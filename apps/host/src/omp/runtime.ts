@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import type { ModelChoice, ModelInfo, TranscriptMessage } from "@agent-desktop/shared";
+import type { ModelChoice, ModelInfo, NativeSessionActivity, TranscriptMessage } from "@agent-desktop/shared";
 import {
   AgentRegistry, createAgentSession, discoverAuthStorage, getAgentDir,
   ModelRegistry, SessionManager, Settings,
@@ -58,6 +58,7 @@ export interface OmpSession {
   readonly createdAt: number;
   readonly modelFallbackMessage: string | undefined;
   getMessages(): TranscriptMessage[];
+  getSessionActivity(): NativeSessionActivity;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
@@ -278,10 +279,11 @@ export class OmpRuntime {
       const thinkingLevel = options.thinkingLevel === undefined ? undefined : parseCliThinkingLevel(options.thinkingLevel);
       if (options.thinkingLevel !== undefined && thinkingLevel === undefined) throw new Error("Unknown OMP thinking level");
       const model = options.model ? this.#findModel(context.registry, options.model, context.settings) : undefined;
+      const agentRegistry = new AgentRegistry();
       const result = await createAgentSession({
         cwd: options.cwd, agentDir: this.#agentDir,
         settings: context.settings, modelRegistry: context.registry, authStorage: context.auth,
-        agentRegistry: new AgentRegistry(), sessionManager: manager, model, thinkingLevel,
+        agentRegistry, sessionManager: manager, model, thinkingLevel,
         // Tools cannot run until create finishes and installs the bridge below.
         hasUI: false, interactivePrompts: options.interactions === true,
         deferUsageReserveConfirmation: true,
@@ -375,6 +377,26 @@ export class OmpRuntime {
         getMessages: () => {
           assertSessionActive();
           return transcript();
+        },
+        getSessionActivity: () => {
+          assertSessionActive();
+          const state = session.getGoalModeState();
+          const goal = state ? { ...state.goal, objective: state.goal.objective.slice(0, 16_384), enabled: state.enabled, mode: state.mode, ...(state.reason ? { reason: state.reason } : {}) } : null;
+          const nativeJobs = session.getAsyncJobSnapshot({ recentLimit: 20 });
+          const job = (value: NonNullable<typeof nativeJobs>["running"][number]) => ({ ...value, id: value.id.slice(0, 200), label: value.label.slice(0, 500), ...(value.agentId ? { agentId: value.agentId.slice(0, 200) } : {}) });
+          const jobs = nativeJobs ? { availability: "available" as const, value: {
+            running: nativeJobs.running.slice(0, 100).map(job), recent: nativeJobs.recent.slice(0, 20).map(job),
+            delivery: { queued: nativeJobs.delivery.queued, delivering: nativeJobs.delivery.delivering,
+              ...(nativeJobs.delivery.nextRetryAt === undefined ? {} : { nextRetryAt: nativeJobs.delivery.nextRetryAt }),
+              pendingJobIds: nativeJobs.delivery.pendingJobIds.slice(0, 100).map(id => id.slice(0, 200)) },
+          } } : { availability: "unavailable" as const, reason: "This native session has no asynchronous job manager." };
+          const agents = agentRegistry.list().filter(ref => ref.kind !== "main").slice(0, 100).map(ref => ({
+            id: ref.id.slice(0, 200), displayName: ref.displayName.slice(0, 500), status: ref.status, running: agentRegistry.isRunning(ref),
+            ...(ref.parentId ? { parentId: ref.parentId.slice(0, 200) } : {}), createdAt: ref.createdAt, lastActivity: ref.lastActivity,
+            ...(ref.activity ? { activity: ref.activity.slice(0, 500) } : {}),
+          }));
+          return { goal: { availability: "available", value: goal }, jobs, agents: { availability: "available", value: agents },
+            sources: { availability: "unsupported", reason: "OMP 18.1.10 does not expose a stable consumed-source registry for this session." } };
         },
         getComposerActions: async () => { assertSessionActive(); return sessionComposerActions(session, result.extensionsResult?.extensions ?? []); },
         getComposerCompletions: async query => { assertSessionActive(); return composerCompletions(sessionComposerActions(session, result.extensionsResult?.extensions ?? []), query, session); },

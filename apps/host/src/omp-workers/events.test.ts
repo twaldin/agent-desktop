@@ -12,7 +12,8 @@ test("worker projection retains lifecycle/thinking/error fields without reading 
   expect(projectWorkerEvent({ type: "thinking_level_changed", thinkingLevel: Effort.High, configured: "auto", resolved: Effort.High })).toEqual({
     type: "thinking_level_changed", thinkingLevel: "high", configured: "auto", resolved: "high",
   });
-  expect(projectWorkerEvent({ type: "agent_end", messages: [], isTerminal: true })).toEqual({ type: "agent_end", isTerminal: true });
+  expect(projectWorkerEvent({ type: "agent_end", messages: [], isTerminal: true })).toEqual({ type: "agent_end", isTerminal: true, activityChanged: true });
+  expect(projectWorkerEvent({ type: "goal_updated", goal: null })).toEqual({ type: "goal_updated", activityChanged: true });
   const requested: OmpBridgeEvent = { type: "extension_interaction_requested", interaction: { id: "request", sessionId: "session", method: "confirm", title: "Permission", actions: [], createdAt: 1 } };
   expect(projectWorkerEvent(requested)).toBe(requested);
   expect(remoteError(new Error(`Native error with data:image/png;base64,${"A".repeat(8192)}`))).toEqual({ name: "Error", message: "Native error with [image payload omitted]" });

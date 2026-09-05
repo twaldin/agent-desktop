@@ -58,6 +58,7 @@ const bridge: DesktopBridge = {
   openExternal: url => ipcRenderer.invoke("desktop:open-external", url),
   command: (envelope, hostId) => ipcRenderer.invoke("host:command", envelope, hostId),
   getMessages: (sessionId, hostId) => ipcRenderer.invoke("host:messages", sessionId, hostId),
+  getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
   chooseDirectory: () => ipcRenderer.invoke("desktop:directory"),
   subscribe: listener => {
     const callback = (_event: Electron.IpcRendererEvent, message: DesktopEvent) => listener(message);

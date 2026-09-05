@@ -69,7 +69,7 @@ export function NativeTerminalPanel({ bridge, target, hostId, connected, onClose
   </section>;
 }
 
-function NativeTerminalViewport({ bridge, hostId, terminal, connected }: { bridge: NativeTerminalClient; hostId: string; terminal: NativeTerminalInfo; connected: boolean }) {
+export function NativeTerminalViewport({ bridge, hostId, terminal, connected, embedded = false }: { bridge: NativeTerminalClient; hostId: string; terminal: NativeTerminalInfo; connected: boolean; embedded?: boolean }) {
   const element = useRef<HTMLDivElement>(null), handle = useRef<NativeTerminalView | undefined>(undefined);
   const current = useRef({ terminal, connected }); current.current = { terminal, connected };
   const [state, setState] = useState<NativeTerminalViewState>({ terminal, ready: false, restoring: running(terminal), inputPaused: false, inputBusy: false, hasSelection: false });
@@ -87,7 +87,7 @@ function NativeTerminalViewport({ bridge, hostId, terminal, connected }: { bridg
     catch (cause) { setHistoryError(errorText(cause)); }
     finally { setHistoryBusy(false); }
   };
-  return <div className="terminal-view native-terminal-view" role="tabpanel" id={`native-terminal-view-${terminal.id}`} aria-labelledby={`native-terminal-tab-${terminal.id}`}>
+  return <div className="terminal-view native-terminal-view" role={embedded ? undefined : "tabpanel"} id={`native-terminal-view-${terminal.id}`} aria-labelledby={embedded ? undefined : `native-terminal-tab-${terminal.id}`}>
     {state.restoring && <p className="terminal-notice" role="status">Attaching to the native pane…</p>}
     {(state.error || state.inputError) && <div className="terminal-view-notices">{state.error && <p className="terminal-notice error" role="alert">{state.error}</p>}{state.inputError && <p className="terminal-notice error" role="alert">{state.inputError}{state.inputPaused && <button className="secondary-button" disabled={!connected || state.inputBusy || !state.ready} onClick={() => handle.current?.resumeInput()}>Resume input</button>}</p>}</div>}
     <div className="native-terminal-scrollport" hidden={historyOpen}><div className="native-terminal-grid" ref={element}/></div>

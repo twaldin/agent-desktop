@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import type { BrowserWindow } from "electron";
-import { defaultWindowView, parseWindowView } from "../window-state";
+import { createDockState, resizeDock } from "../renderer/dock-state";
+import { defaultWindowView, parseDockSnapshot, parseWindowView } from "../window-state";
 import { restoreWindowBounds, trackWindowGeometry, WindowStateStore } from "./window-state";
 const directories: string[] = [];
 const temporary = () => { const directory = mkdtempSync(join(tmpdir(), "agent-window-state-")); directories.push(directory); return directory; };
@@ -69,6 +70,38 @@ test("bounded validation rejects malformed routes, unbounded lists, invalid geom
   expect(store.saveView({ ...selected(), settingsPage: "credentials" }).error).toBeTruthy();
 });
 
+test("dock restoration retains offline owners and native terminal identity", () => {
+  const files = { id: "offline-machine:project:project-one:files", title: "Files", hostId: "offline-machine", target: "project:project-one", kind: "files" } as const;
+  const terminal = { id: "offline-machine:session:saved-session:terminal:terminal-one", title: "Shell", hostId: "offline-machine", target: "session:saved-session", kind: "terminal", terminalId: "terminal-one" } as const;
+  const dock = { tabs: [files, terminal], state: { right: { tabIds: [files.id], activeTabId: files.id, open: true }, bottom: { tabIds: [terminal.id], activeTabId: terminal.id, open: false }, rightWidthRatio: .375, bottomHeight: 288 } };
+  const parsed = parseWindowView({ ...selected(), dock, environmentOpen: true });
+  expect(parsed?.route).toEqual({ hostId: "offline-machine", sessionId: "saved-session" });
+  expect(parsed?.dock).toEqual(dock); expect(parsed?.environmentOpen).toBe(true);
+
+  const directory = temporary(), store = new WindowStateStore(directory, "primary"); store.saveView(parsed);
+  expect(new WindowStateStore(directory, "primary").bootstrap().state?.dock).toEqual(dock);
+});
+
+test("legacy views restore while malformed dock descriptors are discarded without changing navigation", () => {
+  expect(parseWindowView(selected())).toEqual(selected());
+  const valid = { tabs: [{ id: "owner:project:project:files", title: "Files", hostId: "owner", target: "project:project", kind: "files" }],
+    state: { right: { tabIds: ["owner:project:project:files"], activeTabId: "owner:project:project:files", open: true }, bottom: { tabIds: [], open: false }, rightWidthRatio: .3, bottomHeight: 240 } };
+  const malformed = [
+    { ...valid, tabs: [{ ...valid.tabs[0], hostId: "https://owner", id: "https://owner:project:project:files" }] },
+    { ...valid, tabs: [{ ...valid.tabs[0], terminalId: "wrong-kind" }] },
+    { ...valid, tabs: [{ ...valid.tabs[0], kind: "terminal", id: "owner:project:project:terminal" }] },
+    { ...valid, tabs: [{ ...valid.tabs[0], kind: "terminal", terminalId: "bad/id", id: "owner:project:project:terminal:bad/id" }] },
+    { ...valid, state: { ...valid.state, bottom: { tabIds: [...valid.state.right.tabIds], activeTabId: valid.state.right.activeTabId, open: true } } },
+    { ...valid, state: { ...valid.state, rightWidthRatio: Number.NaN } },
+    { ...valid, state: { ...valid.state, bottomHeight: Number.POSITIVE_INFINITY } },
+  ];
+  for (const dock of malformed) {
+    expect(parseDockSnapshot(dock)).toBeUndefined();
+    expect(parseWindowView({ ...selected(), dock })?.route).toEqual(selected().route);
+  }
+  expect(parseWindowView({ ...selected(), environmentOpen: "yes" })).toBeUndefined();
+});
+
 test("monitor restoration clamps offscreen titlebars and keeps normal geometry on the matching monitor", () => {
   const main = { x: 0, y: 24, width: 1440, height: 876 }, side = { x: -1920, y: 24, width: 1920, height: 1056 };
   expect(restoreWindowBounds({ x: -1800, y: 30, width: 1200, height: 820 }, [main, side])).toEqual({ x: -1800, y: 30, width: 1200, height: 820 });
@@ -83,4 +116,14 @@ test("native close flushes a pending geometry change and geometry write failures
   expect(new WindowStateStore(directory, "primary").geometry()).toEqual({ bounds: geometry, maximized: true }); expect(notifications).toEqual([{}]);
   rmSync(store.file); mkdirSync(store.file); events.emit("resize"); events.emit("close");
   expect(notifications.at(-1)?.error).toContain("could not be saved"); events.emit("closed");
+});
+
+// Narrow resize can legitimately reach zero available side width. Restoring
+// that presentation must retain every tab; renderer clamping handles visibility.
+test("a dock resized below the minimum main width still round-trips its tab identity", () => {
+  const tab = {id:"owner:project:project:files",title:"Files",hostId:"owner",target:"project:project" as const,kind:"files" as const};
+  const state = createDockState();state.right = {open:true,tabIds:[tab.id],activeTabId:tab.id};
+  const resized = resizeDock(state,"right",300,{width:300,height:600});
+  expect(resized.rightWidthRatio).toBe(0);
+  expect(parseDockSnapshot(JSON.parse(JSON.stringify({state:resized,tabs:[tab]})))?.tabs).toEqual([tab]);
 });

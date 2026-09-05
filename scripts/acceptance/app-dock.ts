@@ -1,0 +1,25 @@
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
+import { build } from "vite";
+
+const root = resolve(import.meta.dir, "../..");
+const output = resolve(process.argv[2] ?? `.data/app-dock-acceptance/${Date.now()}`);
+const profile = await mkdtemp(join(tmpdir(), "agent-app-dock-"));
+const sources = ["apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/EnvironmentCard.tsx", "scripts/acceptance/app-dock-browser.tsx"];
+const hashes = () => Promise.all(sources.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])).then(Object.fromEntries);
+await mkdir(output, { recursive: true, mode: 0o700 });
+try {
+  const before = await hashes();
+  await writeFile(join(output, "index.html"), `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'self' blob:"><div id="root"></div><script type="module" src="${relative(output, join(import.meta.dir, "app-dock-browser.tsx"))}"></script>`);
+  await build({ configFile: join(root, "apps/desktop/vite.config.ts"), root: output, logLevel: "warn", worker: { format: "es" }, build: { outDir: join(output, "web"), emptyOutDir: true, rollupOptions: { input: join(output, "index.html") } } });
+  await writeFile(join(output, "main.cjs"), `const{app,BrowserWindow}=require('electron'),fs=require('node:fs'),path=require('node:path');app.setPath('userData',${JSON.stringify(profile)});app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:1780,height:1111,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});try{await win.loadFile(path.join(__dirname,'web/index.html'));const result=await win.webContents.executeJavaScript('runAppDockAcceptance()');result.captures=[];for(const scene of [{name:'wide',width:1780,height:1111,zoom:1},{name:'narrow',width:760,height:1000,zoom:1},{name:'zoom150',width:1200,height:1000,zoom:1.5}]){win.setContentSize(scene.width,scene.height);win.webContents.setZoomFactor(scene.zoom);await new Promise(r=>setTimeout(r,100));const geometry=await win.webContents.executeJavaScript('appDockGeometry()');fs.writeFileSync(path.join(__dirname,scene.name+'.png'),(await win.webContents.capturePage()).toPNG());result.captures.push({...scene,...geometry})}result.hidden=true;result.electron=process.versions.electron;result.passed&&=result.captures.every(scene=>scene.fitting);fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(result,null,2));win.destroy();app.exit(result.passed?0:1)}catch(error){const progress=await win.webContents.executeJavaScript('appDockProgress()').catch(()=>null);fs.writeFileSync(path.join(__dirname,'failure.png'),(await win.webContents.capturePage()).toPNG());fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify({passed:false,error:String(error),progress},null,2));app.exit(1)}});`);
+  const child = Bun.spawn([process.execPath, join(root, "node_modules/electron/cli.js"), join(output, "main.cjs")], { stdout: Bun.file(join(output, "electron.log")), stderr: Bun.file(join(output, "electron-errors.log")) });
+  const timer = setTimeout(() => child.kill("SIGTERM"), 60_000); const code = await child.exited; clearTimeout(timer);
+  const result = await Bun.file(join(output, "result.json")).json(); result.sourceAtBuild = before; result.sourceAfter = await hashes(); result.sourceHashesStable = JSON.stringify(result.sourceAtBuild) === JSON.stringify(result.sourceAfter); result.passed &&= result.sourceHashesStable;
+  result.scope = "Actual production App, dock panels, workspace/review surfaces, and Environment card in hidden sandboxed Electron. Host, Git, activity, and native transport responses are controlled; no provider or installed service is used.";
+  await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2));
+  console.log(JSON.stringify({ passed: result.passed, checks: result.checks?.length, captures: result.captures?.length, sourceHashesStable: result.sourceHashesStable, result: join(output, "result.json") }));
+  if (code || !result.passed) throw new Error(`App dock acceptance failed; inspect ${output}/result.json`);
+} finally { await rm(profile, { recursive: true, force: true }); }

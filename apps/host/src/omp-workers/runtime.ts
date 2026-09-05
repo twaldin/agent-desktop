@@ -3,7 +3,7 @@ import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/co
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelInfo, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
+import type { ModelInfo, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
 import { copyPreparedImages } from "../omp/images";
 import { OmpPromptAdmissionError } from "../omp/prompt";
@@ -24,10 +24,12 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "subscribe"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "subscribe"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
+  readonly activity: NativeSessionActivity;
   getMessages(): Promise<TranscriptMessage[]>;
+  getSessionActivity(): Promise<NativeSessionActivity>;
   subscribe(listener: WorkerEventListener): () => void;
   subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
 }
@@ -357,10 +359,12 @@ export class WorkerRuntime {
       get thinkingLevel() { return state().thinkingLevel; }, get isStreaming() { return state().isStreaming; },
       get hasPostPromptWork() { return state().hasPostPromptWork; }, get title() { return state().title; },
       get createdAt() { return state().createdAt; }, get modelFallbackMessage() { return state().modelFallbackMessage; },
+      get activity() { return state().activity; },
       get workerPid() { return client.pid; }, get workerFailure() { return client.failure; },
       getComposerActions: () => client.request<NativeComposerCatalog>({ operation: "getComposerActions", args: {} }, 15_000),
       getComposerCompletions: query => client.request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { query } }, 5_000),
       getMessages: () => client.request<TranscriptMessage[]>({ operation: "getMessages" }, 30_000),
+      getSessionActivity: () => client.request<NativeSessionActivity>({ operation: "getSessionActivity" }, 15_000),
       getImage: async (nativeEntryId, blockIndex) => {
         if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");
         imageReads++;

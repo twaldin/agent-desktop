@@ -8,8 +8,10 @@ import type { OmpApprovalMode, OmpModelDefinitions, OmpModelDefinitionsMutation,
 import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingOptions, OmpSettingsCatalog, OmpSettingsMutation, OmpSettingsSnapshot } from "./settings";
 import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities, UploadedImageMetadata, RecordedImageBytes } from "./attachments";
 import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions } from "./composer-actions";
+import type { SessionActivitySnapshot } from "./session-activity";
 export * from "./attachments";
 export * from "./composer-actions";
+export * from "./session-activity";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -243,6 +245,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   openExternal(url: string): Promise<void>;
   command(envelope: CommandEnvelope, hostId?: string): Promise<CommandResult>;
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
+  getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
   chooseDirectory(): Promise<string | null>;
   subscribe(listener: (event: DesktopEvent) => void): () => void;
 }

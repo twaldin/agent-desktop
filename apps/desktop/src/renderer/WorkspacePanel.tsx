@@ -4,13 +4,14 @@ import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
 import { fileLocation, type WorkspaceFileRequest } from "./transcript-links";
 import { ReviewPanel } from "./ReviewPanel";
+import { retainWorkspace } from "./workspace-lease";
 
-export function WorkspacePanel({ data, connected, name, path, fileRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
+export function WorkspacePanel({ data, connected, name, path, fileRequest, embedded = false, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; embedded?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [localTab, setLocalTab] = useState<WorkspaceTab>("files");
   const tab = selectedTab ?? localTab;
   const setTab = (value: WorkspaceTab) => { setLocalTab(value); onTabChange?.(value); };
-  useEffect(() => { const off = data.subscribe(redraw); data.start(); void data.restore().then(() => { if (data.connected) void data.refresh(); }); return () => { off(); data.stop(); }; }, [data]);
+  useEffect(() => { const off = data.subscribe(redraw); const release = retainWorkspace(data); void data.restore().then(() => { if (data.connected) void data.refresh(); }); return () => { off(); release(); }; }, [data]);
   useEffect(() => { data.setConnected(connected); if (connected) void data.refresh(); }, [data, connected]);
   useEffect(() => {
     if (!fileRequest) return;
@@ -25,17 +26,17 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, tab: 
     return () => clearInterval(interval);
   }, [data, connected, tab]);
   const disabled = !connected || data.busy || Boolean(data.pending) || !data.restored;
-  return <aside className="workspace-panel" aria-label="Workspace files and Git" aria-busy={data.loading.size > 0 || !data.restored}>
-    <header className="workspace-header"><div className="truncate"><strong>{name}</strong><span title={path}>{path}</span></div><button className="icon-button" aria-label="Refresh workspace" disabled={!connected || data.loading.size > 0} onClick={() => { void data.refresh(); if (tab === "worktrees") void data.loadWorktrees(); if (tab === "changes" && data.diff) void data.showDiff(data.diffSelection.path, data.diffSelection.staged); }}><Icon name="refresh"/></button><button className="icon-button" aria-label="Close workspace panel" onClick={onClose}><Icon name="close"/></button></header>
-    <div className="workspace-tabs" role="tablist" aria-label="Workspace view">{(["files", "changes", "worktrees"] as const).map(value => <button key={value} id={`workspace-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls="workspace-view" onClick={() => setTab(value)}>{value === "files" ? "Files" : value === "changes" ? "Changes" : "Worktrees"}</button>)}</div>
+  return <aside className={`workspace-panel ${embedded ? "workspace-embedded" : ""}`} aria-label="Workspace files and Git" aria-busy={data.loading.size > 0 || !data.restored}>
+    {!embedded && <><header className="workspace-header"><div className="truncate"><strong>{name}</strong><span title={path}>{path}</span></div><button className="icon-button" aria-label="Refresh workspace" disabled={!connected || data.loading.size > 0} onClick={() => { void data.refresh(); if (tab === "worktrees") void data.loadWorktrees(); if (tab === "changes" && data.diff) void data.showDiff(data.diffSelection.path, data.diffSelection.staged); }}><Icon name="refresh"/></button><button className="icon-button" aria-label="Close workspace panel" onClick={onClose}><Icon name="close"/></button></header>
+    <div className="workspace-tabs" role="tablist" aria-label="Workspace view">{(["files", "changes", "worktrees"] as const).map(value => <button key={value} id={`workspace-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls="workspace-view" onClick={() => setTab(value)}>{value === "files" ? "Files" : value === "changes" ? "Changes" : "Worktrees"}</button>)}</div></>}
     {!connected && <p className="workspace-notice">Offline · displaying cached files and status. Editor changes stay on this device.</p>}
     {!data.restored && <p className="workspace-notice">{data.cacheWarning ?? "Restoring editor buffers…"}{data.cacheWarning && <button onClick={() => void data.restore()}>Retry recovery</button>}</p>}
     {data.cacheWarning && data.restored && <p className="workspace-notice" role="alert">{data.cacheWarning}</p>}
     {data.errors.action && <div className="inline-error" role="alert">{data.errors.action}</div>}
     {data.notice && <p className="workspace-notice" role="status">{data.notice}</p>}
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
-    <div id="workspace-view" className="workspace-view" role="tabpanel" aria-labelledby={`workspace-tab-${tab}`}>
-      {tab === "files" ? <Files data={data} disabled={disabled} fileRequest={fileRequest}/> : tab === "changes" ? <ReviewPanel data={data} disabled={disabled} onEdit={path => { setTab("files"); void data.open(path); }}/> : <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/>}
+    <div id={embedded ? undefined : "workspace-view"} className="workspace-view" role={embedded ? undefined : "tabpanel"} aria-labelledby={embedded ? undefined : `workspace-tab-${tab}`}>
+      {tab === "files" ? <Files data={data} disabled={disabled} fileRequest={fileRequest}/> : tab === "changes" ? <ReviewPanel commitRequest={commitRequest} data={data} disabled={disabled} onEdit={path => { setTab("files"); void data.open(path); }}/> : <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/>}
     </div>
   </aside>;
 }

@@ -41,6 +41,7 @@ test("owning native worker rejects idle and interrupt-racing steers and cancels 
     await Bun.sleep(50); expect(settled).toBe(false);
     const disposing = session.dispose();
     expect((await queued).kind).toBe("not-recorded"); await disposing; await resumed.completion;
+    expect(session.isStreaming).toBe(false); expect(session.hasPostPromptWork).toBe(false);
     const lines = (await readFile(session.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     const userTexts = lines.filter(entry => entry.message?.role === "user").map(entry => entry.message.content[0].text);
     expect(userTexts).toEqual(["Controlled native interrupt race", "Controlled native disposal"]);

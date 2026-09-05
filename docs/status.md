@@ -2,6 +2,14 @@
 
 Home runs desktop and host **14**. Work runs desktop and host **13**; Deckbox runs host **13**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source 16 — dock and native Environment integration; not installed
+
+Review, Files, Worktrees and existing native terminal IDs now share persistent right/bottom tabs. Host/session ownership survives navigation, restore and moves; hiding or closing a tab does not stop its shell. The floating Environment card uses actual Git and native OMP activity, with verified transcript images/file-read sources. See [dock behavior and evidence](dock-workbench.md) and [native activity limits](session-activity.md).
+
+The integrated production App passes four controlled workflow groups at wide/narrow/150% sizes; menu dismissal and narrow Environment hit-testing failures were preserved and fixed. Native dock restoration/creation has five focused workflow groups, while the existing composer still passes six. These captures exercise this app, not live Codex or installed machines. The final frozen-source suite passes **471 tests / 24,176 assertions**, with 17 explicit skips and zero failures; all 351 recorded source hashes remained unchanged. Typecheck and build pass. The first full run exposed a deterministic activity-read-after-disposal regression; the fix retains only last live activity while final lifecycle fields remain current, and the original regression assertions are preserved. Build 16 is packaged and ad-hoc signed, with all 106 bundled host files verified. Installation and physical acceptance remain pending.
+
+The active implementation subagents use GPT-5.6 Sol / medium for host and state work and GPT-5.6 Terra / medium for UI work, per the user's cost preference. Earlier Astra implementation agents are stopped.
+
 ## Release 14 — installed on Home; remote acceptance pending
 
 - Image attachments now have an owner-side binary store, version 3 commands, ordered persistent draft references, atomic admission/clear receipts, native OMP image normalization and native transcript previews. Source checks include actual worker/HTTP admission and Linux decoding/durability. Real provider images, native OS picker and physical cross-device acceptance remain pending. See [draft attachments](draft-attachments.md).

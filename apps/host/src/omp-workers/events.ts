@@ -7,6 +7,7 @@ export interface NativeEventMetadata {
   thinkingLevel?: string; configured?: string; resolved?: string;
   toolCallId?: string; toolName?: string;
   errorMessage?: string; finalError?: string;
+  activityChanged?: boolean;
   isTerminal?: boolean; isError?: boolean; aborted?: boolean; willRetry?: boolean; success?: boolean;
   attempt?: number; maxAttempts?: number; delayMs?: number;
 }
@@ -19,6 +20,7 @@ export function projectWorkerEvent(event: OmpRuntimeEvent): WorkerEvent {
   if (event.type === "extension_interaction_requested" || event.type === "extension_interaction_resolved"
     || event.type === "extension_notification" || event.type === "extension_ui_unsupported") return event;
   const result: NativeEventMetadata = { type: event.type };
+  if (["goal_updated", "agent_start", "agent_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) result.activityChanged = true;
   if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
     result.message = { role: event.message.role };
     if (event.type === "message_end" && event.message.role === "assistant" && event.message.errorMessage) result.message.errorMessage = projectNativeErrorMessage(event.message.errorMessage);

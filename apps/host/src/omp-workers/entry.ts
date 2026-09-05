@@ -12,9 +12,16 @@ let stopping = false;
 let shuttingDown: Promise<void> | undefined;
 let pendingDispose: { id: string; exitCode: number; deadline: ReturnType<typeof setTimeout> } | undefined;
 let snapshotRevision = 0;
+let latestActivity: SessionSnapshot["activity"] | undefined;
 
 function snapshot(): SessionSnapshot | undefined {
   if (!session) return undefined;
+  // Disposal settles outstanding prompt RPCs after the native session has
+  // become unreadable. Retain only its last live activity projection; current
+  // lifecycle fields must still show the native stop instead of stale streaming.
+  const activity = stopping ? latestActivity : session.getSessionActivity();
+  if (!activity) return undefined;
+  latestActivity = activity;
   return {
     revision: ++snapshotRevision,
     id: session.id, sessionFile: session.sessionFile, cwd: session.cwd,
@@ -22,6 +29,7 @@ function snapshot(): SessionSnapshot | undefined {
     isStreaming: session.isStreaming, hasPostPromptWork: session.hasPostPromptWork,
     title: session.title, createdAt: session.createdAt,
     modelFallbackMessage: session.modelFallbackMessage,
+    activity,
   };
 }
 
@@ -121,6 +129,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getComposerActions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerActions(message.args.cwd, { refresh: message.args.refresh }) : await requireSession().getComposerActions()); break;
       case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
+      case "getSessionActivity": respond(true, requireSession().getSessionActivity()); break;
       case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex)); break;
       case "startPrompt": {
         const run = requireSession().startPrompt(message.args.text, message.args.options);

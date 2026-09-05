@@ -22,7 +22,7 @@ import "./transcript-scroll.css";
 import { AccountsSettings } from "./AccountsSettings";
 import { PendingInteractions } from "./PendingInteractions";
 import { WorkspacePanel } from "./WorkspacePanel";
-import type { TranscriptLinkActions, WorkspaceFileRequest } from "./transcript-links";
+import { resolveTranscriptLink, type TranscriptLinkActions, type WorkspaceFileRequest } from "./transcript-links";
 import { WorkspaceState, workspaceKey } from "./workspace-state";
 import { offlineCache } from "./offline-cache";
 import { PreferencesState } from "./preferences-state";
@@ -33,7 +33,16 @@ import { ThemeEditor } from "./theme-state";
 import { ThemeImageState } from "./theme-image-state";
 import { applyTheme } from "./theme-application";
 import { cssColorToRgba } from "./css-color";
-import { TerminalPanel } from "./TerminalPanel";
+import { transcriptSources, type RecordedSource } from "./transcript-sources";
+import { ImagePreview } from "./ImagePreview";
+import { DockPanel } from "./DockPanel";
+import { DockTerminal } from "./DockTerminal";
+import { moveDockTab, type DockTab, type DockDestination } from "./dock-state";
+import { useWorkbenchDock, targetFromDock } from "./use-workbench-dock";
+import { EnvironmentCard } from "./EnvironmentCard";
+import { useSessionActivity } from "./use-session-activity";
+import { retainWorkspace } from "./workspace-lease";
+import "./dock-layout.css";
 import { DEFAULT_THEME } from "../../../../packages/shared/src/theme";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace-protocol";
 
@@ -62,12 +71,18 @@ export function App() {
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(windowRestoration.state.settingsOpen);
   const [settingsPage, setSettingsPage] = useState<"accounts" | "omp" | "appearance">(windowRestoration.state.settingsPage);
-  const [workspaceOpen, setWorkspaceOpen] = useState(windowRestoration.state.workspaceOpen);
   const [workspaceFileRequest, setWorkspaceFileRequest] = useState<{ owner: string; request: WorkspaceFileRequest }>();
-  const [terminalOpen, setTerminalOpen] = useState(windowRestoration.state.terminalOpen);
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(windowRestoration.state.workspaceTab);
-  const windowWarning = useWindowViewPersistence({ route, sidebarOpen, workspaceOpen, workspaceTab, terminalOpen, showArchived,
-    expandedProjects: [...expandedProjects], settingsOpen, settingsPage }, windowRestoration);
+  const [environmentOpen, setEnvironmentOpen] = useState(windowRestoration.state.environmentOpen ?? false);
+  const [sourcePreview, setSourcePreview] = useState<{hostId:string;source:Extract<RecordedSource,{kind:"image"}>}>();
+  const [commitRequest, setCommitRequest] = useState<{owner:string;id:string}>();
+  const workbenchElement = useRef<HTMLDivElement>(null);
+  const [dockViewport, setDockViewport] = useState({ width: 1000, height: 800, left: 0, top: 0 });
+  useEffect(() => {
+    const element = workbenchElement.current; if (!element) return;
+    const read = () => { const rect = element.getBoundingClientRect(); setDockViewport({ width:rect.width,height:rect.height,left:rect.left,top:rect.top }); };
+    const observer = new ResizeObserver(read); observer.observe(element); read();
+    window.addEventListener("resize",read); return () => { observer.disconnect();window.removeEventListener("resize",read); };
+  }, [sidebarOpen]);
   const expandAfterNavigation = useRef<string | undefined>(undefined);
   const workspaces = useMemo(() => new Map<string, WorkspaceState>(), [bridge]);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -154,6 +169,11 @@ export function App() {
   const draft = view.draft;
   const project = state?.projects.find(project => project.id === (selected?.projectId ?? draft.projectId));
   const workspaceTarget: WorkspaceTarget | undefined = selected ? { sessionId: selected.id } : project ? { projectId: project.id } : undefined;
+  const dock = useWorkbenchDock(bridge, windowRestoration.state, hostId, workspaceTarget, connected, setActionError);
+  const workspaceOpen = dock.snapshot.state.right.open;
+  const terminalOpen = dock.snapshot.state.bottom.open;
+  const windowWarning = useWindowViewPersistence({ route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,
+    expandedProjects: [...expandedProjects], settingsOpen, settingsPage, dock: dock.persisted, environmentOpen }, windowRestoration);
   const composerTarget = composerTargetKey(workspaceTarget);
   const composer = useMemo(() => new ComposerCatalogState(bridge, hostId, workspaceTarget), [bridge, hostId, composerTarget]);
   useEffect(() => {
@@ -181,10 +201,18 @@ export function App() {
       if (!workspace || !workspaceOwner) throw new Error("This session has no owning workspace.");
       if (!connected) throw new Error("The owning host is disconnected. Reconnect before opening a file link.");
       setWorkspaceFileRequest({ owner: workspaceOwner, request: { ...file, id: crypto.randomUUID() } });
-      setWorkspaceOpen(true);
+      dock.open("files");
     },
   };
   const transcript = useTranscript(bridge, selectedId, hostId === "unconnected" ? undefined : hostId, connected, desktop.localHostId);
+  const activity = useSessionActivity(bridge, hostId, selected?.id, connected, environmentOpen && !settingsOpen);
+  useEffect(() => {
+    if (!environmentOpen || settingsOpen || !workspace) return;
+    const release = retainWorkspace(workspace); workspace.setConnected(connected);
+    void workspace.restore().then(() => { if (workspace.connected) void workspace.loadGit(); });
+    const timer = setInterval(() => { if (workspace.connected) void workspace.loadGit(); }, 5000);
+    return () => { release();clearInterval(timer); };
+  }, [workspace,environmentOpen,settingsOpen,connected]);
   const transcriptReading = useTranscriptScroll(selectedId ? `${hostId}:${selectedId}` : undefined);
   const running = selected?.status === "running";
   const pendingSubmission = submissions.get(draftId);
@@ -307,18 +335,36 @@ export function App() {
       { id: "archive", name: "Archive", description: "Archive the current chat", icon: "archive", reason: !selected ? "Open a conversation to archive it." : !connected ? "Reconnect to archive this conversation." : undefined,
         run: async () => { if (!selected || !connected) throw new Error("The conversation is unavailable."); await command({ type: "session.archive", sessionId: selected.id, archived: true }); await refresh(); } },
       { id: "review", name: "Code review", description: "Review changes in this workspace", icon: "compose", reason: !workspace ? "Choose a project to review its changes." : undefined,
-        run: () => { setWorkspaceTab("changes"); setWorkspaceOpen(true); } },
+        run: () => dock.open("review") },
       { id: "files", name: "Files", description: "Open workspace files", icon: "folder", reason: !workspace ? "Choose a project to browse its files." : undefined,
-        run: () => { setWorkspaceTab("files"); setWorkspaceOpen(true); } },
+        run: () => dock.open("files") },
       { id: "terminal", name: "Terminal", description: "Open the workspace terminal", icon: "terminal", reason: !workspace ? "Choose a project to open its terminal." : undefined,
-        run: () => setTerminalOpen(true) },
+        run: () => dock.terminal() },
       { id: "new-chat", name: "New chat", description: "Start a new conversation", icon: "compose", run: () => newConversation() },
       { id: "settings", name: "Settings", description: "Open native OMP settings", icon: "more", run: () => { setSettingsPage("omp"); setSettingsOpen(true); } },
     ],
   });
   const hostGroups = desktop.hosts.flatMap(host => { const hostState = host.hostId ? desktop.catalog.records.get(host.hostId)?.state : undefined; return hostState ? [{ host, hostState }] : []; });
 
-  return <div className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"} ${workspaceOpen && workspace && !settingsOpen ? "with-workspace" : ""}`}>
+  const dockActions = workspaceTarget ? [
+    {id:"review",label:"Review",onSelect:(destination:DockDestination) => dock.open("review",destination)},
+    {id:"terminal",label:"Terminal",onSelect:(destination:DockDestination) => {void dock.terminal(destination);}},
+    {id:"new-terminal",label:"New terminal",onSelect:(destination:DockDestination) => {void dock.terminal(destination,true);}},
+    {id:"files",label:"Files",onSelect:(destination:DockDestination) => dock.open("files",destination)},
+    {id:"worktrees",label:"Worktrees",onSelect:(destination:DockDestination) => dock.open("worktrees",destination)},
+  ] : [];
+  function renderDockTab(tab:DockTab) {
+    const target = targetFromDock(tab.target), owner = `${tab.hostId}:${tab.target}`;
+    const record = desktop.catalog.records.get(tab.hostId);
+    const online = Boolean(record?.connected);
+    if(tab.kind === "terminal") return tab.terminalId ? <DockTerminal bridge={bridge} hostId={tab.hostId} target={target} terminalId={tab.terminalId} connected={online}/> : <p>Saved terminal identity is unavailable.</p>;
+    let data = workspaces.get(owner);
+    if(!data) {data = new WorkspaceState(bridge,tab.hostId,target,offlineCache,desktop.localHostId);workspaces.set(owner,data);}
+    const ownerSession = "sessionId" in target ? record?.state?.sessions.find(value => value.id === target.sessionId) : undefined;
+    const ownerProject = record?.state?.projects.find(value => value.id === ("projectId" in target ? target.projectId : ownerSession?.projectId));
+    return <WorkspacePanel embedded data={data} connected={online} tab={tab.kind === "review" ? "changes" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={tab.kind === "files" && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
+  }
+  return <div className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}>
     <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
       <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search conversations" title="Search conversations (⌘ K)" aria-expanded={searchOpen} onClick={() => { setSearchOpen(value => !value); requestAnimationFrame(() => searchInput.current?.focus()); }}><Icon name="search"/></button></div>
@@ -329,7 +375,11 @@ export function App() {
       <div className="sidebar-scroll"><OrganizedSidebar preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} query={query} showArchived={showArchived} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)}/></div>
       <footer className="sidebar-footer"><span className={`connection-dot ${connected ? "online" : ""}`}/><div className="host-label"><label className="sr-only" htmlFor="active-host">Active machine</label><select id="active-host" value={state?.host.id ?? route.hostId ?? ""} onChange={event => navigate(null, event.target.value, true)}>{route.hostId && !desktop.hosts.some(host => host.hostId === route.hostId) && <option value={route.hostId}>Saved machine · {loading ? "Connecting" : "Unavailable"}</option>}{!desktop.hosts.length && !route.hostId && <option value="">Connecting to host…</option>}{desktop.hosts.map(host => <option key={host.key} value={host.hostId ?? host.key} disabled={!host.hostId}>{host.name}{host.local ? " · This machine" : ""}{host.availability !== "available" ? ` · ${host.availability}` : ""}</option>)}</select><span>{connected ? hostId === desktop.localHostId ? "Connected · This machine" : "Connected · Tailscale" : loading ? "Connecting…" : state ? "Offline · cached view" : "Host unavailable"}</span></div><div className="menu-anchor"><button className="icon-button" aria-label="App menu" title="App menu" aria-expanded={appMenuOpen} onClick={() => setAppMenuOpen(value => !value)}><Icon name="more"/></button>{appMenuOpen && <><button className="menu-dismiss" onClick={() => setAppMenuOpen(false)} tabIndex={-1} aria-label="Close app menu"/><div className="action-menu footer-menu"><button onClick={() => { setSettingsOpen(true); setAppMenuOpen(false); }}>Settings</button><button onClick={() => { setDialog("status"); setAppMenuOpen(false); }}>Build status</button></div></>}</div></footer>
     </aside>
-    <main className={`main-panel ${terminalOpen ? "with-terminal" : ""}`}>
+    <div ref={workbenchElement} className={`workbench ${workspaceOpen && dockViewport.width < 672 ? "dock-narrow" : ""}`} style={{
+      "--right-dock-size": !settingsOpen && workspaceOpen && dockViewport.width >= 672 ? `${Math.max(320,Math.min(dockViewport.width - 352,dock.snapshot.state.rightWidthRatio*dockViewport.width))}px` : "0px",
+      "--bottom-dock-size": !settingsOpen && terminalOpen ? `${Math.min(dockViewport.height/2,Math.max(160,dock.snapshot.state.bottomHeight))}px` : "0px",
+    } as React.CSSProperties}>
+    <main className="main-panel">
       {appliedTheme.background.kind === "asset" && themeImage.sha256 === imageHash && themeImage.dataUrl && <div className="theme-image-background" aria-hidden="true" style={{ backgroundImage: `url("${themeImage.dataUrl}")`, backgroundSize: appliedTheme.background.fit === "tile" ? "auto" : appliedTheme.background.fit, backgroundRepeat: appliedTheme.background.fit === "tile" ? "repeat" : "no-repeat", opacity: appliedTheme.background.opacity, filter: `blur(${appliedTheme.background.blur}px)` }}/> }
       {windowWarning && <div className="connection-banner" role="status"><span>{windowWarning}</span></div>}
       {settingsOpen ? <><nav className="settings-navigation" aria-label="Settings pages"><button aria-current={settingsPage === "accounts" ? "page" : undefined} onClick={() => setSettingsPage("accounts")}>Accounts</button><button aria-current={settingsPage === "omp" ? "page" : undefined} onClick={() => setSettingsPage("omp")}>OMP</button><button aria-current={settingsPage === "appearance" ? "page" : undefined} onClick={() => setSettingsPage("appearance")}>Appearance</button></nav>{settingsPage === "appearance" ? <ThemeSettings data={theme} preferences={preferences} fonts={localFonts} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : <>
@@ -337,9 +387,10 @@ export function App() {
         {!sidebarOpen && <button className="icon-button no-drag" onClick={() => setSidebarOpen(true)} aria-label="Show sidebar"><Icon name="sidebar"/></button>}
         <div className="header-breadcrumb" title={project?.path}>{selected && <Icon name="folder"/>}<strong className="truncate">{selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "New chat")}</strong>{selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>}</div>
         <div className="header-panel-actions no-drag">
+          {workspace && <button className={`icon-button ${environmentOpen ? "active" : ""}`} aria-label="Environment" title="Environment" aria-expanded={environmentOpen} onClick={() => setEnvironmentOpen(value => !value)}><Icon name="sliders"/></button>}
           {selected && (selected.archived || selected.status !== "idle") && <span className={`status-label ${selected.status}`}>{selected.archived ? "Archived" : selected.status}</span>}
-          {workspaceTarget && <button className={`icon-button ${terminalOpen ? "active" : ""}`} aria-label={terminalOpen ? "Hide terminal panel" : "Show terminal panel"} title={terminalOpen ? "Hide terminal panel" : "Show terminal panel"} aria-expanded={terminalOpen} onClick={() => setTerminalOpen(value => !value)}><Icon name="terminal"/></button>}
-          {workspace && <button className={`icon-button ${workspaceOpen ? "active" : ""}`} aria-label={workspaceOpen ? "Hide files and Git" : "Show files and Git"} title={workspaceOpen ? "Hide files and Git" : "Show files and Git"} aria-expanded={workspaceOpen} onClick={() => setWorkspaceOpen(value => !value)}><Icon name="folder"/></button>}
+          {workspaceTarget && <button className={`icon-button ${terminalOpen ? "active" : ""}`} aria-label={terminalOpen ? "Hide terminal panel" : "Show terminal panel"} title={terminalOpen ? "Hide terminal panel" : "Show terminal panel"} aria-expanded={terminalOpen} onClick={() => dock.toggle("bottom")}><Icon name="terminal"/></button>}
+          {workspace && <button className={`icon-button ${workspaceOpen ? "active" : ""}`} aria-label={workspaceOpen ? "Hide side panel" : "Show side panel"} title={workspaceOpen ? "Hide side panel" : "Show side panel"} aria-expanded={workspaceOpen} onClick={() => dock.toggle("right")}><Icon name="folder"/></button>}
         </div>
       </header>
       {imageHash && themeImage.sha256 === imageHash && (themeImage.status === "loading" || themeImage.error) && <div className="connection-banner theme-image-status" role="status"><span>{themeImage.error ?? "Loading this device’s background image…"}</span>{themeImage.error && <button onClick={() => void themeImage.refresh()}><Icon name="refresh"/>Retry image</button>}</div>}
@@ -391,9 +442,15 @@ export function App() {
         </div>
       </>}
       </>}
-      {terminalOpen && workspaceTarget && !settingsOpen && <div className="terminal-dock"><TerminalPanel key={`${hostId}:${workspaceKey(workspaceTarget)}`} target={workspaceTarget} hostId={hostId} connected={connected} onClose={() => setTerminalOpen(false)}/></div>}
+
     </main>
-    {workspaceOpen && workspace && !settingsOpen && <WorkspacePanel key={`${hostId}:${workspaceKey(workspace.target)}`} data={workspace} connected={connected} tab={workspaceTab} onTabChange={setWorkspaceTab} fileRequest={workspaceFileRequest && workspaceFileRequest.owner === workspaceOwner ? workspaceFileRequest.request : undefined} name={project?.name ?? selected?.title ?? "Workspace"} path={selected?.cwd ?? project?.path ?? ""} onClose={() => setWorkspaceOpen(false)} onOpenProject={async path => { const result = await command({ type: "project.add", path }); if (!result || !("path" in result)) throw new Error("The host did not return the project."); await refresh(); newConversation(result.id, hostId); }}/>}
+      {environmentOpen && workspace && !settingsOpen && <div className="environment-overlay"><EnvironmentCard key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal()} onHost={() => { setSidebarOpen(true);requestAnimationFrame(() => document.getElementById("active-host")?.focus()); }} onClose={() => setEnvironmentOpen(false)}/></div>}
+    {(["right", "bottom"] as const).map(destination => <div className={`dock-slot dock-slot-${destination}`} key={destination} style={{display:!settingsOpen && dock.snapshot.state[destination].open ? undefined : "none"}} inert={settingsOpen || !dock.snapshot.state[destination].open || undefined}>
+      <DockPanel destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} onChange={dock.change} onTabDrop={(id,_from,to,index) => dock.change(moveDockTab(dock.snapshot.state,id,to,index))} addActions={dockActions} renderTab={renderDockTab}/>
+      {!dock.snapshot.state[destination].tabIds.length && <div className="dock-empty-actions">{dockActions.map(action => <button key={action.id} onClick={() => action.onSelect(destination)}><Icon name={action.id === "terminal" ? "terminal" : "folder"}/>{action.label}</button>)}</div>}
+    </div>)}
+    </div>
+    {sourcePreview && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>
       {dialog === "project" ? <form onSubmit={addRemoteProject}><p className="subtle-notice">Enter an existing absolute folder path on {state?.host.name}. The project and its sessions stay on that machine.</p>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="remote-project-path">Folder path</label><input id="remote-project-path" className="text-field" value={remotePath} onChange={event => setRemotePath(event.target.value)} placeholder="/home/you/projects/example" autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!remotePath.trim() || !connected || addingProject}>{addingProject ? "Adding…" : "Add project"}</button></div></form> : dialog === "rename" ? <form onSubmit={rename}>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="conversation-title">Name</label><input id="conversation-title" className="text-field" value={renameTitle} onChange={event => setRenameTitle(event.target.value)} autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!renameTitle.trim() || !connected}>Save</button></div></form> : <div className="build-status"><p>This connected desktop flow includes host selection and an aggregate project sidebar: projects, revisioned drafts, sessions, model selection, streaming, steering, stopping, rename, and archive.</p><p>Accounts, native OMP settings and pending requests, file/editor/Git/worktree panels, and terminal sessions use the owning host’s APIs. Shared sidebar organization and the theme file are connected. Attachments, richer review, browser panels, plugins, automations, remain incomplete.</p><p>The layout uses the pinned package and measured colors from the supplied screenshot. Full visual parity and physical cross-device acceptance remain pending.</p><p>{desktop.networkError ?? desktop.network?.error ?? (desktop.network?.status === "connected" ? "Tailscale discovery is connected." : "Tailscale discovery is not connected.")}</p><button className="secondary-button" onClick={() => void desktop.refreshNetwork()}>Refresh machines</button><div className="build-host">{state?.host.name ?? "Host unavailable"} · {state?.host.platform ?? "Unknown platform"}</div></div>}

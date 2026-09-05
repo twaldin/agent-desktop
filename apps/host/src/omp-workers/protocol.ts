@@ -1,9 +1,9 @@
-import type { ComposerCompletionQuery, ModelChoice, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
+import type { ComposerCompletionQuery, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractionResponse, PreparedPromptImage } from "../omp";
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 
-export const WORKER_PROTOCOL_VERSION = 4;
+export const WORKER_PROTOCOL_VERSION = 5;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -16,6 +16,7 @@ export interface SessionSnapshot {
   title?: string;
   createdAt: number;
   modelFallbackMessage?: string;
+  activity: NativeSessionActivity;
 }
 export type WorkerInit = { agentDir?: string } & (
   | { mode: "create"; options: Omit<OmpSessionOptions, "onEvent"> }
@@ -30,6 +31,7 @@ export type WorkerOperation =
   | { operation: "getComposerActions"; args: { cwd?: string; refresh?: boolean } }
   | { operation: "getComposerCompletions"; args: { cwd?: string; query: ComposerCompletionQuery } }
   | { operation: "getMessages" }
+  | { operation: "getSessionActivity" }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
   | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode; options?: { images?: PreparedPromptImage[] } } }

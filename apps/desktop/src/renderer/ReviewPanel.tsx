@@ -6,7 +6,7 @@ import type { WorkspaceState } from "./workspace-state";
 import "./review-panel.css";
 
 const OPTIONS_KEY = "agent-desktop:review-options:v1";
-export function ReviewPanel({ data, disabled, onEdit }: { data: WorkspaceState; disabled: boolean; onEdit(path: string): void }) {
+export function ReviewPanel({ data, disabled, onEdit, commitRequest }: { data: WorkspaceState; disabled: boolean; onEdit(path: string): void; commitRequest?: string }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [options, setOptions] = useState<ReviewOptions>({ ...DEFAULT_REVIEW_OPTIONS });
   const [preferenceError, setPreferenceError] = useState<string>();
@@ -28,6 +28,12 @@ export function ReviewPanel({ data, disabled, onEdit }: { data: WorkspaceState; 
   const staged = data.diffSelection.staged;
   const entries = reviewEntries(data.status?.entries ?? [], staged);
   const stagedEntries = reviewEntries(data.status?.entries ?? [], true);
+  const openedCommitRequest = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!commitRequest || openedCommitRequest.current === commitRequest || !data.status || disabled) return;
+    openedCommitRequest.current = commitRequest;
+    if (stagedEntries.length && !data.status.entries.some(entry => entry.kind === "conflict")) setCommit({ revision: data.status.revision, paths: stagedEntries.map(entry => entry.path) });
+  }, [commitRequest, data.status, disabled]);
   const parsed = useMemo((): { value?: ReviewPatch; error?: string } => {
     if (!data.diff) return {};
     try { return { value: parseReviewPatch(data.diff.patch, crypto.randomUUID(), data.diff.path) }; }

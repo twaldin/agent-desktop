@@ -22,6 +22,7 @@ import { parseInteractionAnswer } from "./interaction-http";
 import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./workspace-http";
 import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
+import { SessionActivityHttp } from "./session-activity-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
 import { TerminalManager, TmuxTerminalManager, TmuxTerminalsHttp } from "./terminals";
@@ -179,6 +180,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (!cwd) throw new Error("The composer target is not catalogued on this host.");
     return cwd;
   } });
+  const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
+    getActivity: async id => (await getHandle(id)).getSessionActivity() });
   settings = new SettingsHttp({ agentDir: options.agentDirectory, defaultCwd: options.discoveryDirectory ?? homedir(), runtime,
     resolveCwd: target => {
       if (!target) return options.discoveryDirectory ?? homedir();
@@ -474,6 +477,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (accountResponse) return accountResponse;
         const composerResponse = await composerActions.route(request, url);
         if (composerResponse) return composerResponse;
+        const activityResponse = await sessionActivity.route(request, url);
+        if (activityResponse) return activityResponse;
         const settingsResponse = await settings!.route(request, url);
         if (settingsResponse) return settingsResponse;
         const terminalResponse = await terminalsHttp!.handle(request);
