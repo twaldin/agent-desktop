@@ -56,7 +56,7 @@ describe("unknown submission outcomes", () => {
         const receipt: CommandResult = { ok: true, commandId: originalEnvelope!.id, value: session };
         store.finishCommand(originalEnvelope!.id, hash(originalEnvelope!), receipt);
         const accepted = await controller.submit(edited, "different-session", "prompt");
-        expect(accepted).toEqual({ sessionId: session.id, submitted: original });
+        expect(accepted).toEqual({ sessionId: session.id, submitted: original, commandId: calls.at(-1)!.id });
         expect(controller.get(original.id)).toBeUndefined();
         expect(calls.slice(0, 4).every(call => JSON.stringify(call) === JSON.stringify(originalEnvelope))).toBe(true);
         expect(executions).toBe(phase === "create" ? 2 : 1);

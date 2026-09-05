@@ -1,5 +1,6 @@
 import type { Draft, OmpApprovalMode, OmpComposerCatalog, OmpSessionControls, SessionSummary } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
+import { CompactSelect } from "./CompactSelect";
 
 export const approvalModes: Record<OmpApprovalMode, { label: string; description: string }> = {
   "always-ask": { label: "Always ask", description: "Ask before native write and execution tools." },
@@ -22,9 +23,9 @@ export function ComposerPermissions({ draft, catalog, session, controls, disable
   const description = choice.effective ? `${approvalModes[choice.effective].description} Native per-tool policies still apply.` : "Native permissions have not loaded.";
   return <label className="select-control permission-select" title={`${description} ${draft.approvalMode ? "This draft applies its choice on send; the session keeps it across host restarts." : "Follow the native default for a new session or the current session's policy."}${!choice.supported ? " Update the owning host if permission controls remain unavailable." : ""}`}>
     <Icon name="shield"/><span className="sr-only">Permissions</span>
-    <select aria-label="Permissions" value={draft.approvalMode ?? ""} disabled={disabled || !choice.supported} onChange={event => onChange(event.target.value ? event.target.value as OmpApprovalMode : undefined)}>
+    <CompactSelect label="Permissions" displayValue={choice.effective ? approvalModes[choice.effective].label : "Permissions"} value={draft.approvalMode ?? ""} disabled={disabled || !choice.supported} onChange={value => onChange(value ? value as OmpApprovalMode : undefined)}>
       <option value="">{label}</option>
       {Object.entries(approvalModes).map(([mode, value]) => <option key={mode} value={mode}>{value.label}</option>)}
-    </select>
+    </CompactSelect>
   </label>;
 }

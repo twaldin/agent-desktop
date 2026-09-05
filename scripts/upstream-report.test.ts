@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { asarRows, fileEvidence, readJson, sourcePath } from "./upstream-artifacts";
+import { asarRows, fileEvidence, packageRoot, readJson, sourcePath } from "./upstream-artifacts";
 import { capabilityRows, canonical, compareRows, settingRows, themeRows, visualRows, type Evidence } from "./upstream-inventory";
 import { buildReport, parseArgs, renderMarkdown } from "./upstream-report";
 const reference = resolve(import.meta.dir, "../.reference"), release = join(reference, "omp-18.1.10-release"), codex = join(reference, "codex-26.901.41600");
@@ -91,6 +91,52 @@ describe("on-demand static upstream report", () => {
     header.writeUInt32LE(4, 0); header.writeUInt32LE(0xfffffff0, 4); header.writeUInt32LE(0xffffffe0, 12);
     await writeFile(file, header); await expect(asarRows(file)).rejects.toThrow("Invalid ASAR header sizes");
   }));
+  test("installed package lookup survives a real native import in an isolated process", async () => temp(async dir => {
+    const repository = resolve(import.meta.dir, ".."), coding = await packageRoot(repository, "@oh-my-pi/pi-coding-agent");
+    const source = `
+      import { strict as assert } from "node:assert";
+      import { realpath } from "node:fs/promises";
+      import { join } from "node:path";
+      import { packageRoot, readJson } from ${JSON.stringify(join(import.meta.dir, "upstream-artifacts.ts"))};
+      await import(${JSON.stringify(join(coding, "src/session/session-manager.ts"))});
+      for (const name of ["@oh-my-pi/pi-catalog", "@oh-my-pi/pi-agent-core"]) {
+        const root = await packageRoot(${JSON.stringify(repository)}, name, ${JSON.stringify(coding)});
+        assert.equal(root, await realpath(root));
+        const artifact = await readJson(join(root, "package.json"));
+        assert.equal(artifact.value.name, name);
+        assert.equal(artifact.value.version, "18.1.10");
+      }
+      console.log("real native import preserves static package identity");
+    `;
+    const child = Bun.spawn([process.execPath, "--eval", source], {
+      cwd: repository, stdout: "pipe", stderr: "pipe",
+      env: { HOME: dir, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: join(dir, "agent"), TERM: "dumb" },
+    });
+    const deadline = setTimeout(() => child.kill(), 10_000);
+    try {
+      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+      expect(stdout).toContain("real native import preserves static package identity");
+    } finally {
+      clearTimeout(deadline);
+      if (child.exitCode === null) { child.kill(); await child.exited; }
+    }
+  }), 15_000);
+  test("static dependency lookup follows the real Bun package directory without evaluating exports or scripts", async () => temp(async dir => {
+    const repository = join(dir, "repo"), installed = join(repository, "node_modules/@fixture/consumer");
+    const store = join(dir, "store/consumer/node_modules"), consumer = join(store, "@fixture/consumer"), dependency = join(dir, "packages/dependency");
+    const decoy = join(repository, "node_modules/@fixture/dependency"), marker = join(dir, "should-not-exist");
+    for (const directory of [consumer, dependency, decoy]) await mkdir(directory, { recursive: true });
+    await symlink(consumer, installed);
+    await symlink(dependency, join(store, "@fixture/dependency"));
+    await writeFile(join(decoy, "package.json"), JSON.stringify({ name: "@fixture/dependency", version: "wrong-ancestor" }));
+    await writeFile(join(dependency, "package.json"), JSON.stringify({ name: "@fixture/dependency", version: "real-store", exports: "./must-not-run.ts", scripts: { postinstall: "exit 99" } }));
+    await writeFile(join(dependency, "must-not-run.ts"), `await Bun.write(${JSON.stringify(marker)}, "executed");`);
+    const observed = await packageRoot(repository, "@fixture/dependency", installed);
+    expect(observed).toBe(await realpath(dependency));
+    expect((await readJson(join(observed, "package.json"))).value.version).toBe("real-store");
+    await expect(readFile(marker)).rejects.toHaveProperty("code", "ENOENT");
+  }));
   test("complete report compares real pinned inventories and never executes a supplied package or extractor", async () => temp(async dir => {
     const candidatePackage = join(dir, "candidate-package"); await mkdir(candidatePackage);
     const marker = join(dir, "should-not-exist");
@@ -98,6 +144,7 @@ describe("on-demand static upstream report", () => {
     await writeFile(join(candidatePackage, "package.json"), JSON.stringify({ name: "@oh-my-pi/pi-coding-agent", version: "99.0.0", main: "index.ts", scripts: { postinstall: "exit 99" } }));
     await writeFile(join(candidatePackage, "index.ts"), malicious);
     const result = await buildReport({ ompCandidateInventory: join(reference, "omp-18.1.10"), ompCandidatePackage: candidatePackage, generatedAt: "fixture-time" });
+    expect(result.checks.filter(check => check.status === "invalid")).toEqual([]);
     expect(result.summary.invalid).toBe(0); expect(result.summary.exitCode).toBe(2);
     expect(result.checks.find(check => check.id === "omp.candidate.settings-inventory.json")?.counts?.added).toBe(1);
     expect(result.checks.find(check => check.id === "omp.candidate-package")?.after).toBe("99.0.0");

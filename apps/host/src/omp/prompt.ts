@@ -1,7 +1,14 @@
 import type { SessionManager } from "@oh-my-pi/pi-coding-agent";
-import type { PromptAdmission } from "@agent-desktop/shared";
+import type { ImageAdmission, PromptAdmission } from "@agent-desktop/shared";
 
 export type OmpPromptReceipt = PromptAdmission;
+export class OmpPromptAdmissionError extends Error {
+  readonly code = "OUTCOME_UNKNOWN";
+  constructor(cause?: unknown) {
+    super(`Native image admission could not be verified. Retain the original submission identity.${cause instanceof Error ? ` ${cause.message}` : ""}`, { cause });
+    this.name = "OmpPromptAdmissionError";
+  }
+}
 export interface NativePromptDispatchResult {
   agentInvoked: boolean;
   /** Set only by an executed native command handler that consumed the input. */
@@ -19,17 +26,21 @@ export function beginNativePrompt(
   manager: Pick<SessionManager, "onEntryAppended" | "flush">,
   dispatch: () => Promise<NativePromptDispatchResult>,
   settlePersistence: () => Promise<void>,
+  imageAdmission?: { matches(message: unknown): boolean; receipt(): ImageAdmission[]; readonly dispatched: boolean },
 ): OmpPromptRun {
   const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
   let entryObserved = false;
+  const admissionFailure = (error: unknown) => imageAdmission?.dispatched ? new OmpPromptAdmissionError(error) : error;
   const previousEntryListener = manager.onEntryAppended;
   const entryListener: NonNullable<typeof manager.onEntryAppended> = entry => {
     previousEntryListener?.(entry);
-    if (entryObserved || entry.type !== "message" || entry.message.role !== "user") return;
+    if (entryObserved || entry.type !== "message" || entry.message.role !== "user" || (imageAdmission && !imageAdmission.matches(entry.message))) return;
     entryObserved = true;
     // message_end precedes persistence. onEntryAppended follows native append;
     // flush additionally checks asynchronous writes and latched disk failures.
-    void manager.flush().then(() => receipt.resolve({ kind: "user-message", entryId: entry.id }), error => receipt.reject(error));
+    void manager.flush().then(() => {
+      receipt.resolve({ kind: "user-message", entryId: entry.id, ...(imageAdmission ? { images: imageAdmission.receipt() } : {}) });
+    }).catch(error => receipt.reject(admissionFailure(error)));
   };
   manager.onEntryAppended = entryListener;
   const completion = (async () => {
@@ -39,11 +50,13 @@ export function beginNativePrompt(
       // Native local commands can persist title/custom/settings metadata without
       // a message event. Check the manager's disk tail before acknowledging them.
       await manager.flush();
-      if (!entryObserved) receipt.resolve(result.handledCommand
-        ? { kind: "native-command", command: result.handledCommand } : null);
+      if (!entryObserved) {
+        if (imageAdmission?.dispatched) receipt.reject(new OmpPromptAdmissionError());
+        else receipt.resolve(result.handledCommand ? { kind: "native-command", command: result.handledCommand } : null);
+      }
       return result.agentInvoked;
     } catch (error) {
-      if (!entryObserved) receipt.reject(error);
+      if (!entryObserved) receipt.reject(admissionFailure(error));
       throw error;
     } finally {
       if (manager.onEntryAppended === entryListener) manager.onEntryAppended = previousEntryListener;

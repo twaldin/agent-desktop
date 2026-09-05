@@ -23,6 +23,8 @@ import { modelCapabilities, NativeSessionControls } from "../omp-settings/models
 import { composerCatalog } from "../omp-settings/composer";
 import type { OmpApprovalMode, OmpComposerCatalog, OmpModelCapabilities, OmpSessionControls, OmpSessionControlMutation } from "@agent-desktop/shared";
 import { approvalMode } from "../approval";
+import { copyPreparedImages, NativeImagePrompt, readNativeImage, type PreparedPromptImage, type OmpRecordedImage } from "./images";
+export type { PreparedPromptImage, OmpRecordedImage } from "./images";
 export type { OmpPromptRun, OmpPromptReceipt } from "./prompt";
 export type { OmpSteerReceipt } from "./steer";
 
@@ -40,7 +42,7 @@ export interface OmpSessionOptions {
   interactions?: boolean;
 }
 export interface OmpOpenOptions { sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
-export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string }
+export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[] }
 export interface OmpSession {
   readonly id: string;
   readonly sessionFile: string;
@@ -53,10 +55,11 @@ export interface OmpSession {
   readonly createdAt: number;
   readonly modelFallbackMessage: string | undefined;
   getMessages(): TranscriptMessage[];
+  getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
   subscribe(listener: OmpEventListener): () => void;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
-  steer(text: string, expectedApprovalMode?: OmpApprovalMode): Promise<OmpSteerReceipt>;
+  steer(text: string, expectedApprovalMode?: OmpApprovalMode, options?: { images?: PreparedPromptImage[] }): Promise<OmpSteerReceipt>;
   abort(): Promise<void>;
   setModel(model: ModelChoice): Promise<void>;
   listAccountChoices(): Promise<SessionAccountList>;
@@ -347,6 +350,13 @@ export class OmpRuntime {
           const display = session.buildTranscriptSessionContext({ collapseCompactedHistory: false, keepDanglingToolCalls: true });
           return mirror.snapshot(display.messages, entries);
         },
+        getImage: async (nativeEntryId, blockIndex) => {
+          assertSessionActive();
+          if (typeof nativeEntryId !== "string" || nativeEntryId.length > 200 || !Number.isSafeInteger(blockIndex) || blockIndex < 0) throw new Error("Invalid native image identity");
+          const entry = manager.getEntry(nativeEntryId);
+          if (entry?.type !== "message" || !("content" in entry.message) || !Array.isArray(entry.message.content)) throw new Error("Native image entry is unavailable");
+          return readNativeImage(entry.message.content[blockIndex]);
+        },
         subscribe: listener => {
           assertSessionActive(); listeners.add(listener);
           return () => { listeners.delete(listener); };
@@ -354,6 +364,8 @@ export class OmpRuntime {
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
           if (promptInFlight || accountMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          const images = copyPreparedImages(promptOptions.images);
+          const imagePrompt = images?.length ? new NativeImagePrompt(images, text) : undefined;
           promptInFlight = true;
           admissionPending = true;
           const controller = new AbortController();
@@ -378,11 +390,13 @@ export class OmpRuntime {
                   if (selection === undefined) throw new Error("Unknown OMP thinking level");
                   session.setThinkingLevel(selection, false);
                 }
-                return dispatchNativePrompt(session, text);
-              }, () => session.settleInFlightMessagePersistence());
+                await imagePrompt?.prepare(session, manager);
+                if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
+                return dispatchNativePrompt(session, text, imagePrompt?.images);
+              }, () => session.settleInFlightMessagePersistence(), imagePrompt);
               void nativeRun.accepted.then(receipt.resolve, receipt.reject);
               return await nativeRun.completion;
-          })().catch(error => { receipt.reject(error); throw error; });
+          })().catch(error => { receipt.reject(error); throw error; }).finally(() => imagePrompt?.close());
           void receipt.promise.catch(() => {});
           void completion.catch(() => {});
           const run = { accepted: receipt.promise, completion };
@@ -393,8 +407,9 @@ export class OmpRuntime {
           return run;
         },
         prompt: (text, promptOptions) => handle.startPrompt(text, promptOptions).completion,
-        steer: async (text, expectedApprovalMode) => {
+        steer: async (text, expectedApprovalMode, options) => {
           assertSessionActive();
+          if (options?.images?.length) throw new Error("Image attachments are not supported on steering input yet; no input was queued");
           if (admissionPending) throw new Error("OMP is still accepting the submitted prompt");
           // The host snapshot can precede a concurrently admitted Interrupt.
           // Recheck in the owning worker before native steer can queue an idle

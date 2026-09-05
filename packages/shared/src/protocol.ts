@@ -6,6 +6,8 @@ import type { ThemeAsset, ThemeDocument, ThemeState, WindowThemeEffects } from "
 import type { TerminalBridge, NativeTerminalBridge } from "./terminals";
 import type { OmpApprovalMode, OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot } from "./settings";
 import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingOptions, OmpSettingsCatalog, OmpSettingsMutation, OmpSettingsSnapshot } from "./settings";
+import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities, UploadedImageMetadata, RecordedImageBytes } from "./attachments";
+export * from "./attachments";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -77,13 +79,19 @@ export interface Draft {
   thinkingLevel?: string;
   /** Absent follows the native default/new session or existing session policy. */
   approvalMode?: OmpApprovalMode;
+  /** Presence persists after clearing the last chip; older command writers must refuse. */
+  attachments?: ImageAttachmentRef[];
+  /** Owning-host receipt, never editable draft input. */
+  lastConsumption?: DraftConsumption;
   updatedAt: number;
 }
+export type DraftInput = Omit<Draft, "revision" | "updatedAt" | "lastConsumption">;
 
 export type TranscriptBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
   | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; intent?: string }
+  | { type: "image"; nativeType: "image"; blockIndex: number; mimeType: string; bytes?: number; sha256?: string }
   | { type: "unsupported"; nativeType: string; mimeType?: string };
 export interface TranscriptAssistantMetadata {
   provider?: string; model?: string; upstreamProvider?: string; upstreamModel?: string;
@@ -114,6 +122,7 @@ export interface HostState {
   models: ModelInfo[];
   lastEventSequence: number;
   modelsLoading?: boolean;
+  imageAttachments?: ImageAttachmentCapabilities;
   diagnostics?: { models?: string; preferences?: string };
 }
 
@@ -122,20 +131,28 @@ export type HostCommand =
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
   | { type: "project.add"; path: string; name?: string }
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode }
-  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; draft?: { id: string; revision: number } }
-  | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; draft?: { id: string; revision: number } }
+  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
+  | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.interrupt"; sessionId: string }
   | { type: "session.rename"; sessionId: string; title: string }
   | { type: "session.archive"; sessionId: string; archived: boolean }
-  | { type: "draft.put"; draft: Omit<Draft, "revision" | "updatedAt">; expectedRevision: number };
+  | { type: "draft.put"; draft: DraftInput; expectedRevision: number };
 
 export interface CommandEnvelope {
   id: string;
   command: HostCommand;
 }
 
+export interface ImageAdmission {
+  attachmentId: string;
+  blockIndex: number;
+  sourceSha256: string;
+  nativeSha256: string;
+  mimeType: string;
+  bytes: number;
+}
 export type PromptAdmission =
-  | { kind: "user-message"; entryId: string }
+  | { kind: "user-message"; entryId: string; images?: ImageAdmission[] }
   | { kind: "native-command"; command: string };
 export type CommandResult =
   | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | { type: "preferences.put"; preference: PreferenceRecord } }
@@ -183,6 +200,11 @@ export type AccountAction =
 export interface AccountActionResult { login?: LoginSnapshot; accounts?: AccountInfo[]; selection?: SessionAccountList }
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge> {
+  inspectImageAttachment?(data: Uint8Array): Promise<UploadedImageMetadata>;
+  getImageAttachmentCapabilities?(hostId: string): Promise<ImageAttachmentCapabilities | null>;
+  uploadImageAttachment?(sha256: string, data: Uint8Array, hostId: string): Promise<UploadedImageMetadata>;
+  getImageAttachment?(sha256: string, hostId: string): Promise<RecordedImageBytes>;
+  getTranscriptImage?(sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string): Promise<RecordedImageBytes>;
   getState(hostId?: string): Promise<HostState>;
   getHosts(): Promise<NetworkState>;
   getProviders(hostId?: string): Promise<ProviderCatalog>;

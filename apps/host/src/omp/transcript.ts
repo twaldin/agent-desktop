@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { TranscriptAssistantMetadata, TranscriptBlock, TranscriptMessage } from "@agent-desktop/shared";
 import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent";
+import { readNativeImage } from "./images";
 
 type MessageRecord = Record<string, unknown> & { role: string };
 export interface NativeTranscriptEntry { id: string; message: unknown }
@@ -20,14 +21,30 @@ function numeric(source: Record<string, unknown>, names: string[]) { return Obje
 function content(message: MessageRecord): TranscriptBlock[] {
   if (typeof message.content === "string") return [{ type: "text", text: message.content }];
   if (!Array.isArray(message.content)) return typeof message.output === "string" ? [{ type: "text", text: message.output }] : [];
-  return message.content.map((value): TranscriptBlock => {
+  return message.content.map((value, blockIndex): TranscriptBlock => {
     const block = record(value);
     if (block?.type === "text" && typeof block.text === "string") return { type: "text", text: block.text };
     if (block?.type === "thinking" && typeof block.thinking === "string") return { type: "thinking", thinking: block.thinking };
+    if (block?.type === "image") {
+      let metadata: { bytes?: number; sha256?: string } = {};
+      try { const image = readNativeImage(block); metadata = { bytes: image.bytes, sha256: image.sha256 }; }
+      catch { if (typeof block.sha256 === "string" && /^[a-f0-9]{64}$/.test(block.sha256) && finite(block.bytes)) metadata = { bytes: block.bytes, sha256: block.sha256 }; }
+      return { type: "image", nativeType: "image", blockIndex, mimeType: typeof block.mimeType === "string" ? block.mimeType.slice(0, 100) : "application/octet-stream", ...metadata };
+    }
     if (block?.type === "toolCall" && typeof block.id === "string" && typeof block.name === "string") return { type: "toolCall", id: block.id, name: block.name, arguments: structuredClone(record(block.arguments) ?? {}), ...(typeof block.intent === "string" ? { intent: block.intent } : {}) };
     // Replay signatures, uploaded-provider references and opaque server payloads stay native.
     return { type: "unsupported", nativeType: typeof block?.type === "string" ? block.type : "unknown", ...(typeof block?.mimeType === "string" ? { mimeType: block.mimeType } : {}) };
   });
+}
+function pendingMessage(message: MessageRecord): MessageRecord {
+  // Never clone retained provider payloads or image bytes merely to render a
+  // pending row. Actual native objects stay in the SDK for admission/storage.
+  const value: MessageRecord = { role: message.role, content: content(message) };
+  for (const key of ["timestamp", "customType", "toolCallId", "toolName", "isError", "provider", "model", "upstreamProvider", "upstreamModel", "errorMessage", "stopReason", "duration", "completedAt"]) {
+    if (["string", "number", "boolean"].includes(typeof message[key])) value[key] = message[key];
+  }
+  if (message.role === "assistant") value.usage = assistant(message).usage;
+  return value;
 }
 function assistant(message: MessageRecord): TranscriptAssistantMetadata {
   const value: TranscriptAssistantMetadata = {};
@@ -69,7 +86,7 @@ export class TranscriptMirror {
         pending = { key, occurrence, message, complete: false, order: this.#tools.get(String(message.toolCallId))?.order ?? this.#order++ };
         this.#active.set(key, pending);
       }
-      pending.message = structuredClone(message); pending.complete = event.type === "message_end";
+      pending.message = pendingMessage(message); pending.complete = event.type === "message_end";
       this.#pending.set(displayId(key, pending.occurrence), pending);
     }
     if (event.type === "tool_execution_start" || event.type === "tool_execution_update" || event.type === "tool_execution_end") {
@@ -78,7 +95,7 @@ export class TranscriptMirror {
       const key = messageKey({ role: "toolResult", toolCallId: event.toolCallId });
       const occurrence = previous?.occurrence ?? this.#occurrences.get(key) ?? 0;
       this.#occurrences.set(key, Math.max(this.#occurrences.get(key) ?? 0, occurrence + 1));
-      this.#tools.set(event.toolCallId, { occurrence, order: previous?.order ?? this.#order++, status: event.type === "tool_execution_end" ? "completed" : "running", message: { ...previous?.message, role: "toolResult", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.type !== "tool_execution_end" && record(event.args) ? { arguments: structuredClone(event.args) } : {}), ...(event.type === "tool_execution_start" && event.intent ? { intent: event.intent } : {}), content: Array.isArray(result?.content) ? structuredClone(result.content) : previous?.message.content ?? [], ...(event.type === "tool_execution_end" && typeof event.isError === "boolean" ? { isError: event.isError } : {}) } });
+      this.#tools.set(event.toolCallId, { occurrence, order: previous?.order ?? this.#order++, status: event.type === "tool_execution_end" ? "completed" : "running", message: { ...previous?.message, role: "toolResult", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.type !== "tool_execution_end" && record(event.args) ? { arguments: structuredClone(event.args) } : {}), ...(event.type === "tool_execution_start" && event.intent ? { intent: event.intent } : {}), content: Array.isArray(result?.content) ? content({ role: "toolResult", content: result.content }) : previous?.message.content ?? [], ...(event.type === "tool_execution_end" && typeof event.isError === "boolean" ? { isError: event.isError } : {}) } });
     }
   }
   snapshot(displayMessages: readonly unknown[], entries: readonly NativeTranscriptEntry[]): TranscriptMessage[] {

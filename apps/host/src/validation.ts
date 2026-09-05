@@ -3,6 +3,7 @@ import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
 import { parsePreferenceChange } from "../../../packages/shared/src/preferences";
 import { approvalMode } from "./approval";
+import { parseImageAttachments } from "@agent-desktop/shared";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object.");
@@ -37,6 +38,9 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
   const type = text(input.type, "command type");
+  if (Object.hasOwn(input, "attachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept image attachments.");
+  const attachments = Object.hasOwn(input, "attachments") ? parseImageAttachments(input.attachments) : undefined;
+  const promptText = () => attachments?.length && input.text === "" ? "" : text(input.text, "prompt", attachments?.length ? 500_000 : 4_000_000);
   switch (type) {
     case "preferences.put": return { id, command: { type, change: parsePreferenceChange(input.change) } };
     case "workspace.mutate": return { id, command: { type, target: parseWorkspaceTarget(input.target), action: parseWorkspaceMutation(input.action) } };
@@ -48,13 +52,15 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
     case "session.prompt": return { id, command: { type,
-      sessionId: text(input.sessionId, "session ID"), text: text(input.text, "prompt", 4_000_000),
+      sessionId: text(input.sessionId, "session ID"), text: promptText(),
+      ...(attachments === undefined ? {} : { attachments }),
       model: input.model === undefined ? undefined : model(input.model),
       thinkingLevel: input.thinkingLevel === undefined ? undefined : text(input.thinkingLevel, "thinking level"),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
       draft: draftReference(input.draft),
     } };
-    case "session.steer": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), text: text(input.text, "prompt", 4_000_000), draft: draftReference(input.draft),
+    case "session.steer": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), text: promptText(), draft: draftReference(input.draft),
+      ...(attachments === undefined ? {} : { attachments }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
     case "session.interrupt": return { id, command: { type, sessionId: text(input.sessionId, "session ID") } };
     case "session.rename": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), title: text(input.title, "session title", 1000) } };
@@ -64,9 +70,11 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
     }
     case "draft.put": {
       const draft = object(input.draft);
+      if (Object.hasOwn(draft, "lastConsumption")) throw new Error("Draft consumption is owned by the host.");
       if (typeof draft.text !== "string" || draft.text.length > 4_000_000) throw new Error("Invalid draft text.");
       return { id, command: { type, expectedRevision: revision(input.expectedRevision), draft: {
         id: text(draft.id, "draft ID"), text: draft.text,
+        ...(Object.hasOwn(draft, "attachments") ? { attachments: parseImageAttachments(draft.attachments) } : {}),
         projectId: draft.projectId === null ? null : text(draft.projectId, "project ID"),
         model: draft.model === null ? null : model(draft.model),
         thinkingLevel: draft.thinkingLevel === undefined ? undefined : text(draft.thinkingLevel, "thinking level"),

@@ -9,8 +9,9 @@
   --syntax-function: var(--accent); --syntax-type: #438ea1;
   --terminal-font: var(--code-font); --heading-font: var(--ui-font);
   --font-size: 14px; --code-font-size: 12px; --terminal-font-size: 13px; --heading-font-size: 27px; --small-font-size: 11px;
-  --font-weight: 400; --heading-font-weight: 500; --code-font-weight: 400; --line-height: 1.5; --code-line-height: 1.65; --letter-spacing: 0px;
-  --radius-small: 6px; --radius-large: 12px; --composer-radius: 24px; --menu-radius: 12px; --panel-radius: 0px; --button-radius: 9px; --border-width: 1px;
+  --font-weight: 400; --heading-font-weight: 500; --code-font-weight: 400; --line-height: 1.5; --transcript-line-height: 1.625; --code-line-height: 1.65; --letter-spacing: 0px;
+  --radius-small: 6px; --radius-large: 12px; --composer-radius: 20px; --user-message-radius: 22px; --menu-radius: 12px; --panel-radius: 0px; --button-radius: 9px; --border-width: 1px;
+  --corner-exponent: 1.5; --corner-radius-scale: 1.25; --conversation-width: 768px; --divider-width: .5px; --composer-border-width: 0px; --attachment-thumbnail-size: 80px;
   --spacing-scale: 1; --spacing-xs: 4px; --spacing-sm: 8px; --spacing-md: 12px; --spacing-lg: 22px; --spacing-xl: 32px;
   --row-padding-x: 10px; --row-padding-y: 5px; --composer-padding: 12px; --panel-padding: 14px; --icon-size: 20px;
   --surface-opacity: 1; --sidebar-opacity: 1; --composer-opacity: 1; --panel-opacity: 1;
@@ -20,6 +21,8 @@
 :root[data-theme="light"] { color-scheme:light; --app-surface:#fcfcfc; --sidebar-surface:#f3f3f3; --composer-surface:#fff; --elevated-surface:#fff; --text:#0d0d0d; --secondary:#696969; --tertiary:#898989; --border:#00000012; --hover:#00000006; --selected:#0000000b; --accent:#2677e8; --danger:#b42318; --error-surface:#fff4f2; }
 :root[data-theme="dark"] { color-scheme:dark; --app-surface:#181818; --sidebar-surface:#242424; --composer-surface:#2a2a2a; --elevated-surface:#303030; --text:#ededed; --secondary:#a3a3a3; --tertiary:#767676; --border:#ffffff12; --hover:#ffffff08; --selected:#ffffff14; --accent:#72a8ff; --danger:#ff938b; --error-surface:#352321; }
 :root[data-material]:not([data-material="none"]) { background:transparent; }
+:root[data-theme="light"] { --user-message-surface:rgb(233 233 233 / 50%); --user-message-text:#0d0d0d; --header-divider-color:var(--border); --sidebar-divider-color:var(--border); --composer-shadow:0 0 0 1px #0000000a, 0 2px 8px 0 #0000000a, 0 4px 80px 8px #00000006; }
+:root[data-theme="dark"] { --user-message-surface:rgb(50 50 50 / 85%); --user-message-text:#fff; --header-divider-color:#3c3c3c; --sidebar-divider-color:#363636; --composer-shadow:inset 0 0 1px 0 #fff3; }
 body, #root { background:transparent; }
 ::selection { background:var(--selection-surface); }
 button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible, textarea:focus-visible { outline-color:var(--focus-ring); }
@@ -28,12 +31,14 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .theme-image-background { position:absolute; inset:0; z-index:-1; background-position:center; pointer-events:none; }
 .sidebar { background:color-mix(in srgb,var(--sidebar-surface) calc(var(--sidebar-opacity) * 100%),transparent); backdrop-filter:blur(var(--sidebar-blur)); }
 .workspace-panel { background:color-mix(in srgb,var(--panel-surface) calc(var(--panel-opacity) * 100%),transparent); backdrop-filter:blur(var(--panel-blur)); border-radius:var(--panel-radius); }
-.composer { background:color-mix(in srgb,var(--composer-surface) calc(var(--composer-opacity) * 100%),transparent); border-radius:var(--composer-radius); border-width:var(--border-width); }
+.composer { background:color-mix(in srgb,var(--composer-surface) calc(var(--composer-opacity) * 100%),transparent); border-radius:calc(var(--composer-radius) * var(--corner-radius-scale)); border-width:var(--composer-border-width); }
+.composer, .user-message .message-body, .icon-button, .model-picker-dialog, .action-menu { corner-shape:superellipse(var(--corner-exponent)); }
 .composer textarea { padding:calc(var(--composer-padding) * var(--spacing-scale)) calc(var(--composer-padding) * var(--spacing-scale)) calc(var(--spacing-xs) * var(--spacing-scale)); line-height:var(--line-height); }
 .composer-toolbar { padding:calc(var(--composer-padding) * 0.6666667 * var(--spacing-scale)); gap:calc(var(--spacing-sm) * .875 * var(--spacing-scale)); }
-.composer-region { width:min(calc(100% - var(--spacing-xl)),768px); }
+.composer-region { width:min(calc(100% - var(--spacing-xl)),calc(var(--conversation-width) - var(--spacing-xl))); }
 .sidebar-actions { padding:0 calc(var(--spacing-sm) * var(--spacing-scale)) calc(var(--spacing-lg) * var(--spacing-scale)); }
-.session-row { padding:calc(var(--row-padding-y) * var(--spacing-scale)) calc(var(--row-padding-x) * var(--spacing-scale)); min-height:calc(20px + var(--row-padding-y) * 2 * var(--spacing-scale)); }
+.session-row { padding:calc(var(--row-padding-y) * var(--spacing-scale)) calc(var(--row-padding-x) * var(--spacing-scale)); min-height:calc(20px + var(--row-padding-y) * 2 * var(--spacing-scale)); line-height:calc(var(--font-size) * 1.4285714286); border-radius:calc(var(--radius-small) * 1.6666667); }
+.project-sessions .session-row { padding-left:calc(32px * var(--spacing-scale)); }
 .project-row { min-height:calc(24px + var(--row-padding-y) * 2 * var(--spacing-scale)); }
 .nav-action { padding:calc((var(--row-padding-y) + 1px) * var(--spacing-scale)) calc(var(--spacing-sm) * var(--spacing-scale)); }
 .action-menu { background:var(--menu-surface); border-radius:var(--menu-radius); border-width:var(--border-width); padding:calc((var(--spacing-xs) + 1px) * var(--spacing-scale)); }
@@ -52,8 +57,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .workspace-header, .editor-toolbar { padding:calc(var(--spacing-sm) * var(--spacing-scale)) calc(var(--spacing-md) * var(--spacing-scale)); }
 /* Preserve divider direction: a shorthand width adds currentColor borders on
    the other edges under Tailwind's solid-border reset. */
-.main-header, .file-browser, .settings-navigation { border-bottom-width:var(--border-width); }
-.sidebar { border-right-width:var(--border-width); }
+.file-browser, .settings-navigation { border-bottom-width:var(--border-width); }
+.main-header { border-bottom-width:var(--divider-width); border-bottom-color:var(--header-divider-color); }
+.sidebar { border-right-width:var(--divider-width); border-right-color:var(--sidebar-divider-color); }
 .workspace-panel { border-left-width:var(--border-width); }
 .workspace-tabs { border-block-width:var(--border-width); }
 .editor-status { border-top-width:var(--border-width); }

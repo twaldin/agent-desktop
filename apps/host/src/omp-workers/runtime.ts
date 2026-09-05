@@ -2,7 +2,10 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
-import type { OmpEventListener, OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
+import type { OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
+import { copyPreparedImages } from "../omp/images";
+import { OmpPromptAdmissionError } from "../omp/prompt";
+import type { WorkerEventListener } from "./events";
 import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation } from "./protocol";
 
 export interface WorkerFailure {
@@ -19,10 +22,11 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "subscribe"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   getMessages(): Promise<TranscriptMessage[]>;
+  subscribe(listener: WorkerEventListener): () => void;
   subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
 }
 export interface WorkerRuntimeOptions {
@@ -43,6 +47,7 @@ interface Pending {
   resolve(value: unknown): void;
   reject(error: unknown): void;
   timeout?: ReturnType<typeof setTimeout>;
+  uncertainAdmission?: boolean;
 }
 
 class WorkerClient {
@@ -56,7 +61,7 @@ class WorkerClient {
   #closeCall?: Promise<void>;
   #options: WorkerRuntimeOptions;
   #readyDeadline: ReturnType<typeof setTimeout>;
-  #events = new Set<OmpEventListener>();
+  #events = new Set<WorkerEventListener>();
   #failures = new Set<(failure: WorkerFailure) => void>();
   snapshot?: SessionSnapshot;
   failure?: WorkerFailure;
@@ -110,7 +115,7 @@ class WorkerClient {
     this.#ready.reject(error);
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
-      pending.reject(error);
+      pending.reject(pending.uncertainAdmission ? new OmpPromptAdmissionError(error) : error);
     }
     this.#pending.clear();
   }
@@ -175,6 +180,7 @@ class WorkerClient {
       else {
         const error = new Error(message.error?.message ?? "OMP worker operation failed");
         error.name = message.error?.name ?? "Error";
+        if (message.error?.code === "OUTCOME_UNKNOWN") Object.assign(error, { code: "OUTCOME_UNKNOWN" });
         pending.reject(error);
       }
     }
@@ -185,11 +191,11 @@ class WorkerClient {
     this.#process.send(message);
   }
 
-  #promise<T>(key: string, timeoutMs?: number): Promise<T> {
+  #promise<T>(key: string, timeoutMs?: number, uncertainAdmission = false): Promise<T> {
     if (this.#pending.size >= 128) throw new Error("OMP worker request limit reached");
     const deferred = Promise.withResolvers<T>();
     const pending: Pending = {
-      resolve: value => deferred.resolve(value as T), reject: deferred.reject,
+      resolve: value => deferred.resolve(value as T), reject: deferred.reject, uncertainAdmission,
     };
     if (timeoutMs) pending.timeout = setTimeout(() => {
       this.#pending.delete(key);
@@ -221,21 +227,26 @@ class WorkerClient {
     if (this.failure) throw new WorkerFailureError(this.failure);
     if (this.#closing) throw new Error("OMP worker is closing");
     if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
+    if (options?.images?.length && (this.snapshot?.isStreaming || this.snapshot?.hasPostPromptWork || [...this.#pending.keys()].some(key => key.endsWith(":completion")))) {
+      throw new Error("OMP session is busy; image input was not dispatched");
+    }
+    const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images) } : undefined;
     const id = String(++this.#requestId);
-    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`);
+    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length));
     const completion = this.#promise<boolean>(`${id}:completion`);
-    try { this.#send({ type: "request", id, operation: "startPrompt", args: { text, options } }); }
+    try { this.#send({ type: "request", id, operation: "startPrompt", args: { text, options: preparedOptions } }); }
     catch (error) {
       for (const phase of ["accepted", "completion"]) {
         const key = `${id}:${phase}`;
-        this.#pending.get(key)?.reject(error);
+        const pending = this.#pending.get(key);
+        pending?.reject(pending.uncertainAdmission ? new OmpPromptAdmissionError(error) : error);
         this.#pending.delete(key);
       }
     }
     return { accepted, completion };
   }
 
-  subscribe(listener: OmpEventListener): () => void {
+  subscribe(listener: WorkerEventListener): () => void {
     this.#events.add(listener);
     return () => { this.#events.delete(listener); };
   }
@@ -292,7 +303,7 @@ export class WorkerRuntime {
     return pending;
   }
 
-  async #spawn(init: WorkerInit, onEvent?: OmpEventListener): Promise<WorkerClient> {
+  async #spawn(init: WorkerInit, onEvent?: WorkerEventListener): Promise<WorkerClient> {
     this.#assertActive();
     const client = new WorkerClient(this.#options);
     this.#clients.add(client);
@@ -308,7 +319,7 @@ export class WorkerRuntime {
     }
   }
 
-  create(options: OmpSessionOptions): Promise<WorkerSession> {
+  create(options: Omit<OmpSessionOptions, "onEvent"> & { onEvent?: WorkerEventListener }): Promise<WorkerSession> {
     this.#assertActive();
     const { onEvent, ...nativeOptions } = options;
     return this.#track((async () => {
@@ -317,7 +328,7 @@ export class WorkerRuntime {
     })());
   }
 
-  open(options: OmpOpenOptions): Promise<WorkerSession> {
+  open(options: Omit<OmpOpenOptions, "onEvent"> & { onEvent?: WorkerEventListener }): Promise<WorkerSession> {
     this.#assertActive();
     return this.#track((async () => {
       const sessionFile = await realpath(options.sessionFile);
@@ -337,6 +348,7 @@ export class WorkerRuntime {
     this.#openFiles.add(sessionFile);
     const state = () => client.snapshot!;
     let disposeCall: Promise<void> | undefined;
+    let imageReads = 0;
     const handle: WorkerSession = {
       get id() { return state().id; }, get sessionFile() { return state().sessionFile; },
       get cwd() { return state().cwd; }, get model() { return state().model; },
@@ -345,11 +357,20 @@ export class WorkerRuntime {
       get createdAt() { return state().createdAt; }, get modelFallbackMessage() { return state().modelFallbackMessage; },
       get workerPid() { return client.pid; }, get workerFailure() { return client.failure; },
       getMessages: () => client.request<TranscriptMessage[]>({ operation: "getMessages" }, 30_000),
+      getImage: async (nativeEntryId, blockIndex) => {
+        if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");
+        imageReads++;
+        try { return await client.request({ operation: "getImage", args: { nativeEntryId, blockIndex } }, 30_000); }
+        finally { imageReads--; }
+      },
       subscribe: listener => client.subscribe(listener),
       subscribeWorkerFailure: listener => client.subscribeFailure(listener),
       startPrompt: (text, options) => client.startPrompt(text, options),
       prompt: (text, options) => client.startPrompt(text, options).completion,
-      steer: (text, expectedApprovalMode) => client.request({ operation: "steer", args: { text, expectedApprovalMode } }),
+      steer: (text, expectedApprovalMode, options) => {
+        if (options?.images?.length) return Promise.reject(new Error("Image attachments are not supported on steering input yet; no input was queued"));
+        return client.request({ operation: "steer", args: { text, expectedApprovalMode, options } });
+      },
       abort: () => client.request({ operation: "abort" }),
       setModel: model => client.request({ operation: "setModel", args: { model } }),
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),

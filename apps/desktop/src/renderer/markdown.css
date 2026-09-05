@@ -1,4 +1,4 @@
-.transcript-markdown { --markdown-space:calc(var(--font-size) / 4 * var(--spacing-scale)); min-width:0; font-family:var(--ui-font); font-size:var(--font-size); font-weight:var(--font-weight); line-height:var(--line-height); overflow-wrap:anywhere; white-space:normal; }
+.transcript-markdown { --markdown-space:calc(var(--font-size) / 4 * var(--spacing-scale)); min-width:0; font-family:var(--ui-font); font-size:var(--font-size); font-weight:var(--font-weight); line-height:var(--transcript-line-height); overflow-wrap:anywhere; white-space:normal; }
 .transcript-markdown > :first-child { margin-block-start:0; }
 .transcript-markdown > :last-child { margin-block-end:0; }
 .transcript-markdown p { margin-block:calc(var(--markdown-space) * 3); }

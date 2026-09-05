@@ -1,5 +1,5 @@
 import type { CommandEnvelope, CommandResult, Draft } from "../../../../packages/shared/src/protocol";
-import type { DraftCache } from "./drafts";
+import { captureDraft, sameDraftContent, type DraftCache } from "./drafts";
 
 export interface PendingSubmission {
   draft: Draft;
@@ -15,17 +15,26 @@ export class SubmissionController {
   private listeners = new Set<() => void>();
   readonly cacheKey: string;
   cacheWarning: string | undefined;
-  constructor(private command: (envelope: CommandEnvelope) => Promise<CommandResult>, hostId: string, private cache?: DraftCache) {
+  constructor(private command: (envelope: CommandEnvelope) => Promise<CommandResult>, private hostId: string, private cache?: DraftCache) {
     this.cacheKey = `agent-desktop:submissions:v1:${hostId}`;
     try {
       const cached = JSON.parse(cache?.read(this.cacheKey) ?? "{}");
       for (const [id, value] of Object.entries(cached)) {
         const item = value as PendingSubmission;
-        if (item?.draft?.id === id && typeof item.draft.text === "string" && ["prompt", "steer"].includes(item.mode) && (!item.create || item.create.command.type === "session.create") && (!item.send || ["session.prompt", "session.steer"].includes(item.send.command.type))) this.pending[id] = { ...item, uncertain: Boolean(item.create || item.send) };
+        if (item?.draft?.id === id && typeof item.draft.text === "string" && ["prompt", "steer"].includes(item.mode) && (!item.create || item.create.command.type === "session.create") && (!item.send || ["session.prompt", "session.steer"].includes(item.send.command.type))) {
+          const captured = captureDraft(item.draft, hostId);
+          if (item.send && (item.send.command.type === "session.prompt" || item.send.command.type === "session.steer")) {
+            const command = item.send.command;
+            if (!sameDraftContent(captured, captureDraft({ ...captured, attachments: command.attachments }, hostId))
+              || command.text !== captured.text || command.draft?.id !== captured.id || command.draft.revision !== captured.revision) throw new Error("Pending attachment metadata differs from its exact command.");
+          }
+          this.pending[id] = { ...structuredClone(item), draft: captured, uncertain: Boolean(item.create || item.send) };
+        }
       }
     } catch { this.cacheWarning = "Pending submission storage could not be read. Check conversation history before resending an earlier prompt."; }
   }
-  get(id: string) { return this.pending[id]; }
+  get(id: string) { return this.pending[id] ? structuredClone(this.pending[id]) : undefined; }
+  entries() { return Object.values(this.pending).map(item => structuredClone(item)); }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private save() {
     this.cache?.write(this.cacheKey, JSON.stringify(this.pending));
@@ -33,7 +42,10 @@ export class SubmissionController {
   }
   private async deliver(item: PendingSubmission, phase: "create" | "send") {
     let result: CommandResult;
-    try { result = await this.command(item[phase]!); }
+    try {
+      result = await this.command(structuredClone(item[phase]!));
+      if (result.commandId !== item[phase]!.id) throw new Error("The host replied with a different command identity.");
+    }
     catch (cause) {
       item.uncertain = true; this.save();
       throw new Error(`Delivery is uncertain. Retry the pending submission to check the same command; it will not send a new copy. ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -51,8 +63,10 @@ export class SubmissionController {
     if (!result.ok) { item[phase] = undefined; this.save(); throw new Error(result.error.message); }
     return result.value;
   }
-  async submit(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer") {
+  async submit(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer", onSendCommand?: (submitted: Draft, commandId: string) => void) {
+    snapshot = captureDraft(snapshot, this.hostId);
     let item = this.pending[snapshot.id];
+    if ((item?.uncertain ? item.mode === "steer" && item.draft.attachments?.length : mode === "steer" && snapshot.attachments?.length)) throw new Error("Image attachments cannot be sent while the agent is running. Wait for the response to finish.");
     if (!item?.uncertain) {
       item = { draft: snapshot, sessionId: sessionId ?? item?.sessionId, mode, uncertain: false };
       this.pending[snapshot.id] = item;
@@ -65,12 +79,14 @@ export class SubmissionController {
       item.sessionId = value.id; item.create = undefined; this.save();
     }
     const saved = item.draft;
+    const attachments = saved.attachments !== undefined ? { attachments: structuredClone(saved.attachments) } : {};
     item.send ??= { id: crypto.randomUUID(), command: item.mode === "steer"
-      ? { type: "session.steer", sessionId: item.sessionId, text: saved.text, approvalMode: saved.approvalMode, draft: { id: saved.id, revision: saved.revision } }
-      : { type: "session.prompt", sessionId: item.sessionId, text: saved.text, model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, draft: { id: saved.id, revision: saved.revision } } };
+      ? { type: "session.steer", sessionId: item.sessionId, text: saved.text, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } }
+      : { type: "session.prompt", sessionId: item.sessionId, text: saved.text, model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } } };
     this.save();
+    onSendCommand?.(captureDraft(item.draft, this.hostId), item.send.id);
     await this.deliver(item, "send");
-    const result = { sessionId: item.sessionId, submitted: item.draft };
+    const result = { sessionId: item.sessionId, submitted: captureDraft(item.draft, this.hostId), commandId: item.send.id };
     delete this.pending[snapshot.id];
     try { this.save(); } catch { this.cacheWarning = "The message was accepted, but its local delivery receipt could not be cleared. A pending retry after restart checks the original command."; }
     return result;

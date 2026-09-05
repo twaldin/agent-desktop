@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from 
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
 import { nativeTerminalResult, requestHost, type HostEndpoint } from "./host-transport";
+import { inspectImageAttachment, requestImageAttachmentCapabilities, requestImageAttachment, requestTranscriptImage, uploadImageAttachment } from "./attachment-transport";
 import { requestComposerCatalog } from "./composer-transport";
 import { requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { verifyKnownHost } from "./host-recovery";
@@ -212,6 +213,25 @@ ipcMain.handle("host:state", async (event, hostId?: string) => {
 ipcMain.handle("host:command", (event, envelope: CommandEnvelope, hostId?: string) => {
   assertTrustedSender(event); return requestVersionedCommand((path, body) => request(path, body, hostId), envelope);
 });
+function requireImageOwner(hostId: string): string {
+  if (typeof hostId !== "string" || !hostId.length || hostId.length > 200 || hostId.includes("\0")) throw new Error("Choose the image's owning host.");
+  return hostId;
+}
+ipcMain.handle("desktop:image-inspect", (event, data: Uint8Array) => {
+  assertTrustedSender(event); return inspectImageAttachment(data);
+});
+ipcMain.handle("host:image-capabilities", async (event, hostId: string) => {
+  assertTrustedSender(event); return requestImageAttachmentCapabilities(await endpointFor(requireImageOwner(hostId)));
+});
+ipcMain.handle("host:image-upload", async (event, sha256: string, data: Uint8Array, hostId: string) => {
+  assertTrustedSender(event); return uploadImageAttachment(await endpointFor(requireImageOwner(hostId)), sha256, data);
+});
+ipcMain.handle("host:image-read", async (event, sha256: string, hostId: string) => {
+  assertTrustedSender(event); return requestImageAttachment(await endpointFor(requireImageOwner(hostId)), sha256);
+});
+ipcMain.handle("host:transcript-image", async (event, sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string) => {
+  assertTrustedSender(event); return requestTranscriptImage(await endpointFor(requireImageOwner(hostId)), sessionId, nativeEntryId, blockIndex);
+});
 ipcMain.handle("host:messages", (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event);
   if (typeof sessionId !== "string" || sessionId.length > 200) throw new Error("Invalid session ID.");
@@ -402,7 +422,7 @@ async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
     width: 1200, height: 820, ...restoredBounds, minWidth: 720, minHeight: 480,
     show: !process.env.AGENT_DESKTOP_CAPTURE,
-    title: "Agent Desktop", titleBarStyle: "hiddenInset", backgroundColor: "#181818", transparent: true,
+    title: "Agent Desktop", titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 16 }, backgroundColor: "#181818", transparent: true,
     webPreferences: { preload: join(app.getAppPath(), "dist/preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   windows.add(window);

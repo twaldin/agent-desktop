@@ -108,11 +108,11 @@ describe("ordered transcript renderer", () => {
     expect(html).toContain("fixture-provider"); expect(html).toContain("fixture-model"); expect(html).toContain("30 ms"); expect(html).toContain("Reported usage");
   });
 
-  test("unknown native roles and unsupported media are visible without exposing withheld data", () => {
+  test("unknown roles, withheld reasoning and a view without image support stay visible without raw data", () => {
     const messages = project([{ role: "extensionNotice", content: "Native note" }, { role: "assistant", content: [{ type: "redactedThinking", data: "fixture-hidden" }, { type: "image", mimeType: "image/png", data: "fixture-image" }] }]);
     const html = render(messages);
     expect(html).toContain("Native extensionNotice message"); expect(html).toContain("Native note");
-    expect(html).toContain("The provider withheld this reasoning content."); expect(html).toContain("cannot display native image content (image/png)");
+    expect(html).toContain("The provider withheld this reasoning content."); expect(html).toContain("Image preview is unavailable in this view.");
     expect(html).not.toContain("fixture-hidden"); expect(html).not.toContain("fixture-image");
   });
 });

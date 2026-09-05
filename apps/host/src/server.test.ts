@@ -131,6 +131,39 @@ describe("isolated host transport", () => {
     expect((await state(host)).projects).toEqual([]);
   });
 
+  test("legacy clients cannot strip image intent or consume an image-aware draft; old receipts still replay", async () => {
+    const host = await start(await isolatedOptions());
+    const original: CommandEnvelope = { id: "legacy-saved", command: { type: "draft.put", draft: initialDraft, expectedRevision: 0 } };
+    const receipt = await command(host, original);
+    expect(receipt.ok).toBe(true);
+    // Metadata fixture models a newer client's committed draft. It is not an
+    // upload/native-image acceptance claim, and no provider/session is created.
+    const attachments = [{ id: "image-chip", hostId: host.store.host.id, kind: "image" as const, sha256: "a".repeat(64), name: "image.png", bytes: 128, mimeType: "image/png" as const }];
+    host.store.putDraft({ ...initialDraft, attachments }, 1);
+    const before = host.store.getDraft(initialDraft.id);
+    expect(await command(host, original)).toEqual(receipt);
+    expect(host.store.getDraft(initialDraft.id)).toEqual(before);
+    for (const version of [1, 2]) {
+      const rawId = `raw-image-v${version}`;
+      const response = await fetch(`${host.connection.origin}/v${version}/commands`, { method: "POST", headers: headers(host),
+        body: JSON.stringify({ id: rawId, command: { type: "draft.put", draft: { ...initialDraft, attachments }, expectedRevision: 2 } }) });
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({ code: "ATTACHMENT_PROTOCOL_REQUIRED" });
+      expect(host.store.getCommand(rawId)).toBeUndefined();
+      for (const next of [
+        { type: "draft.put", draft: initialDraft, expectedRevision: 2 },
+        { type: "session.prompt", sessionId: "must-not-open", text: "old client text", draft: { id: initialDraft.id, revision: 2 } },
+        { type: "session.steer", sessionId: "must-not-open", text: "old client steer", draft: { id: initialDraft.id, revision: 2 } },
+      ]) {
+        const result = await fetch(`${host.connection.origin}/v${version}/commands`, { method: "POST", headers: headers(host), body: JSON.stringify({ id: crypto.randomUUID(), command: next }) });
+        expect(result.status).toBe(200);
+        expect(await result.json()).toMatchObject({ ok: false, error: { code: "ATTACHMENT_PROTOCOL_REQUIRED" } });
+        expect(host.store.getDraft(initialDraft.id)).toEqual(before);
+        expect(host.store.listSessions()).toEqual([]);
+      }
+    }
+  });
+
   test("simultaneous retries share one durable command result and project", async () => {
     const options = await isolatedOptions();
     const host = await start(options);

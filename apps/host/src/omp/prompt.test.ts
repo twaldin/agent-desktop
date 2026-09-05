@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { createHash } from "node:crypto";
 import { beginNativePrompt } from "./prompt";
 
 const directories: string[] = [];
@@ -58,6 +59,28 @@ describe("native prompt admission contract", () => {
         expect(await run.accepted).toBeNull();
         expect(await run.completion).toBe(nativeResult);
       }
+    } finally { await manager.close(); }
+  });
+
+  test("image admission skips another user's append and requires its exact native object plus flush", async () => {
+    const manager = await nativeManager();
+    const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/hZkAAAAASUVORK5CYII=", "base64");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const imageMessage = { role: "user" as const, content: [{ type: "text" as const, text: "Image submission identity fixture" },
+      { type: "image" as const, data: bytes.toString("base64"), mimeType: "image/png" }], timestamp: 2 };
+    const images = [{ attachmentId: "fixture-image", blockIndex: 1, sourceSha256: digest, nativeSha256: digest, mimeType: "image/png", bytes: bytes.byteLength }];
+    let ownId: string | undefined, unrelatedId: string | undefined;
+    try {
+      // Controlled dispatch with real native image storage, not a provider or
+      // normalization proof; actual SDK normalization is covered by worker tests.
+      const run = beginNativePrompt(manager, async () => {
+        unrelatedId = manager.appendMessage({ role: "user", content: "Unrelated native append", timestamp: 1 });
+        ownId = manager.appendMessage(imageMessage);
+        return { agentInvoked: true };
+      }, async () => {}, { matches: message => message === imageMessage, receipt: () => images, dispatched: true });
+      expect(await run.accepted).toEqual({ kind: "user-message", entryId: ownId!, images });
+      expect(ownId).not.toBe(unrelatedId);
+      expect(await run.completion).toBe(true);
     } finally { await manager.close(); }
   });
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { open, realpath, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { object, string, type Evidence, type InventoryRow } from "./upstream-inventory";
 
 export interface JsonArtifact { value: any; evidence: Evidence }
@@ -78,7 +78,19 @@ export async function packageRoot(repository: string, name: string, from?: strin
   // Resolve from the REAL installed package directory; resolving from a symlink
   // can accidentally pick up a user's unrelated ancestor node_modules tree.
   if (!from) return realpath(join(repository, "node_modules", name));
-  return realpath(resolve(Bun.resolveSync(`${name}/package.json`, await realpath(from)), ".."));
+  // This is a static inventory, not a module import. Bun's process-wide resolver
+  // can return virtual file:file:... paths after native OMP modules have loaded.
+  // Walk standard node_modules locations without evaluating exports or hooks.
+  let directory = await realpath(from);
+  for (;;) {
+    if (basename(directory) !== "node_modules") {
+      try { return await realpath(join(directory, "node_modules", name)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    const parent = dirname(directory);
+    if (parent === directory) throw Object.assign(new Error(`Installed package ${name} was not found from ${from}`), { code: "MODULE_NOT_FOUND" });
+    directory = parent;
+  }
 }
 export function sourcePath(root: string, path: string): string {
   if (path.includes("\\") || path.startsWith("/") || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error(`Invalid inventory source path: ${path}`);

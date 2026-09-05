@@ -6,8 +6,8 @@ import "./model-picker.css";
 const PAGE = 100;
 
 /** Native dialog supplies focus containment; the searchable list keeps model identity explicit. */
-export function ModelPicker({ label, value, options, disabled, title, onChange }: {
-  label: string; value: string; options: ModelPickerOption[]; disabled?: boolean; title?: string;
+export function ModelPicker({ label, value, options, disabled, title, displayValue, onChange }: {
+  label: string; value: string; options: ModelPickerOption[]; disabled?: boolean; title?: string; displayValue?: string;
   onChange(value: string): void;
 }) {
   const id = useId(), trigger = useRef<HTMLButtonElement>(null), dialog = useRef<HTMLDialogElement>(null), search = useRef<HTMLInputElement>(null);
@@ -46,7 +46,7 @@ export function ModelPicker({ label, value, options, disabled, title, onChange }
   useLayoutEffect(() => { if (open && activeIndex >= 0) document.getElementById(`${id}-option-${activeIndex}`)?.scrollIntoView({ block: "nearest" }); }, [open, activeIndex, id]);
   return <div className="model-picker">
     <button ref={trigger} type="button" className="model-picker-trigger" aria-label={label} aria-describedby={`${id}-selected`} aria-haspopup="dialog" aria-expanded={open} disabled={disabled} title={title} onClick={() => { setQuery(""); setLimit(PAGE); setActiveValue(value); setOpen(true); }}>
-      <span id={`${id}-selected`}>{selected?.label ?? (value || "Choose model")}</span><Icon name="chevron"/>
+      <span aria-hidden="true">{displayValue ?? selected?.label ?? (value || "Choose model")}</span><span className="sr-only" id={`${id}-selected`}>{selected?.label ?? (value || "Choose model")}</span><Icon name="chevron"/>
     </button>
     {open && <dialog ref={dialog} className="model-picker-dialog" aria-label={`Choose ${label.toLocaleLowerCase()}`} onCancel={event => { event.preventDefault(); close(); }} onClick={event => {
       if (event.target !== dialog.current) return;

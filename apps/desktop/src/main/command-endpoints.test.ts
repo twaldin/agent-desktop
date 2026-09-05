@@ -3,6 +3,23 @@ import type { CommandEnvelope } from "@agent-desktop/shared";
 import { commandEndpoint, requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { HostRequestError, requestHost } from "./host-transport";
 
+test("sticky image manifests require v3 even when empty and never fall back after an old host or uncertain delivery", async () => {
+  const envelopes: CommandEnvelope[] = [
+    { id: "draft", command: { type: "draft.put", expectedRevision: 1, draft: { id: "d", projectId: null, text: "kept", model: null, attachments: [] } } },
+    { id: "prompt", command: { type: "session.prompt", sessionId: "s", text: "kept", attachments: [], approvalMode: "write" } },
+    { id: "steer", command: { type: "session.steer", sessionId: "s", text: "kept", attachments: [] } },
+  ];
+  for (const envelope of envelopes) {
+    const paths: string[] = [];
+    expect(commandEndpoint(envelope)).toBe("/v3/commands");
+    expect(await requestVersionedCommand(async path => { paths.push(path); throw new HostRequestError("Not found", 404); }, envelope)).toMatchObject({ ok: false, commandId: envelope.id, error: { code: "ATTACHMENT_PROTOCOL_UNSUPPORTED" } });
+    expect(paths).toEqual(["/v3/commands"]);
+    for (const error of [new Error("socket lost"), new HostRequestError("Unauthorized", 401), new HostRequestError("Image missing", 404, "IMAGE_NOT_FOUND")]) {
+      await expect(requestVersionedCommand(async () => { throw error; }, envelope)).rejects.toBe(error);
+    }
+  }
+});
+
 test("an old HTTP host cannot silently strip a permission choice or receive a fallback copy", async () => {
   const requests: string[] = [];
   const old = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {

@@ -2,8 +2,9 @@ import type { CommandEnvelope, CommandResult, OmpSessionControlMutation } from "
 import { HostRequestError } from "./host-transport";
 
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
-export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" {
+export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" {
   const command = envelope.command;
+  if (command.type === "draft.put" ? Object.hasOwn(command.draft, "attachments") : Object.hasOwn(command, "attachments")) return "/v3/commands";
   const mode = command.type === "draft.put" ? command.draft.approvalMode
     : command.type === "session.create" || command.type === "session.prompt" || command.type === "session.steer" ? command.approvalMode : undefined;
   return mode === undefined ? "/v1/commands" : "/v2/commands";
@@ -20,6 +21,9 @@ export async function requestVersionedCommand(request: (path: string, body: unkn
   catch (error) {
     // A missing endpoint establishes that this versioned request was rejected.
     // A timeout or any other failure retains ordinary uncertain-delivery rules.
+    if (endpoint === "/v3/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) {
+      return { ok: false, commandId: envelope.id, error: { code: "ATTACHMENT_PROTOCOL_UNSUPPORTED", message: "Update the owning host to use image drafts. This request was not accepted." } } satisfies CommandResult;
+    }
     if (endpoint === "/v2/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) {
       return { ok: false, commandId: envelope.id, error: { code: "PERMISSION_PROTOCOL_UNSUPPORTED", message: "Update the owning host to use saved permission choices. This request was not accepted." } } satisfies CommandResult;
     }

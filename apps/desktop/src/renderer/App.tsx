@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { Draft, Project, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { readWindowRestoration, useWindowViewPersistence } from "./window-view-state";
 import type { WindowNavigation, WorkspaceTab } from "../window-state";
-import { DraftController } from "./drafts";
+import { DraftController, hasDraftContent } from "./drafts";
 import { SubmissionController } from "./submissions";
 import { ComposerCatalogState, composerSelection, composerTargetKey } from "./composer-catalog";
 import { ComposerSelections } from "./ComposerSelections";
 import { approvalModes, composerApproval } from "./ComposerPermissions";
 import { DraftSnapshot } from "./DraftSnapshot";
+import { createAttachmentCache } from "./attachment-cache";
+import { AttachmentComposer, attachmentDraftSender, imageSendIssue } from "./attachment-composer";
+import { ComposerImages } from "./ComposerImages";
+import type { AttachmentMediaContext } from "./attachment-media";
 import { installAppShortcuts } from "./app-shortcuts";
 import { errorMessage, useDesktop, useTranscript } from "./desktop-state";
 import { Icon } from "./Icons";
@@ -102,12 +106,26 @@ export function App() {
   const reduceMotion = preferences.get("general.reduceMotion") ?? false;
   useEffect(() => { document.documentElement.dataset.reduceMotion = reduceMotion ? "true" : "false"; }, [reduceMotion]);
   const hostId = route.hostId ?? state?.host.id ?? desktop.localHostId ?? "unconnected";
+  const imageResources = useMemo(() => ({ cache: createAttachmentCache(), mounted: false }), [bridge]);
+  const imageCache = imageResources.cache;
+  const attachmentMedia = useMemo<AttachmentMediaContext>(() => ({ bridge, cache: imageCache }), [bridge, imageCache]);
+  useEffect(() => {
+    imageResources.mounted = true;
+    return () => { imageResources.mounted = false; queueMicrotask(() => { if (!imageResources.mounted) imageResources.cache.close(); }); };
+  }, [imageResources]);
   const stores = useMemo(() => new Map<string, { drafts: DraftController; submissions: SubmissionController; state?: typeof state; connected?: boolean }>(), [bridge]);
   function controllers(owner: string) {
     let pair = stores.get(owner);
     if (!pair) {
       const cache = { read: (key: string) => localStorage.getItem(key), write: (key: string, value: string) => localStorage.setItem(key, value) };
-      pair = { drafts: new DraftController(envelope => bridge.command(envelope, owner), owner, cache), submissions: new SubmissionController(envelope => bridge.command(envelope, owner), owner, cache) };
+      pair = { drafts: new DraftController(attachmentDraftSender(owner, attachmentMedia, bridge), owner, cache), submissions: new SubmissionController(envelope => bridge.command(envelope, owner), owner, cache) };
+      for (const pending of pair.submissions.entries()) {
+        if (pending.send) pair.drafts.beginPendingSubmission(pending.draft, pending.send.id);
+        else if (!pending.uncertain) {
+          pair.drafts.get(pending.draft.id, pending.draft);
+          pair.drafts.finishSubmission(pending.draft.id, pending.draft, false);
+        }
+      }
       const record = desktop.catalog.records.get(owner);
       for (const draft of record?.state?.drafts ?? []) pair.drafts.ingest(draft);
       pair.drafts.setConnected(record?.connected ?? false); pair.state = record?.state; pair.connected = record?.connected ?? false;
@@ -143,6 +161,11 @@ export function App() {
   }, [composer, connected, desktop.localHostId]);
   const selection = composerSelection(draft, composer.catalog, selected, composer.controls);
   const permissionChoice = composerApproval(draft, composer.catalog, selected, composer.controls);
+  const imageComposer = useMemo(() => new AttachmentComposer(hostId, draftId, drafts, imageCache, bytes => {
+    if (!bridge.inspectImageAttachment) return Promise.reject(new Error("Update this desktop to inspect attached images."));
+    return bridge.inspectImageAttachment(bytes);
+  }), [hostId, draftId, drafts, imageCache, bridge, selected?.archived]);
+  useEffect(() => { imageComposer.start(); const off = imageComposer.subscribe(redraw); return () => { off(); imageComposer.dispose(); }; }, [imageComposer]);
   let workspace: WorkspaceState | undefined;
   if (workspaceTarget) {
     const key = `${hostId}:${workspaceKey(workspaceTarget)}`;
@@ -166,7 +189,9 @@ export function App() {
   const pendingSubmission = submissions.get(draftId);
   const pendingSessionId = pendingSubmission?.sessionId;
   const knownPendingSession = state?.sessions.find(session => session.id === pendingSessionId);
-  const canSend = connected && Boolean(state) && !busy && !missingSession && Boolean(draft.text.trim() || pendingSubmission?.uncertain) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
+  const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls);
+  const imagesStaging = imageComposer.staging.length > 0;
+  const canSend = connected && Boolean(state) && !busy && !missingSession && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !imagesStaging)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
 
   const navigate = useCallback((id: string | null, owner = route.hostId ?? state?.host.id ?? desktop.localHostId, keepSettings = false) => {
     setRoute({ sessionId: id, hostId: owner }); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false); setAppMenuOpen(false);
@@ -240,14 +265,18 @@ export function App() {
     try {
       const pending = submissions.get(sendingDraftId);
       snapshot = pending?.uncertain ? pending.draft : await drafts.prepareSubmission(sendingDraftId);
-      if (!snapshot.text.trim()) return;
+      if (!hasDraftContent(snapshot)) return;
       drafts.beginPendingSubmission(snapshot);
-      const result = await submissions.submit(snapshot, selectedId ?? undefined, running ? "steer" : "prompt");
-      drafts.finishSubmission(sendingDraftId, result.submitted, true);
+      const result = await submissions.submit(snapshot, selectedId ?? undefined, running ? "steer" : "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId));
+      drafts.finishSubmission(sendingDraftId, result.submitted, true, false, result.commandId);
       await refresh(); transcript.refresh();
-      if (selectedRef.current === originalRoute && !drafts.get(sendingDraftId).draft.text) navigate(result.sessionId);
+      // The awaited catalog is authoritative before React runs its ingest effect.
+      // Image-aware drafts cannot navigate based on an optimistic local clear.
+      const savedDraft = desktop.catalog.records.get(hostId)?.state?.drafts.find(value => value.id === sendingDraftId);
+      if (savedDraft) drafts.ingest(savedDraft);
+      if (selectedRef.current === originalRoute && !hasDraftContent(drafts.get(sendingDraftId).draft)) navigate(result.sessionId);
     } catch (cause) {
-      if (snapshot) drafts.finishSubmission(sendingDraftId, snapshot, false, submissions.get(sendingDraftId)?.uncertain);
+      if (snapshot) drafts.finishSubmission(sendingDraftId, snapshot, false, submissions.get(sendingDraftId)?.uncertain, submissions.get(sendingDraftId)?.send?.id);
       setActionError(errorMessage(cause));
     } finally { submitting.current = false; setBusy(false); textarea.current?.focus(); }
   }
@@ -287,10 +316,12 @@ export function App() {
       {settingsOpen ? <><nav className="settings-navigation" aria-label="Settings pages"><button aria-current={settingsPage === "accounts" ? "page" : undefined} onClick={() => setSettingsPage("accounts")}>Accounts</button><button aria-current={settingsPage === "omp" ? "page" : undefined} onClick={() => setSettingsPage("omp")}>OMP</button><button aria-current={settingsPage === "appearance" ? "page" : undefined} onClick={() => setSettingsPage("appearance")}>Appearance</button></nav>{settingsPage === "appearance" ? <ThemeSettings data={theme} preferences={preferences} fonts={localFonts} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : <>
       <header className="main-header drag-region">
         {!sidebarOpen && <button className="icon-button no-drag" onClick={() => setSidebarOpen(true)} aria-label="Show sidebar"><Icon name="sidebar"/></button>}
-        <div className="header-breadcrumb" title={project?.path}>{selected && <Icon name="folder"/>}<strong className="truncate">{selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "New chat")}</strong></div>
-        {workspace && <button className={`workspace-toggle no-drag ${workspaceOpen ? "active" : ""}`} aria-label={workspaceOpen ? "Hide files and Git" : "Show files and Git"} aria-expanded={workspaceOpen} onClick={() => setWorkspaceOpen(value => !value)}><Icon name="folder"/><span>Files & Git</span></button>}
-        {workspaceTarget && <button className={`workspace-toggle terminal-toggle no-drag ${terminalOpen ? "active" : ""}`} aria-label={terminalOpen ? "Hide terminal panel" : "Show terminal panel"} aria-expanded={terminalOpen} onClick={() => setTerminalOpen(value => !value)}><Icon name="terminal"/><span>Terminal</span></button>}
-        {selected && <div className="header-actions no-drag"><span className={`status-label ${selected.status}`}>{selected.archived ? "Archived" : selected.status === "idle" ? "Ready" : selected.status}</span><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>}
+        <div className="header-breadcrumb" title={project?.path}>{selected && <Icon name="folder"/>}<strong className="truncate">{selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "New chat")}</strong>{selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>}</div>
+        <div className="header-panel-actions no-drag">
+          {selected && (selected.archived || selected.status !== "idle") && <span className={`status-label ${selected.status}`}>{selected.archived ? "Archived" : selected.status}</span>}
+          {workspaceTarget && <button className={`icon-button ${terminalOpen ? "active" : ""}`} aria-label={terminalOpen ? "Hide terminal panel" : "Show terminal panel"} title={terminalOpen ? "Hide terminal panel" : "Show terminal panel"} aria-expanded={terminalOpen} onClick={() => setTerminalOpen(value => !value)}><Icon name="terminal"/></button>}
+          {workspace && <button className={`icon-button ${workspaceOpen ? "active" : ""}`} aria-label={workspaceOpen ? "Hide files and Git" : "Show files and Git"} title={workspaceOpen ? "Hide files and Git" : "Show files and Git"} aria-expanded={workspaceOpen} onClick={() => setWorkspaceOpen(value => !value)}><Icon name="folder"/></button>}
+        </div>
       </header>
       {imageHash && themeImage.sha256 === imageHash && (themeImage.status === "loading" || themeImage.error) && <div className="connection-banner theme-image-status" role="status"><span>{themeImage.error ?? "Loading this device’s background image…"}</span>{themeImage.error && <button onClick={() => void themeImage.refresh()}><Icon name="refresh"/>Retry image</button>}</div>}
       {(desktop.error || desktop.cacheWarning || drafts.cacheWarning || submissions.cacheWarning) && <div className="connection-banner" role="status"><span>{desktop.error ?? desktop.cacheWarning ?? drafts.cacheWarning ?? submissions.cacheWarning}</span><button onClick={() => void refresh()}><Icon name="refresh"/>Reconnect</button></div>}
@@ -301,7 +332,7 @@ export function App() {
             {transcript.cacheWarning && <p className="subtle-notice">{transcript.cacheWarning}</p>}
             {selected?.error && <div className="inline-error" role="alert">{selected.error}</div>}
             {!transcript.messages.length && <div className="empty-transcript"><Icon name="compose"/><h2>{transcript.loading ? "Loading conversation…" : !selected ? "Conversation unavailable" : "Start the conversation"}</h2><p>{connected ? "Send a prompt to begin working in this session." : "No transcript is cached on this device."}</p></div>}
-            <TranscriptMessages messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions}/>
+            <TranscriptMessages messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }}/>
             {running && <div className="working-state" role="status"><span className="working-dot"/>Working…</div>}
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <div className="welcome"><div className="welcome-mark"><Icon name="terminal"/></div><h1>What would you like to work on?</h1><p>{project ? project.name : "Choose a project or start a conversation."}</p></div>}
@@ -311,8 +342,8 @@ export function App() {
             <PendingInteractions bridge={bridge} hostId={hostId} sessionId={(selectedId ?? pendingSessionId)!} localHostId={desktop.localHostId} connected={connected}/>
           </>}
           {actionError && <div className="inline-error" role="alert"><span>{actionError}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
-          {pendingSubmission && <div className="subtle-notice">{pendingSubmission.uncertain ? "A submission is awaiting confirmation. Retry checks its original command; newer draft edits stay here." : pendingSessionId ? busy ? "Waiting for this session to accept the captured prompt." : "A session was created. Sending again continues that session." : "Creating this prompt’s session."}{pendingSessionId && <button onClick={() => navigate(pendingSessionId)}>Open {knownPendingSession?.title ?? "session"}</button>}<details><summary>View pending prompt and selections</summary><DraftSnapshot draft={pendingSubmission.draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []}/>{knownPendingSession && <p>Bound session: {knownPendingSession.title} · {knownPendingSession.cwd}</p>}{pendingSubmission.draft.approvalMode && pendingSessionId && <p>The permission choice applies to this session before the prompt runs and remains if the prompt is rejected.</p>}</details></div>}
-          {view.conflict && <div className="draft-conflict" role="alert"><strong>This draft changed on another device.</strong><p>Your text and selections are preserved. Choose which version to continue with.</p><details><summary>View my draft</summary><DraftSnapshot draft={draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []}/></details><details><summary>View host’s saved draft</summary><DraftSnapshot draft={view.conflict} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []}/></details><div><button className="secondary-button" onClick={() => drafts.resolve(draftId, "remote")}>Use saved draft</button><button className="primary-button" onClick={() => drafts.resolve(draftId, "local")}>Keep my draft</button></div></div>}
+          {pendingSubmission && <div className="subtle-notice">{pendingSubmission.uncertain ? "A submission is awaiting confirmation. Retry checks its original command; newer draft edits stay here." : pendingSessionId ? busy ? "Waiting for this session to accept the captured prompt." : "A session was created. Sending again continues that session." : "Creating this prompt’s session."}{pendingSessionId && <button onClick={() => navigate(pendingSessionId)}>Open {knownPendingSession?.title ?? "session"}</button>}<details><summary>View pending prompt and selections</summary><DraftSnapshot draft={pendingSubmission.draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/>{knownPendingSession && <p>Bound session: {knownPendingSession.title} · {knownPendingSession.cwd}</p>}{pendingSubmission.draft.approvalMode && pendingSessionId && <p>The permission choice applies to this session before the prompt runs and remains if the prompt is rejected.</p>}</details></div>}
+          {view.conflict && <div className="draft-conflict" role="alert"><strong>This draft changed on another device.</strong><p>Your text, images, and selections are preserved. Choose which version to continue with.</p><details><summary>View my draft</summary><DraftSnapshot draft={draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/></details><details><summary>View host’s saved draft</summary><DraftSnapshot draft={view.conflict} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/></details><div><button className="secondary-button" onClick={() => drafts.resolve(draftId, "remote")}>Use saved draft</button><button className="primary-button" onClick={() => drafts.resolve(draftId, "local")}>Keep my draft</button></div></div>}
           {view.status === "error" && <div className="inline-error" role="alert"><span>{view.error ?? "Draft could not be saved."}</span><button onClick={() => void drafts.flush(draftId).catch(cause => setActionError(errorMessage(cause)))}>Retry save</button></div>}
           {composer.loading && <p className="subtle-notice" role="status">Loading this workspace’s native models and defaults…</p>}
           {(composer.error || composer.controlsError) && <div className="inline-error" role="alert"><span>{composer.error ?? composer.controlsError}</span><button disabled={!connected} onClick={() => void composer.refresh(true)}>Refresh models</button></div>}
@@ -321,9 +352,13 @@ export function App() {
           {selection.differingDraftModel && <p className="subtle-notice">This draft selects {draft.model!.provider}/{draft.model!.id}; the session currently uses {selection.current!.provider}/{selection.current!.id}.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { model: null, thinkingLevel: undefined })}>Follow current session model and reasoning</button></p>}
           {composer.catalog && !permissionChoice.supported && <p className="subtle-notice">This host does not support saved composer permission choices yet. Update the owning host to enable this control; its native permissions continue to apply.</p>}
           {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
-          <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }}>
+          <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
+            <ComposerImages controller={imageComposer} attachments={draft.attachments} media={attachmentMedia} hostId={hostId} connected={connected} capabilities={state?.imageAttachments} disabled={Boolean(selected?.archived)}/>
+            {imageIssue && <p className="attachment-notice" role="status">{imageIssue}</p>}
+            {imagesStaging && <p className="attachment-notice" role="status">Finish adding or remove the pending images before sending.</p>}
             <label className="sr-only" htmlFor="prompt">Message</label>
-            <textarea id="prompt" ref={textarea} value={draft.text} onChange={event => drafts.update(draftId, { text: event.target.value })} placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)} spellCheck rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>
+            <span id="prompt-keyboard-hint" className="sr-only">{`${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${running ? "steer" : "send"}. Shift Enter for a new line.`}</span>
+            <textarea id="prompt" aria-describedby="prompt-keyboard-hint" ref={textarea} value={draft.text} onChange={event => drafts.update(draftId, { text: event.target.value })} placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)} spellCheck rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>
             <div className="composer-toolbar">
               <div className="composer-selections">
                 {!selectedId && <label className="select-control project-select" title="Project"><Icon name="folder"/><span className="sr-only">Project</span><select aria-label="Project" value={draft.projectId ?? ""} onChange={event => drafts.update(draftId, { projectId: event.target.value || null })}><option value="">No project</option>{state?.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
@@ -332,7 +367,7 @@ export function App() {
               <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running ? "Steer agent" : "Send (Enter)" : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
             </div>
           </form>
-          <div className="composer-footnote"><span>{`${sendBehavior === "mod-enter" ? "⌘ Enter" : "Enter"} to ${running ? "steer" : "send"} · Shift Enter for a new line`}</span><span aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : draft.text ? "Draft saved" : ""}</span></div>
+          <div className="composer-footnote" aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : null}</div>
         </div>
       </>}
       </>}

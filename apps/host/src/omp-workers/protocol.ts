@@ -1,7 +1,9 @@
 import type { ModelChoice, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
-import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpRuntimeEvent, OmpInteractionResponse } from "../omp";
+import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractionResponse, PreparedPromptImage } from "../omp";
+import type { WorkerEvent } from "./events";
+import { projectNativeErrorMessage } from "./events";
 
-export const WORKER_PROTOCOL_VERSION = 3;
+export const WORKER_PROTOCOL_VERSION = 4;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -26,8 +28,9 @@ export type WorkerOperation =
   | { operation: "listModelCapabilities"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerCatalog"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getMessages" }
+  | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
-  | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode } }
+  | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode; options?: { images?: PreparedPromptImage[] } } }
   | { operation: "abort" }
   | { operation: "setModel"; args: { model: ModelChoice } }
   | { operation: "listAccountChoices" }
@@ -44,15 +47,16 @@ export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | { type: "eventAck"; sequence: number }
   /** The child exits only after its disposal result has reached the owner. */
   | { type: "disposeAck"; id: string };
-export interface RemoteError { name: string; message: string }
+export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" }
 export type ChildMessage =
   | { type: "ready"; version: number }
   | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; snapshot?: SessionSnapshot }
-  | { type: "event"; sequence: number; event: OmpRuntimeEvent; snapshot?: SessionSnapshot }
+  | { type: "event"; sequence: number; event: WorkerEvent; snapshot?: SessionSnapshot }
   | { type: "fatal"; error: RemoteError };
 
 export function remoteError(error: unknown): RemoteError {
   return error instanceof Error
-    ? { name: error.name, message: error.message }
+    ? { name: error.name.slice(0, 100), message: projectNativeErrorMessage(error.message),
+      ...("code" in error && error.code === "OUTCOME_UNKNOWN" ? { code: "OUTCOME_UNKNOWN" as const } : {}) }
     : { name: "Error", message: "OMP worker operation failed" };
 }

@@ -2,6 +2,11 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge, DesktopEvent, DesktopTerminalEvent, NativeTerminalInvalidation } from "@agent-desktop/shared";
 
 const bridge: DesktopBridge = {
+  inspectImageAttachment: data => ipcRenderer.invoke("desktop:image-inspect", data),
+  getImageAttachmentCapabilities: hostId => ipcRenderer.invoke("host:image-capabilities", hostId),
+  uploadImageAttachment: (sha256, data, hostId) => ipcRenderer.invoke("host:image-upload", sha256, data, hostId),
+  getImageAttachment: (sha256, hostId) => ipcRenderer.invoke("host:image-read", sha256, hostId),
+  getTranscriptImage: (sessionId, nativeEntryId, blockIndex, hostId) => ipcRenderer.invoke("host:transcript-image", sessionId, nativeEntryId, blockIndex, hostId),
   getState: hostId => ipcRenderer.invoke("host:state", hostId),
   getHosts: () => ipcRenderer.invoke("host:peers"),
   getProviders: hostId => ipcRenderer.invoke("host:providers", hostId),

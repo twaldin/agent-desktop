@@ -1,6 +1,7 @@
 import { serialize } from "node:v8";
-import type { OmpRuntime, OmpSession } from "../omp";
+import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
 import { remoteError, WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot } from "./protocol";
+import { projectWorkerEvent } from "./events";
 
 // All SDK imports are deferred until the child has received its explicit native
 // directory. The daemon never imports/initializes OMP through this boundary.
@@ -43,11 +44,11 @@ function drain(): void {
   inFlight = { sequence: next.message.sequence, bytes: next.bytes };
   send(next.message);
 }
-function emit(event: Extract<ChildMessage, { type: "event" }>["event"]): void {
+function emit(event: OmpRuntimeEvent): void {
   if (stopping) return;
   try {
     const message: Extract<ChildMessage, { type: "event" }> = {
-      type: "event", sequence: ++sequence, event: structuredClone(event), snapshot: snapshot(),
+      type: "event", sequence: ++sequence, event: structuredClone(projectWorkerEvent(event)), snapshot: snapshot(),
     };
     const bytes = serialize(message).byteLength;
     if (bufferedBytes + bytes > MAX_EVENT_BYTES || queue.length >= MAX_QUEUED_EVENTS) {
@@ -118,6 +119,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         respond(true, await runtime.getComposerCatalog(message.args.cwd, { refresh: message.args.refresh }));
         break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
+      case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex)); break;
       case "startPrompt": {
         const run = requireSession().startPrompt(message.args.text, message.args.options);
         // Preserve independent native acceptance and completion, including an
@@ -128,7 +130,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         ]);
         break;
       }
-      case "steer": respond(true, await requireSession().steer(message.args.text, message.args.expectedApprovalMode)); break;
+      case "steer": respond(true, await requireSession().steer(message.args.text, message.args.expectedApprovalMode, message.args.options)); break;
       case "abort": await requireSession().abort(); respond(true); break;
       case "setModel": await requireSession().setModel(message.args.model); respond(true); break;
       case "listAccountChoices": respond(true, await requireSession().listAccountChoices()); break;

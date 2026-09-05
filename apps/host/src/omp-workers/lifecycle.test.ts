@@ -16,14 +16,14 @@ async function eventually<T>(read: () => T | Promise<T>, predicate: (value: T) =
   }
 }
 
-test("a release11 worker is rejected before permission-bearing initialization", async () => {
+for (const version of [2, 3]) test(`an IPC${version} worker is rejected before permission/image-bearing initialization`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "agent-worker-old-protocol-"));
   const workerPath = join(directory, "worker.ts"), pidFile = join(directory, "pid"), initFile = join(directory, "init");
   await writeFile(workerPath, `import {writeFileSync} from 'node:fs';
 writeFileSync(${JSON.stringify(pidFile)},String(process.pid));
 setInterval(()=>{},1000);
 process.on('message',message=>{if(message.type==='request'&&message.operation==='init')writeFileSync(${JSON.stringify(initFile)},'unexpected init');});
-process.send({type:'ready',version:2});
+process.send({type:'ready',version:${version}});
 `);
   const runtime = new WorkerRuntime({ workerPath, startupTimeoutMs: 2000, shutdownTimeoutMs: 250,
     environment: { HOME: directory, PATH: process.env.PATH, TMPDIR: tmpdir(), TERM: "dumb" } });

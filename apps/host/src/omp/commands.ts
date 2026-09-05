@@ -5,6 +5,7 @@ import { parseCommandArgs } from "@oh-my-pi/pi-coding-agent/utils/command-args";
 import { lookupBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { parseSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/parse";
 import type { NativePromptDispatchResult } from "./prompt";
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 
 /** Pinned 18.1.10 public native handlers/contexts. AgentSession.prompt catches
  * command exceptions and returns false for both handled commands and abandoned
@@ -12,8 +13,9 @@ import type { NativePromptDispatchResult } from "./prompt";
  * handlers once with their native context to observe the actual return/throw.
  * No builtin commands or host-owned identity transitions are newly enabled here.
  */
-export async function dispatchNativePrompt(session: AgentSession, text: string): Promise<NativePromptDispatchResult> {
-  if (!text.startsWith("/")) return { agentInvoked: await session.prompt(text) };
+export async function dispatchNativePrompt(session: AgentSession, text: string, images?: ImageContent[]): Promise<NativePromptDispatchResult> {
+  if (images?.length && text.trimStart().startsWith("/")) throw new Error("Image attachments are not supported on slash commands yet; no command was executed");
+  if (!text.startsWith("/")) return { agentInvoked: await session.prompt(text, images?.length ? { images } : undefined) };
   // Match the SDK's exact parser; do not trim or reinterpret namespaces/newlines.
   const space = text.indexOf(" ");
   const name = space === -1 ? text.slice(1) : text.slice(1, space);

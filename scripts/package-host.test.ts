@@ -10,7 +10,7 @@ const directories: string[] = [];
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-test("new package declares schema1/2 and hashes the standalone guard; immutable output cannot be overwritten", async () => {
+test("new package declares schema1/2/3 and hashes the standalone guard; immutable output cannot be overwritten", async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-package-schema-contract-")); directories.push(root);
   const repository = join(root, "repository"), native = join(root, "native-contract-fixture");
   for (const [file, value] of Object.entries({
@@ -33,7 +33,7 @@ test("new package declares schema1/2 and hashes the standalone guard; immutable 
   const listed = Bun.spawnSync(["tar", "-xOzf", output, "./host-artifact.json"], { stdout: "pipe", stderr: "pipe" });
   expect(listed.success).toBe(true);
   const manifest = JSON.parse(new TextDecoder().decode(listed.stdout)) as HostArtifact;
-  expect(manifest.stateSchemaVersions).toEqual([1, 2]);
+  expect(manifest.stateSchemaVersions).toEqual([1, 2, 3]);
   expect(manifest.files["scripts/host-state-compatibility.ts"]).toBe(hash(await readFile(join(repository, "scripts/host-state-compatibility.ts"))));
   const guard = Bun.spawnSync(["tar", "-xOzf", output, "./scripts/host-state-compatibility.ts"], { stdout: "pipe", stderr: "pipe" });
   expect(guard.success).toBe(true); expect(hash(guard.stdout)).toBe(manifest.files["scripts/host-state-compatibility.ts"]!);

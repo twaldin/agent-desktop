@@ -44,7 +44,7 @@ describe("native event transcript projection contract", () => {
     expect(result.content).toEqual([
       { type: "text", text: "Before" }, { type: "thinking", thinking: "Reason" },
       { type: "toolCall", id: "t", name: "read", arguments: { path: "a.txt" }, intent: "Read a" },
-      { type: "text", text: "After" }, { type: "unsupported", nativeType: "image", mimeType: "image/png" },
+      { type: "text", text: "After" }, { type: "image", nativeType: "image", blockIndex: 4, mimeType: "image/png" },
       { type: "unsupported", nativeType: "redactedThinking" }, { type: "unsupported", nativeType: "unknown" },
     ]);
     expect(result.text).toBe("Before\nAfter");
