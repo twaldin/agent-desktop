@@ -1,5 +1,6 @@
 import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
+import { requestBrowserMetadata } from "./browser-metadata-transport";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { captureDesktop } from "./capture";
@@ -242,6 +243,9 @@ ipcMain.handle("host:messages", (event, sessionId: string, hostId?: string) => {
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:browser-metadata", async (event, sessionId: string, hostId?: string) => {
+  assertTrustedSender(event); return requestBrowserMetadata(await endpointFor(hostId), sessionId);
 });
 ipcMain.handle("host:peers", event => { assertTrustedSender(event); return discoverHosts(); });
 ipcMain.handle("host:preferences", event => { assertTrustedSender(event); return request("/v1/preferences"); });

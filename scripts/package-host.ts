@@ -36,6 +36,16 @@ async function sources(directory: string, root: string, excluded: Set<string>): 
   return paths;
 }
 
+function patchedDependencySources(manifest: { patchedDependencies?: Record<string, unknown> }): string[] {
+  const paths = Object.values(manifest.patchedDependencies ?? {});
+  return paths.map(value => {
+    if (typeof value !== "string" || !/^patches\/[A-Za-z0-9@%._/-]+\.patch$/.test(value) || value.includes("..")) {
+      throw new Error("Patched dependency paths must be repository-local files in patches/.");
+    }
+    return value;
+  });
+}
+
 /** Keep the original workspace manifests and lockfile so frozen production installation is exact. */
 export async function packageHost(options: { version: string; output: string; repository?: string; excludeSources?: string[]; nativeBundles?: string[] }): Promise<{ artifact: string; sha256: string; version: string }> {
   const version = validateVersion(options.version);
@@ -50,7 +60,7 @@ export async function packageHost(options: { version: string; output: string; re
   if (!options.nativeBundles?.length) throw new Error("Include the verified native terminal runtime with --tmux-bundle before packaging this host version.");
   const files = ["package.json", "bun.lock", "apps/host/package.json", "apps/desktop/package.json", "packages/shared/package.json",
     "scripts/install-host.ts", "scripts/package-host.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts", ...await sources(join(repository, "apps/host/src"), repository, excluded),
-    ...await sources(join(repository, "packages/shared/src"), repository, excluded)].sort();
+    ...await sources(join(repository, "packages/shared/src"), repository, excluded), ...patchedDependencySources(manifest)].sort();
   const staging = await mkdtemp(join(tmpdir(), "agent-desktop-package-"));
   try {
     const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10", stateSchemaVersions: [1, 2, 3], excludedSources: [...excluded], files: {} };

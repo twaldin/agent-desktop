@@ -23,6 +23,7 @@ import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./wor
 import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
 import { SessionActivityHttp } from "./session-activity-http";
+import { BrowserMetadataHttp } from "./browser-metadata-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
 import { TerminalManager, TmuxTerminalManager, TmuxTerminalsHttp } from "./terminals";
@@ -182,6 +183,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   } });
   const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getActivity: async id => (await getHandle(id)).getSessionActivity() });
+  const browserMetadata = new BrowserMetadataHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
+    getExistingHandle: async id => {
+      const pending = handles.get(id);
+      if (!pending) return undefined;
+      try { return await pending; }
+      catch { return { workerFailure: { message: "The native session worker is unavailable." }, getBrowserMetadata: async () => ({ availability: "unavailable" as const, reason: "The native session worker is unavailable." }) }; }
+    } });
   settings = new SettingsHttp({ agentDir: options.agentDirectory, defaultCwd: options.discoveryDirectory ?? homedir(), runtime,
     resolveCwd: target => {
       if (!target) return options.discoveryDirectory ?? homedir();
@@ -479,6 +487,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const browserMetadataResponse = await browserMetadata.route(request, url);
+        if (browserMetadataResponse) return browserMetadataResponse;
         const settingsResponse = await settings!.route(request, url);
         if (settingsResponse) return settingsResponse;
         const terminalResponse = await terminalsHttp!.handle(request);

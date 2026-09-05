@@ -8,6 +8,7 @@ import {
   type AgentSession, type AgentSessionEvent, type AuthStorage,
 } from "@oh-my-pi/pi-coding-agent";
 import { AUTO_THINKING, parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
 import { parseTitleSlotLine } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
 import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
 import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
@@ -81,6 +82,40 @@ export interface OmpSession {
 }
 
 interface NativeContext { settings: Settings; registry: ModelRegistry; auth: AuthStorage }
+
+function goalFromNativeModeData(modeData: Record<string, unknown> | undefined): Goal | undefined {
+  const goal = modeData?.goal;
+  if (!goal || typeof goal !== "object") return undefined;
+  const value = goal as Record<string, unknown>;
+  if (typeof value.id !== "string" || typeof value.objective !== "string" || typeof value.status !== "string"
+    || typeof value.tokensUsed !== "number" || typeof value.timeUsedSeconds !== "number"
+    || typeof value.createdAt !== "number" || typeof value.updatedAt !== "number") return undefined;
+  return { id: value.id, objective: value.objective, status: value.status as Goal["status"],
+    ...(typeof value.tokenBudget === "number" ? { tokenBudget: value.tokenBudget } : {}),
+    tokensUsed: value.tokensUsed, timeUsedSeconds: value.timeUsedSeconds, createdAt: value.createdAt, updatedAt: value.updatedAt };
+}
+
+/** Apply OMP's cold interactive-session goal reconciliation to a headless SDK session. */
+async function restoreNativeGoalMode(session: AgentSession, manager: SessionManager): Promise<void> {
+  const context = manager.buildSessionContext();
+  if (context.mode !== "goal" && context.mode !== "goal_paused") return;
+  if (!session.settings.get("goal.enabled")) {
+    session.goalRuntime.clearAccounting();
+    manager.appendModeChange("none");
+    return;
+  }
+  const goal = goalFromNativeModeData(context.modeData);
+  if (!goal) {
+    manager.appendModeChange("none");
+    return;
+  }
+  session.setGoalModeState({ enabled: context.mode === "goal", mode: "active", goal });
+  const restored = await session.goalRuntime.onThreadResumed();
+  if (restored?.goal) {
+    const previousTools = session.getEnabledToolNames().filter(name => name !== "goal");
+    await session.setActiveToolsByName([...new Set([...previousTools, "goal"])]);
+  }
+}
 
 function toModelInfo(model: NativeModel, registry: ModelRegistry): ModelInfo {
   // Never forward the whole native Model: its headers may contain credentials.
@@ -290,6 +325,7 @@ export class OmpRuntime {
       });
       native = result.session;
       this.#assertActive();
+      await restoreNativeGoalMode(native, manager);
       // Native 18.1.10 omits the initial auto receipt, and an unchanged first
       // classification does not add it. Record the actual new-session choice
       // before exposing its file; never infer missing intent on an existing log.

@@ -83,6 +83,8 @@ Object.assign(window, {
 
     const rightMenu = right.querySelector<HTMLDetailsElement>(".dock-menu")!; rightMenu.open = true; button(rightMenu, "Move to bottom dock")!.click();
     const bottom = document.querySelector<HTMLElement>(".dock-slot-bottom")!; await wait(() => bottom.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.includes("Files"), "move Files to bottom");
+    const bottomPanel = bottom.querySelector<HTMLElement>(".dock-panel")!;
+    assert(Math.abs(bottomPanel.getBoundingClientRect().height - bottom.clientHeight) <= 1, "bottom panel does not fill its resizable dock");
     menuDismissal.move = !rightMenu.open; rightMenu.open = false;
     assert(route() === expectedRoute, "dock movement changed route");
     button(bottom, "Close Files tab")!.click(); await wait(() => !bottom.querySelector('[data-dock-tab-id$=":files"]'), "close moved Files tab");
@@ -106,9 +108,16 @@ Object.assign(window, {
     const app = document.querySelector<HTMLElement>(".app-shell")!.getBoundingClientRect(), workbench = document.querySelector<HTMLElement>(".workbench")!.getBoundingClientRect(), main = document.querySelector<HTMLElement>(".main-panel")!.getBoundingClientRect();
     const side = document.querySelector<HTMLElement>(".dock-slot-right")!.getBoundingClientRect(), card = document.querySelector<HTMLElement>(".environment-card")!.getBoundingClientRect();
     const namedControls = ["Environment", "Hide side panel"].every(name => document.querySelector(`[aria-label="${name}"]`));
+    const headerControlsClickable = ["Environment", "Hide side panel"].every(name => {
+      const control = document.querySelector<HTMLElement>(`[aria-label="${name}"]`);
+      if (!control) return false;
+      const bounds = control.getBoundingClientRect();
+      const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+      return bounds.width > 0 && bounds.height > 0 && Boolean(hit && control.contains(hit));
+    });
     const inside = (box: DOMRect) => box.left >= -1 && box.top >= -1 && box.right <= innerWidth + 1 && box.bottom <= innerHeight + 1;
     const hit = document.elementFromPoint(card.left + card.width / 2, card.top + Math.min(card.height / 2, 120)); const cardVisible = Boolean(hit && (hit === document.querySelector(".environment-card") || document.querySelector(".environment-card")!.contains(hit)));
-    return { viewport: { width: innerWidth, height: innerHeight }, app: { width: app.width, height: app.height }, workbench: { width: workbench.width, height: workbench.height }, main: { width: main.width, height: main.height }, side: { width: side.width, height: side.height }, card: { x: card.x, y: card.y, width: card.width, height: card.height }, namedControls, cardVisible,
-      fitting: app.width > 0 && workbench.width > 0 && main.width > 0 && side.width > 0 && card.width > 0 && namedControls && cardVisible && inside(app) && inside(workbench) && inside(side) && inside(card) && document.documentElement.scrollWidth <= innerWidth + 1 && document.documentElement.scrollHeight <= innerHeight + 1 };
+    return { viewport: { width: innerWidth, height: innerHeight }, app: { width: app.width, height: app.height }, workbench: { width: workbench.width, height: workbench.height }, main: { width: main.width, height: main.height }, side: { width: side.width, height: side.height }, card: { x: card.x, y: card.y, width: card.width, height: card.height }, namedControls, headerControlsClickable, cardVisible,
+      fitting: app.width > 0 && workbench.width > 0 && main.width > 0 && side.width > 0 && card.width > 0 && namedControls && headerControlsClickable && cardVisible && inside(app) && inside(workbench) && inside(side) && inside(card) && document.documentElement.scrollWidth <= innerWidth + 1 && document.documentElement.scrollHeight <= innerHeight + 1 };
   },
 });

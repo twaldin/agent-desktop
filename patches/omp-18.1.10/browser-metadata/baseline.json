@@ -1,0 +1,7 @@
+{
+  "version": "18.1.10",
+  "commit": "f241301c83726afe75a847e919b89977a54dafbe",
+  "files": {
+    "src/tools/browser/tab-supervisor.ts": "9215d5bed2a0f1069216db5d4691a2e72b1bd599914d46854c7cfaba7f1c3f9e"
+  }
+}

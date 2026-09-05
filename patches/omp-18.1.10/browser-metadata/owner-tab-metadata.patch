@@ -1,0 +1,58 @@
+--- a/src/tools/browser/tab-supervisor.ts
++++ b/src/tools/browser/tab-supervisor.ts
+@@ -68,6 +68,21 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
+ 	ownerSessionId?: string;
+ }
+ 
++/**
++ * Read-only current metadata for a tab owned by one native session.
++ * This intentionally omits browser handles, workers, CDP endpoints, profile
++ * paths, pending runs, and all mutation methods.
++ */
++export interface OwnerTabMetadata {
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly targetId: string;
++	readonly backend: TabSession["backend"];
++	readonly kindTag: BrowserKindTag;
++	readonly state: TabSession["state"];
++	readonly info: Readonly<ReadyInfo>;
++}
++
+ export interface WorkerTabSession extends TabSessionBase<PuppeteerBrowserHandle> {
+ 	backend: "worker";
+ 	worker: WorkerHandle;
+@@ -757,6 +772,32 @@ export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptio
+ 	return count;
+ }
+ 
++/**
++ * Enumerates current authoritative tab metadata for one creator session.
++ * Empty/unknown owners never act as a wildcard. Results are cloned immutable
++ * values so callers cannot retain or mutate native tab state.
++ */
++export function listTabsForOwner(ownerSessionId: string): readonly OwnerTabMetadata[] {
++	if (!ownerSessionId) return Object.freeze([]) as readonly OwnerTabMetadata[];
++	const snapshot = [...tabs.values()]
++		.filter(tab => tab.ownerSessionId === ownerSessionId)
++		.map(tab => Object.freeze({
++			name: tab.name,
++			ownerSessionId,
++			targetId: tab.targetId,
++			backend: tab.backend,
++			kindTag: tab.kindTag,
++			state: tab.state,
++			info: Object.freeze({
++				url: tab.info.url,
++				title: tab.info.title,
++				viewport: Object.freeze({ ...tab.info.viewport }),
++				targetId: tab.info.targetId,
++			}),
++		}));
++	return Object.freeze(snapshot);
++}
++
+ /** Test-only accessor for the module-global tabs map. */
+ export function getTabsMapForTest(): ReadonlyMap<string, TabSession> {
+ 	return tabs;
+ }

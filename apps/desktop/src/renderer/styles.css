@@ -133,7 +133,7 @@ button { touch-action: manipulation; }
 .connection-dot { width: 6px; height: 6px; background: var(--tertiary); border-radius: 100%; flex-shrink: 0; }
 .connection-dot.online { background: #37976a; }
 .main-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: var(--app-surface); }
-.main-header { height: 46px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+.main-header { height: var(--main-header-height,46px); flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
 .sidebar-hidden .main-header { padding-left: 80px; }
 .header-breadcrumb { display: flex; align-items: center; gap: 12px; min-width: 0; font-size: calc(var(--font-size, 14px) * 1.0); color: var(--secondary); }
 .header-breadcrumb > span { white-space: nowrap; flex-shrink: 0; }

@@ -1,5 +1,6 @@
 import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
+import type { BrowserMetadataAvailability, NativeBrowserTabMetadata } from "@agent-desktop/shared";
 import { remoteError, WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot } from "./protocol";
 import { projectWorkerEvent } from "./events";
 
@@ -91,6 +92,22 @@ function requireSession(): OmpSession {
   return session;
 }
 
+function browserMetadata(value: unknown): BrowserMetadataAvailability {
+  if (!Array.isArray(value)) return { availability: "unavailable", reason: "Pinned native browser metadata returned an invalid tab list." };
+  const tabs: NativeBrowserTabMetadata[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") return { availability: "unavailable", reason: "Pinned native browser metadata returned an invalid tab." };
+    const tab = item as Record<string, unknown>, info = tab.info;
+    if (!info || typeof info !== "object") return { availability: "unavailable", reason: "Pinned native browser metadata omitted tab readiness data." };
+    const ready = info as Record<string, unknown>, viewport = ready.viewport;
+    if (typeof tab.name !== "string" || typeof tab.targetId !== "string" || (tab.backend !== "worker" && tab.backend !== "cmux") || !["headless", "spawned", "connected", "relay", "cmux"].includes(String(tab.kindTag)) || !["alive", "dead"].includes(String(tab.state)) || typeof ready.url !== "string" || typeof ready.targetId !== "string" || !viewport || typeof viewport !== "object") return { availability: "unavailable", reason: "Pinned native browser metadata has unsupported fields." };
+    const size = viewport as Record<string, unknown>;
+    if (!Number.isFinite(size.width) || !Number.isFinite(size.height) || (size.deviceScaleFactor !== undefined && !Number.isFinite(size.deviceScaleFactor))) return { availability: "unavailable", reason: "Pinned native browser metadata has an invalid viewport." };
+    tabs.push({ name: tab.name, targetId: tab.targetId, backend: tab.backend, kindTag: tab.kindTag as NativeBrowserTabMetadata["kindTag"], state: tab.state as NativeBrowserTabMetadata["state"], url: ready.url, ...(typeof ready.title === "string" ? { title: ready.title } : {}), viewport: { width: size.width as number, height: size.height as number, ...(typeof size.deviceScaleFactor === "number" ? { deviceScaleFactor: size.deviceScaleFactor } : {}) } });
+  }
+  return { availability: "running", workerPid: process.pid, tabs };
+}
+
 async function request(message: Extract<ParentMessage, { type: "request" }>): Promise<void> {
   const respond = (ok: boolean, value?: unknown, error?: unknown, phase?: "accepted" | "completion") => {
     send({ type: "response", id: message.id, ok, value,
@@ -130,6 +147,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
       case "getSessionActivity": respond(true, requireSession().getSessionActivity()); break;
+      case "getBrowserMetadata": {
+        const owner = requireSession().id;
+        let native: { listTabsForOwner?: (ownerSessionId: string) => unknown };
+        try { native = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as typeof native; }
+        catch { respond(true, { availability: "unavailable", reason: "This host could not load its pinned native browser metadata seam." } satisfies BrowserMetadataAvailability); break; }
+        if (typeof native.listTabsForOwner !== "function") respond(true, { availability: "unavailable", reason: "This host's pinned OMP package does not include the owner-filtered browser metadata patch." } satisfies BrowserMetadataAvailability);
+        else respond(true, browserMetadata(native.listTabsForOwner(owner)));
+        break;
+      }
       case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex)); break;
       case "startPrompt": {
         const run = requireSession().startPrompt(message.args.text, message.args.options);
