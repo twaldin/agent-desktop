@@ -9,11 +9,12 @@ import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutatio
 import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities, UploadedImageMetadata, RecordedImageBytes } from "./attachments";
 import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions } from "./composer-actions";
 import type { SessionActivitySnapshot } from "./session-activity";
-import type { BrowserMetadataSnapshot } from "./browser";
+import type { BrowserMetadataSnapshot, BrowserFrameTarget, BrowserFrameSnapshot } from "./browser";
 export * from "./attachments";
 export * from "./composer-actions";
 export * from "./session-activity";
 export * from "./browser";
+export * from "./browser-frame";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -249,6 +250,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;
+  getBrowserFrame?(sessionId: string, target: BrowserFrameTarget, hostId?: string): Promise<BrowserFrameSnapshot>;
   chooseDirectory(): Promise<string | null>;
   subscribe(listener: (event: DesktopEvent) => void): () => void;
 }

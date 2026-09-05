@@ -1,6 +1,6 @@
 # Native OMP browser integration
 
-Source investigation and isolated feasibility experiment, 2026-09-05. **No production browser panel or full browser parity is claimed.** The initial investigation read installed package source, the preserved Codex archive, and official Electron/CDP documentation. The later bounded experiment below opened only its own disposable native browser/profile and localhost page. Neither stage inspected live Codex or other apps, changed installed settings, accessed existing browser profiles, or made provider requests.
+Source investigation, isolated feasibility evidence and source implementation, 2026-09-05. **Source 18 includes a read-only native viewport panel; full browser parity remains incomplete.** The initial investigation read installed package source, the preserved Codex archive, and official Electron/CDP documentation. The later bounded experiment below opened only its own disposable native browser/profile and localhost page. Neither stage inspected live Codex or other apps, changed installed settings, accessed existing browser profiles, or made provider requests.
 
 ## Release 17 metadata transport
 
@@ -11,6 +11,24 @@ Worker protocol 6 adds a read-only metadata request. `GET /v1/sessions/:id/brows
 The exact-path native test creates a real provider-free OMP worker and reads its empty tab list through the production route class, checking the returned worker PID. A separate isolated test opens a real native browser tab and verifies its target, owner isolation and immutable metadata. Together these establish the metadata seam; they do not establish a renderer stream, input delivery, real tab transport over Tailscale, or a browser panel. The next implementation must still attach to that exact target, keep detach separate from close, and prove shared document state. Worker startup failures from Bun's filename-filter test mode are documented in [test runtime](test-runtime.md), not treated as an authentication limitation.
 
 Installed release 17 verifies the exact patched supervisor hash on Home, Work and Deckbox. Home and Work return actual running worker snapshots with zero tabs; wrong-owner/stale requests fail with 409. Home additionally verifies unauthenticated rejection and no-store responses. Deckbox runs the exact-path HTTP/native-worker tests against isolated archive sources and installed dependencies: five tests, 18 assertions, no provider calls. These checks do not establish nonempty tab streaming across Tailscale. Evidence: `.data/ui-acceptance/home17-installed-contract.json` and `installed-hosts-release17.json`.
+
+## Source 18: native viewport preview
+
+The Browser dock now renders periodic JPEG captures of the exact tab held by the owning OMP worker. It is explicitly a **read-only viewport preview**, with native tab selection, refresh, pause/resume and a stale-image label. It does not provide navigation, input, downloads, browser creation or streaming; these remain required work. The Browser action is available for native sessions. Closing a viewer never closes its native tab.
+
+`captureTabViewportForOwner` extends the selected native patch. It resolves the exact creator/name/target, captures only that Puppeteer page's current viewport without activation/navigation/resize, and revalidates ownership before returning. At most eight distinct captures can run, with one per target. Timed-out native operations remain counted until they settle. This is deliberate: releasing a slot while its screenshot still runs would amplify retries. Pinned Puppeteer 25.3 uses a FIFO screenshot mutex and OMP configures a 60-second CDP protocol timeout; queued captures can retain slots for several minutes during a stalled browser. Target/connection closure rejects underlying calls, and worker disposal provides the final process bound. The caller receives its 10-second timeout without closing or detaching the agent’s tab. A narrower cancellable observation connection remains future work; no unbounded retry or forced tab closure is used. Worker protocol 7 requires the selected worker PID. Shared projection bounds JPEG bytes and decoded dimensions and removes fields outside the frame contract. cmux remains explicitly unavailable for this preview.
+
+`BrowserFrameHttp` coalesces simultaneous same-target reads, uses only an existing worker, and rechecks the session/handle after capture. It returns no-store data through the existing authenticated HTTP transport; frames are never command events or journal entries. The main-process reader bounds the body, verifies response owner/session/worker/target and image dimensions, and exposes only the reconstructed frame through preload. The renderer sequentially polls only visible active panels, rejects stale responses, clears pixels on owner/target replacement and retains an explicitly stale frame on network failure. Opening another tab, hiding the dock, pausing, and unmounting do not start overlapping reads.
+
+The actual native pipeline proof runs with:
+
+```sh
+bun ./scripts/acceptance/native-browser-preview.ts .data/ui-acceptance/native-browser-preview-new
+```
+
+The verified run is `.data/ui-acceptance/native-browser-preview-run1/result.json`, with `initial.png` and `remounted.png`. It starts an isolated real OMP worker and native Chromium tab through a test-only extension, then uses authenticated Bun HTTP routes, the production main transport functions, a minimal acceptance preload and the actual BrowserPanel. Electron decodes a real 8,224-byte 640×480 JPEG. Hide/unmount stop polling; remount retains the native target, URL, cookies and unsent input. Native session disposal reaps the worker and stops that page's heartbeats. All recorded source hashes remain unchanged. This proves the local production preview path; it does not prove physical Tailscale viewing or installed/Linux browser packaging. No provider, existing profile or installed service was used.
+
+Separate controlled renderer tests preserve deferred-selection/pause/worker/owner error cases and actual image decoding at wide/narrow/150% sizes in `.data/browser-panel-acceptance-source18-root/`. The production App check additionally verifies that hiding its actual Browser dock stops polling (`.data/app-dock-acceptance/browser-source18/`). Controlled fixture pixels do not count as native-browser evidence. The native worker and isolated patch proofs are maintained under `apps/host/src/omp-workers/browser-frame-native.test.ts` and `patches/omp-18.1.10/browser-frame/`.
 
 ## Recommendation
 

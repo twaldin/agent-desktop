@@ -1,5 +1,5 @@
 export type DockDestination = "right" | "bottom";
-export type DockTabKind = "review" | "files" | "worktrees" | "terminal";
+export type DockTabKind = "review" | "files" | "worktrees" | "terminal" | "browser";
 export type DockTarget = `session:${string}` | `project:${string}`;
 export interface DockTab { id: string; title: string; kind: DockTabKind; hostId: string; target: DockTarget; terminalId?: string }
 export interface DockRegion { tabIds: string[]; activeTabId?: string; open: boolean }

@@ -24,3 +24,33 @@ export type BrowserMetadataSnapshot = BrowserMetadataAvailability & {
   hostId: string;
   sessionId: string;
 };
+
+/** An exact live native target; a name or URL alone is never sufficient. */
+export interface BrowserFrameTarget {
+  workerPid: number;
+  name: string;
+  targetId: string;
+}
+
+export const BROWSER_FRAME_PROTOCOL_VERSION = 1 as const;
+export const BROWSER_FRAME_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Current viewport capture only. This is not a video stream or an input API. */
+export interface NativeBrowserFrame {
+  name: string;
+  targetId: string;
+  capturedAt: number;
+  mimeType: "image/jpeg";
+  data: string;
+  width: number;
+  height: number;
+  url: string;
+  title: string;
+}
+
+export interface BrowserFrameSnapshot extends NativeBrowserFrame {
+  protocolVersion: typeof BROWSER_FRAME_PROTOCOL_VERSION;
+  hostId: string;
+  sessionId: string;
+  workerPid: number;
+}

@@ -51,7 +51,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
   if (!record(value) || !Array.isArray(value.tabs) || value.tabs.length > 100 || !record(value.state)) return;
   const tabs: DockTab[] = [], seen = new Set<string>();
   for (const item of value.tabs) {
-    if (!record(item) || !id(item.hostId) || typeof item.target !== "string" || !/^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) || typeof item.title !== "string" || item.title.length > 1000 || !["review","files","worktrees","terminal"].includes(String(item.kind)) || item.terminalId !== undefined && !id(item.terminalId)) return;
+    if (!record(item) || !id(item.hostId) || typeof item.target !== "string" || !/^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) || typeof item.title !== "string" || item.title.length > 1000 || !["review","files","worktrees","terminal","browser"].includes(String(item.kind)) || item.terminalId !== undefined && !id(item.terminalId)) return;
     const tab: DockTab = { id: String(item.id), title: item.title, hostId: item.hostId, target: item.target as DockTab["target"], kind: item.kind as DockTab["kind"], ...(item.terminalId === undefined ? {} : { terminalId: item.terminalId as string }) };
     if (tab.id !== dockTabId(tab) || seen.has(tab.id) || (tab.kind === "terminal") !== Boolean(tab.terminalId)) return;
     tabs.push(tab); seen.add(tab.id);

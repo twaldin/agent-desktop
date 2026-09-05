@@ -1,0 +1,5 @@
+# Owner-bound browser viewport patch
+
+This selected patch extends the preserved owner metadata seam for pinned OMP 18.1.10 with one read-only `captureTabViewportForOwner(ownerSessionId, { name, targetId })` export. It captures only the current JPEG viewport of an exact live Puppeteer tab, rechecks owner and target identity afterward, retains timed-out work in an eight-target concurrency bound until it settles, and rejects cmux explicitly. It does not expose browser handles or endpoints and does not activate, navigate, resize, or close the tab.
+
+Run `bun patches/omp-18.1.10/browser-frame/run-isolated.ts`. The isolated proof verifies the pristine package hashes, applies the selected patch with zero fuzz, opens a disposable native OMP tab against a loopback page, captures a nonempty JPEG, and confirms URL, title, viewport, document state, and tab lifetime are unchanged. It performs no provider call and does not touch an existing profile, installed service, global OMP package, or browser UI.

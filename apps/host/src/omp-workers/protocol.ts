@@ -1,9 +1,9 @@
-import type { BrowserMetadataAvailability, ComposerCompletionQuery, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
+import type { BrowserFrameTarget, BrowserMetadataAvailability, ComposerCompletionQuery, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractionResponse, PreparedPromptImage } from "../omp";
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 
-export const WORKER_PROTOCOL_VERSION = 6;
+export const WORKER_PROTOCOL_VERSION = 7;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -33,6 +33,7 @@ export type WorkerOperation =
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }
   | { operation: "getBrowserMetadata" }
+  | { operation: "getBrowserFrame"; args: { target: BrowserFrameTarget } }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
   | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode; options?: { images?: PreparedPromptImage[] } } }

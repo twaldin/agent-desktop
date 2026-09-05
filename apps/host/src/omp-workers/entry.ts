@@ -1,6 +1,7 @@
 import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
-import type { BrowserMetadataAvailability, NativeBrowserTabMetadata } from "@agent-desktop/shared";
+import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeBrowserTabMetadata } from "@agent-desktop/shared";
+import { projectNativeBrowserFrame } from "../omp-browser/frame";
 import { remoteError, WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot } from "./protocol";
 import { projectWorkerEvent } from "./events";
 
@@ -154,6 +155,16 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         catch { respond(true, { availability: "unavailable", reason: "This host could not load its pinned native browser metadata seam." } satisfies BrowserMetadataAvailability); break; }
         if (typeof native.listTabsForOwner !== "function") respond(true, { availability: "unavailable", reason: "This host's pinned OMP package does not include the owner-filtered browser metadata patch." } satisfies BrowserMetadataAvailability);
         else respond(true, browserMetadata(native.listTabsForOwner(owner)));
+        break;
+      }
+      case "getBrowserFrame": {
+        const owner = requireSession().id, target = message.args.target;
+        if (!validBrowserFrameTarget(target) || target.workerPid !== process.pid) throw new Error("The selected browser frame belongs to a stale or invalid worker target.");
+        let native: { captureTabViewportForOwner?: (ownerSessionId: string, target: { name: string; targetId: string }) => Promise<unknown> };
+        try { native = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as typeof native; }
+        catch { throw new Error("This host could not load its pinned native browser capture seam."); }
+        if (typeof native.captureTabViewportForOwner !== "function") throw new Error("This host's pinned OMP package does not include native browser viewport capture.");
+        respond(true, projectNativeBrowserFrame(await native.captureTabViewportForOwner(owner, { name: target.name, targetId: target.targetId }), target, owner));
         break;
       }
       case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex)); break;

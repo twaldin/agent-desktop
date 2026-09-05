@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "package": "@oh-my-pi/pi-coding-agent",
+  "version": "18.1.10",
+  "commit": "f241301c83726afe75a847e919b89977a54dafbe",
+  "baseline": "../browser-metadata/baseline.json",
+  "patch": "../../@oh-my-pi%2Fpi-coding-agent@18.1.10.patch",
+  "entry": "src/tools/browser/tab-supervisor.ts",
+  "requiredExports": ["listTabsForOwner", "captureTabViewportForOwner"]
+}

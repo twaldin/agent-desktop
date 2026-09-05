@@ -3,7 +3,7 @@ import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/co
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BrowserMetadataAvailability, ModelInfo, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
+import type { BrowserFrameTarget, BrowserMetadataAvailability, ModelInfo, NativeBrowserFrame, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
 import { copyPreparedImages } from "../omp/images";
 import { OmpPromptAdmissionError } from "../omp/prompt";
@@ -31,6 +31,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
+  getBrowserFrame(target: BrowserFrameTarget): Promise<NativeBrowserFrame>;
   subscribe(listener: WorkerEventListener): () => void;
   subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
 }
@@ -370,6 +371,10 @@ export class WorkerRuntime {
         const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };
         return metadata;
+      },
+      getBrowserFrame: target => {
+        if (target.workerPid !== client.pid) return Promise.reject(new Error("The selected browser frame belongs to a stale worker."));
+        return client.request<NativeBrowserFrame>({ operation: "getBrowserFrame", args: { target } }, 15_000);
       },
       getImage: async (nativeEntryId, blockIndex) => {
         if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");

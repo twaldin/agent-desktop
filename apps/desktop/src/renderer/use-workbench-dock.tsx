@@ -20,7 +20,7 @@ export function useWorkbenchDock(bridge: DesktopBridge, initial: WindowViewState
   };
   function open(kind: Exclude<DockTab["kind"], "terminal">, destination: DockDestination = "right", owner = hostId, workspace = target) {
     if (!workspace) return;
-    const descriptor = { kind, hostId: owner, target: workspaceKey(workspace) as DockTarget, title: kind === "review" ? "Review" : kind === "worktrees" ? "Worktrees" : "Files" };
+    const descriptor = { kind, hostId: owner, target: workspaceKey(workspace) as DockTarget, title: kind === "review" ? "Review" : kind === "worktrees" ? "Worktrees" : kind === "browser" ? "Browser" : "Files" };
     add({ ...descriptor, id: dockTabId(descriptor) }, destination);
   }
   const bindTerminal = (id: string, owner: string, workspace: WorkspaceTarget, destination: DockDestination, title = "Terminal") => {
@@ -57,7 +57,7 @@ export function useWorkbenchDock(bridge: DesktopBridge, initial: WindowViewState
     if (ready || !target || hostId === "unconnected") return;
     let next = createDockState(); const tabs: DockTab[] = [];
     const insert = (kind: DockTab["kind"], destination: DockDestination, terminalId?: string) => {
-      const descriptor = { kind, hostId, target: workspaceKey(target) as DockTarget, terminalId, title: kind === "review" ? "Review" : kind === "worktrees" ? "Worktrees" : kind === "files" ? "Files" : "Terminal" };
+      const descriptor = { kind, hostId, target: workspaceKey(target) as DockTarget, terminalId, title: kind === "review" ? "Review" : kind === "worktrees" ? "Worktrees" : kind === "files" ? "Files" : kind === "browser" ? "Browser" : "Terminal" };
       const tab = { ...descriptor, id: dockTabId(descriptor) }; tabs.push(tab); next = insertDockTab(next, tab, destination);
     };
     if (initial.workspaceOpen) insert(initial.workspaceTab === "changes" ? "review" : initial.workspaceTab, "right");

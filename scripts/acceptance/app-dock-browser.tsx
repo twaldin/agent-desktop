@@ -9,6 +9,7 @@ import "../../apps/desktop/src/renderer/theme.css";
 
 const owner = "app-dock-owner", projectId = "dock-project", sessionId = "dock-session";
 const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string }[] = [], workspaceCalls: { query: WorkspaceQuery; hostId?: string }[] = [];
+let browserReads = 0;
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
 const model = { provider: "controlled", id: "text", name: "Controlled", input: ["text"], contextWindow: 1000, maxTokens: 1000, reasoning: false, authenticated: true, available: true };
@@ -48,6 +49,8 @@ const methods: Partial<DesktopBridge> = {
   getPreferences: async () => ({ version: 1, records: [] }), getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "theme", filePath: "/controlled/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {}, getMessages: async () => [], getInteractions: async () => [],
   getComposerCatalog: async () => catalog, getSessionControls: async () => ({ sessionId, revision: "controls", model, capabilities: { ...model, api: "controlled", thinkingSelectors: [], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
+  getBrowserMetadata: async (requestedSession, requestedOwner) => { if (requestedSession !== sessionId || requestedOwner !== owner) throw new Error("Browser owner changed"); browserReads++; return { protocolVersion: 1, hostId: owner, sessionId, availability: "running", workerPid: 42, tabs: [] }; },
+  getBrowserFrame: async () => { throw new Error("Empty native catalog must not request pixels"); },
   getSessionActivity: async (requestedSession, hostId) => { activityCalls.push({ sessionId: requestedSession, hostId }); return structuredClone(activity); }, workspaceQuery,
   command: async (envelope: CommandEnvelope): Promise<CommandResult> => {
     if (envelope.command.type === "draft.put") return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: Date.now() } };
@@ -91,6 +94,18 @@ Object.assign(window, {
     const bottomMenu = bottom.querySelector<HTMLDetailsElement>(".dock-menu")!; bottomMenu.open = true; button(bottomMenu, "Hide panel")!.click(); await wait(() => getComputedStyle(bottom).display === "none", "hide bottom panel");
     assert(windowState.dock!.tabs.some(tab => tab.id === restoredTab.id), "closing another tab removed restored pane identity");
     checks.push("menu movement, close, and hide update dock layout without changing navigation or unrelated panes");
+
+    add.open = true; button(add, "Browser")!.click();
+    await wait(() => right.querySelector(".browser-panel") && browserReads > 0, "browser dock reads exact owner metadata");
+    document.querySelector<HTMLButtonElement>('[aria-label="Hide side panel"]')!.click();
+    await wait(() => getComputedStyle(right).display === "none", "hide actual browser dock");
+    const hiddenReads = browserReads; await new Promise(resolve => setTimeout(resolve, 1200));
+    assert(browserReads === hiddenReads, "Hidden production App dock kept browser polling active");
+    document.querySelector<HTMLButtonElement>('[aria-label="Show side panel"]')!.click();
+    await wait(() => browserReads > hiddenReads, "show browser resumes polling");
+    button(right, "Close Browser tab")!.click();
+    await wait(() => !right.querySelector(".browser-panel"), "browser close unmounts viewer");
+    checks.push("browser dock queries its owner and stops polling when the real App hides the dock");
 
     const environment = document.querySelector<HTMLButtonElement>('[aria-label="Environment"]'); assert(environment, "accessible Environment control"); environment.click();
     await wait(() => document.querySelector(".environment-card") && activityCalls.length > 0, "Environment activity");

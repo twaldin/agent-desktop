@@ -18,7 +18,9 @@ test("a lost native command receipt is recovered by command identity without dup
   };
   const messages = async (sessionId: string): Promise<TranscriptMessage[]> => {
     const response = await fetch(`${host.connection.origin}/v1/sessions/${sessionId}/messages`, { headers: { Authorization: `Bearer ${host.connection.token}` } });
-    expect(response.status).toBe(200); return response.json() as Promise<TranscriptMessage[]>;
+    const body = await response.text();
+    if (response.status !== 200) throw new Error(`/messages expected 200, got ${response.status}: ${body.slice(0, 4_096)}`);
+    expect(response.status).toBe(200); return JSON.parse(body) as TranscriptMessage[];
   };
   try {
     const created = await send({ id: crypto.randomUUID(), command: { type: "session.create", projectId: null, cwd: options.discoveryDirectory } });

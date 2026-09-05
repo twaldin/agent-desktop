@@ -60,6 +60,7 @@ const bridge: DesktopBridge = {
   getMessages: (sessionId, hostId) => ipcRenderer.invoke("host:messages", sessionId, hostId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
   getBrowserMetadata: (sessionId, hostId) => ipcRenderer.invoke("host:browser-metadata", sessionId, hostId),
+  getBrowserFrame: (sessionId, target, hostId) => ipcRenderer.invoke("host:browser-frame", sessionId, target, hostId),
   chooseDirectory: () => ipcRenderer.invoke("desktop:directory"),
   subscribe: listener => {
     const callback = (_event: Electron.IpcRendererEvent, message: DesktopEvent) => listener(message);

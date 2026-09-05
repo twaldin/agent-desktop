@@ -40,6 +40,7 @@ import { DockTerminal } from "./DockTerminal";
 import { moveDockTab, type DockTab, type DockDestination } from "./dock-state";
 import { useWorkbenchDock, targetFromDock } from "./use-workbench-dock";
 import { EnvironmentCard } from "./EnvironmentCard";
+import { BrowserPanel } from "./BrowserPanel";
 import { useSessionActivity } from "./use-session-activity";
 import { retainWorkspace } from "./workspace-lease";
 import "./dock-layout.css";
@@ -352,12 +353,14 @@ export function App() {
     {id:"new-terminal",label:"New terminal",onSelect:(destination:DockDestination) => {void dock.terminal(destination,true);}},
     {id:"files",label:"Files",onSelect:(destination:DockDestination) => dock.open("files",destination)},
     {id:"worktrees",label:"Worktrees",onSelect:(destination:DockDestination) => dock.open("worktrees",destination)},
+    ...("sessionId" in workspaceTarget ? [{id:"browser",label:"Browser",onSelect:(destination:DockDestination) => dock.open("browser",destination)}] : []),
   ] : [];
-  function renderDockTab(tab:DockTab) {
+  function renderDockTab(tab:DockTab, active = true) {
     const target = targetFromDock(tab.target), owner = `${tab.hostId}:${tab.target}`;
     const record = desktop.catalog.records.get(tab.hostId);
     const online = Boolean(record?.connected);
     if(tab.kind === "terminal") return tab.terminalId ? <DockTerminal bridge={bridge} hostId={tab.hostId} target={target} terminalId={tab.terminalId} connected={online}/> : <p>Saved terminal identity is unavailable.</p>;
+    if (tab.kind === "browser") return "sessionId" in target ? <BrowserPanel bridge={bridge} hostId={tab.hostId} sessionId={target.sessionId} active={active}/> : <p>Browser previews require a native session.</p>;
     let data = workspaces.get(owner);
     if(!data) {data = new WorkspaceState(bridge,tab.hostId,target,offlineCache,desktop.localHostId);workspaces.set(owner,data);}
     const ownerSession = "sessionId" in target ? record?.state?.sessions.find(value => value.id === target.sessionId) : undefined;
@@ -446,8 +449,8 @@ export function App() {
     </main>
       {environmentOpen && workspace && !settingsOpen && <div className="environment-overlay"><EnvironmentCard key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal()} onHost={() => { setSidebarOpen(true);requestAnimationFrame(() => document.getElementById("active-host")?.focus()); }} onClose={() => setEnvironmentOpen(false)}/></div>}
     {(["right", "bottom"] as const).map(destination => <div className={`dock-slot dock-slot-${destination}`} key={destination} style={{display:!settingsOpen && dock.snapshot.state[destination].open ? undefined : "none"}} inert={settingsOpen || !dock.snapshot.state[destination].open || undefined}>
-      <DockPanel destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} onChange={dock.change} onTabDrop={(id,_from,to,index) => dock.change(moveDockTab(dock.snapshot.state,id,to,index))} addActions={dockActions} renderTab={renderDockTab}/>
-      {!dock.snapshot.state[destination].tabIds.length && <div className="dock-empty-actions">{dockActions.map(action => <button key={action.id} onClick={() => action.onSelect(destination)}><Icon name={action.id === "terminal" ? "terminal" : "folder"}/>{action.label}</button>)}</div>}
+      <DockPanel destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} onChange={dock.change} onTabDrop={(id,_from,to,index) => dock.change(moveDockTab(dock.snapshot.state,id,to,index))} addActions={dockActions} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && dock.snapshot.state[destination].open)}/>
+      {!dock.snapshot.state[destination].tabIds.length && <div className="dock-empty-actions">{dockActions.map(action => <button key={action.id} onClick={() => action.onSelect(destination)}><Icon name={action.id === "browser" ? "globe" : action.id === "terminal" ? "terminal" : "folder"}/>{action.label}</button>)}</div>}
     </div>)}
     </div>
     {sourcePreview && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}

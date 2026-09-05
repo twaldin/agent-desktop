@@ -24,6 +24,7 @@ import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
 import { SessionActivityHttp } from "./session-activity-http";
 import { BrowserMetadataHttp } from "./browser-metadata-http";
+import { BrowserFrameHttp } from "./browser-frame-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
 import { TerminalManager, TmuxTerminalManager, TmuxTerminalsHttp } from "./terminals";
@@ -189,6 +190,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       if (!pending) return undefined;
       try { return await pending; }
       catch { return { workerFailure: { message: "The native session worker is unavailable." }, getBrowserMetadata: async () => ({ availability: "unavailable" as const, reason: "The native session worker is unavailable." }) }; }
+    } });
+  const browserFrames = new BrowserFrameHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
+    getExistingHandle: async id => {
+      const pending = handles.get(id);
+      return pending ? await pending.catch(() => undefined) : undefined;
     } });
   settings = new SettingsHttp({ agentDir: options.agentDirectory, defaultCwd: options.discoveryDirectory ?? homedir(), runtime,
     resolveCwd: target => {
@@ -489,6 +495,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (activityResponse) return activityResponse;
         const browserMetadataResponse = await browserMetadata.route(request, url);
         if (browserMetadataResponse) return browserMetadataResponse;
+        const browserFrameResponse = await browserFrames.route(request, url);
+        if (browserFrameResponse) return browserFrameResponse;
         const settingsResponse = await settings!.route(request, url);
         if (settingsResponse) return settingsResponse;
         const terminalResponse = await terminalsHttp!.handle(request);
