@@ -1,3 +1,5 @@
+import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
+import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
@@ -340,6 +342,12 @@ ipcMain.handle("host:settings-options", (event, path: string, target?: Workspace
 });
 ipcMain.handle("host:model-capabilities", (event, target?: WorkspaceTarget, refresh?: boolean, hostId?: string) => {
   assertTrustedSender(event); return request("/v1/models/capabilities", { target, refresh }, hostId);
+});
+ipcMain.handle("host:composer-actions", async (event, target?: WorkspaceTarget, refresh?: boolean, hostId?: string) => {
+  assertTrustedSender(event); return requestComposerActions(await endpointFor(hostId), target, refresh);
+});
+ipcMain.handle("host:composer-completions", async (event, query: ComposerCompletionQuery, hostId?: string) => {
+  assertTrustedSender(event); return requestComposerCompletions(await endpointFor(hostId), query);
 });
 ipcMain.handle("host:composer-catalog", async (event, target?: WorkspaceTarget, refresh?: boolean, hostId?: string) => {
   assertTrustedSender(event); return requestComposerCatalog(await endpointFor(hostId), target, refresh);

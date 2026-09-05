@@ -1,9 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import type { GitStatusEntry } from "../../../../packages/shared/src/workspace";
 import type { WorkspaceTab } from "../window-state";
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
 import { fileLocation, type WorkspaceFileRequest } from "./transcript-links";
+import { ReviewPanel } from "./ReviewPanel";
 
 export function WorkspacePanel({ data, connected, name, path, fileRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
   const [, redraw] = useReducer(value => value + 1, 0);
@@ -35,7 +35,7 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, tab: 
     {data.notice && <p className="workspace-notice" role="status">{data.notice}</p>}
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
     <div id="workspace-view" className="workspace-view" role="tabpanel" aria-labelledby={`workspace-tab-${tab}`}>
-      {tab === "files" ? <Files data={data} disabled={disabled} fileRequest={fileRequest}/> : tab === "changes" ? <Changes data={data} disabled={disabled} onEdit={path => { setTab("files"); void data.open(path); }}/> : <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/>}
+      {tab === "files" ? <Files data={data} disabled={disabled} fileRequest={fileRequest}/> : tab === "changes" ? <ReviewPanel data={data} disabled={disabled} onEdit={path => { setTab("files"); void data.open(path); }}/> : <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/>}
     </div>
   </aside>;
 }
@@ -90,19 +90,6 @@ function Files({ data, disabled, fileRequest }: { data: WorkspaceState; disabled
   </div>;
 }
 
-function Changes({ data, disabled, onEdit }: { data: WorkspaceState; disabled: boolean; onEdit(path: string): void }) {
-  const status = data.status;
-  const staged = status?.entries.filter(entry => entry.indexStatus !== "." && entry.indexStatus !== " " && entry.indexStatus !== "?") ?? [];
-  const unstaged = status?.entries.filter(entry => entry.worktreeStatus !== "." && entry.worktreeStatus !== " " || entry.kind === "untracked") ?? [];
-  return <div className="changes-view">
-    {data.errors.git && <p className="workspace-notice" role="alert">{data.errors.git}</p>}
-    <div className="git-status-line"><strong>{status ? status.branch ?? "Detached HEAD" : "Git status unavailable"}</strong>{status?.upstream && <span>{status.upstream} · ↑{status.ahead} ↓{status.behind}</span>}</div>
-    <div className="git-files">{([{ title: "Staged changes", entries: staged, staged: true }, { title: "Working tree", entries: unstaged, staged: false }] as const).map(group => <section key={group.title}><div className="git-group-heading"><h3>{group.title} <span>{group.entries.length}</span></h3><button disabled={!data.connected || !group.entries.length} onClick={() => void data.showDiff(undefined, group.staged)}>Review all</button></div>{group.entries.map(entry => <div className="git-file-row" key={entry.path}><button className="git-file-path" title={entry.originalPath ? `${entry.originalPath} → ${entry.path}` : entry.path} onClick={() => void data.showDiff(entry.path, group.staged)}><code>{group.staged ? entry.indexStatus : entry.worktreeStatus === "?" ? "U" : entry.worktreeStatus}</code><span className="truncate">{entry.path}</span>{entry.kind === "conflict" && <span className="git-conflict-label">Conflict</span>}</button><button title="Open file in editor" onClick={() => onEdit(entry.path)}>Edit</button><button disabled={disabled || group.staged && !status} onClick={() => void data.mutate(group.staged ? { type: "git.unstage", paths: paths(entry), expectedRevision: status!.revision } : { type: "git.stage", paths: paths(entry) })}>{group.staged ? "Unstage" : "Stage"}</button></div>)}{group.entries.length === 0 && status && <p className="workspace-notice">No {group.staged ? "staged" : "working tree"} changes.</p>}</section>)}</div>
-    <form className="commit-form" onSubmit={event => { event.preventDefault(); if (status && !disabled && data.commitMessage.trim()) void data.mutate({ type: "git.commit", message: data.commitMessage, expectedRevision: status.revision }); }}><label htmlFor="git-commit-message">Commit staged changes</label><textarea id="git-commit-message" value={data.commitMessage} placeholder="Commit message" onChange={event => data.setCommitMessage(event.target.value)} rows={2}/><button className="primary-button" disabled={disabled || !staged.length || !data.commitMessage.trim() || status?.entries.some(entry => entry.kind === "conflict")}>Commit {staged.length} {staged.length === 1 ? "path" : "paths"}</button></form>
-    <section className="diff-view" aria-label="Git diff"><header><strong>{data.diffSelection.path ?? "Repository diff"}</strong><span>{data.diffSelection.staged ? "Staged" : "Working tree"}</span></header>{data.errors.diff && <p className="workspace-notice" role="alert">{data.errors.diff}</p>}{data.loading.has("diff") && <p className="workspace-notice">Loading diff…</p>}{data.diff ? <>{data.diff.binary && <p className="workspace-notice">This diff includes binary changes.</p>}{data.diff.patch ? <pre>{data.diff.patch.split("\n").map((line, index) => <span key={index} className={line.startsWith("@@") ? "diff-hunk" : line.startsWith("+") && !line.startsWith("+++") ? "diff-added" : line.startsWith("-") && !line.startsWith("---") ? "diff-removed" : ""}>{line || " "}</span>)}</pre> : <p className="workspace-notice">No patch for this selection.</p>}</> : <p className="workspace-notice">Select a changed path to review its actual Git diff.</p>}</section>
-  </div>;
-}
-
 function Worktrees({ data, disabled, onOpenProject }: { data: WorkspaceState; disabled: boolean; onOpenProject(path: string): Promise<void> }) {
   const [destination, setDestination] = useState(""); const [mode, setMode] = useState<"new" | "existing" | "detached">("new");
   const [branch, setBranch] = useState(""); const [start, setStart] = useState(""); const [removing, setRemoving] = useState<string>();
@@ -112,5 +99,4 @@ function Worktrees({ data, disabled, onOpenProject }: { data: WorkspaceState; di
     <h3>Registered worktrees</h3>{!data.worktrees.length && <p className="workspace-notice">{data.loading.has("worktrees") ? "Loading worktrees…" : "No worktree listing is available."}</p>}{data.worktrees.map(tree => <article className="worktree-card" key={tree.path}><strong>{tree.branch ?? (tree.detached ? "Detached HEAD" : "Bare repository")}</strong><code>{tree.path}</code><p>{tree.managed ? "Managed by this host" : "Existing repository worktree"}{tree.locked ? ` · Locked${tree.lockReason ? `: ${tree.lockReason}` : ""}` : ""}{tree.prunable ? ` · ${tree.prunable}` : ""}</p><div><button className="secondary-button" disabled={!data.connected || Boolean(opening) || tree.bare} onClick={() => { setOpening(tree.path); setError(undefined); void onOpenProject(tree.path).catch(cause => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setOpening(undefined)); }}>{opening === tree.path ? "Opening…" : "Open as project"}</button>{tree.managed && <button className="secondary-button" disabled={disabled || tree.locked || !tree.managedRelativePath} title={!tree.managedRelativePath ? "Update this host to expose its managed removal path" : undefined} onClick={() => setRemoving(tree.path)}>Remove</button>}</div>{removing === tree.path && <div className="worktree-remove"><p>Remove this managed worktree directory? The host refuses changed, untracked, ignored, locked, or active-session content.</p><button className="secondary-button" onClick={() => setRemoving(undefined)}>Cancel</button><button className="danger-button" disabled={disabled} onClick={() => { setRemoving(undefined); void data.mutate({ type: "worktree.remove", path: tree.managedRelativePath! }); }}>Remove clean worktree</button></div>}</article>)}
   </div>;
 }
-function paths(entry: GitStatusEntry) { return entry.originalPath ? [entry.originalPath, entry.path] : [entry.path]; }
 function size(bytes: number) { return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`; }

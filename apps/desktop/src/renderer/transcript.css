@@ -24,3 +24,9 @@
 .transcript-message-metadata dd { margin:0; overflow-wrap:anywhere; }
 .transcript-message-metadata pre { margin:0; font:var(--code-font-size)/var(--code-line-height) var(--code-font); }
 .transcript-unsupported { white-space:normal; }
+
+.transcript-command-output { margin: 12px 0; color: var(--secondary); }
+.transcript-command-output summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: var(--small-font-size, 12px); }
+.transcript-command-output summary .icon { width: 16px; height: 16px; }
+.transcript-command-origin { color: var(--tertiary); }
+.transcript-command-output > pre { max-height: 320px; overflow: auto; margin-top: 8px; }

@@ -1,8 +1,8 @@
 # Milestone status
 
-Home and Work run desktop **13**. Both Macs and Deckbox run host **13**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
+Home runs desktop and host **14**. Work runs desktop and host **13**; Deckbox runs host **13**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
-## Source 14 in progress — not installed
+## Release 14 — installed on Home; remote acceptance pending
 
 - Image attachments now have an owner-side binary store, version 3 commands, ordered persistent draft references, atomic admission/clear receipts, native OMP image normalization and native transcript previews. Source checks include actual worker/HTTP admission and Linux decoding/durability. Real provider images, native OS picker and physical cross-device acceptance remain pending. See [draft attachments](draft-attachments.md).
 - The actual production App passes seven controlled attachment workflow groups in hidden Electron, including offline caching, image-only submission and remount cleanup. Updated captures fit at 1780×1111, 1200×1000, 760×1000 and 150% zoom; the saved composer has no reserved footer. Host responses in this fixture are controlled; it does not establish installed or provider behavior. Evidence: `.data/attachment-ui-acceptance/run11/result.json`.
@@ -11,7 +11,15 @@ Home and Work run desktop **13**. Both Macs and Deckbox run host **13**. This is
 - Healthy-host discovery now allows the measured native authentication latency; the source regression passed. This fix is committed but awaits installed verification. See [host discovery latency](host-discovery-latency.md). The reliable explicit-path test runner is documented in [test runtime](test-runtime.md).
 - A real OMP browser experiment proved that an independent CDP viewer observes and controls the same native tab, including input, screenshots, reconnect and disposal. Electron/Tailscale browser panels are not implemented. See [browser integration](browser-integration.md). The [full static archive audit](reference-extraction.md) recovered all 8,528 packed files. The [panel trace](panel-reference.md) identifies exact diff dependencies, themes, toolbar options, docking and animations. Neither source extraction nor isolated icon matches establishes whole-app parity.
 
-The release 14 host archive and signed macOS app are built but not installed. Archive SHA-256: `9724250f4222b17b8b19fe3cd943072bb671dfc32d09a23818cf1e103d363052`. This artifact includes schema `[1,2,3]` and worker IPC 4; install and migration acceptance are still required.
+Home’s guarded 13→14 installation preserved projects, sessions, all four drafts and every original native transcript byte; one open session appended only its verified shutdown exit entry. The backup matched the pre-upgrade database, which remains schema 2. The native image picker opened and cancelled successfully; selecting an image and real provider/cross-device image acceptance remain pending. Evidence: `.data/ui-acceptance/home-release14-upgrade.json` and `home-release14-preservation.json`. An ambiguous app-name lookup briefly launched an older candidate; it was closed, leaving one release 14 window in space 9. Use the exact release bundle path for inspection.
+
+The release 14 host archive and signed macOS app are built; Work and Deckbox have not adopted them. Archive SHA-256: `9724250f4222b17b8b19fe3cd943072bb671dfc32d09a23818cf1e103d363052`. This artifact includes schema `[1,2,3]` and worker IPC 4; install and migration acceptance are still required.
+
+## Source 15 in progress
+
+Composer `/` commands and app actions, `$` skills, `@` files, native URI references and argument completion now use owner-scoped catalogs. The review panel uses Pierre 1.3.5 with syntax highlighting, unified/split modes, compact stage controls and a button-triggered commit dialog. Native command output persists as separate operator metadata. These source changes are not installed and do not establish feature parity.
+
+The final integrated suite passed **457 tests / 24,109 assertions**, with 17 skips and no failures. The source audit found one test-file edit during the run; all other 326 captured source/config files stayed unchanged. That native composer test was rerun separately after edits stopped. Typecheck, production build and diff checks passed. The initial full run caught an old expectation for post-side-effect command errors; its updated test verifies `OUTCOME_UNKNOWN`, exact retry/restart receipts and one side effect. Six actual-App autocomplete workflow groups and four review workflow groups passed in hidden Electron with controlled bridges; screenshots cover narrow/wide/150% layouts. Native backend suites separately verify execution and durable receipts. Evidence: `.data/source15-full-tests-final.log`, `.data/source15-after-final-suite.json`, `.data/composer-ui-acceptance/run5/result.json`, `.data/review-ui-acceptance/current/result.json`. The [runtime surface map](runtime-surface-map.md) records the remaining bridges for goals, subagents, browser state and the Environment card.
 
 ## Release 13 checkpoint
 

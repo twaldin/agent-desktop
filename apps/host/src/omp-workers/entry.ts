@@ -118,6 +118,8 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         if (!runtime) throw new Error("OMP worker is not initialized");
         respond(true, await runtime.getComposerCatalog(message.args.cwd, { refresh: message.args.refresh }));
         break;
+      case "getComposerActions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerActions(message.args.cwd, { refresh: message.args.refresh }) : await requireSession().getComposerActions()); break;
+      case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
       case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex)); break;
       case "startPrompt": {

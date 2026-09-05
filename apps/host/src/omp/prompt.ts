@@ -5,7 +5,7 @@ export type OmpPromptReceipt = PromptAdmission;
 export class OmpPromptAdmissionError extends Error {
   readonly code = "OUTCOME_UNKNOWN";
   constructor(cause?: unknown) {
-    super(`Native image admission could not be verified. Retain the original submission identity.${cause instanceof Error ? ` ${cause.message}` : ""}`, { cause });
+    super(`Native prompt admission could not be verified. Retain the original submission identity.${cause instanceof Error ? ` ${cause.message}` : ""}`, { cause });
     this.name = "OmpPromptAdmissionError";
   }
 }
@@ -13,6 +13,8 @@ export interface NativePromptDispatchResult {
   agentInvoked: boolean;
   /** Set only by an executed native command handler that consumed the input. */
   handledCommand?: string;
+  commandEntryId?: string;
+  output?: string;
 }
 export interface OmpPromptRun {
   /** Flushed user entry or completed native command; null is unaccepted input. */
@@ -27,32 +29,38 @@ export function beginNativePrompt(
   dispatch: () => Promise<NativePromptDispatchResult>,
   settlePersistence: () => Promise<void>,
   imageAdmission?: { matches(message: unknown): boolean; receipt(): ImageAdmission[]; readonly dispatched: boolean },
+  skillAdmission?: { matchesEntry(entry: Parameters<NonNullable<SessionManager["onEntryAppended"]>>[0]): boolean; readonly name: string; readonly dispatched: boolean },
 ): OmpPromptRun {
   const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
   let entryObserved = false;
-  const admissionFailure = (error: unknown) => imageAdmission?.dispatched ? new OmpPromptAdmissionError(error) : error;
+  let commandHandled = false;
+  const admissionFailure = (error: unknown) => imageAdmission?.dispatched || skillAdmission?.dispatched || commandHandled ? new OmpPromptAdmissionError(error) : error;
   const previousEntryListener = manager.onEntryAppended;
   const entryListener: NonNullable<typeof manager.onEntryAppended> = entry => {
     previousEntryListener?.(entry);
-    if (entryObserved || entry.type !== "message" || entry.message.role !== "user" || (imageAdmission && !imageAdmission.matches(entry.message))) return;
+    const skillEntry = skillAdmission?.matchesEntry(entry);
+    if (entryObserved || (skillAdmission ? !skillEntry : entry.type !== "message" || entry.message.role !== "user" || (imageAdmission && !imageAdmission.matches(entry.message)))) return;
     entryObserved = true;
     // message_end precedes persistence. onEntryAppended follows native append;
     // flush additionally checks asynchronous writes and latched disk failures.
     void manager.flush().then(() => {
-      receipt.resolve({ kind: "user-message", entryId: entry.id, ...(imageAdmission ? { images: imageAdmission.receipt() } : {}) });
+      receipt.resolve(skillEntry ? { kind: "skill-message", entryId: entry.id, name: skillAdmission!.name }
+        : { kind: "user-message", entryId: entry.id, ...(imageAdmission ? { images: imageAdmission.receipt() } : {}) });
     }).catch(error => receipt.reject(admissionFailure(error)));
   };
   manager.onEntryAppended = entryListener;
   const completion = (async () => {
     try {
       const result = await dispatch();
+      commandHandled = result.handledCommand !== undefined;
       await settlePersistence();
       // Native local commands can persist title/custom/settings metadata without
       // a message event. Check the manager's disk tail before acknowledging them.
       await manager.flush();
       if (!entryObserved) {
-        if (imageAdmission?.dispatched) receipt.reject(new OmpPromptAdmissionError());
-        else receipt.resolve(result.handledCommand ? { kind: "native-command", command: result.handledCommand } : null);
+        if (imageAdmission?.dispatched || skillAdmission?.dispatched) receipt.reject(new OmpPromptAdmissionError());
+        else receipt.resolve(result.handledCommand ? { kind: "native-command", command: result.handledCommand,
+          ...(result.commandEntryId ? { entryId: result.commandEntryId } : {}), ...(result.output ? { output: result.output } : {}) } : null);
       }
       return result.agentInvoked;
     } catch (error) {

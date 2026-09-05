@@ -1,4 +1,4 @@
-import type { ModelChoice, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
+import type { ComposerCompletionQuery, ModelChoice, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractionResponse, PreparedPromptImage } from "../omp";
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
@@ -27,6 +27,8 @@ export type WorkerOperation =
   | { operation: "listModels"; args: { cwd: string; refresh?: boolean } }
   | { operation: "listModelCapabilities"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerCatalog"; args: { cwd: string; refresh?: boolean } }
+  | { operation: "getComposerActions"; args: { cwd?: string; refresh?: boolean } }
+  | { operation: "getComposerCompletions"; args: { cwd?: string; query: ComposerCompletionQuery } }
   | { operation: "getMessages" }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }

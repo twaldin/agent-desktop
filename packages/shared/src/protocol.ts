@@ -7,7 +7,9 @@ import type { TerminalBridge, NativeTerminalBridge } from "./terminals";
 import type { OmpApprovalMode, OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot } from "./settings";
 import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingOptions, OmpSettingsCatalog, OmpSettingsMutation, OmpSettingsSnapshot } from "./settings";
 import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities, UploadedImageMetadata, RecordedImageBytes } from "./attachments";
+import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions } from "./composer-actions";
 export * from "./attachments";
+export * from "./composer-actions";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -110,6 +112,8 @@ export interface TranscriptMessage {
   lifecycle?: "streaming" | "complete";
   tool?: { callId: string; name?: string; status?: "running" | "completed"; isError?: boolean; arguments?: Record<string, unknown>; intent?: string };
   assistant?: TranscriptAssistantMetadata;
+  /** App-owned native command output entry. This is never a model message. */
+  commandOutput?: { entryId: string; command: string; output: string };
   blocks?: unknown[];
 }
 
@@ -153,7 +157,8 @@ export interface ImageAdmission {
 }
 export type PromptAdmission =
   | { kind: "user-message"; entryId: string; images?: ImageAdmission[] }
-  | { kind: "native-command"; command: string };
+  | { kind: "skill-message"; entryId: string; name: string }
+  | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
   | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | { type: "preferences.put"; preference: PreferenceRecord } }
   | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
@@ -200,6 +205,8 @@ export type AccountAction =
 export interface AccountActionResult { login?: LoginSnapshot; accounts?: AccountInfo[]; selection?: SessionAccountList }
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge> {
+  getComposerActions?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<ComposerActionsCatalog | null>;
+  getComposerCompletions?(query: ComposerCompletionQuery, hostId?: string): Promise<ComposerCompletions>;
   inspectImageAttachment?(data: Uint8Array): Promise<UploadedImageMetadata>;
   getImageAttachmentCapabilities?(hostId: string): Promise<ImageAttachmentCapabilities | null>;
   uploadImageAttachment?(sha256: string, data: Uint8Array, hostId: string): Promise<UploadedImageMetadata>;

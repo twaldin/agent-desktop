@@ -21,6 +21,7 @@ import { AccountsHttp } from "./accounts-http";
 import { parseInteractionAnswer } from "./interaction-http";
 import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./workspace-http";
 import { PreferencesSync } from "./preferences-sync";
+import { ComposerActionsHttp } from "./composer-actions-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
 import { TerminalManager, TmuxTerminalManager, TmuxTerminalsHttp } from "./terminals";
@@ -172,6 +173,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     release: id => ordered(id, async () => (await getHandle(id)).releaseAccountForReselection()),
     changed: refresh => { publish({ type: "accounts" }); if (refresh) refreshModels(); },
   });
+  const composerActions = new ComposerActionsHttp({ hostId: store.host.id, runtime, getHandle, resolveCwd: target => {
+    if (!target) return options.discoveryDirectory ?? homedir();
+    const cwd = "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
+    if (!cwd) throw new Error("The composer target is not catalogued on this host.");
+    return cwd;
+  } });
   settings = new SettingsHttp({ agentDir: options.agentDirectory, defaultCwd: options.discoveryDirectory ?? homedir(), runtime,
     resolveCwd: target => {
       if (!target) return options.discoveryDirectory ?? homedir();
@@ -465,6 +472,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (attachmentResponse) return attachmentResponse;
         const accountResponse = await accounts!.route(request, url);
         if (accountResponse) return accountResponse;
+        const composerResponse = await composerActions.route(request, url);
+        if (composerResponse) return composerResponse;
         const settingsResponse = await settings!.route(request, url);
         if (settingsResponse) return settingsResponse;
         const terminalResponse = await terminalsHttp!.handle(request);

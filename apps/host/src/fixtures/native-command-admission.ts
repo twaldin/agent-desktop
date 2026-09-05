@@ -43,10 +43,11 @@ try {
   // re-run the failed operation for the same client command identity.
   const failedDraft = await draft("/admission-contract throw-after");
   const failedInput: CommandEnvelope = { id: "partial-command-error", command: { type: "session.prompt", sessionId: session.id, text: failedDraft.text, draft: { id: failedDraft.id, revision: failedDraft.revision } } };
-  const failed = await command(failedInput); assert(!failed.ok); assert.equal(failed.error.code, "COMMAND_FAILED");
+  const failed = await command(failedInput); assert(!failed.ok); assert.equal(failed.error.code, "OUTCOME_UNKNOWN");
   assert.match(failed.error.message, /failed after side effect/);
   assert.equal(host.store.getDraft(failedDraft.id)?.text, failedDraft.text);
-  assert.deepEqual(await command(failedInput), failed);
+  const failedAgain = await command(failedInput); assert.deepEqual(failedAgain, failed);
+  assert(!failedAgain.ok); assert.equal(failedAgain.error.code, "OUTCOME_UNKNOWN");
   assert.equal((await entries(session.sessionFile)).filter(entry => entry.data?.args === "throw-after").length, 1);
 
   const waitingDraft = await draft("/admission-contract wait");
@@ -70,7 +71,8 @@ try {
   assert.equal((await entries(session.sessionFile)).filter(entry => entry.data?.args === "wait").length, 0);
   assert.equal((await entries(session.sessionFile)).filter(entry => entry.type === "message").length, 0);
   await host.stop(); host = await startHost(options);
-  assert.deepEqual(await command(failedInput), failed);
+  const failedAfterRestart = await command(failedInput); assert.deepEqual(failedAfterRestart, failed);
+  assert(!failedAfterRestart.ok); assert.equal(failedAfterRestart.error.code, "OUTCOME_UNKNOWN");
   assert.deepEqual(await command(waitingInput), cancelled);
   assert.equal((await entries(session.sessionFile)).filter(entry => entry.data?.args === "throw-after").length, 1);
   const renamed = await command({ id: "native-command-title", command: { type: "session.prompt", sessionId: session.id, text: "/admission-contract rename" } });

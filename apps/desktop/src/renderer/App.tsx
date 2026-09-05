@@ -6,6 +6,7 @@ import { DraftController, hasDraftContent } from "./drafts";
 import { SubmissionController } from "./submissions";
 import { ComposerCatalogState, composerSelection, composerTargetKey } from "./composer-catalog";
 import { ComposerSelections } from "./ComposerSelections";
+import { useComposerAutocomplete } from "./ComposerAutocomplete";
 import { approvalModes, composerApproval } from "./ComposerPermissions";
 import { DraftSnapshot } from "./DraftSnapshot";
 import { createAttachmentCache } from "./attachment-cache";
@@ -297,6 +298,24 @@ export function App() {
     try { await command({ type: "session.rename", sessionId: selected.id, title: renameTitle.trim() }); setDialog(null); await refresh(); }
     catch (cause) { setActionError(errorMessage(cause)); }
   }
+  const autocomplete = useComposerAutocomplete({
+    bridge, hostId, target: workspaceTarget, draftId, text: draft.text, connected,
+    disabled: Boolean(selected?.archived || missingSession || busy || pendingSubmission?.uncertain || settingsOpen),
+    input: textarea, readText: () => drafts.get(draftId).draft.text,
+    updateText: text => drafts.update(draftId, { text }),
+    actions: [
+      { id: "archive", name: "Archive", description: "Archive the current chat", icon: "archive", reason: !selected ? "Open a conversation to archive it." : !connected ? "Reconnect to archive this conversation." : undefined,
+        run: async () => { if (!selected || !connected) throw new Error("The conversation is unavailable."); await command({ type: "session.archive", sessionId: selected.id, archived: true }); await refresh(); } },
+      { id: "review", name: "Code review", description: "Review changes in this workspace", icon: "compose", reason: !workspace ? "Choose a project to review its changes." : undefined,
+        run: () => { setWorkspaceTab("changes"); setWorkspaceOpen(true); } },
+      { id: "files", name: "Files", description: "Open workspace files", icon: "folder", reason: !workspace ? "Choose a project to browse its files." : undefined,
+        run: () => { setWorkspaceTab("files"); setWorkspaceOpen(true); } },
+      { id: "terminal", name: "Terminal", description: "Open the workspace terminal", icon: "terminal", reason: !workspace ? "Choose a project to open its terminal." : undefined,
+        run: () => setTerminalOpen(true) },
+      { id: "new-chat", name: "New chat", description: "Start a new conversation", icon: "compose", run: () => newConversation() },
+      { id: "settings", name: "Settings", description: "Open native OMP settings", icon: "more", run: () => { setSettingsPage("omp"); setSettingsOpen(true); } },
+    ],
+  });
   const hostGroups = desktop.hosts.flatMap(host => { const hostState = host.hostId ? desktop.catalog.records.get(host.hostId)?.state : undefined; return hostState ? [{ host, hostState }] : []; });
 
   return <div className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"} ${workspaceOpen && workspace && !settingsOpen ? "with-workspace" : ""}`}>
@@ -358,7 +377,8 @@ export function App() {
             {imagesStaging && <p className="attachment-notice" role="status">Finish adding or remove the pending images before sending.</p>}
             <label className="sr-only" htmlFor="prompt">Message</label>
             <span id="prompt-keyboard-hint" className="sr-only">{`${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${running ? "steer" : "send"}. Shift Enter for a new line.`}</span>
-            <textarea id="prompt" aria-describedby="prompt-keyboard-hint" ref={textarea} value={draft.text} onChange={event => drafts.update(draftId, { text: event.target.value })} placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)} spellCheck rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>
+            <textarea id="prompt" aria-describedby="prompt-keyboard-hint" ref={textarea} value={draft.text} {...autocomplete.inputProps} placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)} spellCheck rows={2} onKeyDown={event => { if (autocomplete.onKeyDown(event)) return; if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && !autocomplete.composing.current && event.keyCode !== 229) { event.preventDefault(); void submit(); } }}/>
+            {autocomplete.popup}
             <div className="composer-toolbar">
               <div className="composer-selections">
                 {!selectedId && <label className="select-control project-select" title="Project"><Icon name="folder"/><span className="sr-only">Project</span><select aria-label="Project" value={draft.projectId ?? ""} onChange={event => drafts.update(draftId, { projectId: event.target.value || null })}><option value="">No project</option>{state?.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}

@@ -1,0 +1,15 @@
+.composer-autocomplete { position: fixed; z-index: 60; display: flex; flex-direction: column; overflow: hidden; padding: 7px; border: var(--border-width, 1px) solid var(--border); border-radius: calc(16px * var(--corner-radius-scale, 1.25)); corner-shape: superellipse(var(--corner-exponent, 1.5)); background: var(--menu-surface, var(--elevated-surface)); color: var(--text); font-size: var(--font-size, 14px); box-shadow: 0 8px 24px #0003; backdrop-filter: blur(var(--background-blur, 8px)); }
+.composer-autocomplete-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.composer-autocomplete-row { appearance: none; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 8px; border: 0; border-radius: 9999px; color: inherit; background: transparent; text-align: left; font: inherit; line-height: 20px; cursor: pointer; }
+.composer-autocomplete-row[aria-selected=true] { background: var(--selected); }
+.composer-autocomplete-row[aria-disabled=true] { opacity: .5; cursor: default; }
+.composer-autocomplete-row > .icon { width: 16px; height: 16px; flex-shrink: 0; }
+.completion-label { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.completion-description { min-width: 0; flex: 1; color: var(--secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.completion-origin { margin-left: auto; flex: 0 0 auto; color: var(--tertiary); font-size: var(--small-font-size, 12px); max-width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-autocomplete-status, .composer-autocomplete-hint { flex-shrink: 0; padding: 5px 8px; color: var(--secondary); font-size: var(--small-font-size, 12px); line-height: 1.4; }
+.composer-autocomplete-status { display: flex; align-items: center; gap: 8px; }
+.composer-autocomplete-status[role=alert] { color: var(--danger); }
+.composer-autocomplete-status button { margin-left: auto; color: var(--text); }
+.composer-autocomplete-hint { color: var(--tertiary); }
+@media (max-width: 650px) { .completion-origin { max-width: 20%; } .completion-label { max-width: 45%; } .composer-autocomplete-hint { font-size: 11px; } }

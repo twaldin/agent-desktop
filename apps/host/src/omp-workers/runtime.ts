@@ -1,3 +1,5 @@
+import type { ComposerCompletionQuery } from "@agent-desktop/shared";
+import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -232,7 +234,7 @@ class WorkerClient {
     }
     const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images) } : undefined;
     const id = String(++this.#requestId);
-    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length));
+    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length) || text.trimStart().startsWith("/") || text.includes("/skill:"));
     const completion = this.#promise<boolean>(`${id}:completion`);
     try { this.#send({ type: "request", id, operation: "startPrompt", args: { text, options: preparedOptions } }); }
     catch (error) {
@@ -356,6 +358,8 @@ export class WorkerRuntime {
       get hasPostPromptWork() { return state().hasPostPromptWork; }, get title() { return state().title; },
       get createdAt() { return state().createdAt; }, get modelFallbackMessage() { return state().modelFallbackMessage; },
       get workerPid() { return client.pid; }, get workerFailure() { return client.failure; },
+      getComposerActions: () => client.request<NativeComposerCatalog>({ operation: "getComposerActions", args: {} }, 15_000),
+      getComposerCompletions: query => client.request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { query } }, 5_000),
       getMessages: () => client.request<TranscriptMessage[]>({ operation: "getMessages" }, 30_000),
       getImage: async (nativeEntryId, blockIndex) => {
         if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");
@@ -418,6 +422,15 @@ export class WorkerRuntime {
     await this.listModels(cwd);
     const client = await this.#discovery!;
     return client.request<OmpComposerCatalog>({ operation: "getComposerCatalog", args: { cwd, refresh: options.refresh } });
+  }
+
+  async getComposerActions(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeComposerCatalog> {
+    await this.listModels(cwd);
+    return (await this.#discovery!).request<NativeComposerCatalog>({ operation: "getComposerActions", args: { cwd, refresh: options.refresh } }, 15_000);
+  }
+  async getComposerCompletions(cwd: string, query: ComposerCompletionQuery): Promise<NativeComposerCompletions> {
+    await this.listModels(cwd);
+    return (await this.#discovery!).request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { cwd, query } }, 5_000);
   }
 
   dispose(): Promise<void> {

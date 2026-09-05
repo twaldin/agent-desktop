@@ -14,6 +14,9 @@ import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config
 import { TranscriptMirror } from "./transcript";
 import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
 import { dispatchNativePrompt } from "./commands";
+import { NativeSkillPrompt } from "./skills";
+import { discoverComposerActions, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions } from "./composer-actions";
+import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
 import { createNativeAccountSelectionBridge } from "../omp-accounts/session-selection";
 import type { SessionAccountList } from "../omp-accounts/types";
@@ -55,6 +58,8 @@ export interface OmpSession {
   readonly createdAt: number;
   readonly modelFallbackMessage: string | undefined;
   getMessages(): TranscriptMessage[];
+  getComposerActions(): Promise<NativeComposerCatalog>;
+  getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
   subscribe(listener: OmpEventListener): () => void;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
@@ -204,6 +209,13 @@ export class OmpRuntime {
     return this.#withDiscovery(cwd, options.refresh, context => composerCatalog(cwd, context.settings, context.registry));
   }
 
+  getComposerActions(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeComposerCatalog> {
+    return this.#withDiscovery(cwd, options.refresh, context => discoverComposerActions(cwd, this.#agentDir, context.settings));
+  }
+  getComposerCompletions(cwd: string, query: ComposerCompletionQuery): Promise<NativeComposerCompletions> {
+    return this.#withDiscovery(cwd, false, async context => composerCompletions(await discoverComposerActions(cwd, this.#agentDir, context.settings), query));
+  }
+
   #setup(operation: () => Promise<OmpSession>): Promise<OmpSession> {
     this.#assertActive();
     const pending = operation();
@@ -289,11 +301,27 @@ export class OmpRuntime {
       const auth = context.auth;
       const registry = context.registry;
       const mirror = new TranscriptMirror();
+      const transcriptEntries = () => manager.getBranch().flatMap(entry => entry.type === "message" ? [{ id: entry.id, message: entry.message as unknown }]
+        : entry.type === "custom_message" ? [{ id: entry.id, message: { role: "custom", customType: entry.customType, content: entry.content, display: entry.display, details: entry.details, attribution: entry.attribution, timestamp: Date.parse(entry.timestamp) } as unknown }] : []);
+      const transcript = () => {
+        const branch = manager.getBranch();
+        const messages = mirror.snapshot(session.buildTranscriptSessionContext({ collapseCompactedHistory: false, keepDanglingToolCalls: true }).messages, transcriptEntries());
+        const order = new Map(branch.map((entry, index) => [entry.id, index]));
+        for (const entry of branch) {
+          if (entry.type !== "custom" || entry.customType !== "agent-desktop.command-output" || !entry.data || typeof entry.data !== "object") continue;
+          const data = entry.data as Record<string, unknown>;
+          if (typeof data.command !== "string" || typeof data.output !== "string") continue;
+          messages.push({ id: entry.id, nativeId: entry.id, role: "commandOutput", text: "", content: [], blocks: [],
+            timestamp: Date.parse(entry.timestamp), lifecycle: "complete", commandOutput: { entryId: entry.id, command: data.command, output: data.output } });
+        }
+        return messages.sort((left, right) => (left.nativeId ? order.get(left.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER)
+          - (right.nativeId ? order.get(right.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER));
+      };
       // Reserve identities from resumed history before a prompt can emit events,
       // including providers that reuse a tool call ID in a later turn.
       mirror.snapshot(
         session.buildTranscriptSessionContext({ collapseCompactedHistory: false, keepDanglingToolCalls: true }).messages,
-        manager.getBranch().filter(entry => entry.type === "message"),
+        transcriptEntries(),
       );
       const listeners = new Set<OmpEventListener>();
       if (options.onEvent) listeners.add(options.onEvent);
@@ -346,10 +374,10 @@ export class OmpRuntime {
         modelFallbackMessage: result.modelFallbackMessage,
         getMessages: () => {
           assertSessionActive();
-          const entries = manager.getBranch().filter(entry => entry.type === "message");
-          const display = session.buildTranscriptSessionContext({ collapseCompactedHistory: false, keepDanglingToolCalls: true });
-          return mirror.snapshot(display.messages, entries);
+          return transcript();
         },
+        getComposerActions: async () => { assertSessionActive(); return sessionComposerActions(session, result.extensionsResult?.extensions ?? []); },
+        getComposerCompletions: async query => { assertSessionActive(); return composerCompletions(sessionComposerActions(session, result.extensionsResult?.extensions ?? []), query, session); },
         getImage: async (nativeEntryId, blockIndex) => {
           assertSessionActive();
           if (typeof nativeEntryId !== "string" || nativeEntryId.length > 200 || !Number.isSafeInteger(blockIndex) || blockIndex < 0) throw new Error("Invalid native image identity");
@@ -370,6 +398,7 @@ export class OmpRuntime {
           admissionPending = true;
           const controller = new AbortController();
           admissionAbort = controller;
+          let skillPrompt: NativeSkillPrompt | undefined;
           const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
           const completion = (async () => {
               await auth.revalidateCredentials();
@@ -381,6 +410,8 @@ export class OmpRuntime {
               }
               assertSessionActive();
               if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
+              skillPrompt = NativeSkillPrompt.fromText(session, text);
+              if (skillPrompt && imagePrompt) throw new Error("Images on native skill invocations are not connected yet; the draft was retained.");
               // Startup extension messages are not receipts for the submitted draft.
               const nativeRun = beginNativePrompt(manager, async () => {
                 if (promptOptions.model) await session.setModel(this.#findModel(registry, promptOptions.model, session.settings));
@@ -391,12 +422,13 @@ export class OmpRuntime {
                   session.setThinkingLevel(selection, false);
                 }
                 await imagePrompt?.prepare(session, manager);
+                await skillPrompt?.prepare();
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
-                return dispatchNativePrompt(session, text, imagePrompt?.images);
-              }, () => session.settleInFlightMessagePersistence(), imagePrompt);
+                return dispatchNativePrompt(session, text, imagePrompt?.images, skillPrompt);
+              }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt);
               void nativeRun.accepted.then(receipt.resolve, receipt.reject);
               return await nativeRun.completion;
-          })().catch(error => { receipt.reject(error); throw error; }).finally(() => imagePrompt?.close());
+          })().catch(error => { receipt.reject(error); throw error; }).finally(() => { imagePrompt?.close(); skillPrompt?.close(); });
           void receipt.promise.catch(() => {});
           void completion.catch(() => {});
           const run = { accepted: receipt.promise, completion };

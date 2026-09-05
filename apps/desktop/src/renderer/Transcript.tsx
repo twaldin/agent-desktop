@@ -31,6 +31,10 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
       </Disclosure>
     </div>;
   }
+  if (message.role === "commandOutput" && message.commandOutput) return <details className="transcript-command-output" data-message-id={message.id} data-native-id={message.commandOutput.entryId} open>
+    <summary><Icon name="terminal"/><span>/{message.commandOutput.command.replace(/^\//, "")}</span><span className="transcript-command-origin">Command output</span></summary>
+    <pre className="transcript-output-text">{message.commandOutput.output}</pre>
+  </details>;
   const user = message.role === "user", assistant = message.role === "assistant";
   if (!user && !assistant) return <section className="transcript-native-message" data-message-id={message.id} aria-label={`Native ${message.role} message`}><div className="transcript-native-role">{message.role}</div>{blocks.map(renderBlock)}{!blocks.length && <p className="subtle-notice">No displayable content was supplied for this native message.</p>}</section>;
   const metadata = message.assistant, complete = message.lifecycle === "complete";
