@@ -72,8 +72,33 @@ describe("actual Bun worker lifecycle without provider calls", () => {
     expect(JSON.stringify(result)).not.toContain("contract-api-key");
     expect(await Array.fromAsync(new Bun.Glob("**/*.jsonl").scan({ cwd: directory, absolute: true }))).toHaveLength(0);
     await writeFile(path.join(cwd, ".omp", "config.yml"), project + "enabledModels: [no-such-provider/no-such-model]\n");
-    expect((await runtime.getComposerCatalog(cwd, { refresh: true })).default).toEqual({ model: null, source: "unavailable" });
+    expect((await runtime.getComposerCatalog(cwd, { refresh: true })).default).toEqual({ model: null, source: "unavailable", approvalMode: "yolo" });
   }, 60_000);
+  test("host-owned permission intent applies on native creation, mutation and resume without writing native settings", async () => {
+    const { runtime, cwd, agentDir } = await isolatedRuntime();
+    const config = "extensions: []\ntools:\n  approvalMode: write\n";
+    await writeFile(path.join(agentDir, "config.yml"), config);
+    expect((await runtime.getComposerCatalog(cwd)).default.approvalMode).toBe("write");
+    const session = await runtime.create({ cwd, approvalOverride: "always-ask", interactions: true });
+    let controls = await session.getControls();
+    expect(controls.durableApprovalOverride).toBe("always-ask");
+    expect(controls.settings.find(item => item.path === "tools.approvalMode")).toMatchObject({ effective: "always-ask", origin: "runtime" });
+    expect(controls.overrides).toContain("tools.approvalMode");
+    const changed = await session.setApprovalOverride("yolo", controls.revision);
+    await expect(session.setApprovalOverride("write", controls.revision)).rejects.toThrow("changed");
+    expect(changed.durableApprovalOverride).toBe("yolo");
+    expect(await readFile(path.join(agentDir, "config.yml"), "utf8")).toBe(config);
+    await session.dispose();
+    const reopened = await runtime.open({ sessionFile: session.sessionFile, approvalOverride: "always-ask", interactions: true });
+    controls = await reopened.getControls();
+    expect(controls.durableApprovalOverride).toBe("always-ask");
+    expect(controls.settings.find(item => item.path === "tools.approvalMode")?.effective).toBe("always-ask");
+    controls = await reopened.setApprovalOverride(undefined, controls.revision);
+    expect(controls.durableApprovalOverride).toBeUndefined();
+    expect(controls.overrides).not.toContain("tools.approvalMode");
+    expect(controls.settings.find(item => item.path === "tools.approvalMode")?.effective).toBe("write");
+    expect(await readFile(path.join(agentDir, "config.yml"), "utf8")).toBe(config);
+  }, 40_000);
   test("a handled native slash command admits its real side effect without a fabricated user message", async () => {
     const { runtime, cwd, agentDir } = await isolatedRuntime();
     const extension = fileURLToPath(new URL("./fixtures/admission-extension.ts", import.meta.url));
@@ -212,9 +237,10 @@ export default () => [
     let controls = await session.getControls();
     expect(controls.settings).toHaveLength(484);
     const originalRevision = controls.revision;
-    controls = await session.mutateControls({ expectedRevision: controls.revision, operation: "override", path: "tools.approvalMode", value: "always-ask" });
-    expect(controls.settings.find(setting => setting.path === "tools.approvalMode")?.effective).toBe("always-ask");
-    expect(controls.overrides).toContain("tools.approvalMode");
+    for (const operation of ["override", "clear-override"] as const) await expect(session.mutateControls({ expectedRevision: controls.revision, operation, path: "tools.approvalMode", ...(operation === "override" ? { value: "always-ask" } : {}) } as Parameters<typeof session.mutateControls>[0])).rejects.toThrow("durable approval path");
+    controls = await session.mutateControls({ expectedRevision: controls.revision, operation: "override", path: "retry.enabled", value: false });
+    expect(controls.settings.find(setting => setting.path === "retry.enabled")?.effective).toBe(false);
+    expect(controls.overrides).toContain("retry.enabled");
     await expect(session.mutateControls({ expectedRevision: originalRevision, operation: "thinking", level: "auto" })).rejects.toThrow("changed");
     await expect(session.mutateControls({ expectedRevision: controls.revision, operation: "service-tier", family: "anthropic", tier: "flex" })).rejects.toThrow("Unsupported native service tier");
     controls = await session.mutateControls({ expectedRevision: controls.revision, operation: "service-tier", family: "openai", tier: "scale" });
@@ -229,6 +255,7 @@ export default () => [
     expect(restored.serviceTiers.openai).toBe("scale");
     expect(restored.thinkingLevel).toBe("auto");
     expect(restored.overrides).toEqual([]);
+    expect(restored.settings.find(setting => setting.path === "retry.enabled")?.effective).toBe(true);
     expect(restored.settings.find(setting => setting.path === "tools.approvalMode")?.effective).toBe("yolo");
     const capabilities = await runtime.listModelCapabilities(cwd);
     expect(capabilities.length).toBeGreaterThan(0);

@@ -255,6 +255,11 @@ button { touch-action: manipulation; }
 .select-control select option, .select-control select optgroup { background: var(--elevated-surface); color: var(--text); }
 .select-control .icon { width: calc(var(--icon-size, 20px) * 0.75); height: calc(var(--icon-size, 20px) * 0.75); margin-right: 5px; }
 .reasoning-select select { max-width: 160px; text-transform: capitalize; }
+.permission-select select { max-width: 170px; }
+.draft-snapshot dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 8px 0; }
+.draft-snapshot dt { color: var(--tertiary); }
+.draft-snapshot dd { margin: 0; overflow-wrap: anywhere; }
+.draft-snapshot pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 150px; overflow: auto; font-size: inherit; }
 .composer-send-actions { display: flex; align-items: center; gap: 4px; }
 .send-button, .stop-button { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .send-button { background: var(--text); color: var(--app-surface); }

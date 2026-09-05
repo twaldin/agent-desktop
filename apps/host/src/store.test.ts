@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostCommand, SessionSummary } from "../../../packages/shared/src/protocol.ts";
 import { HostStore, type DraftInput } from "./store.ts";
+import { Database } from "bun:sqlite";
 
 const directories: string[] = [];
 const stores = new Set<HostStore>();
@@ -34,6 +35,39 @@ afterEach(() => {
 const draft: DraftInput = { id: "new-chat", text: "first laptop's unsent work", projectId: null, model: null, thinkingLevel: "high" };
 
 describe("HostStore persistence and recovery", () => {
+  test("permission-bearing state raises a durable rollback gate only when its write commits", () => {
+    const path = directory(), store = open(path);
+    const db = new Database(join(path, "state.sqlite"));
+    const version = () => (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+    try {
+      store.putDraft(draft, 0); expect(version()).toBe(1);
+      db.exec("CREATE TRIGGER fail_permission_draft BEFORE UPDATE ON drafts BEGIN SELECT RAISE(ABORT, 'fixture disk write failure'); END");
+      expect(() => store.putDraft({ ...draft, approvalMode: "always-ask" }, 1)).toThrow("fixture disk write failure");
+      expect(version()).toBe(1); expect(store.getDraft(draft.id)?.approvalMode).toBeUndefined();
+      db.exec("DROP TRIGGER fail_permission_draft");
+      const conflict = store.putDraft({ ...draft, approvalMode: "always-ask" }, 0);
+      expect(conflict.ok).toBe(false); expect(version()).toBe(2);
+      close(store); const reopened = open(path);
+      expect(version()).toBe(2);
+      expect(reopened.listDraftConflicts()[0]?.attempted.approvalMode).toBe("always-ask");
+      reopened.putDraft({ ...draft, approvalMode: "write" }, 1);
+      expect(reopened.consumeDraft({ id: draft.id, revision: 2 })?.approvalMode).toBe("write");
+      reopened.putDraft(draft, 3); expect(version()).toBe(2);
+    } finally { db.close(); }
+  });
+
+  test("pending permission commands preserve intent across reopen and cannot be rewritten", () => {
+    const path = directory(), first = open(path);
+    const command: HostCommand = { type: "session.prompt", sessionId: "session", text: "captured unsent work", approvalMode: "always-ask" };
+    first.claimCommand("permission-send", "hash", command); close(first);
+    const db = new Database(join(path, "state.sqlite"));
+    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 2 }); db.close();
+    const second = open(path);
+    expect(second.claimCommand("permission-send", "hash", command)).toMatchObject({ kind: "pending", record: { command } });
+    expect(second.claimCommand("permission-send", "newhash", { ...command, approvalMode: "yolo" }).kind).toBe("conflict");
+    expect(second.getCommand("permission-send")?.command).toEqual(command);
+  });
+
   test("reopening preserves host/project/draft/session identity and interrupts only running sessions", () => {
     const path = directory();
     const projectPath = join(path, "project");
@@ -159,7 +193,7 @@ describe("HostStore persistence and recovery", () => {
     const storePath = new URL("./store.ts", import.meta.url).pathname;
     const command: HostCommand = {
       type: "session.prompt", sessionId: "native-session", text: "accepted work that must remain recoverable",
-      model: { provider: "provider", id: "model" }, thinkingLevel: "high", draft: { id: "new-chat", revision: 4 },
+      model: { provider: "provider", id: "model" }, thinkingLevel: "high", approvalMode: "always-ask", draft: { id: "new-chat", revision: 4 },
     };
     const child = Bun.spawnSync([process.execPath, "--eval", `
       import { HostStore } from ${JSON.stringify(storePath)};

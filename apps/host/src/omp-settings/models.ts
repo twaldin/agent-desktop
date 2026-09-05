@@ -1,5 +1,6 @@
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
-import type { OmpModelCapabilities, OmpSessionControls, OmpSessionControlMutation, SettingJson } from "@agent-desktop/shared";
+import type { OmpApprovalMode, OmpModelCapabilities, OmpSessionControls, OmpSessionControlMutation, SettingJson } from "@agent-desktop/shared";
+import { approvalMode } from "../approval";
 import { isCredential } from "@oh-my-pi/pi-coding-agent/config/settings-schema";
 import { SERVICE_TIER_OPENAI_VALUES, SERVICE_TIER_ANTHROPIC_VALUES, SERVICE_TIER_GOOGLE_VALUES, isServiceTierFamily, isServiceTierForFamily } from "@oh-my-pi/pi-coding-agent/config/service-tier";
 import { parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
@@ -84,7 +85,24 @@ export class NativeSessionControls {
   #fingerprint?: string;
   #revision = crypto.randomUUID();
   #overrides = new Set<string>();
-  constructor(private session: AgentSession) {}
+  #durableApprovalOverride?: OmpApprovalMode;
+  constructor(private session: AgentSession, durableApprovalOverride?: OmpApprovalMode) {
+    this.#durableApprovalOverride = durableApprovalOverride;
+    if (durableApprovalOverride !== undefined) this.#overrides.add("tools.approvalMode");
+  }
+  /** The caller has durably saved intent before invoking this native apply. */
+  setApprovalOverride(mode: OmpApprovalMode | undefined, expectedRevision: string): OmpSessionControls {
+    if (expectedRevision !== this.read().revision) throw new OmpSettingsError("conflict", "Native session controls changed; reload before editing");
+    if (mode === undefined) {
+      this.session.settings.clearOverride("tools.approvalMode");
+      this.#overrides.delete("tools.approvalMode");
+    } else {
+      this.session.settings.override("tools.approvalMode", approvalMode(mode));
+      this.#overrides.add("tools.approvalMode");
+    }
+    this.#durableApprovalOverride = mode;
+    return this.read();
+  }
   read(): OmpSessionControls {
     const session = this.session;
     const states = settingStates(session.settings);
@@ -94,7 +112,8 @@ export class NativeSessionControls {
       thinkingLevel: session.configuredThinkingLevel(), serviceTiers: { ...session.serviceTierByFamily },
       capabilities: session.model ? modelCapabilities(session.model) : null,
       settings: states, overrides: [...this.#overrides], runtimeMutablePaths: settingPaths.filter(key => supportsSessionOverride(key) && !isCredential(key)),
-      persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" };
+      persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose",
+      ...(this.#durableApprovalOverride === undefined ? {} : { durableApprovalOverride: this.#durableApprovalOverride }) };
     const fingerprint = JSON.stringify({ ...output, revision: undefined });
     if (fingerprint !== this.#fingerprint) { this.#fingerprint = fingerprint; this.#revision = crypto.randomUUID(); }
     output.revision = this.#revision;
@@ -114,12 +133,14 @@ export class NativeSessionControls {
         this.session.setServiceTierFamily(request.family, request.tier); break;
       case "override": {
         const key = requireSetting(request.path);
+        if (key === "tools.approvalMode") throw new OmpSettingsError("unsupported", "Native permission edits require the owning host's durable approval path");
         if (isCredential(key) || !supportsSessionOverride(key)) throw new OmpSettingsError("unsupported", "This setting requires owning-host configuration and a new session");
         const value = validateSettingValue(key, request.value);
         this.session.settings.override(key, value as never); this.#overrides.add(key); break;
       }
       case "clear-override": {
         const key = requireSetting(request.path);
+        if (key === "tools.approvalMode") throw new OmpSettingsError("unsupported", "Native permission edits require the owning host's durable approval path");
         if (!this.#overrides.has(key)) throw new OmpSettingsError("unsupported", "No desktop runtime override exists for this setting");
         this.session.settings.clearOverride(key); this.#overrides.delete(key); break;
       }

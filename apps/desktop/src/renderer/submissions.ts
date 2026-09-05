@@ -12,6 +12,7 @@ export interface PendingSubmission {
 /** Persist envelopes before delivery so an explicit retry uses the original command identity. */
 export class SubmissionController {
   private pending: Record<string, PendingSubmission> = {};
+  private listeners = new Set<() => void>();
   readonly cacheKey: string;
   cacheWarning: string | undefined;
   constructor(private command: (envelope: CommandEnvelope) => Promise<CommandResult>, hostId: string, private cache?: DraftCache) {
@@ -25,7 +26,11 @@ export class SubmissionController {
     } catch { this.cacheWarning = "Pending submission storage could not be read. Check conversation history before resending an earlier prompt."; }
   }
   get(id: string) { return this.pending[id]; }
-  private save() { this.cache?.write(this.cacheKey, JSON.stringify(this.pending)); }
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  private save() {
+    this.cache?.write(this.cacheKey, JSON.stringify(this.pending));
+    for (const listener of this.listeners) listener();
+  }
   private async deliver(item: PendingSubmission, phase: "create" | "send") {
     let result: CommandResult;
     try { result = await this.command(item[phase]!); }
@@ -53,7 +58,7 @@ export class SubmissionController {
       this.pending[snapshot.id] = item;
     }
     if (!item.sessionId) {
-      item.create ??= { id: crypto.randomUUID(), command: { type: "session.create", projectId: item.draft.projectId, model: item.draft.model ?? undefined } };
+      item.create ??= { id: crypto.randomUUID(), command: { type: "session.create", projectId: item.draft.projectId, model: item.draft.model ?? undefined, approvalMode: item.draft.approvalMode } };
       this.save();
       const value = await this.deliver(item, "create");
       if (!value || !("sessionFile" in value)) { item.uncertain = true; this.save(); throw new Error("The host did not return the created session. Retry the pending submission to check the original command."); }
@@ -61,8 +66,8 @@ export class SubmissionController {
     }
     const saved = item.draft;
     item.send ??= { id: crypto.randomUUID(), command: item.mode === "steer"
-      ? { type: "session.steer", sessionId: item.sessionId, text: saved.text, draft: { id: saved.id, revision: saved.revision } }
-      : { type: "session.prompt", sessionId: item.sessionId, text: saved.text, model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, draft: { id: saved.id, revision: saved.revision } } };
+      ? { type: "session.steer", sessionId: item.sessionId, text: saved.text, approvalMode: saved.approvalMode, draft: { id: saved.id, revision: saved.revision } }
+      : { type: "session.prompt", sessionId: item.sessionId, text: saved.text, model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, draft: { id: saved.id, revision: saved.revision } } };
     this.save();
     await this.deliver(item, "send");
     const result = { sessionId: item.sessionId, submitted: item.draft };

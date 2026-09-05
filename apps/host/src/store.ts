@@ -12,6 +12,7 @@ import type {
   SessionSummary,
 } from "../../../packages/shared/src/protocol.ts";
 import type { StoredPreferencesState } from "./preferences/store";
+import { approvalMode, hasApprovalIntent, validateCommandApproval } from "./approval";
 
 export type DraftInput = Omit<Draft, "revision" | "updatedAt">;
 
@@ -60,7 +61,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 1) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 2) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -71,8 +72,8 @@ export class HostStore {
           CREATE INDEX IF NOT EXISTS draft_conflicts_by_draft ON draft_conflicts(draft_id);
           CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, data TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);
-          PRAGMA user_version = 1;
         `);
+        if (version === 0) this.db.exec("PRAGMA user_version = 1");
       }).immediate();
       this.host = this.db.transaction(() => {
         const saved = this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key = ?").get("host");
@@ -160,9 +161,13 @@ export class HostStore {
   upsertSession(session: SessionSummary): SessionSummary {
     if (session.hostId !== this.host.id) throw new Error("Session belongs to another host");
     if (session.projectId !== null && !this.getProject(session.projectId)) throw new Error("Unknown session project");
-    this.db.query("INSERT INTO sessions (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data")
-      .run(session.id, JSON.stringify(session));
-    return session;
+    if (session.approvalOverride !== undefined) approvalMode(session.approvalOverride);
+    return this.db.transaction(() => {
+      if (session.approvalOverride !== undefined) this.requirePermissionVersion();
+      this.db.query("INSERT INTO sessions (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data")
+        .run(session.id, JSON.stringify(session));
+      return session;
+    }).immediate();
   }
 
   listDrafts(): Draft[] {
@@ -177,7 +182,9 @@ export class HostStore {
 
   putDraft(input: DraftInput, expectedRevision: number): DraftWriteResult {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error("Invalid draft revision");
+    if (input.approvalMode !== undefined) approvalMode(input.approvalMode);
     return this.db.transaction((): DraftWriteResult => {
+      if (input.approvalMode !== undefined) this.requirePermissionVersion();
       const currentDraft = this.getDraft(input.id);
       if ((currentDraft?.revision ?? 0) !== expectedRevision) {
         const conflict: DraftConflict = {
@@ -225,9 +232,11 @@ export class HostStore {
    */
   claimCommand(id: string, requestHash: string, command?: HostCommand): CommandClaim {
     if (!id || !requestHash) throw new Error("Command ID and request hash are required");
+    if (command) validateCommandApproval(command);
     return this.db.transaction((): CommandClaim => {
       const existing = this.getCommand(id);
       if (existing) return { kind: existing.requestHash === requestHash ? existing.state : "conflict", record: existing };
+      if (command && hasApprovalIntent(command)) this.requirePermissionVersion();
       const now = Date.now();
       const record: CommandRecord = {
         id, requestHash, ...(command === undefined ? {} : { command }),
@@ -280,4 +289,7 @@ export class HostStore {
       }
     }).immediate();
   }
+
+  /** Never downgrade: old hosts must refuse even after an override is cleared. */
+  private requirePermissionVersion(): void { this.db.exec("PRAGMA user_version = 2"); }
 }

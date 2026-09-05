@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { register as registerExitCleanup } from "@oh-my-pi/pi-utils/postmortem";
-import type { CommandEnvelope, CommandResult, HostCommand, HostEvent, HostState, ModelInfo, SessionSummary } from "@agent-desktop/shared";
+import type { CommandEnvelope, CommandResult, HostCommand, HostEvent, HostState, ModelInfo, OmpApprovalMode, OmpSessionControls, SessionSummary } from "@agent-desktop/shared";
 import { acquireHostLease } from "./lease";
 import { WorkerRuntime, type WorkerSession } from "./omp-workers";
 import { getDataDirectory, type LocalConnection } from "./paths";
@@ -21,6 +21,9 @@ import { ThemeFile, ThemeConflictError } from "./theme-file";
 import { TerminalManager, TmuxTerminalManager, TmuxTerminalsHttp } from "./terminals";
 import { TerminalsHttp } from "./terminals-http";
 import { ThemeAssets } from "./theme-assets";
+import { approvalMode, hasApprovalIntent } from "./approval";
+import { OmpSettingsError } from "./omp-settings";
+import { ApprovalRecovery } from "./approval-recovery";
 
 type SocketData = { after: number; remoteAddress?: string };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -80,6 +83,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const token = randomBytes(32).toString("hex");
   const peers = new Set<ServerWebSocket<SocketData>>();
   const handles = new Map<string, Promise<WorkerSession>>();
+  // A lost permission-apply receipt must never leave an old worker eligible for
+  // another prompt. Failed cleanup stays blocked rather than guessing ownership.
+  const approvalRecovery = new ApprovalRecovery();
   const commands = new Map<string, Promise<CommandResult>>();
   const sessionTails = new Map<string, Promise<unknown>>();
   const executions = new Map<string, Promise<unknown>>();
@@ -169,6 +175,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     getHandle: async id => ({
       getControls: async () => (await getHandle(id)).getControls(),
       mutateControls: mutation => ordered(id, async () => {
+        if ((mutation.operation === "override" || mutation.operation === "clear-override") && mutation.path === "tools.approvalMode") {
+          return applySessionApproval(id, mutation.operation === "override" ? approvalMode(mutation.value) : undefined, mutation.expectedRevision);
+        }
         const result = await (await getHandle(id)).mutateControls(mutation);
         if (!stopping) updateSession(id, { model: result.model });
         return result;
@@ -213,15 +222,53 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     publish({ type: "runtime", sessionId, event });
   }
   async function getHandle(sessionId: string): Promise<WorkerSession> {
+    await approvalRecovery.wait(sessionId);
     let pending = handles.get(sessionId);
     if (!pending) {
       const session = store.getSession(sessionId);
       if (!session) throw new Error("Session does not exist on this host.");
-      pending = runtime.open({ sessionFile: session.sessionFile, interactions: true, onEvent: event => onRuntimeEvent(sessionId, event) });
+      pending = runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) });
       handles.set(sessionId, pending);
       pending.catch(() => { if (handles.get(sessionId) === pending) handles.delete(sessionId); });
     }
     return pending;
+  }
+  async function applySessionApproval(sessionId: string, mode: OmpApprovalMode | undefined, expectedRevision?: string): Promise<OmpSessionControls> {
+    const handle = await getHandle(sessionId);
+    if (executions.has(sessionId) || handle.isStreaming || handle.hasPostPromptWork) throw new OmpSettingsError("conflict", "Stop the current turn before changing its native permission mode.");
+    const current = await handle.getControls();
+    if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new OmpSettingsError("conflict", "Native session controls changed; reload before editing");
+    if (mode !== undefined) approvalMode(mode);
+    const saved = store.getSession(sessionId)!;
+    if (mode === undefined && saved.approvalOverride === undefined) throw new OmpSettingsError("unsupported", "No app-owned permission override exists for this session.");
+    // SQLite commits this intent and its rollback version gate together. A
+    // rejected write cannot start native work or clear the submitted draft.
+    store.upsertSession({ ...saved, approvalOverride: mode, updatedAt: Date.now() });
+    try {
+      const applied = await handle.setApprovalOverride(mode, current.revision);
+      if (applied.durableApprovalOverride !== mode) throw new Error("Native permission apply was not acknowledged");
+      publishState();
+      return applied;
+    } catch (error) {
+      const failed = handles.get(sessionId);
+      // The saved choice remains authoritative even if this command failed.
+      // Only proven disposal allows a fresh worker to restore it on next use.
+      let retired = false;
+      try {
+        await approvalRecovery.retire(sessionId, () => handle.dispose(), () => {
+          if (handles.get(sessionId) === failed) handles.delete(sessionId);
+        });
+        retired = true;
+      } finally {
+        // Settings mutations do not pass through command-dispatch's final
+        // snapshot. Publish saved intent and recovery status on this path too.
+        updateSession(sessionId, { status: "error", error: retired
+          ? "The permission choice was saved; native application was not confirmed. Reload this session before sending."
+          : "The permission choice was saved, but worker cleanup is unverified. This session is blocked until host recovery." });
+        publish({ type: "settings", sessionId });
+      }
+      throw new Error(`The permission choice was saved, but native application was not confirmed. Reload this session before sending. ${errorMessage(error)}`);
+    }
   }
   function clearSubmittedDraft(reference: { id: string; revision: number } | undefined): void {
     if (reference) store.consumeDraft(reference);
@@ -252,14 +299,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         assertWorkspaceAvailable(cwd);
         if (!project && !command.cwd) await mkdir(cwd, { recursive: true, mode: 0o700 });
         let sessionId: string | undefined;
-        const handle = await runtime.create({ cwd, model: command.model, interactions: true, onEvent: event => { if (sessionId) onRuntimeEvent(sessionId, event); } });
+        const handle = await runtime.create({ cwd, model: command.model, approvalOverride: command.approvalMode, interactions: true, onEvent: event => { if (sessionId) onRuntimeEvent(sessionId, event); } });
         sessionId = handle.id;
         handles.set(handle.id, Promise.resolve(handle));
         const now = Date.now();
-        return ok(store.upsertSession({ id: handle.id, hostId: store.host.id, projectId: project?.id ?? null,
+        try { return ok(store.upsertSession({ id: handle.id, hostId: store.host.id, projectId: project?.id ?? null,
           cwd: handle.cwd, title: handle.title || "New conversation", status: "idle", sessionFile: handle.sessionFile,
           model: handle.model, createdAt: Number.isFinite(handle.createdAt) ? handle.createdAt : now, updatedAt: now,
-          archived: false, error: handle.modelFallbackMessage }));
+          archived: false, error: handle.modelFallbackMessage, approvalOverride: command.approvalMode })); }
+        catch (error) { await handle.dispose(); handles.delete(handle.id); throw error; }
       }
       case "session.rename": return ok(updateSession(command.sessionId, { title: command.title.trim() || "New conversation" }));
       case "session.archive": return ok(updateSession(command.sessionId, { archived: command.archived }));
@@ -271,8 +319,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "session.steer": {
         const handle = await getHandle(command.sessionId);
         if (!executions.has(command.sessionId) || !handle.isStreaming) throw new Error("There is no running turn to steer.");
+        if (command.approvalMode !== undefined) {
+          const controls = await handle.getControls();
+          const effective = controls.settings.find(setting => setting.path === "tools.approvalMode")?.effective;
+          if (effective !== command.approvalMode) return fail(envelope.id, "PERMISSION_CHANGED", "The running turn uses a different native permission mode. Stop it before changing permissions; the draft was retained.");
+        }
         let receipt;
-        try { receipt = await handle.steer(command.text); }
+        try { receipt = await handle.steer(command.text, command.approvalMode); }
         catch (error) {
           // A lost worker/RPC response cannot prove the native queue was never
           // consumed. Keep this command identity and its draft for reconciliation.
@@ -285,6 +338,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       }
       case "session.prompt": {
         if (executions.has(command.sessionId)) throw new Error("This session is running. Steer or stop its current turn first.");
+        if (command.approvalMode !== undefined) await applySessionApproval(command.sessionId, command.approvalMode);
         const handle = await getHandle(command.sessionId);
         runtimeErrors.delete(command.sessionId);
         assertWorkspaceAvailable(handle.cwd);
@@ -415,7 +469,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
             return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
           }
         }
-        if (request.method === "POST" && url.pathname === "/v1/commands") return Response.json(await dispatch(parseCommandEnvelope(await request.json())));
+        if (request.method === "POST" && ["/v1/commands", "/v2/commands"].includes(url.pathname)) {
+          const value = await request.json();
+          if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
+          return Response.json(await dispatch(parseCommandEnvelope(value)));
+        }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
         if (request.method === "GET" && messagePath) return Response.json(await (await getHandle(decodeURIComponent(messagePath[1]!))).getMessages());
         return Response.json({ error: "Not found" }, { status: 404 });

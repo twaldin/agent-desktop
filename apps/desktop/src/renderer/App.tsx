@@ -6,6 +6,9 @@ import { DraftController } from "./drafts";
 import { SubmissionController } from "./submissions";
 import { ComposerCatalogState, composerSelection, composerTargetKey } from "./composer-catalog";
 import { ComposerSelections } from "./ComposerSelections";
+import { approvalModes, composerApproval } from "./ComposerPermissions";
+import { DraftSnapshot } from "./DraftSnapshot";
+import { installAppShortcuts } from "./app-shortcuts";
 import { errorMessage, useDesktop, useTranscript } from "./desktop-state";
 import { Icon } from "./Icons";
 import { TranscriptMessages } from "./Transcript";
@@ -114,6 +117,7 @@ export function App() {
   }
   const { drafts, submissions } = controllers(hostId);
   useEffect(() => drafts.subscribe(redraw), [drafts]);
+  useEffect(() => submissions.subscribe(redraw), [submissions]);
   useEffect(() => {
     for (const [owner, pair] of stores) {
       const record = desktop.catalog.records.get(owner);
@@ -138,6 +142,7 @@ export function App() {
     return () => { unsubscribe(); composer.stop(); };
   }, [composer, connected, desktop.localHostId]);
   const selection = composerSelection(draft, composer.catalog, selected, composer.controls);
+  const permissionChoice = composerApproval(draft, composer.catalog, selected, composer.controls);
   let workspace: WorkspaceState | undefined;
   if (workspaceTarget) {
     const key = `${hostId}:${workspaceKey(workspaceTarget)}`;
@@ -175,16 +180,16 @@ export function App() {
     navigate(null, owner);
     if (projectId !== undefined && owner) controllers(owner).drafts.update("new-conversation", { projectId });
   }, [navigate, route.hostId, state?.host.id, desktop.localHostId, stores, desktop.catalog]);
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key === ",") { event.preventDefault(); setSettingsOpen(true); setAppMenuOpen(false); }
-      if (event.key.toLowerCase() === "n") { event.preventDefault(); newConversation(); }
-      if (event.key.toLowerCase() === "k") { event.preventDefault(); setSidebarOpen(true); setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus()); }
-      if (event.key === "\\") { event.preventDefault(); setSidebarOpen(value => !value); }
-    }
-    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [newConversation]);
+  useEffect(() => installAppShortcuts(window, {
+    composer: () => textarea.current,
+    blocked: () => Boolean(dialog || menuOpen || appMenuOpen),
+    actions: {
+      "new-chat": () => newConversation(),
+      search: () => { setSidebarOpen(true); setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus()); },
+      sidebar: () => setSidebarOpen(value => !value),
+      settings: () => { setSettingsOpen(true); setAppMenuOpen(false); },
+    },
+  }), [newConversation, dialog, menuOpen, appMenuOpen]);
   useEffect(() => {
     const element = textarea.current;
     if (element) { element.style.height = "0px"; element.style.height = `${Math.min(Math.max(element.scrollHeight, 56), 240)}px`; }
@@ -301,16 +306,21 @@ export function App() {
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <div className="welcome"><div className="welcome-mark"><Icon name="terminal"/></div><h1>What would you like to work on?</h1><p>{project ? project.name : "Choose a project or start a conversation."}</p></div>}
         <div className={`composer-region ${selectedId ? "" : "home-composer"}`}>
-          {selectedId && state && <PendingInteractions bridge={bridge} hostId={hostId} sessionId={selectedId} localHostId={desktop.localHostId} connected={connected}/>}
+          {(selectedId || pendingSessionId) && state && <>
+            {!selectedId && <p className="subtle-notice">Requests for {knownPendingSession?.title ?? "the session being started"} on {state.host.name}.</p>}
+            <PendingInteractions bridge={bridge} hostId={hostId} sessionId={(selectedId ?? pendingSessionId)!} localHostId={desktop.localHostId} connected={connected}/>
+          </>}
           {actionError && <div className="inline-error" role="alert"><span>{actionError}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
-          {pendingSubmission && <div className="subtle-notice">{pendingSubmission.uncertain ? "A submission is awaiting confirmation. Retry checks its original command; newer draft edits stay here." : "A session was created. Sending again continues that session."}{pendingSessionId && <button onClick={() => navigate(pendingSessionId)}>Open {knownPendingSession?.title ?? "session"}</button>}{pendingSubmission.uncertain && <details><summary>View pending prompt</summary><pre>{pendingSubmission.draft.text}</pre></details>}</div>}
-          {view.conflict && <div className="draft-conflict" role="alert"><strong>This draft changed on another device.</strong><p>Your text is preserved. Choose which version to continue with.</p><details><summary>View host’s saved draft</summary><pre>{view.conflict.text || "(Empty draft)"}</pre></details><div><button className="secondary-button" onClick={() => drafts.resolve(draftId, "remote")}>Use saved draft</button><button className="primary-button" onClick={() => drafts.resolve(draftId, "local")}>Keep my draft</button></div></div>}
+          {pendingSubmission && <div className="subtle-notice">{pendingSubmission.uncertain ? "A submission is awaiting confirmation. Retry checks its original command; newer draft edits stay here." : pendingSessionId ? busy ? "Waiting for this session to accept the captured prompt." : "A session was created. Sending again continues that session." : "Creating this prompt’s session."}{pendingSessionId && <button onClick={() => navigate(pendingSessionId)}>Open {knownPendingSession?.title ?? "session"}</button>}<details><summary>View pending prompt and selections</summary><DraftSnapshot draft={pendingSubmission.draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []}/>{knownPendingSession && <p>Bound session: {knownPendingSession.title} · {knownPendingSession.cwd}</p>}{pendingSubmission.draft.approvalMode && pendingSessionId && <p>The permission choice applies to this session before the prompt runs and remains if the prompt is rejected.</p>}</details></div>}
+          {view.conflict && <div className="draft-conflict" role="alert"><strong>This draft changed on another device.</strong><p>Your text and selections are preserved. Choose which version to continue with.</p><details><summary>View my draft</summary><DraftSnapshot draft={draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []}/></details><details><summary>View host’s saved draft</summary><DraftSnapshot draft={view.conflict} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []}/></details><div><button className="secondary-button" onClick={() => drafts.resolve(draftId, "remote")}>Use saved draft</button><button className="primary-button" onClick={() => drafts.resolve(draftId, "local")}>Keep my draft</button></div></div>}
           {view.status === "error" && <div className="inline-error" role="alert"><span>{view.error ?? "Draft could not be saved."}</span><button onClick={() => void drafts.flush(draftId).catch(cause => setActionError(errorMessage(cause)))}>Retry save</button></div>}
           {composer.loading && <p className="subtle-notice" role="status">Loading this workspace’s native models and defaults…</p>}
           {(composer.error || composer.controlsError) && <div className="inline-error" role="alert"><span>{composer.error ?? composer.controlsError}</span><button disabled={!connected} onClick={() => void composer.refresh(true)}>Refresh models</button></div>}
           {composer.catalog?.resolution === "legacy-capabilities" && <p className="subtle-notice" role="status">This older host provides workspace model controls, but does not report model availability or the new-chat default. Existing session selections are preserved. Update the owning host to resolve these details.</p>}
           {!connected && <p className="subtle-notice">Model details are {composer.catalog ? "from this workspace’s last loaded catalog" : "unavailable until this host reconnects"}. Your saved selections are preserved.</p>}
           {selection.differingDraftModel && <p className="subtle-notice">This draft selects {draft.model!.provider}/{draft.model!.id}; the session currently uses {selection.current!.provider}/{selection.current!.id}.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { model: null, thinkingLevel: undefined })}>Follow current session model and reasoning</button></p>}
+          {composer.catalog && !permissionChoice.supported && <p className="subtle-notice">This host does not support saved composer permission choices yet. Update the owning host to enable this control; its native permissions continue to apply.</p>}
+          {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }}>
             <label className="sr-only" htmlFor="prompt">Message</label>
             <textarea id="prompt" ref={textarea} value={draft.text} onChange={event => drafts.update(draftId, { text: event.target.value })} placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)} spellCheck rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>

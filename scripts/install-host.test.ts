@@ -11,7 +11,7 @@ afterEach(async () => { await Promise.all(directories.splice(0).map(directory =>
 describe("installed host service configuration", () => {
   test("standalone installer imports before its production dependencies are installed", async () => {
     const directory = await mkdtemp(join(tmpdir(), "agent-standalone-installer-")); directories.push(directory);
-    for (const file of ["scripts/install-host.ts", "scripts/terminal-upgrade-guard.ts", "apps/host/src/terminals/native-store.ts", "apps/host/src/terminals/bundle.ts", "apps/host/src/terminals/error.ts"]) {
+    for (const file of ["scripts/install-host.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts", "apps/host/src/terminals/native-store.ts", "apps/host/src/terminals/bundle.ts", "apps/host/src/terminals/error.ts"]) {
       await mkdir(dirname(join(directory, file)), { recursive: true });
       await copyFile(join(import.meta.dir, "..", file), join(directory, file));
     }

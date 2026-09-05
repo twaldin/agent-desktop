@@ -16,6 +16,25 @@ async function eventually<T>(read: () => T | Promise<T>, predicate: (value: T) =
   }
 }
 
+test("a release11 worker is rejected before permission-bearing initialization", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agent-worker-old-protocol-"));
+  const workerPath = join(directory, "worker.ts"), pidFile = join(directory, "pid"), initFile = join(directory, "init");
+  await writeFile(workerPath, `import {writeFileSync} from 'node:fs';
+writeFileSync(${JSON.stringify(pidFile)},String(process.pid));
+setInterval(()=>{},1000);
+process.on('message',message=>{if(message.type==='request'&&message.operation==='init')writeFileSync(${JSON.stringify(initFile)},'unexpected init');});
+process.send({type:'ready',version:2});
+`);
+  const runtime = new WorkerRuntime({ workerPath, startupTimeoutMs: 2000, shutdownTimeoutMs: 250,
+    environment: { HOME: directory, PATH: process.env.PATH, TMPDIR: tmpdir(), TERM: "dumb" } });
+  try {
+    await expect(runtime.create({ cwd: directory, approvalOverride: "always-ask" })).rejects.toThrow("protocol");
+    const pid = Number(await readFile(pidFile, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await Bun.file(initFile).exists()).toBe(false);
+  } finally { await runtime.dispose(); await rm(directory, { recursive: true, force: true }); }
+}, 5000);
+
 test("the real discovery worker waits for its exact disposal acknowledgement before exiting", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agent-worker-dispose-ack-"));
   const agentDir = join(directory, "agent");

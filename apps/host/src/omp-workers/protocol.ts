@@ -1,7 +1,7 @@
-import type { ModelChoice, OmpSessionControlMutation } from "@agent-desktop/shared";
+import type { ModelChoice, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpRuntimeEvent, OmpInteractionResponse } from "../omp";
 
-export const WORKER_PROTOCOL_VERSION = 2;
+export const WORKER_PROTOCOL_VERSION = 3;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -27,7 +27,7 @@ export type WorkerOperation =
   | { operation: "getComposerCatalog"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getMessages" }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
-  | { operation: "steer"; args: { text: string } }
+  | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode } }
   | { operation: "abort" }
   | { operation: "setModel"; args: { model: ModelChoice } }
   | { operation: "listAccountChoices" }
@@ -38,6 +38,7 @@ export type WorkerOperation =
   | { operation: "cancelInteractions"; args: { reason?: "cancelled" | "disconnected" } }
   | { operation: "getControls" }
   | { operation: "mutateControls"; args: OmpSessionControlMutation }
+  | { operation: "setApprovalOverride"; args: { mode?: OmpApprovalMode; expectedRevision: string } }
   | { operation: "dispose" };
 export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | { type: "eventAck"; sequence: number }

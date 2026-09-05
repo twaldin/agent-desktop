@@ -4,7 +4,7 @@ import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, Worksp
 import type { PreferenceChange, PreferenceRecord, PreferencesSnapshot } from "./preferences";
 import type { ThemeAsset, ThemeDocument, ThemeState, WindowThemeEffects } from "./theme";
 import type { TerminalBridge, NativeTerminalBridge } from "./terminals";
-import type { OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot } from "./settings";
+import type { OmpApprovalMode, OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot } from "./settings";
 import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingOptions, OmpSettingsCatalog, OmpSettingsMutation, OmpSettingsSnapshot } from "./settings";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
@@ -63,6 +63,8 @@ export interface SessionSummary {
   createdAt: number;
   updatedAt: number;
   archived: boolean;
+  /** Host-owned native permission override; absent follows native configuration. */
+  approvalOverride?: OmpApprovalMode;
   error?: string;
 }
 
@@ -73,6 +75,8 @@ export interface Draft {
   projectId: string | null;
   model: ModelChoice | null;
   thinkingLevel?: string;
+  /** Absent follows the native default/new session or existing session policy. */
+  approvalMode?: OmpApprovalMode;
   updatedAt: number;
 }
 
@@ -117,9 +121,9 @@ export type HostCommand =
   | { type: "preferences.put"; change: PreferenceChange }
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
   | { type: "project.add"; path: string; name?: string }
-  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice }
-  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; draft?: { id: string; revision: number } }
-  | { type: "session.steer"; sessionId: string; text: string; draft?: { id: string; revision: number } }
+  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode }
+  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; draft?: { id: string; revision: number } }
+  | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; draft?: { id: string; revision: number } }
   | { type: "session.interrupt"; sessionId: string }
   | { type: "session.rename"; sessionId: string; title: string }
   | { type: "session.archive"; sessionId: string; archived: boolean }

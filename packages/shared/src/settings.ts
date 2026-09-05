@@ -1,5 +1,7 @@
 import type { ModelInfo } from "./protocol";
 
+export type OmpApprovalMode = "always-ask" | "write" | "yolo";
+
 export interface OmpComposerModel extends Omit<ModelInfo, "authenticated"> {
   /** Older capability endpoints do not report authentication or availability. */
   authenticated?: boolean;
@@ -13,6 +15,8 @@ export interface OmpComposerCatalog {
     model: OmpComposerModel | null;
     thinkingLevel?: string;
     effectiveThinkingLevel?: string;
+    /** Native workspace preview. Omitted by older hosts. */
+    approvalMode?: OmpApprovalMode;
     source: "configured-role" | "native-fallback" | "unavailable" | "unknown-older-host";
   };
   /** Metadata only. Native session startup can load additional extension models. */
@@ -133,6 +137,8 @@ export interface OmpSessionControls {
   capabilities: OmpModelCapabilities | null;
   settings: OmpSettingState[];
   overrides: string[];
+  /** App-owned session policy restored by its host before native startup. */
+  durableApprovalOverride?: OmpApprovalMode;
   runtimeMutablePaths: string[];
   persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose";
 }

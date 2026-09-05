@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
 import { parsePreferenceChange } from "../../../packages/shared/src/preferences";
+import { approvalMode } from "./approval";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object.");
@@ -44,14 +45,17 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
       projectId: input.projectId === null ? null : text(input.projectId, "project ID"),
       cwd: input.cwd === undefined ? undefined : directory(input.cwd),
       model: input.model === undefined ? undefined : model(input.model),
+      ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
     case "session.prompt": return { id, command: { type,
       sessionId: text(input.sessionId, "session ID"), text: text(input.text, "prompt", 4_000_000),
       model: input.model === undefined ? undefined : model(input.model),
       thinkingLevel: input.thinkingLevel === undefined ? undefined : text(input.thinkingLevel, "thinking level"),
+      ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
       draft: draftReference(input.draft),
     } };
-    case "session.steer": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), text: text(input.text, "prompt", 4_000_000), draft: draftReference(input.draft) } };
+    case "session.steer": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), text: text(input.text, "prompt", 4_000_000), draft: draftReference(input.draft),
+      ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
     case "session.interrupt": return { id, command: { type, sessionId: text(input.sessionId, "session ID") } };
     case "session.rename": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), title: text(input.title, "session title", 1000) } };
     case "session.archive": {
@@ -66,6 +70,7 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
         projectId: draft.projectId === null ? null : text(draft.projectId, "project ID"),
         model: draft.model === null ? null : model(draft.model),
         thinkingLevel: draft.thinkingLevel === undefined ? undefined : text(draft.thinkingLevel, "thinking level"),
+        ...(draft.approvalMode === undefined ? {} : { approvalMode: approvalMode(draft.approvalMode) }),
       } } };
     }
     default: throw new Error(`Unsupported command: ${type}`);

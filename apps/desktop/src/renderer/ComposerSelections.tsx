@@ -1,10 +1,11 @@
-import type { Draft, ModelChoice, SessionSummary } from "@agent-desktop/shared";
+import type { Draft, ModelChoice, OmpApprovalMode, SessionSummary } from "@agent-desktop/shared";
 import { ModelPicker } from "./ModelPicker";
+import { ComposerPermissions } from "./ComposerPermissions";
 import { composerModelGroups, composerModelKey, composerSelection, type ComposerCatalogState } from "./composer-catalog";
 
 export function ComposerSelections({ data, draft, session, disabled, onChange }: {
   data: ComposerCatalogState; draft: Draft; session?: SessionSummary | null; disabled: boolean;
-  onChange(patch: { model?: ModelChoice | null; thinkingLevel?: string }): void;
+  onChange(patch: { model?: ModelChoice | null; thinkingLevel?: string; approvalMode?: OmpApprovalMode }): void;
 }) {
   const selection = composerSelection(draft, data.catalog, session, data.controls);
   const models = data.catalog?.models ?? [];
@@ -13,6 +14,7 @@ export function ComposerSelections({ data, draft, session, disabled, onChange }:
   const thinkingLabel = `${session ? "Current session" : "Native default"}${selection.defaultThinking ? `: ${selection.defaultThinking}` : " reasoning"}`;
   const selectedTitle = selection.entry ? `${selection.entry.provider} · ${selection.entry.contextWindow?.toLocaleString() ?? "Unknown"} context` : defaultLabel;
   return <>
+    <ComposerPermissions draft={draft} catalog={data.catalog} session={session} controls={data.controls} disabled={disabled} onChange={approvalMode => onChange({ approvalMode })}/>
     <div className="select-control model-select"><ModelPicker label="Model" value={composerModelKey(draft.model)} disabled={disabled} title={selectedTitle} options={[
       { value: "", label: defaultLabel },
       ...(draft.model && !models.some(model => composerModelKey(model) === composerModelKey(draft.model)) ? [{ value: composerModelKey(draft.model), label: `${draft.model.id} (saved draft selection)`, provider: draft.model.provider }] : []),

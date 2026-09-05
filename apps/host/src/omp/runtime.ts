@@ -21,7 +21,8 @@ import { OmpInteractionBridge, type OmpBridgeEvent, type OmpInteraction, type Om
 import { initializeDesktopExtensions } from "./extensions";
 import { modelCapabilities, NativeSessionControls } from "../omp-settings/models";
 import { composerCatalog } from "../omp-settings/composer";
-import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControls, OmpSessionControlMutation } from "@agent-desktop/shared";
+import type { OmpApprovalMode, OmpComposerCatalog, OmpModelCapabilities, OmpSessionControls, OmpSessionControlMutation } from "@agent-desktop/shared";
+import { approvalMode } from "../approval";
 export type { OmpPromptRun, OmpPromptReceipt } from "./prompt";
 export type { OmpSteerReceipt } from "./steer";
 
@@ -32,12 +33,13 @@ export interface OmpSessionOptions {
   cwd: string;
   model?: ModelChoice;
   thinkingLevel?: string;
+  approvalOverride?: OmpApprovalMode;
   sessionDirectory?: string;
   onEvent?: OmpEventListener;
   /** Enable only when the daemon provides an actual pending-interaction UI. */
   interactions?: boolean;
 }
-export interface OmpOpenOptions { sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean }
+export interface OmpOpenOptions { sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
 export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string }
 export interface OmpSession {
   readonly id: string;
@@ -54,7 +56,7 @@ export interface OmpSession {
   subscribe(listener: OmpEventListener): () => void;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
-  steer(text: string): Promise<OmpSteerReceipt>;
+  steer(text: string, expectedApprovalMode?: OmpApprovalMode): Promise<OmpSteerReceipt>;
   abort(): Promise<void>;
   setModel(model: ModelChoice): Promise<void>;
   listAccountChoices(): Promise<SessionAccountList>;
@@ -65,6 +67,7 @@ export interface OmpSession {
   cancelInteractions(reason?: "cancelled" | "disconnected"): Promise<void>;
   getControls(): Promise<OmpSessionControls>;
   mutateControls(request: OmpSessionControlMutation): Promise<OmpSessionControls>;
+  setApprovalOverride(mode: OmpApprovalMode | undefined, expectedRevision: string): Promise<OmpSessionControls>;
   dispose(): Promise<void>;
 }
 
@@ -235,7 +238,7 @@ export class OmpRuntime {
       if (manager.getSessionId() !== header.id || manager.getCwd() !== header.cwd) {
         throw new Error("OMP changed the session identity or working directory while opening it");
       }
-      return await this.#attach(manager, { cwd: header.cwd, onEvent: options.onEvent, interactions: options.interactions }, sessionFile);
+      return await this.#attach(manager, { cwd: header.cwd, onEvent: options.onEvent, interactions: options.interactions, approvalOverride: options.approvalOverride }, sessionFile);
     } catch (error) {
       this.#reservedFiles.delete(sessionFile);
       await manager?.close();
@@ -254,6 +257,9 @@ export class OmpRuntime {
     try {
       context = await this.#context(options.cwd);
       this.#assertActive();
+      // SDK construction loads extension factories and tool policy. Restore the
+      // owning host's intent before any native startup work observes Settings.
+      if (options.approvalOverride !== undefined) context.settings.override("tools.approvalMode", approvalMode(options.approvalOverride));
       const thinkingLevel = options.thinkingLevel === undefined ? undefined : parseCliThinkingLevel(options.thinkingLevel);
       if (options.thinkingLevel !== undefined && thinkingLevel === undefined) throw new Error("Unknown OMP thinking level");
       const model = options.model ? this.#findModel(context.registry, options.model, context.settings) : undefined;
@@ -307,7 +313,7 @@ export class OmpRuntime {
       let accountMutation = false;
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session);
-      const controls = new NativeSessionControls(session);
+      const controls = new NativeSessionControls(session, options.approvalOverride);
       const assertIdle = () => {
         assertSessionActive();
         if (promptInFlight || accountMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
@@ -380,13 +386,14 @@ export class OmpRuntime {
           return run;
         },
         prompt: (text, promptOptions) => handle.startPrompt(text, promptOptions).completion,
-        steer: async text => {
+        steer: async (text, expectedApprovalMode) => {
           assertSessionActive();
           if (admissionPending) throw new Error("OMP is still accepting the submitted prompt");
           // The host snapshot can precede a concurrently admitted Interrupt.
           // Recheck in the owning worker before native steer can queue an idle
           // auto-continuation or land after abort's initial queue cancellation.
           if (interruptsInFlight || !session.isStreaming) return { kind: "not-recorded", reason: "There is no running native turn accepting steering input" };
+          if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode")) return { kind: "not-recorded", reason: "The running turn uses a different native permission mode. Stop it before changing permissions." };
           return steering.submit(text);
         },
         abort: async () => {
@@ -428,6 +435,10 @@ export class OmpRuntime {
         },
         cancelInteractions: async (reason = "cancelled") => { assertSessionActive(); ui?.cancelAll(reason); },
         getControls: async () => { assertSessionActive(); return controls.read(); },
+        setApprovalOverride: async (mode, expectedRevision) => {
+          assertIdle();
+          return controls.setApprovalOverride(mode, expectedRevision);
+        },
         mutateControls: async request => {
           assertIdle(); accountMutation = true;
           try {

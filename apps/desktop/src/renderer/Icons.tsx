@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
-type IconName = "compose" | "search" | "folder" | "chevron" | "arrow" | "stop" | "more" | "archive" | "close" | "terminal" | "check" | "sidebar" | "plus" | "refresh";
+type IconName = "compose" | "search" | "folder" | "chevron" | "arrow" | "stop" | "more" | "archive" | "close" | "terminal" | "check" | "sidebar" | "plus" | "refresh" | "shield";
 const paths: Record<IconName, React.ReactNode> = {
+  shield: <path d="M10 2.5 16 5v5c0 3.2-2.5 5.6-6 7.5C6.5 15.6 4 13.2 4 10V5Z"/>,
   compose: <><path d="M11.5 4H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5"/><path d="m8 12 1-3L15.5 2.5a1.4 1.4 0 0 1 2 2L11 11l-3 1Z"/></>,
   search: <><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></>,
   folder: <path d="M2.5 6a1.5 1.5 0 0 1 1.5-1.5h4l2 2h6A1.5 1.5 0 0 1 17.5 8v7A1.5 1.5 0 0 1 16 16.5H4A1.5 1.5 0 0 1 2.5 15Z"/>,

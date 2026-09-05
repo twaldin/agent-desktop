@@ -23,7 +23,7 @@ export interface DraftCache {
   write(key: string, value: string): void;
 }
 const equalModel = (a: ModelChoice | null, b: ModelChoice | null) => a?.id === b?.id && a?.provider === b?.provider;
-export const sameDraftContent = (a: Draft, b: Draft) => a.text === b.text && a.projectId === b.projectId && equalModel(a.model, b.model) && a.thinkingLevel === b.thinkingLevel;
+export const sameDraftContent = (a: Draft, b: Draft) => a.text === b.text && a.projectId === b.projectId && equalModel(a.model, b.model) && a.thinkingLevel === b.thinkingLevel && a.approvalMode === b.approvalMode;
 
 /** Owner revisions are authoritative; local changes remain recoverable until acknowledged. */
 export class DraftController {
@@ -94,7 +94,7 @@ export class DraftController {
       this.publish();
     }
   }
-  update(id: string, patch: Partial<Pick<Draft, "text" | "projectId" | "model" | "thinkingLevel">>) {
+  update(id: string, patch: Partial<Pick<Draft, "text" | "projectId" | "model" | "thinkingLevel" | "approvalMode">>) {
     this.get(id); const entry = this.entries.get(id)!;
     entry.version += 1; entry.dirty = true;
     entry.view = { ...entry.view, draft: { ...entry.view.draft, ...patch }, error: undefined, status: entry.view.conflict ? "conflict" : this.connected ? "unsaved" : "offline" };

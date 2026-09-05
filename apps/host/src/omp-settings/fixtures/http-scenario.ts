@@ -55,9 +55,13 @@ try {
   const modes = await call("/v1/settings/options", { path: "tools.approvalMode" });
   assert(modes.data.options.some((option: any) => option.value === "always-ask"));
   const controls = (await call(`/v1/sessions/${session.id}/controls`)).data as OmpSessionControls;
-  const overridden = await call(`/v1/sessions/${session.id}/controls`, { expectedRevision: controls.revision, operation: "override", path: "tools.approvalMode", value: "always-ask" });
+  // This route-only fixture deliberately has no owning HostStore coordinator.
+  // Permission edits must refuse that bypass; actual durable routing/recovery
+  // is covered by fixtures/permissions-http.ts with the production host.
+  assert.equal((await call(`/v1/sessions/${session.id}/controls`, { expectedRevision: controls.revision, operation: "override", path: "tools.approvalMode", value: "always-ask" })).status, 400);
+  const overridden = await call(`/v1/sessions/${session.id}/controls`, { expectedRevision: controls.revision, operation: "override", path: "retry.enabled", value: false });
   assert.equal(overridden.status, 200);
-  assert.equal(overridden.data.settings.find((entry: any) => entry.path === "tools.approvalMode").effective, "always-ask");
+  assert.equal(overridden.data.settings.find((entry: any) => entry.path === "retry.enabled").effective, false);
   assert(!JSON.stringify(invalidations).includes("always-ask"));
   const secretOverride = await call(`/v1/sessions/${session.id}/controls`, { expectedRevision: overridden.data.revision, operation: "override", path: "auth.broker.token", value: "contract-http-private-token" });
   assert.equal(secretOverride.status, 400); assert(!JSON.stringify(secretOverride.data).includes("contract-http-private-token"));

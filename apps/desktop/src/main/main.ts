@@ -3,6 +3,7 @@ import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
 import { nativeTerminalResult, requestHost, type HostEndpoint } from "./host-transport";
 import { requestComposerCatalog } from "./composer-transport";
+import { requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { verifyKnownHost } from "./host-recovery";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -209,7 +210,7 @@ ipcMain.handle("host:state", async (event, hostId?: string) => {
   return state;
 });
 ipcMain.handle("host:command", (event, envelope: CommandEnvelope, hostId?: string) => {
-  assertTrustedSender(event); return request("/v1/commands", envelope, hostId);
+  assertTrustedSender(event); return requestVersionedCommand((path, body) => request(path, body, hostId), envelope);
 });
 ipcMain.handle("host:messages", (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event);
@@ -335,7 +336,7 @@ ipcMain.handle("host:session-controls", (event, sessionId: string, hostId?: stri
 ipcMain.handle("host:session-controls-mutate", (event, sessionId: string, mutation: OmpSessionControlMutation, hostId?: string) => {
   assertTrustedSender(event);
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200) throw new Error("Invalid session ID.");
-  return request(`/v1/sessions/${encodeURIComponent(sessionId)}/controls`, mutation, hostId);
+  return requestVersionedControl((path, body) => request(path, body, hostId), sessionId, mutation);
 });
 ipcMain.handle("host:providers", (event, hostId?: string) => { assertTrustedSender(event); return request("/v1/accounts/providers", undefined, hostId); });
 ipcMain.handle("host:logins", (event, hostId?: string) => { assertTrustedSender(event); return request("/v1/accounts/logins", undefined, hostId); });

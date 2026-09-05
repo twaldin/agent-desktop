@@ -11,6 +11,8 @@ export interface HostArtifact {
   createdAt: string;
   bunVersion: "1.3.14";
   ompVersion: "18.1.10";
+  /** Absent only in historical artifacts, whose stores read schema 1. */
+  stateSchemaVersions?: number[];
   excludedSources?: string[];
   nativeTerminals?: { protocol: "tmux-v1"; platforms: Array<"darwin-arm64" | "linux-x64"> };
   files: Record<string, string>;
@@ -47,11 +49,11 @@ export async function packageHost(options: { version: string; output: string; re
   const excluded = new Set(options.excludeSources ?? []);
   if (!options.nativeBundles?.length) throw new Error("Include the verified native terminal runtime with --tmux-bundle before packaging this host version.");
   const files = ["package.json", "bun.lock", "apps/host/package.json", "apps/desktop/package.json", "packages/shared/package.json",
-    "scripts/install-host.ts", "scripts/package-host.ts", "scripts/terminal-upgrade-guard.ts", ...await sources(join(repository, "apps/host/src"), repository, excluded),
+    "scripts/install-host.ts", "scripts/package-host.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts", ...await sources(join(repository, "apps/host/src"), repository, excluded),
     ...await sources(join(repository, "packages/shared/src"), repository, excluded)].sort();
   const staging = await mkdtemp(join(tmpdir(), "agent-desktop-package-"));
   try {
-    const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10", excludedSources: [...excluded], files: {} };
+    const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10", stateSchemaVersions: [1, 2], excludedSources: [...excluded], files: {} };
     for (const file of files) {
       const destination = join(staging, file);
       await mkdir(dirname(destination), { recursive: true });

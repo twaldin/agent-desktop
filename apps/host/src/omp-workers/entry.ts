@@ -128,7 +128,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         ]);
         break;
       }
-      case "steer": respond(true, await requireSession().steer(message.args.text)); break;
+      case "steer": respond(true, await requireSession().steer(message.args.text, message.args.expectedApprovalMode)); break;
       case "abort": await requireSession().abort(); respond(true); break;
       case "setModel": await requireSession().setModel(message.args.model); respond(true); break;
       case "listAccountChoices": respond(true, await requireSession().listAccountChoices()); break;
@@ -139,6 +139,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "cancelInteractions": await requireSession().cancelInteractions(message.args.reason); respond(true); break;
       case "getControls": respond(true, await requireSession().getControls()); break;
       case "mutateControls": respond(true, await requireSession().mutateControls(message.args)); break;
+      case "setApprovalOverride": respond(true, await requireSession().setApprovalOverride(message.args.mode, message.args.expectedRevision)); break;
       case "dispose":
         stopping = true;
         {

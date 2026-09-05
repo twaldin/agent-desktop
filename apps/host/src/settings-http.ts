@@ -155,7 +155,7 @@ export class SettingsHttp {
     finally { entry.leases--; entry.touched = ++this.#clock; }
   }
   async route(request: Request, url: URL): Promise<Response | undefined> {
-    const sessionPath = /^\/v1\/sessions\/([^/]+)\/controls$/.exec(url.pathname);
+    const sessionPath = /^\/v[12]\/sessions\/([^/]+)\/controls$/.exec(url.pathname);
     const settingsPath = url.pathname.startsWith("/v1/settings/");
     const modelsPath = ["/v1/models/capabilities", "/v1/models/composer"].includes(url.pathname);
     const definitionsPath = url.pathname === "/v1/models/definitions";

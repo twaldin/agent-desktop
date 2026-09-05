@@ -22,15 +22,22 @@ test("owning native worker rejects idle and interrupt-racing steers and cancels 
     expect((await session.steer("Idle input must not start a turn")).kind).toBe("not-recorded");
     const model = { provider: "steer-contract", id: "controlled" };
     const run = session.startPrompt("Controlled native interrupt race", { model }); await run.accepted; await started(1);
+    // No app override: compare against the actual native default, not an absent
+    // catalog field. Rejected intent must not enter the native queue.
+    const differentDefault = await session.steer("Wrong permission under native default", "always-ask");
+    expect(differentDefault.kind).toBe("not-recorded");
+    if (differentDefault.kind === "not-recorded") expect(differentDefault.reason).toContain("different native permission");
     // Concurrent real RPC requests: a stale host streaming snapshot must not
     // authorize a steer while the native abort is unwinding or after it ends.
     const stopping = session.abort(), late = session.steer("Late input racing native abort");
     expect((await late).kind).toBe("not-recorded"); await stopping; await run.completion;
     expect((await session.steer("Input after native abort")).kind).toBe("not-recorded");
     await Bun.sleep(50); expect(await Bun.file(path.join(gates, "2.started")).exists()).toBe(false);
+    await session.setApprovalOverride("always-ask", (await session.getControls()).revision);
     const resumed = session.startPrompt("Controlled native disposal", { model }); await resumed.accepted; await started(2);
+    expect((await session.steer("Wrong permission under saved override", "yolo")).kind).toBe("not-recorded");
     let settled = false;
-    const queued = session.steer("Queued input must survive native disposal").then(receipt => { settled = true; return receipt; });
+    const queued = session.steer("Queued input must survive native disposal", "always-ask").then(receipt => { settled = true; return receipt; });
     await Bun.sleep(50); expect(settled).toBe(false);
     const disposing = session.dispose();
     expect((await queued).kind).toBe("not-recorded"); await disposing; await resumed.completion;

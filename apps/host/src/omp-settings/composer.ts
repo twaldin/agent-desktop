@@ -2,6 +2,7 @@ import type { ModelRegistry, Settings } from "@oh-my-pi/pi-coding-agent";
 import { getModelMatchPreferences, pickDefaultAvailableModel, resolveAllowedModels, resolveModelRoleValue } from "@oh-my-pi/pi-coding-agent/config/model-resolver";
 import { AUTO_THINKING, concreteThinkingLevel, parseConfiguredThinkingLevel, resolveProvisionalAutoLevel, resolveThinkingLevelForModel } from "@oh-my-pi/pi-coding-agent/thinking";
 import type { OmpComposerCatalog, OmpComposerModel } from "@agent-desktop/shared";
+import { approvalMode } from "../approval";
 type Model = ReturnType<ModelRegistry["getAll"]>[number];
 
 /** Read the same pinned native role/fallback/thinking rules as SDK startup.
@@ -35,5 +36,6 @@ export async function composerCatalog(cwd: string, settings: Settings, registry:
     model: models.find(model => model.provider === selected.provider && model.id === selected.id) ?? project(selected),
     ...thinking(selected, role.model && role.explicitThinkingLevel ? role.thinkingLevel : undefined),
     source: role.model ? "configured-role" : "native-fallback",
-  } : { model: null, source: "unavailable" } };
+    approvalMode: approvalMode(settings.get("tools.approvalMode")),
+  } : { model: null, source: "unavailable", approvalMode: approvalMode(settings.get("tools.approvalMode")) } };
 }

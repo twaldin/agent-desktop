@@ -325,7 +325,7 @@ export class WorkerRuntime {
       if (this.#openFiles.has(sessionFile)) throw new Error("OMP session is already open in this worker runtime");
       this.#openFiles.add(sessionFile);
       try {
-        const client = await this.#spawn({ mode: "open", agentDir: this.#options.agentDir, options: { sessionFile, interactions: options.interactions } }, options.onEvent);
+        const client = await this.#spawn({ mode: "open", agentDir: this.#options.agentDir, options: { sessionFile, interactions: options.interactions, approvalOverride: options.approvalOverride } }, options.onEvent);
         return this.#handle(client);
       } catch (error) { this.#openFiles.delete(sessionFile); throw error; }
     })());
@@ -349,7 +349,7 @@ export class WorkerRuntime {
       subscribeWorkerFailure: listener => client.subscribeFailure(listener),
       startPrompt: (text, options) => client.startPrompt(text, options),
       prompt: (text, options) => client.startPrompt(text, options).completion,
-      steer: text => client.request({ operation: "steer", args: { text } }),
+      steer: (text, expectedApprovalMode) => client.request({ operation: "steer", args: { text, expectedApprovalMode } }),
       abort: () => client.request({ operation: "abort" }),
       setModel: model => client.request({ operation: "setModel", args: { model } }),
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),
@@ -360,6 +360,7 @@ export class WorkerRuntime {
       cancelInteractions: reason => client.request({ operation: "cancelInteractions", args: { reason } }),
       getControls: () => client.request({ operation: "getControls" }),
       mutateControls: args => client.request({ operation: "mutateControls", args }),
+      setApprovalOverride: (mode, expectedRevision) => client.request({ operation: "setApprovalOverride", args: { mode, expectedRevision } }, 30_000),
       dispose: () => {
         if (!disposeCall) disposeCall = (async () => {
           try { await client.close(); }

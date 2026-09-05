@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { HostArtifact } from "./package-host";
 import { assertNoLiveTerminals, assertNoNativeTerminalOwnership } from "./terminal-upgrade-guard";
 import { verifyTmuxBundle } from "../apps/host/src/terminals/bundle";
+import { checkHostStateCompatibility, supportedHostStateSchemaVersions } from "./host-state-compatibility";
 
 export const HOST_SERVICE = "agent-desktop-host";
 export const MAC_HOST_LABEL = "com.agent-desktop.host";
@@ -179,6 +180,34 @@ async function healthy(layout: ServiceLayout, timeoutMs = 20_000): Promise<{ hos
   throw new Error("The installed host did not become healthy. Inspect its private service logs.");
 }
 
+/** The service boundary is injectable for isolated installer lifecycle tests. */
+export interface HostServiceLifecycle {
+  stop(layout: ServiceLayout): Promise<void>;
+  start(layout: ServiceLayout): Promise<void>;
+  healthy(layout: ServiceLayout, timeoutMs?: number): Promise<{ hostId: string }>;
+}
+const nativeLifecycle: HostServiceLifecycle = { stop: stopService, start: startService, healthy };
+
+function checkBeforeStop(manifest: HostArtifact, layout: ServiceLayout): void {
+  try { checkHostStateCompatibility(manifest, layout.dataDirectory); }
+  catch (error) { throw new Error(`${error instanceof Error ? error.message : "Cannot verify host state compatibility."} Refusing to stop or replace the current host; keep the compatible release running.`); }
+}
+
+async function stopForCompatibleRelease(manifest: HostArtifact, layout: ServiceLayout, lifecycle: HostServiceLifecycle, hasCurrent: boolean): Promise<void> {
+  checkBeforeStop(manifest, layout);
+  await lifecycle.stop(layout);
+  // A live writer can promote the schema after the pre-stop check. Never activate the
+  // incompatible target; restart the still-selected current release when there is one.
+  try { checkHostStateCompatibility(manifest, layout.dataDirectory); }
+  catch (error) {
+    if (hasCurrent) {
+      try { await lifecycle.start(layout); await lifecycle.healthy(layout); }
+      catch (restartError) { throw new Error(`${error instanceof Error ? error.message : "Host state compatibility changed."} Current release was not replaced, but restarting it failed: ${restartError instanceof Error ? restartError.message : "unknown service error"}`); }
+    }
+    throw new Error(`${error instanceof Error ? error.message : "Host state compatibility changed."} Current release was not replaced${hasCurrent ? "; its service was restarted" : ""}.`);
+  }
+}
+
 export async function assertNoRunningWork(layout: ServiceLayout): Promise<void> {
   assertNoNativeTerminalOwnership(layout.dataDirectory, { allowRetainedFinalScreens: true });
   const path = join(layout.dataDirectory, "state.sqlite");
@@ -213,6 +242,7 @@ async function verifyArtifact(directory: string): Promise<HostArtifact> {
   const manifest = JSON.parse(await readFile(join(directory, "host-artifact.json"), "utf8")) as HostArtifact;
   if (manifest.format !== 1 || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(manifest.version)
     || manifest.bunVersion !== BUN_VERSION || manifest.ompVersion !== "18.1.10" || !manifest.files || typeof manifest.files !== "object") throw new Error("Unsupported host artifact manifest.");
+  supportedHostStateSchemaVersions(manifest);
   for (const [file, hash] of Object.entries(manifest.files)) {
     if (isAbsolute(file) || file.split("/").includes("..") || file.includes("\0") || !/^[a-f0-9]{64}$/.test(hash)) throw new Error("Invalid artifact file manifest.");
     const path = join(directory, file);
@@ -240,9 +270,10 @@ async function unpack(archive: string, directory: string): Promise<HostArtifact>
   return verifyArtifact(directory);
 }
 
-export async function installHost(options: { archive: string; bun?: string; layout?: ServiceLayout }): Promise<object> {
+export async function installHost(options: { archive: string; bun?: string; layout?: ServiceLayout; lifecycle?: HostServiceLifecycle }): Promise<object> {
   if (!options.archive) throw new Error("An explicit --package archive path is required.");
   const layout = options.layout ?? serviceLayout({ dataDirectory: process.env.AGENT_DESKTOP_DATA_DIR });
+  const lifecycle = options.lifecycle ?? nativeLifecycle;
   const bun = absolute(options.bun ?? process.execPath);
   if ((await run([bun, "--version"])).stdout.trim() !== BUN_VERSION) throw new Error(`Installation requires Bun ${BUN_VERSION}.`);
   await mkdir(layout.installDirectory, { recursive: true, mode: 0o700 });
@@ -251,6 +282,7 @@ export async function installHost(options: { archive: string; bun?: string; layo
   let newRelease: string | undefined;
   try {
     const manifest = await unpack(resolve(options.archive), staging);
+    checkBeforeStop(manifest, layout);
     const previous = await currentVersion(layout);
     if (await exists(layout.serviceFile) && !previous) throw new Error("An existing service file has no matching installation; refusing to overwrite it.");
     newRelease = join(layout.installDirectory, "versions", manifest.version);
@@ -275,25 +307,31 @@ export async function installHost(options: { archive: string; bun?: string; layo
       const path = join(layout.logDirectory, name);
       if (!await exists(path)) await writeFile(path, "", { mode: 0o600 });
     }
-    await stopService(layout);
+    await stopForCompatibleRelease(manifest, layout, lifecycle, Boolean(previous));
     assertNoNativeTerminalOwnership(layout.dataDirectory);
     const backup = await backupState(layout);
     const oldService = await exists(layout.serviceFile) ? await readFile(layout.serviceFile, "utf8") : undefined;
     try {
       await replaceCurrent(layout, `versions/${manifest.version}`);
       await writeAtomic(layout.serviceFile, layout.platform === "darwin" ? renderLaunchAgent(layout) : renderSystemdUnit(layout));
-      await startService(layout);
-      const health = await healthy(layout);
+      await lifecycle.start(layout);
+      const health = await lifecycle.healthy(layout);
       await writeAtomic(join(layout.installDirectory, "installation.json"), JSON.stringify({ version: manifest.version, previousVersion: previous,
         installedAt: new Date().toISOString(), dataDirectory: layout.dataDirectory, serviceFile: layout.serviceFile, backup }, null, 2));
       return { installed: true, version: manifest.version, previousVersion: previous, hostId: health.hostId, platform: layout.platform, architecture: arch(), backup };
     } catch (error) {
-      await stopService(layout);
       if (previous) {
+        try {
+          const previousManifest = await verifyArtifact(join(layout.installDirectory, "versions", previous));
+          await stopForCompatibleRelease(previousManifest, layout, lifecycle, true);
+        } catch (recoveryError) {
+          throw new Error(`Target host failed: ${error instanceof Error ? error.message : "unknown service error"}. Automatic recovery to ${previous} was not completed: ${recoveryError instanceof Error ? recoveryError.message : "unknown recovery error"}`);
+        }
         await replaceCurrent(layout, `versions/${previous}`);
         if (oldService !== undefined) await writeAtomic(layout.serviceFile, oldService);
-        await startService(layout);
+        await lifecycle.start(layout);
       } else {
+        await lifecycle.stop(layout);
         await rm(join(layout.installDirectory, "current"), { force: true });
         await rm(layout.serviceFile, { force: true });
         if (layout.platform === "linux") await run(["/usr/bin/systemctl", "--user", "daemon-reload"]);
@@ -311,12 +349,12 @@ export async function installHost(options: { archive: string; bun?: string; layo
   } finally { await rm(staging, { recursive: true, force: true }); }
 }
 
-async function manage(action: string, layout: ServiceLayout, version?: string): Promise<object> {
-  if (action === "stop") { await stopService(layout); return { stopped: true }; }
-  if (action === "start") { await stopService(layout); await startService(layout); return { started: true, ...await healthy(layout) }; }
+export async function manageHost(action: string, layout: ServiceLayout, version?: string, lifecycle: HostServiceLifecycle = nativeLifecycle): Promise<object> {
+  if (action === "stop") { await lifecycle.stop(layout); return { stopped: true }; }
+  if (action === "start") { await lifecycle.stop(layout); await lifecycle.start(layout); return { started: true, ...await lifecycle.healthy(layout) }; }
   if (action === "status") {
     let health: object;
-    try { health = { running: true, ...await healthy(layout, 1000) }; }
+    try { health = { running: true, ...await lifecycle.healthy(layout, 1000) }; }
     catch { health = { running: false }; }
     return { version: await currentVersion(layout), ...health };
   }
@@ -325,17 +363,25 @@ async function manage(action: string, layout: ServiceLayout, version?: string): 
     const target = version ?? record.previousVersion;
     if (typeof target !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(target)) throw new Error("No valid rollback version is available.");
     const release = join(layout.installDirectory, "versions", target);
-    await verifyArtifact(release);
+    const manifest = await verifyArtifact(release);
+    checkBeforeStop(manifest, layout);
     await assertNoRunningWork(layout);
     const previous = await currentVersion(layout);
-    await stopService(layout);
+    await stopForCompatibleRelease(manifest, layout, lifecycle, Boolean(previous));
     assertNoNativeTerminalOwnership(layout.dataDirectory);
     const backup = await backupState(layout);
     await replaceCurrent(layout, `versions/${target}`);
-    try { await startService(layout); await healthy(layout); }
+    try { await lifecycle.start(layout); await lifecycle.healthy(layout); }
     catch (error) {
-      await stopService(layout);
-      if (previous) { await replaceCurrent(layout, `versions/${previous}`); await startService(layout); }
+      if (previous) {
+        try {
+          const previousManifest = await verifyArtifact(join(layout.installDirectory, "versions", previous));
+          await stopForCompatibleRelease(previousManifest, layout, lifecycle, true);
+        } catch (recoveryError) {
+          throw new Error(`Target host failed: ${error instanceof Error ? error.message : "unknown service error"}. Automatic recovery to ${previous} was not completed: ${recoveryError instanceof Error ? recoveryError.message : "unknown recovery error"}`);
+        }
+        await replaceCurrent(layout, `versions/${previous}`); await lifecycle.start(layout);
+      } else await lifecycle.stop(layout);
       throw error;
     }
     await writeAtomic(join(layout.installDirectory, "installation.json"), JSON.stringify({ ...record, version: target, previousVersion: previous, backup }, null, 2));
@@ -343,7 +389,7 @@ async function manage(action: string, layout: ServiceLayout, version?: string): 
   }
   if (action === "uninstall") {
     await assertNoRunningWork(layout);
-    await stopService(layout);
+    await lifecycle.stop(layout);
     assertNoNativeTerminalOwnership(layout.dataDirectory);
     if (layout.platform === "linux") await run(["/usr/bin/systemctl", "--user", "disable", `${HOST_SERVICE}.service`]);
     await rm(layout.serviceFile, { force: true });
@@ -359,7 +405,7 @@ if (import.meta.main) {
     const value = (name: string) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
     const layout = serviceLayout({ installDirectory: value("--root"), dataDirectory: value("--data-dir") ?? process.env.AGENT_DESKTOP_DATA_DIR });
     const result = args[0] === "install" ? await installHost({ archive: value("--package") ?? "", bun: value("--bun"), layout })
-      : await manage(args[0] ?? "", layout, value("--version"));
+      : await manageHost(args[0] ?? "", layout, value("--version"));
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : "Host installation failed."}\n`);
