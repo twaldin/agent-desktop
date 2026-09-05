@@ -1,0 +1,15 @@
+import { expect, test } from "bun:test";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+test("HTTP native command receipts consume only their draft revision and deduplicate effects through errors, abort and restart", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "agent-desktop-command-admission-")));
+  try {
+    const child = Bun.spawn([process.execPath, fileURLToPath(new URL("./fixtures/native-command-admission.ts", import.meta.url)), root], { cwd: root,
+      env: { HOME: root, PI_CODING_AGENT_DIR: path.join(root, "agent"), PATH: process.env.PATH, SHELL: "/bin/sh", TMPDIR: tmpdir(), TERM: "dumb" }, stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (code !== 0) throw new Error(`Isolated native command admission failed: ${stderr}`);
+    expect(stdout).toContain("native slash-command HTTP admission contracts passed");
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 30_000);

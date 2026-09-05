@@ -1,0 +1,10 @@
+{
+  "version": "18.1.10",
+  "commit": "f241301c83726afe75a847e919b89977a54dafbe",
+  "files": {
+    "src/session/session-manager.ts": "58bac0e379c726692cd87638dfd73217079eb44f560e96b909d8b4ddcb54b6b3",
+    "src/session/session-storage.ts": "d080d92ec137598fb92029e091284ee4a1862e258d3b5d4f02ca0d9f0ab0a4a6",
+    "src/session/agent-session.ts": "4cf6d8074a361490bc9f8e51a728a57f51a0eee2f4b736caf308226becafd6fb",
+    "src/task/persisted-revive.ts": "04c426227a69f11c9bcc30a7e32844dc94c211bbc0bae86934311ae71cd5a863"
+  }
+}

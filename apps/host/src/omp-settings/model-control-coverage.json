@@ -1,0 +1,1414 @@
+{
+  "version": "18.1.10",
+  "sourceCommit": "f241301c83726afe75a847e919b89977a54dafbe",
+  "inventorySource": ".reference/omp-18.1.10-release/model-capabilities-inventory.json",
+  "complete": false,
+  "modelDefinitions": "native-schema-derived-typed-read-write-editors",
+  "extensionSettings": "pending-session-registry-descriptors",
+  "fields": [
+    {
+      "interface": "Model",
+      "field": "id",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1054",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "identity",
+      "type": "ModelIdentity",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1060",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native classified identity projected with a fixed field allowlist; compiled identity is not a models.yml input field."
+    },
+    {
+      "interface": "Model",
+      "field": "requiresGlyphTokenization",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1066",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "requiresCursorToolSchemaProjection",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1068",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "requestModelId",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1077",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "reasoningMode",
+      "type": "\"pro\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1084",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "name",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1085",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "api",
+      "type": "TApi",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1086",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "provider",
+      "type": "Provider",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1087",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "baseUrl",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1088",
+      "status": "native-definition-write-only",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "reasoning",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1089",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "tokenizer",
+      "type": "ModelTokenizer",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1095",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "input",
+      "type": "(\"text\" | \"image\")[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1096",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "imageInputDecoder",
+      "type": "\"stb\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1101",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "supportsTools",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1108",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "supportsComputerUse",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1110",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "supportsComputerUseConfig",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1112",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "gitlabDuoWorkflowRootNamespaceId",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1114",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "cursorMaxMode",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1116",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "cost",
+      "type": "ModelCost",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1117",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "premiumMultiplier",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1119",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "contextWindow",
+      "type": "number | null",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1120",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "maxTokens",
+      "type": "number | null",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1121",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "omitMaxOutputTokens",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1133",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "headers",
+      "type": "Record<string, string>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1134",
+      "status": "native-definition-write-only",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "transport",
+      "type": "\"pi-native\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1149",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "preferWebsockets",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1151",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "useResponsesLite",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1153",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "toolMode",
+      "type": "\"code_mode_only\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1155",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "contextPromotionTarget",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1157",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "compactionModel",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1159",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "remoteCompaction",
+      "type": "RemoteCompactionConfig<TApi>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1161",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "priority",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1163",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "serviceTierCost",
+      "type": "Readonly<Partial<Record<\"flex\" | \"priority\", number>>>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1169",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "description",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1174",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "isNew",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1176",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "isBeta",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1178",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "isRecommended",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1180",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "thinking",
+      "type": "ThinkingConfig",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1182",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "int",
+      "type": "number | null",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1184",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "tps",
+      "type": "number | null",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1186",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "compat",
+      "type": "CompatOf<TApi>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1191",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native custom-model definition editor; final document validated and reloaded by OMP. ModelOverride supports this field only when declared there."
+    },
+    {
+      "interface": "Model",
+      "field": "compatConfig",
+      "type": "CompatConfigOf<TApi>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1193",
+      "status": "withheld-sensitive",
+      "settingsPaths": [],
+      "note": "No value serialized; dedicated write-only model definition editor remains pending."
+    },
+    {
+      "interface": "Model",
+      "field": "applyPatchToolType",
+      "type": "\"freeform\" | \"function\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1201",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "isOAuth",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1208",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "guardrailIdentifier",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1216",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "guardrailVersion",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1218",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "guardrailTrace",
+      "type": "\"enabled\" | \"disabled\" | \"enabled_full\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1220",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "Model",
+      "field": "requestMetadata",
+      "type": "Record<string, string>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1226",
+      "status": "withheld-sensitive",
+      "settingsPaths": [],
+      "note": "No value serialized; dedicated write-only model definition editor remains pending."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "mode",
+      "type": "ThinkingControlMode",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L37",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native thinking definition field; native normalization and narrow validators apply."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "efforts",
+      "type": "readonly Effort[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L43",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native thinking definition field; native normalization and narrow validators apply."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "defaultLevel",
+      "type": "Effort",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L45",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native thinking definition field; native normalization and narrow validators apply."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "effortMap",
+      "type": "Partial<Record<Effort, string>>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L51",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native thinking definition field; native normalization and narrow validators apply."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "supportsDisplay",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L56",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native thinking definition field; native normalization and narrow validators apply."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "prefixBinding",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L61",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "effortRouting",
+      "type": "Readonly<Partial<Record<Effort | \"off\", string>>>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L67",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "effortBudgets",
+      "type": "Readonly<Partial<Record<Effort, number>>>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L75",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "suppressWhenOff",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L83",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "ThinkingConfig",
+      "field": "requiresEffort",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L91",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Typed native thinking definition field; native normalization and narrow validators apply."
+    },
+    {
+      "interface": "RemoteCompactionConfig",
+      "field": "enabled",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L994",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Native remote compaction object editor, with endpoints write-only."
+    },
+    {
+      "interface": "RemoteCompactionConfig",
+      "field": "api",
+      "type": "TApi",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L996",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Native remote compaction object editor, with endpoints write-only."
+    },
+    {
+      "interface": "RemoteCompactionConfig",
+      "field": "endpoint",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L998",
+      "status": "native-definition-write-only",
+      "settingsPaths": [],
+      "note": "Native remote compaction object editor, with endpoints write-only."
+    },
+    {
+      "interface": "RemoteCompactionConfig",
+      "field": "v2StreamingEnabled",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1000",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Native remote compaction object editor, with endpoints write-only."
+    },
+    {
+      "interface": "RemoteCompactionConfig",
+      "field": "v2Endpoint",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1002",
+      "status": "native-definition-write-only",
+      "settingsPaths": [],
+      "note": "Native remote compaction object editor, with endpoints write-only."
+    },
+    {
+      "interface": "RemoteCompactionConfig",
+      "field": "streamingEndpoint",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1004",
+      "status": "native-definition-write-only",
+      "settingsPaths": [],
+      "note": "Native remote compaction object editor, with endpoints write-only."
+    },
+    {
+      "interface": "RemoteCompactionConfig",
+      "field": "model",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1006",
+      "status": "native-definition-editor",
+      "settingsPaths": [],
+      "note": "Native remote compaction object editor, with endpoints write-only."
+    },
+    {
+      "interface": "TokenCost",
+      "field": "input",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1011",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "TokenCost",
+      "field": "output",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1012",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "TokenCost",
+      "field": "cacheRead",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1013",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "TokenCost",
+      "field": "cacheWrite",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1014",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "LongContextTokenCost",
+      "field": "inputThreshold",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1024",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "LongContextTokenCost",
+      "field": "inputThresholdInclusive",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1026",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "ModelCost",
+      "field": "longContext",
+      "type": "LongContextTokenCost",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/catalog/src/types.ts#L1031",
+      "status": "readonly-capability",
+      "settingsPaths": [],
+      "note": "Native metadata is projected. Fields omitted from the native models.yml input schema remain compiled/runtime capability metadata."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "temperature",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "topP",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "topK",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L401",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "minP",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L402",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "presencePenalty",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L403",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "repetitionPenalty",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L404",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "stopSequences",
+      "type": "string[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L411",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "frequencyPenalty",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L416",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "maxTokens",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "signal",
+      "type": "AbortSignal",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L418",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "apiKey",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L419",
+      "status": "native-sensitive-plumbing",
+      "settingsPaths": [],
+      "note": "Never serialize credential or arbitrary request values; dedicated write-only configuration requires explicit adapter."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "cacheRetention",
+      "type": "CacheRetention",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L420",
+      "status": "native-setting",
+      "settingsPaths": [
+        "providers.cacheRetention"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "anthropicCacheRefresh",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L428",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "anthropicPrefixMismatchBehavior",
+      "type": "\"drop_block\" | \"error\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L433",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "anthropicCacheRefreshRequest",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L435",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "headers",
+      "type": "Record<string, string>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L440",
+      "status": "native-sensitive-plumbing",
+      "settingsPaths": [],
+      "note": "Never serialize credential or arbitrary request values; dedicated write-only configuration requires explicit adapter."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "initiatorOverride",
+      "type": "MessageAttribution",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L444",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "maxRetryDelayMs",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L452",
+      "status": "native-setting",
+      "settingsPaths": [
+        "retry.maxDelayMs"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "metadata",
+      "type": "Record<string, unknown>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L458",
+      "status": "native-sensitive-plumbing",
+      "settingsPaths": [],
+      "note": "Never serialize credential or arbitrary request values; dedicated write-only configuration requires explicit adapter."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "providerOptions",
+      "type": "Readonly<Record<string, unknown>>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L463",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "include",
+      "type": "OpenAIResponseInclude[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L465",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "loopGuard",
+      "type": "{",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L469",
+      "status": "native-setting",
+      "settingsPaths": [
+        "model.loopGuard.enabled",
+        "model.loopGuard.checkAssistantContent"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "taskBudget",
+      "type": "TokenTaskBudget",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L477",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "sessionId",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L483",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "promptCacheKey",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L489",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "promptCache",
+      "type": "OpenAIPromptCacheOptions",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L495",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "statefulResponses",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L501",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "forceReasoningOff",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L507",
+      "status": "native-session-control",
+      "settingsPaths": [],
+      "note": "native off thinking selector"
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "providerSessionState",
+      "type": "Map<string, ProviderSessionState>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L512",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "codexCompaction",
+      "type": "CodexCompactionRequestContext",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L514",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "toolNamespacesInfo",
+      "type": "unknown",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L516",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "maxInFlightRequests",
+      "type": "Record<string, number>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L524",
+      "status": "native-setting",
+      "settingsPaths": [
+        "providers.maxInFlightRequests"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "onPayload",
+      "type": "(payload: unknown, model?: Model<Api>) => unknown | undefined | Promise<unknown | undefined>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L529",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "onResponse",
+      "type": "(response: ProviderResponseMetadata, model?: Model<Api>) => void | Promise<void>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L533",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "onSseEvent",
+      "type": "(event: RawSseEvent, model?: Model<Api>) => void",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L543",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "streamFirstEventTimeoutMs",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L563",
+      "status": "native-setting",
+      "settingsPaths": [
+        "providers.streamFirstEventTimeoutSeconds"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "streamIdleTimeoutMs",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L572",
+      "status": "native-setting",
+      "settingsPaths": [
+        "providers.streamIdleTimeoutSeconds"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "codexSseMaxAttempts",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L579",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "providerRetryWait",
+      "type": "(delayMs: number, signal?: AbortSignal) => Promise<void>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L583",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "acceptEmptyResponse",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L590",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "fetch",
+      "type": "FetchImpl",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L598",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "cwd",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L600",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "execHandlers",
+      "type": "CursorExecHandlers",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L603",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "apiKey",
+      "type": "ApiKey",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L615",
+      "status": "native-sensitive-plumbing",
+      "settingsPaths": [],
+      "note": "Never serialize credential or arbitrary request values; dedicated write-only configuration requires explicit adapter."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "reasoning",
+      "type": "Effort",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L616",
+      "status": "native-session-control",
+      "settingsPaths": [],
+      "note": "native session thinking selector"
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "disableReasoning",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L625",
+      "status": "native-session-control",
+      "settingsPaths": [],
+      "note": "native off thinking selector"
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "hideThinkingSummary",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L633",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "textVerbosity",
+      "type": "\"low\" | \"medium\" | \"high\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L635",
+      "status": "native-setting",
+      "settingsPaths": [
+        "textVerbosity"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "thinkingBudgets",
+      "type": "ThinkingBudgets",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L637",
+      "status": "native-setting",
+      "settingsPaths": [
+        "thinkingBudgets.*"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "cursorExecHandlers",
+      "type": "CursorExecHandlers",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L639",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "cursorOnToolResult",
+      "type": "CursorToolResultHandler",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L648",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "cursorExternalToolExecutor",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L650",
+      "status": "native-runtime-hook",
+      "settingsPaths": [],
+      "note": "Runtime, cancellation, instrumentation or extension callback plumbing; not a serializable user value. No arbitrary callback editor implemented."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "guardrailIdentifier",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L656",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "guardrailVersion",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L657",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "guardrailTrace",
+      "type": "\"enabled\" | \"disabled\" | \"enabled_full\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L658",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "requestMetadata",
+      "type": "Record<string, string>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L665",
+      "status": "native-sensitive-plumbing",
+      "settingsPaths": [],
+      "note": "Never serialize credential or arbitrary request values; dedicated write-only configuration requires explicit adapter."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "toolChoice",
+      "type": "ToolChoice",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L667",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "serviceTier",
+      "type": "ServiceTier",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L669",
+      "status": "native-session-control",
+      "settingsPaths": [],
+      "note": "native family-specific session tier selector"
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "kimiApiFormat",
+      "type": "\"openai\" | \"anthropic\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L671",
+      "status": "native-setting",
+      "settingsPaths": [
+        "providers.kimiApiFormat"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "syntheticApiFormat",
+      "type": "\"openai\" | \"anthropic\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L673",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "preferWebsockets",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L675",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "openrouterVariant",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L685",
+      "status": "native-setting",
+      "settingsPaths": [
+        "providers.openrouterVariant"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "cachedContent",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L691",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "antigravityEndpointMode",
+      "type": "\"auto\" | \"production\" | \"sandbox\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L693",
+      "status": "native-setting",
+      "settingsPaths": [
+        "providers.antigravityEndpoint"
+      ],
+      "note": "Native settings stream wrapper supplies this option; honors native model/provider behavior."
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "fallbacks",
+      "type": "FallbackParam[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L700",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "OpenAIPromptCacheOptions",
+      "field": "mode",
+      "type": "\"implicit\" | \"explicit\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L382",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "OpenAIPromptCacheOptions",
+      "field": "ttl",
+      "type": "\"30m\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L384",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    },
+    {
+      "interface": "OpenAIPromptCacheOptions",
+      "field": "breakpoint",
+      "type": "\"latest-stable-message\" | \"none\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L386",
+      "status": "pending-stream-control",
+      "settingsPaths": [],
+      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+    }
+  ],
+  "modelDefinitionSchema": {
+    "source": "packages/coding-agent/src/config/models-config-schema-bundle.ts",
+    "sourceSha256": "1f55b3c24c136426fca80e55f607cf8b1ba6a05782aea32d61dde090db8e7dcb",
+    "providerFields": [
+      "baseUrl",
+      "apiKey",
+      "api",
+      "headers",
+      "compat",
+      "remoteCompaction",
+      "authHeader",
+      "auth",
+      "discovery",
+      "models",
+      "modelOverrides",
+      "disableStrictTools",
+      "guardrailIdentifier",
+      "guardrailVersion",
+      "guardrailTrace",
+      "requestMetadata",
+      "transport"
+    ],
+    "customModelFields": [
+      "id",
+      "name",
+      "api",
+      "baseUrl",
+      "reasoning",
+      "thinking",
+      "input",
+      "imageInputDecoder",
+      "tokenizer",
+      "supportsTools",
+      "cost",
+      "premiumMultiplier",
+      "contextWindow",
+      "maxTokens",
+      "omitMaxOutputTokens",
+      "preferWebsockets",
+      "headers",
+      "compat",
+      "contextPromotionTarget",
+      "compactionModel",
+      "remoteCompaction"
+    ],
+    "modelOverrideFields": [
+      "name",
+      "reasoning",
+      "thinking",
+      "input",
+      "imageInputDecoder",
+      "tokenizer",
+      "supportsTools",
+      "cost",
+      "premiumMultiplier",
+      "contextWindow",
+      "maxTokens",
+      "omitMaxOutputTokens",
+      "preferWebsockets",
+      "headers",
+      "compat",
+      "contextPromotionTarget",
+      "compactionModel",
+      "remoteCompaction"
+    ],
+    "compatibilityFields": [
+      "supportsStore",
+      "supportsDeveloperRole",
+      "supportsMultipleSystemMessages",
+      "supportsReasoningEffort",
+      "reasoningEffortMap",
+      "maxTokensField",
+      "supportsUsageInStreaming",
+      "requiresToolResultName",
+      "requiresMistralToolIds",
+      "requiresAssistantAfterToolResult",
+      "requiresThinkingAsText",
+      "reasoningContentField",
+      "requiresReasoningContentForToolCalls",
+      "allowsSyntheticReasoningContentForToolCalls",
+      "requiresAssistantContentForToolCalls",
+      "supportsToolChoice",
+      "supportsForcedToolChoice",
+      "disableReasoningOnForcedToolChoice",
+      "disableReasoningOnToolChoice",
+      "thinkingFormat",
+      "qwenTemplateReasoningEffort",
+      "openRouterRouting",
+      "vercelGatewayRouting",
+      "extraBody",
+      "cacheControlFormat",
+      "supportsStrictMode",
+      "toolStrictMode",
+      "streamIdleTimeoutMs",
+      "streamMarkupHealingPattern",
+      "supportsLongPromptCacheRetention",
+      "supportsReasoningParams",
+      "supportsReasoningSummary",
+      "alwaysSendMaxTokens",
+      "strictResponsesPairing",
+      "supportsImageDetailOriginal",
+      "supportsContextManagement",
+      "supportsEagerToolInputStreaming",
+      "allowAnthropicHeaderOverrides",
+      "requiresToolResultId",
+      "replayUnsignedThinking",
+      "whenThinking",
+      "promptCacheMode",
+      "promptCacheMinimumTokens",
+      "promptCacheMaximumCheckpoints"
+    ]
+  }
+}

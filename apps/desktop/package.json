@@ -1,0 +1,13 @@
+{
+  "name": "@agent-desktop/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "dependencies": {
+    "@agent-desktop/shared": "workspace:*",
+    "lowlight": "3.3.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1"
+  }
+}

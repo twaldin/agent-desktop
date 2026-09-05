@@ -1,0 +1,493 @@
+import { constants } from "node:fs";
+import { access, open, realpath, stat } from "node:fs/promises";
+import path from "node:path";
+import type { ModelChoice, ModelInfo, TranscriptMessage } from "@agent-desktop/shared";
+import {
+  AgentRegistry, createAgentSession, discoverAuthStorage, getAgentDir,
+  ModelRegistry, SessionManager, Settings,
+  type AgentSession, type AgentSessionEvent, type AuthStorage,
+} from "@oh-my-pi/pi-coding-agent";
+import { parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+import { parseTitleSlotLine } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
+import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
+import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
+import { TranscriptMirror } from "./transcript";
+import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
+import { dispatchNativePrompt } from "./commands";
+import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
+import { createNativeAccountSelectionBridge } from "../omp-accounts/session-selection";
+import type { SessionAccountList } from "../omp-accounts/types";
+import { OmpInteractionBridge, type OmpBridgeEvent, type OmpInteraction, type OmpInteractionResponse } from "./interactions";
+import { initializeDesktopExtensions } from "./extensions";
+import { modelCapabilities, NativeSessionControls } from "../omp-settings/models";
+import { composerCatalog } from "../omp-settings/composer";
+import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControls, OmpSessionControlMutation } from "@agent-desktop/shared";
+export type { OmpPromptRun, OmpPromptReceipt } from "./prompt";
+export type { OmpSteerReceipt } from "./steer";
+
+type NativeModel = NonNullable<AgentSession["model"]>;
+export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent;
+export type OmpEventListener = (event: OmpRuntimeEvent) => void;
+export interface OmpSessionOptions {
+  cwd: string;
+  model?: ModelChoice;
+  thinkingLevel?: string;
+  sessionDirectory?: string;
+  onEvent?: OmpEventListener;
+  /** Enable only when the daemon provides an actual pending-interaction UI. */
+  interactions?: boolean;
+}
+export interface OmpOpenOptions { sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean }
+export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string }
+export interface OmpSession {
+  readonly id: string;
+  readonly sessionFile: string;
+  readonly cwd: string;
+  readonly model: ModelChoice | null;
+  readonly thinkingLevel: string | undefined;
+  readonly isStreaming: boolean;
+  readonly hasPostPromptWork: boolean;
+  readonly title: string | undefined;
+  readonly createdAt: number;
+  readonly modelFallbackMessage: string | undefined;
+  getMessages(): TranscriptMessage[];
+  subscribe(listener: OmpEventListener): () => void;
+  startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
+  prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
+  steer(text: string): Promise<OmpSteerReceipt>;
+  abort(): Promise<void>;
+  setModel(model: ModelChoice): Promise<void>;
+  listAccountChoices(): Promise<SessionAccountList>;
+  pinAccount(credentialId: number): Promise<SessionAccountList>;
+  releaseAccountForReselection(): Promise<SessionAccountList>;
+  listInteractions(): Promise<OmpInteraction[]>;
+  respondInteraction(id: string, response: OmpInteractionResponse): Promise<void>;
+  cancelInteractions(reason?: "cancelled" | "disconnected"): Promise<void>;
+  getControls(): Promise<OmpSessionControls>;
+  mutateControls(request: OmpSessionControlMutation): Promise<OmpSessionControls>;
+  dispose(): Promise<void>;
+}
+
+interface NativeContext { settings: Settings; registry: ModelRegistry; auth: AuthStorage }
+
+function toModelInfo(model: NativeModel, registry: ModelRegistry): ModelInfo {
+  // Never forward the whole native Model: its headers may contain credentials.
+  return {
+    id: model.id, provider: model.provider, name: model.name,
+    reasoning: model.reasoning, input: [...model.input],
+    contextWindow: model.contextWindow, maxTokens: model.maxTokens,
+    authenticated: registry.hasConfiguredAuth(model),
+    // Same baked metadata read used by native getSupportedEfforts().
+    thinkingLevels: model.reasoning ? [...(model.thinking?.efforts ?? [])] : [],
+  };
+}
+
+async function requireDirectory(directory: string): Promise<string> {
+  const resolved = await realpath(directory);
+  if (!(await stat(resolved)).isDirectory()) throw new Error("OMP working directory must be a directory");
+  await access(resolved, constants.R_OK | constants.X_OK);
+  return resolved;
+}
+
+async function readSessionHeader(sessionFile: string): Promise<{ id: string; cwd: string }> {
+  const file = await open(sessionFile, "r");
+  try {
+    const buffer = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await file.read(buffer);
+    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+    // 18.1.10 may put its fixed-width physical title slot before the semantic
+    // session header. Use native slot recognition and retain legacy support.
+    const headerLine = parseTitleSlotLine(lines[0]) ? lines[1] : lines[0];
+    const header: unknown = JSON.parse(headerLine);
+    if (!header || typeof header !== "object" || !("type" in header) || header.type !== "session"
+      || !("id" in header) || typeof header.id !== "string"
+      || !("cwd" in header) || typeof header.cwd !== "string") {
+      throw new Error("Cannot open an OMP session without a valid native identity and working directory");
+    }
+    return { id: header.id, cwd: header.cwd };
+  } finally { await file.close(); }
+}
+
+/** Bun-only native runtime. The owning host, never a window, controls its lifetime. */
+export class OmpRuntime {
+  #agentDir: string;
+  #discovery = new Map<string, NativeContext>();
+  #discoveryTails = new Map<string, Promise<unknown>>();
+  #sessions = new Set<OmpSession>();
+  #setups = new Set<Promise<OmpSession>>();
+  #reservedFiles = new Set<string>();
+  #disposed = false;
+  #disposeCall?: Promise<void>;
+
+  constructor(options: { agentDir?: string } = {}) {
+    this.#agentDir = options.agentDir ?? getAgentDir();
+  }
+
+  async #context(cwd: string): Promise<NativeContext> {
+    // Readonly Settings cannot reload itself. Both capability files and the
+    // default ModelsConfigFile may be cached by the native process.
+    for (const file of [path.join(this.#agentDir, "config.yml"), path.join(this.#agentDir, "config.yaml"), path.join(cwd, ".omp", "config.yml")]) invalidate(file);
+    ModelsConfigFile.relocate(path.join(this.#agentDir, "models.yml")).invalidate();
+    const settings = await Settings.loadReadOnly({ cwd, agentDir: this.#agentDir });
+    const auth = await discoverAuthStorage(this.#agentDir);
+    try {
+      const registry = new ModelRegistry(auth, path.join(this.#agentDir, "models.yml"), { settings });
+      if (registry.getError()) throw new Error("OMP model configuration is invalid; review the native models.yml");
+      await registry.hydrateCredentialScopedModelCaches();
+      return { settings, auth, registry };
+    } catch (error) { auth.close(); throw error; }
+  }
+
+  #assertActive(): void {
+    if (this.#disposed) throw new Error("OMP runtime is disposed");
+  }
+
+  async #withDiscovery<T>(cwd: string, refresh: boolean | undefined, read: (context: NativeContext) => T | Promise<T>): Promise<T> {
+    this.#assertActive();
+    const resolved = await requireDirectory(cwd);
+    this.#assertActive();
+    const pending = (this.#discoveryTails.get(resolved) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      this.#assertActive();
+      let context = this.#discovery.get(resolved);
+      if (!context || refresh) {
+        const replacement = await this.#context(resolved);
+        try {
+          if (refresh) {
+            await replacement.auth.revalidateCredentials();
+            await replacement.registry.refresh("online-if-uncached");
+          }
+          this.#assertActive();
+        } catch (error) { replacement.auth.close(); throw error; }
+        // All reads for this cwd share the queue, so nobody is still using the
+        // old store when it closes. Failed refreshes retain the previous context.
+        context?.auth.close();
+        this.#discovery.set(resolved, replacement);
+        context = replacement;
+      }
+      return read(context);
+    });
+    this.#discoveryTails.set(resolved, pending);
+    void pending.finally(() => { if (this.#discoveryTails.get(resolved) === pending) this.#discoveryTails.delete(resolved); }).catch(() => {});
+    return pending;
+  }
+
+  /** Configured auth means native credential availability, not a successful provider probe. */
+  listModels(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<ModelInfo[]> {
+    return this.#withDiscovery(cwd, options.refresh, context => {
+      const available = new Set(context.registry.getAvailable().map(model => `${model.provider}/${model.id}`));
+      return context.registry.getAll().map(model => ({ ...toModelInfo(model, context.registry),
+        available: available.has(`${model.provider}/${model.id}`),
+        disabledInSettings: context.settings.get("disabledProviders").includes(model.provider),
+      }));
+    });
+  }
+
+  async listModelCapabilities(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<OmpModelCapabilities[]> {
+    return this.#withDiscovery(cwd, options.refresh, context => {
+      const available = new Set(context.registry.getAvailable().map(model => `${model.provider}/${model.id}`));
+      return context.registry.getAll().map(model => {
+        const result = modelCapabilities(model);
+        result.capabilities.available = available.has(`${model.provider}/${model.id}`);
+        result.capabilities.disabledInSettings = context.settings.get("disabledProviders").includes(model.provider);
+        return result;
+      });
+    });
+  }
+
+  getComposerCatalog(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<OmpComposerCatalog> {
+    return this.#withDiscovery(cwd, options.refresh, context => composerCatalog(cwd, context.settings, context.registry));
+  }
+
+  #setup(operation: () => Promise<OmpSession>): Promise<OmpSession> {
+    this.#assertActive();
+    const pending = operation();
+    this.#setups.add(pending);
+    const remove = () => { this.#setups.delete(pending); };
+    void pending.then(remove, remove);
+    return pending;
+  }
+
+  create(options: OmpSessionOptions): Promise<OmpSession> {
+    return this.#setup(async () => {
+      const cwd = await requireDirectory(options.cwd);
+      this.#assertActive();
+      const manager = SessionManager.create(cwd, options.sessionDirectory);
+      return this.#attach(manager, { ...options, cwd });
+    });
+  }
+
+  /** Only for a file whose exclusive ownership the host has already established.
+   * OMP 18.1.10 does not provide a cross-process session lock. */
+  open(options: OmpOpenOptions): Promise<OmpSession> {
+    return this.#setup(() => this.#open(options));
+  }
+
+  async #open(options: OmpOpenOptions): Promise<OmpSession> {
+    const sessionFile = await realpath(options.sessionFile);
+    this.#assertActive();
+    if (this.#reservedFiles.has(sessionFile)) throw new Error("OMP session is already open in this runtime");
+    this.#reservedFiles.add(sessionFile);
+    let manager: SessionManager | undefined;
+    try {
+      const header = await readSessionHeader(sessionFile);
+      await requireDirectory(header.cwd);
+      manager = await SessionManager.open(sessionFile);
+      if (manager.getSessionId() !== header.id || manager.getCwd() !== header.cwd) {
+        throw new Error("OMP changed the session identity or working directory while opening it");
+      }
+      return await this.#attach(manager, { cwd: header.cwd, onEvent: options.onEvent, interactions: options.interactions }, sessionFile);
+    } catch (error) {
+      this.#reservedFiles.delete(sessionFile);
+      await manager?.close();
+      throw error;
+    }
+  }
+
+  async #attach(manager: SessionManager, options: OmpSessionOptions, reservation?: string): Promise<OmpSession> {
+    let context: NativeContext | undefined;
+    let native: AgentSession | undefined;
+    let bridge: OmpInteractionBridge | undefined;
+    const sessionFile = manager.getSessionFile();
+    if (!sessionFile) throw new Error("OMP did not allocate a session file");
+    const reservedFile = reservation ?? path.resolve(sessionFile);
+    this.#reservedFiles.add(reservedFile);
+    try {
+      context = await this.#context(options.cwd);
+      this.#assertActive();
+      const thinkingLevel = options.thinkingLevel === undefined ? undefined : parseCliThinkingLevel(options.thinkingLevel);
+      if (options.thinkingLevel !== undefined && thinkingLevel === undefined) throw new Error("Unknown OMP thinking level");
+      const model = options.model ? this.#findModel(context.registry, options.model, context.settings) : undefined;
+      const result = await createAgentSession({
+        cwd: options.cwd, agentDir: this.#agentDir,
+        settings: context.settings, modelRegistry: context.registry, authStorage: context.auth,
+        agentRegistry: new AgentRegistry(), sessionManager: manager, model, thinkingLevel,
+        // Tools cannot run until create finishes and installs the bridge below.
+        hasUI: false, interactivePrompts: options.interactions === true,
+        deferUsageReserveConfirmation: true,
+      });
+      native = result.session;
+      this.#assertActive();
+      await manager.ensureOnDisk();
+      const session = native;
+      const steering = new NativeSteerAdmission(session, manager);
+      const auth = context.auth;
+      const registry = context.registry;
+      const mirror = new TranscriptMirror();
+      // Reserve identities from resumed history before a prompt can emit events,
+      // including providers that reuse a tool call ID in a later turn.
+      mirror.snapshot(
+        session.buildTranscriptSessionContext({ collapseCompactedHistory: false, keepDanglingToolCalls: true }).messages,
+        manager.getBranch().filter(entry => entry.type === "message"),
+      );
+      const listeners = new Set<OmpEventListener>();
+      if (options.onEvent) listeners.add(options.onEvent);
+      const emitBridge = (event: OmpBridgeEvent) => { for (const listener of listeners) listener(event); };
+      if (options.interactions) {
+        bridge = new OmpInteractionBridge(session.sessionId, emitBridge);
+        result.setToolUIContext(bridge, true);
+        const ui = bridge;
+        session.setUsageFallbackConfirmer((confirmation, signal) => ui.confirm(
+          "Coding-plan reserve reached",
+          `${confirmation.from} has ${confirmation.remainingPercent === undefined ? "reached its configured reserve" : `${confirmation.remainingPercent.toFixed(1)}% remaining`}. Switch to ${confirmation.to}?`,
+          { signal },
+        ));
+      }
+      const ui = bridge;
+      let extensionStartup: Promise<void> | undefined;
+      const unsubscribe = session.subscribe(event => {
+        mirror.accept(event);
+        for (const listener of listeners) listener(event);
+      });
+      let disposed = false;
+      let disposeCall: Promise<void> | undefined;
+      let promptInFlight = false;
+      let admissionPending = false;
+      let admissionAbort: AbortController | undefined;
+      let interruptsInFlight = 0;
+      let accountMutation = false;
+      const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); };
+      const accountBridge = createNativeAccountSelectionBridge(async () => session);
+      const controls = new NativeSessionControls(session);
+      const assertIdle = () => {
+        assertSessionActive();
+        if (promptInFlight || accountMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
+      };
+      const listAccounts = async () => {
+        assertSessionActive();
+        await auth.revalidateCredentials();
+        return accountBridge.list(session.sessionId);
+      };
+      const handle: OmpSession = {
+        get id() { return session.sessionId; },
+        get sessionFile() { return session.sessionFile ?? sessionFile; },
+        get cwd() { return manager.getCwd(); },
+        get model() { return session.model ? { provider: session.model.provider, id: session.model.id } : null; },
+        get thinkingLevel() { return session.configuredThinkingLevel(); },
+        get isStreaming() { return session.isStreaming; },
+        get hasPostPromptWork() { return session.hasPostPromptWork; },
+        get title() { return session.sessionName ?? manager.getHeader()?.title; },
+        get createdAt() { return Date.parse(manager.getHeader()!.timestamp); },
+        modelFallbackMessage: result.modelFallbackMessage,
+        getMessages: () => {
+          assertSessionActive();
+          const entries = manager.getBranch().filter(entry => entry.type === "message");
+          const display = session.buildTranscriptSessionContext({ collapseCompactedHistory: false, keepDanglingToolCalls: true });
+          return mirror.snapshot(display.messages, entries);
+        },
+        subscribe: listener => {
+          assertSessionActive(); listeners.add(listener);
+          return () => { listeners.delete(listener); };
+        },
+        startPrompt: (text, promptOptions = {}) => {
+          assertSessionActive();
+          if (promptInFlight || accountMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          promptInFlight = true;
+          admissionPending = true;
+          const controller = new AbortController();
+          admissionAbort = controller;
+          const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
+          const completion = (async () => {
+              await auth.revalidateCredentials();
+              if (ui) {
+                // Deferred until the handle exists: session_start may itself wait
+                // for user input, which must never deadlock worker initialization.
+                extensionStartup ??= initializeDesktopExtensions(session, ui);
+                await extensionStartup;
+              }
+              assertSessionActive();
+              if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
+              // Startup extension messages are not receipts for the submitted draft.
+              const nativeRun = beginNativePrompt(manager, async () => {
+                if (promptOptions.model) await session.setModel(this.#findModel(registry, promptOptions.model, session.settings));
+                if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
+                if (promptOptions.thinkingLevel !== undefined) {
+                  const selection = parseCliThinkingLevel(promptOptions.thinkingLevel);
+                  if (selection === undefined) throw new Error("Unknown OMP thinking level");
+                  session.setThinkingLevel(selection, false);
+                }
+                return dispatchNativePrompt(session, text);
+              }, () => session.settleInFlightMessagePersistence());
+              void nativeRun.accepted.then(receipt.resolve, receipt.reject);
+              return await nativeRun.completion;
+          })().catch(error => { receipt.reject(error); throw error; });
+          void receipt.promise.catch(() => {});
+          void completion.catch(() => {});
+          const run = { accepted: receipt.promise, completion };
+          const clearAdmission = () => { admissionPending = false; };
+          void run.accepted.then(clearAdmission, clearAdmission);
+          const clearTurn = () => { promptInFlight = false; admissionPending = false; admissionAbort = undefined; };
+          void run.completion.then(clearTurn, clearTurn);
+          return run;
+        },
+        prompt: (text, promptOptions) => handle.startPrompt(text, promptOptions).completion,
+        steer: async text => {
+          assertSessionActive();
+          if (admissionPending) throw new Error("OMP is still accepting the submitted prompt");
+          // The host snapshot can precede a concurrently admitted Interrupt.
+          // Recheck in the owning worker before native steer can queue an idle
+          // auto-continuation or land after abort's initial queue cancellation.
+          if (interruptsInFlight || !session.isStreaming) return { kind: "not-recorded", reason: "There is no running native turn accepting steering input" };
+          return steering.submit(text);
+        },
+        abort: async () => {
+          assertSessionActive(); admissionAbort?.abort(); ui?.cancelAll("aborted");
+          interruptsInFlight++;
+          steering.cancelQueued("Interrupted before this steer left the native queue");
+          try { await session.abort(); }
+          finally {
+            try { await steering.settleCancelled("Interrupted after native delivery; durable steer admission could not be verified"); }
+            finally { interruptsInFlight--; }
+          }
+        },
+        setModel: async choice => {
+          assertIdle(); accountMutation = true;
+          try {
+            await auth.revalidateCredentials();
+            await session.setModel(this.#findModel(registry, choice, session.settings));
+          } finally { accountMutation = false; }
+        },
+        listAccountChoices: listAccounts,
+        pinAccount: async credentialId => {
+          assertIdle(); accountMutation = true;
+          try { await auth.revalidateCredentials(); return await accountBridge.pin(session.sessionId, credentialId); }
+          finally { accountMutation = false; }
+        },
+        releaseAccountForReselection: async () => {
+          assertIdle(); accountMutation = true;
+          try {
+            await auth.revalidateCredentials();
+            if (session.model) auth.releaseSessionCredentialForReselection(session.model.provider, session.sessionId);
+            return await accountBridge.list(session.sessionId);
+          } finally { accountMutation = false; }
+        },
+        listInteractions: async () => { assertSessionActive(); return ui?.list() ?? []; },
+        respondInteraction: async (id, response) => {
+          assertSessionActive();
+          if (!ui) throw new Error("OMP interaction bridge is not installed");
+          ui.respond(id, response);
+        },
+        cancelInteractions: async (reason = "cancelled") => { assertSessionActive(); ui?.cancelAll(reason); },
+        getControls: async () => { assertSessionActive(); return controls.read(); },
+        mutateControls: async request => {
+          assertIdle(); accountMutation = true;
+          try {
+            return await controls.mutate(request, async choice => {
+              await auth.revalidateCredentials();
+              await session.setModel(this.#findModel(registry, choice, session.settings));
+            });
+          } finally { accountMutation = false; }
+        },
+        dispose: () => {
+          if (disposeCall) return disposeCall;
+          disposed = true;
+          admissionAbort?.abort();
+          ui?.dispose();
+          steering.cancelQueued("Session stopped before this steer left the native queue");
+          session.beginDispose();
+          disposeCall = (async () => {
+            try { await session.dispose(); }
+            finally {
+              await steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified");
+              steering.close();
+              unsubscribe(); listeners.clear(); auth.close();
+              this.#sessions.delete(handle); this.#reservedFiles.delete(reservedFile);
+            }
+          })();
+          return disposeCall;
+        },
+      };
+      this.#sessions.add(handle);
+      return handle;
+    } catch (error) {
+      bridge?.dispose();
+      try { if (native) await native.dispose(); else await manager.close(); }
+      finally { context?.auth.close(); this.#reservedFiles.delete(reservedFile); }
+      throw error;
+    }
+  }
+
+  #findModel(registry: ModelRegistry, choice: ModelChoice, settings: Settings): NativeModel {
+    if (settings.get("disabledProviders").includes(choice.provider)) throw new Error("OMP provider is disabled in this session's native settings");
+    const model = registry.find(choice.provider, choice.id);
+    if (!model) throw new Error(`OMP model is not available: ${choice.provider}/${choice.id}`);
+    if (!registry.hasConfiguredAuth(model)) throw new Error(`OMP has no configured authentication for ${choice.provider}`);
+    return model;
+  }
+
+  dispose(): Promise<void> {
+    if (this.#disposeCall) return this.#disposeCall;
+    this.#disposed = true;
+    this.#disposeCall = (async () => {
+      // A session under construction owns native resources before it reaches
+      // #sessions. Wait for its active-state check and cleanup before exit.
+      await Promise.allSettled([...this.#setups]);
+      await Promise.allSettled([...this.#discoveryTails.values()]);
+      const results = await Promise.allSettled([...this.#sessions].map(session => session.dispose()));
+      for (const context of this.#discovery.values()) context.auth.close();
+      this.#discovery.clear();
+      const failures = results.filter(result => result.status === "rejected");
+      if (failures.length) throw new AggregateError(failures.map(result => result.reason), "OMP session disposal failed");
+    })();
+    return this.#disposeCall;
+  }
+}

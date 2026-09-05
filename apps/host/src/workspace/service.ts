@@ -1,0 +1,399 @@
+import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitCommitResult, GitWorktree, CreateWorktreeOptions } from "../../../../packages/shared/src/workspace";
+export type * from "../../../../packages/shared/src/workspace";
+
+import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, realpathSync, statSync } from "node:fs";
+import { access, link, lstat, mkdir, open, readdir, readlink, realpath, rename, stat, unlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
+
+const execute = promisify(execFile);
+const editTails = new Map<string, Promise<void>>();
+const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+export class WorkspaceError extends Error {
+  constructor(readonly code: string, message: string) { super(message); this.name = "WorkspaceError"; }
+}
+
+
+function within(root: string, path: string): boolean { return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep); }
+function relativePath(path: string): string {
+  if (typeof path !== "string" || path.includes("\0") || isAbsolute(path) || path.split(/[\\/]/).includes("..") || path.includes("\\")) {
+    throw new WorkspaceError("OUTSIDE_WORKSPACE", "A relative path within the owning workspace is required.");
+  }
+  return path || ".";
+}
+async function serialized<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const pending = (editTails.get(key) ?? Promise.resolve()).then(operation);
+  const settled = pending.then(() => {}, () => {});
+  editTails.set(key, settled);
+  void settled.then(() => { if (editTails.get(key) === settled) editTails.delete(key); });
+  return pending;
+}
+
+function decode(bytes: Uint8Array): string {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { throw new WorkspaceError("INVALID_GIT_ENCODING", "Git output contains filenames or metadata that are not valid UTF-8."); }
+}
+
+/** One owning directory; every caller-supplied file path is relative to it. */
+export class WorkspaceService {
+  readonly cwd: string;
+  readonly worktreeRoot?: string;
+  private readonly maxTextBytes: number;
+  private readonly gitTimeoutMs: number;
+
+  constructor(cwd: string, options: { worktreeRoot?: string; maxTextBytes?: number; gitTimeoutMs?: number } = {}) {
+    this.cwd = realpathSync(cwd);
+    if (!statSync(this.cwd).isDirectory()) throw new WorkspaceError("NOT_DIRECTORY", "The workspace must be an existing directory.");
+    if (options.worktreeRoot && !isAbsolute(options.worktreeRoot)) throw new WorkspaceError("INVALID_WORKTREE_ROOT", "The host must provide an absolute managed worktree root.");
+    this.worktreeRoot = options.worktreeRoot && resolve(options.worktreeRoot);
+    this.maxTextBytes = options.maxTextBytes ?? 2 * 1024 * 1024;
+    this.gitTimeoutMs = options.gitTimeoutMs ?? 30_000;
+    if (!Number.isSafeInteger(this.maxTextBytes) || this.maxTextBytes < 1 || this.maxTextBytes > 64 * 1024 * 1024) throw new WorkspaceError("INVALID_LIMIT", "Text size limit must be between 1 byte and 64 MiB.");
+    if (!Number.isSafeInteger(this.gitTimeoutMs) || this.gitTimeoutMs < 1) throw new WorkspaceError("INVALID_LIMIT", "Git timeout must be a positive integer.");
+  }
+
+  private async owned(path: string, root = this.cwd): Promise<string> {
+    const target = await realpath(resolve(root, relativePath(path)));
+    if (!within(root, target)) throw new WorkspaceError("OUTSIDE_WORKSPACE", "The path resolves outside its owning workspace.");
+    return target;
+  }
+
+  private async parentOwned(path: string, root = this.cwd): Promise<string> {
+    const target = resolve(root, relativePath(path));
+    if (target === root) return root;
+    const parent = await this.owned(relative(root, dirname(target)), root);
+    return join(parent, basename(target));
+  }
+
+  async stat(path: string): Promise<WorkspaceEntry> {
+    const target = await this.parentOwned(path);
+    const metadata = await lstat(target);
+    const entry: WorkspaceEntry = { path: relative(this.cwd, target) || ".", name: basename(target),
+      kind: metadata.isSymbolicLink() ? "symlink" : metadata.isDirectory() ? "directory" : metadata.isFile() ? "file" : "other",
+      size: metadata.size, modifiedAt: metadata.mtimeMs, mode: metadata.mode & 0o777 };
+    if (metadata.isSymbolicLink()) {
+      entry.linkTarget = await readlink(target);
+      try { entry.linkState = within(this.cwd, await realpath(target)) ? "inside" : "outside"; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") entry.linkState = "missing"; else throw error; }
+    }
+    return entry;
+  }
+
+  async list(path = "."): Promise<WorkspaceEntry[]> {
+    const directory = await this.owned(path);
+    if (!(await stat(directory)).isDirectory()) throw new WorkspaceError("NOT_DIRECTORY", "The selected path is not a directory.");
+    const names = await readdir(directory);
+    if (names.length > 20_000) throw new WorkspaceError("DIRECTORY_TOO_LARGE", "The directory has more than 20000 entries.");
+    const entries = await Promise.all(names.map(name => this.stat(relative(this.cwd, join(directory, name)))));
+    return entries.sort((a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name));
+  }
+
+  async readText(path: string): Promise<FileContent> {
+    const target = await this.owned(path);
+    if (!(await stat(target)).isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Text reading supports regular files only.");
+    const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const initial = await file.stat();
+      if (!initial.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Text reading supports regular files only.");
+      const resolvedAgain = await realpath(target);
+      const current = await stat(resolvedAgain);
+      if (!within(this.cwd, resolvedAgain) || current.ino !== initial.ino || current.dev !== initial.dev) throw new WorkspaceError("PATH_CHANGED", "The file changed identity while opening it. Refresh before retrying.");
+      const metadata: ContentMetadata = { path: relative(this.cwd, target), size: initial.size, modifiedAt: initial.mtimeMs, mode: initial.mode & 0o777 };
+      if (initial.size > this.maxTextBytes) return { ...metadata, kind: "too-large", revision: null, maximumBytes: this.maxTextBytes };
+      const buffer = Buffer.alloc(Math.min(initial.size + 1, this.maxTextBytes + 1));
+      let count = 0;
+      while (count < buffer.length) {
+        const result = await file.read(buffer, count, buffer.length - count, count);
+        if (!result.bytesRead) break;
+        count += result.bytesRead;
+      }
+      const after = await file.stat();
+      if (after.size > this.maxTextBytes) return { ...metadata, size: after.size, kind: "too-large", revision: null, maximumBytes: this.maxTextBytes };
+      if (after.size !== count || after.size !== initial.size || after.mtimeMs !== initial.mtimeMs) throw new WorkspaceError("FILE_CHANGED", "The file changed during reading. Refresh before retrying.");
+      const bytes = buffer.subarray(0, count);
+      const revision = hash(bytes);
+      const encoding = bytes.subarray(0, 4).equals(Buffer.from([0xff, 0xfe, 0, 0])) ? "utf32le"
+        : bytes.subarray(0, 4).equals(Buffer.from([0, 0, 0xfe, 0xff])) ? "utf32be"
+        : bytes[0] === 0xff && bytes[1] === 0xfe ? "utf16le" : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf16be" : undefined;
+      if (encoding) return { ...metadata, kind: "unsupported-encoding", revision, encoding };
+      if (bytes.includes(0)) return { ...metadata, kind: "binary", revision };
+      let text: string;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+      catch { return { ...metadata, kind: "binary", revision }; }
+      return { ...metadata, kind: "text", text, revision, encoding: "utf8", bom: bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])) };
+    } finally { await file.close(); }
+  }
+
+  private async currentText(path: string): Promise<FileContent | null> {
+    try { return await this.readText(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  }
+
+  async writeText(path: string, input: FileWriteInput): Promise<FileWriteResult> {
+    if (typeof input.text !== "string" || (input.expectedRevision !== null && !/^[a-f0-9]{64}$/.test(input.expectedRevision))) throw new WorkspaceError("INVALID_REVISION", "A text value and its exact SHA-256 revision (or null for a new file) are required.");
+    const lexical = await this.parentOwned(path);
+    let target: string;
+    try { target = await this.owned(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { if ((await lstat(lexical).catch(() => null))?.isSymbolicLink()) throw new WorkspaceError("BROKEN_SYMLINK", "Cannot save through a broken symlink."); target = lexical; } else throw error; }
+    return serialized(`file:${target}`, async () => {
+      const current = await this.currentText(relative(this.cwd, target));
+      if ((current?.revision ?? null) !== input.expectedRevision || (current !== null && input.expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current };
+      if (current && current.kind !== "text") throw new WorkspaceError("NOT_UTF8_TEXT", "This file is not editable UTF-8 text.");
+      const bytes = Buffer.from((input.bom ?? current?.bom ? "\uFEFF" : "") + input.text, "utf8");
+      if (bytes.length > this.maxTextBytes) throw new WorkspaceError("FILE_TOO_LARGE", `Text exceeds the ${this.maxTextBytes}-byte editor limit.`);
+      if (bytes.includes(0)) throw new WorkspaceError("BINARY_CONTENT", "Text writes cannot contain NUL bytes.");
+      const before = current ? await stat(target) : undefined;
+      if (current) await access(target, constants.W_OK);
+      const parent = await this.owned(relative(this.cwd, dirname(target)));
+      if (parent !== dirname(target)) throw new WorkspaceError("PATH_CHANGED", "The destination directory changed. Refresh before saving.");
+      const temporary = join(parent, `.agent-desktop-save-${randomUUID()}`);
+      const file = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, before ? before.mode & 0o777 : 0o644);
+      try {
+        if (before) { await file.chmod(before.mode & 0o777); const tempMetadata = await file.stat(); if (tempMetadata.uid !== before.uid || tempMetadata.gid !== before.gid) await file.chown(before.uid, before.gid); }
+        await file.writeFile(bytes);
+        await file.sync();
+        await file.close();
+        const latest = await this.currentText(relative(this.cwd, target));
+        if ((latest?.revision ?? null) !== input.expectedRevision || (latest !== null && input.expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current: latest };
+        if (await this.owned(relative(this.cwd, parent)) !== parent) throw new WorkspaceError("PATH_CHANGED", "The destination directory changed. Refresh before saving.");
+        if (current) await rename(temporary, target);
+        else {
+          try { await link(temporary, target); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") return { ok: false, code: "REVISION_CONFLICT", current: await this.currentText(relative(this.cwd, target)) }; throw error; }
+        }
+        const directory = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY);
+        try { await directory.sync(); } finally { await directory.close(); }
+        const written = await this.readText(relative(this.cwd, target));
+        if (written.kind !== "text" || written.revision !== hash(bytes)) throw new WorkspaceError("FILE_CHANGED", "The file changed immediately after saving. Refresh its contents.");
+        return { ok: true, document: written };
+      } finally { await file.close(); await unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }); }
+    });
+  }
+
+  private async git(args: string[], options: { cwd?: string; validExitCodes?: number[] } = {}): Promise<{ stdout: string; exitCode: number }> {
+    const command = ["--no-pager", "--literal-pathspecs", "-c", "color.ui=false", "-C", options.cwd ?? this.cwd, ...args];
+    try {
+      const result = await execute("git", command, { encoding: "buffer", timeout: this.gitTimeoutMs, maxBuffer: 8 * 1024 * 1024 });
+      return { stdout: decode(result.stdout), exitCode: 0 };
+    } catch (error) {
+      const failure = error as Error & { code?: number | string; killed?: boolean; stdout?: Buffer; stderr?: Buffer };
+      if (typeof failure.code === "number" && options.validExitCodes?.includes(failure.code)) return { stdout: decode(failure.stdout ?? Buffer.alloc(0)), exitCode: failure.code };
+      if (failure.killed) throw new WorkspaceError("GIT_TIMEOUT", "Git exceeded its time limit. Inspect repository state before retrying a mutation.");
+      if (failure.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new WorkspaceError("GIT_OUTPUT_TOO_LARGE", "Git output exceeds 8 MiB. Select a narrower path.");
+      const detail = failure.stderr ? new TextDecoder().decode(failure.stderr).trim().slice(0, 32_000) : failure.message;
+      throw new WorkspaceError("GIT_FAILED", detail || "Git failed.");
+    }
+  }
+
+  private async requireGitRoot(): Promise<void> {
+    const top = (await this.git(["rev-parse", "--show-toplevel"])).stdout.trimEnd();
+    if (await realpath(top) !== this.cwd) throw new WorkspaceError("GIT_ROOT_OUTSIDE_WORKSPACE", "Select the repository root before performing Git operations.");
+  }
+
+  /** Content revision of HEAD and the index, independent of working-file edits. */
+  private async indexState(): Promise<{ head: string | null; revision: string }> {
+    const resolved = await this.git(["rev-parse", "--verify", "--quiet", "HEAD"], { validExitCodes: [1] });
+    const head = resolved.exitCode === 0 ? resolved.stdout.trim() : null;
+    if (!head) {
+      // A missing commit is safe only for a genuinely unborn branch, never a corrupt HEAD.
+      const symbolic = (await this.git(["symbolic-ref", "--quiet", "HEAD"])).stdout.trim();
+      if (!symbolic.startsWith("refs/heads/") || (await this.git(["show-ref", "--verify", "--quiet", symbolic], { validExitCodes: [1] })).exitCode !== 1) {
+        throw new WorkspaceError("INVALID_GIT_HEAD", "Git HEAD cannot be resolved to a commit or an unborn branch.");
+      }
+    }
+    const index = (await this.git(["ls-files", "--stage", "-z"])).stdout;
+    return { head, revision: hash(Buffer.from(JSON.stringify([head, index]))) };
+  }
+
+  private async checkIndexRevision(expectedRevision?: string): Promise<{ head: string | null; revision: string }> {
+    if (expectedRevision !== undefined && (typeof expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(expectedRevision))) throw new WorkspaceError("INVALID_REVISION", "An exact SHA-256 Git revision is required.");
+    const current = await this.indexState();
+    if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new WorkspaceError("GIT_REVISION_CONFLICT", "The Git index or HEAD changed since this review. Refresh before committing or unstaging.");
+    return current;
+  }
+
+  private async gitPaths(paths: string[]): Promise<string[]> {
+    if (!paths.length) throw new WorkspaceError("PATHS_REQUIRED", "Select at least one path.");
+    return Promise.all(paths.map(async path => {
+      const lexical = resolve(this.cwd, relativePath(path));
+      if (lexical === this.cwd) return ".";
+      let ancestor = dirname(lexical);
+      const missing: string[] = [];
+      let canonical: string;
+      for (;;) {
+        try { canonical = await realpath(ancestor); break; }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT" || ancestor === this.cwd) throw error;
+          missing.unshift(basename(ancestor)); ancestor = dirname(ancestor);
+        }
+      }
+      if (!within(this.cwd, canonical)) throw new WorkspaceError("OUTSIDE_WORKSPACE", "The Git path resolves outside its owning workspace.");
+      const target = join(canonical, ...missing, basename(lexical));
+      return relative(this.cwd, target) || ".";
+    }));
+  }
+
+  async gitStatus(): Promise<GitStatus> {
+    return serialized(`git:${this.cwd}`, () => this.readGitStatus());
+  }
+
+  private async readGitStatus(): Promise<GitStatus> {
+    await this.requireGitRoot();
+    let snapshot: { revision: string; output: string } | undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const before = await this.indexState();
+      const output = (await this.git(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"])).stdout;
+      if ((await this.indexState()).revision === before.revision) { snapshot = { revision: before.revision, output }; break; }
+    }
+    if (!snapshot) throw new WorkspaceError("GIT_CHANGED", "The Git index or HEAD kept changing during inspection. Refresh before reviewing.");
+    const records = snapshot.output.split("\0");
+    const result: GitStatus = { revision: snapshot.revision, branch: null, head: null, upstream: null, ahead: 0, behind: 0, entries: [] };
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index]!;
+      if (!record) continue;
+      if (record.startsWith("# branch.head ")) { const value = record.slice(14); result.branch = value === "(detached)" ? null : value; }
+      else if (record.startsWith("# branch.oid ")) { const value = record.slice(13); result.head = value === "(initial)" ? null : value; }
+      else if (record.startsWith("# branch.upstream ")) result.upstream = record.slice(18);
+      else if (record.startsWith("# branch.ab ")) { const counts = /^# branch\.ab \+(\d+) -(\d+)$/.exec(record); if (counts) { result.ahead = Number(counts[1]); result.behind = Number(counts[2]); } }
+      else if (record.startsWith("? ")) result.entries.push({ path: record.slice(2), indexStatus: "?", worktreeStatus: "?", kind: "untracked", submodule: false });
+      else if (/^[12u] /.test(record)) {
+        const fields = record.split(" ");
+        const count = fields[0] === "1" ? 8 : fields[0] === "2" ? 9 : 10;
+        const path = fields.slice(count).join(" ");
+        const xy = fields[1]!;
+        result.entries.push({ path, indexStatus: xy[0]!, worktreeStatus: xy[1]!, kind: fields[0] === "u" ? "conflict" : "tracked",
+          submodule: fields[2]?.startsWith("S") ?? false, ...(fields[0] === "2" ? { originalPath: records[++index] } : {}) });
+      }
+    }
+    return result;
+  }
+
+  async branches(): Promise<GitBranch[]> {
+    await this.requireGitRoot();
+    const output = (await this.git(["for-each-ref", "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream:short)%00%(symref)", "refs/heads", "refs/remotes"])).stdout;
+    return output.split("\n").filter(Boolean).map(line => {
+      const [ref, commit, head, upstream, symbolicTarget] = line.split("\0");
+      return { name: ref!.replace(/^refs\/(heads|remotes)\//, ""), ref: ref!, commit: commit!, current: head === "*", remote: ref!.startsWith("refs/remotes/"), upstream: upstream || null, symbolicTarget: symbolicTarget || null };
+    });
+  }
+
+  async diff(options: GitDiffOptions = {}): Promise<GitDiff> {
+    await this.requireGitRoot();
+    const context = options.context ?? 3;
+    if (!Number.isSafeInteger(context) || context < 0 || context > 1000) throw new WorkspaceError("INVALID_CONTEXT", "Diff context must be between 0 and 1000 lines.");
+    const paths = options.path === undefined ? [] : await this.gitPaths([options.path]);
+    const arguments_ = ["diff", "--no-ext-diff", "--no-textconv", `--unified=${context}`, ...(options.staged ? ["--cached"] : []), "--", ...paths];
+    let patch: string;
+    let binary: boolean;
+    if (paths.length && !options.staged && (await this.git(["ls-files", "--error-unmatch", "--", ...paths], { validExitCodes: [1] })).exitCode === 1) {
+      const target = await this.parentOwned(options.path!);
+      patch = (await this.git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", `--unified=${context}`, "--", "/dev/null", target], { validExitCodes: [1] })).stdout;
+      binary = (await this.git(["diff", "--no-index", "--numstat", "-z", "--", "/dev/null", target], { validExitCodes: [1] })).stdout.startsWith("-\t-\t");
+    } else {
+      patch = (await this.git(arguments_)).stdout;
+      const stats = (await this.git(["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", ...(options.staged ? ["--cached"] : []), "--", ...paths])).stdout;
+      binary = stats.split("\0").some(record => record.startsWith("-\t-\t"));
+    }
+    return { patch, binary, staged: options.staged ?? false, ...(options.path === undefined ? {} : { path: options.path }) };
+  }
+
+  async stage(paths: string[]): Promise<GitStatus> {
+    return serialized(`git:${this.cwd}`, async () => { await this.requireGitRoot(); await this.git(["add", "--", ...await this.gitPaths(paths)]); return this.readGitStatus(); });
+  }
+
+  async unstage(paths: string[], expectedRevision?: string): Promise<GitStatus> {
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      const normalized = await this.gitPaths(paths);
+      const state = await this.checkIndexRevision(expectedRevision);
+      await this.git(state.head === null ? ["rm", "--cached", "-r", "-f", "--ignore-unmatch", "--", ...normalized] : ["restore", "--staged", `--source=${state.head}`, "--", ...normalized]);
+      return this.readGitStatus();
+    });
+  }
+
+  async commit(message: string, expectedRevision?: string): Promise<GitCommitResult> {
+    if (typeof message !== "string" || !message.trim() || message.includes("\0")) throw new WorkspaceError("INVALID_COMMIT_MESSAGE", "A nonempty commit message is required.");
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      await this.checkIndexRevision(expectedRevision);
+      const result = await this.git(["commit", "--message", message]);
+      return { commit: (await this.git(["rev-parse", "HEAD"])).stdout.trim(), summary: result.stdout.trim() };
+    });
+  }
+
+  async worktrees(): Promise<GitWorktree[]> {
+    await this.requireGitRoot();
+    const output = (await this.git(["worktree", "list", "--porcelain", "-z"])).stdout;
+    const managedRoot = this.worktreeRoot ? await realpath(this.worktreeRoot).catch(() => undefined) : undefined;
+    const result: GitWorktree[] = [];
+    let item: GitWorktree | undefined;
+    for (const field of output.split("\0")) {
+      if (field.startsWith("worktree ")) { item = { path: field.slice(9), head: null, branch: null, detached: false, bare: false, locked: false, managed: false }; result.push(item); }
+      else if (item && field.startsWith("HEAD ")) item.head = field.slice(5);
+      else if (item && field.startsWith("branch ")) item.branch = field.slice(7).replace(/^refs\/heads\//, "");
+      else if (item && field === "detached") item.detached = true;
+      else if (item && field === "bare") item.bare = true;
+      else if (item && (field === "locked" || field.startsWith("locked "))) { item.locked = true; item.lockReason = field.slice(7) || undefined; }
+      else if (item && (field === "prunable" || field.startsWith("prunable "))) item.prunable = field.slice(9) || "Prunable";
+    }
+    if (managedRoot) for (const tree of result) {
+      const canonical = await realpath(tree.path).catch(() => undefined);
+      tree.managed = !!canonical && canonical !== managedRoot && within(managedRoot, canonical) && canonical !== this.cwd;
+      if (tree.managed) tree.managedRelativePath = relative(managedRoot, canonical!);
+    }
+    return result;
+  }
+
+  private async managedRoot(create: boolean): Promise<string> {
+    if (!this.worktreeRoot) throw new WorkspaceError("WORKTREE_ROOT_REQUIRED", "The host must configure a managed worktree root before creating or removing worktrees.");
+    if (create) await mkdir(this.worktreeRoot, { recursive: true });
+    const root = await realpath(this.worktreeRoot);
+    if (!(await stat(root)).isDirectory()) throw new WorkspaceError("NOT_DIRECTORY", "The managed worktree root is not a directory.");
+    return root;
+  }
+
+  async createWorktree(options: CreateWorktreeOptions): Promise<GitWorktree> {
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      if (options.branch && (options.newBranch || options.startPoint)) throw new WorkspaceError("INVALID_BRANCH_SELECTION", "Choose an existing branch, or a new/detached start point.");
+      relativePath(options.path);
+      const root = await this.managedRoot(true);
+      const target = await this.parentOwned(options.path, root);
+      if (target === root || target === this.cwd) throw new WorkspaceError("INVALID_WORKTREE_PATH", "Choose a new directory below the managed worktree root.");
+      try { await lstat(target); throw new WorkspaceError("WORKTREE_EXISTS", "The worktree destination already exists."); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      if (options.branch) {
+        await this.git(["check-ref-format", "--branch", options.branch]);
+        await this.git(["show-ref", "--verify", `refs/heads/${options.branch}`]);
+        await this.git(["worktree", "add", "--", target, options.branch]);
+      } else {
+        if (options.newBranch) await this.git(["check-ref-format", "--branch", options.newBranch]);
+        const start = (await this.git(["rev-parse", "--verify", "--end-of-options", `${options.startPoint ?? "HEAD"}^{commit}`])).stdout.trim();
+        await this.git(["worktree", "add", ...(options.newBranch ? ["-b", options.newBranch] : ["--detach"]), "--", target, start]);
+      }
+      const created = (await this.worktrees()).find(tree => tree.path === target);
+      if (!created) throw new WorkspaceError("WORKTREE_NOT_REGISTERED", "Git did not register the new worktree. Inspect its outcome before retrying.");
+      return created;
+    });
+  }
+
+  async removeWorktree(path: string): Promise<void> {
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      const root = await this.managedRoot(false);
+      const target = await this.owned(path, root);
+      const registered = (await this.worktrees()).find(tree => tree.path === target && tree.managed);
+      if (!registered || target === root || target === this.cwd) throw new WorkspaceError("UNMANAGED_WORKTREE", "Only a registered linked worktree under the configured managed root may be removed.");
+      if (registered.locked) throw new WorkspaceError("WORKTREE_LOCKED", "Git has locked this worktree; unlock it explicitly before removal.");
+      const changes = await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"], { cwd: target });
+      if (changes.stdout) throw new WorkspaceError("DIRTY_WORKTREE", "The worktree contains changed, untracked or ignored files. Preserve or clean them before removal.");
+      if (registered.detached && registered.head && !(await this.git(["for-each-ref", `--contains=${registered.head}`, "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags"])).stdout.trim()) {
+        throw new WorkspaceError("UNREFERENCED_COMMITS", "The detached worktree contains commits with no branch or tag. Preserve a reference before removal.");
+      }
+      await this.git(["worktree", "remove", "--", target]);
+    });
+  }
+}

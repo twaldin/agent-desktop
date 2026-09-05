@@ -1,0 +1,44 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { HostStore } from "./store";
+import { PreferencesSync } from "./preferences-sync";
+import { startHost } from "./server";
+
+const cleanup: Array<() => Promise<unknown>> = [];
+afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
+
+test("preference exchange uses real authenticated host HTTP and recovers from an unreachable peer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-desktop-preference-http-"));
+  cleanup.push(() => rm(root, { recursive: true, force: true }));
+  const agentDir = join(root, "native"); await mkdir(agentDir);
+  const remote = await startHost({ dataDirectory: join(root, "remote"), agentDirectory: agentDir, discoveryDirectory: root });
+  cleanup.push(() => remote.stop());
+  const localStore = new HostStore(join(root, "local"));
+  cleanup.push(async () => localStore.close());
+  let notifications = 0;
+  const local = new PreferencesSync(localStore, () => notifications++);
+  cleanup.push(() => local.dispose());
+  local.put({ key: "theme.tokens", value: { "--app-surface": "#181818", "--ui-font": "system-ui" } });
+  const peer = { hostId: remote.connection.hostId, origin: remote.connection.origin, token: remote.connection.token };
+  const mergeUrl = `${peer.origin}/v1/preferences/merge`;
+  expect((await fetch(mergeUrl, { method: "POST", body: JSON.stringify(local.snapshot()) })).status).toBe(401);
+  await local.sync([{ ...peer, token: "not-a-token" }]);
+  expect(local.errors[peer.hostId]).toContain("saved locally");
+  await local.sync([peer]);
+  expect(local.errors).toEqual({});
+  const remoteSnapshot = await (await fetch(`${peer.origin}/v1/preferences`, { headers: { Authorization: `Bearer ${peer.token}` } })).json();
+  expect(remoteSnapshot).toEqual(local.snapshot());
+  await remote.dispatch({ id: "remote-preference", command: { type: "preferences.put", change: { key: "general.reduceMotion", value: true } } });
+  await local.sync([peer]);
+  expect(local.store.get("general.reduceMotion")).toMatchObject({ deleted: false, value: true });
+  const before = local.snapshot();
+  await local.sync([peer]);
+  expect(local.snapshot()).toEqual(before);
+  expect(notifications).toBeGreaterThan(1);
+  await remote.stop();
+  await local.sync([peer]);
+  expect(local.errors[peer.hostId]).toContain("saved locally");
+  expect(local.snapshot()).toEqual(before);
+});

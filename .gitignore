@@ -1,0 +1,9 @@
+# Local installed-app reference; not application source or distributable output.
+.reference/
+node_modules/
+dist/
+out/
+runtime/tmux/
+.data/
+.DS_Store
+*.tsbuildinfo

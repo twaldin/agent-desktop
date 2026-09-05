@@ -1,0 +1,1119 @@
+--- a/src/session/session-manager.ts
++++ b/src/session/session-manager.ts
+@@ -1,5 +1,6 @@
+ import * as fs from "node:fs";
+ import * as path from "node:path";
++import { SessionFileLease, type SessionOwnershipExpectation } from "./session-ownership";
+ import type {
+ 	ImageContent,
+ 	Message,
+@@ -64,6 +65,7 @@
+ import {
+ 	loadEntriesFromFile,
+ 	loadSessionFile,
++	parseSessionContent,
+ 	resolveBlobRefsInEntries,
+ 	type SessionLoadResult,
+ 	visitEntriesFromFile,
+@@ -520,6 +522,27 @@
+ 
+ 	/** The single open append writer; the manager only ever writes one file at a time. */
+ 	#writer: SessionStorageWriter | undefined;
++	// Candidate native protocol: fork has an explicit owning transition.
++	// Other transition retirement remains separately unaccepted.
++	#ownerships = new Map<string, SessionFileLease>();
++	#ownershipClose?: Promise<void>;
++	#forkSettled?: Promise<void>;
++
++	#leaseFor(file: string): SessionFileLease | undefined {
++		if (!(this.#storage instanceof FileSessionStorage)) return;
++		const resolved = path.resolve(file);
++		const existing = this.#ownerships.get(resolved);
++		if (existing) { existing.assertPath(); return existing; }
++		if (this.#released) throw new Error("Session manager is terminally sealed");
++		const lease = SessionFileLease.acquire(resolved);
++		this.#ownerships.set(lease.file, lease);
++		return lease;
++	}
++
++	getOwnership(): { protocol: string; canonicalFile: string; heldFiles: string[]; sealed: boolean } | undefined {
++		const lease = this.#sessionFile ? this.#ownerships.get(this.#sessionFile) : undefined;
++		return lease ? { protocol: lease.protocol, canonicalFile: lease.file, heldFiles: [...this.#ownerships.keys()], sealed: this.#released } : undefined;
++	}
+ 	/** Sealed by {@link releaseRetainedEntries}: every later append/title/rewrite is a dropped no-op. */
+ 	#released = false;
+ 	/** Serializes async disk work (flush/close/atomic rewrite). Appends are synchronous and bypass it. */
+@@ -762,6 +785,7 @@
+ 				try {
+ 					await this.#storage.writeTextAtomic(sessionFile, body, {
+ 						commitGuard: () => !this.#released && this.#diskEpoch === epoch,
++						ownership: this.#leaseFor(sessionFile),
+ 					});
+ 				} catch (error) {
+ 					const recoveryErrors = [toError(error)];
+@@ -808,6 +832,7 @@
+ 
+ 		this.#writer = this.#storage.openWriter(this.#sessionFile, {
+ 			flags: "a",
++			ownership: this.#leaseFor(this.#sessionFile),
+ 			onError: err => this.#noteDiskFailure(err),
+ 		});
+ 		return this.#writer;
+@@ -875,7 +900,7 @@
+ 			this.#diskEpoch++;
+ 			this.#diskTail = Promise.resolve();
+ 			this.#closeWriterEventually();
+-			this.#storage.writeTextSync(targetPath, body);
++			this.#storage.writeTextSync(targetPath, body, this.#leaseFor(targetPath));
+ 			this.#clearDiskError();
+ 			// Only mark the manager current when writing the active session path.
+ 			// Mid-move writes update the live relocation path; `#sessionFile` is
+@@ -945,6 +970,7 @@
+ 				if (!sessionFile) return false;
+ 				if (this.#diskEpoch !== epoch) return false;
+ 				await this.#storage.writeTextAtomic(sessionFile, this.#fileBody(), {
++					ownership: this.#leaseFor(sessionFile),
+ 					commitGuard: () => !this.#released && this.#diskEpoch === epoch,
+ 				});
+ 				if (this.#diskEpoch !== epoch) return false;
+@@ -1080,7 +1106,7 @@
+ 				if (!sessionFile) return;
+ 				try {
+ 					await this.#appendWriter().append(line);
+-					await this.#storage.updateSessionTitle(sessionFile, update);
++					await this.#storage.updateSessionTitle(sessionFile, update, this.#leaseFor(sessionFile));
+ 					if (this.#diskEpoch === epoch) this.#fileIsCurrent = true;
+ 				} catch {
+ 					if (!(await this.#runFencedAtomicRewrite(epoch))) return;
+@@ -1106,6 +1132,7 @@
+ 	}
+ 
+ 	#resetToNewSession(options?: NewSessionOptions, forcedSessionFile?: string): string | undefined {
++		if (this.#released) throw new Error("Session manager is terminally sealed");
+ 		this.#diskTail = Promise.resolve();
+ 		this.#clearDiskError();
+ 		this.#reconcileSessionDirForFallback();
+@@ -1155,6 +1182,7 @@
+ 			this.#sessionFile =
+ 				forcedSessionFile ??
+ 				path.join(this.#sessionDir, `${fileSafeTimestamp(timestamp)}_${this.#sessionId}.jsonl`);
++			this.#sessionFile = this.#leaseFor(this.#sessionFile)?.file ?? this.#sessionFile;
+ 			this.#rememberBreadcrumb(this.#cwd, this.#sessionFile, true);
+ 		} else {
+ 			this.#sessionFile = undefined;
+@@ -1408,12 +1436,14 @@
+ 	}
+ 
+ 	async #setSessionFile(sessionFile: string, loadedSession?: SessionLoadResult): Promise<void> {
++		if (this.#released) throw new Error("Session manager is terminally sealed");
+ 		await this.#drainAndCloseWriter();
+ 		this.#clearDiskError();
+ 		this.#draftOnlySessionCleanupArmed = false;
+ 
+-		const resolvedSessionFile = path.resolve(sessionFile);
+-		const loaded = loadedSession ?? (await loadSessionFile(resolvedSessionFile, this.#storage));
++		const lease = this.#leaseFor(sessionFile);
++		const resolvedSessionFile = lease?.file ?? path.resolve(sessionFile);
++		const loaded = loadedSession ?? (lease ? parseSessionContent(lease.read()) : await loadSessionFile(resolvedSessionFile, this.#storage));
+ 		if (loaded.invalidHeader) {
+ 			throw new Error(
+ 				`Cannot resume session "${resolvedSessionFile}": the session header is missing or malformed. The file was not modified.`,
+@@ -1502,48 +1532,129 @@
+ 	 * Fork the current session into a new file with the same entries.
+ 	 * @returns the old and new session file paths, or undefined when not persisting.
+ 	 */
+-	async fork(): Promise<{ oldSessionFile: string; newSessionFile: string } | undefined> {
++	async fork(options?: {
++		/** Native high-level work that must finish while BOTH file owners remain held. */
++		prepare?: (result: { oldSessionFile: string; newSessionFile: string }) => Promise<void>;
++		/** Called after the original manager state is restored, before target retirement. */
++		rollback?: () => Promise<void>;
++		/** A native detached bash writer continuing the original transcript after commit. */
++		sourceSuccessor?: SessionManager;
++	}): Promise<{ oldSessionFile: string; newSessionFile: string } | undefined> {
++		if (this.#released) throw new Error("Session manager is terminally sealed");
++		if (this.#forkSettled) throw new Error("A fork transition is already in progress");
+ 		if (!this.#persist || !this.#sessionFile) return undefined;
+-
+-		const oldSessionFile = this.#sessionFile;
+-		const parentSessionId = this.#sessionId;
+-		await this.#drainAndCloseWriter();
+-		this.#clearDiskError();
+-		this.#reconcileSessionDirForFallback();
+-
+-		const timestamp = nowIso();
+-		this.#sessionId = mintSessionId();
+-		this.#sessionFile = path.join(this.#sessionDir, `${fileSafeTimestamp(timestamp)}_${this.#sessionId}.jsonl`);
+-		this.#header = {
+-			type: "session",
+-			version: CURRENT_SESSION_VERSION,
+-			id: this.#sessionId,
+-			title: this.#header.title ?? this.#sessionName,
+-			titleSource: this.#header.titleSource ?? this.#titleSource,
+-			timestamp,
+-			cwd: this.#cwd,
+-			additionalDirectories: this.#additionalDirectories.length > 0 ? [...this.#additionalDirectories] : undefined,
+-			parentSession: parentSessionId,
+-			providerPromptCacheKey: this.#header.providerPromptCacheKey ?? parentSessionId,
++		const settled = Promise.withResolvers<void>();
++		this.#forkSettled = settled.promise;
++		let previous: SessionManagerStateSnapshot | undefined;
++		let writerCloseFailure: Error | undefined;
++		const closeWriter = async () => {
++			try { await this.#drainAndCloseWriter(); }
++			catch (error) { writerCloseFailure = toError(error); throw error; }
+ 		};
+-		this.#sessionName = this.#header.title;
+-		this.#titleSource = this.#header.titleSource;
+-		this.#titleUpdatedAt = timestamp;
+-		this.#hasTitleSlot = true;
+-		this.#fileIsCurrent = false;
+-		this.#rewriteRequired = false;
+-		this.#forceFileCreation = true;
+-		this.#draftOnlySessionCleanupArmed = false;
+-		this.#artifactManager = null;
+-		this.#artifactManagerSessionFile = null;
+-		this.#rememberBreadcrumb(this.#cwd, this.#sessionFile);
+-
+-		await this.#rewriteAtomically();
+-		return { oldSessionFile, newSessionFile: this.#sessionFile };
++		try {
++			await this.#atomicPersistenceTail;
++			await this.flush();
++			await closeWriter();
++			if (this.#released) throw new Error("Session manager sealed during fork");
++			previous = this.captureState();
++			const oldSessionFile = this.#sessionFile!;
++			const parentSessionId = this.#sessionId;
++			const sourceLease = this.#leaseFor(oldSessionFile);
++			const successor = options?.sourceSuccessor;
++			if (sourceLease && successor && (successor.#released || successor.#writer ||
++				successor.#storage !== this.#storage || successor.#sessionFile !== oldSessionFile ||
++				successor.#sessionId !== parentSessionId || successor.#ownerships.size !== 0)) {
++				throw new Error("Invalid native fork source successor");
++			}
++			this.#clearDiskError();
++			this.#reconcileSessionDirForFallback();
++
++			const timestamp = nowIso();
++			this.#sessionId = mintSessionId();
++			this.#sessionFile = path.join(this.#sessionDir, `${fileSafeTimestamp(timestamp)}_${this.#sessionId}.jsonl`);
++			this.#sessionFile = this.#leaseFor(this.#sessionFile)?.file ?? this.#sessionFile;
++			this.#header = {
++				type: "session",
++				version: CURRENT_SESSION_VERSION,
++				id: this.#sessionId,
++				title: this.#header.title ?? this.#sessionName,
++				titleSource: this.#header.titleSource ?? this.#titleSource,
++				timestamp,
++				cwd: this.#cwd,
++				additionalDirectories: this.#additionalDirectories.length > 0 ? [...this.#additionalDirectories] : undefined,
++				parentSession: parentSessionId,
++				providerPromptCacheKey: this.#header.providerPromptCacheKey ?? parentSessionId,
++			};
++			this.#sessionName = this.#header.title;
++			this.#titleSource = this.#header.titleSource;
++			this.#titleUpdatedAt = timestamp;
++			this.#hasTitleSlot = true;
++			this.#fileIsCurrent = false;
++			this.#rewriteRequired = false;
++			this.#forceFileCreation = true;
++			this.#draftOnlySessionCleanupArmed = false;
++			this.#artifactManager = null;
++			this.#artifactManagerSessionFile = null;
++			this.#rememberBreadcrumb(this.#cwd, this.#sessionFile);
++
++			await this.#rewriteAtomically();
++			const destination = this.#sessionFile;
++			const result = { oldSessionFile, newSessionFile: destination };
++			await options?.prepare?.(result);
++			await this.#atomicPersistenceTail;
++			await this.flush();
++			await closeWriter();
++			await this.#storage.drain();
++			if (this.#released) throw new Error("Session manager sealed during fork");
++			sourceLease?.assertPath();
++			this.#leaseFor(destination)?.assertPath();
++			// No await between transfer/release and return. A detached native writer
++			// receives the SAME OS handle; there is no unlocked reacquisition gap.
++			if (sourceLease) {
++				if (successor) successor.#ownerships.set(oldSessionFile, sourceLease);
++				else sourceLease.release();
++				this.#ownerships.delete(oldSessionFile);
++			}
++			return result;
++		} catch (error) {
++			if (writerCloseFailure) {
++				this.seal();
++				throw this.#latchIndeterminate(toError(error), [writerCloseFailure]);
++			}
++			if (previous) {
++				try {
++					await this.#atomicPersistenceTail;
++					await closeWriter();
++					await this.#storage.drain();
++					this.#leaseFor(previous.sessionFile!)?.assertPath();
++					// Native state restoration happens only after destination work drains.
++					// Its published file/artifacts are retained for inspection, never deleted.
++					const failedFile = this.#sessionFile;
++					this.restoreState(previous);
++					await options?.rollback?.();
++					await this.#atomicPersistenceTail;
++					await closeWriter();
++					await this.#storage.drain();
++					if (failedFile && failedFile !== previous.sessionFile) {
++						this.#ownerships.get(failedFile)?.release();
++						this.#ownerships.delete(failedFile);
++					}
++				} catch (rollbackError) {
++					// Do not advertise either file as handed off after uncertain rollback.
++					this.seal();
++					throw this.#latchIndeterminate(toError(error), [toError(rollbackError)]);
++				}
++			}
++			throw error;
++		} finally {
++			this.#forkSettled = undefined;
++			settled.resolve();
++		}
+ 	}
+ 
+ 	/** Move the session to a new working directory. */
+ 	async moveTo(newCwd: string, targetSessionDir?: string): Promise<void> {
++		if (this.#released) throw new Error("Session manager is terminally sealed");
+ 		const resolvedCwd = path.resolve(newCwd);
+ 		const resolvedTargetDir = targetSessionDir ? path.resolve(targetSessionDir) : undefined;
+ 		const managedRoot = resolveManagedSessionRoot(this.#sessionDir, this.#cwd);
+@@ -1572,7 +1683,8 @@
+ 		// `ensureOnDisk()` materializing rewrite) before the drain below runs it.
+ 		if (this.#persist && this.#sessionFile) {
+ 			const source = this.#sessionFile;
+-			const dest = path.join(nextSessionDir, path.basename(source));
++			const requestedDest = path.join(nextSessionDir, path.basename(source));
++			const dest = this.#leaseFor(requestedDest)?.file ?? requestedDest;
+ 			this.#sessionFileRelocating = { source, dest };
+ 		}
+ 
+@@ -1598,7 +1710,9 @@
+ 
+ 				try {
+ 					if (sessionFileExisted && sessionPathChanged) {
+-						await fs.promises.rename(oldSessionFile, newSessionFile);
++						const sourceLease = this.#leaseFor(oldSessionFile), destinationLease = this.#leaseFor(newSessionFile);
++						if (sourceLease && destinationLease) sourceLease.renameTo(destinationLease);
++						else await fs.promises.rename(oldSessionFile, newSessionFile);
+ 						sessionMoved = true;
+ 					}
+ 
+@@ -1626,7 +1740,9 @@
+ 
+ 					if (sessionMoved) {
+ 						try {
+-							await fs.promises.rename(newSessionFile, oldSessionFile);
++							const sourceLease = this.#leaseFor(newSessionFile), destinationLease = this.#leaseFor(oldSessionFile);
++							if (sourceLease && destinationLease) sourceLease.renameTo(destinationLease);
++							else await fs.promises.rename(newSessionFile, oldSessionFile);
+ 						} catch (rollbackErr) {
+ 							throw new Error(
+ 								`Failed to move session file and rollback: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
+@@ -1868,6 +1984,14 @@
+ 	/** Flush, then close the append writer. */
+ 	async close(): Promise<void> {
+ 		if (!this.#persist) return;
++		if (this.#ownershipClose) return this.#ownershipClose;
++		if (this.#storage instanceof FileSessionStorage) this.seal();
++		this.#ownershipClose = this.#closeOwnedPersistence();
++		return this.#ownershipClose;
++	}
++
++	async #closeOwnedPersistence(): Promise<void> {
++		await this.#forkSettled;
+ 		await this.#scheduleDiskWork(async () => {
+ 			const hadWriter = this.#writer !== undefined;
+ 			await this.#closeWriterHandle();
+@@ -1880,6 +2004,7 @@
+ 		// a fire-and-forget publish is still on the wire.
+ 		await this.#storage.drain();
+ 		if (this.#diskFailure) throw this.#diskFailure;
++		for (const lease of this.#ownerships.values()) lease.release();
+ 	}
+ 
+ 	/**
+@@ -2720,6 +2845,7 @@
+ 	 * Returns the new file path, or undefined when not persisting.
+ 	 */
+ 	createBranchedSession(leafId: string): string | undefined {
++		if (this.#released) throw new Error("Session manager is terminally sealed");
+ 		const sourceSessionFile = this.#sessionFile;
+ 		const branchPath = this.getBranch(leafId);
+ 		if (branchPath.length === 0) throw new Error(`Entry ${leafId} not found`);
+@@ -2763,6 +2889,7 @@
+ 			parentId = labelEntry.id;
+ 		}
+ 
++		if (this.#persist) this.#leaseFor(newSessionFile);
+ 		this.#header = header;
+ 		this.#entries = [...entriesToKeep, ...labels];
+ 		this.#sessionId = newSessionId;
+@@ -2827,8 +2954,10 @@
+ 			cwd: path.resolve(cwd),
+ 		};
+ 		const file = path.join(sessionDir, `${fileSafeTimestamp(timestamp)}_${id}.jsonl`);
+-		storage.writeTextSync(file, `${serializeTitleSlot({ updatedAt: timestamp })}${JSON.stringify(header)}\n`);
+-		return file;
++		const lease = storage instanceof FileSessionStorage ? SessionFileLease.acquire(file) : undefined;
++		try { storage.writeTextSync(lease?.file ?? file, `${serializeTitleSlot({ updatedAt: timestamp })}${JSON.stringify(header)}\n`, lease); }
++		finally { lease?.release(); }
++		return lease?.file ?? file;
+ 	}
+ 
+ 	/**
+@@ -2914,10 +3043,18 @@
+ 		filePath: string,
+ 		sessionDir?: string,
+ 		storage: SessionStorage = new FileSessionStorage(),
+-		options?: { initialCwd?: string; suppressBreadcrumb?: boolean },
++		options?: { initialCwd?: string; suppressBreadcrumb?: boolean; expectedOwnership?: SessionOwnershipExpectation; expectedNativeId?: string },
+ 	): Promise<SessionManager> {
+-		const loaded = await loadSessionFile(filePath, storage);
++		const lease = storage instanceof FileSessionStorage ? SessionFileLease.acquire(filePath) : undefined;
++		try {
++		const loaded = lease ? parseSessionContent(lease.read(options?.expectedOwnership)) : await loadSessionFile(filePath, storage);
+ 		const header = loaded.entries.find(entry => entry.type === "session") as SessionHeader | undefined;
++		// Cold revival must not silently adopt a replacement transcript at the
++		// same path. Check under the lease, before loading/migrating a manager.
++		if (options?.expectedNativeId !== undefined && header?.id !== options.expectedNativeId) {
++			throw new Error("Persisted native session identity changed before revival");
++		}
++
+ 		// Resume into the session's recorded cwd only when it is verifiably
+ 		// accessible. A deleted or permission-blocked (macOS TCC denial) project
+ 		// dir would make the constructor's #cwd — and the `setProjectDir` chdir
+@@ -2934,8 +3071,10 @@
+ 				: path.dirname(path.resolve(filePath)));
+ 		const manager = new SessionManager(cwd, dir, true, storage);
+ 		manager.#suppressBreadcrumb = options?.suppressBreadcrumb === true;
+-		await manager.#setSessionFile(filePath, loaded);
++		if (lease) manager.#ownerships.set(lease.file, lease);
++		await manager.#setSessionFile(lease?.file ?? filePath, loaded);
+ 		return manager;
++		} catch (error) { lease?.release(); throw error; }
+ 	}
+ 
+ 	/**
+@@ -2950,6 +3089,7 @@
+ 		filePath: string,
+ 		storage: SessionStorage = new FileSessionStorage(),
+ 	): Promise<{
++		nativeId: string;
+ 		cwd: string;
+ 		init: {
+ 			systemPrompt: string;
+@@ -3014,7 +3154,7 @@
+ 		}
+ 		// A missing, empty, or invalid file has no usable session.
+ 		if (!header) return null;
+-		return { cwd: header.cwd ?? getProjectDir(), init };
++		return { nativeId: header.id, cwd: header.cwd ?? getProjectDir(), init };
+ 	}
+ 
+ 	/** Continue the most recent session, or create a new one if none exists. */
+--- a/src/session/session-storage.ts
++++ b/src/session/session-storage.ts
+@@ -3,6 +3,7 @@
+ import * as path from "node:path";
+ import { hasFsCode, isEnoent, logger, peekFileEnds, Snowflake, toError } from "@oh-my-pi/pi-utils";
+ import { overlayTitleSlotContent, type SessionTitleUpdate, serializeTitleSlot } from "./session-title-slot";
++import type { SessionFileLease } from "./session-ownership";
+ 
+ const utf8Decoder = new TextDecoder("utf-8");
+ 
+@@ -53,12 +54,13 @@
+  */
+ export interface WriteTextAtomicOptions {
+ 	commitGuard?: () => boolean;
++	ownership?: SessionFileLease;
+ }
+ 
+ export interface SessionStorage {
+ 	ensureDirSync(dir: string): void;
+ 	existsSync(path: string): boolean;
+-	writeTextSync(path: string, content: string): void;
++	writeTextSync(path: string, content: string, ownership?: SessionFileLease): void;
+ 	/**
+ 	 * Update the current session title through the storage backend.
+ 	 *
+@@ -66,7 +68,7 @@
+ 	 * backends can store the semantic title fields and synthesize the slot when
+ 	 * reading.
+ 	 */
+-	updateSessionTitle(path: string, update: SessionTitleUpdate): Promise<void>;
++	updateSessionTitle(path: string, update: SessionTitleUpdate, ownership?: SessionFileLease): Promise<void>;
+ 	statSync(path: string): SessionStorageStat;
+ 	listFilesSync(dir: string, pattern: string): string[];
+ 
+@@ -79,7 +81,7 @@
+ 	rename(path: string, nextPath: string): Promise<void>;
+ 	unlink(path: string): Promise<void>;
+ 	deleteSessionWithArtifacts(sessionPath: string): Promise<void>;
+-	openWriter(path: string, options?: { flags?: "a" | "w"; onError?: (err: Error) => void }): SessionStorageWriter;
++	openWriter(path: string, options?: { flags?: "a" | "w"; onError?: (err: Error) => void; ownership?: SessionFileLease }): SessionStorageWriter;
+ 	/**
+ 	 * Wait for every backing write scheduled by this storage to become durably
+ 	 * visible. Sync backends (file, memory) return immediately because their
+@@ -105,9 +107,11 @@
+ 	#closed = false;
+ 	#error: Error | undefined;
+ 	#onError: ((err: Error) => void) | undefined;
+-
+-	constructor(fpath: string, options?: { flags?: "a" | "w"; onError?: (err: Error) => void }) {
++	#ownership?: SessionFileLease;
++
++	constructor(fpath: string, options?: { flags?: "a" | "w"; onError?: (err: Error) => void; ownership?: SessionFileLease }) {
+ 		this.#onError = options?.onError;
++		this.#ownership = options?.ownership;
+ 		const flags = options?.flags ?? "a";
+ 		// Ensure parent directory exists
+ 		const dir = path.dirname(fpath);
+@@ -115,7 +119,14 @@
+ 			fs.mkdirSync(dir, { recursive: true });
+ 		}
+ 		// Open file once, keep fd for lifetime
+-		this.#fd = fs.openSync(fpath, flags === "w" ? "w" : "a");
++		if (this.#ownership) {
++			this.#ownership.assertPath(fpath);
++			this.#fd = fs.openSync(fpath, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW | (flags === "a" ? fs.constants.O_APPEND : 0));
++			try {
++				this.#ownership.assertDescriptor(this.#fd);
++				if (flags === "w") { fs.ftruncateSync(this.#fd, 0); this.#ownership.written(this.#fd); }
++			} catch (error) { fs.closeSync(this.#fd); throw error; }
++		} else this.#fd = fs.openSync(fpath, flags === "w" ? "w" : "a");
+ 		// Register for cleanup if abandoned without close()
+ 		writerRegistry.register(this, this.#fd, this);
+ 	}
+@@ -128,6 +139,7 @@
+ 	}
+ 
+ 	#writeNow(line: string): void {
++		this.#ownership?.assertDescriptor(this.#fd);
+ 		const originalSize = fs.fstatSync(this.#fd).size;
+ 		const buf = Buffer.from(line, "utf-8");
+ 		let offset = 0;
+@@ -139,6 +151,7 @@
+ 				}
+ 				offset += written;
+ 			}
++			this.#ownership?.written(this.#fd);
+ 		} catch (writeError) {
+ 			try {
+ 				fs.ftruncateSync(this.#fd, originalSize);
+@@ -211,13 +224,17 @@
+ 		return fs.existsSync(path);
+ 	}
+ 
+-	writeTextSync(fpath: string, content: string): void {
++	writeTextSync(fpath: string, content: string, ownership?: SessionFileLease): void {
++		ownership?.assertPath(fpath);
+ 		const dir = path.dirname(fpath);
+ 		this.ensureDirSync(dir);
+ 		const tempPath = path.join(dir, `.${path.basename(fpath)}.${Snowflake.next()}.tmp`);
+ 		try {
+ 			fs.writeFileSync(tempPath, content);
++			ownership?.assertPath(fpath);
++			const staged = ownership ? fs.statSync(tempPath) : undefined;
+ 			fs.renameSync(tempPath, fpath);
++			if (staged) ownership!.replaced(staged);
+ 		} catch (err) {
+ 			try {
+ 				if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+@@ -230,7 +247,7 @@
+ 					});
+ 				}
+ 			}
+-			if (hasFsCode(err, "EPERM")) {
++			if (hasFsCode(err, "EPERM") && !ownership) {
+ 				fs.writeFileSync(fpath, content);
+ 				return;
+ 			}
+@@ -238,9 +255,11 @@
+ 		}
+ 	}
+ 
+-	async updateSessionTitle(fpath: string, update: SessionTitleUpdate): Promise<void> {
+-		const fd = fs.openSync(fpath, "r+");
+-		try {
++	async updateSessionTitle(fpath: string, update: SessionTitleUpdate, ownership?: SessionFileLease): Promise<void> {
++		ownership?.assertPath(fpath);
++		const fd = fs.openSync(fpath, ownership ? fs.constants.O_RDWR | fs.constants.O_NOFOLLOW : "r+");
++		try {
++			ownership?.assertDescriptor(fd);
+ 			const buf = Buffer.from(serializeTitleSlot(update), "utf-8");
+ 			let offset = 0;
+ 			while (offset < buf.length) {
+@@ -250,6 +269,7 @@
+ 				}
+ 				offset += written;
+ 			}
++			ownership?.written(fd);
+ 		} catch (err) {
+ 			throw toError(err);
+ 		} finally {
+@@ -296,6 +316,7 @@
+ 	}
+ 
+ 	async writeTextAtomic(fpath: string, content: string, options?: WriteTextAtomicOptions): Promise<void> {
++		options?.ownership?.assertPath(fpath);
+ 		const dir = path.resolve(fpath, "..");
+ 		const tempPath = path.join(dir, `.${path.basename(fpath)}.${Snowflake.next()}.tmp`);
+ 		await fs.promises.mkdir(dir, { recursive: true });
+@@ -314,10 +335,13 @@
+ 			return;
+ 		}
+ 		try {
++			options?.ownership?.assertPath(fpath);
++			const staged = options?.ownership ? fs.statSync(tempPath) : undefined;
+ 			this.renameSync(tempPath, fpath);
++			if (staged) options!.ownership!.replaced(staged);
+ 			return;
+ 		} catch (err) {
+-			if (!hasFsCode(err, "EPERM")) {
++			if (!hasFsCode(err, "EPERM") || options?.ownership) {
+ 				this.#discardTemp(tempPath, fpath);
+ 				throw toError(err);
+ 			}
+--- a/src/session/agent-session.ts
++++ b/src/session/agent-session.ts
+@@ -7711,53 +7711,51 @@
+ 		await this.#bash.flushPending();
+ 		// Flush current session to ensure all entries are written
+ 		await this.sessionManager.flush();
++		const previousFreshProviderSessionId = this.#freshProviderSessionId;
++		const previousInheritedProviderPromptCacheKey = this.#inheritedProviderPromptCacheKey;
++		const previousBaseSystemPrompt = this.#tools.baseSystemPrompt;
++		const previousSystemPrompt = this.agent.state.systemPrompt;
++		const previousMemoryPromotion = this.#memory.promotionSnapshot;
+ 		let advisorRecordersDetached = false;
+ 		try {
+ 			advisorRecordersDetached = true;
+-			// Fork keeps the conversation, but still needs a quiet artifact boundary:
+-			// stop and settle in-flight advisors before muting their feeds.
+ 			await this.#advisors.drainAndDetachRecorders();
+ 			const bashTransition = this.#bash.beginSessionTransition();
+-
+-			// Fork the session (creates new session file with same entries)
+-			let forkResult: { oldSessionFile: string; newSessionFile: string } | undefined;
++			let committed = false;
+ 			try {
+-				forkResult = await this.sessionManager.fork();
+-			} catch (error) {
+-				this.#bash.finishSessionTransition(bashTransition, false);
+-				throw error;
+-			}
+-			if (!forkResult) {
+-				this.#bash.finishSessionTransition(bashTransition, false);
+-				return false;
+-			}
+-			this.#bash.markSessionTransition(bashTransition);
+-			this.#bash.finishSessionTransition(bashTransition, true);
+-			// The fork clones the transcript and keeps this recovery state running
+-			// under a fresh id, so the work already produced is still this session's.
+-			this.#recovery.reanchorServedAttribution(previousSessionId);
+-
+-			await copySessionArtifacts(forkResult.oldSessionFile, forkResult.newSessionFile);
+-
+-			// Update agent session ID
+-			this.#freshProviderSessionId = undefined;
+-			this.#adoptInheritedProviderPromptCacheKey();
+-			this.#syncAgentSessionId();
+-			this.#memory.rekeyForCurrentSessionId();
+-			this.#advisors.reattachRecorderFeeds();
+-			advisorRecordersDetached = false;
+-			await this.#memory.resetContextForNewTranscript();
+-
+-			// Emit session_switch event with reason "fork" to hooks
+-			if (this.#extensionRunner) {
+-				await this.#extensionRunner.emit({
+-					type: "session_switch",
+-					reason: "fork",
+-					previousSessionFile,
++				const forkResult = await this.sessionManager.fork({
++					sourceSuccessor: bashTransition.detachedManager,
++					prepare: async result => {
++						this.#bash.markSessionTransition(bashTransition);
++						await copySessionArtifacts(result.oldSessionFile, result.newSessionFile);
++						this.#freshProviderSessionId = undefined;
++						this.#adoptInheritedProviderPromptCacheKey();
++						// Observers hear the identity change only once the lease commit succeeds.
++						this.#syncAgentSessionId(undefined, false);
++						this.#memory.rekeyForCurrentSessionId();
++						await this.#memory.resetContextForNewTranscript();
++						if (this.#extensionRunner) await this.#extensionRunner.emit({
++							type: "session_switch", reason: "fork", previousSessionFile,
++						});
++					},
++					rollback: async () => {
++						this.#freshProviderSessionId = previousFreshProviderSessionId;
++						this.#inheritedProviderPromptCacheKey = previousInheritedProviderPromptCacheKey;
++						this.#syncAgentSessionId(previousSessionId, false);
++						this.#memory.rekeyForCurrentSessionId();
++						this.#tools.setBaseSystemPrompt(previousBaseSystemPrompt);
++						this.#memory.restorePromotionSnapshot(previousMemoryPromotion);
++						this.agent.setSystemPrompt(previousSystemPrompt);
++					},
+ 				});
+-			}
+-
+-			return true;
++				if (!forkResult) return false;
++				committed = true;
++				this.#recovery.reanchorServedAttribution(previousSessionId);
++				this.#notifySessionChangeCallbacks();
++				return true;
++			} finally {
++				this.#bash.finishSessionTransition(bashTransition, committed);
++			}
+ 		} finally {
+ 			if (advisorRecordersDetached) this.#advisors.reattachRecorderFeeds();
+ 		}
+--- a/src/task/persisted-revive.ts
++++ b/src/task/persisted-revive.ts
+@@ -72,156 +72,175 @@
+ 		} catch {
+ 			return undefined;
+ 		}
+-		const init = peek.init;
+-		// taskDepth drives real capability gating (task-spawn allowance, memory
+-		// startup, …); derive it from the persisted parent chain rather than
+-		// assuming a fixed level.
+-		let taskDepth = 1;
+-		let parentId = ref.parentId;
+-		const seen = new Set<string>();
+-		while (parentId && parentId !== MAIN_AGENT_ID && !seen.has(parentId)) {
+-			seen.add(parentId);
+-			taskDepth++;
+-			parentId = registry.get(parentId)?.parentId;
+-		}
+-		// Rebuild the same advisor opt-in the original spawn resolved: `"on"` =
+-		// advisor-role model, anything else = the explicit pattern stamped onto
+-		// this session's `modelRoles.advisor`. Absent = unadvised (the
+-		// createSubagentSettings default).
+-		const subagentSettings = createSubagentSettings(ctx.settings, {
+-			...(init.readSummarize === false ? { "read.summarize.enabled": false } : undefined),
+-			...(init.advisor
+-				? {
+-						"advisor.enabled": true,
+-						...(init.advisor !== "on"
+-							? { modelRoles: { ...ctx.settings.getModelRoles(), advisor: init.advisor } }
+-							: undefined),
+-					}
+-				: undefined),
+-		});
+-		const persistedModelPattern =
+-			init.modelRole && init.modelRole !== "default"
+-				? [formatModelRoleAlias(init.modelRole), ...(init.resolvedModel ? [init.resolvedModel] : [])]
+-				: init.resolvedModel;
+-		// Older session files persisted the synthetic xd:// write transport in the
+-		// enabled set. A read-only agent definition could never grant full write,
+-		// so remove that transport name before replaying tools as explicit grants.
+-		const revivedToolNames =
+-			init.readOnly === true && init.tools.includes("write")
+-				? init.tools.filter(name => name !== "write")
+-				: init.tools;
+ 		return async expectedRef => {
+ 			// Re-open fresh on every revive: park closes the writer, so this takes
+ 			// the single-writer lock cleanly and restores the full message history.
+ 			const reopened = await SessionManager.open(sessionFile, undefined, undefined, {
+ 				suppressBreadcrumb: true,
++				expectedNativeId: peek.nativeId,
+ 			});
+-			const artifactManager = ctx.session.sessionManager.getArtifactManager();
+-			if (artifactManager) reopened.adoptArtifactManager(artifactManager);
+-			// A restricted persisted contract must not consult process-global MCP
+-			// state: same-name MCP tools are untrusted capability sources.
+-			const restrictToolNames = init.restrictToolNames === true;
+-			const mcpManager = restrictToolNames ? undefined : MCPManager.instance();
+-			const mcpProxyTools = mcpManager ? createMCPProxyTools(mcpManager) : [];
+-			const { session } = await createAgentSession({
+-				cwd: ctx.session.sessionManager.getCwd(),
+-				authStorage: ctx.authStorage,
+-				// Revived agents join the root session tree, so their observability
+-				// frames ride the same bus the RPC/collab surfaces subscribed to.
+-				subagentEventBus: ctx.subagentEventBus,
+-				modelRegistry: ctx.modelRegistry,
+-				...(persistedModelPattern ? { modelPattern: persistedModelPattern } : {}),
+-				modelPatternAuthFallback: init.resolvedModel,
+-				settings: subagentSettings,
+-				sessionManager: reopened,
+-				agentId: ref.id,
+-				agentDisplayName: ref.displayName,
+-				// `agents` rule scoping keys on the durable definition name (`scout`,
+-				// `reviewer`, …), not the registry display label — cold-revived refs
+-				// register with `displayName: id` (registry/persisted-agents.ts), so a
+-				// generated task id would silently drop every agent-scoped rule.
+-				// `init.agent` carries the real name; only files predating that field
+-				// fall back to the display label. A parked transcript may also predate
+-				// the `main`/`sub` definition-name reservation (discovery/helpers.ts): a
+-				// persisted `init.agent` of either sentinel value from such a legacy
+-				// custom agent must not masquerade as that sentinel here, so it falls
+-				// back to the display label too, keeping it scoped as an ordinary
+-				// subagent under its generated id instead of `main` or the shared `sub`
+-				// bucket.
+-				agentName:
+-					init.agent &&
+-					init.agent.trim().toLowerCase() !== MAIN_AGENT_RULE_NAME &&
+-					init.agent.trim().toLowerCase() !== SUB_AGENT_RULE_NAME
+-						? init.agent
+-						: ref.displayName,
+-				parentTaskPrefix: ref.id,
+-				parentAgentId: ref.parentId,
+-				expectedAgentRef: expectedRef,
+-				taskDepth,
+-				toolNames: revivedToolNames,
+-				outputSchema: init.outputSchema,
+-				outputSchemaMode: init.outputSchemaMode,
+-				restrictToolNames: restrictToolNames || undefined,
+-				requireYieldTool: true,
+-				systemPrompt: () => [init.systemPrompt],
+-				// Old files predate persisted spawns: deny re-spawning rather than let
+-				// createAgentSession default to wildcard ("*").
+-				spawns: init.spawns ?? "",
+-				hasUI: false,
+-				enableLsp: restrictToolNames ? false : ctx.enableLsp,
+-				...(restrictToolNames
+-					? {
+-							enableIrc: false,
+-							enableMCP: false,
+-							preloadedExtensionPaths: [],
+-							preloadedPreparedExtensions: [],
+-							preloadedCustomToolPaths: [],
+-						}
+-					: {
+-							enableMCP: !mcpManager,
+-							mcpManager,
+-							customTools: mcpProxyTools.length > 0 ? mcpProxyTools : undefined,
+-						}),
+-			});
+-			// Clamp the active set to the persisted list: createAgentSession's
+-			// `alwaysInclude` can re-add non-defaultInactive extension/custom tools
+-			// the original run didn't carry. Unknown/missing names are ignored.
+-			await session.setActiveToolsByName([...revivedToolNames, ...session.getMountedXdevToolNames()]);
+-			// Wire the extension runtime exactly as the live executor does. Without
+-			// this the runner stays pre-init, every action method throws
+-			// `ExtensionRuntimeNotInitializedError`, and a `tool_call` handler that
+-			// touches a runtime action trips the fail-closed gate in `emitToolCall`,
+-			// blocking every tool — including the hidden `yield` — in the revived
+-			// agent. `session_start` also re-runs so extensions restore per-session
+-			// state (issue #8824).
+-			await initializeExtensions(session, {
+-				reportSendError: (action, err) => logger.error("Extension send failed", { action, error: err.message }),
+-				reportRuntimeError: err => logger.error("Extension error", { path: err.extensionPath, error: err.error }),
+-			});
+-			// Cold revives must drive registry status themselves — createAgentSession
+-			// doesn't wire this generically (the live path does it in the executor).
+-			// The internal run-state signal precedes deferrable public `agent_end`,
+-			// keeping idle-TTL ownership synchronized even while prompts unwind.
+-			registry.syncSessionStatus(ref.id, session);
+-			// Persisted files predate an agent-source field, so cold-revived frames
+-			// report the runtime-neutral `user` source; name comes from the ref.
+-			const wakeAgent: AgentDefinition = {
+-				name: ref.displayName,
+-				description: "",
+-				systemPrompt: init.systemPrompt,
+-				source: "user",
+-			};
+-			attachIrcWakeTurnMonitor(session, {
+-				id: ref.id,
+-				agent: wakeAgent,
+-				eventBus: ctx.eventBus,
+-				subagentEventBus: ctx.subagentEventBus,
+-				sessionFile,
+-				outputSchema: init.outputSchema,
+-				outputSchemaMode: init.outputSchemaMode,
+-				artifactsDir: ctx.session.sessionFile?.slice(0, -6),
+-			});
+-			return session;
++			let session: AgentSession | undefined;
++			try {
++				// Derive runtime grants from the newly admitted history on EACH revive;
++				// the factory peek is eligibility/identity evidence, not a cached contract.
++				const init = reopened.getEntries().findLast(entry => entry.type === "session_init");
++				if (!init || reopened.getCwd() !== reopened.getRecordedCwd() || !(await fs.stat(reopened.getCwd())).isDirectory()) {
++					throw new Error("The persisted revival contract or working directory is unavailable");
++				}
++				// taskDepth drives real capability gating (task-spawn allowance, memory
++				// startup, …); derive it from the persisted parent chain rather than
++				// assuming a fixed level.
++				let taskDepth = 1;
++				let parentId = ref.parentId;
++				const seen = new Set<string>();
++				while (parentId && parentId !== MAIN_AGENT_ID && !seen.has(parentId)) {
++					seen.add(parentId);
++					taskDepth++;
++					parentId = registry.get(parentId)?.parentId;
++				}
++				// Rebuild the same advisor opt-in the original spawn resolved: `"on"` =
++				// advisor-role model, anything else = the explicit pattern stamped onto
++				// this session's `modelRoles.advisor`. Absent = unadvised (the
++				// createSubagentSettings default).
++				const subagentSettings = createSubagentSettings(ctx.settings, {
++					...(init.readSummarize === false ? { "read.summarize.enabled": false } : undefined),
++					...(init.advisor
++						? {
++								"advisor.enabled": true,
++								...(init.advisor !== "on"
++									? { modelRoles: { ...ctx.settings.getModelRoles(), advisor: init.advisor } }
++									: undefined),
++							}
++						: undefined),
++				});
++				const persistedModelPattern =
++					init.modelRole && init.modelRole !== "default"
++						? [formatModelRoleAlias(init.modelRole), ...(init.resolvedModel ? [init.resolvedModel] : [])]
++						: init.resolvedModel;
++				// Older session files persisted the synthetic xd:// write transport in the
++				// enabled set. A read-only agent definition could never grant full write,
++				// so remove that transport name before replaying tools as explicit grants.
++				const revivedToolNames =
++					init.readOnly === true && init.tools.includes("write")
++						? init.tools.filter(name => name !== "write")
++						: init.tools;
++				const artifactManager = ctx.session.sessionManager.getArtifactManager();
++				if (artifactManager) reopened.adoptArtifactManager(artifactManager);
++				// A restricted persisted contract must not consult process-global MCP
++				// state: same-name MCP tools are untrusted capability sources.
++				const restrictToolNames = init.restrictToolNames === true;
++				const mcpManager = restrictToolNames ? undefined : MCPManager.instance();
++				const mcpProxyTools = mcpManager ? createMCPProxyTools(mcpManager) : [];
++				({ session } = await createAgentSession({
++					cwd: ctx.session.sessionManager.getCwd(),
++					authStorage: ctx.authStorage,
++					// Revived agents join the root session tree, so their observability
++					// frames ride the same bus the RPC/collab surfaces subscribed to.
++					subagentEventBus: ctx.subagentEventBus,
++					modelRegistry: ctx.modelRegistry,
++					...(persistedModelPattern ? { modelPattern: persistedModelPattern } : {}),
++					modelPatternAuthFallback: init.resolvedModel,
++					settings: subagentSettings,
++					sessionManager: reopened,
++					agentId: ref.id,
++					agentDisplayName: ref.displayName,
++					// `agents` rule scoping keys on the durable definition name (`scout`,
++					// `reviewer`, …), not the registry display label — cold-revived refs
++					// register with `displayName: id` (registry/persisted-agents.ts), so a
++					// generated task id would silently drop every agent-scoped rule.
++					// `init.agent` carries the real name; only files predating that field
++					// fall back to the display label. A parked transcript may also predate
++					// the `main`/`sub` definition-name reservation (discovery/helpers.ts): a
++					// persisted `init.agent` of either sentinel value from such a legacy
++					// custom agent must not masquerade as that sentinel here, so it falls
++					// back to the display label too, keeping it scoped as an ordinary
++					// subagent under its generated id instead of `main` or the shared `sub`
++					// bucket.
++					agentName:
++						init.agent &&
++						init.agent.trim().toLowerCase() !== MAIN_AGENT_RULE_NAME &&
++						init.agent.trim().toLowerCase() !== SUB_AGENT_RULE_NAME
++							? init.agent
++							: ref.displayName,
++					parentTaskPrefix: ref.id,
++					parentAgentId: ref.parentId,
++					expectedAgentRef: expectedRef,
++					taskDepth,
++					toolNames: revivedToolNames,
++					outputSchema: init.outputSchema,
++					outputSchemaMode: init.outputSchemaMode,
++					restrictToolNames: restrictToolNames || undefined,
++					requireYieldTool: true,
++					systemPrompt: () => [init.systemPrompt],
++					// Old files predate persisted spawns: deny re-spawning rather than let
++					// createAgentSession default to wildcard ("*").
++					spawns: init.spawns ?? "",
++					hasUI: false,
++					enableLsp: restrictToolNames ? false : ctx.enableLsp,
++					...(restrictToolNames
++						? {
++								enableIrc: false,
++								enableMCP: false,
++								preloadedExtensionPaths: [],
++								preloadedPreparedExtensions: [],
++								preloadedCustomToolPaths: [],
++							}
++						: {
++								enableMCP: !mcpManager,
++								mcpManager,
++								customTools: mcpProxyTools.length > 0 ? mcpProxyTools : undefined,
++							}),
++				}));
++				// Clamp the active set to the persisted list: createAgentSession's
++				// `alwaysInclude` can re-add non-defaultInactive extension/custom tools
++				// the original run didn't carry. Unknown/missing names are ignored.
++				await session.setActiveToolsByName([...revivedToolNames, ...session.getMountedXdevToolNames()]);
++				// Wire the extension runtime exactly as the live executor does. Without
++				// this the runner stays pre-init, every action method throws
++				// `ExtensionRuntimeNotInitializedError`, and a `tool_call` handler that
++				// touches a runtime action trips the fail-closed gate in `emitToolCall`,
++				// blocking every tool — including the hidden `yield` — in the revived
++				// agent. `session_start` also re-runs so extensions restore per-session
++				// state (issue #8824).
++				await initializeExtensions(session, {
++					reportSendError: (action, err) => logger.error("Extension send failed", { action, error: err.message }),
++					reportRuntimeError: err => logger.error("Extension error", { path: err.extensionPath, error: err.error }),
++				});
++				// Cold revives must drive registry status themselves — createAgentSession
++				// doesn't wire this generically (the live path does it in the executor).
++				// The internal run-state signal precedes deferrable public `agent_end`,
++				// keeping idle-TTL ownership synchronized even while prompts unwind.
++				registry.syncSessionStatus(ref.id, session);
++				// Persisted files predate an agent-source field, so cold-revived frames
++				// report the runtime-neutral `user` source; name comes from the ref.
++				const wakeAgent: AgentDefinition = {
++					name: ref.displayName,
++					description: "",
++					systemPrompt: init.systemPrompt,
++					source: "user",
++				};
++				attachIrcWakeTurnMonitor(session, {
++					id: ref.id,
++					agent: wakeAgent,
++					eventBus: ctx.eventBus,
++					subagentEventBus: ctx.subagentEventBus,
++					sessionFile,
++					outputSchema: init.outputSchema,
++					outputSchemaMode: init.outputSchemaMode,
++					artifactsDir: ctx.session.sessionFile?.slice(0, -6),
++				});
++				return session;
++			} catch (error) {
++				// SDK setup can fail before it takes ownership of the reopened
++				// manager. Never strand that writable lease after a rejected revive.
++				try {
++					if (session) await session.dispose();
++					await reopened.close();
++				} catch (cleanupError) {
++					throw new AggregateError([error, cleanupError], "Persisted revival failed and ownership cleanup did not drain");
++				}
++				throw error;
++			}
+ 		};
+ 	};
+ }
+--- /dev/null
++++ b/src/session/session-ownership.ts
+@@ -0,0 +1,117 @@
++import * as fs from "node:fs";
++import * as path from "node:path";
++import { createHash } from "node:crypto";
++import { FileLock } from "@oh-my-pi/pi-natives";
++
++export const SESSION_OWNERSHIP_PROTOCOL = "omp-session-file-v1-candidate";
++export interface SessionOwnershipExpectation {
++  canonicalFile: string;
++  nativeId: string;
++  recordedCwd: string;
++  sha256: string;
++}
++const equalIdentity = (left: fs.Stats, right: fs.Stats) => left.dev === right.dev && left.ino === right.ino;
++const equalRevision = (left: fs.Stats, right: fs.Stats) => equalIdentity(left, right)
++  && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
++function regular(file: string): fs.Stats | undefined {
++  try {
++    const info = fs.lstatSync(file);
++    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error("Session ownership requires a regular, non-hard-linked file");
++    return info;
++  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
++}
++
++/** Process-owned, stable sidecar. Never delete the sidecar to recover a lock.
++ * The caller must separately establish that all potential writers cooperate.
++ */
++export class SessionFileLease {
++  readonly protocol = SESSION_OWNERSHIP_PROTOCOL;
++  readonly file: string;
++  readonly lockPath: string;
++  #lock: FileLock;
++  #parent: fs.Stats;
++  #revision?: fs.Stats;
++  #released = false;
++  #poison?: Error;
++  private constructor(file: string, lock: FileLock, parent: fs.Stats, revision?: fs.Stats) {
++    this.file = file; this.lockPath = file + ".lock"; this.#lock = lock; this.#parent = parent; this.#revision = revision;
++  }
++  static acquire(file: string): SessionFileLease {
++    const supplied = path.resolve(file), suppliedParent = path.dirname(supplied);
++    fs.mkdirSync(suppliedParent, { recursive: true });
++    // Bind the parent and final component, rather than following the supplied
++    // alias again after admission. Final symlinks are deliberately rejected.
++    const parent = fs.realpathSync(suppliedParent), canonical = path.join(parent, path.basename(supplied));
++    regular(canonical);
++    const lockPath = canonical + ".lock";
++    regular(lockPath);
++    const lock = FileLock.tryAcquire(lockPath);
++    if (!lock.acquired) throw new Error(`Session ownership is busy: ${canonical}`);
++    try {
++      const parentInfo = fs.statSync(parent), revision = regular(canonical);
++      if (fs.realpathSync(suppliedParent) !== parent) throw new Error("Session parent changed during ownership admission");
++      regular(lockPath);
++      return new SessionFileLease(canonical, lock, parentInfo, revision);
++    } catch (error) { lock.release(); throw error; }
++  }
++  get released(): boolean { return this.#released; }
++  #fail(message: string): never { this.#poison ??= new Error(message); throw this.#poison; }
++  assertPath(file: string = this.file): void {
++    if (this.#released) throw new Error("Session ownership has been released");
++    if (this.#poison) throw this.#poison;
++    if (path.resolve(file) !== this.file) this.#fail("Writer path is outside its admitted session lease");
++    const parent = path.dirname(this.file);
++    if (fs.realpathSync(parent) !== parent || !equalIdentity(fs.statSync(parent), this.#parent)) this.#fail("Session parent identity changed after admission");
++    const visible = regular(this.file);
++    if (this.#revision ? !visible || !equalRevision(visible, this.#revision) : visible !== undefined) this.#fail("Session file identity or revision changed after admission");
++  }
++  assertDescriptor(fd: number): void {
++    this.assertPath();
++    const actual = fs.fstatSync(fd);
++    if (!this.#revision || !equalRevision(actual, this.#revision) || actual.nlink !== 1) this.#fail("Session writer descriptor is not the admitted file");
++  }
++  /** A write through an already validated descriptor changed only this inode. */
++  written(fd: number): void {
++    const actual = fs.fstatSync(fd), visible = regular(this.file);
++    if (!this.#revision || !equalIdentity(actual, this.#revision) || !visible || !equalRevision(actual, visible) || actual.nlink !== 1) this.#fail("Session path changed during a descriptor write");
++    this.#revision = actual;
++  }
++  /** Accept only the known staged inode after its atomic publication. */
++  replaced(expected: fs.Stats): void {
++    const visible = regular(this.file);
++    if (!visible || !equalIdentity(visible, expected) || visible.nlink !== 1) this.#fail("Session replacement did not publish its staged inode");
++    this.#revision = visible;
++  }
++  /** Both per-file leases are already held. Keep publication and inode rebinding
++   * in one synchronous operation so hot-path appends cannot see half a move. */
++  renameTo(destination: SessionFileLease): void {
++    this.assertPath(); destination.assertPath();
++    if (!this.#revision || destination.#revision) throw new Error("Session relocation needs an existing source and absent destination");
++    const source = this.#revision;
++    fs.renameSync(this.file, destination.file);
++    destination.replaced(source);
++    this.#revision = undefined;
++    this.assertPath();
++  }
++  read(expected?: SessionOwnershipExpectation): string {
++    this.assertPath();
++    if (!this.#revision) {
++      if (expected) throw new Error("Inspected original session no longer exists");
++      return "";
++    }
++    const fd = fs.openSync(this.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
++    try {
++      this.assertDescriptor(fd);
++      const contents = fs.readFileSync(fd, "utf8");
++      this.assertDescriptor(fd);
++      if (expected) {
++        if (expected.canonicalFile !== this.file || createHash("sha256").update(contents).digest("hex") !== expected.sha256) throw new Error("Inspected original session revision changed");
++        const header = contents.trim().split("\n").map(line => JSON.parse(line)).find(entry => entry.type === "session");
++        if (!header || header.id !== expected.nativeId || header.cwd !== expected.recordedCwd) throw new Error("Inspected native session ID or cwd changed");
++        if (!fs.statSync(fs.realpathSync(header.cwd)).isDirectory()) throw new Error("Inspected native working directory is unavailable");
++      }
++      return contents;
++    } finally { fs.closeSync(fd); }
++  }
++  release(): void { if (!this.#released) { this.#released = true; this.#lock.release(); } }
++}

@@ -1,0 +1,13 @@
+.native-terminal-scrollport { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 4px 8px; }
+.terminal-legacy-container { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.terminal-legacy-container > .terminal-panel { flex: 1; min-height: 0; }
+.native-terminal-scrollport[hidden] { display: none; }
+.native-terminal-grid { width: max-content; min-height: 1px; }
+.native-terminal-grid .xterm-viewport { border-radius: 0; background-color: transparent; }
+.native-terminal-panel .terminal-view-footer { flex-wrap: wrap; }
+.native-terminal-panel .terminal-view-footer button { white-space: normal; }
+.native-terminal-history { display: flex; flex: 1; min-height: 0; min-width: 0; flex-direction: column; overflow: hidden; }
+.native-terminal-history-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; flex-wrap: wrap; font-size: 11px; border-bottom: 1px solid var(--border); }
+.native-terminal-history-toolbar > strong { margin-right: auto; }
+.native-terminal-history-content { flex: 1; min-height: 0; overflow: auto; }
+.native-terminal-history pre { overflow: auto; margin: 0; padding: 10px; font: var(--terminal-font-size, 13px)/var(--code-line-height, 1.2) var(--terminal-font, var(--code-font, monospace)); white-space: pre; user-select: text; }

@@ -1,0 +1,7 @@
+{
+  "name": "@agent-desktop/host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@agent-desktop/shared": "workspace:*" }
+}

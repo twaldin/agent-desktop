@@ -1,0 +1,132 @@
+import { describe, expect, test } from "bun:test";
+import type { CommandEnvelope, CommandResult, Draft, SessionSummary } from "../../../../packages/shared/src/protocol";
+import { DraftController, type DraftCache } from "./drafts";
+import { SubmissionController } from "./submissions";
+
+const draft = (patch: Partial<Draft> = {}): Draft => ({ id: "new-conversation", revision: 1, text: "first prompt", projectId: "project-1", model: null, updatedAt: 1, ...patch });
+function cache(): DraftCache { const values = new Map<string, string>(); return { read: key => values.get(key) ?? null, write: (key, value) => { values.set(key, value); } }; }
+function saver(calls: CommandEnvelope[]) { return async (envelope: CommandEnvelope): Promise<CommandResult> => { calls.push(envelope); if (envelope.command.type !== "draft.put") throw new Error("Unexpected command"); return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: 2 } }; }; }
+const session: SessionSummary = { id: "session-1", hostId: "host", projectId: "project-1", cwd: "/project", title: "New conversation", status: "idle", sessionFile: "/session.jsonl", model: null, createdAt: 1, updatedAt: 1, archived: false };
+
+describe("revisioned draft persistence", () => {
+  test("own save echo does not conflict with newer local typing", async () => {
+    let acknowledge!: (result: CommandResult) => void;
+    let envelope!: CommandEnvelope;
+    const controller = new DraftController(command => { envelope = command; return new Promise(resolve => { acknowledge = resolve; }); }, "host");
+    controller.setConnected(true); controller.update("new-conversation", { text: "first" });
+    const saving = controller.flush("new-conversation");
+    controller.update("new-conversation", { text: "newer text" });
+    const saved = draft({ text: "first", projectId: null });
+    controller.ingest(saved);
+    expect(controller.get(saved.id).status).not.toBe("conflict");
+    acknowledge({ ok: true, commandId: envelope.id, value: saved });
+    await saving;
+    expect(controller.get(saved.id).draft.text).toBe("newer text");
+    expect(controller.get(saved.id).status).toBe("unsaved");
+    controller.dispose();
+  });
+  test("submission captures the Enter keypress before a slow draft save", async () => {
+    let acknowledge!: (result: CommandResult) => void;
+    let commandId = "";
+    const controller = new DraftController(envelope => { commandId = envelope.id; return new Promise(resolve => { acknowledge = resolve; }); }, "host");
+    controller.setConnected(true); controller.update("new-conversation", { text: "send this" });
+    const preparing = controller.prepareSubmission("new-conversation");
+    controller.update("new-conversation", { text: "keep this for later" });
+    acknowledge({ ok: true, commandId, value: draft({ text: "send this", projectId: null }) });
+    const submitted = await preparing;
+    expect(submitted.text).toBe("send this");
+    expect(controller.get(submitted.id).draft.text).toBe("keep this for later");
+    controller.ingest(draft({ revision: 2, text: "", projectId: null }));
+    controller.finishSubmission(submitted.id, submitted, true);
+    expect(controller.get(submitted.id).draft.text).toBe("keep this for later");
+    controller.dispose();
+  });
+  test("accepted submission consumes only its revision and saves later edits against the new revision", async () => {
+    const calls: CommandEnvelope[] = []; const controller = new DraftController(saver(calls), "host");
+    controller.ingest(draft()); controller.setConnected(true);
+    const submitted = await controller.prepareSubmission("new-conversation");
+    controller.update(submitted.id, { text: "next instruction" });
+    controller.ingest(draft({ text: "", revision: 2 }));
+    controller.finishSubmission(submitted.id, submitted, true);
+    expect(controller.get(submitted.id).draft.text).toBe("next instruction");
+    await controller.flush(submitted.id);
+    expect(calls[0]?.command).toMatchObject({ type: "draft.put", expectedRevision: 2, draft: { text: "next instruction" } });
+    controller.dispose();
+  });
+  test("late consume event does not resurrect a sent prompt", async () => {
+    const calls: CommandEnvelope[] = []; const controller = new DraftController(saver(calls), "host");
+    controller.ingest(draft()); controller.setConnected(true);
+    const submitted = await controller.prepareSubmission("new-conversation");
+    controller.finishSubmission(submitted.id, submitted, true);
+    expect(controller.get(submitted.id).draft.text).toBe("");
+    controller.ingest(draft({ text: "", revision: 2 }));
+    controller.update(submitted.id, { text: "another prompt" }); await controller.flush(submitted.id);
+    expect(calls[0]?.command).toMatchObject({ expectedRevision: 2 }); controller.dispose();
+  });
+  test("offline edits survive a fresh controller and require explicit conflict resolution", async () => {
+    const storage = cache(); const calls: CommandEnvelope[] = [];
+    const first = new DraftController(saver(calls), "host", storage);
+    first.ingest(draft()); first.update("new-conversation", { text: "my offline change" }); first.dispose();
+    const restored = new DraftController(saver(calls), "host", storage);
+    restored.ingest(draft({ revision: 2, text: "other device" }));
+    expect(restored.get("new-conversation")).toMatchObject({ status: "conflict", draft: { text: "my offline change" }, conflict: { text: "other device" } });
+    restored.resolve("new-conversation", "local"); restored.setConnected(true); await restored.flush("new-conversation");
+    expect(calls[0]?.command).toMatchObject({ expectedRevision: 2, draft: { text: "my offline change" } }); restored.dispose();
+  });
+  test("a rejected save preserves text and the host conflict version", async () => {
+    const controller = new DraftController(async envelope => ({ ok: false, commandId: envelope.id, error: { code: "DRAFT_CONFLICT", message: "Draft changed" }, currentDraft: draft({ revision: 3, text: "remote" }) }), "host");
+    controller.ingest(draft()); controller.setConnected(true); controller.update("new-conversation", { text: "mine" });
+    await expect(controller.flush("new-conversation")).rejects.toThrow("Draft changed");
+    expect(controller.get("new-conversation")).toMatchObject({ status: "conflict", draft: { text: "mine" }, conflict: { revision: 3 } }); controller.dispose();
+  });
+});
+
+describe("submission delivery identities", () => {
+  test("uncertain send retries the original envelope after a renderer restart", async () => {
+    const storage = cache(); const calls: CommandEnvelope[] = []; let disconnect = true;
+    const send = async (envelope: CommandEnvelope): Promise<CommandResult> => {
+      calls.push(envelope);
+      if (envelope.command.type === "session.create") return { ok: true, commandId: envelope.id, value: session };
+      if (disconnect) { disconnect = false; throw new Error("connection closed"); }
+      return { ok: true, commandId: envelope.id, value: session };
+    };
+    const first = new SubmissionController(send, "host", storage);
+    await expect(first.submit(draft(), undefined, "prompt")).rejects.toThrow("Delivery is uncertain");
+    const restored = new SubmissionController(send, "host", storage);
+    expect(restored.get("new-conversation")?.uncertain).toBe(true);
+    const result = await restored.submit(draft({ text: "newer edit", revision: 2 }), undefined, "prompt");
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toEqual(calls[1]);
+    expect(result.submitted.text).toBe("first prompt");
+    expect(restored.get("new-conversation")).toBeUndefined();
+  });
+  test("uncertain create reuses its identity before sending once", async () => {
+    const calls: CommandEnvelope[] = []; let first = true;
+    const controller = new SubmissionController(async envelope => {
+      calls.push(envelope); if (first) { first = false; throw new Error("lost create response"); }
+      return { ok: true, commandId: envelope.id, value: session };
+    }, "host", cache());
+    await expect(controller.submit(draft(), undefined, "prompt")).rejects.toThrow("uncertain");
+    await controller.submit(draft(), undefined, "prompt");
+    expect(calls[0]?.id).toBe(calls[1]?.id);
+    expect(calls.filter(call => call.command.type === "session.prompt")).toHaveLength(1);
+  });
+  test("known prompt rejection keeps its created session but accepts edited retry text", async () => {
+    const calls: CommandEnvelope[] = []; let rejectPrompt = true;
+    const controller = new SubmissionController(async envelope => {
+      calls.push(envelope);
+      if (envelope.command.type === "session.prompt" && rejectPrompt) { rejectPrompt = false; return { ok: false, commandId: envelope.id, error: { code: "BUSY", message: "Session is busy" } }; }
+      return { ok: true, commandId: envelope.id, value: session };
+    }, "host", cache());
+    await expect(controller.submit(draft(), undefined, "prompt")).rejects.toThrow("busy");
+    await controller.submit(draft({ text: "edited retry", revision: 2 }), undefined, "prompt");
+    expect(calls.filter(call => call.command.type === "session.create")).toHaveLength(1);
+    expect(calls[2]?.command).toMatchObject({ sessionId: "session-1", text: "edited retry" });
+    expect(calls[2]?.id).not.toBe(calls[1]?.id);
+  });
+  test("failure to persist an envelope prevents first delivery", async () => {
+    let deliveries = 0;
+    const controller = new SubmissionController(async envelope => { deliveries++; return { ok: true, commandId: envelope.id, value: session }; }, "host", { read: () => null, write: () => { throw new Error("Storage full"); } });
+    await expect(controller.submit(draft(), undefined, "prompt")).rejects.toThrow("Storage full"); expect(deliveries).toBe(0);
+  });
+});
