@@ -1,6 +1,18 @@
 # Milestone status
 
-Home and Work run desktop and host **16**; Deckbox runs host **16**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
+Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
+
+## Release 17 — browser metadata and native goal restoration
+
+The pinned OMP metadata patch, worker protocol 6 and owner-bound desktop transport now expose actual native browser tab metadata. This is the foundation for a shared-target browser panel; frames, input and browser controls remain unimplemented. The native worker test and separate real-tab candidate proof are described in [browser integration](browser-integration.md). Host artifacts include selected dependency patches so frozen installs can reproduce them.
+
+Saved goal mode now follows native OMP resume reconciliation. Paused goals retain identity, budget and usage; a cold active goal becomes paused exactly once. Native goal creation/continuation controls and the desktop goal display remain separate work. The source also fixes narrow header access and dock height. Luna's bounded independent review found no concrete defects in the dock/goal changes.
+
+The frozen full suite passed **481 tests / 24,209 assertions**, with 17 skips and zero failures, across 95 files. All 391 captured source files remained unchanged during the run (`.data/source17-full-tests.log`, `source17-before-full-suite.json`, `source17-after-full-suite.json`). A fresh isolated frozen dependency install also builds the renderer successfully (`.data/source17-frozen-renderer-*.log`). The subsequent small parser correction for valid blank page titles has separate focused verification; it is not represented as part of that earlier frozen run. The final focused metadata suite passed 10 tests / 34 assertions, and typecheck passed.
+
+Guarded host upgrades passed on all three machines. The 109-file archive, selected native patch and IPC 6 were verified on macOS and Linux. Catalogs, drafts and original native-history prefixes were preserved; only verified shutdown metadata was appended. All backup databases passed `quick_check`; release 16 remains available for rollback. Deckbox additionally passed five isolated HTTP/native-worker tests with provider access blocked. Evidence: `.data/ui-acceptance/installed-hosts-release17.json`, `home-release17-preservation.json` and `home17-installed-contract.json`.
+
+Home's installed 760×1000 check verifies that the side dock starts below the header, both Environment and side-toggle controls receive actual input, and the saved Review identity survives upgrade/restart. The first attempt is retained as a failed check: its viewport was inadvertently constrained to 760×506 and its starting overlay state was not reconciled. That capture also exposes cramped empty-dock content at short heights; short-window layout remains open. The successful repeat used the intended viewport and explicit state guards; it does not erase that limit. No provider prompts were sent. Home returns to one normal window in space 9 with diagnostics closed and both docks hidden; final table fingerprints still match the pre-upgrade database. Evidence: `.data/ui-acceptance/home17-narrow-ui/`, `home17-normal.json` and `home17-final-catalogs.json`. Work's desktop-only upgrade keeps its host PID, exact native history, catalogs/drafts and saved window state; one normal window remains in space 8 without diagnostics. Evidence: `.data/ui-acceptance/work-desktop17-final.json`.
 
 ## Release 16 — installed dock and native Environment integration
 
@@ -16,15 +28,7 @@ Those installed checks also found a separate narrow-window defect: the side dock
 
 A clean dependency install exposed Pierre theming importing a theme absent from its broadly permitted Shiki 3 peer. The project now explicitly pins `@shikijs/themes` 4.4.3, already used by Pierre's pinned Shiki 4 dependency, while retaining native/root Shiki 3.20.0 and its own themes. The renderer build and actual App layout check pass with that selection; full integrated verification follows the browser/goal changes.
 
-The active implementation subagents use GPT-5.6 Sol / medium for host and state work and GPT-5.6 Terra / medium for UI work, per the user's cost preference. Earlier Astra implementation agents are stopped.
-
-## Source 17 — browser metadata and native goal restoration
-
-The pinned OMP metadata patch, worker protocol 6 and owner-bound desktop transport now expose actual native browser tab metadata. This is the foundation for a shared-target browser panel; frames, input and browser controls remain unimplemented. The native worker test and separate real-tab candidate proof are described in [browser integration](browser-integration.md). Host artifacts include selected dependency patches so frozen installs can reproduce them.
-
-Saved goal mode now follows native OMP resume reconciliation. Paused goals retain identity, budget and usage; a cold active goal becomes paused exactly once. Native goal creation/continuation controls and the desktop goal display remain separate work. The source also fixes narrow header access and dock height. Luna's bounded independent review found no concrete defects in the dock/goal changes.
-
-The frozen full suite passed **481 tests / 24,209 assertions**, with 17 skips and zero failures, across 95 files. All 391 captured source files remained unchanged during the run (`.data/source17-full-tests.log`, `source17-before-full-suite.json`, `source17-after-full-suite.json`). A fresh isolated frozen dependency install also builds the renderer successfully (`.data/source17-frozen-renderer-*.log`). The subsequent small parser correction for valid blank page titles has separate focused verification; it is not represented as part of that earlier frozen run. Release 16 remains the installed checkpoint.
+Subagents use GPT-5.6 Sol / medium for host and state work, Terra / medium for UI work, and Luna / medium for bounded reviews. Earlier Astra implementation agents are stopped.
 
 ## Release 14 — installed on Home; remote acceptance pending
 

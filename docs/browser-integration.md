@@ -2,13 +2,15 @@
 
 Source investigation and isolated feasibility experiment, 2026-09-05. **No production browser panel or full browser parity is claimed.** The initial investigation read installed package source, the preserved Codex archive, and official Electron/CDP documentation. The later bounded experiment below opened only its own disposable native browser/profile and localhost page. Neither stage inspected live Codex or other apps, changed installed settings, accessed existing browser profiles, or made provider requests.
 
-## Source 17 metadata transport
+## Release 17 metadata transport
 
 The maintained project now selects a small, pinned Bun patch for OMP 18.1.10. `listTabsForOwner` returns immutable snapshots from the native supervisor's actual tab map, filtered by the native session's exact identity. Its original source hash and isolated real-browser proof live under `patches/omp-18.1.10/browser-metadata/`; the selected package patch is `patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch`. Host packaging includes the selected patch in its hashed file inventory so a frozen production install reproduces it. Global OMP installations and release 16 bundles are unchanged.
 
 Worker protocol 6 adds a read-only metadata request. `GET /v1/sessions/:id/browser-metadata` uses the existing host authentication and an explicit expected-owner header. Observation never starts a missing native worker. Responses distinguish not-started, unavailable and a running worker snapshot, and name the native target IDs, backend, title, URL and viewport. Desktop parsing validates those fields and their owner/protocol before exposing them. Older route-level 404 responses remain an explicit compatibility case.
 
 The exact-path native test creates a real provider-free OMP worker and reads its empty tab list through the production route class, checking the returned worker PID. A separate isolated test opens a real native browser tab and verifies its target, owner isolation and immutable metadata. Together these establish the metadata seam; they do not establish a renderer stream, input delivery, real tab transport over Tailscale, or a browser panel. The next implementation must still attach to that exact target, keep detach separate from close, and prove shared document state. Worker startup failures from Bun's filename-filter test mode are documented in [test runtime](test-runtime.md), not treated as an authentication limitation.
+
+Installed release 17 verifies the exact patched supervisor hash on Home, Work and Deckbox. Home and Work return actual running worker snapshots with zero tabs; wrong-owner/stale requests fail with 409. Home additionally verifies unauthenticated rejection and no-store responses. Deckbox runs the exact-path HTTP/native-worker tests against isolated archive sources and installed dependencies: five tests, 18 assertions, no provider calls. These checks do not establish nonempty tab streaming across Tailscale. Evidence: `.data/ui-acceptance/home17-installed-contract.json` and `installed-hosts-release17.json`.
 
 ## Recommendation
 
