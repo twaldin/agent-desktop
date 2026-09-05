@@ -48,6 +48,27 @@ async function seedAuth(directory: string, agentDir: string, mode: "key" | "oaut
 }
 
 describe("actual Bun worker lifecycle without provider calls", () => {
+  test("new native auto thinking survives replacement of the owning worker without duplicate receipts", async () => {
+    const { runtime, directory, cwd, agentDir } = await isolatedRuntime();
+    await seedAuth(directory, agentDir, "key");
+    const config = "extensions: []\ndefaultThinkingLevel: auto\nmodelRoles:\n  default: [openai/gpt-5.4-mini:max]\n";
+    await writeFile(path.join(agentDir, "config.yml"), config);
+    const session = await runtime.create({ cwd, model: { provider: "openai", id: "gpt-5.4-mini" } });
+    expect(session.thinkingLevel).toBe("auto");
+    expect((await session.getControls()).thinkingLevel).toBe("auto");
+    const readThinking = async () => (await readFile(session.sessionFile, "utf8")).trim().split("\n")
+      .map(line => JSON.parse(line)).filter(entry => entry.type === "thinking_level_change");
+    const before = await readThinking();
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ configured: "auto", thinkingLevel: "high" });
+    await session.dispose();
+    const reopened = await runtime.open({ sessionFile: session.sessionFile });
+    expect(reopened.id).toBe(session.id);
+    expect(reopened.thinkingLevel).toBe("auto");
+    expect((await reopened.getControls()).thinkingLevel).toBe("auto");
+    expect(await readThinking()).toEqual(before);
+    expect(await readFile(path.join(agentDir, "config.yml"), "utf8")).toBe(config);
+  }, 30_000);
   test("composer metadata resolves native default roles and thinking in the selected project without creating a session", async () => {
     const { runtime, directory, cwd, agentDir } = await isolatedRuntime();
     await seedAuth(directory, agentDir, "key");

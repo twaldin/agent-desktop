@@ -7,7 +7,7 @@ import {
   ModelRegistry, SessionManager, Settings,
   type AgentSession, type AgentSessionEvent, type AuthStorage,
 } from "@oh-my-pi/pi-coding-agent";
-import { parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+import { AUTO_THINKING, parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import { parseTitleSlotLine } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
 import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
 import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
@@ -273,6 +273,13 @@ export class OmpRuntime {
       });
       native = result.session;
       this.#assertActive();
+      // Native 18.1.10 omits the initial auto receipt, and an unchanged first
+      // classification does not add it. Record the actual new-session choice
+      // before exposing its file; never infer missing intent on an existing log.
+      if (reservation === undefined && native.configuredThinkingLevel() === AUTO_THINKING
+        && !manager.getBranch().some(entry => entry.type === "thinking_level_change")) {
+        manager.appendThinkingLevelChange(native.thinkingLevel, AUTO_THINKING);
+      }
       await manager.ensureOnDisk();
       const session = native;
       const steering = new NativeSteerAdmission(session, manager);
