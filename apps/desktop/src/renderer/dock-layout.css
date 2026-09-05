@@ -10,8 +10,8 @@
 .environment-overlay>.environment-card { max-height:100%; pointer-events:auto; }
 .workbench.dock-narrow>.dock-slot-right { grid-column:1 / -1; z-index:15; margin-top:var(--main-header-height,46px); background:var(--app-surface); }
 .workbench.dock-narrow>.main-panel { grid-column:1 / -1; }
-.dock-empty-actions { position:absolute;inset:36px 0 0;height:calc(100% - 36px); display:flex; flex-direction:column; justify-content:center; max-width:540px; margin:auto; padding:20px; gap:4px; }
-.dock-empty-actions button { text-align:left; display:flex; align-items:center; gap:10px; border:0; border-radius:8px; padding:12px; background:var(--hover); color:var(--text); }
+.dock-empty-actions { position:absolute;inset:36px 0 0;height:calc(100% - 36px); box-sizing:border-box; display:flex; min-height:0; flex-direction:column; justify-content:safe center; overflow-y:auto; overscroll-behavior:contain; max-width:540px; margin:auto; padding:20px; gap:4px; }
+.dock-empty-actions button { flex:0 0 auto; text-align:left; display:flex; align-items:center; gap:10px; border:0; border-radius:8px; padding:12px; background:var(--hover); color:var(--text); }
 .dock-empty-actions button:hover { background:var(--selected); }
 
 .dock-native-terminal {position:relative;}

@@ -103,10 +103,23 @@ Object.assign(window, {
     assert(route() === expectedRoute && document.querySelectorAll('[role="tab"]').length >= 1, "pane activity changed selected route or removed all tabs");
     return { passed: menuDismissal.add && menuDismissal.move, checks, menuDismissal, providerRequests: 0, route: route(), activityCalls, workspaceQueryKinds: [...new Set(workspaceCalls.map(call => call.query.type))] };
   },
-  appDockGeometry: async () => {
+  prepareShortDockChooser: async () => {
+    const card = document.querySelector<HTMLElement>(".environment-card"); assert(card && button(card, "Close environment summary"), "Environment close before short chooser"); button(card, "Close environment summary")!.click();
+    await wait(() => !document.querySelector(".environment-card"), "close Environment before short chooser capture");
+    const right = document.querySelector<HTMLElement>(".dock-slot-right")!; button(right, "Close Review tab")!.click(); await wait(() => right.querySelector(".dock-empty-actions"), "empty side chooser after close");
+    const side = document.querySelector<HTMLButtonElement>('[aria-label="Show side panel"]'); assert(side, "show side dock control"); side.click(); await wait(() => getComputedStyle(right).display !== "none", "show empty side chooser");
+    const terminal = document.querySelector<HTMLButtonElement>('[aria-label="Show terminal panel"]'); assert(terminal, "show bottom dock control"); terminal.click();
+    const bottom = document.querySelector<HTMLElement>(".dock-slot-bottom")!; await wait(() => getComputedStyle(bottom).display !== "none", "open bottom dock beside empty chooser");
+    checks.push("short viewport keeps an empty side chooser reachable beside an open bottom dock");
+  },
+  appDockGeometry: async (expectChooser = false) => {
     await document.fonts.ready; await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const app = document.querySelector<HTMLElement>(".app-shell")!.getBoundingClientRect(), workbench = document.querySelector<HTMLElement>(".workbench")!.getBoundingClientRect(), main = document.querySelector<HTMLElement>(".main-panel")!.getBoundingClientRect();
-    const side = document.querySelector<HTMLElement>(".dock-slot-right")!.getBoundingClientRect(), card = document.querySelector<HTMLElement>(".environment-card")!.getBoundingClientRect();
+    const side = document.querySelector<HTMLElement>(".dock-slot-right")!.getBoundingClientRect(), cardElement = document.querySelector<HTMLElement>(".environment-card"), card = cardElement?.getBoundingClientRect();
+    const chooser = document.querySelector<HTMLElement>(".dock-slot-right .dock-empty-actions"), chooserLast = chooser?.querySelector<HTMLButtonElement>("button:last-child");
+    chooserLast?.scrollIntoView({ block: "nearest" });
+    const chooserBounds = chooser?.getBoundingClientRect(), lastBounds = chooserLast?.getBoundingClientRect();
+    const chooserReachable = Boolean(chooserBounds && lastBounds && lastBounds.top >= chooserBounds.top - 1 && lastBounds.bottom <= chooserBounds.bottom + 1 && document.elementFromPoint(lastBounds.left + lastBounds.width / 2, lastBounds.top + lastBounds.height / 2) === chooserLast);
     const namedControls = ["Environment", "Hide side panel"].every(name => document.querySelector(`[aria-label="${name}"]`));
     const headerControlsClickable = ["Environment", "Hide side panel"].every(name => {
       const control = document.querySelector<HTMLElement>(`[aria-label="${name}"]`);
@@ -116,8 +129,8 @@ Object.assign(window, {
       return bounds.width > 0 && bounds.height > 0 && Boolean(hit && control.contains(hit));
     });
     const inside = (box: DOMRect) => box.left >= -1 && box.top >= -1 && box.right <= innerWidth + 1 && box.bottom <= innerHeight + 1;
-    const hit = document.elementFromPoint(card.left + card.width / 2, card.top + Math.min(card.height / 2, 120)); const cardVisible = Boolean(hit && (hit === document.querySelector(".environment-card") || document.querySelector(".environment-card")!.contains(hit)));
-    return { viewport: { width: innerWidth, height: innerHeight }, app: { width: app.width, height: app.height }, workbench: { width: workbench.width, height: workbench.height }, main: { width: main.width, height: main.height }, side: { width: side.width, height: side.height }, card: { x: card.x, y: card.y, width: card.width, height: card.height }, namedControls, headerControlsClickable, cardVisible,
-      fitting: app.width > 0 && workbench.width > 0 && main.width > 0 && side.width > 0 && card.width > 0 && namedControls && headerControlsClickable && cardVisible && inside(app) && inside(workbench) && inside(side) && inside(card) && document.documentElement.scrollWidth <= innerWidth + 1 && document.documentElement.scrollHeight <= innerHeight + 1 };
+    const hit = card && document.elementFromPoint(card.left + card.width / 2, card.top + Math.min(card.height / 2, 120)); const cardVisible = expectChooser ? !cardElement || Boolean(hit && (hit === cardElement || cardElement.contains(hit))) : Boolean(cardElement && hit && (hit === cardElement || cardElement.contains(hit)));
+    return { viewport: { width: innerWidth, height: innerHeight }, app: { width: app.width, height: app.height }, workbench: { width: workbench.width, height: workbench.height }, main: { width: main.width, height: main.height }, side: { width: side.width, height: side.height }, card: card ? { x: card.x, y: card.y, width: card.width, height: card.height } : null, chooser: chooserBounds ? { x: chooserBounds.x, y: chooserBounds.y, width: chooserBounds.width, height: chooserBounds.height } : null, chooserLast: lastBounds ? { x: lastBounds.x, y: lastBounds.y, width: lastBounds.width, height: lastBounds.height } : null, chooserReachable, namedControls, headerControlsClickable, cardVisible,
+      fitting: app.width > 0 && workbench.width > 0 && main.width > 0 && side.width > 0 && namedControls && headerControlsClickable && cardVisible && (!expectChooser || chooserReachable) && inside(app) && inside(workbench) && inside(side) && (!card || inside(card)) && document.documentElement.scrollWidth <= innerWidth + 1 && document.documentElement.scrollHeight <= innerHeight + 1 };
   },
 });
