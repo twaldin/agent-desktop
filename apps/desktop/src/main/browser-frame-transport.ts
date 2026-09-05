@@ -2,7 +2,7 @@ import { BROWSER_FRAME_MAX_BYTES, BROWSER_FRAME_PROTOCOL_VERSION, BROWSER_METADA
   type BrowserFrameSnapshot, type BrowserFrameTarget } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
 
-async function readJSON(response: Response, limit: number): Promise<unknown> {
+export async function readBrowserJSON(response: Response, limit: number): Promise<unknown> {
   if (!response.body) throw new Error("The browser viewport response is empty.");
   const reader = response.body.getReader();
   let size = 0;
@@ -30,7 +30,7 @@ export async function requestBrowserFrame(endpoint: HostEndpoint, sessionId: str
   if (response.ok && response.headers.get(BROWSER_METADATA_OWNER_HEADER) !== endpoint.hostId) {
     await response.body?.cancel(); throw new HostRequestError("Browser viewport belongs to another host.", 409, "OWNER_MISMATCH");
   }
-  const value = await readJSON(response, response.ok ? Math.ceil(BROWSER_FRAME_MAX_BYTES / 3) * 4 + 32_768 : 16_384);
+  const value = await readBrowserJSON(response, response.ok ? Math.ceil(BROWSER_FRAME_MAX_BYTES / 3) * 4 + 32_768 : 16_384);
   if (!response.ok) {
     const detail = value && typeof value === "object" && "error" in value && value.error && typeof value.error === "object" ? value.error as Record<string, unknown> : {};
     throw new HostRequestError(typeof detail.message === "string" ? detail.message : response.status === 404 ? "Update this host to preview native browser tabs." : `Browser viewport failed (${response.status}).`, response.status, typeof detail.code === "string" ? detail.code : undefined);
@@ -38,5 +38,6 @@ export async function requestBrowserFrame(endpoint: HostEndpoint, sessionId: str
   if (!value || typeof value !== "object") throw new Error("Invalid browser viewport response.");
   const source = value as BrowserFrameSnapshot;
   if (source.protocolVersion !== BROWSER_FRAME_PROTOCOL_VERSION || source.hostId !== endpoint.hostId || source.sessionId !== sessionId || source.workerPid !== target.workerPid) throw new Error("Browser viewport does not match the selected owner, worker or protocol.");
-  return { ...parseNativeBrowserFrame(source, target), protocolVersion: BROWSER_FRAME_PROTOCOL_VERSION, hostId: endpoint.hostId, sessionId, workerPid: target.workerPid };
+  if (source.controlEpoch !== undefined && (typeof source.controlEpoch !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(source.controlEpoch))) throw new Error("Invalid browser control epoch.");
+  return { ...parseNativeBrowserFrame(source, target), ...(source.controlEpoch ? { controlEpoch: source.controlEpoch } : {}), protocolVersion: BROWSER_FRAME_PROTOCOL_VERSION, hostId: endpoint.hostId, sessionId, workerPid: target.workerPid };
 }

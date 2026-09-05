@@ -14,7 +14,7 @@ class FrameError extends Error {
  * or start a session worker simply because a desktop opens the panel. */
 export class BrowserFrameHttp {
   private pending = new Map<string, Promise<NativeBrowserFrame>>();
-  constructor(private options: { hostId: string; sessionExists(id: string): boolean; getExistingHandle(id: string): Promise<FrameHandle | undefined> }) {}
+  constructor(private options: { hostId: string; controlEpoch?: string; sessionExists(id: string): boolean; getExistingHandle(id: string): Promise<FrameHandle | undefined> }) {}
 
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
     const match = /^\/v1\/sessions\/([^/]+)\/browser-frame$/.exec(url.pathname);
@@ -42,7 +42,7 @@ export class BrowserFrameHttp {
       if (!this.options.sessionExists(sessionId) || handle.workerFailure || await this.options.getExistingHandle(sessionId) !== handle) {
         throw new FrameError("The browser session changed while its viewport was loading.", 409, "STALE_TARGET");
       }
-      return Response.json({ protocolVersion: BROWSER_FRAME_PROTOCOL_VERSION, hostId: this.options.hostId, sessionId, workerPid: target.workerPid, ...value }, { headers });
+      return Response.json({ protocolVersion: BROWSER_FRAME_PROTOCOL_VERSION, hostId: this.options.hostId, sessionId, workerPid: target.workerPid, ...(this.options.controlEpoch ? { controlEpoch: this.options.controlEpoch } : {}), ...value }, { headers });
     } catch (error) {
       return Response.json({ error: { code: error instanceof FrameError ? error.code : "BROWSER_FRAME_FAILED",
         message: error instanceof FrameError ? error.message : "The native browser viewport could not be captured. Refresh its tab list and try again." } },

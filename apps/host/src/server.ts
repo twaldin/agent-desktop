@@ -24,6 +24,7 @@ import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
 import { SessionActivityHttp } from "./session-activity-http";
 import { BrowserMetadataHttp } from "./browser-metadata-http";
+import { BrowserControlHttp } from "./browser-control-http";
 import { BrowserFrameHttp } from "./browser-frame-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
@@ -191,7 +192,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try { return await pending; }
       catch { return { workerFailure: { message: "The native session worker is unavailable." }, getBrowserMetadata: async () => ({ availability: "unavailable" as const, reason: "The native session worker is unavailable." }) }; }
     } });
-  const browserFrames = new BrowserFrameHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
+  const browserControls = new BrowserControlHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
+    getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
+  const browserFrames = new BrowserFrameHttp({ hostId: store.host.id, controlEpoch: browserControls.epoch, sessionExists: id => Boolean(store.getSession(id)),
     getExistingHandle: async id => {
       const pending = handles.get(id);
       return pending ? await pending.catch(() => undefined) : undefined;
@@ -495,6 +498,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (activityResponse) return activityResponse;
         const browserMetadataResponse = await browserMetadata.route(request, url);
         if (browserMetadataResponse) return browserMetadataResponse;
+        const browserControlResponse = await browserControls.route(request, url);
+        if (browserControlResponse) return browserControlResponse;
         const browserFrameResponse = await browserFrames.route(request, url);
         if (browserFrameResponse) return browserFrameResponse;
         const settingsResponse = await settings!.route(request, url);

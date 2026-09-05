@@ -1,6 +1,9 @@
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
-@@ -89,0 +90,29 @@
+@@ -10 +10 @@
+-import type { Page, Target } from "puppeteer-core";
++import type { KeyInput, MouseButton, Page, Target } from "puppeteer-core";
+@@ -89,0 +90,55 @@
 +/**
 + * Read-only current metadata for a tab owned by one native session.
 + * This intentionally omits browser handles, workers, CDP endpoints, profile
@@ -28,11 +31,40 @@
 +	readonly data: Uint8Array;
 +	readonly url: string;
 +	readonly title: string;
++	readonly context: OwnerTabDocumentContext;
 +}
 +
-@@ -149,0 +179 @@
++export interface OwnerTabDocumentContext {
++	readonly documentId: string;
++	readonly width: number;
++	readonly height: number;
++	readonly scrollX: number;
++	readonly scrollY: number;
++}
++
++export type OwnerTabHumanAction =
++	| { readonly type: "navigate"; readonly url: string }
++	| { readonly type: "reload" | "back" | "forward" }
++	| { readonly type: "click"; readonly x: number; readonly y: number; readonly button?: MouseButton; readonly clickCount?: 1 | 2 | 3 }
++	| { readonly type: "wheel"; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number }
++	| { readonly type: "text"; readonly text: string }
++	| { readonly type: "key"; readonly key: string; readonly modifiers?: readonly ("Alt" | "Control" | "Meta" | "Shift")[] };
++
++export interface OwnerTabHumanActionResult {
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly targetId: string;
++	readonly context: OwnerTabDocumentContext;
++	readonly url: string;
++	readonly title: string;
++}
++
+@@ -149,0 +205,2 @@
 +const viewportCaptures = new Map<string, Promise<Readonly<OwnerTabViewportCapture>>>();
-@@ -756,0 +787,66 @@
++const humanActions = new Map<string, Promise<Readonly<OwnerTabHumanActionResult>>>();
+@@ -510,0 +568 @@
++	if (humanActions.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is busy with a human browser action`);
+@@ -756,0 +815,212 @@
 +}
 +
 +/**
@@ -71,6 +103,7 @@
 +): Promise<Readonly<OwnerTabViewportCapture>> {
 +	if (!ownerSessionId || !target.name || !target.targetId) throw new ToolError("Browser viewport capture requires an exact owner, name, and target id");
 +	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
++	if (humanActions.has(target.name)) throw new ToolError("This browser tab is busy with a human action");
 +	if (viewportCaptures.has(key)) throw new ToolError("This browser viewport is already being captured");
 +	if (viewportCaptures.size >= 8) throw new ToolError("Browser viewport capture concurrency limit reached");
 +	const tab = tabs.get(target.name);
@@ -86,16 +119,161 @@
 +		if (!exactTarget) throw new ToolError("The selected browser target is no longer attached");
 +		const page = await exactTarget.page();
 +		if (!page) throw new ToolError("The selected browser target is not a page");
++		const before = await readOwnerTabDocumentContext(page);
 +		const data = Buffer.from(await page.screenshot({ type: "jpeg", quality: 80, fullPage: false, captureBeyondViewport: false }));
 +		if (data.byteLength === 0 || data.byteLength > 8 * 1024 * 1024) throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
-+		const url = page.url(), title = await page.title();
++		const url = page.url(), title = await page.title(), context = await readOwnerTabDocumentContext(page);
++		if (!sameOwnerTabDocumentContext(before, context, false)) throw new ToolError("The browser document or viewport changed during capture");
 +		const current = tabs.get(target.name);
 +		if (current !== tab || current.ownerSessionId !== ownerSessionId || current.targetId !== target.targetId || current.state !== "alive") {
 +			throw new ToolError("The selected owner-bound browser tab changed during capture");
 +		}
 +		if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during capture");
-+		return Object.freeze({ name: tab.name, ownerSessionId, targetId: tab.targetId, data, url, title });
++		return Object.freeze({ name: tab.name, ownerSessionId, targetId: tab.targetId, data, url, title, context });
 +	})();
 +	viewportCaptures.set(key, pending);
 +	void pending.then(() => viewportCaptures.delete(key), () => viewportCaptures.delete(key));
 +	return await withTimeout(pending, 10_000, "Timed out after 10000ms capturing the browser viewport");
++}
++
++const HUMAN_ACTION_TIMEOUT_MS = 15_000;
++const keyModifiers = new Set(["Alt", "Control", "Meta", "Shift"] as const);
++const namedKeys = new Set(["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", " "]);
++export class BrowserActionRejected extends ToolError { override name = "BrowserActionRejected"; }
++const rejectHumanAction = (message: string): never => { throw new BrowserActionRejected(message); };
++
++function validFinite(value: unknown, minimum: number, maximum: number): value is number {
++	return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum;
++}
++
++function validDocumentContext(value: OwnerTabDocumentContext): boolean {
++	return Boolean(value && typeof value.documentId === "string" && value.documentId.length > 0 && value.documentId.length <= 200 && !value.documentId.includes("\0")
++		&& validFinite(value.width, 1, 16_384) && validFinite(value.height, 1, 16_384) && value.width * value.height <= 32_000_000
++		&& validFinite(value.scrollX, -1_000_000_000, 1_000_000_000) && validFinite(value.scrollY, -1_000_000_000, 1_000_000_000));
++}
++
++function sameOwnerTabDocumentContext(expected: OwnerTabDocumentContext, actual: OwnerTabDocumentContext, navigation: boolean): boolean {
++	return expected.documentId === actual.documentId && expected.width === actual.width && expected.height === actual.height
++		&& (navigation || (expected.scrollX === actual.scrollX && expected.scrollY === actual.scrollY));
++}
++
++async function readOwnerTabDocumentContext(page: Page): Promise<OwnerTabDocumentContext> {
++	const client = await page.target().createCDPSession();
++	try {
++		const [tree, viewport] = await Promise.all([
++			client.send("Page.getFrameTree") as Promise<{ frameTree?: { frame?: { loaderId?: string } } }>,
++			page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY })),
++		]);
++		const documentId = tree.frameTree?.frame?.loaderId;
++		if (!documentId || documentId.length > 200 || documentId.includes("\0")
++			|| !validFinite(viewport.width, 1, 16_384) || !validFinite(viewport.height, 1, 16_384) || viewport.width * viewport.height > 32_000_000
++			|| !validFinite(viewport.scrollX, -1_000_000_000, 1_000_000_000) || !validFinite(viewport.scrollY, -1_000_000_000, 1_000_000_000)) {
++			throw new ToolError("The selected browser document has no stable viewport context");
++		}
++		return Object.freeze({ documentId, ...viewport });
++	} finally { await client.detach().catch(() => undefined); }
++}
++
++function validateHumanAction(action: OwnerTabHumanAction, expected: OwnerTabDocumentContext): void {
++	if (!action || typeof action !== "object" || Array.isArray(action)) rejectHumanAction("Invalid human browser action");
++	if (action.type === "navigate") {
++		if (typeof action.url !== "string" || action.url.length === 0 || action.url.length > 8_192 || /[\u0000-\u0020]/.test(action.url)) rejectHumanAction("Invalid browser navigation URL");
++		let url: URL; try { url = new URL(action.url); } catch { return rejectHumanAction("Invalid browser navigation URL"); }
++		if (!(["http:", "https:"].includes(url.protocol) || action.url === "about:blank")) rejectHumanAction("This browser navigation protocol is not supported");
++		return;
++	}
++	if (["reload", "back", "forward"].includes(action.type)) return;
++	if (action.type === "click") {
++		if (!validFinite(action.x, 0, expected.width) || action.x >= expected.width || !validFinite(action.y, 0, expected.height) || action.y >= expected.height
++			|| (action.button !== undefined && !["left", "middle", "right"].includes(action.button))
++			|| (action.clickCount !== undefined && ![1, 2, 3].includes(action.clickCount))) rejectHumanAction("Invalid browser click action");
++		return;
++	}
++	if (action.type === "wheel") {
++		if (!validFinite(action.x, 0, expected.width) || action.x >= expected.width || !validFinite(action.y, 0, expected.height) || action.y >= expected.height
++			|| !validFinite(action.deltaX, -10_000, 10_000) || !validFinite(action.deltaY, -10_000, 10_000)) rejectHumanAction("Invalid browser wheel action");
++		return;
++	}
++	if (action.type === "text") {
++		if (typeof action.text !== "string" || action.text.length === 0 || action.text.length > 16_384 || action.text.includes("\0")) rejectHumanAction("Invalid browser text action");
++		return;
++	}
++	if (action.type === "key") {
++		const printable = typeof action.key === "string" && action.key.length === 1 && /^[\x20-\x7e]$/.test(action.key);
++		if (typeof action.key !== "string" || (!namedKeys.has(action.key) && !printable)
++			|| (action.modifiers !== undefined && (!Array.isArray(action.modifiers) || action.modifiers.length > 4
++				|| action.modifiers.some(value => !keyModifiers.has(value)) || new Set(action.modifiers).size !== action.modifiers.length))) rejectHumanAction("Invalid browser key action");
++		return;
++	}
++	rejectHumanAction("Unsupported human browser action");
++}
++
++/** Mutates one exact owner-bound Puppeteer tab using a captured document context. */
++export async function performTabHumanActionForOwner(
++	ownerSessionId: string,
++	target: OwnerTabViewportTarget,
++	expected: OwnerTabDocumentContext,
++	action: OwnerTabHumanAction,
++): Promise<Readonly<OwnerTabHumanActionResult>> {
++	if (typeof ownerSessionId !== "string" || !ownerSessionId || !target || typeof target.name !== "string" || !target.name || target.name.length > 200 || target.name.includes("\0")
++		|| typeof target.targetId !== "string" || !target.targetId || target.targetId.length > 200 || target.targetId.includes("\0") || !validDocumentContext(expected)) rejectHumanAction("Human browser action requires an exact owner, target, and document context");
++	validateHumanAction(action, expected);
++	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
++	if (humanActions.has(target.name)) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
++	const existingCapture = viewportCaptures.get(key);
++	const selectedTab = tabs.get(target.name);
++	if (!selectedTab || selectedTab.ownerSessionId !== ownerSessionId || selectedTab.targetId !== target.targetId || selectedTab.state !== "alive") rejectHumanAction("The selected owner-bound browser tab is no longer available");
++	if (selectedTab?.backend === "cmux") rejectHumanAction("Human actions are not supported for cmux browser tabs");
++	const tab = selectedTab as WorkerTabSession;
++	if (tab.pending.size > 0) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy with native browser work`);
++	let dispatched = false, callerTimedOut = false;
++	const pending = Promise.resolve().then(async () => {
++		let page: Page;
++		try {
++			if (existingCapture) await existingCapture.catch(() => undefined);
++			let exactTarget: Target | undefined;
++			for (const candidate of tab.browser.browser.targets()) if ((await targetIdForTarget(candidate)) === target.targetId) { exactTarget = candidate; break; }
++			if (!exactTarget) return rejectHumanAction("The selected browser target is no longer attached");
++			const resolved = await exactTarget.page(); if (!resolved) return rejectHumanAction("The selected browser target is not a page"); page = resolved;
++			const before = await readOwnerTabDocumentContext(page), navigation = ["navigate", "reload", "back", "forward"].includes(action.type);
++			if (!sameOwnerTabDocumentContext(expected, before, navigation)) rejectHumanAction("The browser document or viewport changed; refresh before acting");
++			const current = tabs.get(target.name);
++			if (current !== tab || current?.state !== "alive" || current?.ownerSessionId !== ownerSessionId || current?.targetId !== target.targetId || tab.pending.size > 0) rejectHumanAction("The selected browser tab changed or became busy before the action");
++			if (callerTimedOut) rejectHumanAction("The human browser action timed out before dispatch");
++		} catch (error) {
++			if (error instanceof BrowserActionRejected) throw error;
++			const rejected = new BrowserActionRejected(error instanceof Error ? error.message : "The browser target could not be verified before the action");
++			Object.defineProperty(rejected, "cause", { value: error, configurable: true }); throw rejected;
++		}
++		dispatched = true;
++		switch (action.type) {
++			case "navigate": await page.goto(action.url, { waitUntil: "domcontentloaded", timeout: 30_000 }); break;
++			case "reload": await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
++			case "back": await page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
++			case "forward": await page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
++			case "click": await page.mouse.click(action.x, action.y, { button: action.button, count: action.clickCount }); break;
++			case "wheel": await page.mouse.move(action.x, action.y); await page.mouse.wheel({ deltaX: action.deltaX, deltaY: action.deltaY }); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))); break;
++			case "text": await page.keyboard.sendCharacter(action.text); break;
++			case "key": {
++				const modifiers = [...(action.modifiers ?? [])] as KeyInput[], pressed: KeyInput[] = [];
++				try { for (const modifier of modifiers) { await page.keyboard.down(modifier); pressed.push(modifier); } await page.keyboard.press(action.key as KeyInput); }
++				finally { for (const modifier of pressed.reverse()) await page.keyboard.up(modifier).catch(() => undefined); }
++				break;
++			}
++		}
++		const finalTab = tabs.get(target.name);
++		if (finalTab !== tab || finalTab?.state !== "alive" || finalTab?.ownerSessionId !== ownerSessionId || finalTab?.targetId !== target.targetId) throw new ToolError("The selected owner-bound browser tab changed during the action");
++		if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during the action");
++		const context = await readOwnerTabDocumentContext(page), url = page.url(), title = await page.title();
++		return Object.freeze({ name: tab.name, ownerSessionId, targetId: tab.targetId, context, url, title });
++	});
++	humanActions.set(target.name, pending);
++	const release = () => { if (humanActions.get(target.name) === pending) humanActions.delete(target.name); };
++	void pending.then(release, release);
++	try { return await withTimeout(pending, HUMAN_ACTION_TIMEOUT_MS, `Timed out after ${HUMAN_ACTION_TIMEOUT_MS}ms performing the human browser action`); }
++	catch (error) {
++		if (dispatched) throw error;
++		callerTimedOut = true;
++		const rejected = new BrowserActionRejected(error instanceof Error ? error.message : "The human browser action timed out before dispatch");
++		Object.defineProperty(rejected, "cause", { value: error, configurable: true }); throw rejected;
++	}

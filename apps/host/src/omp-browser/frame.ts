@@ -7,6 +7,7 @@ interface NativeViewportCapture {
   data: unknown;
   url: unknown;
   title: unknown;
+  context?: unknown;
 }
 
 /** Project the native capture into the bounded cross-process frame contract. */
@@ -20,7 +21,7 @@ export function projectNativeBrowserFrame(value: unknown, target: BrowserFrameTa
   const dimensions = jpegViewportDimensions(capture.data);
   const frame = {
     name: target.name, targetId: target.targetId, capturedAt: Date.now(), mimeType: "image/jpeg" as const,
-    data: Buffer.from(capture.data).toString("base64"), ...dimensions, url: capture.url, title: capture.title,
+    data: Buffer.from(capture.data).toString("base64"), ...dimensions, url: capture.url, title: capture.title, ...(capture.context === undefined ? {} : { context: capture.context }),
   };
   return parseNativeBrowserFrame(frame, target);
 }

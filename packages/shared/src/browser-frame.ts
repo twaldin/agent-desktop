@@ -1,3 +1,4 @@
+import { parseBrowserDocumentContext } from './browser-control';
 import { BROWSER_FRAME_MAX_BYTES, type BrowserFrameTarget, type NativeBrowserFrame } from "./browser";
 
 const identity = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 200 && !value.includes("\0");
@@ -52,5 +53,5 @@ export function parseNativeBrowserFrame(value: unknown, target: BrowserFrameTarg
   const size = jpegViewportDimensions(bytes);
   if (size.width !== frame.width || size.height !== frame.height) throw new Error("Browser viewport dimensions do not match its image.");
   return { name: target.name, targetId: target.targetId, capturedAt: frame.capturedAt, mimeType: "image/jpeg", data: frame.data,
-    ...size, url: frame.url, title: frame.title };
+    ...size, url: frame.url, title: frame.title, ...(frame.context === undefined ? {} : { context: parseBrowserDocumentContext(frame.context) }) };
 }

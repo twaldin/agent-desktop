@@ -1,3 +1,4 @@
+import { parseBrowserControlRequest } from "@agent-desktop/shared";
 import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
 import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeBrowserTabMetadata } from "@agent-desktop/shared";
@@ -155,6 +156,16 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         catch { respond(true, { availability: "unavailable", reason: "This host could not load its pinned native browser metadata seam." } satisfies BrowserMetadataAvailability); break; }
         if (typeof native.listTabsForOwner !== "function") respond(true, { availability: "unavailable", reason: "This host's pinned OMP package does not include the owner-filtered browser metadata patch." } satisfies BrowserMetadataAvailability);
         else respond(true, browserMetadata(native.listTabsForOwner(owner)));
+        break;
+      }
+      case "controlBrowser": {
+        const owner = requireSession().id, request = parseBrowserControlRequest(message.args.request);
+        if (request.target.workerPid !== process.pid) { const error = new Error("The browser worker changed."); error.name = "BrowserActionRejected"; throw error; }
+        const native = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as unknown as {
+          performTabHumanActionForOwner?: (owner: string, target: typeof request.target, context: typeof request.context, action: typeof request.action) => Promise<unknown>
+        };
+        if (!native.performTabHumanActionForOwner) { const error = new Error("Native browser controls are unavailable."); error.name = "BrowserActionRejected"; throw error; }
+        respond(true, await native.performTabHumanActionForOwner(owner, request.target, request.context, request.action));
         break;
       }
       case "getBrowserFrame": {

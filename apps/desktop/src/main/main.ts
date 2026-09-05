@@ -2,7 +2,8 @@ import { requestComposerActions, requestComposerCompletions } from "./composer-a
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBrowserMetadata } from "./browser-metadata-transport";
 import { requestBrowserFrame } from "./browser-frame-transport";
-import type { BrowserFrameTarget } from "@agent-desktop/shared";
+import { requestBrowserControl } from "./browser-control-transport";
+import type { BrowserControlRequest, BrowserFrameTarget } from "@agent-desktop/shared";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { captureDesktop } from "./capture";
@@ -248,6 +249,9 @@ ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?
 });
 ipcMain.handle("host:browser-metadata", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserMetadata(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:browser-control", async (event, sessionId: string, request: BrowserControlRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestBrowserControl(await endpointFor(hostId), sessionId, request);
 });
 ipcMain.handle("host:browser-frame", async (event, sessionId: string, target: BrowserFrameTarget, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserFrame(await endpointFor(hostId), sessionId, target);

@@ -1,4 +1,4 @@
-import type { ComposerCompletionQuery } from "@agent-desktop/shared";
+import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
@@ -31,6 +31,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
+  controlBrowser(request: BrowserControlRequest): Promise<{name: string; targetId: string; context: BrowserDocumentContext; url: string; title: string}>;
   getBrowserFrame(target: BrowserFrameTarget): Promise<NativeBrowserFrame>;
   subscribe(listener: WorkerEventListener): () => void;
   subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
@@ -372,6 +373,7 @@ export class WorkerRuntime {
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };
         return metadata;
       },
+      controlBrowser: request => client.request({ operation: "controlBrowser", args: { request } }, 15_000),
       getBrowserFrame: target => {
         if (target.workerPid !== client.pid) return Promise.reject(new Error("The selected browser frame belongs to a stale worker."));
         return client.request<NativeBrowserFrame>({ operation: "getBrowserFrame", args: { target } }, 15_000);

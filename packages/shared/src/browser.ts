@@ -1,3 +1,4 @@
+import type { BrowserDocumentContext } from './browser-control';
 /** Read-only native OMP browser metadata. Browser handles, debugger endpoints,
  * cookies, profiles, frames, and control operations never cross this contract. */
 export const BROWSER_METADATA_PROTOCOL_VERSION = 1 as const;
@@ -40,6 +41,7 @@ export interface NativeBrowserFrame {
   name: string;
   targetId: string;
   capturedAt: number;
+  context?: BrowserDocumentContext;
   mimeType: "image/jpeg";
   data: string;
   width: number;
@@ -49,6 +51,7 @@ export interface NativeBrowserFrame {
 }
 
 export interface BrowserFrameSnapshot extends NativeBrowserFrame {
+  controlEpoch?: string;
   protocolVersion: typeof BROWSER_FRAME_PROTOCOL_VERSION;
   hostId: string;
   sessionId: string;
