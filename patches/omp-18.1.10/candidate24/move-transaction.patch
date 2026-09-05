@@ -1,0 +1,393 @@
+--- a/src/session/session-manager.ts
++++ b/src/session/session-manager.ts
+@@ -1,6 +1,6 @@
+ import * as fs from "node:fs";
+ import * as path from "node:path";
+-import { SessionFileLease, type SessionOwnershipExpectation } from "./session-ownership";
++import { SessionFileLease, reserveSessionMoveNamespace, ensureSessionNamespaceDirectory, type SessionOwnershipExpectation } from "./session-ownership";
+ import type {
+ 	ImageContent,
+ 	Message,
+@@ -527,6 +527,8 @@
+ 	#ownerships = new Map<string, SessionFileLease>();
+ 	#ownershipClose?: Promise<void>;
+ 	#forkSettled?: Promise<void>;
++	#moveSettled?: Promise<void>;
++	#uncertainMoveNamespace?: { release(): void };
+ 
+ 	#leaseFor(file: string): SessionFileLease | undefined {
+ 		if (!(this.#storage instanceof FileSessionStorage)) return;
+@@ -600,7 +602,10 @@
+ 		this.#storage = storage;
+ 		this.#blobs = new BlobStore(getBlobsDir());
+ 
+-		if (persist && sessionDir) this.#storage.ensureDirSync(sessionDir);
++		if (persist && sessionDir) {
++			if (storage instanceof FileSessionStorage) ensureSessionNamespaceDirectory(sessionDir, () => this.#storage.ensureDirSync(sessionDir));
++			else this.#storage.ensureDirSync(sessionDir);
++		}
+ 	}
+ 
+ 	#rememberBreadcrumb(cwd: string, sessionFile: string, fresh = false): void {
+@@ -1436,6 +1441,7 @@
+ 	}
+ 
+ 	async #setSessionFile(sessionFile: string, loadedSession?: SessionLoadResult): Promise<void> {
++		if (this.#moveSettled) throw new Error("A move transition is in progress");
+ 		if (this.#released) throw new Error("Session manager is terminally sealed");
+ 		await this.#drainAndCloseWriter();
+ 		this.#clearDiskError();
+@@ -1512,6 +1518,7 @@
+ 	 * from selecting the previous conversation as the most recent session.
+ 	 */
+ 	async newSession(options?: NewSessionOptions): Promise<string | undefined> {
++		if (this.#moveSettled) throw new Error("A move transition is in progress");
+ 		await this.#drainAndCloseWriter();
+ 		const sessionFile = this.#resetToNewSession(options);
+ 		await this.ensureOnDisk();
+@@ -1520,6 +1527,7 @@
+ 
+ 	/** Delete a session file and its artifact directory. ENOENT is treated as success. */
+ 	async dropSession(sessionPath: string): Promise<void> {
++		if (this.#moveSettled) throw new Error("A move transition is in progress");
+ 		await this.#drainAndCloseWriter();
+ 		try {
+ 			await this.#storage.deleteSessionWithArtifacts(sessionPath);
+@@ -1541,7 +1549,7 @@
+ 		sourceSuccessor?: SessionManager;
+ 	}): Promise<{ oldSessionFile: string; newSessionFile: string } | undefined> {
+ 		if (this.#released) throw new Error("Session manager is terminally sealed");
+-		if (this.#forkSettled) throw new Error("A fork transition is already in progress");
++		if (this.#forkSettled || this.#moveSettled) throw new Error("A native session transition is already in progress");
+ 		if (!this.#persist || !this.#sessionFile) return undefined;
+ 		const settled = Promise.withResolvers<void>();
+ 		this.#forkSettled = settled.promise;
+@@ -1652,9 +1660,70 @@
+ 		}
+ 	}
+ 
+-	/** Move the session to a new working directory. */
+-	async moveTo(newCwd: string, targetSessionDir?: string): Promise<void> {
++	/** Native owning lifetime includes the caller's cwd rescope and rollback. */
++	async moveTo(newCwd: string, targetSessionDir?: string, transition?: {
++		prepare?: () => Promise<void>;
++		rollback?: () => Promise<void>;
++	}): Promise<void> {
+ 		if (this.#released) throw new Error("Session manager is terminally sealed");
++		if (this.#moveSettled || this.#forkSettled) throw new Error("A native session transition is already in progress");
++		const settled = Promise.withResolvers<void>(); this.#moveSettled = settled.promise;
++		const source = this.#sessionFile;
++		let previous: SessionManagerStateSnapshot | undefined;
++		let namespace: { release(): void } | undefined;
++		let writerCloseFailure: Error | undefined;
++		const heldBefore = new Set(this.#ownerships.keys());
++		const closeWriter = async () => { try { await this.#drainAndCloseWriter(); } catch (error) { writerCloseFailure = toError(error); throw error; } };
++		const retire = (keep?: string) => { for (const [file, lease] of this.#ownerships) { if (file !== keep && (file === source || !heldBefore.has(file))) { lease.release(); this.#ownerships.delete(file); } } };
++		try {
++			const resolvedCwd = path.resolve(newCwd), managedRoot = resolveManagedSessionRoot(this.#sessionDir, this.#cwd);
++			const nextDir = targetSessionDir ? path.resolve(targetSessionDir) : managedRoot ? computeDefaultSessionDir(resolvedCwd, this.#storage, managedRoot) : computeDefaultSessionDir(resolvedCwd, this.#storage);
++			if (resolvedCwd === path.resolve(this.#cwd) && !this.#fallbackRuntimeOnly && path.resolve(nextDir) === path.resolve(this.#sessionDir)) return;
++			if (source && this.#storage instanceof FileSessionStorage) {
++				namespace = reserveSessionMoveNamespace(source, path.join(nextDir, path.basename(source)));
++				this.#leaseFor(path.join(nextDir, path.basename(source)));
++			}
++			await this.#atomicPersistenceTail; await this.flush(); await closeWriter(); await this.#storage.drain();
++			if (this.#released) throw new Error("Session manager sealed during move");
++			previous = this.captureState();
++			await this.#moveToRaw(newCwd, targetSessionDir);
++			await transition?.prepare?.();
++			await this.#atomicPersistenceTail; await this.flush(); await closeWriter(); await this.#storage.drain();
++			if (this.#released) throw new Error("Session manager sealed during move");
++			if (this.#sessionFile) this.#leaseFor(this.#sessionFile)?.assertPath();
++			retire(this.#sessionFile); namespace?.release(); namespace = undefined;
++		} catch (error) {
++			if (this.#diskFailure instanceof SessionPersistenceIndeterminateError) { this.seal(); this.#uncertainMoveNamespace = namespace; namespace = undefined; throw error; }
++			if (writerCloseFailure) { this.seal(); this.#uncertainMoveNamespace = namespace; namespace = undefined; throw this.#latchIndeterminate(toError(error), [writerCloseFailure]); }
++			if (previous) {
++				try {
++					await this.#atomicPersistenceTail; await closeWriter(); await this.#storage.drain();
++					// Keep appends and title updates completed during cwd setup; only the
++					// move's own path/workspace metadata is rolled back.
++					await this.#moveToRaw(previous.cwd, previous.sessionFile ? path.dirname(previous.sessionFile) : previous.sessionDir, true);
++					const current = this.captureState();
++					const rollback = { ...current, cwd: previous.cwd, sessionDir: previous.sessionDir, sessionFile: previous.sessionFile,
++						header: { ...current.header, cwd: previous.header.cwd, additionalDirectories: previous.header.additionalDirectories, previousSessionFiles: previous.header.previousSessionFiles } };
++					this.restoreState(rollback);
++					// Recovery stays sealed if close already started. This one synchronous
++					// owned write does not reopen admission for late callbacks.
++					if (this.#persist && this.#sessionFile && this.#storage.existsSync(this.#sessionFile)) {
++						this.#storage.writeTextSync(this.#sessionFile, this.#fileBody(), this.#leaseFor(this.#sessionFile));
++						this.#fileIsCurrent = true; this.#rewriteRequired = false; this.#hasTitleSlot = true;
++					}
++					await transition?.rollback?.();
++					await this.#atomicPersistenceTail; await closeWriter(); await this.#storage.drain();
++					if (this.#diskFailure) throw this.#diskFailure;
++					retire(previous.sessionFile); namespace?.release(); namespace = undefined;
++				} catch (rollbackError) { this.seal(); this.#uncertainMoveNamespace = namespace; namespace = undefined; throw this.#latchIndeterminate(toError(error), [toError(rollbackError)]); }
++			} else { retire(source); namespace?.release(); namespace = undefined; }
++			throw error;
++		} finally { namespace?.release(); this.#moveSettled = undefined; settled.resolve(); }
++	}
++
++	/** File and artifact relocation under the move lifetime's existing leases. */
++	async #moveToRaw(newCwd: string, targetSessionDir?: string, recovery = false): Promise<void> {
++		if (this.#released && !recovery) throw new Error("Session manager is terminally sealed");
+ 		const resolvedCwd = path.resolve(newCwd);
+ 		const resolvedTargetDir = targetSessionDir ? path.resolve(targetSessionDir) : undefined;
+ 		const managedRoot = resolveManagedSessionRoot(this.#sessionDir, this.#cwd);
+@@ -1744,9 +1813,13 @@
+ 							if (sourceLease && destinationLease) sourceLease.renameTo(destinationLease);
+ 							else await fs.promises.rename(newSessionFile, oldSessionFile);
+ 						} catch (rollbackErr) {
+-							throw new Error(
+-								`Failed to move session file and rollback: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
+-							);
++							// Never restore a phantom source after the physical rename-back
++							// failed. Keep the actual file owner and report uncertainty.
++							this.#sessionFile = newSessionFile;
++							this.#cwd = resolvedCwd;
++							this.#sessionDir = nextSessionDir;
++							this.seal();
++							throw this.#latchIndeterminate(toError(err), [toError(rollbackErr)]);
+ 						}
+ 					}
+ 
+@@ -1992,6 +2065,7 @@
+ 
+ 	async #closeOwnedPersistence(): Promise<void> {
+ 		await this.#forkSettled;
++		await this.#moveSettled;
+ 		await this.#scheduleDiskWork(async () => {
+ 			const hadWriter = this.#writer !== undefined;
+ 			await this.#closeWriterHandle();
+@@ -2845,6 +2919,7 @@
+ 	 * Returns the new file path, or undefined when not persisting.
+ 	 */
+ 	createBranchedSession(leafId: string): string | undefined {
++		if (this.#moveSettled) throw new Error("A move transition is in progress");
+ 		if (this.#released) throw new Error("Session manager is terminally sealed");
+ 		const sourceSessionFile = this.#sessionFile;
+ 		const branchPath = this.getBranch(leafId);
+--- a/src/session/session-ownership.ts
++++ b/src/session/session-ownership.ts
+@@ -3,7 +3,7 @@
+ import { createHash } from "node:crypto";
+ import { FileLock } from "@oh-my-pi/pi-natives";
+ 
+-export const SESSION_OWNERSHIP_PROTOCOL = "omp-session-file-v1-candidate";
++export const SESSION_OWNERSHIP_PROTOCOL = "omp-session-file-v2-move-candidate";
+ export interface SessionOwnershipExpectation {
+   canonicalFile: string;
+   nativeId: string;
+@@ -21,6 +21,59 @@
+   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+ }
+ 
++
++/** Gates are outside their artifact directory. Admission holds ancestor gates
++ * only while acquiring its per-file owner, so independent child writers remain
++ * concurrent. Parent relocation holds its gate through commit or rollback. */
++function ancestorNamespaces(file: string): string[] {
++  const result: string[] = [];
++  for (let dir = path.dirname(file); path.dirname(dir) !== dir; dir = path.dirname(dir)) {
++    if (fs.existsSync(dir + ".jsonl") || fs.existsSync(dir + ".jsonl.lock")) result.push(dir);
++  }
++  return result;
++}
++function canonicalPending(file: string): string {
++  const missing: string[] = []; let existing = path.resolve(file);
++  while (!fs.existsSync(existing)) { missing.unshift(path.basename(existing)); const parent = path.dirname(existing); if (parent === existing) throw new Error("Session parent is unavailable"); existing = parent; }
++  return path.join(fs.realpathSync(existing), ...missing);
++}
++function reserveNamespaces(roots: string[]): { release(): void } {
++  const locks: FileLock[] = [];
++  try {
++    for (const root of [...new Set(roots)].sort()) {
++      const lockPath = root + ".namespace.lock"; fs.mkdirSync(path.dirname(lockPath), { recursive: true }); regular(lockPath);
++      const lock = FileLock.tryAcquire(lockPath); if (!lock.acquired) throw new Error("Session namespace is busy: " + root); locks.push(lock); regular(lockPath);
++    }
++    return { release() { for (const lock of locks.splice(0)) lock.release(); } };
++  } catch (error) { for (const lock of locks) lock.release(); throw error; }
++}
++export function ensureSessionNamespaceDirectory(directory: string, create: () => void): void {
++  const reservation = reserveNamespaces(ancestorNamespaces(path.join(canonicalPending(directory), ".pending-session")));
++  try { create(); } finally { reservation.release(); }
++}
++export function reserveSessionMoveNamespace(source: string, destination: string): { release(): void } {
++  source = canonicalPending(source); destination = canonicalPending(destination);
++  if (ancestorNamespaces(source).length || ancestorNamespaces(destination).length) throw new Error("Nested session namespace is busy: native child relocation is not yet supported");
++  const sourceRoot = source.replace(/\.jsonl$/, ""), destinationRoot = destination.replace(/\.jsonl$/, "");
++  const reserved = reserveNamespaces([sourceRoot, destinationRoot]);
++  try {
++    let count = 0;
++    const inspect = (directory: string) => {
++      if (!fs.existsSync(directory)) return;
++      const info = fs.lstatSync(directory); if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Artifact relocation requires a real directory");
++      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
++        if (++count > 100000) throw new Error("Artifact relocation exceeds the bounded inspection limit");
++        if (entry.isSymbolicLink()) throw new Error("Artifact relocation cannot move an unverified symbolic link");
++        if (/\.jsonl(?:\.lock)?$/.test(entry.name)) throw new Error("Nested session namespace is busy: native child relocation is not yet supported");
++        if (entry.isDirectory()) inspect(path.join(directory, entry.name));
++      }
++    };
++    inspect(sourceRoot);
++    if (sourceRoot !== destinationRoot && fs.existsSync(destinationRoot)) throw new Error("Destination artifact directory already exists");
++    return reserved;
++  } catch (error) { reserved.release(); throw error; }
++}
++
+ /** Process-owned, stable sidecar. Never delete the sidecar to recover a lock.
+  * The caller must separately establish that all potential writers cooperate.
+  */
+@@ -37,6 +90,10 @@
+     this.file = file; this.lockPath = file + ".lock"; this.#lock = lock; this.#parent = parent; this.#revision = revision;
+   }
+   static acquire(file: string): SessionFileLease {
++    const reservation = reserveNamespaces(ancestorNamespaces(path.join(canonicalPending(path.dirname(file)), path.basename(file))));
++    try { return this.#acquireReserved(file); } finally { reservation.release(); }
++  }
++  static #acquireReserved(file: string): SessionFileLease {
+     const supplied = path.resolve(file), suppliedParent = path.dirname(supplied);
+     fs.mkdirSync(suppliedParent, { recursive: true });
+     // Bind the parent and final component, rather than following the supplied
+--- a/src/session/agent-session.ts
++++ b/src/session/agent-session.ts
+@@ -7762,9 +7762,9 @@
+ 	}
+ 
+ 	/** Move the active session and artifacts after enforcing mode transition invariants. */
+-	async moveSession(newCwd: string, targetSessionDir?: string): Promise<void> {
++	async moveSession(newCwd: string, targetSessionDir?: string, transition?: { prepare?: () => Promise<void>; rollback?: () => Promise<void> }): Promise<void> {
+ 		this.#assertVibeSessionTransitionAllowed("move the session");
+-		await this.sessionManager.moveTo(newCwd, targetSessionDir);
++		await this.sessionManager.moveTo(newCwd, targetSessionDir, transition);
+ 	}
+ 
+ 	// =========================================================================
+--- a/src/modes/controllers/command-controller.ts
++++ b/src/modes/controllers/command-controller.ts
+@@ -84,56 +84,6 @@
+ export class CommandController {
+ 	constructor(private readonly ctx: InteractiveModeContext) {}
+ 
+-	async #restoreAfterMoveFailure(
+-		previousState: Parameters<InteractiveModeContext["sessionManager"]["rollbackMove"]>[0],
+-		initialError?: unknown,
+-	): Promise<void> {
+-		if (initialError !== undefined) {
+-			this.ctx.showError(
+-				`Failed to switch workspace: ${initialError instanceof Error ? initialError.message : String(initialError)}`,
+-			);
+-		}
+-
+-		try {
+-			await this.ctx.sessionManager.rollbackMove(previousState);
+-		} catch (rollbackError) {
+-			const actual = this.ctx.sessionManager.getCwd();
+-			let realigned = false;
+-			try {
+-				realigned = await this.ctx.applyCwdChange(actual);
+-			} catch {}
+-			if (!realigned) {
+-				this.ctx.showError(
+-					`Failed to roll back move: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)} (failed to re-align workspace to ${actual})`,
+-				);
+-				await this.ctx.shutdown();
+-				return;
+-			}
+-			this.ctx.showError(
+-				`Failed to roll back move: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)} (workspace remains at ${actual})`,
+-			);
+-			return;
+-		}
+-
+-		let sourceRestored = false;
+-		try {
+-			sourceRestored = await this.ctx.applyCwdChange(previousState.cwd);
+-		} catch {}
+-		if (sourceRestored) return;
+-
+-		const actual = this.ctx.sessionManager.getCwd();
+-		let realigned = false;
+-		try {
+-			realigned = await this.ctx.applyCwdChange(actual);
+-		} catch {}
+-		if (!realigned) {
+-			this.ctx.showError(`Failed to restore source workspace after rollback: workspace remains at ${actual}`);
+-			await this.ctx.shutdown();
+-			return;
+-		}
+-		this.ctx.showError(`Failed to restore source workspace after rollback: workspace remains at ${actual}`);
+-	}
+-
+ 	openInBrowser(urlOrPath: string): void {
+ 		openPath(urlOrPath);
+ 	}
+@@ -1268,7 +1218,7 @@
+ 	 * Move the session and process cwd to an existing directory, rolling back
+ 	 * on failure. Returns true when the session now lives at `resolvedPath`.
+ 	 */
+-	async #relocateSession(resolvedPath: string): Promise<boolean> {
++	async #relocateSession(resolvedPath: string, completedBashCwd = false): Promise<boolean> {
+ 		try {
+ 			await this.ctx.settings.flush();
+ 		} catch (err) {
+@@ -1276,22 +1226,18 @@
+ 			return false;
+ 		}
+ 
+-		const previousState = this.ctx.sessionManager.captureState();
++		const previousCwd = this.ctx.sessionManager.getCwd();
+ 		try {
+-			await this.ctx.session.moveSession(resolvedPath);
+-		} catch (err) {
+-			this.ctx.showError(`Move failed: ${err instanceof Error ? err.message : String(err)}`);
+-			return false;
+-		}
+-		let applied = false;
+-		try {
+-			applied = await this.ctx.applyCwdChange(resolvedPath);
++			const move = completedBashCwd
++				? this.ctx.sessionManager.moveTo.bind(this.ctx.sessionManager)
++				: this.ctx.session.moveSession.bind(this.ctx.session);
++			await move(resolvedPath, undefined, {
++				prepare: async () => { if (!await this.ctx.applyCwdChange(resolvedPath)) throw new Error("Workspace change was refused"); },
++				rollback: async () => { if (!await this.ctx.applyCwdChange(previousCwd)) throw new Error("Source workspace restoration was refused"); },
++			});
+ 		} catch (error) {
+-			await this.#restoreAfterMoveFailure(previousState, error);
+-			return false;
+-		}
+-		if (!applied) {
+-			await this.#restoreAfterMoveFailure(previousState);
++			this.ctx.showError("Move failed: " + (error instanceof Error ? error.message : String(error)));
++			if (this.ctx.sessionManager.getOwnership()?.sealed) await this.ctx.shutdown();
+ 			return false;
+ 		}
+ 
+@@ -1382,22 +1328,9 @@
+ 	}
+ 
+ 	async #moveInteractiveCwd(resolvedPath: string): Promise<void> {
+-		const previousState = this.ctx.sessionManager.captureState();
+-		await this.ctx.sessionManager.moveTo(resolvedPath);
+-		let applied = false;
+-		try {
+-			applied = await this.ctx.applyCwdChange(resolvedPath);
+-		} catch (error) {
+-			await this.#restoreAfterMoveFailure(previousState, error);
+-			return;
+-		}
+-		if (!applied) {
+-			await this.#restoreAfterMoveFailure(previousState);
+-			return;
+-		}
+-
+-		this.ctx.updateEditorBorderColor();
+-		await this.ctx.reloadTodos();
++		// A completed persistent shell cd has the same owning cwd transaction,
++		// while retaining its native manager-level admission semantics.
++		await this.#relocateSession(resolvedPath, true);
+ 	}
+ 
+ 	async #applyBashResultCwd(result: BashResult): Promise<void> {

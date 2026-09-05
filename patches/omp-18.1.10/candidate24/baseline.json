@@ -1,0 +1,7 @@
+{
+  "version": "18.1.10",
+  "candidate23Sha256": "abbb86cb3cd949b44046fd2e64bfa9c1c118c1f620e653b0c029e6e308051751",
+  "files": {
+    "src/modes/controllers/command-controller.ts": "af89318c6b51e52756173d65f6050fb82bfeeee2ad61b2b9623defc265ef3ed2"
+  }
+}
