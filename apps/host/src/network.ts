@@ -6,6 +6,26 @@ export type { DiscoveredHost, NetworkState } from "@agent-desktop/shared";
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const originFor = (address: string) => `http://${address.includes(":") ? `[${address}]` : address}:${TAILNET_PORT}`;
 
+type AppHostProbe =
+  | { availability: "available"; host: HostIdentity; origin: string }
+  | { availability: "unavailable"; error: string };
+
+// An uncached peer authorization can run two sequential Tailscale CLI calls,
+// each bounded at 5 seconds. Allow that work plus transport within one probe.
+export async function probeAppHost(origin: string, timeoutMs = 12_000): Promise<AppHostProbe> {
+  try {
+    const response = await fetch(`${origin}/v1/health`, { signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
+    if (!response.ok) return { availability: "unavailable", error: `Host service returned ${response.status}.` };
+    const value = await response.json() as { host?: HostIdentity; protocolVersion?: number };
+    const host = value.host;
+    if (value.protocolVersion !== 1 || !host || typeof host.id !== "string" || typeof host.name !== "string"
+      || typeof host.platform !== "string" || typeof host.architecture !== "string") {
+      return { availability: "unavailable", error: "Host service has an incompatible protocol." };
+    }
+    return { availability: "available", host, origin };
+  } catch { return { availability: "unavailable", error: "App host service is not reachable." }; }
+}
+
 /** Existing Tailscale supplies device identity and transport encryption. No provider credentials leave their host. */
 export class TailnetNetwork {
   readonly client = new TailscaleClient();
@@ -42,17 +62,7 @@ export class TailnetNetwork {
       const address = peer.addresses.find(address => !address.includes(":")) ?? peer.addresses[0];
       if (!address) return base;
       const origin = originFor(address);
-      try {
-        const response = await fetch(`${origin}/v1/health`, { signal: AbortSignal.timeout(1500), redirect: "error" });
-        if (!response.ok) return { ...base, error: `Host service returned ${response.status}.` };
-        const value = await response.json() as { host?: HostIdentity; protocolVersion?: number };
-        const host = value.host;
-        if (value.protocolVersion !== 1 || !host || typeof host.id !== "string" || typeof host.name !== "string"
-          || typeof host.platform !== "string" || typeof host.architecture !== "string") {
-          return { ...base, error: "Host service has an incompatible protocol." };
-        }
-        return { ...base, availability: "available" as const, host, origin };
-      } catch { return { ...base, error: "App host service is not reachable." }; }
+      return { ...base, ...await probeAppHost(origin) };
     }));
     return this.state = { status: "connected", ownNodeId: self.nodeId, ownName: self.hostname, listenAddress, hosts, checkedAt: Date.now() };
   }
