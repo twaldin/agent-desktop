@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -137,20 +138,23 @@ test('authenticated create/resume/reopen/cleanup use actual Git, sourced setup a
     expect(prep.phase).toBe('session-created'); expect(JSON.stringify(prep)).not.toContain('private-fixture-export');
     const listing = await (await request('/v1/workspace/query', { target: { projectId }, query: { type: 'git.worktrees' } })).json();
     const managed = listing.worktrees.find((tree: { path: string }) => tree.path === session.cwd);
+    const snapshotRef = `refs/agent-desktop/snapshots/${createHash('sha1').update(session.cwd).digest('hex')}`;
     await writeFile(join(session.cwd, 'block-cleanup'), '');
     const remove = (id: string) => send({ id, command: { type: 'workspace.mutate', target: { projectId }, action: { type: 'worktree.remove', path: managed.managedRelativePath } } });
     expect(await remove('failed-remove')).toMatchObject({ ok: false });
     expect(await readFile(join(session.cwd, 'README.md'))).toEqual(original.file);
     expect(host.store.getSessionEnvironment(session.id)?.environmentDelta?.set.ENVIRONMENT_ROUTE_CHECK).toBe('private-fixture-export');
     expect((await (await readPrep()).json()).phase).toBe('cleanup-failed');
+    expect(host.store.getSession(session.id)?.archived).toBe(false);
+    expect(git('show', `${snapshotRef}:setup-attempts`)).toBe('attempt\nattempt\n');
+    expect(git('show', `${snapshotRef}:block-cleanup`)).toBe('');
     await rm(join(session.cwd, 'block-cleanup'));
-    expect(await remove('retain-materialized-config')).toMatchObject({ ok: false });
     const materialized = host.store.environmentPreparations.get(prep.id)!.environment!;
-    // The unchanged dirty-worktree guard retains copied configuration until the user cleans it.
     expect(await readFile(materialized.configPath, 'utf8')).toBe(materialized.raw);
-    await rm(materialized.configPath);
     expect(await remove('explicit-remove')).toMatchObject({ ok: true });
+    expect(git('show', `${snapshotRef}:${materialized.configPath.slice(session.cwd.length + 1)}`)).toBe(materialized.raw);
     expect((await (await readPrep()).json()).phase).toBe('removed');
+    expect(host.store.getSession(session.id)?.archived).toBe(true);
     expect(git('worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);
     expect(host.store.getDraft(draft.id)).toMatchObject({ text: 'Newer preserved prompt', environment: null, revision: 2 });
     expect(git('rev-parse', 'HEAD')).toBe(original.head); expect(await readFile(join(source, '.git/index'))).toEqual(original.index);

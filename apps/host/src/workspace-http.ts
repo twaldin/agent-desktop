@@ -8,6 +8,8 @@ import { WorkspaceService } from "./workspace";
 import type { WorktreeStartingState, GitWorktree } from '@agent-desktop/shared';
 import { resolveWorktreeDirectoryContext, verifyWorktreeDirectories } from "./local-environments/worktree-directory-resolution";
 import type { WorktreeDirectoryContext } from "./local-environments/worktree-directories";
+import type { SessionSummary } from "@agent-desktop/shared";
+import { WorkspaceError } from "./workspace";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid workspace request.");
@@ -89,7 +91,7 @@ export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
 
 export class HostWorkspaces {
   constructor(private store: HostStore, private dataDirectory: string, private reserveMutation: (path: string) => () => void,
-    private removal?: { before(path: string): Promise<void>; after(path: string): void }, private actions?: LocalEnvironmentActions) {}
+    private removal?: { before(path: string): Promise<void>; committed(sessions: SessionSummary[]): void }, private actions?: LocalEnvironmentActions) {}
   #resolve(target: WorkspaceTarget): WorkspaceService {
     const session = "sessionId" in target ? this.store.getSession(target.sessionId) : undefined;
     const projectId = "projectId" in target ? target.projectId : session?.projectId;
@@ -149,7 +151,7 @@ export class HostWorkspaces {
       case "git.worktrees": return { type: query.type, worktrees: await workspace.worktrees() };
     }
   }
-  async mutate(target: WorkspaceTarget, action: WorkspaceMutation): Promise<WorkspaceMutationResult> {
+  async mutate(target: WorkspaceTarget, action: WorkspaceMutation, commandId?: string): Promise<WorkspaceMutationResult> {
     const owner = this.#resolve(target);
     const workspace = action.type.startsWith("git.") || action.type.startsWith("worktree.") ? await owner.gitRootService() : owner;
     switch (action.type) {
@@ -176,19 +178,69 @@ export class HostWorkspaces {
         const root = await realpath(workspace.worktreeRoot!);
         const candidate = resolve(root, action.path);
         if (!candidate.startsWith(root + sep)) throw new Error("Only a managed worktree can be removed.");
+        const prior = this.store.getWorktreeRemovalIntent(candidate);
+        if (prior?.state === "pending") throw new WorkspaceError("OUTCOME_UNKNOWN", "A prior removal of this worktree has an unresolved outcome. Inspect it before trying another removal.");
+        if (commandId) {
+          const command = this.store.getCommand(commandId);
+          if (!command || command.state !== "pending") throw new Error("Worktree removal requires its pending command identity.");
+        }
         const path = await realpath(candidate);
         if (!path.startsWith(root + sep)) throw new Error("Only a managed worktree can be removed.");
         const release = this.reserveMutation(path);
         try {
           const registered = (await workspace.worktrees()).find(tree => tree.path === path && tree.managed);
           if (!registered || registered.locked) throw new Error("Only an unlocked registered managed worktree can be removed.");
+          // Preserve the pre-cleanup files, including copied environment config,
+          // before either the cleanup script or Git removal can delete them.
+          const snapshot = await workspace.snapshotWorktreeForRemoval(action.path);
           await this.removal?.before(path);
-          await workspace.removeWorktree(action.path);
-          this.removal?.after(path);
+          const projectId = ownerProjectId(this.store, target), project = this.store.getProject(projectId)!;
+          let intent: ReturnType<HostStore["createWorktreeRemovalIntent"]> | undefined;
+          await workspace.removeSnapshottedWorktree(action.path, snapshot, commandId ? () => {
+            intent = this.store.createWorktreeRemovalIntent({
+              id: crypto.randomUUID(), commandId, projectId,
+              sourceRoot: project.path, worktreePath: path, snapshot,
+            });
+          } : undefined);
+          if (intent) {
+            let finalized;
+            try { finalized = this.store.finalizeWorktreeRemoval(intent.id, intent.revision); }
+            catch (error) { throw new WorkspaceError("OUTCOME_UNKNOWN", `The worktree was removed, but its host metadata could not be finalized. Inspect before retrying. ${error instanceof Error ? error.message : String(error)}`); }
+            this.notifyRemovalCommitted(finalized.sessions);
+          }
           return { type: action.type };
         }
         finally { release(); }
       }
     }
   }
+
+  /** Read-only restart reconciliation. It never dispatches Git removal. */
+  async reconcileWorktreeRemovals(): Promise<void> {
+    for (const intent of this.store.listWorktreeRemovalIntents()) {
+      let release: (() => void) | undefined;
+      try {
+        const project = this.store.getProject(intent.projectId);
+        if (!project || project.path !== intent.sourceRoot) continue;
+        const workspace = await this.#resolve({ projectId: project.id }).gitRootService();
+        release = this.reserveMutation(intent.worktreePath);
+        if (!await workspace.inspectSnapshottedWorktreeRemoval(intent.snapshot)) continue;
+        const finalized = this.store.finalizeWorktreeRemoval(intent.id, intent.revision);
+        this.notifyRemovalCommitted(finalized.sessions);
+      } catch (error) {
+        console.error(`Worktree removal ${intent.id} remains unresolved:`, error instanceof Error ? error.message : String(error));
+      } finally { release?.(); }
+    }
+  }
+
+  private notifyRemovalCommitted(sessions: SessionSummary[]): void {
+    try { this.removal?.committed(sessions); }
+    catch (error) { console.error("Worktree removal committed, but its local notifications failed:", error instanceof Error ? error.message : String(error)); }
+  }
+}
+
+function ownerProjectId(store: HostStore, target: WorkspaceTarget): string {
+  const projectId = "projectId" in target ? target.projectId : store.getSession(target.sessionId)?.projectId;
+  if (!projectId) throw new Error("A managed worktree must belong to a project.");
+  return projectId;
 }

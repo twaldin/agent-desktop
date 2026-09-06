@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -495,6 +496,150 @@ describe("actual local Git operations", () => {
     expect(concurrent.filter(result => result.status === "rejected")).toHaveLength(1);
     expect(concurrent.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "WORKTREE_EXISTS" } });
     expect((await submodule.service.worktrees()).filter(tree => tree.managedRelativePath === "serialized")).toHaveLength(1);
+  });
+
+  test("snapshot-backed removal preserves dirty files in a durable ref without changing either live index", async () => {
+    const { directory, cwd, service } = await repository();
+    const tree = await service.createWorktree({ path: "snapshot-remove", newBranch: "snapshot-remove" });
+    const filterSentinel = join(directory, "filter-invoked");
+    const filter = join(directory, "transform-filter.sh");
+    await writeFile(filter, `#!/bin/sh\nprintf invoked >> '${filterSentinel}'\ntr '[:lower:]' '[:upper:]'\n`); await chmod(filter, 0o755);
+    git(cwd, "config", "filter.transform.clean", filter);
+    git(cwd, "config", "filter.transform.required", "true");
+    await writeFile(join(tree.path, ".gitignore"), "ignored.cache\n");
+    await writeFile(join(tree.path, ".gitattributes"), "*.raw filter=transform\n");
+    await symlink("tracked.txt", join(tree.path, "changed-link"));
+    git(tree.path, "add", ".gitignore", "changed-link"); git(tree.path, "commit", "-m", "Ignore cache and track link");
+    await rm(join(tree.path, "changed-link")); await symlink("missing-after-change", join(tree.path, "changed-link"));
+    await symlink("tracked.txt", join(tree.path, "untracked-link"));
+    await symlink("missing-untracked", join(tree.path, "dangling-link"));
+    await writeFile(join(tree.path, "tracked.txt"), "staged contents\n"); git(tree.path, "add", "tracked.txt");
+    await writeFile(join(tree.path, "tracked.txt"), "unstaged contents\n");
+    await mkdir(join(tree.path, ".agent-desktop/environments"), { recursive: true });
+    await writeFile(join(tree.path, ".agent-desktop/environments/copied.toml"), "version = 1\nname = \"Copied\"\n");
+    const rawFiltered = Buffer.from("MiXeD\r\n", "utf8");
+    await writeFile(join(tree.path, "filtered.raw"), rawFiltered);
+    await writeFile(join(tree.path, "ignored.cache"), "not snapshotted\n");
+
+    const rootIndexPath = git(cwd, "rev-parse", "--path-format=absolute", "--git-path", "index");
+    const treeIndexPath = git(tree.path, "rev-parse", "--path-format=absolute", "--git-path", "index");
+    const rootHead = git(cwd, "rev-parse", "HEAD"), treeHead = git(tree.path, "rev-parse", "HEAD");
+    const rootIndex = await readFile(rootIndexPath), treeIndex = await readFile(treeIndexPath);
+    const status = git(tree.path, "status", "--porcelain=v1", "-z", "--untracked-files=all");
+    await rm(filterSentinel, { force: true });
+
+    const receipt = await service.snapshotWorktreeForRemoval("snapshot-remove");
+    expect(receipt).toMatchObject({ version: 1, worktreePath: tree.path, head: treeHead, branch: "snapshot-remove", detached: false });
+    expect(receipt.snapshotRef).toMatch(/^refs\/agent-desktop\/snapshots\/[0-9a-f]{40}$/);
+    expect(git(cwd, "rev-parse", `${receipt.snapshotRef}^{commit}`)).toBe(receipt.snapshotCommit);
+    expect(git(cwd, "show", `${receipt.snapshotRef}:tracked.txt`)).toBe("unstaged contents");
+    expect(git(cwd, "show", `${receipt.snapshotRef}:.agent-desktop/environments/copied.toml`)).toContain('name = "Copied"');
+    expect(git(cwd, "show", `${receipt.snapshotRef}:changed-link`)).toBe("missing-after-change");
+    expect(git(cwd, "show", `${receipt.snapshotRef}:untracked-link`)).toBe("tracked.txt");
+    expect(git(cwd, "show", `${receipt.snapshotRef}:dangling-link`)).toBe("missing-untracked");
+    for (const path of ["changed-link", "untracked-link", "dangling-link"]) {
+      expect(git(cwd, "ls-tree", receipt.snapshotRef, "--", path)).toStartWith("120000 blob ");
+    }
+    expect(await readlink(join(tree.path, "changed-link"))).toBe("missing-after-change");
+    expect(await readlink(join(tree.path, "untracked-link"))).toBe("tracked.txt");
+    expect(await readlink(join(tree.path, "dangling-link"))).toBe("missing-untracked");
+    const capturedRaw = Bun.spawnSync(["git", "-C", cwd, "cat-file", "blob", `${receipt.snapshotRef}:filtered.raw`], { stdout: "pipe", stderr: "pipe" });
+    expect(capturedRaw.success).toBe(true); expect(Buffer.from(capturedRaw.stdout)).toEqual(rawFiltered);
+    expect(await Bun.file(filterSentinel).exists()).toBe(false);
+    expect(git(cwd, "config", "--get", "filter.transform.clean")).toBe(filter);
+    expect(git(cwd, "config", "--get", "filter.transform.required")).toBe("true");
+    expect(Bun.spawnSync(["git", "-C", cwd, "cat-file", "-e", `${receipt.snapshotRef}:ignored.cache`]).exitCode).not.toBe(0);
+    expect(await readFile(rootIndexPath)).toEqual(rootIndex);
+    expect(await readFile(treeIndexPath)).toEqual(treeIndex);
+    expect(git(cwd, "rev-parse", "HEAD")).toBe(rootHead);
+    expect(git(tree.path, "rev-parse", "HEAD")).toBe(treeHead);
+    expect(git(tree.path, "status", "--porcelain=v1", "-z", "--untracked-files=all")).toBe(status);
+
+    await service.removeSnapshottedWorktree("snapshot-remove", receipt);
+    await expect(stat(tree.path)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(join(cwd, "changed-link"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await service.worktrees()).some(item => item.path === tree.path)).toBe(false);
+    expect(git(cwd, "show", `${receipt.snapshotRef}:tracked.txt`)).toBe("unstaged contents");
+    expect(await readFile(rootIndexPath)).toEqual(rootIndex);
+    expect(git(cwd, "rev-parse", "HEAD")).toBe(rootHead);
+  });
+
+  test("snapshot failure and changed, locked, or unrelated registrations fail closed", async () => {
+    const { directory, cwd, worktreeRoot, service } = await repository();
+    const failed = await service.createWorktree({ path: "snapshot-fails", newBranch: "snapshot-fails" });
+    await writeFile(join(failed.path, "unsafe.boom"), "must remain\n");
+    const canonicalFailed = await realpath(failed.path);
+    const refLock = join(cwd, ".git/refs/agent-desktop/snapshots", `${createHash("sha1").update(canonicalFailed).digest("hex")}.lock`);
+    await mkdir(join(cwd, ".git/refs/agent-desktop/snapshots"), { recursive: true });
+    await writeFile(refLock, "held by test\n");
+    await expect(service.snapshotWorktreeForRemoval("snapshot-fails")).rejects.toMatchObject({ code: "GIT_FAILED" });
+    expect(await readFile(join(failed.path, "unsafe.boom"), "utf8")).toBe("must remain\n");
+    expect((await service.worktrees()).some(item => item.path === failed.path)).toBe(true);
+
+    const hidden = await service.createWorktree({ path: "hidden-change", newBranch: "hidden-change" });
+    git(hidden.path, "update-index", "--assume-unchanged", "tracked.txt");
+    await writeFile(join(hidden.path, "tracked.txt"), "hidden work must remain\n");
+    await expect(service.snapshotWorktreeForRemoval("hidden-change")).rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_HIDDEN_CHANGES" });
+    expect(await readFile(join(hidden.path, "tracked.txt"), "utf8")).toBe("hidden work must remain\n");
+    git(hidden.path, "update-index", "--no-assume-unchanged", "tracked.txt");
+    git(hidden.path, "checkout", "--", "tracked.txt");
+    git(hidden.path, "update-index", "--skip-worktree", "tracked.txt");
+    await writeFile(join(hidden.path, "tracked.txt"), "skip-worktree content must remain\n");
+    await expect(service.snapshotWorktreeForRemoval("hidden-change")).rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_HIDDEN_CHANGES" });
+    expect(await readFile(join(hidden.path, "tracked.txt"), "utf8")).toBe("skip-worktree content must remain\n");
+
+    const locked = await service.createWorktree({ path: "locked-snapshot", newBranch: "locked-snapshot" });
+    git(cwd, "worktree", "lock", locked.path);
+    await expect(service.snapshotWorktreeForRemoval("locked-snapshot")).rejects.toMatchObject({ code: "WORKTREE_LOCKED" });
+    git(cwd, "worktree", "unlock", locked.path);
+
+    const external = join(directory, "external-snapshot");
+    git(cwd, "worktree", "add", "--detach", external);
+    await expect(service.snapshotWorktreeForRemoval("../external-snapshot")).rejects.toMatchObject({ code: "OUTSIDE_WORKSPACE" });
+    await symlink(external, join(worktreeRoot, "external-link"));
+    await expect(service.snapshotWorktreeForRemoval("external-link")).rejects.toMatchObject({ code: "OUTSIDE_WORKSPACE" });
+
+    const changed = await service.createWorktree({ path: "changed-after-snapshot", newBranch: "changed-after-snapshot" });
+    const receipt = await service.snapshotWorktreeForRemoval("changed-after-snapshot");
+    await writeFile(join(changed.path, "after.txt"), "new commit\n");
+    git(changed.path, "add", "after.txt"); git(changed.path, "commit", "-m", "Registration head changed");
+    await expect(service.removeSnapshottedWorktree("changed-after-snapshot", receipt)).rejects.toMatchObject({ code: "WORKTREE_REGISTRATION_CHANGED" });
+    expect(await readFile(join(changed.path, "after.txt"), "utf8")).toBe("new commit\n");
+    expect((await service.worktrees()).some(item => item.path === changed.path)).toBe(true);
+
+    const converted = await service.createWorktree({ path: "converted", newBranch: "converted" });
+    await writeFile(join(converted.path, ".gitattributes"), "*.txt text eol=lf\n");
+    await expect(service.snapshotWorktreeForRemoval("converted")).rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_CONVERSION" });
+    expect((await service.worktrees()).some(item => item.path === converted.path)).toBe(true);
+    await rm(join(converted.path, ".gitattributes"));
+    git(cwd, "config", "core.autocrlf", "true");
+    await expect(service.snapshotWorktreeForRemoval("converted")).rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_CONVERSION" });
+    git(cwd, "config", "core.autocrlf", "false");
+  });
+
+  test("snapshot and removal reject dirty tracked submodules before force can discard their inner files", async () => {
+    const { directory, cwd, service } = await repository();
+    const submodule = join(directory, "submodule-source"); await mkdir(submodule);
+    git(submodule, "init", "--initial-branch=main"); git(submodule, "config", "user.name", "Workspace Test"); git(submodule, "config", "user.email", "workspace-tests@example.invalid");
+    await writeFile(join(submodule, "inside.txt"), "submodule baseline\n"); git(submodule, "add", "."); git(submodule, "commit", "-m", "Submodule baseline");
+    git(cwd, "-c", "protocol.file.allow=always", "submodule", "add", submodule, "vendor/submodule"); git(cwd, "commit", "-am", "Add submodule");
+    const tree = await service.createWorktree({ path: "submodule-remove", newBranch: "submodule-remove" });
+    git(tree.path, "-c", "protocol.file.allow=always", "submodule", "update", "--init");
+
+    const inner = join(tree.path, "vendor/submodule/inside.txt");
+    await writeFile(inner, "dirty before snapshot\n");
+    await expect(service.snapshotWorktreeForRemoval("submodule-remove")).rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_SUBMODULE" });
+    expect(await readFile(inner, "utf8")).toBe("dirty before snapshot\n");
+    git(join(tree.path, "vendor/submodule"), "checkout", "--", "inside.txt");
+
+    const receipt = await service.snapshotWorktreeForRemoval("submodule-remove");
+    await writeFile(inner, "dirtied after snapshot by cleanup\n");
+    let dispatchAuthorized = false;
+    await expect(service.removeSnapshottedWorktree("submodule-remove", receipt, () => { dispatchAuthorized = true; }))
+      .rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_SUBMODULE" });
+    expect(dispatchAuthorized).toBe(false);
+    expect(await readFile(inner, "utf8")).toBe("dirtied after snapshot by cleanup\n");
+    expect((await service.worktrees()).some(item => item.path === tree.path)).toBe(true);
   });
 
   test("detached worktree commits need a surviving reference before removal", async () => {

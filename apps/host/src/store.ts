@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { arch, hostname, platform } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, sep } from "node:path";
+import type { ManagedWorktreeSnapshotReceipt } from "./workspace/service";
 import type {
   CommandResult,
   Draft,
@@ -58,6 +59,23 @@ export interface CommandClaim {
   kind: "claimed" | "pending" | "done" | "conflict";
   record: CommandRecord;
 }
+
+export interface WorktreeRemovalIntent {
+  version: 1;
+  id: string;
+  commandId: string;
+  requestHash: string;
+  projectId: string;
+  sourceRoot: string;
+  worktreePath: string;
+  snapshot: ManagedWorktreeSnapshotReceipt;
+  state: "pending" | "finalized";
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+const removalIntentPrefix = "worktree-removal.v1:";
 
 type WithoutSequence<T> = T extends { sequence: number } ? Omit<T, "sequence"> : never;
 export type EventInput = WithoutSequence<HostEvent>;
@@ -394,6 +412,74 @@ export class HostStore {
     }).immediate();
   }
 
+  listWorktreeRemovalIntents(includeFinalized = false): WorktreeRemovalIntent[] {
+    return this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key LIKE ? ORDER BY key").all(`${removalIntentPrefix}%`)
+      .map(({ data }) => JSON.parse(data) as WorktreeRemovalIntent)
+      .filter(record => includeFinalized || record.state === "pending")
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  }
+
+  getWorktreeRemovalIntent(worktreePath: string): WorktreeRemovalIntent | undefined {
+    const records = this.listWorktreeRemovalIntents(true).filter(record => record.worktreePath === worktreePath);
+    return records.find(record => record.state === "pending") ?? records.at(-1);
+  }
+
+  /** Persist the exact removal authority after cleanup and before Git dispatch. */
+  createWorktreeRemovalIntent(input: Omit<WorktreeRemovalIntent, "version" | "requestHash" | "state" | "revision" | "createdAt" | "updatedAt">): WorktreeRemovalIntent {
+    return this.db.transaction(() => {
+      this.requireVersion(6);
+      const command = this.getCommand(input.commandId);
+      const project = this.getProject(input.projectId);
+      if (!command || command.state !== "pending") throw new Error("Worktree removal requires its pending command identity.");
+      if (!project || project.hostId !== this.host.id || project.path !== input.sourceRoot) throw new Error("Worktree removal source ownership changed.");
+      if (input.snapshot.worktreePath !== input.worktreePath) throw new Error("Worktree removal snapshot belongs to another path.");
+      const existing = this.listWorktreeRemovalIntents().find(record => record.worktreePath === input.worktreePath);
+      if (existing) {
+        if (existing.commandId === input.commandId && existing.id === input.id
+          && JSON.stringify(existing.snapshot) === JSON.stringify(input.snapshot)) return existing;
+        throw Object.assign(new Error("A prior worktree removal has an unresolved outcome. Inspect it before trying another removal."), { code: "OUTCOME_UNKNOWN" });
+      }
+      const now = Date.now();
+      const record: WorktreeRemovalIntent = { ...structuredClone(input), version: 1, requestHash: command.requestHash, state: "pending", revision: 1, createdAt: now, updatedAt: now };
+      this.db.query("INSERT INTO metadata (key, data) VALUES (?, ?)").run(`${removalIntentPrefix}${record.id}`, JSON.stringify(record));
+      return record;
+    }).immediate();
+  }
+
+  /** Finalize deletion metadata and every linked session as one SQLite commit. */
+  finalizeWorktreeRemoval(id: string, expectedRevision: number): { intent: WorktreeRemovalIntent; sessions: SessionSummary[] } {
+    return this.db.transaction(() => {
+      const row = this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key = ?").get(`${removalIntentPrefix}${id}`);
+      if (!row) throw new Error("Unknown worktree removal intent.");
+      const current = JSON.parse(row.data) as WorktreeRemovalIntent;
+      if (current.state === "finalized") return { intent: current, sessions: this.listSessions().filter(session => session.archived && withinPath(current.worktreePath, session.cwd)) };
+      if (current.revision !== expectedRevision) throw new Error("Worktree removal intent changed elsewhere.");
+      const project = this.getProject(current.projectId);
+      if (!project || project.path !== current.sourceRoot || current.snapshot.worktreePath !== current.worktreePath) throw new Error("Worktree removal ownership changed.");
+      const preparation = this.environmentPreparations.list().find(record => record.worktreePath === current.worktreePath && record.phase !== "removed");
+      if (preparation) {
+        if (preparation.projectId !== current.projectId || preparation.sourceRoot !== current.sourceRoot || preparation.phase !== "cleanup-succeeded")
+          throw new Error("Worktree environment cleanup is not durably complete.");
+        this.environmentPreparations.transition(preparation.id, preparation.revision, { type: "removed" });
+      }
+      const sessions: SessionSummary[] = [];
+      for (const session of this.listSessions()) if (withinPath(current.worktreePath, session.cwd)) {
+        const archived = this.upsertSession({ ...session, archived: true, updatedAt: Date.now() });
+        sessions.push(archived);
+      }
+      const intent: WorktreeRemovalIntent = { ...current, state: "finalized", revision: current.revision + 1, updatedAt: Date.now() };
+      this.db.query("UPDATE metadata SET data = ? WHERE key = ?").run(JSON.stringify(intent), `${removalIntentPrefix}${id}`);
+      const command = this.getCommand(current.commandId);
+      if (!command || command.requestHash !== current.requestHash) throw new Error("Worktree removal command identity disappeared or changed.");
+      if (command.state === "done" && (command.result?.ok || command.result?.error.code !== "OUTCOME_UNKNOWN")) {
+        throw new Error("Worktree removal command already has a different definitive outcome.");
+      }
+      const result: CommandResult = { ok: true, commandId: current.commandId, value: { type: "worktree.remove" } };
+      this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify({ ...command, state: "done", result, updatedAt: Date.now() }), command.id);
+      return { intent, sessions };
+    }).immediate();
+  }
+
   get lastEventSequence(): number {
     return this.db.query<{ sequence: number }, []>("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events").get()!.sequence;
   }
@@ -449,4 +535,8 @@ export class HostStore {
     if (current > 6) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
+}
+
+function withinPath(parent: string, path: string): boolean {
+  return path === parent || path.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 }

@@ -101,9 +101,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       const result = await environmentLifecycle.cleanup(record.id, record.revision);
       if (result.phase !== 'cleanup-succeeded') throw new Error('Environment cleanup failed. The worktree was preserved; inspect cleanup before explicitly retrying removal.');
     },
-    after: path => {
-      const record = store.environmentPreparations.list().find(item => item.worktreePath === path && item.phase === 'cleanup-succeeded');
-      if (record) store.environmentPreparations.transition(record.id, record.revision, { type: 'removed' });
+    committed: sessions => {
+      for (const session of sessions) {
+        goalContinuations?.cancel(session.id);
+        questionDeliveries?.cancel(session.id);
+      }
+      publishState();
     },
   }, environmentActions);
   const environmentRuns = new LocalEnvironmentRuns(store.environmentPreparations);
@@ -455,7 +458,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "session.environment.resume": return environmentSessions.resume(envelope.id, command.preparationId, command.expectedRevision);
       case "preferences.put": return ok({ type: command.type, preference: preferences!.put(command.change) });
       case "workspace.mutate": {
-        try { return ok(await workspaces.mutate(command.target, command.action)); }
+        try { return ok(await workspaces.mutate(command.target, command.action, envelope.id)); }
         finally { publish({ type: "workspace", target: command.target }); }
       }
       case "project.add": return ok(store.addProject(command));
@@ -772,6 +775,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     },
   });
   }
+  await workspaces.reconcileWorktreeRemovals();
   server = createServer("127.0.0.1", options.port ?? 0);
   function refreshNetwork(): Promise<void> {
     if (!network || stopping) return Promise.resolve();

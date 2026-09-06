@@ -140,7 +140,7 @@ export class WorktreeEnvironmentLifecycle {
   private async cleanupConfiguration(record: LocalEnvironmentPreparation) {
     if (!record.directories) return { raw: record.environment?.raw, directories: await this.executionDirectories(record) };
     const mapped = await this.workspaces.verifyPreparedWorktree(record.projectId, record.worktreePath, { ...record.directories, configCwdRelativePath: null });
-    const selection = this.store.getActionEnvironmentSelection(mapped.worktreeWorkspaceRoot);
+    const selection = this.store.getActionEnvironmentSelection(mapped.worktreeGitRoot);
     const configPath = selection ? selection.configPath : record.environment?.configPath ?? null;
     let raw: string | undefined, configCwdRelativePath: string | null = null;
     if (configPath !== null) {
@@ -150,7 +150,7 @@ export class WorktreeEnvironmentLifecycle {
       configCwdRelativePath = relative(sourceFallback ? record.directories.sourceGitRoot : record.worktreePath, dirname(dirname(dirname(config.configPath))));
     }
     const directories = await this.workspaces.verifyPreparedWorktree(record.projectId, record.worktreePath, { ...record.directories, configCwdRelativePath });
-    const latest = this.store.getActionEnvironmentSelection(mapped.worktreeWorkspaceRoot);
+    const latest = this.store.getActionEnvironmentSelection(mapped.worktreeGitRoot);
     if (latest?.revision !== selection?.revision || latest?.configPath !== selection?.configPath)
       throw new Error("The selected cleanup environment changed. Refresh before removing the worktree.");
     return { raw, directories: { cwd: directories.scriptCwd ?? directories.worktreeWorkspaceRoot, sourceRoot: record.sourceRoot,

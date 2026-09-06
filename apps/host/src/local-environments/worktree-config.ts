@@ -150,6 +150,28 @@ async function persistSelection(sourceGitRoot: string, worktreeGitRoot: string, 
     throw new WorktreeEnvironmentConfigError("OUTCOME_UNKNOWN", "The worktree environment selection was written but could not be isolated and verified.");
 }
 
+const selectionTails = new Map<string, Promise<void>>();
+type SelectionValue = string | null | undefined | (() => string | null | undefined | Promise<string | null | undefined>);
+/** Serialize and verify the native Git worktree selection mirror. */
+export async function syncWorktreeEnvironmentSelection(sourceGitRoot: string, worktreeGitRoot: string, desired: SelectionValue): Promise<void> {
+  const prior = selectionTails.get(worktreeGitRoot) ?? Promise.resolve();
+  const operation = prior.catch(() => {}).then(async () => {
+    const value = typeof desired === "function" ? await desired() : desired;
+    if (value === undefined) return;
+    const common = await commonConfigPath(worktreeGitRoot);
+    const extension = await configValue(worktreeGitRoot, ["--file", common, "--type=bool", "--get", "extensions.worktreeConfig"]);
+    const native = extension?.toLowerCase() === "true"
+      ? await configValue(worktreeGitRoot, ["--worktree", "--get", selectionKey])
+      : null;
+    const encoded = value ?? noSelection;
+    if (native === encoded) return;
+    await persistSelection(sourceGitRoot, worktreeGitRoot, encoded);
+  });
+  selectionTails.set(worktreeGitRoot, operation);
+  try { await operation; }
+  finally { if (selectionTails.get(worktreeGitRoot) === operation) selectionTails.delete(worktreeGitRoot); }
+}
+
 /** Materialize one exact selected environment and persist its effective path only in the managed worktree. */
 export async function materializeWorktreeEnvironment(input: WorktreeEnvironmentMaterializationInput): Promise<WorktreeEnvironmentMaterialization> {
   const worktreeWorkspaceRoot = await validateRoots(input);

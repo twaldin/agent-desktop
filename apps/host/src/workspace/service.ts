@@ -18,6 +18,21 @@ export interface GitWorkspaceContext {
   workspaceRelativePath: string;
 }
 
+/** Host-private proof that a managed worktree was durably captured before cleanup. */
+export interface ManagedWorktreeSnapshotReceipt {
+  version: 1;
+  worktreePath: string;
+  worktreeGitDir: string;
+  commonGitDir: string;
+  worktreeIdentity: { dev: number; ino: number };
+  worktreeGitDirIdentity: { dev: number; ino: number };
+  head: string;
+  branch: string | null;
+  detached: boolean;
+  snapshotRef: string;
+  snapshotCommit: string;
+}
+
 export class WorkspaceError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "WorkspaceError"; }
 }
@@ -435,6 +450,99 @@ export class WorkspaceService {
     return root;
   }
 
+  private async registeredManagedWorktree(path: string): Promise<{ target: string; tree: GitWorktree; gitDir: string; commonDir: string; targetIdentity: { dev: number; ino: number }; gitDirIdentity: { dev: number; ino: number } }> {
+    const root = await this.managedRoot(false);
+    const target = await this.owned(path, root);
+    const tree = (await this.worktrees()).find(item => item.path === target && item.managed);
+    if (!tree || target === root || target === this.cwd) throw new WorkspaceError("UNMANAGED_WORKTREE", "Only a registered linked worktree under the configured managed root may be used.");
+    if (tree.locked) throw new WorkspaceError("WORKTREE_LOCKED", "Git has locked this worktree; unlock it explicitly before continuing.");
+    if (!tree.head) throw new WorkspaceError("INVALID_GIT_HEAD", "The managed worktree HEAD cannot be resolved.");
+    const gitDir = await realpath((await this.git(["rev-parse", "--absolute-git-dir"], { cwd: target })).stdout.trim());
+    const commonOutput = (await this.git(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: target })).stdout.trim();
+    const commonDir = await realpath(commonOutput);
+    const [targetMetadata, gitDirMetadata] = await Promise.all([stat(target), stat(gitDir)]);
+    if (!targetMetadata.isDirectory() || !gitDirMetadata.isDirectory()) throw new WorkspaceError("WORKTREE_REGISTRATION_CHANGED", "The managed worktree registration is not an owned directory.");
+    return {
+      target, tree, gitDir, commonDir,
+      targetIdentity: { dev: targetMetadata.dev, ino: targetMetadata.ino },
+      gitDirIdentity: { dev: gitDirMetadata.dev, ino: gitDirMetadata.ino },
+    };
+  }
+
+  private async assertNoDirtySubmodules(cwd: string, filterOverrides: string[]): Promise<void> {
+    const status = (await this.git([...filterOverrides, "status", "--porcelain=v2", "-z", "--untracked-files=normal", "--ignore-submodules=none"], { cwd })).stdout;
+    for (const record of status.split("\0")) {
+      if ((record.startsWith("1 ") || record.startsWith("2 ") || record.startsWith("u ")) && record.split(" ")[2]?.startsWith("S")) {
+        throw new WorkspaceError("WORKTREE_SNAPSHOT_SUBMODULE", "Commit or clean submodule changes before snapshotting this worktree.");
+      }
+    }
+  }
+
+  private async snapshotFilterOverrides(cwd: string): Promise<string[]> {
+    const configured = await this.git(["config", "--name-only", "--get-regexp", "^filter\\..*\\.(clean|smudge|process|required)$"], { cwd, validExitCodes: [1] });
+    const names = new Set<string>();
+    for (const key of configured.stdout.split(/\r?\n/)) {
+      const name = /^filter\.(.+)\.(?:clean|smudge|process|required)$/.exec(key)?.[1];
+      if (name) names.add(name);
+    }
+    return ["-c", "attr.tree=", "-c", "core.attributesFile=", ...[...names].flatMap(name => [
+      "-c", `filter.${name}.clean=`, "-c", `filter.${name}.smudge=`, "-c", `filter.${name}.process=`, "-c", `filter.${name}.required=false`,
+    ])];
+  }
+
+  private async snapshotRawPaths(cwd: string, filterOverrides: string[]): Promise<string[]> {
+    const results = await Promise.all([
+      this.git([...filterOverrides, "diff", "--name-only", "--no-renames", "-z"], { cwd }),
+      this.git([...filterOverrides, "diff", "--cached", "--name-only", "--no-renames", "-z"], { cwd }),
+      this.git(["ls-files", "--others", "--exclude-standard", "-z"], { cwd }),
+    ]);
+    return [...new Set(results.flatMap(result => result.stdout.split("\0").filter(Boolean)))];
+  }
+
+  private async assertNoUnsupportedSnapshotConversions(cwd: string): Promise<void> {
+    for (const key of ["core.autocrlf", "core.eol"]) {
+      const value = await this.git(["config", "--get", key], { cwd, validExitCodes: [1] });
+      if (value.exitCode === 0 && !["", "false", "native"].includes(value.stdout.trim().toLowerCase())) {
+        throw new WorkspaceError("WORKTREE_SNAPSHOT_CONVERSION", `Disable ${key} before snapshotting this worktree so raw file bytes can be preserved.`);
+      }
+    }
+    const externalAttributes = await this.git(["config", "--get", "core.attributesFile"], { cwd, validExitCodes: [1] });
+    if (externalAttributes.exitCode === 0 && externalAttributes.stdout.trim()) {
+      throw new WorkspaceError("WORKTREE_SNAPSHOT_CONVERSION", "A custom Git attributes file can transform working bytes. Disable it before snapshotting this worktree.");
+    }
+    const attributePaths = (await this.git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd })).stdout
+      .split("\0").filter(path => path === ".gitattributes" || path.endsWith("/.gitattributes"));
+    const commonDir = (await this.git(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd })).stdout.trim();
+    const candidates = [...attributePaths.map(path => resolve(cwd, path)), join(commonDir, "info", "attributes")];
+    for (const path of candidates) {
+      let bytes: Uint8Array;
+      try { bytes = await readFileBytes(path); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+      const content = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      if (content.split(/\r?\n/).some(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) return false;
+        return trimmed.split(/\s+/).slice(1).some(attribute => /^(?:[-!]?(?:text|ident|binary)|eol=|working-tree-encoding=)/i.test(attribute));
+      })) throw new WorkspaceError("WORKTREE_SNAPSHOT_CONVERSION", "Git text or encoding attributes can transform working bytes. Remove them before snapshotting this worktree.");
+    }
+  }
+
+  private async preserveRawSnapshotBytes(cwd: string, paths: string[], env: NodeJS.ProcessEnv, filterOverrides: string[]): Promise<void> {
+    for (const path of paths) {
+      const staged = (await this.git(["ls-files", "--stage", "-z", "--", path], { cwd, env })).stdout.split("\0").filter(Boolean);
+      if (staged.length !== 1) continue; // Deleted paths have no entry; unresolved stages are rejected by git add.
+      const match = /^(\d+) ([0-9a-f]{40,64}) 0\t/.exec(staged[0]!);
+      if (!match) throw new WorkspaceError("WORKTREE_SNAPSHOT_FAILED", "The temporary snapshot index contains an unexpected staged entry.");
+      const mode = match[1]!;
+      // Git add already records gitlinks and symlink target text exactly. Hashing
+      // a mode-120000 path as a regular file would follow its target (and a
+      // dangling target would fail), corrupting the snapshot blob.
+      if (mode === "160000" || mode === "120000") continue;
+      const object = (await this.git(["hash-object", "-w", "--no-filters", "--", path], { cwd })).stdout.trim();
+      if (object !== match[2]) await this.git([...filterOverrides, "update-index", "--add", "--cacheinfo", mode, object, path], { cwd, env });
+    }
+  }
+
   async createWorktree(options: CreateWorktreeOptions): Promise<GitWorktree> {
     return serialized(`git:${this.cwd}`, async () => {
       await this.requireGitRoot();
@@ -566,4 +674,165 @@ export class WorkspaceService {
       await this.git(["worktree", "remove", "--", target]);
     });
   }
+
+  /**
+   * Durably captures a managed worktree's files in a private Git ref without
+   * changing its HEAD, index, or files. Cleanup may run after this receipt is
+   * returned; removal separately verifies that the Git registration is the
+   * same one that was captured.
+   */
+  async snapshotWorktreeForRemoval(path: string): Promise<ManagedWorktreeSnapshotReceipt> {
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      const before = await this.registeredManagedWorktree(path);
+      const hiddenIndexEntries = (await this.git(["ls-files", "-v", "-z"], { cwd: before.target })).stdout
+        .split("\0").filter(entry => entry && (/^[a-z]/.test(entry) || entry.startsWith("S ")));
+      if (hiddenIndexEntries.length) {
+        throw new WorkspaceError("WORKTREE_SNAPSHOT_HIDDEN_CHANGES", "Clear Git assume-unchanged and skip-worktree flags before snapshotting this worktree.");
+      }
+      const filterOverrides = await this.snapshotFilterOverrides(before.target);
+      await this.assertNoDirtySubmodules(before.target, filterOverrides);
+      await this.assertNoUnsupportedSnapshotConversions(before.target);
+      const indexPath = (await this.git(["rev-parse", "--path-format=absolute", "--git-path", "index"], { cwd: before.target })).stdout.trim();
+      const indexBytes = await readFileBytes(indexPath);
+      const rawPaths = await this.snapshotRawPaths(before.target, filterOverrides);
+      const temporary = await mkdtemp(join(tmpdir(), "agent-desktop-remove-index-"));
+      const temporaryIndex = join(temporary, "index");
+      const env = { ...process.env, GIT_INDEX_FILE: temporaryIndex };
+      try {
+        const capture = async () => {
+          await copyFile(indexPath, temporaryIndex);
+          await this.git([...filterOverrides, "add", "-A", "--", "."], { cwd: before.target, env });
+          await this.preserveRawSnapshotBytes(before.target, rawPaths, env, filterOverrides);
+          return (await this.git([...filterOverrides, "write-tree"], { cwd: before.target, env })).stdout.trim();
+        };
+        const tree = await capture();
+        if (await capture() !== tree) throw new WorkspaceError("GIT_CHANGED", "The worktree changed while it was being snapshotted. Retry after it is stable.");
+        const current = await this.registeredManagedWorktree(path);
+        if (!sameWorktreeRegistration(before, current) || !Buffer.from(await readFileBytes(indexPath)).equals(Buffer.from(indexBytes))) {
+          throw new WorkspaceError("GIT_CHANGED", "The worktree registration, HEAD, or index changed while it was being snapshotted.");
+        }
+        const snapshotRef = `refs/agent-desktop/snapshots/${createHash("sha1").update(before.target).digest("hex")}`;
+        const commit = (await this.git(["commit-tree", tree, "-p", before.tree.head!, "-m", `Agent Desktop worktree snapshot: ${before.target}`], {
+          cwd: before.target,
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "Agent Desktop",
+            GIT_AUTHOR_EMAIL: "agent-desktop@localhost",
+            GIT_COMMITTER_NAME: "Agent Desktop",
+            GIT_COMMITTER_EMAIL: "agent-desktop@localhost",
+          },
+        })).stdout.trim();
+        const existing = await this.git(["rev-parse", "--verify", "--quiet", snapshotRef], { cwd: before.target, validExitCodes: [1] });
+        await this.git(["update-ref", snapshotRef, commit, ...(existing.exitCode === 0 ? [existing.stdout.trim()] : ["0".repeat(before.tree.head!.length)])], { cwd: before.target });
+        if ((await this.git(["rev-parse", "--verify", `${snapshotRef}^{commit}`], { cwd: before.target })).stdout.trim() !== commit) {
+          throw new WorkspaceError("SNAPSHOT_NOT_DURABLE", "Git did not retain the worktree snapshot ref.");
+        }
+        return {
+          version: 1,
+          worktreePath: before.target,
+          worktreeGitDir: before.gitDir,
+          commonGitDir: before.commonDir,
+          worktreeIdentity: before.targetIdentity,
+          worktreeGitDirIdentity: before.gitDirIdentity,
+          head: before.tree.head!,
+          branch: before.tree.branch,
+          detached: before.tree.detached,
+          snapshotRef,
+          snapshotCommit: commit,
+        };
+      } finally { await rm(temporary, { recursive: true, force: true }); }
+    });
+  }
+
+  /** Force-removes only the unchanged managed registration proven by a snapshot receipt. */
+  async removeSnapshottedWorktree(path: string, receipt: ManagedWorktreeSnapshotReceipt, beforeDispatch?: () => void | Promise<void>): Promise<void> {
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      if (!validSnapshotReceipt(receipt)) throw new WorkspaceError("INVALID_SNAPSHOT_RECEIPT", "A valid managed-worktree snapshot receipt is required.");
+      const root = await this.managedRoot(false);
+      if (!within(root, receipt.worktreePath) || receipt.worktreePath === root || receipt.worktreePath === this.cwd) {
+        throw new WorkspaceError("UNMANAGED_WORKTREE", "The snapshot does not belong to this managed worktree root.");
+      }
+      const current = await this.registeredManagedWorktree(path);
+      if (current.target !== receipt.worktreePath || current.gitDir !== receipt.worktreeGitDir || current.commonDir !== receipt.commonGitDir
+        || current.targetIdentity.dev !== receipt.worktreeIdentity.dev || current.targetIdentity.ino !== receipt.worktreeIdentity.ino
+        || current.gitDirIdentity.dev !== receipt.worktreeGitDirIdentity.dev || current.gitDirIdentity.ino !== receipt.worktreeGitDirIdentity.ino
+        || current.tree.head !== receipt.head || current.tree.branch !== receipt.branch || current.tree.detached !== receipt.detached) {
+        throw new WorkspaceError("WORKTREE_REGISTRATION_CHANGED", "The managed worktree registration changed after it was snapshotted.");
+      }
+      await this.assertNoDirtySubmodules(current.target, await this.snapshotFilterOverrides(current.target));
+      const expectedRef = `refs/agent-desktop/snapshots/${createHash("sha1").update(current.target).digest("hex")}`;
+      if (receipt.snapshotRef !== expectedRef
+        || (await this.git(["rev-parse", "--verify", `${expectedRef}^{commit}`], { cwd: current.target })).stdout.trim() !== receipt.snapshotCommit) {
+        throw new WorkspaceError("SNAPSHOT_CHANGED", "The durable worktree snapshot changed before removal.");
+      }
+      await beforeDispatch?.();
+      try { await this.git(["worktree", "remove", "--force", "--", current.target]); }
+      catch (error) {
+        throw new WorkspaceError("OUTCOME_UNKNOWN", `Git did not return a verified managed-worktree removal receipt. Inspect ${current.target} before retrying. ${error instanceof Error ? error.message : String(error)}`);
+      }
+      try {
+        if (!await this.inspectSnapshottedWorktreeRemoval(receipt)) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "Git reported removal but the managed worktree still exists or remains registered. Inspect it before retrying.");
+        }
+      } catch (error) {
+        if (error instanceof WorkspaceError && error.code === "OUTCOME_UNKNOWN") throw error;
+        throw new WorkspaceError("OUTCOME_UNKNOWN", `Git reported removal but its result could not be verified. Inspect ${current.target} before retrying. ${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
+  }
+
+  /** Read-only proof used after a restart; it never invokes Git removal. */
+  async inspectSnapshottedWorktreeRemoval(receipt: ManagedWorktreeSnapshotReceipt): Promise<boolean> {
+    await this.requireGitRoot();
+    if (!validSnapshotReceipt(receipt)) throw new WorkspaceError("INVALID_SNAPSHOT_RECEIPT", "A valid managed-worktree snapshot receipt is required.");
+    const root = await this.managedRoot(false);
+    if (!within(root, receipt.worktreePath) || receipt.worktreePath === root || receipt.worktreePath === this.cwd) {
+      throw new WorkspaceError("UNMANAGED_WORKTREE", "The snapshot does not belong to this managed worktree root.");
+    }
+    const common = await realpath((await this.git(["rev-parse", "--path-format=absolute", "--git-common-dir"])).stdout.trim());
+    if (common !== receipt.commonGitDir) throw new WorkspaceError("WORKTREE_REGISTRATION_CHANGED", "The snapshot belongs to another Git repository.");
+    const expectedRef = `refs/agent-desktop/snapshots/${createHash("sha1").update(receipt.worktreePath).digest("hex")}`;
+    if (receipt.snapshotRef !== expectedRef
+      || (await this.git(["rev-parse", "--verify", `${expectedRef}^{commit}`])).stdout.trim() !== receipt.snapshotCommit) {
+      throw new WorkspaceError("SNAPSHOT_CHANGED", "The durable worktree snapshot is no longer valid.");
+    }
+    if ((await this.worktrees()).some(tree => tree.path === receipt.worktreePath)) return false;
+    return !await lstat(receipt.worktreePath).then(() => true, error => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    });
+  }
+}
+
+async function readFileBytes(path: string): Promise<Uint8Array> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const metadata = await file.stat();
+    if (!metadata.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "The Git index must be a regular file.");
+    return new Uint8Array(await file.readFile());
+  } finally { await file.close(); }
+}
+
+function sameWorktreeRegistration(
+  left: { target: string; tree: GitWorktree; gitDir: string; commonDir: string; targetIdentity: { dev: number; ino: number }; gitDirIdentity: { dev: number; ino: number } },
+  right: { target: string; tree: GitWorktree; gitDir: string; commonDir: string; targetIdentity: { dev: number; ino: number }; gitDirIdentity: { dev: number; ino: number } },
+): boolean {
+  return left.target === right.target && left.gitDir === right.gitDir && left.commonDir === right.commonDir
+    && left.targetIdentity.dev === right.targetIdentity.dev && left.targetIdentity.ino === right.targetIdentity.ino
+    && left.gitDirIdentity.dev === right.gitDirIdentity.dev && left.gitDirIdentity.ino === right.gitDirIdentity.ino
+    && left.tree.head === right.tree.head && left.tree.branch === right.tree.branch && left.tree.detached === right.tree.detached;
+}
+
+function validSnapshotReceipt(value: ManagedWorktreeSnapshotReceipt): boolean {
+  return !!value && value.version === 1 && typeof value.worktreePath === "string" && typeof value.worktreeGitDir === "string"
+    && typeof value.commonGitDir === "string" && validFileIdentity(value.worktreeIdentity) && validFileIdentity(value.worktreeGitDirIdentity)
+    && /^[0-9a-f]{40,64}$/.test(value.head)
+    && (value.branch === null || typeof value.branch === "string") && typeof value.detached === "boolean"
+    && /^refs\/agent-desktop\/snapshots\/[0-9a-f]{40}$/.test(value.snapshotRef) && /^[0-9a-f]{40,64}$/.test(value.snapshotCommit);
+}
+
+function validFileIdentity(value: { dev: number; ino: number }): boolean {
+  return !!value && Number.isSafeInteger(value.dev) && value.dev >= 0 && Number.isSafeInteger(value.ino) && value.ino > 0;
 }

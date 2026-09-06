@@ -13,6 +13,7 @@ import type { TmuxTerminalManager } from "../terminals/native-manager";
 import { TerminalError } from "../terminals/error";
 import { verifyWorktreeDirectories } from "./worktree-directory-resolution";
 import { WorkspaceService } from "../workspace/service";
+import { syncWorktreeEnvironmentSelection } from "./worktree-config";
 
 export interface LocalEnvironmentActionRun { configPath: string; configRevision: string; selectionRevision: number; actionIndex: number }
 
@@ -21,6 +22,15 @@ const platform = process.platform === "darwin" || process.platform === "win32" ?
 const digest = (...parts: string[]) => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const fail = (code: string, message: string): never => { throw new TerminalError(code, message); };
 const execute = promisify(execFile);
+const selectionOperations = new Map<string, Promise<void>>();
+
+async function orderedSelection<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const pending = (selectionOperations.get(root) ?? Promise.resolve()).then(operation);
+  const settled = pending.then(() => {}, () => {});
+  selectionOperations.set(root, settled);
+  try { return await pending; }
+  finally { if (selectionOperations.get(root) === settled) selectionOperations.delete(root); }
+}
 
 async function commonGitDirectory(root: string): Promise<string> {
   try {
@@ -67,7 +77,8 @@ export class LocalEnvironmentActions {
     catch { fail("WORKSPACE_NOT_FOUND", "The workspace directory no longer exists."); }
     let configRoot = cwd, initialConfigPath: string | null | undefined;
     if (sessionId) {
-      const prep = store.environmentPreparations.list().find(item => item.sessionId === sessionId && item.phase !== "removed");
+      const prep = store.environmentPreparations.list().find(item => item.phase !== "removed" && (item.sessionId === sessionId
+        || item.version === 2 && item.sourceRoot === projectRoot && resolve(item.worktreePath, item.directories.workspaceRelativePath) === cwd));
       if (prep) {
         if (prep.version === 2) {
           if (realpathSync(prep.directories.sourceWorkspaceRoot) !== projectRoot) fail("WORKSPACE_NOT_FOUND", "The environment preparation does not own this project.");
@@ -85,7 +96,7 @@ export class LocalEnvironmentActions {
           initialConfigPath = prep.environment?.configPath ?? null;
           const sourceFallbackConfig = prep.selectedEnvironment && prep.environment?.configPath === prep.selectedEnvironment.configPath ? prep.selectedEnvironment.configPath : undefined;
           const sourceFallbackRoot = sourceFallbackConfig ? realpathSync(dirname(dirname(dirname(sourceFallbackConfig)))) : undefined;
-          return { cwd, configRoot, targetKey, preparationSessionId: sessionId, initialConfigPath, actionRoot: realpathSync(mapped.worktreeGitRoot), sourceGitRoot: realpathSync(prep.directories.sourceGitRoot), sourceFallbackConfig, sourceFallbackRoot };
+          return { cwd, configRoot, targetKey, preparationSessionId: prep.sessionId ?? sessionId, initialConfigPath, actionRoot: realpathSync(mapped.worktreeGitRoot), sourceGitRoot: realpathSync(prep.directories.sourceGitRoot), sourceFallbackConfig, sourceFallbackRoot };
         }
         configRoot = realpathSync(prep.sourceRoot);
         if (configRoot !== projectRoot || realpathSync(prep.worktreePath) !== cwd) fail("WORKSPACE_NOT_FOUND", "The environment preparation does not own this workspace.");
@@ -96,12 +107,13 @@ export class LocalEnvironmentActions {
     return { cwd, configRoot, targetKey, preparationSessionId: sessionId, initialConfigPath };
   }
 
-  private async build(target: WorkspaceTarget, resolved?: Resolved): Promise<LocalEnvironmentActionsState> {
+  private async build(target: WorkspaceTarget, resolved?: Resolved, mirrored = false): Promise<LocalEnvironmentActionsState> {
     resolved ??= await this.resolve(target);
     const store = this.store;
     const entries = await this.entries(resolved);
     const byPath = new Map(entries.map(item => [item.configPath, item]));
-    const persisted = store.getActionEnvironmentSelection(resolved.cwd);
+    if (!mirrored) await this.mirror(resolved);
+    const persisted = store.getActionEnvironmentSelection(this.selectionCwd(resolved));
     const selected = persisted ? persisted.configPath : resolved.initialConfigPath === undefined ? this.default(entries) : resolved.initialConfigPath;
     const revision = persisted?.revision ?? 0;
     const selectedItem = selected ? byPath.get(selected) : undefined;
@@ -119,24 +131,41 @@ export class LocalEnvironmentActions {
     return named?.configPath ?? entries.find(item => item.type === "environment")?.configPath ?? null;
   }
 
-  catalog(target: WorkspaceTarget): Promise<LocalEnvironmentActionsState> { return this.build(target); }
+  async catalog(target: WorkspaceTarget): Promise<LocalEnvironmentActionsState> {
+    const resolved = await this.resolve(target);
+    return orderedSelection(this.selectionCwd(resolved), () => this.build(target, resolved));
+  }
 
   async select(target: WorkspaceTarget, configPath: string | null, expectedRevision: number): Promise<LocalEnvironmentActionsState> {
-    const resolved = await this.resolve(target), store = this.store;
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) fail("INVALID_ENVIRONMENT_SELECTION", "The environment selection revision is invalid.");
-    const selectedPath = configPath === null ? null : await this.ownedConfig(resolved, configPath);
-    if (selectedPath !== null) {
-      const exists = (await this.entries(resolved)).some(item => item.configPath === selectedPath);
-      if (!exists) fail("INVALID_ENVIRONMENT_SELECTION", "The selected environment configuration no longer exists.");
-    }
-    store.putActionEnvironmentSelection(resolved.cwd, selectedPath, expectedRevision);
-    return this.build(target, resolved);
+    const resolved = await this.resolve(target);
+    return orderedSelection(this.selectionCwd(resolved), () => this.selectResolved(target, resolved, configPath, expectedRevision));
+  }
+
+  private async selectResolved(target: WorkspaceTarget, resolved: Resolved, configPath: string | null, expectedRevision: number): Promise<LocalEnvironmentActionsState> {
+    const store = this.store;
+    const release = this.reserveRun(resolved.actionRoot ?? resolved.cwd);
+    try {
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) fail("INVALID_ENVIRONMENT_SELECTION", "The environment selection revision is invalid.");
+      const selectedPath = configPath === null ? null : await this.ownedConfig(resolved, configPath);
+      if (selectedPath !== null) {
+        const exists = (await this.entries(resolved)).some(item => item.configPath === selectedPath);
+        if (!exists) fail("INVALID_ENVIRONMENT_SELECTION", "The selected environment configuration no longer exists.");
+      }
+      store.putActionEnvironmentSelection(this.selectionCwd(resolved), selectedPath, expectedRevision);
+      await this.mirror(resolved, true);
+      return this.build(target, resolved, true);
+    } finally { release(); }
   }
 
   async run(target: WorkspaceTarget, input: LocalEnvironmentActionRun): Promise<NativeTerminalInfo> {
-    const resolved = await this.resolve(target), store = this.store;
+    const resolved = await this.resolve(target);
+    return orderedSelection(this.selectionCwd(resolved), () => this.runResolved(target, resolved, input));
+  }
+
+  private async runResolved(target: WorkspaceTarget, resolved: Resolved, input: LocalEnvironmentActionRun): Promise<NativeTerminalInfo> {
+    const store = this.store;
     const entries = await this.entries(resolved);
-    const persisted = store.getActionEnvironmentSelection(resolved.cwd);
+    const persisted = store.getActionEnvironmentSelection(this.selectionCwd(resolved));
     const effectiveSelection = persisted ? persisted.configPath : resolved.initialConfigPath === undefined ? this.default(entries) : resolved.initialConfigPath;
     const currentRevision = persisted?.revision ?? 0;
     if (input.selectionRevision !== currentRevision || input.configPath !== effectiveSelection) fail("STALE_ENVIRONMENT_SELECTION", "The environment selection changed; refresh and try again.");
@@ -146,9 +175,14 @@ export class LocalEnvironmentActions {
     if (!item) throw new TerminalError("INVALID_ENVIRONMENT_CONFIG", "The environment configuration no longer exists.");
     if (item.type === "error") throw new TerminalError("INVALID_ENVIRONMENT_CONFIG", item.error);
     if (item.revision !== input.configRevision) fail("STALE_ENVIRONMENT_CONFIG", "The environment configuration changed; refresh and try again.");
-    const afterRead = store.getActionEnvironmentSelection(resolved.cwd);
+    const afterRead = store.getActionEnvironmentSelection(this.selectionCwd(resolved));
     const afterSelection = afterRead ? afterRead.configPath : resolved.initialConfigPath === undefined ? this.default(entries) : resolved.initialConfigPath;
     if (afterRead?.revision !== persisted?.revision || afterSelection !== effectiveSelection) fail("STALE_ENVIRONMENT_SELECTION", "The environment selection changed; refresh and try again.");
+    await this.mirror(resolved);
+    const latest = store.getActionEnvironmentSelection(this.selectionCwd(resolved));
+    const latestSelection = latest ? latest.configPath : resolved.initialConfigPath === undefined ? this.default(entries) : resolved.initialConfigPath;
+    if (latest?.revision !== persisted?.revision || latestSelection !== effectiveSelection)
+      fail("STALE_ENVIRONMENT_SELECTION", "The environment selection changed; refresh and try again.");
     if (!Number.isSafeInteger(input.actionIndex) || input.actionIndex < 0) throw new TerminalError("INVALID_ENVIRONMENT_ACTION", "The configured action index is invalid.");
     const action = item.environment.actions?.[input.actionIndex];
     if (!action) throw new TerminalError("INVALID_ENVIRONMENT_ACTION", "The configured action is unavailable on this host.");
@@ -179,6 +213,22 @@ export class LocalEnvironmentActions {
       if (source) entries.push(source);
     }
     return entries;
+  }
+
+  private selectionCwd(resolved: Resolved): string { return resolved.actionRoot ?? resolved.cwd; }
+
+  private async mirror(resolved: Resolved, reserved = false): Promise<void> {
+    if (!resolved.actionRoot || !resolved.sourceGitRoot) return;
+    if (!this.store.getActionEnvironmentSelection(this.selectionCwd(resolved))) return;
+    const release = reserved ? undefined : this.reserveRun(resolved.actionRoot);
+    try {
+      await syncWorktreeEnvironmentSelection(resolved.sourceGitRoot, resolved.actionRoot, () => {
+        const current = this.store.getActionEnvironmentSelection(this.selectionCwd(resolved));
+        return current?.configPath;
+      });
+    }
+    catch (cause) { throw new TerminalError("OUTCOME_UNKNOWN", `The environment selection mirror could not be verified. ${cause instanceof Error ? cause.message : String(cause)}`); }
+    finally { release?.(); }
   }
 
   private ownedConfig(resolved: Resolved, configPath: string): Promise<string> {

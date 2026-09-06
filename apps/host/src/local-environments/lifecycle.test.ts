@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -58,10 +59,10 @@ for (const namespace of [".agent-desktop", ".codex"]) test(`${namespace}: actual
   if (listing.type !== "git.worktrees") throw new Error("Missing registered worktrees");
   const relativePath = listing.worktrees.find(tree => tree.path === ready.worktreePath)?.managedRelativePath;
   if (!relativePath) throw new Error("Missing managed removal path");
-  // Materialization retains the selected untracked config. Cleanup is not authority to discard it.
-  await expect(f.workspaces.mutate({ projectId: f.project.id }, { type: "worktree.remove", path: relativePath })).rejects.toMatchObject({ code: "DIRTY_WORKTREE" });
-  await rm(ready.environment!.configPath);
+  // Explicit removal preserves the copied configuration in a durable Git ref.
   await f.workspaces.mutate({ projectId: f.project.id }, { type: "worktree.remove", path: relativePath });
+  const snapshotRef = `refs/agent-desktop/snapshots/${createHash('sha1').update(ready.worktreePath).digest('hex')}`;
+  expect((await f.git("show", `${snapshotRef}:${namespace}/environments/environment.toml`)).stdout).toBe(ready.environment!.raw);
   f.store.environmentPreparations.transition(cleaned.id, cleaned.revision, { type: "removed" });
   expect(await access(ready.worktreePath).then(() => true, () => false)).toBe(false);
   expect(await readFile(join(f.source, ".git", "index"))).toEqual(f.before.index);
@@ -134,7 +135,7 @@ for (const selectNested of [false, true]) test(`nested workspace inherits root s
   const saved = await managedConfig.save({ configPath: cleanupPath, expectedRevision: selectNested ? null : ready.environment!.revision,
     raw: serializeLocalEnvironment({ version: 1, name: "Managed cleanup", setup: { script: "" }, cleanup: { script: 'printf "%s\\n" "$PWD" "$CODEX_WORKTREE_PATH" > cleanup-paths' } }) });
   expect(saved.type).toBe("saved");
-  if (selectNested) f.store.putActionEnvironmentSelection(workspace, cleanupPath, 0);
+  if (selectNested) f.store.putActionEnvironmentSelection(ready.worktreePath, cleanupPath, 0);
   const cleaned = await f.lifecycle.cleanup(ready.id, ready.revision);
   expect(cleaned.phase).toBe("cleanup-succeeded");
   const cleanupCwd = selectNested ? workspace : ready.worktreePath;

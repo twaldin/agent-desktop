@@ -9,6 +9,7 @@ import { serializeLocalEnvironment } from "@agent-desktop/shared";
 import { HostStore } from "../store";
 import { TmuxTerminalManager } from "../terminals/native-manager";
 import { LocalEnvironmentActions } from "./actions";
+import { materializeWorktreeEnvironment, worktreeEnvironmentConfigKey } from "./worktree-config";
 import type { LocalEnvironmentPreparation } from "./preparations";
 
 const roots: string[] = [];
@@ -30,7 +31,83 @@ async function fixture() {
   return { root, project, store, record, service: new LocalEnvironmentActions(store, () => undefined) };
 }
 
+// Real Git + persisted preparation fixtures; no OMP worker or provider is involved.
+async function managedSelectionFixture() {
+  const f = await fixture(), source = await realpath(f.project);
+  git(source, "init", "-b", "main"); git(source, "config", "user.name", "Selection fixture"); git(source, "config", "user.email", "fixture@example.invalid");
+  await mkdir(join(source, "nested")); await writeFile(join(source, "nested/README.md"), "nested\n");
+  git(source, "add", "."); git(source, "commit", "-m", "Base");
+  const project = f.store.addProject({ path: join(source, "nested") });
+  const managed = join(await realpath(f.root), "managed"); git(source, "worktree", "add", "--detach", managed, "HEAD");
+  const configPath = join(source, ".agent-desktop/environments/environment.toml"), raw = await readFile(configPath, "utf8");
+  const snapshot = { configPath, raw, revision: revision(raw) };
+  const materialized = await materializeWorktreeEnvironment({ sourceGitRoot: source, sourceWorkspaceRoot: project.path, worktreeGitRoot: managed, selected: snapshot });
+  let prep = f.store.createEnvironmentPreparation({ id: crypto.randomUUID(), projectId: project.id, sourceRoot: project.path, worktreePath: managed,
+    startingState: { type: "branch", branchName: "main" }, draft: { id: "selection-draft", revision: 0 }, environment: snapshot,
+    directories: { sourceGitRoot: source, sourceWorkspaceRoot: project.path, workspaceRelativePath: "nested", configCwdRelativePath: "" } });
+  prep = advance(f.store, prep, { type: "worktree-create.started" });
+  prep = advance(f.store, prep, { type: "worktree-create.succeeded", worktreePath: managed,
+    materializedEnvironment: { configPath: materialized.configPath!, raw: materialized.raw!, revision: materialized.revision! } });
+  prep = advance(f.store, prep, { type: "setup.started" });
+  prep = advance(f.store, prep, { type: "setup.succeeded", result: { status: "succeeded", exitCode: 0, signal: null,
+    startedAt: 1, finishedAt: 2, stdout: "", stderr: "", outputTruncated: false, environmentDelta: { version: 1, set: {}, unset: [] } } });
+  prep = advance(f.store, prep, { type: "native-create.started" });
+  const ids = [crypto.randomUUID(), crypto.randomUUID()];
+  advance(f.store, prep, { type: "native-create.succeeded", sessionId: ids[0]! });
+  for (const id of ids) f.store.upsertSession({ id, hostId: f.store.host.id, projectId: project.id, cwd: join(managed, "nested"), title: "Selection fixture",
+    sessionFile: join(f.root, id + ".jsonl"), model: null, createdAt: 1, updatedAt: 1, status: "idle", archived: false });
+  const config = materialized.configPath!, key = worktreeEnvironmentConfigKey;
+  return { ...f, source, managed, config, key, targets: ids.map(sessionId => ({ sessionId })),
+    current: () => git(managed, "config", "--worktree", "--get", key) };
+}
+
 describe("LocalEnvironmentActions", () => {
+  test("managed shared-session selections serialize CAS and mirror the same worktree key", async () => {
+    const f = await managedSelectionFixture();
+    const other = new LocalEnvironmentActions(f.store, () => undefined);
+    const outcomes = await Promise.allSettled([f.service.select(f.targets[0]!, null, 0), other.select(f.targets[1]!, f.config, 0)]);
+    expect(outcomes.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(result => result.status === "rejected")).toHaveLength(1);
+    const desired = f.store.getActionEnvironmentSelection(f.managed)!;
+    expect(desired.revision).toBe(1); expect(f.current()).toBe(desired.configPath ?? "__none__");
+    const configFile = git(f.managed, "rev-parse", "--git-path", "config.worktree");
+    const bytes = await readFile(configFile);
+    await expect(other.select(f.targets[1]!, null, 0)).rejects.toThrow("changed");
+    expect(await readFile(configFile)).toEqual(bytes);
+    await expect(other.catalog(f.targets[1]!)).resolves.toMatchObject({ selectionRevision: 1, selectedConfigPath: desired.configPath });
+    expect(f.store.getActionEnvironmentSelection(join(f.managed, "nested"))).toBeUndefined();
+  });
+
+  test("a failed managed mirror retains SQLite intent and catalog repairs after store reopen", async () => {
+    const f = await managedSelectionFixture();
+    const lock = git(f.managed, "rev-parse", "--git-path", "config.worktree") + ".lock";
+    await writeFile(lock, "held by fixture");
+    await expect(f.service.select(f.targets[0]!, null, 0)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(f.store.getActionEnvironmentSelection(f.managed)).toEqual({ revision: 1, configPath: null });
+    expect(f.current()).toBe(f.config);
+    f.store.close(); stores.splice(stores.indexOf(f.store), 1); await rm(lock);
+    const reopened = new HostStore(join(f.root, "state")); stores.push(reopened);
+    const service = new LocalEnvironmentActions(reopened, () => undefined);
+    await expect(service.catalog(f.targets[1]!)).resolves.toMatchObject({ selectionRevision: 1, selectedConfigPath: null, actions: [] });
+    expect(f.current()).toBe("__none__");
+    expect(reopened.getActionEnvironmentSelection(f.managed)).toEqual({ revision: 1, configPath: null });
+    // An idempotent matching mirror must not require a writable Git config.
+    await writeFile(lock, "still held");
+    await expect(service.catalog(f.targets[0]!)).resolves.toMatchObject({ selectionRevision: 1 });
+    await rm(lock);
+  });
+
+  test("managed selection reserves the checkout before changing SQLite and preserves common config", async () => {
+    const f = await managedSelectionFixture();
+    const blocked = new LocalEnvironmentActions(f.store, () => undefined, () => { throw new Error("removal in progress"); });
+    await expect(blocked.select(f.targets[0]!, null, 0)).rejects.toThrow("removal in progress");
+    expect(f.store.getActionEnvironmentSelection(f.managed)).toBeUndefined(); expect(f.current()).toBe(f.config);
+    git(f.source, "config", "--local", f.key, "preserve-common");
+    await f.service.select(f.targets[0]!, null, 0);
+    await f.service.catalog(f.targets[1]!);
+    expect(f.current()).toBe("__none__"); expect(git(f.source, "config", "--local", "--get", f.key)).toBe("preserve-common");
+  });
+
   test("catalogs the default config and preserves unavailable native state", async () => {
     const { service, record } = await fixture();
     await expect(service.catalog({ projectId: record.id })).resolves.toMatchObject({
@@ -175,7 +252,7 @@ describe("LocalEnvironmentActions", () => {
     const rootKey = createHash("sha256").update(JSON.stringify([state.host.id, `sessionId:${sessionId}`, managed, managedRootConfig, "0"])).digest("hex");
     const nestedKey = createHash("sha256").update(JSON.stringify([state.host.id, `sessionId:${sessionId}`, managedProject, nestedConfig, "0"])).digest("hex");
     expect(manager.getAction(rootKey)?.id).toBe(rootTerminal.id); expect(manager.getAction(nestedKey)?.id).toBe(nestedTerminal.id);
-    expect(reservations).toEqual([managed, managed]);
+    expect(new Set(reservations)).toEqual(new Set([managed]));
 
     // An exact retained source config remains selectable, but its action cwd is translated into the managed checkout.
     const fallbackRaw = serializeLocalEnvironment({ version: 1, name: "Fallback", setup: { script: "true" }, actions: [{ name: "Fallback", icon: null, command: observed("fallback-observed") }] });
@@ -203,7 +280,7 @@ describe("LocalEnvironmentActions", () => {
     expect(fallbackTerminal.cwd).toBe(fallback.worktreePath);
     expect(readFileSync(join(fallback.worktreePath, "fallback-observed"), "utf8").trimEnd().split("\n"))
       .toEqual([fallback.worktreePath, fallbackProject, fallbackProject, project.path]);
-    expect(reservations).toEqual([managed, managed, fallback.worktreePath]);
+    expect(new Set(reservations)).toEqual(new Set([managed, fallback.worktreePath]));
 
     git(source, "worktree", "lock", managed);
     await expect(service.catalog(target)).rejects.toMatchObject({ code: "WORKSPACE_NOT_FOUND" });

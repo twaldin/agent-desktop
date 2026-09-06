@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { LocalEnvironmentStore } from "./index";
-import { materializeWorktreeEnvironment, worktreeEnvironmentConfigKey, type WorktreeEnvironmentSnapshot } from "./worktree-config";
+import { materializeWorktreeEnvironment, syncWorktreeEnvironmentSelection, worktreeEnvironmentConfigKey, type WorktreeEnvironmentSnapshot } from "./worktree-config";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -131,4 +131,36 @@ test("an unrelated Git repository is rejected before either repository is change
   expect(maybeGit(f.source, "config", "--get", "extensions.worktreeConfig").code).toBe(1);
   expect(maybeGit(unrelated, "config", "--get", "extensions.worktreeConfig").code).toBe(1);
   expect(maybeGit(unrelated, "config", "--get", worktreeEnvironmentConfigKey).code).toBe(1);
+});
+
+test("selection mirror persists explicit null and is visible after a fresh Git process", async () => {
+  const f = await fixture(), worktree = f.createWorktree("explicit-null");
+  await syncWorktreeEnvironmentSelection(f.source, worktree, null);
+  expect(git(worktree, "config", "--worktree", "--get", worktreeEnvironmentConfigKey)).toBe("__none__");
+});
+
+test("shared target mirrors serialize and skip a matching Git value", async () => {
+  const f = await fixture(), worktree = f.createWorktree("shared-target");
+  const first = join(worktree, "first.toml"), second = join(worktree, "second.toml");
+  await Promise.all([
+    syncWorktreeEnvironmentSelection(f.source, worktree, async () => { await Bun.sleep(10); return first; }),
+    syncWorktreeEnvironmentSelection(f.source, worktree, () => second),
+  ]);
+  expect(git(worktree, "config", "--worktree", "--get", worktreeEnvironmentConfigKey)).toBe(second);
+  await syncWorktreeEnvironmentSelection(f.source, worktree, second);
+  expect(git(worktree, "config", "--worktree", "--get", worktreeEnvironmentConfigKey)).toBe(second);
+});
+
+test("a locked Git config blocks mirroring and the same desired value can be retried", async () => {
+  const f = await fixture(), worktree = f.createWorktree("mirror-repair");
+  const desired = join(worktree, "repair.toml");
+  git(f.source, "config", "extensions.worktreeConfig", "true");
+  const lock = git(worktree, "rev-parse", "--git-path", "config.worktree") + ".lock";
+  await writeFile(lock, "fixture lock");
+  try {
+    await expect(syncWorktreeEnvironmentSelection(f.source, worktree, desired)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  } finally { await rm(lock); }
+  expect(maybeGit(worktree, "config", "--worktree", "--get", worktreeEnvironmentConfigKey).code).not.toBe(0);
+  await syncWorktreeEnvironmentSelection(f.source, worktree, desired);
+  expect(git(worktree, "config", "--worktree", "--get", worktreeEnvironmentConfigKey)).toBe(desired);
 });
