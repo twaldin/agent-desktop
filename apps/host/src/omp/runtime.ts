@@ -1,3 +1,5 @@
+import { NativeSessionMcp } from "./mcp-session";
+import type { NativeSessionMcpSnapshot, NativeSessionMcpReload } from "@agent-desktop/shared";
 import { constants } from "node:fs";
 import { access, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -84,6 +86,8 @@ export interface OmpSession {
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
+  getSessionMcp(): NativeSessionMcpSnapshot;
+  reloadSessionMcp(request: NativeSessionMcpReload): Promise<NativeSessionMcpSnapshot>;
   getBtw(): NativeBtwSnapshot | null;
   startBtw(input: NativeBtwStart): NativeBtwSnapshot;
   cancelBtw(runId: string): NativeBtwSnapshot | null;
@@ -425,6 +429,7 @@ export class OmpRuntime {
       await manager.ensureOnDisk();
       const session = native;
       const btw = new NativeBtwController(session);
+      const mcp = new NativeSessionMcp(session, result.mcpManager);
       const steering = new NativeSteerAdmission(session, manager);
       const auth = context.auth;
       const registry = context.registry;
@@ -491,18 +496,19 @@ export class OmpRuntime {
       let interruptEpoch = 0;
       let accountMutation = false;
       let goalMutation = false;
+      let mcpMutation: Promise<NativeSessionMcpSnapshot> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
       const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session);
       const controls = new NativeSessionControls(session, options.approvalOverride);
       const nativeGoalController = goalController = new NativeGoalController(session, manager, () => ({
-        disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation,
+        disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation || Boolean(mcpMutation),
         interruptsInFlight, interactionsPending: (ui?.list().length ?? 0) > 0,
       }), async () => { await session.setActiveToolsByName(goalPreviousTools); });
       const assertIdle = () => {
         assertSessionActive();
-        if (promptInFlight || accountMutation || goalMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
+        if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
       const listAccounts = async () => {
         assertSessionActive();
@@ -579,7 +585,7 @@ export class OmpRuntime {
           const startedBeforeInterrupt = interruptEpoch;
           const preflight = () => {
             assertSessionActive();
-            if (admissionPending || accountMutation || goalMutation || interruptsInFlight || session.hasPostPromptWork
+            if (admissionPending || accountMutation || goalMutation || mcpMutation || interruptsInFlight || session.hasPostPromptWork
               || session.queuedMessageCount > 0 || (ui?.list().length ?? 0) > 0) {
               throw detachedQuestionRejected("The native session cannot accept a detached answer yet.");
             }
@@ -608,8 +614,19 @@ export class OmpRuntime {
           };
           return detachedQuestions.startDelivery(questionId, preflight, dispatch);
         },
+        getSessionMcp: () => { assertSessionActive(); return mcp.read(); },
+        reloadSessionMcp: request => {
+          assertIdle();
+          if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
+            throw new Error("Resolve pending native work before reloading MCP servers.");
+          const run = mcp.reload(request);
+          mcpMutation = run;
+          const clear = () => { if (mcpMutation === run) mcpMutation = undefined; };
+          void run.then(clear, clear);
+          return run;
+        },
         getBtw: () => { assertSessionActive(); return btw.get(); },
-        startBtw: input => { assertSessionActive(); return btw.start(input); },
+        startBtw: input => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are reloading."); return btw.start(input); },
         cancelBtw: runId => { assertSessionActive(); return btw.cancel(runId); },
         promoteBtw: (runId, operationId) => {
           assertIdle();
@@ -644,7 +661,7 @@ export class OmpRuntime {
             try { assertIdle(); } catch { throw goalRejected("The native session is busy. Wait for its current work to finish."); }
           } else {
             assertSessionActive();
-            if (admissionPending || accountMutation || goalMutation || interruptsInFlight || session.hasPostPromptWork
+            if (admissionPending || accountMutation || goalMutation || mcpMutation || interruptsInFlight || session.hasPostPromptWork
               || nativeGoalController.hasActiveToolExecution() || (ui?.list().length ?? 0) > 0) {
               throw goalRejected("The native session has an active tool, approval, ask, or admission. Wait for it to settle.");
             }
@@ -735,7 +752,7 @@ export class OmpRuntime {
         },
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
-          if (promptInFlight || accountMutation || goalMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
           const images = copyPreparedImages(promptOptions.images);
           const imagePrompt = images?.length ? new NativeImagePrompt(images, text) : undefined;
           promptInFlight = true;
@@ -788,7 +805,7 @@ export class OmpRuntime {
         steer: async (text, expectedApprovalMode, options) => {
           assertSessionActive();
           if (options?.images?.length) throw new Error("Image attachments are not supported on steering input yet; no input was queued");
-          if (admissionPending) throw new Error("OMP is still accepting the submitted prompt");
+          if (admissionPending || mcpMutation) throw new Error("OMP is still accepting a prompt or reloading MCP servers");
           // The host snapshot can precede a concurrently admitted Interrupt.
           // Recheck in the owning worker before native steer can queue an idle
           // auto-continuation or land after abort's initial queue cancellation.
@@ -861,6 +878,7 @@ export class OmpRuntime {
             // Resolving/cancelling UI above releases native branch hooks. A branch
             // already in flight still owns both files until it settles.
             await promotionCall?.catch(() => {});
+            await mcpMutation?.catch(() => {});
             session.beginDispose();
             try { await session.dispose(); }
             finally {

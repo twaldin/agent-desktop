@@ -29,7 +29,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -41,6 +41,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
+  getSessionMcp(): Promise<import("@agent-desktop/shared").NativeSessionMcpSnapshot>;
   getBtw(): Promise<NativeBtwSnapshot | null>;
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
   cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
@@ -441,6 +442,8 @@ export class WorkerRuntime {
       listQuestions: () => client.request<DetachedQuestionSnapshot[]>({ operation: "listQuestions" }, 15_000),
       resolveQuestion: request => client.request<ResolveDetachedQuestionReceipt>({ operation: "resolveQuestion", args: { request } }, 15_000, "question-resolution"),
       startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
+      getSessionMcp: () => client.request({ operation: "getSessionMcp" }, 15_000),
+      reloadSessionMcp: request => client.request({ operation: "reloadSessionMcp", args: { request } }, 120_000),
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),
       startBtw: input => client.request({ operation: "startBtw", args: input }, 15_000),
       cancelBtw: runId => client.request({ operation: "cancelBtw", args: { runId } }, 15_000),

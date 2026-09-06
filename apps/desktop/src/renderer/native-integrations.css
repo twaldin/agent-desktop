@@ -32,6 +32,14 @@
 .integration-back { display:flex; align-items:center; gap:7px; padding:0; margin:0 0 18px; border:0; color:var(--secondary); background:transparent; cursor:pointer; font:inherit; }
 .integration-back:hover { color:var(--text); }
 .integration-back .icon { width:16px; height:16px; }
+.session-mcp { width:100%; min-width:0; }
+.session-mcp .integration-list-heading { align-items: flex-start; }
+.session-mcp-row { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:14px 0; border-top:1px solid var(--border); }
+.session-mcp-row > div:first-child { min-width:0; flex:1; }
+.session-mcp-row small { display:block; margin-top:4px; color:var(--secondary); }
+.session-mcp-row .inline-error { margin:6px 0 0; }
+.session-mcp-counts { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px 12px; color:var(--secondary); font-size:12px; text-align:right; }
+@media (max-width:680px) { .session-mcp-row { flex-direction:column; } .session-mcp-counts { justify-content:flex-start; text-align:left; } }
 /* Reference 10-integrations: one centered settings canvas with list/detail
    navigation. OMP-only controls retain these native groups and tokens. */
 .native-integrations { flex:1; min-width:0; overflow-y:auto; padding:64px 24px 48px; }
@@ -78,3 +86,10 @@
 .mcp-add .text-field { background:var(--composer-surface); border:1px solid var(--border); border-radius:var(--radius-medium,10px); }
 .mcp-add input.text-field { min-height:36px; }
 .mcp-add > .primary-button { align-self:flex-end; min-width:88px; }
+
+.session-mcp-row summary { display:flex; align-items:center; gap:4px; width:fit-content; margin-top:8px; color:var(--secondary); cursor:pointer; list-style:none; }
+.session-mcp-row summary::-webkit-details-marker { display:none; }
+.session-mcp-row summary .icon { width:16px; height:16px; }
+.session-mcp-row details[open] summary .icon { transform:rotate(90deg); }
+.session-mcp-row summary:hover { color:var(--text); }
+.session-mcp-row ul { margin:8px 0 0 20px; padding:0; list-style:none; color:var(--secondary); overflow-wrap:anywhere; }

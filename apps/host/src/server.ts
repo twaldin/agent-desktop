@@ -1,3 +1,4 @@
+import { SessionMcpHttp } from "./session-mcp-http";
 import { BtwPromotionService } from "./btw-promotion";
 import { LocalEnvironmentActions } from "./local-environments/actions";
 import { hasNewChatIntent, requiresNewChatProtocol } from './new-chat-protocol';
@@ -320,6 +321,16 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     getHandle,
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; },
   });
+  const sessionMcpHttp = new SessionMcpHttp({hostId:store.host.id, sessionExists:id=>!stopping && Boolean(store.getSession(id)),
+    existing:async id=>handles.get(id)?.catch(()=>undefined),
+    receipt:(sessionId,commandId)=>{
+      const entry=store.getCommand(commandId);
+      if (!entry || entry.command?.type !== 'session.mcp.reload' || entry.command.sessionId !== sessionId) return {commandId,state:'absent'};
+      if(entry.state==='pending') return {commandId,state:commands.has(commandId)?'pending':'unknown'};
+      const result=entry.result;
+      return {commandId,state:result?.ok?'succeeded':result && !result.ok && result.error.code!=='OUTCOME_UNKNOWN'?'failed':'unknown',
+        ...(result && !result.ok ? {message:result.error.message} : {})};
+    }});
   const btwHttp = new BtwHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)), service: btw });
   const browserControls = new BrowserControlHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
@@ -507,6 +518,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }
         const snapshot = await btw.start(command.sessionId, { runId: envelope.id, question: command.question }, checkedHandle);
         return ok({ type: "session.btw", snapshot });
+      }
+      case "session.mcp.reload": {
+        if (!store.getSession(command.sessionId)) return fail(envelope.id,"STALE_TARGET","The selected session no longer exists.");
+        if (executions.has(command.sessionId)) return fail(envelope.id,"SESSION_BUSY","Wait for the native turn to finish before reloading MCP servers.");
+        const handle = await handles.get(command.sessionId)?.catch(()=>undefined);
+        if (!handle) return fail(envelope.id,"MCP_NOT_LOADED","This session has no loaded native runtime. Reload did not start a worker.");
+        const snapshot = await handle.reloadSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision});
+        return ok({type:"session.mcp",snapshot});
       }
       case "session.btw.promote": return btwPromotion.promote(envelope.id, command.sessionId, command.runId);
       case "session.btw.cancel": {
@@ -746,6 +765,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const mcpStateResponse = await sessionMcpHttp.route(request, url);
+        if (mcpStateResponse) return mcpStateResponse;
         const btwResponse = await btwHttp.route(request, url);
         if (btwResponse) return btwResponse;
         const goalControlResponse = await goalControls.route(request, url);

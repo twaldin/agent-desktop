@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — live native MCP state and reload
+
+The selected session now exposes its actual OMP MCP connection state, tool names and measured resource/prompt counts in the settings UI. Explicit Reload servers applies saved configuration through the same native manager and tool registry. It rejects busy sessions, stale manager tickets and overlapping mutations. Status reads never start a worker. Durable command IDs and an owner-scoped receipt read prevent duplicate execution after lost responses or host restarts; unresolved receipts remain visible. Worker protocol18 carries these operations; OMP18.1.10/Bun1.3.14 remain pinned.
+
+The full regression suite passes **840 tests / 26,654 assertions across168 files**, with29 skips and zero failures. Final typecheck and production build pass. Actual native worker tests invoke an MCP tool through OMP's `xd://` transport, remove it on reload and reject reload during a running turn. Actual authenticated-host tests cover duplicate/stale requests, scoped receipts, deliberate SQLite receipt loss and restart without reconnect/replay. Five final controlled Electron captures also recover a deliberately lost reload acknowledgement through one read-only receipt check: one explicit reload, two stdio process starts including startup, zero messages/prompts, and no execution on page reopen. These component captures bypass main IPC/full host dispatch and are not installed/native-window or pixel-parity evidence.
+
+Interactive MCP OAuth/reconnect, resource/prompt contents, corresponding native slash workflows, plugin acquisition/live reload and exact visual matching remain open. The final focused follow-up covers the reload failure cleanup added during the full-suite run. Private evidence is `.data/session-mcp-checkpoint/` and `.data/session-mcp-ui-reconciled/result.json`. All1,737 sealed reference payload records match; installed services, Work fixtures and sealed bundles remain unchanged. See [native integrations](native-integrations.md).
+
 ## Source30 — native Plugins and MCP configuration
 
 The Plugins settings canvas now reads actual OMP user/project package and marketplace registries, exposes native feature defaults and typed settings, masks secrets, and retains disabled/shadowed entries. MCP controls add user/project configurations and toggle or remove exact native-owned rows; third-party source files remain unchanged. Opaque revisions, native file locks, bounded reads and owner checks protect configuration writes. Graceful shutdown drains admitted configuration writes before retiring their discovery worker. Worker protocol17 includes the new configuration operations.
