@@ -10,6 +10,7 @@ import { assertNoNativeTerminalOwnership } from "../../../../scripts/terminal-up
 import type { NativeTerminalAttachment, NativeTerminalInput } from "../../../../packages/shared/src/terminals";
 
 const bundle = process.env.AGENT_TEST_TMUX_BUNDLE;
+const quote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const fixtures: { directory: string; manager?: TmuxTerminalManager; child?: Bun.Subprocess }[] = [];
 async function until(check: () => boolean | Promise<boolean>, label: string, timeout = 8000): Promise<void> { const end = Date.now() + timeout; while (!await check()) { if (Date.now() > end) throw new Error(`Timed out: ${label}`); await Bun.sleep(15); } }
 const program = `import {readFileSync,writeFileSync,renameSync,appendFileSync} from 'node:fs';
@@ -87,6 +88,87 @@ describe.skipIf(!bundle)("private bundled tmux integration (actual native progra
     await expect(f.manager.create({cwd:f.directory,target:{projectId:crypto.randomUUID()}},{sourceRoot:f.directory,worktreeRoot:other,environmentDelta:null})).rejects.toThrow("does not own");
     expect(f.manager.list()).toHaveLength(1);
   });
+
+  test("configured actions restart one native pane under the same terminal identity", async () => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "agent-native-terminal-action-")));
+    const resource = { directory, manager: undefined as TmuxTerminalManager | undefined }; fixtures.push(resource);
+    const hostId = crypto.randomUUID(), actionKey = "a".repeat(64), target = { projectId: crypto.randomUUID() };
+    const manager = await TmuxTerminalManager.open({
+      dataDirectory: directory, hostId, bundleDirectory: resolve(bundle!), pollIntervalMs: 100,
+      shell: { application: "/bin/bash", args: ["--noprofile", "--norc", "-i"] },
+    });
+    resource.manager = manager;
+    const environment = (value: string) => ({
+      sourceRoot: directory, worktreeRoot: directory,
+      environmentDelta: { version: 1 as const, set: { ACTION_PRIVATE_VALUE: value }, unset: [] },
+    });
+    const action = await manager.create({ cwd: directory, target, cols: 80, rows: 24 }, environment("initial-private"), { actionKey });
+    const other = await manager.create({ cwd: directory, target: { projectId: crypto.randomUUID() }, cols: 80, rows: 24 });
+    expect(manager.getAction(actionKey)?.id).toBe(action.id);
+    await expect(manager.create({ cwd: directory, target }, undefined, { actionKey })).rejects.toThrow("already owns");
+    const oldViewer = await manager.attach(action.id, crypto.randomUUID());
+
+    const count = join(directory, "action-count"), firstEnvironment = join(directory, "action-first-env"), childFile = join(directory, "action-child.pid");
+    const firstCommand = `printf 'first\\n' >> ${quote(count)}; printf '%s' "$ACTION_PRIVATE_VALUE" > ${quote(firstEnvironment)}; sleep 30 & echo $! > ${quote(childFile)}; wait`;
+    const first = await manager.restartAction(action.id, firstCommand, environment("first-private-value"));
+    expect(first.id).toBe(action.id); expect(first.pid).not.toBe(action.pid);
+    expect(() => manager.replay(oldViewer.id, 0)).toThrow("expired");
+    await until(() => existsSync(childFile) && existsSync(firstEnvironment), "first configured action");
+    const priorChild = Number(readFileSync(childFile, "utf8").trim());
+    expect(readFileSync(firstEnvironment, "utf8")).toBe("first-private-value");
+
+    const secondEnvironment = join(directory, "action-second-env");
+    const secondCommand = `printf 'second\\n' >> ${quote(count)}; printf '%s' "$ACTION_PRIVATE_VALUE" > ${quote(secondEnvironment)}`;
+    const second = await manager.restartAction(action.id, secondCommand, environment("second-private-value"));
+    expect(second).toMatchObject({ id: action.id, status: "running" });
+    expect(second.pid).not.toBe(first.pid); expect(manager.get(other.id).pid).toBe(other.pid);
+    await until(() => existsSync(secondEnvironment) && Process.fromPid(priorChild)?.status() !== "running", "replacement action and old process-tree exit");
+    expect(readFileSync(count, "utf8")).toBe("first\nsecond\n");
+    expect(readFileSync(secondEnvironment, "utf8")).toBe("second-private-value");
+
+    const catalog = JSON.parse(readFileSync(join(directory, "native-terminals-v1", "catalog.json"), "utf8"));
+    const pane = Bun.spawnSync([join(resolve(bundle!), "bin/tmux"), "-S", catalog.socket, "display-message", "-p", "-t", catalog.terminals.find((item: any) => item.info.id === action.id).paneId, "#{pane_current_command}"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, TMUX: undefined } });
+    expect(pane.exitCode).toBe(0); expect(new TextDecoder().decode(pane.stdout).trim()).toBe("bash");
+    const publicText = JSON.stringify([manager.get(action.id), manager.list(), manager.getAction(actionKey)]);
+    for (const privateText of ["first-private-value", "second-private-value", "ACTION_PRIVATE_VALUE", "action-count"])
+      expect(publicText).not.toContain(privateText);
+    const catalogText = JSON.stringify(catalog);
+    expect(catalogText).not.toContain("first-private-value"); expect(catalogText).not.toContain(firstCommand);
+    await manager.close(action.id);
+    const reopened = await manager.restartAction(action.id, `printf 'third\\n' >> ${quote(count)}`);
+    expect(reopened).toMatchObject({ id: action.id, status: "running" });
+    await until(() => readFileSync(count, "utf8") === "first\nsecond\nthird\n", "explicit run after closed action");
+    expect(manager.get(other.id).pid).toBe(other.pid);
+  }, 20_000);
+
+  test("a lost action restart receipt stays unknown across reopen and is never replayed", async () => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "agent-native-terminal-action-unknown-")));
+    const resource = { directory, manager: undefined as TmuxTerminalManager | undefined }; fixtures.push(resource);
+    const options = {
+      dataDirectory: directory, hostId: crypto.randomUUID(), bundleDirectory: resolve(bundle!), pollIntervalMs: 100,
+      shell: { application: "/bin/bash", args: ["--noprofile", "--norc", "-i"] },
+    };
+    let manager = await TmuxTerminalManager.open(options); resource.manager = manager;
+    const actionKey = "b".repeat(64), terminal = await manager.create({ cwd: directory, target: { projectId: crypto.randomUUID() } }, undefined, { actionKey });
+    const internal = manager as unknown as { cli(command: string[], maximumBytes?: number): Promise<string> };
+    const nativeCli = internal.cli.bind(manager); let respawns = 0;
+    internal.cli = async (command, maximumBytes) => {
+      const output = await nativeCli(command, maximumBytes);
+      if (command[0] === "respawn-pane") { respawns++; throw new Error("Injected lost respawn acknowledgement"); }
+      return output;
+    };
+    const marker = join(directory, "must-not-replay"), command = `printf replayed > ${quote(marker)}`;
+    await expect(manager.restartAction(terminal.id, command)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(manager.get(terminal.id)).toMatchObject({ id: terminal.id, pid: null, status: "error", attachable: false });
+    await expect(manager.restartAction(terminal.id, command)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(respawns).toBe(1); expect(existsSync(marker)).toBe(false);
+    internal.cli = nativeCli;
+    await manager.shutdown();
+    manager = await TmuxTerminalManager.open(options); resource.manager = manager;
+    expect(manager.getAction(actionKey)).toMatchObject({ id: terminal.id, attachable: false });
+    await expect(manager.restartAction(terminal.id, command)).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(existsSync(marker)).toBe(false);
+  }, 20_000);
 
   for (const code of [0, 7]) for (const cleanup of ["close", "shutdown"] as const) {
     test(`retained natural exit ${code} preserves its outcome through ${cleanup} and reopen`, async () => {

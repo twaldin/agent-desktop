@@ -1,3 +1,4 @@
+import type { LocalEnvironmentActions } from "./local-environments/actions";
 import { LocalEnvironmentStore } from "./local-environments";
 import { join, resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
@@ -34,7 +35,7 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
     case "environment.read": return { type: query.type, configPath: text(query.configPath) };
     case "files.list": return { type: query.type, path: optionalText(query.path) };
     case "file.stat": case "file.read": return { type: query.type, path: text(query.path) };
-    case "environments.list": case "git.status": case "git.branches": case "git.worktrees": return { type: query.type };
+    case "environment.actions": case "environments.list": case "git.status": case "git.branches": case "git.worktrees": return { type: query.type };
     case "git.diff": {
       if (query.context !== undefined && (!Number.isSafeInteger(query.context) || (query.context as number) < 0 || (query.context as number) > 1000)) throw new Error("Invalid diff context.");
       return { type: query.type, path: optionalText(query.path), staged: optionalBoolean(query.staged), context: query.context as number | undefined };
@@ -45,6 +46,16 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
 export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
   const action = object(value);
   switch (action.type) {
+    case "environment.select": {
+      if (!Number.isSafeInteger(action.expectedRevision) || (action.expectedRevision as number) < 0) throw new Error("Invalid environment selection revision.");
+      return { type: action.type, configPath: action.configPath === null ? null : text(action.configPath), expectedRevision: action.expectedRevision as number };
+    }
+    case "environment.action": {
+      if (!Number.isSafeInteger(action.selectionRevision) || (action.selectionRevision as number) < 0 || !Number.isSafeInteger(action.actionIndex) || (action.actionIndex as number) < 0)
+        throw new Error("Invalid environment action selection.");
+      if (typeof action.configRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.configRevision)) throw new Error("The exact environment config revision is required.");
+      return { type: action.type, configPath: text(action.configPath), configRevision: action.configRevision, selectionRevision: action.selectionRevision as number, actionIndex: action.actionIndex as number };
+    }
     case "environment.save": {
       if (typeof action.raw !== "string" || new TextEncoder().encode(action.raw).length > 1024 * 1024) throw new Error("Invalid environment config or config exceeds 1 MiB.");
       if (action.expectedRevision !== null && (typeof action.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error("The exact environment revision is required.");
@@ -76,7 +87,7 @@ export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
 
 export class HostWorkspaces {
   constructor(private store: HostStore, private dataDirectory: string, private reserveMutation: (path: string) => () => void,
-    private removal?: { before(path: string): Promise<void>; after(path: string): void }) {}
+    private removal?: { before(path: string): Promise<void>; after(path: string): void }, private actions?: LocalEnvironmentActions) {}
   #resolve(target: WorkspaceTarget): WorkspaceService {
     const session = "sessionId" in target ? this.store.getSession(target.sessionId) : undefined;
     const projectId = "projectId" in target ? target.projectId : session?.projectId;
@@ -94,6 +105,10 @@ export class HostWorkspaces {
   async query(target: WorkspaceTarget, query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
     const workspace = this.#resolve(target);
     switch (query.type) {
+      case "environment.actions": {
+        if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");
+        return { type: query.type, state: await this.actions.catalog(target) };
+      }
       case "environment.output":
       case "environment.preparation": {
         const projectId = 'projectId' in target ? target.projectId : this.store.getSession(target.sessionId)?.projectId;
@@ -116,6 +131,14 @@ export class HostWorkspaces {
   async mutate(target: WorkspaceTarget, action: WorkspaceMutation): Promise<WorkspaceMutationResult> {
     const workspace = this.#resolve(target);
     switch (action.type) {
+      case "environment.select": {
+        if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");
+        return { type: action.type, state: await this.actions.select(target, action.configPath, action.expectedRevision) };
+      }
+      case "environment.action": {
+        if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");
+        return { type: action.type, terminal: await this.actions.run(target, action) };
+      }
       case "environment.save": return { type: action.type, result: await new LocalEnvironmentStore(workspace.cwd).save(action) };
       case "file.write": return { type: action.type, result: await workspace.writeText(action.path, action) };
       case "git.stage": return { type: action.type, status: await workspace.stage(action.paths) };

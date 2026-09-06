@@ -122,3 +122,13 @@ export function scriptForPlatform(script: LocalEnvironmentScript | undefined, pl
   if (!script) return null;
   return script[platform]?.script || script.script;
 }
+
+/** Host-resolved configured actions; shell text and setup exports remain on the owner. */
+export interface LocalEnvironmentActionsState {
+  selectionRevision: number;
+  selectedConfigPath: string | null;
+  configRevision: string | null;
+  environments: Array<{ configPath: string; name: string | null; error?: string }>;
+  actions: Array<{ index: number; name: string; icon: LocalEnvironmentIcon | null }>;
+  available: boolean;
+}

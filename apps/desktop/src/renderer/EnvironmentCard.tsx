@@ -1,13 +1,13 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useState, type ReactNode } from "react";
 import type { SessionActivitySnapshot } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
 import type { WorkspaceState } from "./workspace-state";
 import "./environment-card.css";
 
 export interface EnvironmentSource { id: string; label: string; kind: "image" | "file"; onOpen(): void }
-export interface EnvironmentCardProps { hostName: string; cwd: string; local: boolean; connected: boolean; workspace: WorkspaceState; activity?: SessionActivitySnapshot | null; activityError?: string; sources: readonly EnvironmentSource[]; onReview(): void; onCommit(): void; onFiles(): void; onTerminal(): void; onHost(): void; onClose(): void }
+export interface EnvironmentCardProps { hostName: string; cwd: string; local: boolean; connected: boolean; workspace: WorkspaceState; activity?: SessionActivitySnapshot | null; activityError?: string; sources: readonly EnvironmentSource[]; onReview(): void; onCommit(): void; onFiles(): void; onTerminal(): void; onHost(): void; onClose(): void; actions?: ReactNode }
 
-export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, onClose }: EnvironmentCardProps) {
+export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, onClose, actions }: EnvironmentCardProps) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [expandedSources, setExpandedSources] = useState(false);
   const [copyError, setCopyError] = useState<string>();
@@ -27,7 +27,7 @@ export function EnvironmentCard({ hostName, cwd, local, connected, workspace, ac
   }
 
   return <aside className="environment-card" aria-label="Environment summary">
-    <header className="environment-card-header"><h2>Environment</h2><button className="icon-button" aria-label="Close environment summary" onClick={onClose}><Icon name="close"/></button></header>
+    <header className="environment-card-header"><h2>Environment</h2>{actions}<button className="icon-button" aria-label="Close environment summary" onClick={onClose}><Icon name="close"/></button></header>
     <section className="environment-section environment-overview">
       <button className="environment-row" disabled={!status} onClick={onReview}><Icon name="sliders"/><span><strong>Changes</strong><small>{status ? `${changed.size} ${changed.size === 1 ? "file" : "files"}${staged.length ? ` · ${staged.length} staged` : ""}${conflict ? " · conflicts" : ""}` : "Unavailable"}</small></span><Icon name="chevron"/></button>
       <div className="environment-row environment-host"><button onClick={onHost} title={cwd || hostName}><Icon name="terminal"/><span><strong>{local ? "Local" : hostName}</strong><small>{connected ? cwd || "Connected" : "Offline"}</small></span></button><button className="environment-row-action" aria-label="Open terminal" title="Open terminal" disabled={!connected} onClick={onTerminal}><Icon name="terminal"/></button></div>

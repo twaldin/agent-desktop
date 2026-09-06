@@ -4,6 +4,7 @@ import { HostRequestError } from "./host-transport";
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
 export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" {
   const command = envelope.command;
+  if (command.type === 'workspace.mutate' && (command.action.type === 'environment.select' || command.action.type === 'environment.action')) return '/v5/commands';
   if (envelope.commandVersion === 5 || command.type === 'session.environment.cancel' || command.type === 'session.environment.resume' || command.type === 'session.create' && Object.hasOwn(command, 'environment')
     || command.type === 'draft.put' && Object.hasOwn(command.draft, 'environment')) return '/v5/commands';
   if (envelope.commandVersion === 4 || command.type === 'session.create' && Object.hasOwn(command, 'worktree')

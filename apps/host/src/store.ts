@@ -120,6 +120,23 @@ export class HostStore {
     this.db.close();
   }
 
+  getActionEnvironmentSelection(canonicalCwd: string): { revision: number; configPath: string | null } | undefined {
+    const row = this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key = ?").get(`environment-selection:${canonicalCwd}`);
+    return row ? JSON.parse(row.data) : undefined;
+  }
+  putActionEnvironmentSelection(canonicalCwd: string, configPath: string | null, expectedRevision: number): { revision: number; configPath: string | null } {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error("Invalid environment selection revision.");
+    return this.db.transaction(() => {
+      const current = this.getActionEnvironmentSelection(canonicalCwd);
+      if ((current?.revision ?? 0) !== expectedRevision) throw new Error("The environment selection changed elsewhere. Refresh before selecting again.");
+      this.requireVersion(5);
+      const next = { revision: expectedRevision + 1, configPath };
+      this.db.query("INSERT INTO metadata (key, data) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data")
+        .run(`environment-selection:${canonicalCwd}`, JSON.stringify(next));
+      return next;
+    }).immediate();
+  }
+
   readThemeFileMarker(): { currentHash?: string; pendingHash?: string } | undefined {
     const row = this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key = ?").get("theme-file-marker");
     return row ? JSON.parse(row.data) : undefined;

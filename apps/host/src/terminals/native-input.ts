@@ -48,3 +48,12 @@ export function nativeInputCommand(pane: string, cols: number, rows: number, inp
   } else command = hex(pane, Buffer.from(input.kind === "bytes" ? input.base64 : input.data, input.kind === "bytes" ? "base64" : "utf8"));
   return conditional(pane, `#{&&:#{==:#{pane_width},${cols}},#{==:#{pane_height},${rows}}}`, command, "display-message -p AGENT_STALE_GEOMETRY");
 }
+
+/** Assemble and bound the whole shell input before creating or replacing any program. */
+export function nativeActionText(cwd: string, command: string): string {
+  if (!command.trim() || command.includes("\0")) throw new TerminalError("INVALID_TERMINAL_ACTION", "A configured action must have a non-empty command.");
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+  const data = `cd ${quote(cwd)} && ${command.replace(/\r\n?/g, "\n")}\n`;
+  validateNativeInput({ kind: "text", data });
+  return data;
+}

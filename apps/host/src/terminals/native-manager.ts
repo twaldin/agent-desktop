@@ -11,11 +11,12 @@ import { sha256, verifyTmuxBundle, type TmuxBundle } from "./bundle";
 import { NativeControlError, TmuxControl } from "./control";
 import { TerminalError } from "./error";
 import { defaultTerminalShell } from "./default-shell";
-import { nativeInputCommand, nativeInputIdentity, validateNativeInput } from "./native-input";
+import { nativeActionText, nativeInputCommand, nativeInputIdentity, validateNativeInput } from "./native-input";
 import { NativeTerminalStore, privateDirectory, privateFile, atomicPrivateText, type NativeTerminalCatalog, type NativeTerminalRecord } from "./native-store";
 import { isProtectedLocalEnvironmentKey, localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const ACTION_KEY = /^[a-f0-9]{64}$/;
 const copy = <T>(value: T): T => structuredClone(value);
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
 const active = (info: NativeTerminalInfo) => info.status === "running" || info.status === "starting" || info.status === "closing";
@@ -167,6 +168,11 @@ export class TmuxTerminalManager {
   private find(id: string): Entry { const entry = this.entries.get(id); if (!entry) throw new TerminalError("TERMINAL_NOT_FOUND", "The native terminal does not exist on its owning host."); return entry; }
   private attachment(id: string): Attachment { const attachment = this.attachments.get(id); if (!attachment || attachment.closing || attachment.info.expiresAt <= Date.now()) throw new TerminalError("TERMINAL_ATTACHMENT_EXPIRED", "This native viewer attachment expired. Create a new attachment to the same terminal."); return attachment; }
   get(id: string): NativeTerminalInfo { return this.publicInfo(this.find(id)); }
+  getAction(actionKey: string): NativeTerminalInfo | undefined {
+    if (!ACTION_KEY.test(actionKey)) throw new TerminalError("INVALID_TERMINAL_ACTION", "A terminal action key must be a SHA-256 digest.");
+    const entry = [...this.entries.values()].find(value => value.record.actionKey === actionKey);
+    return entry ? this.publicInfo(entry) : undefined;
+  }
   list(target?: WorkspaceTarget): NativeTerminalInfo[] { const key = target && targetKey(target); return [...this.entries.values()].filter(entry => !key || targetKey(entry.record.info.target) === key).map(entry => this.publicInfo(entry)); }
 
   private async verifyServer(): Promise<void> {
@@ -187,6 +193,10 @@ export class TmuxTerminalManager {
       const rows = await this.panes();
       for (const entry of this.entries.values()) {
         if (entry.record.info.serverGeneration !== this.catalog.serverGeneration) continue;
+        if (entry.record.restartPending) {
+          entry.record.info = { ...entry.record.info, status: "error", error: entry.record.info.error ?? "The action restart outcome is unknown; it was not replayed." };
+          continue;
+        }
         const row = rows.find(row => row.session === entry.record.sessionName);
         if (!row) { if (active(entry.record.info)) this.interrupted(entry, "The owning native pane is missing; no shell or input was replayed."); continue; }
         if ((entry.record.paneId && entry.record.paneId !== row.pane) || (row.id && row.id !== entry.record.info.id)) throw new TerminalError("TERMINAL_OWNER_MISMATCH", "A native pane differs from its durable terminal identity.");
@@ -227,12 +237,18 @@ export class TmuxTerminalManager {
     await this.cli(["new-session", "-d", "-s", "agent_control", "-x", "20", "-y", "5", "/usr/bin/true", "agent-desktop-control"]);
     await this.verifyServer(); this.save();
   }
-  create(input: TerminalCreateOptions & { cwd: string }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<NativeTerminalInfo> {
+  create(
+    input: TerminalCreateOptions & { cwd: string },
+    localEnvironment?: LocalEnvironmentWorkerEnvironment,
+    action?: { actionKey: string },
+  ): Promise<NativeTerminalInfo> {
     const operation = this.createTail.then(async () => {
       if (this.stopping) throw new TerminalError("TERMINALS_STOPPING", "The native terminal host is stopping.");
       targetKey(input.target); const cwd = realpathSync(input.cwd); if (!statSync(cwd).isDirectory()) throw new TerminalError("NOT_DIRECTORY", "The owning terminal directory must exist.");
       if ([...this.entries.values()].filter(entry => active(entry.record.info)).length >= this.maximumRunning) throw new TerminalError("TERMINAL_LIMIT", "Close a native terminal before creating another.");
       if (this.entries.size >= 128) throw new TerminalError("TERMINAL_HISTORY_LIMIT", "Forget an exited terminal before creating another.");
+      if (action && !ACTION_KEY.test(action.actionKey)) throw new TerminalError("INVALID_TERMINAL_ACTION", "A terminal action key must be a SHA-256 digest.");
+      if (action && [...this.entries.values()].some(entry => entry.record.actionKey === action.actionKey)) throw new TerminalError("TERMINAL_ACTION_EXISTS", "This configured action already owns a native terminal.");
       const id = crypto.randomUUID(), size = dimensions(input.cols ?? 120, input.rows ?? 40);
       const launch = this.environmentLaunch(id, cwd, localEnvironment);
       try { await this.prepareServer(); }
@@ -241,7 +257,7 @@ export class TmuxTerminalManager {
         if (launch.payload) this.cleanupEnvironmentLaunch(id);
         throw error;
       }
-      const entry: Entry = { record: { info: { id, target: copy(input.target), cwd, shell: basename(this.shell.application), pid: null, ...size, status: "starting", createdAt: Date.now(), protocol: NATIVE_TERMINAL_PROTOCOL, serverGeneration: this.catalog.serverGeneration, geometryRevision: 1, inputEpoch: this.inputEpoch }, sessionName: `agent_${id.replaceAll("-", "")}`, prepared: true }, mutating: true };
+      const entry: Entry = { record: { info: { id, target: copy(input.target), cwd, shell: basename(this.shell.application), pid: null, ...size, status: "starting", createdAt: Date.now(), protocol: NATIVE_TERMINAL_PROTOCOL, serverGeneration: this.catalog.serverGeneration, geometryRevision: 1, inputEpoch: this.inputEpoch }, sessionName: `agent_${id.replaceAll("-", "")}`, prepared: true, ...(action ? { actionKey: action.actionKey } : {}) }, mutating: true };
       this.entries.set(id, entry); this.save(); this.state(entry);
       try {
         await this.cli(["new-session", "-d", "-s", entry.record.sessionName, "-x", String(size.cols), "-y", String(size.rows), "-c", cwd, launch.application, ...launch.args]);
@@ -258,6 +274,80 @@ export class TmuxTerminalManager {
       finally { entry.mutating = false; }
     });
     this.createTail = operation.then(() => {}, () => {}); return operation;
+  }
+
+  restartAction(terminalId: string, command: string, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<NativeTerminalInfo> {
+    if (typeof command !== "string" || !command.trim() || command.includes("\0") || Buffer.byteLength(command) > 64 * 1024)
+      return Promise.reject(new TerminalError("INVALID_TERMINAL_ACTION", "A terminal action command must contain between 1 and 65536 bytes."));
+    const operation = this.createTail.then(async () => {
+      if (this.stopping) throw new TerminalError("TERMINALS_STOPPING", "The native terminal host is stopping.");
+      const entry = this.find(terminalId), info = entry.record.info;
+      if (!entry.record.actionKey) throw new TerminalError("INVALID_TERMINAL_ACTION", "This native terminal is not associated with a configured action.");
+      if (entry.record.restartPending) throw new TerminalError("OUTCOME_UNKNOWN", "The previous action restart has an unknown outcome. Inspect its terminal, then close and forget it before starting a new action.");
+      if (entry.closing && info.status === "exited" && !entry.record.paneId) entry.closing = undefined;
+      if (entry.mutating || entry.closing) throw new TerminalError("TERMINAL_BUSY", "This native terminal is already being changed.");
+      const knownExited = info.status === "exited";
+      if (!knownExited && (!entry.record.paneId || info.serverGeneration !== this.catalog.serverGeneration || !this.server || this.server.status() !== "running"))
+        throw new TerminalError("TERMINAL_NOT_RUNNING", "This action terminal has no verified native pane to restart.");
+      if (knownExited && [...this.entries.values()].filter(value => active(value.record.info)).length >= this.maximumRunning)
+        throw new TerminalError("TERMINAL_LIMIT", "Close a native terminal before running this action.");
+      const initial = nativeActionText(info.cwd, command);
+      const launch = this.environmentLaunch(terminalId, info.cwd, localEnvironment);
+      entry.mutating = true;
+      let restartDispatched = false;
+      try {
+        // An explicit new Run can reopen a definitely closed action, retaining its tab identity.
+        // Unknown outcomes remain blocked above; recovery itself never starts a program.
+        if (knownExited) await this.prepareServer();
+        const oldRow = (await this.panes()).find(row => row.session === entry.record.sessionName);
+        if (oldRow && (oldRow.id !== terminalId || oldRow.pane !== entry.record.paneId || info.serverGeneration !== this.catalog.serverGeneration))
+          throw new TerminalError("TERMINAL_OWNER_MISMATCH", "The action pane differs from its durable owner.");
+        if (!oldRow && !knownExited) throw new TerminalError("TERMINAL_NOT_RUNNING", "The action pane disappeared; it was not replaced.");
+        // Join accepted input before invalidating this pane's viewers.
+        if (oldRow) await this.controller(entry).execute(`display-message -p -t ${oldRow.pane} AGENT_ACTION_READY`);
+        await this.detachEntry(terminalId);
+        await entry.control?.close(); entry.control = undefined;
+        entry.record.restartPending = true;
+        entry.record.info = { ...info, pid: null, status: "starting", serverGeneration: this.catalog.serverGeneration, geometryRevision: info.geometryRevision + 1,
+          error: "The action restart is awaiting its native acknowledgement." };
+        delete entry.record.info.exitedAt; delete entry.record.info.exitCode; delete entry.record.info.cancelled;
+        this.save(); this.state(entry);
+        restartDispatched = true;
+        if (oldRow) await this.cli(["respawn-pane", "-k", "-t", oldRow.pane, "-c", info.cwd, launch.application, ...launch.args]);
+        else {
+          const pane = await this.cli(["new-session", "-d", "-P", "-F", "#{pane_id}", "-s", entry.record.sessionName, "-x", String(info.cols), "-y", String(info.rows), "-c", info.cwd, launch.application, ...launch.args]);
+          if (!/^%[0-9]+$/.test(pane)) throw new TerminalError("TERMINAL_RESTART_UNCERTAIN", "The action pane identity was not returned.");
+          await this.verifyServer();
+          await this.cli(["set-option", "-p", "-t", pane, "@agent-terminal", terminalId]);
+          await this.cli(["set-window-option", "-t", entry.record.sessionName, "window-size", "manual"]);
+        }
+        const row = (await this.panes()).find(row => row.id === terminalId && row.session === entry.record.sessionName && (!oldRow || row.pane === oldRow.pane));
+        if (!row || row.dead) throw new TerminalError("TERMINAL_RESTART_UNCERTAIN", "The action pane restart could not be reconciled.");
+        entry.record.paneId = row.pane; entry.record.info.pid = row.pid; entry.process = Process.fromPid(row.pid) ?? undefined;
+        const receipt = await this.controller(entry).execute(nativeInputCommand(row.pane, info.cols, info.rows, { kind: "text", data: initial }));
+        if (receipt.includes("AGENT_STALE_GEOMETRY")) throw new TerminalError("STALE_TERMINAL_GEOMETRY", "The action pane changed size before its command arrived.");
+        entry.record.restartPending = undefined;
+        entry.record.prepared = false;
+        entry.record.info = { ...entry.record.info, pid: row.pid, status: "running" };
+        delete entry.record.info.error;
+        this.store.forgetHistory(terminalId);
+        this.save(); this.state(entry);
+        return this.publicInfo(entry);
+      } catch (error) {
+        if (!restartDispatched) {
+          if (launch.payload) this.cleanupEnvironmentLaunch(terminalId);
+          entry.record.info = info;
+        } else {
+          entry.record.restartPending = true;
+          entry.record.info = { ...entry.record.info, status: "error", error: `The action restart outcome is unknown. ${error instanceof Error ? error.message : "The native receipt was lost."}` };
+        }
+        this.save(); this.state(entry);
+        if (restartDispatched) throw new TerminalError("OUTCOME_UNKNOWN", entry.record.info.error!);
+        throw error;
+      } finally { entry.mutating = false; }
+    });
+    this.createTail = operation.then(() => {}, () => {});
+    return operation;
   }
 
   async attach(terminalId: string, viewerId: string): Promise<NativeTerminalAttachment> {

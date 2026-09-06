@@ -5,6 +5,8 @@ import { HostRequestError, requestHost } from "./host-transport";
 
 test('environment-aware drafts and consumption never downgrade to an older endpoint', async () => {
   const envelopes: CommandEnvelope[] = [
+    { id: 'select-action-config', command: { type: 'workspace.mutate', target: {projectId: 'p'}, action: {type: 'environment.select', configPath: null, expectedRevision: 0} } },
+    { id: 'run-action', command: { type: 'workspace.mutate', target: {sessionId: 's'}, action: {type: 'environment.action', configPath: '/owned/config.toml', configRevision: 'a'.repeat(64), selectionRevision: 1, actionIndex: 0} } },
     { id: 'clear-environment', command: { type: 'draft.put', expectedRevision: 2, draft: { id: 'd', text: 'keep', projectId: null, model: null, environment: null } } },
     { id: 'create-without-environment', command: { type: 'session.create', projectId: 'p', worktree: { type: 'working-tree' }, environment: null, draft: { id: 'd', revision: 3 } } },
     { id: 'consume-environment-draft', commandVersion: 5, command: { type: 'session.prompt', sessionId: 's', text: 'keep', draft: { id: 'd', revision: 3 } } },

@@ -62,6 +62,6 @@ test('environment catalog and revisioned save use authenticated owning workspace
     expect(await readFile(saved.configPath,'utf8')).toBe(editRaw);
     expect(await (await query(projectA)).json()).toMatchObject({type:'environments.list',environments:[{type:'environment',environment:{name:'Saved edit'}}]});
     const state=await (await request('/v1/state')).json();
-    expect(state.localEnvironments).toEqual({configuration:true,execution:{commandVersion:5}}); expect(state.sessions).toHaveLength(0);
+    expect(state.localEnvironments).toEqual({configuration:true,execution:{commandVersion:5,scriptOutput:true,scriptCancellation:true}}); expect(state.sessions).toHaveLength(0);
   } finally { await host?.stop(); await rm(root,{recursive:true,force:true}); }
 },30_000);

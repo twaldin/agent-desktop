@@ -2,6 +2,16 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source28 — configured actions run in the native terminal dock
+
+The environment card now exposes configured actions and an environment selector. Run opens the owning project's or session's actual native terminal; another explicit Run restarts that action in the same tab. The host checks configuration and selection revisions, deduplicates command receipts, restores session-specific setup exports and refuses to replay an uncertain restart. An explicit Run can reopen a definitely closed action. Old protocol endpoints reject these commands before execution, and their first persisted use requires schema5.
+
+The controlled production-App flow passes six checks with four captures: open/dismiss the menu, run through its menu, then rerun through the primary button. Both actual shell executions are recorded and the final terminal visibly shows the second result. Inspection caught a stale attachment error in an earlier capture despite successful execution; generation-aware recovery now restores the viewer without replaying input. The final screenshot is settled with no error or attaching banner. This is hidden Electron/source-runtime proof, not installed-window or native pixel parity.
+
+The integrated macOS suite passed66 tests/508 assertions. The subsequent close/reopen regression passes19 tests/208 assertions, and renderer/transport regressions pass21 tests/157 assertions. Deckbox passes28 tests/224 assertions on the final action/native-terminal source; all515 transferred source hashes match, with its installed host PID and checked runtime hashes unchanged. Typecheck passes. Multiline setup exports and legitimate shell variable names are also preserved by the corrected capture runner. Private evidence: `.data/environment28/actions-scope.md`, `actions-ui-1788700202434/`, `actions-close-final-tests.log`, `actions-viewer-regression.log` and `linux-actions-close/`.
+
+Source28 remains unfrozen and uninstalled. Native environment discovery/import, worktree-specific Git configuration selection, action recency/shortcuts, whole-worktree progress/cancellation, Auto-fix and paired native acceptance remain open. The earlier checkpoints below retain their original validation scope.
+
 ## Source28 — live script output and cancellation
 
 Environment setup now exposes live stdout/stderr through More details and supports explicit cancellation of its exact running script. Cancellation bypasses the waiting creation command, settles without creating a session, and preserves the original submission and newer draft for explicit retry. Output and cancellation receipts survive host restart. A process that has already exited refuses late cancellation while its exports finish being captured. These controls are specifically advertised as script output/cancellation; Git checkout/fetch and native-session creation cancellation remain unfinished.

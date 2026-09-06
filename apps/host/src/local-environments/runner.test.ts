@@ -9,7 +9,10 @@ function root() { const path = mkdtempSync(join(tmpdir(), "agent-desktop-environ
 afterEach(() => { for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
 
 const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-const baseEnvironment = () => ({ PATH: process.env.PATH, HOME: process.env.HOME, LOCAL_ENV_REMOVE: "old", PRIVATE_UNCHANGED: "must-not-be-public", MULTILINE: "before\nvalue" });
+const baseEnvironment = () => ({
+  PATH: process.env.PATH, HOME: process.env.HOME, LOCAL_ENV_REMOVE: "old", PRIVATE_UNCHANGED: "must-not-be-public",
+  MULTILINE: "before\nvalue", MULTILINE_UNSET: "remove\nthis",
+});
 function input(script: string, overrides: Partial<LocalEnvironmentRunInput> = {}): LocalEnvironmentRunInput {
   const sourceRoot = root(), worktreeRoot = root();
   return { cwd: worktreeRoot, sourceRoot, worktreeRoot, script, lifecycle: "setup", baseEnvironment: baseEnvironment(), shell: { executable: "/bin/bash" }, ...overrides };
@@ -41,12 +44,26 @@ test("setup runs once, injects owned paths and returns only allowed exported env
     "export PI_CODING_AGENT_DIR='/attempted-relocation'",
     "export AGENT_DESKTOP_DATA_DIR='/attempted-relocation'",
     "export MULTILINE='after\nvalue'",
+    "export MULTILINE_ADDED='new\nmultiline\nvalue'",
+    "unset MULTILINE_UNSET",
+    "export after_capture_path='user\npath'",
+    "export code='user-code'",
     "printf 'visible stdout'",
     "printf 'visible stderr' >&2",
   ].join("\n"), { onOutput: event => output.push(Buffer.from(event.chunk).toString("utf8")) });
   const result = await runLocalEnvironmentScript(run);
-  expect(result).toMatchObject({ status: "succeeded", exitCode: 0, stdout: "visible stdout", stderr: "visible stderr", outputTruncated: false,
-    environmentDelta: { version: 1, set: { LOCAL_ENV_ADDED: "added value" }, unset: ["LOCAL_ENV_REMOVE"] } });
+  expect(result).toMatchObject({ status: "succeeded", exitCode: 0, stdout: "visible stdout", stderr: "visible stderr", outputTruncated: false });
+  expect(result.environmentDelta).toEqual({
+    version: 1,
+    set: {
+      LOCAL_ENV_ADDED: "added value",
+      MULTILINE: "after\nvalue",
+      MULTILINE_ADDED: "new\nmultiline\nvalue",
+      after_capture_path: "user\npath",
+      code: "user-code",
+    },
+    unset: ["LOCAL_ENV_REMOVE", "MULTILINE_UNSET"],
+  });
   expect(readFileSync(marker, "utf8")).toBe("once\n");
   const publicResult = { ...result, environmentDelta: undefined };
   expect(JSON.stringify(publicResult)).not.toContain("must-not-be-public");

@@ -1,3 +1,4 @@
+import { LocalEnvironmentActions } from "./local-environments/actions";
 import { hasNewChatIntent, requiresNewChatProtocol } from './new-chat-protocol';
 import { hasEnvironmentIntent, requiresEnvironmentProtocol } from './environment-protocol';
 import { LocalEnvironmentRuns } from './local-environments/runs';
@@ -88,6 +89,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     mutatingWorkspaces.add(path);
     return () => { mutatingWorkspaces.delete(path); };
   };
+  const environmentActions = new LocalEnvironmentActions(store, () => nativeTerminals, cwd => {
+    assertWorkspaceAvailable(cwd);
+    mutatingWorkspaces.add(cwd);
+    return () => { mutatingWorkspaces.delete(cwd); };
+  });
   const workspaces = new HostWorkspaces(store, dataDirectory, reserveWorkspaceMutation, {
     before: async path => {
       const record = store.environmentPreparations.list().find(item => item.worktreePath === path && item.phase !== 'removed');
@@ -99,7 +105,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       const record = store.environmentPreparations.list().find(item => item.worktreePath === path && item.phase === 'cleanup-succeeded');
       if (record) store.environmentPreparations.transition(record.id, record.revision, { type: 'removed' });
     },
-  });
+  }, environmentActions);
   const environmentRuns = new LocalEnvironmentRuns(store.environmentPreparations);
   const environmentLifecycle = new WorktreeEnvironmentLifecycle(store, workspaces, { signal: environmentAbort.signal }, environmentRuns);
   function assertWorkspaceAvailable(cwd: string): void {
@@ -336,7 +342,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence };
   }
   function publish(input: EventInput): void {
@@ -587,7 +593,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
     // not another full copy of each submitted editor buffer in the pending journal.
-    const claim = store.claimCommand(envelope.id, hash, envelope.command.type === "workspace.mutate" ? undefined : envelope.command);
+    const workspaceAction = envelope.command.type === "workspace.mutate" ? envelope.command.action : undefined;
+    // Action references contain no script bodies. Retain their version gate and owner
+    // so an older artifact cannot adopt a terminal with newer restart semantics.
+    const journalCommand = workspaceAction && workspaceAction.type !== "environment.action" && workspaceAction.type !== "environment.select" ? undefined : envelope.command;
+    const claim = store.claimCommand(envelope.id, hash, journalCommand);
     if (claim.kind === "conflict") return fail(envelope.id, "COMMAND_ID_REUSED", "This command ID belongs to a different request.");
     if (claim.kind === "done") return claim.record.result!;
     if (claim.kind === "pending") return commands.get(envelope.id)

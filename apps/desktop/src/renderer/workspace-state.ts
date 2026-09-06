@@ -1,4 +1,4 @@
-import type { CommandEnvelope, DesktopBridge } from "../../../../packages/shared/src/protocol";
+import type { CommandEnvelope, DesktopBridge, LocalEnvironmentActionsState } from "../../../../packages/shared/src/protocol";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "../../../../packages/shared/src/workspace-protocol";
 import type { FileContent, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "../../../../packages/shared/src/workspace";
 import type { OfflineCache } from "./offline-cache";
@@ -26,6 +26,8 @@ export class WorkspaceState {
   pending?: PendingWorkspaceMutation;
   busy = false;
   notice?: string;
+  environmentActions?: LocalEnvironmentActionsState;
+  mutationReceipt?: { commandId: string; value: WorkspaceMutationResult };
   cacheWarning?: string;
   commitMessage = "";
   private listeners = new Set<() => void>();
@@ -89,6 +91,7 @@ export class WorkspaceState {
   async refresh() {
     await this.restore();
     const reads = [this.list(this.directory), this.loadGit()];
+    if (this.environmentActions !== undefined) reads.push(this.loadEnvironmentActions());
     if (this.opened) reads.push(this.read(this.opened));
     await Promise.allSettled(reads);
   }
@@ -117,6 +120,13 @@ export class WorkspaceState {
     if (choice === "remote") { item.recoveredText = item.text; item.text = current?.kind === "text" ? current.text : ""; }
     item.content = current; item.conflict = undefined; item.dirty = choice === "local";
     this.changed(); this.saveSoon();
+  }
+  loadEnvironmentActions() {
+    return this.load("environment-actions", async () => {
+      const result = await this.query({ type: "environment.actions" });
+      if (result.type !== "environment.actions") throw new Error("The host returned the wrong environment actions response.");
+      this.environmentActions = result.state;
+    });
   }
   loadGit() {
     return this.load("git", async () => {
@@ -166,7 +176,7 @@ export class WorkspaceState {
       } else {
         const value = result.value;
         if (!value || !("type" in value) || value.type !== item.envelope.command.action.type) throw new Error("The host did not return the expected mutation receipt.");
-        this.applyResult(item.envelope.command.action, value); this.pending = undefined;
+        this.applyResult(item.envelope.command.action, value); this.mutationReceipt = { commandId: item.envelope.id, value }; this.pending = undefined;
       }
       await this.persist();
     } catch (cause) {
@@ -176,7 +186,8 @@ export class WorkspaceState {
     } finally { this.busy = false; this.changed(); await this.refresh(); }
   }
   private applyResult(action: WorkspaceMutation, value: WorkspaceMutationResult) {
-    if (action.type === "file.write" && value.type === "file.write") {
+    if (value.type === "environment.select") this.environmentActions = value.state;
+    else if (action.type === "file.write" && value.type === "file.write") {
       const item = this.documents.get(action.path); if (!item) return;
       if (!value.result.ok) { item.conflict = value.result.current; this.errors.action = "The file changed on the host. Both versions are preserved below."; return; }
       const newer = item.text !== action.text;

@@ -80,8 +80,18 @@ export class NativeTerminalView {
     this.requested = true;
     if (this.refreshing || !this.alive || !this.connected) return;
     if (!attachable(this.terminal)) { this.restoring = false; this.publish(); return; }
+    const revision = this.attachmentRevision;
     this.refreshing = true;
-    void this.sync().catch(cause => { if (this.alive) this.restart(errorText(cause)); }).finally(() => { this.refreshing = false; });
+    void this.sync().catch(cause => {
+      if (!this.alive) return;
+      // Detach/restart invalidates the old attachment deliberately. A late failure from that
+      // generation must drive the already-requested recovery, not replace it with an error.
+      if (revision !== this.attachmentRevision) { this.requested = true; return; }
+      this.restart(errorText(cause));
+    }).finally(() => {
+      this.refreshing = false;
+      if (this.requested && this.alive && this.connected) this.refresh();
+    });
   }
   private async sync(): Promise<void> {
     let replacements = 0;
@@ -135,8 +145,8 @@ export class NativeTerminalView {
         if (!this.alive || !this.connected || this.fresh || this.attachment?.id !== attachment.id) return;
         try {
           const result = await this.bridge.nativeTerminalAction({ type: "reply", attachmentId: attachment.id, ...reply }, this.hostId);
-          if (result.accepted !== true) { this.restart("The terminal reply attachment expired. Restoring a fresh native view."); return; }
-        } catch { this.restart("Terminal reply delivery was interrupted. Restoring a fresh native view."); return; }
+          if (result.accepted !== true && !this.fresh && this.attachment?.id === attachment.id) { this.restart("The terminal reply attachment expired. Restoring a fresh native view."); return; }
+        } catch { if (!this.fresh && this.attachment?.id === attachment.id) this.restart("Terminal reply delivery was interrupted. Restoring a fresh native view."); return; }
       }
     });
     this.cursor.begin(attachment);

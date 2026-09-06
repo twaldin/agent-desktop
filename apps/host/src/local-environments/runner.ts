@@ -116,7 +116,7 @@ async function readBoundedEnvironment(path: string): Promise<Buffer> {
 function environmentDelta(before: Record<string, string>, after: Record<string, string>): LocalEnvironmentEnvironmentDelta | null {
   const set: Record<string, string> = {}, unset: string[] = [];
   for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
-    if (isProtectedLocalEnvironmentKey(key) || before[key]?.includes("\n") || after[key]?.includes("\n")) continue;
+    if (isProtectedLocalEnvironmentKey(key)) continue;
     if (!(key in after)) unset.push(key);
     else if (before[key] !== after[key]) set[key] = after[key];
   }
@@ -151,13 +151,13 @@ export async function runLocalEnvironmentScript(input: LocalEnvironmentRunInput)
   const beforePath = join(temporary, "before.env");
   const afterPath = join(temporary, "after.env");
   const captureSetup = input.lifecycle === "setup";
+  const captureOnExit = `if [ "$?" -eq 0 ]; then /usr/bin/env -0 > ${shellQuote(afterPath)}; fi`;
   const wrapper = [
     "umask 077",
     "set -eo pipefail",
     ...(captureSetup ? [
       `/usr/bin/env -0 > ${shellQuote(beforePath)}`,
-      `after_capture_path=${shellQuote(afterPath)}`,
-      `trap 'code=$?; if [ "$code" -eq 0 ]; then /usr/bin/env -0 > "$after_capture_path"; fi' EXIT`,
+      `trap ${shellQuote(captureOnExit)} EXIT`,
     ] : []),
     `. ${shellQuote(scriptPath)}`,
   ].join("\n");

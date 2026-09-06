@@ -3,7 +3,16 @@ import { join } from "node:path";
 import type { NativeTerminalHistory, NativeTerminalInfo } from "../../../../packages/shared/src/terminals";
 import { TerminalError } from "./error";
 
-export interface NativeTerminalRecord { info: NativeTerminalInfo; sessionName: string; paneId?: string; prepared: boolean }
+export interface NativeTerminalRecord {
+  info: NativeTerminalInfo;
+  sessionName: string;
+  paneId?: string;
+  prepared: boolean;
+  /** Host-private stable association for a configured action terminal. */
+  actionKey?: string;
+  /** A restart was dispatched without a complete native acknowledgement; never replay it automatically. */
+  restartPending?: boolean;
+}
 export interface NativeTerminalCatalog {
   schema: 1;
   hostId: string;
@@ -44,8 +53,13 @@ export class NativeTerminalStore {
     const value = JSON.parse(bytes.toString("utf8")) as NativeTerminalCatalog;
     const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
     if (value.schema !== 1 || !uuid.test(value.hostId) || !uuid.test(value.serverGeneration) || !/^[a-f0-9]{64}$/.test(value.bundleDigest) || typeof value.socket !== "string" || typeof value.bundleDirectory !== "string" || !Array.isArray(value.terminals) || value.terminals.length > 1000) throw new TerminalError("INVALID_TERMINAL_CATALOG", "The durable native terminal catalog is invalid.");
+    const actionKeys = new Set<string>();
     for (const terminal of value.terminals) {
-      if (!uuid.test(terminal.info?.id) || terminal.sessionName !== `agent_${terminal.info.id.replaceAll("-", "")}` || (terminal.paneId !== undefined && !/^%[0-9]+$/.test(terminal.paneId)) || typeof terminal.info.cwd !== "string" || !uuid.test(terminal.info.serverGeneration)) throw new TerminalError("INVALID_TERMINAL_CATALOG", "A native terminal catalog entry is invalid.");
+      if (!uuid.test(terminal.info?.id) || terminal.sessionName !== `agent_${terminal.info.id.replaceAll("-", "")}` || (terminal.paneId !== undefined && !/^%[0-9]+$/.test(terminal.paneId)) || typeof terminal.info.cwd !== "string" || !uuid.test(terminal.info.serverGeneration)
+        || (terminal.actionKey !== undefined && !/^[a-f0-9]{64}$/.test(terminal.actionKey)) || (terminal.restartPending !== undefined && terminal.restartPending !== true))
+        throw new TerminalError("INVALID_TERMINAL_CATALOG", "A native terminal catalog entry is invalid.");
+      if (terminal.actionKey && actionKeys.has(terminal.actionKey)) throw new TerminalError("INVALID_TERMINAL_CATALOG", "A native terminal action association is duplicated.");
+      if (terminal.actionKey) actionKeys.add(terminal.actionKey);
     }
     return value;
   }

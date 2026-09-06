@@ -3,6 +3,7 @@ import type { Draft, HostCommand } from "@agent-desktop/shared";
 export function hasEnvironmentIntent(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const command = value as Record<string, unknown>;
+  if (command.type === 'workspace.mutate' && command.action && typeof command.action === 'object' && ['environment.select', 'environment.action'].includes((command.action as {type?:string}).type ?? '')) return true;
   return command.type === 'session.environment.cancel' || command.type === 'session.environment.resume' || Object.hasOwn(command, "environment") || command.type === "draft.put" && !!command.draft
     && typeof command.draft === "object" && Object.hasOwn(command.draft, "environment");
 }

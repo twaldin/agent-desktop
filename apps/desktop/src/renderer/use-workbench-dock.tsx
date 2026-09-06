@@ -372,6 +372,7 @@ export function useWorkbenchDock(
     toggle,
     open,
     terminal,
+    bindTerminal,
     browser,
     updateBrowserTitle,
     workspaceTab,

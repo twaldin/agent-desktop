@@ -1,9 +1,11 @@
-import type { LocalEnvironmentCatalogItem, LocalEnvironmentSaveResult } from "./local-environments";
+import type { NativeTerminalInfo } from "./terminals";
+import type { LocalEnvironmentActionsState, LocalEnvironmentCatalogItem, LocalEnvironmentSaveResult } from "./local-environments";
 import type { LocalEnvironmentPreparationPublic, LocalEnvironmentExecutionOutput } from "./environment-preparations";
 import type { CreateWorktreeOptions, FileContent, FileWriteResult, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "./workspace";
 
 export type { WorkspaceTarget } from "./workspace";
 export type WorkspaceQuery =
+  | { type: "environment.actions" }
   | { type: "environment.output"; preparationId: string }
   | { type: "environment.preparation"; preparationId: string }
   | { type: "environment.read"; configPath: string }
@@ -16,6 +18,7 @@ export type WorkspaceQuery =
   | { type: "git.diff"; path?: string; staged?: boolean; context?: number }
   | { type: "git.worktrees" };
 export type WorkspaceQueryResult =
+  | { type: "environment.actions"; state: LocalEnvironmentActionsState }
   | { type: "environment.output"; output: LocalEnvironmentExecutionOutput | null }
   | { type: "environment.preparation"; preparation: LocalEnvironmentPreparationPublic }
   | { type: "environment.read"; configPath: string; revision: string; raw: string }
@@ -28,6 +31,8 @@ export type WorkspaceQueryResult =
   | { type: "git.diff"; diff: GitDiff }
   | { type: "git.worktrees"; worktrees: GitWorktree[] };
 export type WorkspaceMutation =
+  | { type: "environment.select"; configPath: string | null; expectedRevision: number }
+  | { type: "environment.action"; configPath: string; configRevision: string; selectionRevision: number; actionIndex: number }
   | { type: "environment.save"; configPath?: string | null; expectedRevision: string | null; raw: string }
   | { type: "file.write"; path: string; text: string; expectedRevision: string | null; bom?: boolean }
   | { type: "git.stage"; paths: string[] }
@@ -37,6 +42,8 @@ export type WorkspaceMutation =
   | { type: "worktree.create"; options: CreateWorktreeOptions }
   | { type: "worktree.remove"; path: string };
 export type WorkspaceMutationResult =
+  | { type: "environment.select"; state: LocalEnvironmentActionsState }
+  | { type: "environment.action"; terminal: NativeTerminalInfo }
   | { type: "environment.save"; result: LocalEnvironmentSaveResult }
   | { type: "file.write"; result: FileWriteResult }
   | { type: "git.stage" | "git.unstage"; status: GitStatus }
