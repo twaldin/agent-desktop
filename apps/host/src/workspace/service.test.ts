@@ -323,6 +323,21 @@ describe("actual local Git operations", () => {
     expect((await stat(unowned)).isDirectory()).toBe(true);
   });
 
+  test("managed worktree creation uses literal branch names instead of checkout-history expansion", async () => {
+    const { cwd, worktreeRoot, service } = await repository();
+    git(cwd, "checkout", "-b", "previous-topic");
+    git(cwd, "checkout", "main");
+    git(cwd, "branch", "-D", "previous-topic");
+    const before = await service.worktrees();
+    await expect(service.createWorktree({ path: "history-expansion", newBranch: "@{-1}" })).rejects.toMatchObject({ code: "INVALID_BRANCH" });
+    expect(await service.worktrees()).toEqual(before);
+    expect(await Bun.file(join(worktreeRoot, "history-expansion", ".git")).exists()).toBe(false);
+    expect(git(cwd, "branch", "--list", "previous-topic").trim()).toBe("");
+    const created = await service.createWorktree({ path: "literal-topic", newBranch: "literal-topic" });
+    expect(git(created.path, "branch", "--show-current").trim()).toBe("literal-topic");
+    await service.removeWorktree("literal-topic");
+  });
+
   test("detached worktree commits need a surviving reference before removal", async () => {
     const { cwd, service } = await repository();
     const tree = await service.createWorktree({ path: "detached" });

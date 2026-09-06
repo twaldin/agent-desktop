@@ -332,8 +332,7 @@ export class WorkspaceService {
     return serialized(`git:${this.cwd}`, async () => {
       await this.requireGitRoot();
       const before = await this.checkIndexRevision(expectedRevision);
-      const checkedBranch = await this.git(["check-ref-format", "--branch", branch]);
-      if (checkedBranch.stdout.trim() !== branch) throw new WorkspaceError("INVALID_BRANCH", "Branch syntax must name the requested local branch exactly.");
+      await this.requireLiteralBranch(branch);
       const ref = `refs/heads/${branch}`;
       if (create) {
         if (before.head === null) throw new WorkspaceError("UNBORN_BRANCH", "Create the repository's first commit before creating another branch.");
@@ -413,11 +412,11 @@ export class WorkspaceService {
       try { await lstat(target); throw new WorkspaceError("WORKTREE_EXISTS", "The worktree destination already exists."); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       if (options.branch) {
-        await this.git(["check-ref-format", "--branch", options.branch]);
+        await this.requireLiteralBranch(options.branch);
         await this.git(["show-ref", "--verify", `refs/heads/${options.branch}`]);
         await this.git(["worktree", "add", "--", target, options.branch]);
       } else {
-        if (options.newBranch) await this.git(["check-ref-format", "--branch", options.newBranch]);
+        if (options.newBranch) await this.requireLiteralBranch(options.newBranch);
         const start = (await this.git(["rev-parse", "--verify", "--end-of-options", `${options.startPoint ?? "HEAD"}^{commit}`])).stdout.trim();
         await this.git(["worktree", "add", ...(options.newBranch ? ["-b", options.newBranch] : ["--detach"]), "--", target, start]);
       }
@@ -425,6 +424,11 @@ export class WorkspaceService {
       if (!created) throw new WorkspaceError("WORKTREE_NOT_REGISTERED", "Git did not register the new worktree. Inspect its outcome before retrying.");
       return created;
     });
+  }
+
+  private async requireLiteralBranch(branch: string): Promise<void> {
+    const checked = await this.git(["check-ref-format", "--branch", branch]);
+    if (checked.stdout.trim() !== branch) throw new WorkspaceError("INVALID_BRANCH", "Branch syntax must name the requested local branch exactly.");
   }
 
   async removeWorktree(path: string): Promise<void> {
