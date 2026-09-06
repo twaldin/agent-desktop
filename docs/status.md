@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Frozen24 — signed and locally verified; Work handoff pending
+
+Release24 freezes `242c04328d780f1cfbe06877a49c029d229ad709`: bounded owner-bound browser capture transition recovery, the exact pinned welcome mark, project-aware heading and heading-anchored project picker. The clean suite passes584 tests, skips17 and fails0 (24,847 assertions/124 files). All531 tracked source hashes stay unchanged;328 packaged renderer files match the frozen build. Typecheck, native import/runtime checks, packaging and deep/strict signature verification pass.
+
+The isolated signed launcher has verified input hashes and creates one idle browser session plus a separate clean Git project, using fresh native/data/profile directories without credentials or prompts. Local verification confirmed one visible window, actual native Git status and both branches, stable host locator, and zero prompts. A native window screenshot records startup only at its actual797×496-point tiled geometry; it is not a matched parity capture. Both temporary local processes were stopped and the locator removed. Private evidence: `.data/release24-package/`. The app is built locally under `out/desktop-release24`; it has not been transferred or launched on Work.
+
+The first24 frozen attempt stopped before packaging because the worker-loss acceptance fixture could kill model discovery instead of its session worker: both loaded an extension that wrote one shared PID file. A forced real catalog refresh reproduced different executing/loader identities. The fixture now records the PID at the actual provider invocation and keeps the original uncertain-receipt/draft/restart assertions. Focused steering/goal tests pass7 cases with48 assertions, and independent review found no weakened acceptance. The failed attempt remains in `failed-cb8f3be/`; diagnosis is in `.data/steer-worker-identity24/`. This was a test-target identity correction, not a change to production steering semantics.
+
 ## Source24 — browser capture transition recovery
 
 A deterministic real-browser regression reproduces the rejected frame when one navigation crosses the screenshot boundary. The candidate retries only recognized read-only document-transition failures with the same owner/target and a bounded retry window. Native checks prove one navigation without replay, bounded failure under continued navigation, and release of the capture reservation afterward. Focused frame/control suites pass11 tests/85 assertions; a fresh native-only rerun passes31 assertions. Typecheck passes. Private evidence: `.data/browser-frame-transition24/`. The exact Work21 first-frame cause and installed24 behavior remain unverified; no current Work run was changed.
@@ -12,7 +20,7 @@ Release23 freezes `d019c6632362fb6857af289fe70fda3b13d49861`: integrated new-cha
 
 The separate Work artifact at `/Users/twaldin/.agent-desktop-release23.zb582k9m` passes336 transferred hashes and deep/strict signature verification. Its exact visible launcher was handed to the external verifier without launching it here or changing previous runs. The setup provides one idle browser session and a separate clean Git project with `main` and an existing feature branch. Local signed startup observed one visible window, stable host locator, actual clean Git status and both branches, and zero prompts; only the local proof processes were stopped. Private provenance: `.data/release23-package/`.
 
-Native23 browser-fit and context-menu checks remain pending. The first-frame transient error, full font/hover/corner/pixel matching, annotation/zoom and remote context-selection acceptance remain open. The earlier untransferred641bd2f build is explicitly superseded and preserved only as private evidence; it lacks the exact-branch-name and late-menu-completion guards.
+The verifier launched23 once and is exercising its browser-fit and context-menu scope. Yabai had kept that exact window tiled; floating only that window produced a stable1440×1000-point frame. Earlier large-window captures are size outliers, not an app geometry defect. Native23 browser-fit and context-menu results remain pending. The first-frame transient error, full font/hover/corner/pixel matching, annotation/zoom and remote context-selection acceptance remain open. The earlier untransferred641bd2f build is explicitly superseded and preserved only as private evidence; it lacks the exact-branch-name and late-menu-completion guards.
 
 ## Independent Work22 composer acceptance
 
