@@ -8,7 +8,7 @@ test("actual HTTP/native queue receipts preserve drafts through delivery, interr
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "agent-desktop-steer-contract-")));
   try {
     const child = Bun.spawn([process.execPath, fileURLToPath(new URL("./fixtures/native-steer-admission.ts", import.meta.url)), root], {
-      cwd: root, env: { HOME: root, PI_CODING_AGENT_DIR: path.join(root, "agent"), STEER_CONTRACT_GATES: path.join(root, "gates"),
+      cwd: root, env: { PI_CODING_AGENT_DIR: path.join(root, "agent"), STEER_CONTRACT_GATES: path.join(root, "gates"),
         PATH: process.env.PATH, SHELL: "/bin/sh", TMPDIR: tmpdir(), TERM: "dumb" }, stdout: "pipe", stderr: "pipe",
     });
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);

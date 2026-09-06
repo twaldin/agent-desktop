@@ -83,9 +83,14 @@ try {
 
   const afterRace = await command({ id: "prompt-before-worker-loss", command: { type: "session.prompt", sessionId: session.id, text: "Controlled worker loss prompt", model } });
   assert(afterRace.ok); await started(5);
+  const catalogResponse = await fetch(`${host.connection.origin}/v1/models/composer`, { method: "POST", headers: {
+    Authorization: `Bearer ${host.connection.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ target: { sessionId: session.id }, refresh: true }) });
+  assert.equal(catalogResponse.status, 200, "A real model discovery refresh must complete during the held session");
   const uncertainDraft = await draft("Keep this steer when its worker response is lost"), uncertainInput = steer(session, uncertainDraft, "worker-loss-steer");
   const uncertainResponse = command(uncertainInput); await Bun.sleep(100);
-  const workerPid = Number(await readFile(path.join(gates, "worker.pid"), "utf8"));
+  const workerPid = Number(await readFile(path.join(gates, "5.worker.pid"), "utf8"));
+  const discoveryPid = Number(await readFile(path.join(gates, "extension-loader.pid"), "utf8"));
+  assert.notEqual(workerPid, discoveryPid, "Discovery must not replace the held provider call's worker identity");
   assert(workerPid > 0 && workerPid !== process.pid);
   process.kill(workerPid, "SIGKILL");
   const uncertain = await uncertainResponse; assert(!uncertain.ok); assert.equal(uncertain.error.code, "OUTCOME_UNKNOWN");

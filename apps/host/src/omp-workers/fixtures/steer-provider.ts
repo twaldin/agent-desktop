@@ -10,7 +10,7 @@ export default function (pi: ExtensionAPI) {
   const directory = process.env.STEER_CONTRACT_GATES;
   if (!directory) throw new Error("Controlled steer provider requires isolated file gates");
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, "worker.pid"), String(process.pid));
+  writeFileSync(path.join(directory, "extension-loader.pid"), String(process.pid));
   pi.on("message_end", async event => {
     const hold = path.join(directory, "hold-persistence");
     if (!existsSync(hold) || event.message.role !== "user") return;
@@ -27,6 +27,9 @@ export default function (pi: ExtensionAPI) {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 1024 }],
     streamSimple: (model, context, options) => {
       const stream = new AssistantMessageEventStream(), current = ++call;
+      // Discovery also loads this extension. Only a real provider invocation
+      // identifies the worker whose held response the test intends to kill.
+      writeFileSync(path.join(directory, `${current}.worker.pid`), String(process.pid));
       writeFileSync(path.join(directory, `${current}.started`), JSON.stringify(context.messages));
       const message: AssistantMessage = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
         usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
