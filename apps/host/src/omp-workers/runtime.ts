@@ -10,6 +10,7 @@ import { copyPreparedImages } from "../omp/images";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
 import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation } from "./protocol";
+import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 
 export interface WorkerFailure {
   type: "worker_failure";
@@ -81,7 +82,7 @@ class WorkerClient {
   snapshot?: SessionSnapshot;
   failure?: WorkerFailure;
 
-  constructor(options: WorkerRuntimeOptions) {
+  constructor(options: WorkerRuntimeOptions, environment = options.environment) {
     this.#options = options;
     if (options.onWorkerFailure) this.#failures.add(options.onWorkerFailure);
     const executable = options.executablePath ?? process.execPath;
@@ -94,7 +95,7 @@ class WorkerClient {
     try {
       this.#process = Bun.spawn({
         cmd: [executable, workerPath],
-        ...(options.environment ? { env: options.environment } : {}),
+        ...(environment ? { env: environment } : {}),
         stdin: "ignore", stdout: "ignore", stderr: "ignore",
         serialization: "advanced",
         ipc: (message: unknown) => this.#receive(message),
@@ -359,9 +360,12 @@ export class WorkerRuntime {
     return pending;
   }
 
-  async #spawn(init: WorkerInit, onEvent?: WorkerEventListener): Promise<WorkerClient> {
+  async #spawn(init: WorkerInit, onEvent?: WorkerEventListener, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<WorkerClient> {
     this.#assertActive();
-    const client = new WorkerClient(this.#options);
+    const environment = localEnvironment
+      ? localEnvironmentForWorker(this.#options.environment ?? process.env, localEnvironment)
+      : this.#options.environment;
+    const client = new WorkerClient(this.#options, environment);
     this.#clients.add(client);
     if (onEvent) client.subscribe(onEvent);
     try {
@@ -375,16 +379,16 @@ export class WorkerRuntime {
     }
   }
 
-  create(options: Omit<OmpSessionOptions, "onEvent"> & { onEvent?: WorkerEventListener }): Promise<WorkerSession> {
+  create(options: Omit<OmpSessionOptions, "onEvent"> & { onEvent?: WorkerEventListener }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<WorkerSession> {
     this.#assertActive();
     const { onEvent, ...nativeOptions } = options;
     return this.#track((async () => {
-      const client = await this.#spawn({ mode: "create", agentDir: this.#options.agentDir, options: nativeOptions }, onEvent);
+      const client = await this.#spawn({ mode: "create", agentDir: this.#options.agentDir, options: nativeOptions }, onEvent, localEnvironment);
       return this.#handle(client);
     })());
   }
 
-  open(options: Omit<OmpOpenOptions, "onEvent"> & { onEvent?: WorkerEventListener }): Promise<WorkerSession> {
+  open(options: Omit<OmpOpenOptions, "onEvent"> & { onEvent?: WorkerEventListener }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<WorkerSession> {
     this.#assertActive();
     return this.#track((async () => {
       const sessionFile = await realpath(options.sessionFile);
@@ -392,7 +396,7 @@ export class WorkerRuntime {
       if (this.#openFiles.has(sessionFile)) throw new Error("OMP session is already open in this worker runtime");
       this.#openFiles.add(sessionFile);
       try {
-        const client = await this.#spawn({ mode: "open", agentDir: this.#options.agentDir, options: { sessionFile, interactions: options.interactions, approvalOverride: options.approvalOverride } }, options.onEvent);
+        const client = await this.#spawn({ mode: "open", agentDir: this.#options.agentDir, options: { sessionFile, interactions: options.interactions, approvalOverride: options.approvalOverride } }, options.onEvent, localEnvironment);
         return this.#handle(client);
       } catch (error) { this.#openFiles.delete(sessionFile); throw error; }
     })());

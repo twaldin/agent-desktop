@@ -3,6 +3,9 @@ import { existsSync } from "node:fs";
 import { mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { isProtectedLocalEnvironmentKey, type LocalEnvironmentEnvironmentDelta } from "./environment";
+
+export type { LocalEnvironmentEnvironmentDelta } from "./environment";
 
 export type LocalEnvironmentLifecycle = "setup" | "cleanup";
 export type LocalEnvironmentOutputStream = "stdout" | "stderr";
@@ -10,12 +13,6 @@ export type LocalEnvironmentOutputStream = "stdout" | "stderr";
 export interface LocalEnvironmentShell {
   executable: string;
   args?: string[];
-}
-
-export interface LocalEnvironmentEnvironmentDelta {
-  version: 1;
-  set: Record<string, string>;
-  unset: string[];
 }
 
 export interface LocalEnvironmentRunInput {
@@ -51,11 +48,6 @@ const defaultOutputBytes = 1024 * 1024;
 const maximumScriptBytes = 1024 * 1024;
 const maximumEnvironmentBytes = 4 * 1024 * 1024;
 const supportedShells = new Set(["sh", "bash", "dash", "ksh", "zsh"]);
-// Native volatile fields plus app-owned profile/data and workspace identity.
-const reservedEnvironment = new Set([
-  "CODEX_HOME", "CODEX_SETUP_EXIT_CODE", "CODEX_SOURCE_TREE_PATH", "CODEX_WORKTREE_PATH",
-  "AGENT_SOURCE_TREE_PATH", "AGENT_WORKTREE_PATH", "HOME", "OLDPWD", "PI_CODING_AGENT_DIR", "PWD", "SHELLOPTS", "SHLVL", "_",
-]);
 
 function boundedInteger(value: number | undefined, fallback: number, maximum: number, label: string): number {
   const resolved = value ?? fallback;
@@ -119,14 +111,10 @@ async function readBoundedEnvironment(path: string): Promise<Buffer> {
   } finally { await file.close(); }
 }
 
-function excludedEnvironment(key: string): boolean {
-  return reservedEnvironment.has(key) || key.startsWith("AGENT_DESKTOP_") || key.startsWith("BASH_FUNC_");
-}
-
 function environmentDelta(before: Record<string, string>, after: Record<string, string>): LocalEnvironmentEnvironmentDelta | null {
   const set: Record<string, string> = {}, unset: string[] = [];
   for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
-    if (excludedEnvironment(key) || before[key]?.includes("\n") || after[key]?.includes("\n")) continue;
+    if (isProtectedLocalEnvironmentKey(key) || before[key]?.includes("\n") || after[key]?.includes("\n")) continue;
     if (!(key in after)) unset.push(key);
     else if (before[key] !== after[key]) set[key] = after[key];
   }
