@@ -6,10 +6,10 @@ import { LocalEnvironmentRuns } from './local-environments/runs';
 import { WorktreeEnvironmentLifecycle } from './local-environments/lifecycle';
 import { EnvironmentSessions } from './environment-sessions';
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { join, sep, resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { register as registerExitCleanup } from "@oh-my-pi/pi-utils/postmortem";
 import type { CommandEnvelope, CommandResult, HostCommand, HostEvent, HostState, ModelInfo, OmpApprovalMode, OmpSessionControls, SessionSummary } from "@agent-desktop/shared";
@@ -41,6 +41,7 @@ import { BrowserMetadataHttp } from "./browser-metadata-http";
 import { BrowserControlHttp } from "./browser-control-http";
 import { BrowserFrameHttp } from "./browser-frame-http";
 import { BrowserCreateHttp } from "./browser-create-http";
+import { IntegrationsHttp } from "./integrations-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
 import { TerminalManager, TmuxTerminalManager, TmuxTerminalsHttp } from "./terminals";
@@ -62,6 +63,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let accounts: AccountsHttp | undefined;
   let preferences: PreferencesSync | undefined;
   let settings: SettingsHttp | undefined;
+  let integrations: IntegrationsHttp | undefined;
   let theme: ThemeFile | undefined;
   let terminals: TerminalManager | undefined;
   let terminalsHttp: TerminalsHttp | undefined;
@@ -337,6 +339,17 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       const pending = handles.get(id);
       return pending ? await pending.catch(() => undefined) : undefined;
     } });
+  integrations = new IntegrationsHttp({ runtime,
+    resolveCwd: async target => {
+      if (!target) return options.discoveryDirectory ?? homedir();
+      const cwd = "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
+      if (!cwd) throw new Error("The selected integration owner does not exist on this host.");
+      const canonical = await realpath(cwd);
+      if (canonical !== resolve(cwd)) throw new Error("The integration owner's directory has changed. Re-add the project before editing configuration.");
+      return canonical;
+    },
+    changed: target => publish({ type: "settings", target }),
+  });
   settings = new SettingsHttp({ agentDir: options.agentDirectory, defaultCwd: options.discoveryDirectory ?? homedir(), runtime,
     resolveCwd: target => {
       if (!target) return options.discoveryDirectory ?? homedir();
@@ -745,6 +758,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (browserControlResponse) return browserControlResponse;
         const browserFrameResponse = await browserFrames.route(request, url);
         if (browserFrameResponse) return browserFrameResponse;
+        const integrationsResponse = await integrations!.route(request, url);
+        if (integrationsResponse) return integrationsResponse;
         const settingsResponse = await settings!.route(request, url);
         if (settingsResponse) return settingsResponse;
         const terminalResponse = await terminalsHttp!.handle(request);
@@ -878,6 +893,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try {
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
+        // Configuration writes are bounded, local operations. Drain them before
+        // retiring their discovery worker so a graceful stop cannot interrupt
+        // a native registry write midway through serialization.
+        await integrations!.dispose();
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
         const outcomes = await Promise.allSettled([runtime.dispose(), networkCall, discovery, modelsRefresh,
@@ -901,7 +920,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     questionDeliveries?.stop();
     clearInterval(networkTimer);
     server?.stop(true); tailServer?.stop(true);
-    try { terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose(); await Promise.allSettled([terminals?.shutdown(), nativeTerminals?.shutdown()]); await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await runtime?.dispose(); }
+    try { terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose(); await Promise.allSettled([terminals?.shutdown(), nativeTerminals?.shutdown()]); await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await integrations?.dispose(); await runtime?.dispose(); }
     finally {
       try {
         store?.close();

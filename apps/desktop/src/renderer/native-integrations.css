@@ -1,0 +1,80 @@
+.native-integrations { overflow: hidden; }
+.integration-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); min-height: 0; flex: 1; }
+.integration-list { min-height: 0; overflow: auto; padding: 16px 10px; border-right: 1px solid var(--border); }
+.integration-list button { display:flex; align-items:center; gap:10px; width:100%; padding:10px; border:0; border-radius:8px; color:var(--text); background:transparent; text-align:left; cursor:pointer; }
+.integration-list button:hover,.integration-list button.selected { background:var(--hover); }
+.integration-list button .icon { width:16px; flex:none; color:var(--secondary); }
+.integration-list button span { min-width:0; display:flex; flex:1; flex-direction:column; gap:3px; }
+.integration-list small,.integration-detail small,.mcp-row small { display:block; color:var(--secondary); font-size:12px; }
+.integration-list i { width:7px; height:7px; border-radius:50%; background:var(--secondary); opacity:.45; }
+.integration-list i.on { background:var(--accent); opacity:1; }
+.integration-detail,.mcp-layout { min-width:0; min-height:0; overflow:auto; padding:24px 32px 40px; }
+.integration-title { display:flex; justify-content:space-between; gap:20px; align-items:start; }
+.integration-title h2,.integration-section h2 { margin:0; font-size:18px; }
+.integration-title p { margin:6px 0 0; color:var(--secondary); }
+.integration-scope,.integration-note { color:var(--secondary); font-size:12px; }
+.integration-section { margin-top:24px; padding:18px; border:1px solid var(--border); border-radius:10px; background:var(--surface-elevated,var(--sidebar-surface)); }
+.integration-section h3 { margin:0 0 12px; font-size:14px; }
+.integration-check,.integration-setting,.mcp-add label { display:flex; align-items:center; gap:12px; min-height:38px; }
+.integration-check span,.integration-setting span { display:flex; flex:1; flex-direction:column; gap:3px; }
+.integration-setting { justify-content:space-between; }
+.integration-setting .text-field { width:min(320px,48%); }
+.integration-placeholder { color:var(--secondary); }
+.mcp-layout { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; }
+.mcp-row { display:flex; align-items:center; gap:14px; padding:12px 0; border-top:1px solid var(--border); }
+.mcp-row > div { min-width:0; flex:1; }
+.mcp-row label { display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:12px; }
+.mcp-add { margin-top:0; display:flex; flex-direction:column; gap:12px; align-self:start; }
+.mcp-add label { justify-content:space-between; }
+.mcp-add label input,.mcp-add label select { width:58%; }
+@media (max-width:760px) { .integration-layout,.mcp-layout { display:flex; flex-direction:column; overflow:auto; } .integration-list { max-height:190px; border-right:0; border-bottom:1px solid var(--border); } .integration-detail,.mcp-layout { overflow:visible; padding:18px; } }
+.integration-list-hidden { display: none; }
+.integration-back { display:flex; align-items:center; gap:7px; padding:0; margin:0 0 18px; border:0; color:var(--secondary); background:transparent; cursor:pointer; font:inherit; }
+.integration-back:hover { color:var(--text); }
+.integration-back .icon { width:16px; height:16px; }
+/* Reference 10-integrations: one centered settings canvas with list/detail
+   navigation. OMP-only controls retain these native groups and tokens. */
+.native-integrations { flex:1; min-width:0; overflow-y:auto; padding:64px 24px 48px; }
+.integration-content { width:100%; max-width:768px; margin:0 auto; }
+.integration-heading { display:flex; justify-content:space-between; align-items:start; margin-bottom:36px; }
+.integration-heading h1 { margin:0 0 6px; font-size:24px; line-height:32px; font-weight:500; }
+.integration-heading p { margin:0; color:var(--secondary); line-height:20px; }
+.integration-navigation { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:40px; }
+.integration-navigation [role=tablist] { display:flex; gap:4px; }
+.integration-navigation [role=tab] { background:transparent; border:0; border-radius:var(--radius-medium,10px); padding:7px 10px; color:var(--secondary); font:inherit; cursor:pointer; }
+.integration-navigation [aria-selected=true] { color:var(--text); background:var(--hover); }
+.integration-search { display:flex; align-items:center; gap:8px; padding:6px 12px; border:1px solid var(--border); border-radius:999px; background:var(--composer-surface); min-width:0; max-width:224px; }
+.integration-search .icon { width:16px; height:16px; color:var(--secondary); }
+.integration-search input { width:100%; min-width:0; border:0; background:transparent; color:var(--text); font:inherit; outline:none; }
+.integration-layout { display:block; }
+.integration-list { padding:0; border:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.integration-list-hidden { display:none; }
+.integration-list button { min-height:76px; padding:16px; background:var(--sidebar-surface); border:1px solid var(--border); border-radius:var(--radius-large,16px); corner-shape:superellipse(1.25); }
+.integration-detail,.mcp-layout { padding:0; overflow:visible; display:block; }
+.integration-back { display:flex; gap:6px; align-items:center; background:transparent; border:0; color:var(--secondary); font:inherit; padding:6px 8px; margin:0 0 24px; cursor:pointer; }
+.integration-back .icon { width:16px; height:16px; }
+.integration-list-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+.integration-list-heading h2,.mcp-add h2 { font-size:20px; font-weight:500; margin:0; }
+.integration-section,.mcp-row { background:var(--composer-surface); border:1px solid var(--border); border-radius:var(--radius-large,16px); corner-shape:superellipse(1.25); }
+.mcp-row { padding:16px; margin-bottom:10px; }
+.mcp-add { gap:8px; }
+.mcp-add h2 { margin-bottom:18px; }
+.mcp-add > label { padding:12px; background:var(--composer-surface); border:1px solid var(--border); border-radius:var(--radius-large,16px); corner-shape:superellipse(1.25); display:flex; align-items:stretch; flex-direction:column; gap:10px; }
+.mcp-add > label input,.mcp-add > label select,.mcp-add > label textarea { width:100%; }
+.integration-setting-control { display:flex; align-items:center; gap:8px; min-width:0; }
+.integration-setting-control .text-field { width:200px; }
+@media(max-width:900px){.native-integrations{padding:40px 20px}.integration-list{grid-template-columns:1fr}.integration-navigation{flex-wrap:wrap}.integration-setting{align-items:stretch;flex-direction:column}.integration-setting-control .text-field{width:100%}.integration-setting-control{width:100%}}
+
+.mcp-add .integration-type-row { flex-direction:row; align-items:center; justify-content:space-between; background:var(--sidebar-surface); }
+.integration-segments { display:flex; gap:2px; }
+.integration-segments button { padding:6px 10px; border-radius:var(--radius-medium,10px); color:var(--secondary); }
+.integration-segments button[aria-pressed=true] { background:var(--hover); color:var(--text); }
+.integration-form-row { padding:12px; border:1px solid var(--border); border-radius:var(--radius-large,16px); }
+.mcp-advanced { padding:12px; border:1px solid var(--border); border-radius:var(--radius-large,16px); background:var(--composer-surface); }
+.mcp-advanced summary { cursor:pointer; }
+.mcp-advanced label { display:flex; flex-direction:column; align-items:stretch; gap:8px; margin-top:12px; }
+.mcp-advanced textarea { width:100%; min-height:100px; font-family:var(--code-font); }
+.mcp-add .integration-type-row { display:flex; }
+.mcp-add .text-field { background:var(--composer-surface); border:1px solid var(--border); border-radius:var(--radius-medium,10px); }
+.mcp-add input.text-field { min-height:36px; }
+.mcp-add > .primary-button { align-self:flex-end; min-width:88px; }

@@ -1,3 +1,5 @@
+import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from './integrations';
+export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpMutation, NativeMcpServer } from './integrations';
 export * from "./local-environments";
 export * from "./environment-selection";
 export * from "./environment-preparations";
@@ -268,6 +270,10 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   applyWindowTheme(effects: WindowThemeEffects): Promise<void>;
   importThemeBackground(): Promise<ThemeAsset | null>;
   getThemeBackground(sha256: string): Promise<{ asset: ThemeAsset; dataUrl: string } | null>;
+  getPlugins(target?: WorkspaceTarget, hostId?: string): Promise<NativePluginCatalog>;
+  mutatePlugin(target: WorkspaceTarget | undefined, mutation: NativePluginMutation, hostId?: string): Promise<NativePluginCatalog>;
+  getMcpServers(target?: WorkspaceTarget, hostId?: string): Promise<NativeMcpCatalog>;
+  mutateMcpServer(target: WorkspaceTarget | undefined, mutation: NativeMcpMutation, hostId?: string): Promise<NativeMcpCatalog>;
   getSettingsCatalog(hostId?: string): Promise<OmpSettingsCatalog>;
   getSettings(target?: WorkspaceTarget, hostId?: string): Promise<OmpSettingsSnapshot>;
   setSetting(mutation: OmpSettingsMutation, target?: WorkspaceTarget, hostId?: string): Promise<OmpSettingsSnapshot>;

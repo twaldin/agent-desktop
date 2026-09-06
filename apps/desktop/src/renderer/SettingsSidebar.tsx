@@ -5,7 +5,7 @@ import "./settings-sidebar.css";
 import type { SettingsPage } from "../window-state";
 export type { SettingsPage } from "../window-state";
 
-type SettingsItem = { id: SettingsPage; label: string; group: "Personal" | "Coding"; icon: "shield" | "sliders" | "branch" | "laptop" | "folder"; description: string };
+type SettingsItem = { id: SettingsPage; label: string; group: "Personal" | "Integrations" | "Coding"; icon: "shield" | "sliders" | "branch" | "laptop" | "folder"; description: string };
 
 const settingsItems: SettingsItem[] = [
   { id: "accounts", label: "Accounts", group: "Personal", icon: "shield", description: "Provider accounts and sign-in" },
@@ -13,6 +13,7 @@ const settingsItems: SettingsItem[] = [
   { id: "omp", label: "OMP", group: "Coding", icon: "laptop", description: "Native OMP configuration" },
   { id: "git", label: "Git", group: "Coding", icon: "branch", description: "Branch and repository defaults" },
   { id: "environments", label: "Environments", group: "Coding", icon: "folder", description: "Project setup environments" },
+  { id: "plugins", label: "Plugins", group: "Integrations", icon: "folder", description: "Native OMP plugins and features" },
 ];
 
 export interface SettingsSidebarProps {
@@ -42,12 +43,12 @@ export function SettingsSidebar({ page, onSelect, onBack, hostControl, environme
       <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search settings…" aria-label="Search settings" />
     </label>
     <nav className="settings-sidebar-nav">
-      {(["Personal", "Coding"] as const).map(group => {
+      {(["Personal", "Integrations", "Coding"] as const).map(group => {
         const items = visible.filter(item => item.group === group);
         if (!items.length) return null;
         return <section key={group} aria-labelledby={`settings-sidebar-${group.toLowerCase()}`}>
           <h2 id={`settings-sidebar-${group.toLowerCase()}`}>{group}</h2>
-          {items.map(item => <button key={item.id} type="button" className={`settings-sidebar-item ${item.id === page ? "selected" : ""}`} aria-current={item.id === page ? "page" : undefined} title={item.description} onClick={() => onSelect(item.id)}>
+          {items.map(item => <button key={item.id} type="button" className={`settings-sidebar-item ${(item.id === page || item.id === "plugins" && page === "mcp") ? "selected" : ""}`} aria-current={(item.id === page || item.id === "plugins" && page === "mcp") ? "page" : undefined} title={item.description} onClick={() => onSelect(item.id)}>
             <Icon name={item.icon} />
             <span>{item.label}</span>
           </button>)}

@@ -8,6 +8,8 @@ import { projectWorkerEvent } from "./events";
 
 // All SDK imports are deferred until the child has received its explicit native
 // directory. The daemon never imports/initializes OMP through this boundary.
+let plugins: Promise<import("../integrations/plugins").NativePlugins> | undefined;
+let mcp: Promise<import("../integrations/mcp").NativeMcp> | undefined;
 let runtime: OmpRuntime | undefined;
 let session: OmpSession | undefined;
 let initializing = false;
@@ -143,6 +145,22 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         if (init.mode === "create") session = await runtime.create({ ...init.options, onEvent: emit });
         if (init.mode === "open") session = await runtime.open({ ...init.options, onEvent: emit });
         respond(true, snapshot());
+        break;
+      }
+      case "getPlugins":
+      case "mutatePlugin": {
+        if (!runtime || session) throw new Error("Native configuration requires an initialized discovery worker.");
+        plugins ??= import("../integrations/plugins").then(module => new module.NativePlugins());
+        const backend = await plugins;
+        respond(true, message.operation === "getPlugins" ? await backend.read(message.args.cwd) : await backend.mutate(message.args.cwd, message.args.mutation));
+        break;
+      }
+      case "getMcpServers":
+      case "mutateMcpServer": {
+        if (!runtime || session) throw new Error("Native configuration requires an initialized discovery worker.");
+        mcp ??= import("../integrations/mcp").then(module => new module.NativeMcp());
+        const backend = await mcp;
+        respond(true, message.operation === "getMcpServers" ? await backend.read(message.args.cwd) : await backend.mutate(message.args.cwd, message.args.mutation));
         break;
       }
       case "listModels":

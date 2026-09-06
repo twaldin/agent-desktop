@@ -1,3 +1,4 @@
+import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
@@ -525,6 +526,19 @@ export class WorkerRuntime {
   async getComposerCatalog(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<OmpComposerCatalog> {
     const client = await this.#discoveryClient();
     return client.request<OmpComposerCatalog>({ operation: "getComposerCatalog", args: { cwd, refresh: options.refresh } });
+  }
+
+  async getPlugins(cwd: string): Promise<NativePluginCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "getPlugins", args: { cwd } }, 30_000);
+  }
+  async mutatePlugin(cwd: string, mutation: NativePluginMutation): Promise<NativePluginCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "mutatePlugin", args: { cwd, mutation } }, 30_000);
+  }
+  async getMcpServers(cwd: string): Promise<NativeMcpCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "getMcpServers", args: { cwd } }, 30_000);
+  }
+  async mutateMcpServer(cwd: string, mutation: NativeMcpMutation): Promise<NativeMcpCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "mutateMcpServer", args: { cwd, mutation } }, 30_000);
   }
 
   async getComposerActions(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeComposerCatalog> {
