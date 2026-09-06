@@ -42,7 +42,7 @@ export class BtwService {
     if (!live || stored && live.runId !== stored.runId) return this.lost(id, stored);
     return this.save(id, live);
   }); }
-  async start(id: string, input: NativeBtwStart): Promise<NativeBtwSnapshot> { return this.locked(id, async () => {
+  async start(id: string, input: NativeBtwStart, checkedHandle?: Handle): Promise<NativeBtwSnapshot> { return this.locked(id, async () => {
     this.session(id, true);
     if (typeof input.runId !== "string" || !/^[a-zA-Z0-9_-]{1,200}$/.test(input.runId) || typeof input.question !== "string" || !input.question.trim() || Buffer.byteLength(input.question) > 32 * 1024) throw new Error("The side question is invalid or exceeds 32 KiB.");
     const runId = input.runId, question = input.question.trim(), previous = this.options.read(id);
@@ -50,7 +50,7 @@ export class BtwService {
       if (previous.question !== question) throw new Error("This side-question identity belongs to different input.");
       return previous;
     }
-    const handle = await this.options.getHandle(id);
+    const handle = checkedHandle ?? await this.options.getHandle(id);
     this.session(id, true);
     if (handle.workerFailure || await this.options.getExistingHandle(id) !== handle) throw new Error("The native side-question worker changed before admission.");
     const now = Date.now(), intent: NativeBtwSnapshot = { runId, sessionId: id, question, status: "running", answer: "", startedAt: now, updatedAt: now };

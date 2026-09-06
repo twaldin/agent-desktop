@@ -197,7 +197,7 @@ export class DraftController {
   }
   async prepareSubmission(id: string): Promise<Draft> {
     this.get(id); const entry = this.entries.get(id)!;
-    if (needsReceipt(entry.consuming?.draft)) throw new Error("Waiting for the host to confirm consumption of the previous draft.");
+    if (entry.consuming) throw new Error("Waiting for the host to confirm consumption of the previous draft.");
     // Capture the click/keypress, not later typing that arrives while disk/network saves finish.
     const captured = { draft: captureDraft(entry.view.draft, this.hostId), version: entry.version };
     entry.sending = { draft: captured.draft };

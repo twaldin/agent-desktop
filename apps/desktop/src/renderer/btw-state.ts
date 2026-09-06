@@ -1,4 +1,5 @@
 import type { CommandEnvelope, DesktopBridge, Draft, NativeBtwSnapshot } from '../../../../packages/shared/src/protocol';
+import { nativeBtwQuestion } from '../../../../packages/shared/src/btw';
 import { DraftController, captureDraft, sameDraftContent, type DraftCache } from './drafts';
 
 interface Pending { envelope: CommandEnvelope; draft?: Draft }
@@ -27,8 +28,12 @@ export class BtwState {
         if (command.type === 'session.btw.start') {
           if (typeof command.question !== 'string' || !command.question.trim() || new TextEncoder().encode(command.question).byteLength > 32768) throw new Error('Invalid saved question.');
         } else if (command.type !== 'session.btw.cancel' || typeof command.runId !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(command.runId)) throw new Error('Invalid saved operation.');
-        if (saved.draft && (command.type !== 'session.btw.start' || saved.draft.id !== this.draftId || saved.draft.text !== command.question)) throw new Error('Invalid captured draft.');
+        if (saved.draft && (command.type !== 'session.btw.start'
+          || (command.nativeCommand === 'btw' ? saved.draft.id !== `session:${sessionId}` || nativeBtwQuestion(saved.draft.text) !== command.question.trim()
+            : saved.draft.id !== this.draftId || saved.draft.text.trim() !== command.question.trim())
+          || command.draft && (command.draft.id !== saved.draft.id || command.draft.revision !== saved.draft.revision))) throw new Error('Invalid captured draft.');
         this.pending = { envelope, ...(saved.draft ? { draft: captureDraft(saved.draft, hostId) } : {}) };
+        if (this.pending.draft) this.drafts.beginPendingSubmission(this.pending.draft, envelope.id);
       }
     } catch { this.receiptError = this.error = 'The saved side-chat receipt could not be read. Sending is disabled to avoid repeating an unconfirmed request.'; }
   }
@@ -43,13 +48,15 @@ export class BtwState {
       const result = await this.bridge.getBtw(this.sessionId, this.hostId);
       if (result.protocolVersion !== 1 || result.hostId !== this.hostId || result.sessionId !== this.sessionId || (result.value && result.value.sessionId !== this.sessionId)) throw new Error('The side-chat response belongs to another session.');
       if (sequence !== this.readSequence) return;
-      this.value = result.value; this.unavailable = result.unavailable; this.ready = !result.unavailable && !this.receiptError;
+      this.value = result.value;
+      this.unavailable = result.unavailable || (result.draftConsumption !== true ? 'Update the owning host to send side questions with saved drafts.' : undefined);
+      this.ready = !this.unavailable && !this.receiptError;
       // A terminal native observation can settle a lost command response. An
       // admission-intent/failed snapshot alone cannot prove provider execution.
       if (this.pending && result.value && (result.value.status === 'complete' || result.value.status === 'cancelled')) {
         const command = this.pending.envelope.command;
         const runId = command.type === 'session.btw.start' ? this.pending.envelope.id : command.type === 'session.btw.cancel' ? command.runId : undefined;
-        if (result.value.runId === runId) {
+        if (result.value.runId === runId && !(command.type === 'session.btw.start' && command.draft)) {
           const submitted = this.pending.draft;
           this.persist(undefined);
           if (submitted && sameDraftContent(this.drafts.get(this.draftId).draft, submitted)) this.drafts.update(this.draftId, { text: '' });
@@ -59,20 +66,30 @@ export class BtwState {
     } catch (cause) { if (sequence === this.readSequence) { this.ready = false; this.error = cause instanceof Error ? cause.message : String(cause); } }
     if (sequence === this.readSequence) this.publish();
   }
-  async start() {
+  async start(captured?: Draft) {
     if (this.busy || this.pending || this.receiptError) return;
-    const view = this.drafts.get(this.draftId);
-    if (!view.draft.text.trim() || view.status === 'conflict') return;
+    const sourceId = captured?.id ?? this.draftId;
+    const view = this.drafts.get(sourceId);
+    if (!captured && (!view.draft.text.trim() || view.status === 'conflict')) return;
     this.busy = true; this.error = undefined; this.publish();
+    let submitted: Draft | undefined;
     try {
-      const submitted = structuredClone(view.draft);
-      await this.drafts.flush(this.draftId);
-      // Only the text present at Send is submitted; new typing remains a draft.
-      const pending: Pending = { envelope: { id: crypto.randomUUID(), command: { type: 'session.btw.start', sessionId: this.sessionId, question: submitted.text } }, draft: submitted };
+      submitted = captured ? captureDraft(captured, this.hostId) : await this.drafts.prepareSubmission(this.draftId);
+      const composer = sourceId === `session:${this.sessionId}`;
+      if (!composer && sourceId !== this.draftId) throw new Error('The side question has a different draft owner.');
+      if (submitted.attachments?.length) throw new Error('Native /btw does not accept images. The draft was retained.');
+      const question = composer ? nativeBtwQuestion(submitted.text) : submitted.text.trim();
+      if (!question) throw new Error('Usage: /btw <question>');
+      const pending: Pending = { envelope: { id: crypto.randomUUID(), command: { type: 'session.btw.start', sessionId: this.sessionId, question,
+        draft: { id: submitted.id, revision: submitted.revision }, ...(composer ? { nativeCommand: 'btw' as const } : {}) } }, draft: submitted };
       this.persist(pending);
+      this.drafts.beginPendingSubmission(submitted, pending.envelope.id);
       this.busy = false;
       await this.dispatch(pending);
-    } catch (cause) { this.error = cause instanceof Error ? cause.message : String(cause); }
+    } catch (cause) {
+      if (submitted && !this.pending) this.drafts.finishSubmission(submitted.id, submitted, false);
+      this.error = cause instanceof Error ? cause.message : String(cause);
+    }
     finally { this.busy = false; this.publish(); }
   }
   async cancel() {
@@ -98,8 +115,14 @@ export class BtwState {
       if (!value || value.sessionId !== this.sessionId || value.runId !== runId) throw new Error('The native side-chat receipt has a different owner.');
       this.value = value; this.error = undefined;
       this.persist(undefined);
-      if (pending.draft && sameDraftContent(this.drafts.get(this.draftId).draft, pending.draft)) this.drafts.update(this.draftId, { text: '' });
-    } catch (cause) { this.error = cause instanceof Error ? cause.message : String(cause); }
+      if (pending.draft) {
+        if (command.type === 'session.btw.start' && command.draft) this.drafts.finishSubmission(pending.draft.id, pending.draft, true, false, pending.envelope.id);
+        else if (sameDraftContent(this.drafts.get(pending.draft.id).draft, pending.draft)) this.drafts.update(pending.draft.id, { text: '' });
+      }
+    } catch (cause) {
+      if (pending.draft) this.drafts.finishSubmission(pending.draft.id, pending.draft, false, Boolean(this.pending), pending.envelope.id);
+      this.error = cause instanceof Error ? cause.message : String(cause);
+    }
     finally { this.busy = false; this.publish(); }
   }
 }

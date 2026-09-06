@@ -32,3 +32,14 @@ test("archived and foreign sessions are rejected before worker access", async ()
   const f = fixture(); await expect(f.service.start("missing", { runId: "r", question: "q" })).rejects.toThrow("does not exist");
   const archived = fixture(); session.archived = true; await expect(archived.service.start("s", { runId: "r", question: "q" })).rejects.toThrow("Archived"); session.archived = false;
 });
+
+test("a worker replacement after composer validation rejects before intent or native dispatch", async () => {
+  let starts = 0;
+  const checked = { getBtw: async () => null, startBtw: async () => { starts++; return value(); }, cancelBtw: async () => null };
+  const replacement = { getBtw: async () => null, startBtw: async () => { starts++; return value(); }, cancelBtw: async () => null };
+  let saved: NativeBtwSnapshot | null = null, writes = 0;
+  const service = new BtwService({ session: id => id === "s" ? session : undefined, read: () => saved,
+    write: (_id, next) => { saved = next; writes++; }, getHandle: async () => replacement, getExistingHandle: async () => replacement });
+  await expect(service.start("s", { runId: "checked-run", question: "question" }, checked)).rejects.toThrow("changed before admission");
+  expect(starts).toBe(0); expect(writes).toBe(0); expect(saved).toBeNull();
+});

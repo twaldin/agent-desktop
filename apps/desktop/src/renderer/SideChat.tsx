@@ -1,16 +1,15 @@
-import { useEffect, useMemo, useReducer, useRef } from 'react';
-import type { DesktopBridge, SessionSummary } from '../../../../packages/shared/src/protocol';
+import { useEffect, useReducer, useRef } from 'react';
+import type { SessionSummary } from '../../../../packages/shared/src/protocol';
 import type { DraftController } from './drafts';
 import { BtwState } from './btw-state';
 import { Icon } from './Icons';
 import { MarkdownText } from './MarkdownText';
 import './side-chat.css';
 
-export function SideChat({ bridge, hostId, session, sessionId, drafts, connected, active, onTitle, onUnread }: {
-  bridge: DesktopBridge; hostId: string; sessionId: string; session?: SessionSummary;
+export function SideChat({ controller, hostId, session, sessionId, drafts, connected, active, onTitle, onUnread }: {
+  controller: BtwState; hostId: string; sessionId: string; session?: SessionSummary;
   drafts: DraftController; connected: boolean; active: boolean; onTitle(title: string): void; onUnread(unread: boolean): void;
 }) {
-  const controller = useMemo(() => new BtwState(bridge, hostId, sessionId, drafts, { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value) }), [bridge, hostId, sessionId, drafts]);
   const [, redraw] = useReducer(value => value + 1, 0), textarea = useRef<HTMLTextAreaElement>(null), content = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   useEffect(() => { const off = controller.subscribe(redraw), offDrafts = drafts.subscribe(redraw); return () => { off(); offDrafts(); }; }, [controller, drafts]);

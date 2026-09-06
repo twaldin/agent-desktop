@@ -28,6 +28,8 @@ import { parseInteractionAnswer } from "./interaction-http";
 import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./workspace-http";
 import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
+import { hasNativeBtwComposerWinner } from "./omp/composer-actions";
+import { nativeBtwQuestion } from "@agent-desktop/shared";
 import { SessionActivityHttp } from "./session-activity-http";
 import { BtwService } from "./btw";
 import { BtwHttp } from "./btw-http";
@@ -468,7 +470,22 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "session.environment.resume": return environmentSessions.resume(envelope.id, command.preparationId, command.expectedRevision);
       case "session.btw.start": {
         if (!command.question.trim() || command.question.length > 32 * 1024) return fail(envelope.id, "INVALID_BTW_REQUEST", "The btw question is empty or too large.");
-        const snapshot = await btw.start(command.sessionId, { runId: envelope.id, question: command.question });
+        let checkedHandle: WorkerSession | undefined;
+        if (command.draft) {
+          const draft = store.getDraft(command.draft.id);
+          if (!draft || draft.revision !== command.draft.revision) return fail(envelope.id, "DRAFT_CONFLICT", "The side-question draft changed elsewhere. Its content was preserved.");
+          if (draft.attachments?.length) return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "Native side questions do not accept image attachments. The draft was preserved.");
+          if (command.nativeCommand === "btw") {
+            if (draft.id !== `session:${command.sessionId}` || nativeBtwQuestion(draft.text) !== command.question)
+              return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "The submitted /btw question does not match this main composer draft. Reload its preserved content before sending.");
+            checkedHandle = await getHandle(command.sessionId);
+            const catalog = await checkedHandle.getComposerActions();
+            if (!hasNativeBtwComposerWinner(catalog)) return fail(envelope.id, "NATIVE_COMMAND_SHADOWED", "Native /btw is shadowed by another loaded composer command. The draft was preserved.");
+          } else if (draft.id !== `btw:${command.sessionId}` || draft.text.trim() !== command.question) {
+            return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "The submitted side question does not match its saved draft. Reload its preserved content before sending.");
+          }
+        }
+        const snapshot = await btw.start(command.sessionId, { runId: envelope.id, question: command.question }, checkedHandle);
         return ok({ type: "session.btw", snapshot });
       }
       case "session.btw.cancel": {
@@ -633,7 +650,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try { result = await execute(envelope, commandVersion); }
       catch (error) { result = fail(envelope.id, error instanceof AttachmentRequestError || error instanceof AttachmentImageError ? error.code
         : error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN" ? "OUTCOME_UNKNOWN" : "COMMAND_FAILED", errorMessage(error)); }
-      const completed = store.finishCommand(envelope.id, hash, result);
+      let completed;
+      try { completed = store.finishCommand(envelope.id, hash, result); }
+      catch (error) {
+        return fail(envelope.id, "OUTCOME_UNKNOWN", `The command completed but its durable receipt could not be recorded. Inspect the original command before retrying. ${errorMessage(error)}`);
+      }
       publishState();
       // A handler can atomically commit its successful receipt with native binding.
       // A later notification error cannot replace that already-durable outcome.
@@ -641,10 +662,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     });
     commands.set(envelope.id, pending);
     if (!interrupt) sessionTails.set(key, pending);
-    void pending.finally(() => {
+    const finish = () => {
       commands.delete(envelope.id);
       if (sessionTails.get(key) === pending) sessionTails.delete(key);
-    });
+    };
+    void pending.then(finish, finish);
     return pending;
   }
 

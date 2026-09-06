@@ -24,6 +24,7 @@ const supportedBuiltins = new Set(["model", "switch", "fast", "skillful", "compu
 const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
   if (supportedBuiltins.has(name)) return { availability: "executable" };
+  if (name === "btw") return { availability: "partial", reason: "Ask a side question using this conversation’s context." };
   if (name === "session") {
     if (args === undefined) return { availability: "partial", reason: "Session info is connected. Deletion and account pin commands require the owning desktop lifecycle/account bridge." };
     if (!args.trim() || args.trim() === "info") return { availability: "executable" };
@@ -47,7 +48,17 @@ function nativeBuiltinRows(): ComposerAction[] {
     argumentHint: command.acpInputHint ?? command.inlineHint,
     subcommands: command.subcommands?.map(sub => ({ ...sub, ...builtinAvailability(command.name, sub.name) })),
     argumentCompletions: Boolean(command.subcommands?.length),
+    ...(command.name === "btw" ? { desktopAction: "side-chat" as const } : {}),
   }));
+}
+
+/** A desktop /btw route is valid only while native dispatch still resolves the
+ * exact command name to the pinned builtin. Shadowing rows remain visible, but
+ * must never be converted into a different side-chat operation. */
+export function hasNativeBtwComposerWinner(catalog: NativeComposerCatalog): boolean {
+  const builtin = catalog.commands.find(row => row.id === "builtin:btw");
+  return builtin?.name === "btw" && builtin.source.kind === "builtin"
+    && builtin.desktopAction === "side-chat" && builtin.availability === "partial";
 }
 
 function finish(cwd: string, commands: ComposerAction[], skills: ComposerAction[], diagnostics: string[]): NativeComposerCatalog {

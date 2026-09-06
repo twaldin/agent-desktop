@@ -51,6 +51,9 @@ import { moveDockTab, type DockTab, type DockDestination } from "./dock-state";
 import { useWorkbenchDock, targetFromDock } from "./use-workbench-dock";
 import { EnvironmentCard } from "./EnvironmentCard";
 import { SideChat } from "./SideChat";
+import { BtwState } from "./btw-state";
+import { nativeBtwQuestion } from "../../../../packages/shared/src/btw";
+import { assertComposerOwner } from "./composer-autocomplete";
 import { BrowserPanel } from "./BrowserPanel";
 import { useSessionActivity } from "./use-session-activity";
 import { retainWorkspace } from "./workspace-lease";
@@ -167,6 +170,7 @@ export function App() {
     return () => { imageResources.mounted = false; queueMicrotask(() => { if (!imageResources.mounted) imageResources.cache.close(); }); };
   }, [imageResources]);
   const stores = useMemo(() => new Map<string, { drafts: DraftController; submissions: SubmissionController; state?: typeof state; connected?: boolean }>(), [bridge]);
+  const sideChatControllers = useMemo(() => new Map<string, BtwState>(), [bridge]);
   function controllers(owner: string) {
     let pair = stores.get(owner);
     if (!pair) {
@@ -185,6 +189,15 @@ export function App() {
       stores.set(owner, pair);
     }
     return pair;
+  }
+  function sideChatController(owner: string, sessionId: string) {
+    const key = `${owner}:${sessionId}`;
+    let controller = sideChatControllers.get(key);
+    if (!controller) {
+      controller = new BtwState(bridge, owner, sessionId, controllers(owner).drafts, { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value) });
+      sideChatControllers.set(key, controller);
+    }
+    return controller;
   }
   const { drafts, submissions } = controllers(hostId);
   useEffect(() => drafts.subscribe(redraw), [drafts]);
@@ -365,10 +378,32 @@ export function App() {
     setBusy(true); setActionError(null);
     const sendingDraftId = draftId; const originalRoute = selectedRef.current;
     let snapshot: Draft | undefined;
+    let sideHandled = false;
     try {
       const pending = submissions.get(sendingDraftId);
       snapshot = pending?.uncertain ? pending.draft : await drafts.prepareSubmission(sendingDraftId);
       if (!hasDraftContent(snapshot)) return;
+      if (!pending?.uncertain && !selectedId && nativeBtwQuestion(snapshot.text) !== undefined) throw new Error('Open a conversation before asking a native /btw side question. The draft was retained.');
+      if (!pending?.uncertain && selectedId && nativeBtwQuestion(snapshot.text) !== undefined) {
+        if (!bridge.getComposerActions) throw new Error('Update this desktop to resolve native /btw. The draft was retained.');
+        const target = { sessionId: selectedId };
+        const catalog = await bridge.getComposerActions(target, false, hostId);
+        assertComposerOwner(catalog, hostId, target);
+        const native = catalog.commands.find(value => value.name === 'btw' && value.availability !== 'shadowed');
+        // Native extensions/custom commands retain their dispatch precedence.
+        if (native?.source.kind === 'builtin') {
+          if (native.desktopAction !== 'side-chat') throw new Error('Update the owning host to use native /btw through Side chat. The draft was retained.');
+          const side = sideChatController(hostId, selectedId);
+          await side.refresh();
+          if (!side.ready || side.busy || side.pending) throw new Error(side.error || side.unavailable || 'Resolve the previous side-chat request before sending another.');
+          sideHandled = true;
+          if (selectedRef.current === originalRoute) dock.open('side-chat');
+          await side.start(snapshot);
+          if (side.error) throw new Error(side.error);
+          await refresh();
+          return;
+        }
+      }
       drafts.beginPendingSubmission(snapshot);
       const result = await submissions.submit(snapshot, selectedId ?? undefined, running ? "steer" : "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId));
       drafts.finishSubmission(sendingDraftId, result.submitted, true, false, result.commandId);
@@ -379,9 +414,9 @@ export function App() {
       if (savedDraft) drafts.ingest(savedDraft);
       if (selectedRef.current === originalRoute && !hasDraftContent(drafts.get(sendingDraftId).draft)) navigate(result.sessionId);
     } catch (cause) {
-      if (snapshot) drafts.finishSubmission(sendingDraftId, snapshot, false, submissions.get(sendingDraftId)?.uncertain, submissions.get(sendingDraftId)?.send?.id);
+      if (snapshot && !sideHandled) drafts.finishSubmission(sendingDraftId, snapshot, false, submissions.get(sendingDraftId)?.uncertain, submissions.get(sendingDraftId)?.send?.id);
       if (!(cause instanceof EnvironmentPreparationPause)) setActionError(errorMessage(cause));
-    } finally { submitting.current = false; setBusy(false); textarea.current?.focus(); }
+    } finally { submitting.current = false; setBusy(false); if (!sideHandled) textarea.current?.focus(); }
   }
   async function resumeEnvironment() {
     if (submitting.current || !connected || !pendingSubmission?.preparation) return;
@@ -454,7 +489,7 @@ export function App() {
     const online = Boolean(record?.connected);
     if (tab.kind === "side-chat") {
       if (!("sessionId" in target)) return <p>Side chat belongs to a conversation.</p>;
-      return <SideChat key={owner} bridge={bridge} hostId={tab.hostId} sessionId={target.sessionId} session={record?.state?.sessions.find(value => value.id === target.sessionId)} drafts={controllers(tab.hostId).drafts} connected={online} active={active} onTitle={title => dock.updateTitle(tab.id,title)} onUnread={unread => dock.setUnread(tab.id,unread)}/>;
+      return <SideChat key={owner} controller={sideChatController(tab.hostId,target.sessionId)} hostId={tab.hostId} sessionId={target.sessionId} session={record?.state?.sessions.find(value => value.id === target.sessionId)} drafts={controllers(tab.hostId).drafts} connected={online} active={active} onTitle={title => dock.updateTitle(tab.id,title)} onUnread={unread => dock.setUnread(tab.id,unread)}/>;
     }
     if (tab.kind === "goal") {
       if (!("sessionId" in target)) return <p>A goal belongs to a conversation.</p>;

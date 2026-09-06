@@ -8,6 +8,7 @@ import { WorkerRuntime } from "./runtime";
 import { skillInsertionIssue } from "@agent-desktop/shared";
 import { parseSkillInvocation } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls";
+import { hasNativeBtwComposerWinner } from "../omp/composer-actions";
 
 async function fixture(worker = "no-provider-worker.ts") {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "agent-desktop-native-composer-")));
@@ -30,6 +31,8 @@ test("native read-only catalog lists the complete builtin registry without execu
     expect(catalog.referenceSchemes).toEqual(InternalUrlRouter.instance().completionSchemes());
     expect(catalog.skills.find(row => row.name === "compose-skill")).toMatchObject({ availability: "executable", insertText: "/skill:compose-skill " });
     expect(catalog.commands.find(row => row.source.path?.endsWith("composer-provider.ts"))).toMatchObject({ availability: "pending", insertText: "" });
+    expect(catalog.commands.find(row => row.id === "builtin:btw")).toMatchObject({ availability: "partial", desktopAction: "side-chat" });
+    expect(hasNativeBtwComposerWinner(catalog)).toBe(true);
     expect(await Bun.file(path.join(f.gates, "factory-ran")).exists()).toBe(false);
     expect(await Array.fromAsync(new Bun.Glob("**/*.jsonl").scan({ cwd: f.root }))).toHaveLength(0);
     const files = await f.runtime.getComposerCompletions(f.cwd, { kind: "file", query: "file", catalogRevision: catalog.revision });
@@ -43,6 +46,8 @@ test("actual native loaded callbacks, collisions, builtin output, unsupported co
   try {
     const session = await f.runtime.create({ cwd: f.cwd, interactions: true });
     const catalog = await session.getComposerActions();
+    expect(catalog.commands.find(row => row.id === "builtin:btw")).toMatchObject({ availability: "partial", desktopAction: "side-chat" });
+    expect(hasNativeBtwComposerWinner(catalog)).toBe(true);
     expect(await Bun.file(path.join(f.gates, "factory-ran")).exists()).toBe(true);
     expect(catalog.commands.find(row => row.id === "builtin:jobs")?.availability).toBe("shadowed");
     expect(catalog.commands.find(row => row.name === "jobs:detail")?.availability).toBe("executable");

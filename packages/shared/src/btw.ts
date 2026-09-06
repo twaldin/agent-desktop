@@ -19,11 +19,20 @@ export interface NativeBtwStart {
 export const BTW_PROTOCOL_VERSION = 1 as const;
 export const BTW_OWNER_HEADER = "X-Agent-Host-Id";
 
+/** Match the pinned native /btw parser: the slash must be the first byte and
+ * command spelling is case-sensitive. Native trims the remaining question. */
+export function nativeBtwQuestion(text: string): string | undefined {
+  if (!/^\/btw(?:\s+|$)/.test(text)) return undefined;
+  return text.slice("/btw".length).trim();
+}
+
 export interface NativeBtwResponse {
   protocolVersion: typeof BTW_PROTOCOL_VERSION;
   hostId: string;
   sessionId: string;
   value: NativeBtwSnapshot | null;
+  /** Start receipts atomically consume an exact submitted draft revision. */
+  draftConsumption?: true;
   unavailable?: string;
 }
 
@@ -63,5 +72,6 @@ export function parseNativeBtwResponse(value: unknown, owner: { hostId: string; 
   const snapshot = source.value === null ? null : parseNativeBtwSnapshot(source.value);
   if (snapshot && snapshot.sessionId !== owner.sessionId) throw new Error("Native btw snapshot belongs to another session.");
   const unavailable = source.unavailable === undefined ? undefined : text(source.unavailable, "unavailable reason", 4 * 1024);
-  return { protocolVersion: BTW_PROTOCOL_VERSION, hostId: owner.hostId, sessionId: owner.sessionId, value: snapshot, ...(unavailable ? { unavailable } : {}) };
+  if (source.draftConsumption !== undefined && source.draftConsumption !== true) throw new Error('Invalid native btw draft capability.');
+  return { protocolVersion: BTW_PROTOCOL_VERSION, hostId: owner.hostId, sessionId: owner.sessionId, value: snapshot, ...(unavailable ? { unavailable } : {}), ...(source.draftConsumption ? { draftConsumption: true } : {}) };
 }

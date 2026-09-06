@@ -7,7 +7,7 @@ function fixture(command: (e: CommandEnvelope) => Promise<CommandResult>, storag
  const memory = new Map<string,string>(); const cache = storage ?? { read: (k:string) => memory.get(k) ?? null, write: (k:string,v:string) => {memory.set(k,v);} };
  const drafts = new DraftController(async e => { if(e.command.type !== 'draft.put') throw Error('unexpected'); return {ok:true,commandId:e.id,value:{...e.command.draft,revision:e.command.expectedRevision+1,updatedAt:1}}; },'host',cache);
  drafts.setConnected(true); drafts.update('btw:session',{text:'question'});
- const bridge = {command,getBtw:async()=>({protocolVersion:1,hostId:'host',sessionId:'session',value:null})} as unknown as DesktopBridge;
+ const bridge = {command,getBtw:async()=>({protocolVersion:1,hostId:'host',sessionId:'session',value:null,draftConsumption:true})} as unknown as DesktopBridge;
  return {cache,drafts,bridge,controller:new BtwState(bridge,'host','session',drafts,cache)};
 }
 test('lost acknowledgement retains exact request across remount, recovery does not generate another id',async()=>{
@@ -41,13 +41,49 @@ test('malformed persisted receipts remain blocked after a healthy read instead o
   try {await f.controller.refresh();await f.controller.start();expect(calls).toBe(0);expect(f.controller.ready).toBe(false);expect(f.controller.error).toContain('Sending is disabled');expect(memory.get('btw.pending.host.session')).toBe(saved);}finally{f.drafts.dispose();}
  }
 });
-test('a matching completed observation settles a lost send without replay and preserves newer typing', async()=>{
+test('a completed observation does not fabricate the new draft-consumption receipt', async()=>{
  const calls:CommandEnvelope[]=[];const f=fixture(async e=>{calls.push(e);throw Error('lost response');});
  try {await f.controller.start();const id=calls[0]!.id;f.drafts.update('btw:session',{text:'newer draft'});
  f.bridge.getBtw=async()=>({protocolVersion:1,hostId:'host',sessionId:'session',value:{...value(id),status:'complete',answer:'done'}});
- await f.controller.refresh();expect(calls).toHaveLength(1);expect(f.controller.pending).toBeUndefined();expect(f.drafts.get('btw:session').draft.text).toBe('newer draft');}finally{f.drafts.dispose();}
+ await f.controller.refresh();expect(calls).toHaveLength(1);expect(f.controller.pending?.envelope.id).toBe(id);expect(f.drafts.get('btw:session').draft.text).toBe('newer draft');}finally{f.drafts.dispose();}
 });
 test('a cancel receipt for a replacement run cannot settle the selected run',async()=>{
  let calls=0;const f=fixture(async e=>{calls++;return {ok:true,commandId:e.id,value:{type:'session.btw',snapshot:value('replacement')}};});
  try {f.controller.value=value('selected');await f.controller.cancel();expect(calls).toBe(1);expect(f.controller.pending?.envelope.command.type).toBe('session.btw.cancel');expect(f.controller.value.runId).toBe('selected');expect(f.controller.error).toContain('different owner');}finally{f.drafts.dispose();}
+});
+
+test('native composer submission retains its saved revision and newer main and side drafts independently', async()=>{
+ const calls:CommandEnvelope[]=[];const f=fixture(async e=>{calls.push(e);return {ok:true,commandId:e.id,value:{type:'session.btw',snapshot:value(e.id)}};});
+ try {f.drafts.update('session:session',{text:'/btw  explain\nthis'});const captured=await f.drafts.prepareSubmission('session:session');
+ f.drafts.update('session:session',{text:'next main prompt'});await f.controller.start(captured);
+ expect(calls[0]?.command).toEqual({type:'session.btw.start',sessionId:'session',question:'explain\nthis',nativeCommand:'btw',draft:{id:'session:session',revision:captured.revision}});
+ expect(f.drafts.get('session:session').draft.text).toBe('next main prompt');expect(f.drafts.get('btw:session').draft.text).toBe('question');
+ }finally{f.drafts.dispose();}
+});
+test('lost native composer receipt restores the main draft binding and recovers the same command',async()=>{
+ const calls:CommandEnvelope[]=[];const f=fixture(async e=>{calls.push(e);if(calls.length===1)throw Error('lost');return {ok:true,commandId:e.id,value:{type:'session.btw',snapshot:value(e.id)}};});
+ try{f.drafts.update('session:session',{text:'/btw question'});await f.controller.start(await f.drafts.prepareSubmission('session:session'));
+ const restored=new BtwState(f.bridge,'host','session',f.drafts,f.cache);expect(restored.receiptError).toBeUndefined();expect(restored.pending?.draft?.id).toBe('session:session');await restored.refresh(true);
+ expect(calls).toHaveLength(2);expect(calls[1]).toEqual(calls[0]);expect(restored.pending).toBeUndefined();expect(f.drafts.get('session:session').draft.text).toBe('');expect(f.drafts.get('btw:session').draft.text).toBe('question');
+ }finally{f.drafts.dispose();}
+});
+test('an empty native invocation or unrelated captured draft is never sent as a side question',async()=>{
+ let calls=0;const f=fixture(async()=>{calls++;throw Error('must not send');});
+ try{f.drafts.update('session:session',{text:'/btw '});await f.controller.start(await f.drafts.prepareSubmission('session:session'));expect(f.controller.error).toContain('Usage');
+ f.drafts.update('session:foreign',{text:'/btw foreign'});await f.controller.start(await f.drafts.prepareSubmission('session:foreign'));expect(f.controller.error).toContain('different draft owner');expect(calls).toBe(0);expect(f.drafts.get('session:session').draft.text).toBe('/btw ');
+ }finally{f.drafts.dispose();}
+});
+
+test('an older host stays readable but does not advertise safe draft submission',async()=>{
+ const f=fixture(async()=>{throw Error('no command');});
+ try{f.bridge.getBtw=async()=>({protocolVersion:1,hostId:'host',sessionId:'session',value:value('prior')});await f.controller.refresh();expect(f.controller.value?.runId).toBe('prior');expect(f.controller.ready).toBe(false);expect(f.controller.unavailable).toContain('Update the owning host');}finally{f.drafts.dispose();}
+});
+
+test('a second side send waits for delayed consumption state, then saves against its actual revision',async()=>{
+ const calls:CommandEnvelope[]=[];const f=fixture(async e=>{calls.push(e);return {ok:true,commandId:e.id,value:{type:'session.btw',snapshot:value(e.id)}};});
+ try{await f.controller.start();const first=calls[0]!.command;if(first.type!=='session.btw.start')throw Error('wrong command');
+ const old=f.drafts.get('btw:session').draft;f.drafts.update(old.id,{text:'second question'});await f.controller.start();expect(calls).toHaveLength(1);expect(f.controller.error).toContain('Waiting for the host');
+ f.drafts.ingest({...old,text:'',revision:first.draft!.revision+1,updatedAt:2});await f.controller.start();expect(calls).toHaveLength(2);
+ const second=calls[1]!.command;if(second.type!=='session.btw.start')throw Error('wrong command');expect(second.question).toBe('second question');expect(second.draft?.revision).toBe(first.draft!.revision+2);
+ }finally{f.drafts.dispose();}
 });

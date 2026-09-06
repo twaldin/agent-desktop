@@ -85,7 +85,11 @@ function parseCommandBody(value: unknown): CommandEnvelope {
       if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid side question command ID.");
       const question = text(input.question, "side question", 32_768).trim();
       if (!question || new TextEncoder().encode(question).byteLength > 32_768) throw new Error("Invalid side question.");
-      return { id, command: { type, sessionId: text(input.sessionId, "session ID"), question } };
+      const sessionId = text(input.sessionId, "session ID"), draft = draftReference(input.draft);
+      if (input.nativeCommand !== undefined && input.nativeCommand !== "btw") throw new Error("Invalid native side question command.");
+      if (input.nativeCommand === "btw" && (!draft || draft.id !== `session:${sessionId}`)) throw new Error("Native /btw requires the exact main composer draft.");
+      return { id, command: { type, sessionId, question,
+        ...(draft ? { draft } : {}), ...(input.nativeCommand === "btw" ? { nativeCommand: "btw" as const } : {}) } };
     }
     case "session.btw.cancel": {
       const runId = text(input.runId, "side question run ID", 200);

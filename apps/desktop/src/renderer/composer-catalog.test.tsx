@@ -109,6 +109,8 @@ describe("owning-workspace composer selection", () => {
     expect(first.model).toBeNull(); await submissions.submit(first, "session", "prompt"); drafts.finishSubmission(first.id, first, true);
     expect(requests.find(item => item.type === "session.prompt").model).toBeUndefined();
     drafts.update(first.id, { text: "Use the chosen model", model: { provider: "contract", id: "first" }, thinkingLevel: "high" });
+    // Deliver the host's consumption event after the next edit, as on a delayed connection.
+    drafts.ingest({ ...first, text: "", revision: ++revision, updatedAt: 2 });
     const second = await drafts.prepareSubmission(first.id); drafts.update(first.id, { text: "Later edit" });
     await submissions.submit(second, "session", "prompt"); drafts.finishSubmission(second.id, second, true);
     expect(requests.filter(item => item.type === "session.prompt").at(-1)).toMatchObject({ model: { id: "first" }, thinkingLevel: "high", text: "Use the chosen model" });

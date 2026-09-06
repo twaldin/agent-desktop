@@ -15,6 +15,12 @@ test("side questions reach their dedicated start and cancel commands with bounde
   expect(() => parseCommandEnvelope({ id: "side-1", command: { ...command, attachments: [] } })).toThrow();
   expect(() => parseCommandEnvelope({ id: "bad/id", command })).toThrow();
   expect(() => parseCommandEnvelope({ id: "stop-1", command: { type: "session.btw.cancel", sessionId: "parent", runId: "../other" } })).toThrow();
+  expect(parseCommandEnvelope({ id: "composer-side", command: { ...command, question: "Explain this", nativeCommand: "btw",
+    draft: { id: "session:parent", revision: 7 } } }).command).toEqual({ ...command, question: "Explain this", nativeCommand: "btw",
+      draft: { id: "session:parent", revision: 7 } });
+  expect(() => parseCommandEnvelope({ id: "composer-side", command: { ...command, nativeCommand: "btw" } })).toThrow("exact main composer draft");
+  expect(() => parseCommandEnvelope({ id: "composer-side", command: { ...command, nativeCommand: "btw", draft: { id: "btw:parent", revision: 1 } } })).toThrow();
+  expect(() => parseCommandEnvelope({ id: "composer-side", command: { ...command, nativeCommand: "BTW", draft: { id: "session:parent", revision: 1 } } })).toThrow();
 });
 
 test("image-aware validation preserves ordered metadata and allows image-only prompts without silently accepting unknown image fields", () => {

@@ -348,6 +348,11 @@ export class HostStore {
         && result.value.type === 'session.question.answer' && result.value.receipt.questionId === command.questionId) {
         this.consumeDraft(command.draft, id);
       }
+      if (result.ok && command?.type === "session.btw.start" && command.draft && result.value && "type" in result.value
+        && result.value.type === "session.btw" && result.value.snapshot?.sessionId === command.sessionId
+        && result.value.snapshot.runId === id && result.value.snapshot.question === command.question) {
+        this.consumeDraft(command.draft, id);
+      }
       const finished: CommandRecord = { ...record, state: "done", result, updatedAt: Date.now() };
       this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify(finished), id);
       return finished;
