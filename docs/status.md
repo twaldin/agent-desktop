@@ -2,7 +2,15 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
-## Work17 blockers — source fixes, not yet installed
+## Isolated Work19 verification and release20.1 handoff
+
+The external verifier exercised the signed Work19 package at 1440×1000: actual model-invoked OMP asks completed recommended, Other/editor, and captured nullable paths; the terminal executed a typed command and exposed a reachable Refresh control. These close the two named Work17 blockers in the isolated 19 build. Work17 remains installed and its state is preserved. Source-only or direct bridge tests are not substituted for this native evidence.
+
+Release20.1 is frozen at `95efbdf`, separately packaged and signed. It adds [detached questions](detached-questions.md), extension-provider discovery/direct model creation, a compact model/effort selector, automatic browser fitting, and the bounded read-only navigation observation retry. Fresh-install validation passes **576 tests, 17 skips, zero failures**, 24,781 assertions across 123 files, plus typecheck and packaging. All 527 tracked files remain unchanged in the test stage. A packaged local-provider fixture verifies both model catalogs, direct selection, a pending native blocking ask and a detached question alongside continued work; it sends no answers and stops its owned host afterward.
+
+The separate Work20.1 copy has matching executable, host archive, native browser patch, both fixtures, all 328 renderer files and a valid deep strict signature. Its visible entrypoint is handed to the verifier after those checks; Work17/18/19 are not replaced. The Work browser navigation/layout and actual detached-card interaction results are still pending. The frozen reference bundle is unchanged. Private provenance and remaining structural visual mismatches are recorded under `.data/release20-package/`; no full visual parity is claimed.
+
+## Work17 blockers — original source-fix evidence
 
 The independent Work17 pass exercised a real model-invoked native `ask` failure and a clipped bottom terminal at 1440×1000. Both now have focused source fixes:
 
@@ -23,7 +31,7 @@ Source now includes [native goal controls, continuation and achievement presenta
 
 The goal source suite passed **545 tests / 24,602 assertions**, 17 skips and zero failures across 113 files, with all 496 recorded source/config files unchanged. The later editor presentation adjustment passed seven controlled renderer groups and three viewport captures separately. Final typecheck and diff checks pass. Evidence and remaining composer/editor persistence gaps are recorded in [native goals](native-goals.md). This batch has not been installed.
 
-Tim's external Work verifier is exercising release17 separately and refreshing reference build8109 into an isolated sibling bundle. The original7868 bundle remains immutable and pinned7982 source stays identified separately. Reported detached-question behavior is accepted-immediately with answers delivered as ordinary user messages while a turn continues; unanswered controls reportedly disappear at turn completion. New captures/report are pending review. Durable detached answer delivery and reconnect handling remain implementation work, alongside the existing native blocking asks and explicitly interactive approvals. No pin upgrade is included.
+Tim's external Work verifier refreshed reference build8109 into an isolated sibling bundle. The original7868 bundle remains immutable and pinned7982 source stays identified separately. Native captures show detached questions alongside continued work and answers delivered as ordinary user messages; unanswered controls disappear at turn completion. Release20.1 implements the distinct durable answer-delivery path while preserving native blocking asks and explicitly interactive approvals. Its installed cross-client and visual acceptance remain separate gates. No OMP pin upgrade is included.
 
 ## Supplied reference audit and current source work
 
