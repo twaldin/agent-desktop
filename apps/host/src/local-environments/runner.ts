@@ -25,6 +25,8 @@ export interface LocalEnvironmentRunInput {
   shell?: LocalEnvironmentShell;
   signal?: AbortSignal;
   onOutput?: (event: { stream: LocalEnvironmentOutputStream; chunk: Uint8Array; truncated: boolean }) => void;
+  /** Synchronous notification that the child process has exited; async result finalization may still be running. */
+  onProcessSettled?: () => void;
   timeoutMs?: number;
   maxOutputBytes?: number;
 }
@@ -205,7 +207,9 @@ export async function runLocalEnvironmentScript(input: LocalEnvironmentRunInput)
     if (input.signal?.aborted) cancel("aborted");
     const timeout = setTimeout(() => cancel("timed-out"), timeoutMs);
     const completion = await completionPromise;
-    clearTimeout(timeout); input.signal?.removeEventListener("abort", abort); if (escalation) await escalation;
+    clearTimeout(timeout); input.signal?.removeEventListener("abort", abort);
+    try { input.onProcessSettled?.(); } catch {}
+    if (escalation) await escalation;
     if (completion.error) retain("stderr", Buffer.from(completion.error.message));
     const status = cancelReason ? "cancelled" : completion.code === 0 ? "succeeded" : "failed";
     let delta: LocalEnvironmentEnvironmentDelta | null = null;

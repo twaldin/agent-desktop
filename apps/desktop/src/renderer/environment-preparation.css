@@ -7,3 +7,10 @@
 .environment-preparation-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font: inherit; }
 .environment-preparation-actions button:hover:enabled { background: var(--hover); }
 .environment-preparation-actions button:disabled { opacity: .5; }
+
+.environment-preparation-output { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; min-width: 0; }
+.environment-output-meta { color: var(--secondary); font-size: 11px; }
+.environment-output-scroll { max-height: 220px; overflow: auto; margin-top: 6px; border-radius: 6px; background: var(--main-bg,var(--background)); padding: 8px; }
+.environment-output-scroll pre { font-family: var(--font-mono,monospace); font-size: 12px; line-height: 1.5; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.environment-output-scroll pre + pre { margin-top: 6px; }
+.environment-output-stderr { color: var(--secondary); }

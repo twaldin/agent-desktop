@@ -41,6 +41,7 @@ test("actual setup is revision-pinned, runs once, captures private exports and c
   const f = await fixture('printf "setup\\n" >> setup-count\nexport ENVIRONMENT_FIXTURE_VALUE=private-value', 'rm setup-count');
   const ready = await f.lifecycle.prepare(f.input);
   expect(ready.phase).toBe("setup-succeeded");
+  expect(f.store.environmentPreparations.getOutput(ready.id)).toMatchObject({ lifecycle: "setup", finished: true });
   expect(await readFile(join(ready.worktreePath, "setup-count"), "utf8")).toBe("setup\n");
   expect(ready.environmentDelta?.set.ENVIRONMENT_FIXTURE_VALUE).toBe("private-value");
   expect(await f.lifecycle.prepare(f.input)).toEqual(ready);
@@ -50,6 +51,7 @@ test("actual setup is revision-pinned, runs once, captures private exports and c
   await f.configStore.save({ configPath: f.saved.configPath, expectedRevision: f.saved.revision, raw: serializeLocalEnvironment({ version: 1, name: "Changed", setup: { script: "exit 9" }, cleanup: { script: "exit 7" } }) });
   const cleaned = await f.lifecycle.cleanup(ready.id, ready.revision);
   expect(cleaned.phase).toBe("cleanup-succeeded");
+  expect(f.store.environmentPreparations.getOutput(cleaned.id)).toMatchObject({ lifecycle: "cleanup", finished: true });
   expect(await access(join(ready.worktreePath, "setup-count")).then(() => true, () => false)).toBe(false);
   expect(await f.lifecycle.cleanup(cleaned.id, cleaned.revision)).toEqual(cleaned);
   const listing = await f.workspaces.query({ projectId: f.project.id }, { type: "git.worktrees" });

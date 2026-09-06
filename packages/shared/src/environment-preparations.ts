@@ -39,3 +39,16 @@ export interface LocalEnvironmentPreparationReceipt {
   type: "environment.preparation";
   preparation: LocalEnvironmentPreparationPublic;
 }
+
+/** Explicit authenticated output read; never part of ordinary preparation status or drafts. */
+export interface LocalEnvironmentExecutionOutput {
+  preparationId: string;
+  runRevision: number;
+  lifecycle: "setup" | "cleanup";
+  sequence: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  cancellationRequested: boolean;
+  finished: boolean;
+}

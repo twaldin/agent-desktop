@@ -4,7 +4,9 @@ import type { HostStore } from "../store";
 import type { HostWorkspaces } from "../workspace-http";
 import { LocalEnvironmentStore } from "./index";
 import type { LocalEnvironmentPreparation } from "./preparations";
-import { runLocalEnvironmentScript, type LocalEnvironmentRunInput } from "./runner";
+import type { LocalEnvironmentPreparations } from "./preparations";
+import { LocalEnvironmentRuns } from "./runs";
+import type { LocalEnvironmentRunInput } from "./runner";
 
 export interface PrepareEnvironmentWorktree {
   commandId: string;
@@ -20,7 +22,16 @@ type RunOptions = Pick<LocalEnvironmentRunInput, "signal" | "onOutput" | "timeou
 
 /** Owns setup/cleanup ordering. Reobserving an existing identity never dispatches its effects again. */
 export class WorktreeEnvironmentLifecycle {
-  constructor(private store: HostStore, private workspaces: HostWorkspaces, private runOptions: RunOptions = {}) {}
+  private runs: LocalEnvironmentRuns;
+
+  constructor(
+    private store: HostStore,
+    private workspaces: HostWorkspaces,
+    private runOptions: RunOptions = {},
+    runs?: LocalEnvironmentRuns,
+  ) {
+    this.runs = runs ?? new LocalEnvironmentRuns(store.environmentPreparations as LocalEnvironmentPreparations);
+  }
 
   async prepare(
     input: PrepareEnvironmentWorktree,
@@ -87,7 +98,7 @@ export class WorktreeEnvironmentLifecycle {
     const record = this.store.environmentPreparations.transition(current.id, current.revision, { type: "setup.started" });
     try {
       const config = parseLocalEnvironment(record.environment!.raw);
-      const result = await runLocalEnvironmentScript({ ...this.runOptions, cwd: record.worktreePath, sourceRoot: record.sourceRoot,
+      const result = await this.runs.run(record, { ...this.runOptions, cwd: record.worktreePath, sourceRoot: record.sourceRoot,
         worktreeRoot: record.worktreePath, lifecycle: "setup", script: scriptForPlatform(config.setup, process.platform as LocalEnvironmentPlatform) ?? "" });
       return this.store.environmentPreparations.transition(record.id, record.revision, { type: result.status === "succeeded" ? "setup.succeeded" : "setup.failed", result });
     } catch (error) {
@@ -105,7 +116,7 @@ export class WorktreeEnvironmentLifecycle {
     try {
       const config = record.environment ? parseLocalEnvironment(record.environment.raw) : null;
       const script = config ? scriptForPlatform(config.cleanup, process.platform as LocalEnvironmentPlatform) : null;
-      const result = script ? await runLocalEnvironmentScript({ ...this.runOptions, cwd: record.worktreePath, sourceRoot: record.sourceRoot,
+      const result = script ? await this.runs.run(record, { ...this.runOptions, cwd: record.worktreePath, sourceRoot: record.sourceRoot,
         worktreeRoot: record.worktreePath, lifecycle: "cleanup", script }) : undefined;
       if (result && result.status !== "succeeded") return this.store.environmentPreparations.transition(id, record.revision, { type: "cleanup.failed", result });
       return this.store.environmentPreparations.transition(id, record.revision, { type: "cleanup.succeeded", result });

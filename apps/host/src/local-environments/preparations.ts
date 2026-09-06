@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { parseLocalEnvironment, type LocalEnvironmentPreparationPhase, type LocalEnvironmentPreparationPublic, type LocalEnvironmentUncertainOperation, type ModelChoice, type OmpApprovalMode, type WorktreeStartingState } from "@agent-desktop/shared";
+import { parseLocalEnvironment, type LocalEnvironmentExecutionOutput, type LocalEnvironmentPreparationPhase, type LocalEnvironmentPreparationPublic, type LocalEnvironmentUncertainOperation, type ModelChoice, type OmpApprovalMode, type WorktreeStartingState } from "@agent-desktop/shared";
 import type { LocalEnvironmentEnvironmentDelta, LocalEnvironmentRunResult } from "./runner";
 
 export type { LocalEnvironmentPreparationPhase, LocalEnvironmentPreparationPublic, LocalEnvironmentUncertainOperation } from "@agent-desktop/shared";
@@ -66,6 +66,7 @@ export type LocalEnvironmentPreparationTransition =
   | { type: "removed" };
 
 type Row = { data: string };
+type OutputRow = { data: string };
 const revisionPattern = /^[a-f0-9]{64}$/;
 const dispatched = new Map<LocalEnvironmentPreparationPhase, LocalEnvironmentUncertainOperation>([
   ["worktree-creating", "worktree-create"], ["setup-running", "setup"], ["native-creating", "native-create"], ["cleanup-running", "cleanup"],
@@ -140,7 +141,14 @@ export function initializeLocalEnvironmentPreparations(database: Database): void
     worktree_path TEXT NOT NULL UNIQUE,
     revision INTEGER NOT NULL,
     data TEXT NOT NULL
-  ); CREATE INDEX IF NOT EXISTS local_environment_preparations_project ON local_environment_preparations(host_id, project_id);`);
+  ); CREATE INDEX IF NOT EXISTS local_environment_preparations_project ON local_environment_preparations(host_id, project_id);
+  CREATE TABLE IF NOT EXISTS local_environment_execution_output (
+    preparation_id TEXT NOT NULL,
+    host_id TEXT NOT NULL,
+    run_revision INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (preparation_id, host_id)
+  ); CREATE INDEX IF NOT EXISTS local_environment_execution_output_host ON local_environment_execution_output(host_id);`);
 }
 
 /** Synchronous host-private CAS storage. External effects are performed by its caller. */
@@ -175,6 +183,55 @@ export class LocalEnvironmentPreparations {
       ? this.database.query<Row, [string]>("SELECT data FROM local_environment_preparations WHERE host_id = ? ORDER BY rowid").all(this.hostId)
       : this.database.query<Row, [string, string]>("SELECT data FROM local_environment_preparations WHERE host_id = ? AND project_id = ? ORDER BY rowid").all(this.hostId, projectId);
     return rows.map(row => JSON.parse(row.data) as LocalEnvironmentPreparation);
+  }
+
+  getOutput(id: string): LocalEnvironmentExecutionOutput | null {
+    const row = this.database.query<OutputRow, [string, string]>("SELECT data FROM local_environment_execution_output WHERE preparation_id = ? AND host_id = ?").get(id, this.hostId);
+    return row ? JSON.parse(row.data) as LocalEnvironmentExecutionOutput : null;
+  }
+
+  beginOutput(record: LocalEnvironmentPreparation, lifecycle: "setup" | "cleanup"): LocalEnvironmentExecutionOutput {
+    if (record.hostId !== this.hostId) throw new Error("Preparation belongs to another host.");
+    const expectedPhase = lifecycle === "setup" ? "setup-running" : "cleanup-running";
+    return this.database.transaction(() => {
+      const current = this.get(record.id);
+      if (!current || current.revision !== record.revision || current.phase !== expectedPhase)
+        throw new LocalEnvironmentPreparationConflict(current);
+      const prior = this.getOutput(record.id);
+      if (prior && (!prior.finished || prior.runRevision === record.revision))
+        throw new Error("This local-environment run was already dispatched.");
+      const output: LocalEnvironmentExecutionOutput = {
+        preparationId: record.id, runRevision: record.revision, lifecycle, sequence: 0,
+        stdout: "", stderr: "", truncated: false, cancellationRequested: false, finished: false,
+      };
+      this.database.query("INSERT INTO local_environment_execution_output (preparation_id, host_id, run_revision, data) VALUES (?, ?, ?, ?) ON CONFLICT(preparation_id, host_id) DO UPDATE SET run_revision = excluded.run_revision, data = excluded.data")
+        .run(record.id, this.hostId, record.revision, JSON.stringify(output));
+      return output;
+    }).immediate();
+  }
+
+  updateOutput(
+    id: string,
+    runRevision: number,
+    update: (current: LocalEnvironmentExecutionOutput) => LocalEnvironmentExecutionOutput,
+  ): LocalEnvironmentExecutionOutput {
+    return this.database.transaction(() => {
+      const current = this.getOutput(id);
+      if (!current || current.runRevision !== runRevision) throw new Error("The local-environment run changed.");
+      if (current.finished) throw new Error("The local-environment run already finished.");
+      const next = update(structuredClone(current));
+      if (next.preparationId !== id || next.runRevision !== runRevision || next.lifecycle !== current.lifecycle)
+        throw new Error("Local-environment output identity cannot change.");
+      if (next.sequence !== current.sequence + 1) throw new Error("Local-environment output sequence must advance exactly once.");
+      if ((current.cancellationRequested && !next.cancellationRequested) || (current.truncated && !next.truncated))
+        throw new Error("Local-environment output flags cannot be cleared.");
+      if (Buffer.byteLength(next.stdout) + Buffer.byteLength(next.stderr) > 8 * 1024 * 1024)
+        throw new Error("Local-environment output exceeds 8 MiB.");
+      const changed = this.database.query("UPDATE local_environment_execution_output SET data = ? WHERE preparation_id = ? AND host_id = ? AND run_revision = ?")
+        .run(JSON.stringify(next), id, this.hostId, runRevision);
+      if (changed.changes !== 1) throw new Error("The local-environment run changed.");
+      return structuredClone(next);
+    }).immediate();
   }
 
   transition(id: string, expectedRevision: number, transition: LocalEnvironmentPreparationTransition): LocalEnvironmentPreparation {

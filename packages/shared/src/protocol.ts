@@ -156,7 +156,7 @@ export interface HostState {
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
   newChatExecution?: { commandVersion: 4; worktrees: true };
-  localEnvironments?: { configuration: true; execution?: { commandVersion: 5 } };
+  localEnvironments?: { configuration: true; execution?: { commandVersion: 5; scriptOutput?: true; scriptCancellation?: true } };
   diagnostics?: { models?: string; preferences?: string };
 }
 
@@ -165,6 +165,7 @@ export type HostCommand =
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
   | { type: "project.add"; path: string; name?: string }
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
+  | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }

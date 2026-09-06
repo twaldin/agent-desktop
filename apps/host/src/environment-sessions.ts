@@ -1,3 +1,4 @@
+import type { LocalEnvironmentRuns } from "./local-environments/runs";
 import { createHash } from "node:crypto";
 import type {
   CommandEnvelope,
@@ -28,6 +29,7 @@ export type EnvironmentSessionCreateEnvelope = Omit<CommandEnvelope, "command"> 
 };
 
 export interface EnvironmentSessionsOptions {
+  runs?: LocalEnvironmentRuns;
   store: HostStore;
   workspaces: HostWorkspaces;
   runtime: WorkerRuntime;
@@ -73,6 +75,7 @@ export class EnvironmentSessions {
       options.store,
       options.workspaces,
       { signal: options.signal },
+      options.runs,
     );
   }
 

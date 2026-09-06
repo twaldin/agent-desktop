@@ -1,9 +1,10 @@
 import type { LocalEnvironmentCatalogItem, LocalEnvironmentSaveResult } from "./local-environments";
-import type { LocalEnvironmentPreparationPublic } from "./environment-preparations";
+import type { LocalEnvironmentPreparationPublic, LocalEnvironmentExecutionOutput } from "./environment-preparations";
 import type { CreateWorktreeOptions, FileContent, FileWriteResult, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "./workspace";
 
 export type { WorkspaceTarget } from "./workspace";
 export type WorkspaceQuery =
+  | { type: "environment.output"; preparationId: string }
   | { type: "environment.preparation"; preparationId: string }
   | { type: "environment.read"; configPath: string }
   | { type: "environments.list" }
@@ -15,6 +16,7 @@ export type WorkspaceQuery =
   | { type: "git.diff"; path?: string; staged?: boolean; context?: number }
   | { type: "git.worktrees" };
 export type WorkspaceQueryResult =
+  | { type: "environment.output"; output: LocalEnvironmentExecutionOutput | null }
   | { type: "environment.preparation"; preparation: LocalEnvironmentPreparationPublic }
   | { type: "environment.read"; configPath: string; revision: string; raw: string }
   | { type: "environments.list"; environments: LocalEnvironmentCatalogItem[] }

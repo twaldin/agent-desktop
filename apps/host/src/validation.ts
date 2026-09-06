@@ -49,6 +49,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
   const attachments = Object.hasOwn(input, "attachments") ? parseImageAttachments(input.attachments) : undefined;
   const promptText = () => attachments?.length && input.text === "" ? "" : text(input.text, "prompt", attachments?.length ? 500_000 : 4_000_000);
   switch (type) {
+    case "session.environment.cancel": return { id, command: { type, preparationId: text(input.preparationId, "preparation ID"), projectId: text(input.projectId, "project ID"), runRevision: revision(input.runRevision) } };
     case "session.environment.resume": return { id, command: { type, preparationId: text(input.preparationId, 'preparation ID'), expectedRevision: revision(input.expectedRevision) } };
     case "preferences.put": return { id, command: { type, change: parsePreferenceChange(input.change) } };
     case "workspace.mutate": return { id, command: { type, target: parseWorkspaceTarget(input.target), action: parseWorkspaceMutation(input.action) } };

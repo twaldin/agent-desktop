@@ -1,5 +1,6 @@
 import { hasNewChatIntent, requiresNewChatProtocol } from './new-chat-protocol';
 import { hasEnvironmentIntent, requiresEnvironmentProtocol } from './environment-protocol';
+import { LocalEnvironmentRuns } from './local-environments/runs';
 import { WorktreeEnvironmentLifecycle } from './local-environments/lifecycle';
 import { EnvironmentSessions } from './environment-sessions';
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -99,7 +100,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       if (record) store.environmentPreparations.transition(record.id, record.revision, { type: 'removed' });
     },
   });
-  const environmentLifecycle = new WorktreeEnvironmentLifecycle(store, workspaces, { signal: environmentAbort.signal });
+  const environmentRuns = new LocalEnvironmentRuns(store.environmentPreparations);
+  const environmentLifecycle = new WorktreeEnvironmentLifecycle(store, workspaces, { signal: environmentAbort.signal }, environmentRuns);
   function assertWorkspaceAvailable(cwd: string): void {
     if ([...mutatingWorkspaces].some(path => within(path, cwd))) throw new Error("This workspace is being changed. Wait for it to finish before starting work.");
   }
@@ -127,7 +129,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const sessionTails = new Map<string, Promise<unknown>>();
   const executions = new Map<string, Promise<unknown>>();
   const runtimeErrors = new Map<string, string>();
-  const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, reserve: reserveWorkspaceMutation,
+  const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, runs: environmentRuns, reserve: reserveWorkspaceMutation,
     signal: environmentAbort.signal, onEvent: onRuntimeEvent,
     onHandle: handle => { handles.set(handle.id, Promise.resolve(handle)); }, changed: () => publishState() });
   let models: ModelInfo[] = [];
@@ -334,7 +336,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, execution: { commandVersion: 5 } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence };
   }
   function publish(input: EventInput): void {
@@ -437,6 +439,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const ok = (value?: Extract<CommandResult, { ok: true }>["value"], admission?: Extract<CommandResult, { ok: true }>["admission"]): CommandResult =>
       ({ ok: true, commandId: envelope.id, value, ...(admission ? { admission } : {}) });
     switch (command.type) {
+      case "session.environment.cancel": {
+        const record = store.environmentPreparations.get(command.preparationId);
+        const project = store.getProject(command.projectId);
+        if (!record || !project || record.projectId !== project.id || record.sourceRoot !== project.path) throw new Error('Preparation does not belong to this project.');
+        environmentRuns.cancel(record.id, command.runRevision);
+        return { ok: true, commandId: envelope.id };
+      }
       case "session.environment.resume": return environmentSessions.resume(envelope.id, command.preparationId, command.expectedRevision);
       case "preferences.put": return ok({ type: command.type, preference: preferences!.put(command.change) });
       case "workspace.mutate": {
@@ -585,7 +594,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       ?? fail(envelope.id, "OUTCOME_UNKNOWN", "This command was pending when the service stopped. Inspect its outcome before issuing a new command.");
     const command = envelope.command;
     const key = command.type === "workspace.mutate" ? `workspace:${JSON.stringify(command.target)}` : "sessionId" in command ? command.sessionId : "$catalog";
-    const previous = command.type === "session.interrupt" ? undefined : sessionTails.get(key);
+    const interrupt = command.type === "session.interrupt" || command.type === "session.environment.cancel";
+    const previous = interrupt ? undefined : sessionTails.get(key);
     const pending = (previous ?? Promise.resolve()).catch(() => {}).then(async () => {
       let result: CommandResult;
       try { result = await execute(envelope, commandVersion); }
@@ -598,7 +608,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       return completed.result!;
     });
     commands.set(envelope.id, pending);
-    if (command.type !== "session.interrupt") sessionTails.set(key, pending);
+    if (!interrupt) sessionTails.set(key, pending);
     void pending.finally(() => {
       commands.delete(envelope.id);
       if (sessionTails.get(key) === pending) sessionTails.delete(key);

@@ -62,7 +62,7 @@ export interface CommandClaim {
 type WithoutSequence<T> = T extends { sequence: number } ? Omit<T, "sequence"> : never;
 export type EventInput = WithoutSequence<HostEvent>;
 type JsonRow = { data: string };
-type EnvironmentPreparationAccessor = Pick<LocalEnvironmentPreparations, "get" | "list" | "transition" | "public">;
+type EnvironmentPreparationAccessor = Pick<LocalEnvironmentPreparations, "get" | "list" | "transition" | "public" | "getOutput" | "beginOutput" | "updateOutput">;
 
 /** Host-owned app state. Native OMP files remain the source of transcripts. */
 export class HostStore {

@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source28 — live script output and cancellation
+
+Environment setup now exposes live stdout/stderr through More details and supports explicit cancellation of its exact running script. Cancellation bypasses the waiting creation command, settles without creating a session, and preserves the original submission and newer draft for explicit retry. Output and cancellation receipts survive host restart. A process that has already exited refuses late cancellation while its exports finish being captured. These controls are specifically advertised as script output/cancellation; Git checkout/fetch and native-session creation cancellation remain unfinished.
+
+The real production-App flow passes10 checks with9 captures in hidden Electron: show live output, cancel once, reload, retain the newer draft, explicitly retry and deliver the original prompt once. Source HEAD/index/README remain unchanged. The macOS focused suite passes31 tests/304 assertions, followed by the corrected portable HTTP check passing34 assertions. Deckbox passes26 tests/280 assertions on the same final host source; its installed service PID and checked runtime hashes remain unchanged. Linux’s shell emits an additional Terminated diagnostic after cancellation; the retained initial failed assertion and corrected check distinguish that platform output from an app defect. Typecheck passes. Private evidence: `.data/environment28/composer-cancellation-final/`, `output-final-tests.log`, `output-cancel-portable.log` and `linux-output/`.
+
+Source28 remains unfrozen and uninstalled. Named actions, native environment discovery/import, whole-worktree progress/cancellation, Auto-fix, uncertain-effect reconciliation and paired native acceptance are still required; this checkpoint does not claim visual parity or hosted-provider proof.
+
 ## Source28 — session environment reaches macOS and Linux terminals
 
 New session-owned terminals now receive the setup exports and explicit unsets captured for that session. Project terminals and other sessions retain their own environment; reopening the host restores the bound session exports. Both raw-PTY and native tmux transports use a host-private argument, with no environment fields accepted from clients or exposed in public terminal records. Native tmux applies each pane’s values without changing its shared server environment.
