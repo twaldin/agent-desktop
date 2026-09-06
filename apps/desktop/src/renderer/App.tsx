@@ -53,6 +53,7 @@ import { DEFAULT_THEME } from "../../../../packages/shared/src/theme";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace-protocol";
 import type { NewChatExecution } from "../../../../packages/shared/src/new-chat";
 import { Welcome } from "./Welcome";
+import { applyProjectExecutionMode, executionModeLabel, projectExecutionModeDraftId, projectExecutionModeView, resolveProjectExecutionMode, sameModeConflict, selectProjectExecutionMode, selectProjectWithExecutionMode } from "./project-execution-mode";
 
 export function App() {
   const composerContext = useRef<ComposerContextHandle>(null);
@@ -230,11 +231,20 @@ export function App() {
   const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls);
   const imagesStaging = imageComposer.staging.length > 0;
   const worktreesAvailable = state?.newChatExecution?.commandVersion === 4 && state.newChatExecution.worktrees === true;
+  const modeView = !selectedId && worktreesAvailable && draft.projectId ? projectExecutionModeView(drafts, draft.projectId, draft.execution) : undefined;
+  useEffect(() => {
+    if (!modeView || !draft.projectId || view.conflict || pendingSubmission?.uncertain) return;
+    if (modeView.conflict) {
+      if (sameModeConflict(modeView)) resolveProjectExecutionMode(drafts, draftId, draft.projectId, "remote");
+      return;
+    }
+    applyProjectExecutionMode(drafts, draftId, modeView.draft);
+  }, [drafts, draftId, draft.projectId, draft.execution?.type, view.conflict?.revision, pendingSubmission?.uncertain, modeView?.draft.revision, modeView?.draft.execution?.type, modeView?.conflict?.revision, modeView?.conflict?.execution?.type]);
   const executionBranch = draft.execution?.type === "worktree" && draft.execution.startingState.type === "branch" ? draft.execution.startingState.branchName : undefined;
   const executionReady = Boolean(selectedId || draft.execution?.type !== "worktree" || worktreesAvailable && project && workspace?.restored && workspace.status && !workspace.busy && !workspace.pending && (draft.execution.startingState.type === "working-tree"
     ? workspace.status.entries.length
     : executionBranch === workspace.status.branch || workspace.branches.some(branch => !branch.remote && !branch.symbolicTarget && branch.name === executionBranch)));
-  const canSend = connected && Boolean(state) && !busy && !missingSession && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !imagesStaging && executionReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
+  const canSend = connected && Boolean(state) && !busy && !missingSession && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !imagesStaging && executionReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
 
   const navigate = useCallback((id: string | null, owner = route.hostId ?? state?.host.id ?? desktop.localHostId, keepSettings = false) => {
     setRoute({ sessionId: id, hostId: owner }); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false); setAppMenuOpen(false);
@@ -246,7 +256,11 @@ export function App() {
   useEffect(() => { if (!route.hostId && desktop.localHostId) setRoute(previous => previous.hostId ? previous : { ...previous, hostId: desktop.localHostId }); }, [route.hostId, desktop.localHostId]);
   const newConversation = useCallback((projectId?: string, owner = route.hostId ?? state?.host.id ?? desktop.localHostId) => {
     navigate(null, owner);
-    if (projectId !== undefined && owner) controllers(owner).drafts.update("new-conversation", { projectId });
+    if (projectId !== undefined && owner) {
+      const pair = controllers(owner), capabilities = desktop.catalog.records.get(owner)?.state?.newChatExecution;
+      if (capabilities?.commandVersion === 4 && capabilities.worktrees) selectProjectWithExecutionMode(pair.drafts, "new-conversation", projectId);
+      else pair.drafts.update("new-conversation", { projectId });
+    }
   }, [navigate, route.hostId, state?.host.id, desktop.localHostId, stores, desktop.catalog]);
   useEffect(() => installAppShortcuts(window, {
     composer: () => textarea.current,
@@ -286,7 +300,7 @@ export function App() {
     try {
       const path = await bridge.chooseDirectory(); if (!path) return;
       const value = await command({ type: "project.add", path });
-      if (value && "path" in value) { drafts.update("new-conversation", { projectId: value.id }); navigate(null); await refresh(); }
+      if (value && "path" in value) { if (worktreesAvailable) selectProjectWithExecutionMode(drafts, "new-conversation", value.id); else drafts.update("new-conversation", { projectId: value.id }); navigate(null); await refresh(); }
     } catch (cause) { setActionError(errorMessage(cause)); }
     finally { setAddingProject(false); }
   }
@@ -295,7 +309,7 @@ export function App() {
     setAddingProject(true); setActionError(null);
     try {
       const value = await command({ type: "project.add", path: remotePath.trim() });
-      if (value && "path" in value) { drafts.update("new-conversation", { projectId: value.id }); navigate(null); setDialog(null); await refresh(); }
+      if (value && "path" in value) { if (worktreesAvailable) selectProjectWithExecutionMode(drafts, "new-conversation", value.id); else drafts.update("new-conversation", { projectId: value.id }); navigate(null); setDialog(null); await refresh(); }
     } catch (cause) { setActionError(errorMessage(cause)); }
     finally { setAddingProject(false); }
   }
@@ -435,6 +449,8 @@ export function App() {
             <PendingInteractions bridge={bridge} hostId={hostId} sessionId={(selectedId ?? pendingSessionId)!} localHostId={desktop.localHostId} connected={connected}/>
           </>}
           {actionError && <div className="inline-error" role="alert"><span>{actionError}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
+          {modeView?.conflict && !sameModeConflict(modeView) && draft.projectId && <div className="draft-conflict" role="alert"><strong>Work in changed on another device.</strong><p>Your prompt and other selections are preserved. Choose which execution mode to use for this project.</p><dl><dt>My choice</dt><dd>{executionModeLabel(modeView.draft.execution)}</dd><dt>Host’s saved choice</dt><dd>{executionModeLabel(modeView.conflict.execution)}</dd></dl><div><button className="secondary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"remote")}>Use saved mode</button><button className="primary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"local")}>Keep my mode</button></div></div>}
+          {modeView?.status === "error" && draft.projectId && <div className="inline-error" role="alert"><span>{modeView.error ?? "The Work in choice was not saved to the host."}</span><button disabled={!connected} onClick={() => void drafts.flush(projectExecutionModeDraftId(draft.projectId!)).catch(() => {})}>Retry mode save</button></div>}
           {pendingSubmission && <div className="subtle-notice">{pendingSubmission.uncertain ? "A submission is awaiting confirmation. Retry checks its original command; newer draft edits stay here." : pendingSessionId ? busy ? "Waiting for this session to accept the captured prompt." : "A session was created. Sending again continues that session." : "Creating this prompt’s session."}{pendingSessionId && <button onClick={() => navigate(pendingSessionId)}>Open {knownPendingSession?.title ?? "session"}</button>}<details><summary>View pending prompt and selections</summary><DraftSnapshot draft={pendingSubmission.draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/>{knownPendingSession && <p>Bound session: {knownPendingSession.title} · {knownPendingSession.cwd}</p>}{pendingSubmission.draft.approvalMode && pendingSessionId && <p>The permission choice applies to this session before the prompt runs and remains if the prompt is rejected.</p>}</details></div>}
           {view.conflict && <div className="draft-conflict" role="alert"><strong>This draft changed on another device.</strong><p>Your text, images, and selections are preserved. Choose which version to continue with.</p><details><summary>View my draft</summary><DraftSnapshot draft={draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/></details><details><summary>View host’s saved draft</summary><DraftSnapshot draft={view.conflict} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/></details><div><button className="secondary-button" onClick={() => drafts.resolve(draftId, "remote")}>Use saved draft</button><button className="primary-button" onClick={() => drafts.resolve(draftId, "local")}>Keep my draft</button></div></div>}
           {view.status === "error" && <div className="inline-error" role="alert"><span>{view.error ?? "Draft could not be saved."}</span><button onClick={() => void drafts.flush(draftId).catch(cause => setActionError(errorMessage(cause)))}>Retry save</button></div>}
@@ -448,8 +464,12 @@ export function App() {
           {selected && <GoalStrip key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
           {!selectedId && <ComposerContext ref={composerContext} hostId={hostId} hostName={state?.host.name ?? hostId} hosts={desktop.hosts} projects={state?.projects ?? []} projectId={draft.projectId} connected={connected} addingProject={addingProject} workspace={workspace}
             execution={draft.execution} worktreesAvailable={worktreesAvailable} onExecution={(execution: NewChatExecution) => drafts.update(draftId,{execution})}
+            onExecutionMode={(execution: NewChatExecution) => {
+              if (worktreesAvailable && draft.projectId) selectProjectExecutionMode(drafts,draftId,draft.projectId,execution);
+              else if (execution.type === "local" && draft.execution?.type === "worktree") drafts.update(draftId,{execution});
+            }}
             branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); setSettingsOpen(true); }}
-            onProject={projectId => drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})})} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}
+            onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}
             onCheckout={async (branch,create) => { if (!workspace?.status || !connected) return; await workspace.mutate({type:"git.checkout",branch,expectedRevision:workspace.status.revision,...(create ? {create:true} : {})}); }}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
             <ComposerImages controller={imageComposer} attachments={draft.attachments} media={attachmentMedia} hostId={hostId} connected={connected} capabilities={state?.imageAttachments} disabled={Boolean(selected?.archived)}/>

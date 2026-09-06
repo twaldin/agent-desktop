@@ -340,6 +340,17 @@ Object.assign(window, {
     await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]'),"worktree starting state control");
     assert(document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')!.textContent?.includes("Local file state"),"Dirty detached HEAD did not fall back to local file state");
     assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Selecting worktree mode mutated the repository or created a session");
+    assert(!document.querySelector('[aria-label="Switch branch"]'),"Worktree composer exposes a redundant source-checkout control");
+    location.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Local"),"return to Local mode");
+    button(document.querySelector('.composer-context-menu'),"Local")!.click();
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')?.textContent?.includes("Detached HEAD"),"Local mode restores source branch control");
+    assert(!document.querySelector('[aria-label="What branch should this chat start from?"]'),"Local mode retains worktree starting-state control");
+    location.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"New local worktree")?.disabled===false,"return to worktree mode");
+    button(document.querySelector('.composer-context-menu'),"New local worktree")!.click();
+    await wait(()=>document.querySelector('[aria-label="What branch should this chat start from?"]') && !document.querySelector('[aria-label="Switch branch"]'),"worktree control replaces checkout control");
+    assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Toggling execution mode changed source Git or created a session");
     document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')!.click();
     await wait(()=>button(document.querySelector('.composer-context-menu'),"Local file state"),"dirty local file state");
     assert(document.querySelector<HTMLInputElement>('[aria-label="Search Dock project branches"]') && !button(document.querySelector('.composer-context-menu'),"origin/feature/dock"),"Starting-state menu is not the native local branch catalog");
@@ -347,6 +358,18 @@ Object.assign(window, {
     await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')?.textContent?.includes("Local file state"),"working-tree choice");
     assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Selecting local file state mutated the source repository or created a session");
     const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!; prompt.focus(); prompt.select(); document.execCommand('insertText',false,'Captured worktree prompt');
+    document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Don’t work in a project"),"clear worktree project");
+    button(document.querySelector('.composer-context-menu'),"Don’t work in a project")!.click();
+    await wait(()=>!document.querySelector('[aria-label="What branch should this chat start from?"]'),"project clear returns to Local");
+    assert(prompt.value==='Captured worktree prompt',"Project clear lost authored prompt");
+    document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Dock project"),"restore worktree project");
+    button(document.querySelector('.composer-context-menu'),"Dock project")!.click();
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')?.textContent?.includes("Local file state"),"project restores remembered worktree mode");
+    assert(prompt.value==='Captured worktree prompt' && !document.querySelector('[aria-label="Switch branch"]'),"Restored worktree mode lost prompt or retained source checkout control");
+    assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Project mode restoration mutated Git or created a session");
+
     await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled===false,"worktree Send enabled");
     promptGate=Promise.withResolvers<void>(); document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click();
     await wait(()=>sessionCreates.length===beforeCreates+1 && sessionPrompts.length===1,"captured worktree create and prompt");
@@ -358,8 +381,12 @@ Object.assign(window, {
     checks.push("dirty detached HEAD selects local file state for a worktree without mutating the source; Send captures the owning project and working-tree state");
     return {prompt:{x:prompt.getBoundingClientRect().x+20,y:prompt.getBoundingClientRect().y+20}};
   },
+  checkWorktreePromptFocus: async () => {
+    await wait(()=>document.activeElement===document.querySelector("#prompt"),"native pointer focuses worktree prompt before typing");
+  },
   finishWorktreeSubmission: async () => {
     const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+    await wait(()=>prompt.value.includes(" newer edit"),"native newer edit reaches composer before receipt");
     promptGate?.resolve();
     await wait(()=>!document.querySelector('.subtle-notice details') && prompt.value.includes(' newer edit'),"worktree submission completion with newer edit");
     assert(sessionCreates.length===1 && sessionPrompts.length===1,"Worktree submission created or prompted more than once");
