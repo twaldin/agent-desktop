@@ -116,7 +116,7 @@ async function loadExtensionProviders(registry: ModelRegistry, settings: Setting
   for (const sourceId of new Set(activeSources)) registry.clearSourceRegistrations(sourceId);
   for (const { name, config, sourceId } of extensions.runtime.pendingProviderRegistrations) registry.registerProvider(name, config, sourceId);
   if (!retainRegistrations) extensions.runtime.pendingProviderRegistrations = [];
-  await registry.refreshRuntimeProviders("offline");
+  await registry.refreshRuntimeProviders();
   return extensions;
 }
 
@@ -257,15 +257,16 @@ export class OmpRuntime {
     if (this.#disposed) throw new Error("OMP runtime is disposed");
   }
 
-  async #withDiscovery<T>(cwd: string, refresh: boolean | undefined, read: (context: NativeContext) => T | Promise<T>): Promise<T> {
+  async #withDiscovery<T>(cwd: string, refresh: boolean | undefined, read: (context: NativeContext) => T | Promise<T>, loadExtensions = true): Promise<T> {
     this.#assertActive();
     const resolved = await requireDirectory(cwd);
+    const contextKey = `${resolved}\0${loadExtensions ? "providers" : "metadata"}`;
     this.#assertActive();
     const pending = (this.#discoveryTails.get(resolved) ?? Promise.resolve()).catch(() => {}).then(async () => {
       this.#assertActive();
-      let context = this.#discovery.get(resolved);
+      let context = this.#discovery.get(contextKey);
       if (!context || refresh) {
-        const replacement = await this.#context(resolved);
+        const replacement = await this.#context(resolved, loadExtensions);
         try {
           if (refresh) {
             await replacement.auth.revalidateCredentials();
@@ -276,7 +277,7 @@ export class OmpRuntime {
         // All reads for this cwd share the queue, so nobody is still using the
         // old store when it closes. Failed refreshes retain the previous context.
         context?.auth.close();
-        this.#discovery.set(resolved, replacement);
+        this.#discovery.set(contextKey, replacement);
         context = replacement;
       }
       return read(context);
@@ -314,10 +315,10 @@ export class OmpRuntime {
   }
 
   getComposerActions(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeComposerCatalog> {
-    return this.#withDiscovery(cwd, options.refresh, context => discoverComposerActions(cwd, this.#agentDir, context.settings));
+    return this.#withDiscovery(cwd, options.refresh, context => discoverComposerActions(cwd, this.#agentDir, context.settings), false);
   }
   getComposerCompletions(cwd: string, query: ComposerCompletionQuery): Promise<NativeComposerCompletions> {
-    return this.#withDiscovery(cwd, false, async context => composerCompletions(await discoverComposerActions(cwd, this.#agentDir, context.settings), query));
+    return this.#withDiscovery(cwd, false, async context => composerCompletions(await discoverComposerActions(cwd, this.#agentDir, context.settings), query), false);
   }
 
   #setup(operation: () => Promise<OmpSession>): Promise<OmpSession> {

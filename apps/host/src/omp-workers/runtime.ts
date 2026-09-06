@@ -476,7 +476,7 @@ export class WorkerRuntime {
     return handle;
   }
 
-  async listModels(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<ModelInfo[]> {
+  async #discoveryClient(): Promise<WorkerClient> {
     this.#assertActive();
     if (!this.#discovery) {
       const pending = this.#track(this.#spawn({ mode: "discovery", agentDir: this.#options.agentDir }));
@@ -485,28 +485,29 @@ export class WorkerRuntime {
     }
     const client = await this.#discovery;
     this.#assertActive();
+    return client;
+  }
+
+  async listModels(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<ModelInfo[]> {
+    const client = await this.#discoveryClient();
     return client.request<ModelInfo[]>({ operation: "listModels", args: { cwd, refresh: options.refresh } });
   }
 
   async listModelCapabilities(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<OmpModelCapabilities[]> {
-    await this.listModels(cwd);
-    const client = await this.#discovery!;
+    const client = await this.#discoveryClient();
     return client.request<OmpModelCapabilities[]>({ operation: "listModelCapabilities", args: { cwd, refresh: options.refresh } });
   }
 
   async getComposerCatalog(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<OmpComposerCatalog> {
-    await this.listModels(cwd);
-    const client = await this.#discovery!;
+    const client = await this.#discoveryClient();
     return client.request<OmpComposerCatalog>({ operation: "getComposerCatalog", args: { cwd, refresh: options.refresh } });
   }
 
   async getComposerActions(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeComposerCatalog> {
-    await this.listModels(cwd);
-    return (await this.#discovery!).request<NativeComposerCatalog>({ operation: "getComposerActions", args: { cwd, refresh: options.refresh } }, 15_000);
+    return (await this.#discoveryClient()).request<NativeComposerCatalog>({ operation: "getComposerActions", args: { cwd, refresh: options.refresh } }, 15_000);
   }
   async getComposerCompletions(cwd: string, query: ComposerCompletionQuery): Promise<NativeComposerCompletions> {
-    await this.listModels(cwd);
-    return (await this.#discovery!).request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { cwd, query } }, 5_000);
+    return (await this.#discoveryClient()).request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { cwd, query } }, 5_000);
   }
 
   dispose(): Promise<void> {
