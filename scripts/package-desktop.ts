@@ -2,10 +2,14 @@ import { spawnSync } from "node:child_process";
 import { access, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { verifyTmuxBundle } from "../apps/host/src/terminals/bundle";
+import { unpackHostArtifact } from "./install-host";
 
 // macOS packaging deliberately uses the vendor Electron shell plus our maintained app files.
 // A host source archive is provided by package-host.ts; all runtime paths are inside this app.
 if (process.platform !== "darwin") throw new Error("Build the macOS desktop on a Mac.");
+if (Bun.version !== "1.3.14") throw new Error("Desktop packaging requires Bun 1.3.14.");
+const bunVersion = spawnSync(process.execPath, ["--version"], { encoding: "utf8" });
+if (bunVersion.status !== 0 || bunVersion.stdout.trim() !== "1.3.14") throw new Error("The bundled executable must be Bun 1.3.14.");
 const root = resolve(import.meta.dir, "..");
 const hostArchive = process.argv[2] ? resolve(process.argv[2]) : undefined;
 if (!hostArchive) throw new Error("Usage: bun scripts/package-desktop.ts <host-package.tar.gz> [output-directory]");
@@ -37,15 +41,17 @@ try {
   await writeFile(join(appDirectory, "package.json"), JSON.stringify({ name: "agent-desktop", version: desktopPackage.version, main: "dist/main.cjs" }));
   const hostDirectory = join(resources, "host");
   await mkdir(hostDirectory, { recursive: true });
-  run("/usr/bin/tar", ["-xzf", hostArchive, "-C", hostDirectory]);
-  // package-host uses a flat package root. Verify before installing dependencies.
-  await readFile(join(hostDirectory, "package.json"));
-  run(process.execPath, ["install", "--production", "--frozen-lockfile"], hostDirectory);
+  // Validate archive paths, pinned metadata and every recorded source hash before installing code.
+  const hostArtifact = await unpackHostArtifact(hostArchive, hostDirectory);
+  if (hostArtifact.runtimeEntrypoint !== "apps/host/src/packaged-entry.ts") throw new Error("Desktop packaging requires a host with runtime ownership checks.");
+  run(process.execPath, ["install", "--production", "--frozen-lockfile", "--backend=copyfile"], hostDirectory);
   await mkdir(join(resources, "runtime"));
   await cp(process.execPath, join(resources, "runtime/bun"), { dereference: true });
+  const copiedVersion = spawnSync(join(resources, "runtime/bun"), ["--version"], { encoding: "utf8" });
+  if (copiedVersion.status !== 0 || copiedVersion.stdout.trim() !== "1.3.14") throw new Error("Copied Bun runtime does not match 1.3.14.");
   // Test the installed source tree before producing a launchable artifact. Runtime
   // JSON catalogs and other packaged imports must not resolve through the checkout.
-  run(join(resources, "runtime/bun"), ["--eval", 'await import("./apps/host/src/server.ts"); const native = await import("@oh-my-pi/pi-natives"); if (typeof native.FileLock.tryAcquire !== "function") throw new Error("Native host lock missing");'], hostDirectory);
+  run(join(resources, "runtime/bun"), ["--eval", 'const {activateBundledRuntime}=await import("./apps/host/src/runtime-ownership.ts"); activateBundledRuntime(process.cwd()); await import("./apps/host/src/server.ts"); const native = await import("@oh-my-pi/pi-natives"); if (typeof native.FileLock.tryAcquire !== "function") throw new Error("Native host lock missing");'], hostDirectory);
   const nativeBundle = verifyTmuxBundle(join(hostDirectory, "runtime/tmux", `${process.platform}-${process.arch}`));
   run(nativeBundle.binary, ["-V"]);
   await rename(join(application, "Contents/MacOS/Electron"), join(application, "Contents/MacOS/Agent Desktop"));

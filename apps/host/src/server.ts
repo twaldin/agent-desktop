@@ -858,10 +858,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   }
 }
 
-if (import.meta.main) {
+export async function runHostMain(): Promise<void> {
   const host = await startHost({ tailscale: true });
   // OMP owns the process signal exit and waits for registered cleanup. A second
   // SIGTERM listener races its native hard exit and can leave our locator behind.
   registerExitCleanup("agent-desktop-host", () => host.stop(), { exitOnly: true });
   process.stdout.write(`Agent Desktop host ready on ${host.connection.origin}\n`);
 }
+
+if (import.meta.main) await runHostMain();

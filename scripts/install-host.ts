@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, copyFile, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { arch, homedir, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { HostArtifact } from "./package-host";
+import { assertHostRuntimePins } from "./package-host";
 import { assertNoLiveTerminals, assertNoNativeTerminalOwnership } from "./terminal-upgrade-guard";
 import { verifyTmuxBundle } from "../apps/host/src/terminals/bundle";
 import { checkHostStateCompatibility, supportedHostStateSchemaVersions } from "./host-state-compatibility";
@@ -43,7 +45,14 @@ export function serviceLayout(options: { platform?: string; homeDirectory?: stri
 const xml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 const systemd = (value: string, exec = false) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%").replace(/\$/g, exec ? "$$$$" : "$")}"`;
 const executable = (layout: ServiceLayout) => join(layout.installDirectory, "current/bin/bun");
-const entry = (layout: ServiceLayout) => join(layout.installDirectory, "current/apps/host/src/server.ts");
+const entry = (layout: ServiceLayout) => {
+  const current = join(layout.installDirectory, "current");
+  let manifest: Pick<HostArtifact, "runtimeEntrypoint">;
+  try { manifest = JSON.parse(readFileSync(join(current, "host-artifact.json"), "utf8")); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return join(current, "apps/host/src/server.ts"); throw error; }
+  if (manifest.runtimeEntrypoint !== undefined && manifest.runtimeEntrypoint !== "apps/host/src/packaged-entry.ts") throw new Error("Unsupported packaged runtime entrypoint.");
+  return join(current, manifest.runtimeEntrypoint ?? "apps/host/src/server.ts");
+};
 const servicePath = (layout: ServiceLayout) => [join(layout.installDirectory, "current/bin"), join(layout.homeDirectory, ".bun/bin"),
   join(layout.homeDirectory, ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
 
@@ -238,7 +247,7 @@ async function backupState(layout: ServiceLayout): Promise<string | undefined> {
   return directory;
 }
 
-async function verifyArtifact(directory: string): Promise<HostArtifact> {
+export async function verifyArtifact(directory: string): Promise<HostArtifact> {
   const manifest = JSON.parse(await readFile(join(directory, "host-artifact.json"), "utf8")) as HostArtifact;
   if (manifest.format !== 1 || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(manifest.version)
     || manifest.bunVersion !== BUN_VERSION || manifest.ompVersion !== "18.1.10" || !manifest.files || typeof manifest.files !== "object") throw new Error("Unsupported host artifact manifest.");
@@ -251,6 +260,10 @@ async function verifyArtifact(directory: string): Promise<HostArtifact> {
   for (const required of ["package.json", "bun.lock", "apps/host/src/server.ts", "scripts/install-host.ts"]) {
     if (!manifest.files[required]) throw new Error(`Artifact is missing ${required}`);
   }
+  assertHostRuntimePins(JSON.parse(await readFile(join(directory, "package.json"), "utf8")));
+  if (manifest.runtimeEntrypoint !== undefined && (manifest.runtimeEntrypoint !== "apps/host/src/packaged-entry.ts"
+    || !manifest.files[manifest.runtimeEntrypoint] || !manifest.files["apps/host/src/runtime-ownership.ts"]
+    || !manifest.files["apps/host/src/omp-workers/packaged-entry.ts"])) throw new Error("Invalid packaged runtime ownership entrypoint.");
   if (manifest.nativeTerminals) {
     const target = `${platform()}-${arch()}`;
     if (manifest.nativeTerminals.protocol !== "tmux-v1" || !Array.isArray(manifest.nativeTerminals.platforms)
@@ -261,7 +274,7 @@ async function verifyArtifact(directory: string): Promise<HostArtifact> {
   return manifest;
 }
 
-async function unpack(archive: string, directory: string): Promise<HostArtifact> {
+export async function unpackHostArtifact(archive: string, directory: string): Promise<HostArtifact> {
   const listing = (await run(["tar", "-tzf", archive])).stdout.split("\n").filter(Boolean);
   if (listing.some(path => isAbsolute(path) || path.split("/").includes("..") || /[\x00-\x1f\x7f]/.test(path))) throw new Error("Unsafe archive path.");
   const types = (await run(["tar", "-tvzf", archive])).stdout.split("\n").filter(Boolean);
@@ -281,7 +294,7 @@ export async function installHost(options: { archive: string; bun?: string; layo
   await mkdir(staging, { mode: 0o700 });
   let newRelease: string | undefined;
   try {
-    const manifest = await unpack(resolve(options.archive), staging);
+    const manifest = await unpackHostArtifact(resolve(options.archive), staging);
     checkBeforeStop(manifest, layout);
     const previous = await currentVersion(layout);
     if (await exists(layout.serviceFile) && !previous) throw new Error("An existing service file has no matching installation; refusing to overwrite it.");
@@ -291,8 +304,10 @@ export async function installHost(options: { archive: string; bun?: string; layo
     await copyFile(bun, join(staging, "bin/bun"));
     await chmod(join(staging, "bin/bun"), 0o700);
     const installedBun = join(staging, "bin/bun");
-    await run([installedBun, "install", "--production", "--frozen-lockfile"], { cwd: staging });
-    await run([installedBun, "--eval", 'await import("./apps/host/src/server.ts"); const native = await import("@oh-my-pi/pi-natives"); if (typeof native.FileLock.tryAcquire !== "function") throw new Error("Native lock missing");'], { cwd: staging });
+    await run([installedBun, "install", "--production", "--frozen-lockfile", "--backend=copyfile"], { cwd: staging });
+    const runtimeGuard = manifest.runtimeEntrypoint
+      ? 'const {activateBundledRuntime}=await import("./apps/host/src/runtime-ownership.ts"); activateBundledRuntime(process.cwd()); ' : '';
+    await run([installedBun, "--eval", runtimeGuard + 'await import("./apps/host/src/server.ts"); const native = await import("@oh-my-pi/pi-natives"); if (typeof native.FileLock.tryAcquire !== "function") throw new Error("Native lock missing");'], { cwd: staging });
     if (manifest.nativeTerminals) {
       const bundle = verifyTmuxBundle(join(staging, "runtime/tmux", `${platform()}-${arch()}`));
       if ((await run([bundle.binary, "-V"])).stdout.trim() !== "tmux 3.7c") throw new Error("The bundled native terminal failed its runtime check.");

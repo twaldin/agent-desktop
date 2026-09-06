@@ -16,6 +16,7 @@ import { inspectImageAttachment, requestImageAttachmentCapabilities, requestImag
 import { requestComposerCatalog } from "./composer-transport";
 import { requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { verifyKnownHost } from "./host-recovery";
+import { resolveHostLaunch } from "./host-launch";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
@@ -73,12 +74,9 @@ async function startOrFindHost(): Promise<LocalConnection> {
   const current = readConnection();
   if (current && await probe(current)) return current;
   mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
-  const root = process.env.AGENT_DESKTOP_PROJECT_ROOT;
-  const packagedEntry = join(process.resourcesPath, "host/apps/host/src/server.ts");
-  const bun = process.env.AGENT_DESKTOP_BUN || (existsSync(packagedEntry)
-    ? join(process.resourcesPath, "runtime", "bun") : join(homedir(), ".bun", "bin", "bun"));
-  const entry = root ? join(root, "apps/host/src/server.ts") : packagedEntry;
-  if (!existsSync(bun) || !existsSync(entry)) throw new Error("The host runtime is missing. Build or reinstall Agent Desktop.");
+  const { bun, entry } = resolveHostLaunch({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath,
+    homeDirectory: homedir(), environment: { AGENT_DESKTOP_BUN: process.env.AGENT_DESKTOP_BUN,
+      AGENT_DESKTOP_PROJECT_ROOT: process.env.AGENT_DESKTOP_PROJECT_ROOT } });
   const output = openSync(join(dataDirectory, "host.log"), "a", 0o600);
   const child = spawn(bun, [entry], {
     detached: true, stdio: ["ignore", output, output],

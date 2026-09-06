@@ -4,7 +4,8 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { TMUX_BUNDLE_SOURCES } from "../apps/host/src/terminals/bundle";
-import { packageHost, type HostArtifact } from "./package-host";
+import { unpackHostArtifact, verifyArtifact } from "./install-host";
+import { assertHostRuntimePins, packageHost, type HostArtifact } from "./package-host";
 
 const directories: string[] = [];
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -14,9 +15,11 @@ test("new package declares schema1/2/3/4/5 and hashes the standalone guard; immu
   const root = await mkdtemp(join(tmpdir(), "agent-package-schema-contract-")); directories.push(root);
   const repository = join(root, "repository"), native = join(root, "native-contract-fixture");
   for (const [file, value] of Object.entries({
-    "package.json": JSON.stringify({ packageManager: "bun@1.3.14", dependencies: { "@oh-my-pi/pi-coding-agent": "18.1.10", "@oh-my-pi/pi-natives": "18.1.10" }, patchedDependencies: { "@oh-my-pi/pi-coding-agent@18.1.10": "patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch" } }),
+    "package.json": JSON.stringify({ packageManager: "bun@1.3.14", dependencies: { "@oh-my-pi/pi-ai": "18.1.10", "@oh-my-pi/pi-coding-agent": "18.1.10", "@oh-my-pi/pi-natives": "18.1.10", "@oh-my-pi/pi-tui": "18.1.10", "@oh-my-pi/pi-utils": "18.1.10" }, patchedDependencies: { "@oh-my-pi/pi-coding-agent@18.1.10": "patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch" } }),
     "bun.lock": "packaging-only lock fixture\n", "apps/host/package.json": "{}", "apps/desktop/package.json": "{}", "packages/shared/package.json": "{}",
-    "apps/host/src/server.ts": "// Packaging-only fixture; never launched.\n", "packages/shared/src/protocol.ts": "export {};\n",
+    "apps/host/src/server.ts": "// Packaging-only fixture; never launched.\n", "apps/host/src/packaged-entry.ts": "// inert packaged entry fixture; never launched.\n",
+    "apps/host/src/runtime-ownership.ts": "export {};\n", "apps/host/src/omp-workers/packaged-entry.ts": "// inert worker entry fixture; never launched.\n",
+    "packages/shared/src/protocol.ts": "export {};\n",
   })) { await mkdir(dirname(join(repository, file)), { recursive: true }); await writeFile(join(repository, file), value); }
   const ompPatch = "diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts\n";
   await mkdir(join(repository, "patches"), { recursive: true });
@@ -34,6 +37,7 @@ test("new package declares schema1/2/3/4/5 and hashes the standalone guard; immu
   const output = join(root, "contract-source12.tar.gz");
   const result = await packageHost({ version: "contract-source12", output, repository, nativeBundles: [native] });
   const unpacked = join(root, "unpacked"); await mkdir(unpacked);
+  await unpackHostArtifact(output, unpacked);
   expect(Bun.spawnSync(["tar", "-xzf", output, "-C", unpacked], { stdout: "pipe", stderr: "pipe" }).success).toBe(true);
   const manifest = JSON.parse(await readFile(join(unpacked, "host-artifact.json"), "utf8")) as HostArtifact;
   expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5]);
@@ -42,6 +46,19 @@ test("new package declares schema1/2/3/4/5 and hashes the standalone guard; immu
   const guard = await readFile(join(unpacked, "scripts/host-state-compatibility.ts"));
   expect(hash(guard)).toBe(manifest.files["scripts/host-state-compatibility.ts"]!);
   expect(hash(await readFile(output))).toBe(result.sha256);
+  await writeFile(join(unpacked, "package.json"), "tampered\n");
+  await expect(verifyArtifact(unpacked)).rejects.toThrow("Artifact verification failed: package.json");
   await expect(packageHost({ version: "changed-version", output, repository, nativeBundles: [native] })).rejects.toThrow("Refusing to overwrite an existing artifact");
   expect(hash(await readFile(output))).toBe(result.sha256);
+});
+
+test("host packaging rejects any missing or unpinned OMP package", () => {
+  const dependencies = Object.fromEntries(["pi-ai", "pi-coding-agent", "pi-natives", "pi-tui", "pi-utils"].map(name => [`@oh-my-pi/${name}`, "18.1.10"]));
+  assertHostRuntimePins({ packageManager: "bun@1.3.14", dependencies });
+  for (const name of Object.keys(dependencies)) {
+    const changed = { ...dependencies };
+    delete changed[name];
+    expect(() => assertHostRuntimePins({ packageManager: "bun@1.3.14", dependencies: changed })).toThrow();
+  }
+  expect(() => assertHostRuntimePins({ packageManager: "bun@1.3.14", dependencies: { ...dependencies, "@oh-my-pi/pi-ai": "latest" } })).toThrow();
 });

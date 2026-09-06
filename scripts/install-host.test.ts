@@ -11,7 +11,7 @@ afterEach(async () => { await Promise.all(directories.splice(0).map(directory =>
 describe("installed host service configuration", () => {
   test("standalone installer imports before its production dependencies are installed", async () => {
     const directory = await mkdtemp(join(tmpdir(), "agent-standalone-installer-")); directories.push(directory);
-    for (const file of ["scripts/install-host.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts", "apps/host/src/terminals/native-store.ts", "apps/host/src/terminals/bundle.ts", "apps/host/src/terminals/error.ts"]) {
+    for (const file of ["scripts/install-host.ts", "scripts/package-host.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts", "apps/host/src/terminals/native-store.ts", "apps/host/src/terminals/bundle.ts", "apps/host/src/terminals/error.ts"]) {
       await mkdir(dirname(join(directory, file)), { recursive: true });
       await copyFile(join(import.meta.dir, "..", file), join(directory, file));
     }
@@ -31,6 +31,16 @@ describe("installed host service configuration", () => {
     expect(source).not.toContain("<key>HOME</key>");
     expect(source).not.toContain("OMP_AGENT_DIR");
     expect(source).not.toContain("--watch");
+  });
+
+  test("service entry follows packaged manifest and does not fall back to server.ts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-host-entry-selector-")); directories.push(root);
+    const layout = serviceLayout({ platform: "darwin", homeDirectory: root, installDirectory: join(root, "install") });
+    const current = join(layout.installDirectory, "current");
+    await mkdir(current, { recursive: true });
+    await writeFile(join(current, "host-artifact.json"), JSON.stringify({ runtimeEntrypoint: "apps/host/src/packaged-entry.ts" }));
+    expect(renderLaunchAgent(layout)).toContain("apps/host/src/packaged-entry.ts");
+    expect(renderLaunchAgent(layout)).not.toContain("apps/host/src/server.ts");
   });
 
   test("generated launchd XML preserves paths containing XML characters", async () => {

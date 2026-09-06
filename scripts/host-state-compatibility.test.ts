@@ -30,7 +30,11 @@ function lifecycle(onStop?: () => void, onHealthy?: () => void) {
 async function artifact(directory: string, version: string, stateSchemaVersions?: number[]) {
   // These inert files are archive/manifest fixtures, never an emulated native runtime.
   const files: Record<string, string> = {};
-  for (const [file, value] of Object.entries({ "package.json": '{"private":true}', "bun.lock": "fixture lock\n", "apps/host/src/server.ts": "export {};\n", "scripts/install-host.ts": "export {};\n" })) {
+  const packageManifest = JSON.stringify({ packageManager: "bun@1.3.14", dependencies: {
+    "@oh-my-pi/pi-ai": "18.1.10", "@oh-my-pi/pi-coding-agent": "18.1.10", "@oh-my-pi/pi-natives": "18.1.10",
+    "@oh-my-pi/pi-tui": "18.1.10", "@oh-my-pi/pi-utils": "18.1.10",
+  } });
+  for (const [file, value] of Object.entries({ "package.json": packageManifest, "bun.lock": "fixture lock\n", "apps/host/src/server.ts": "export {};\n", "scripts/install-host.ts": "export {};\n" })) {
     await mkdir(dirname(join(directory, file)), { recursive: true }); await writeFile(join(directory, file), value); files[file] = hash(value);
   }
   await writeFile(join(directory, "host-artifact.json"), JSON.stringify({ format: 1, version, bunVersion: "1.3.14", ompVersion: "18.1.10", ...(stateSchemaVersions ? { stateSchemaVersions } : {}), files }));

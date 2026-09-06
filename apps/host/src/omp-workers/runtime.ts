@@ -11,6 +11,7 @@ import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
 import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation } from "./protocol";
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
+import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 
 export interface WorkerFailure {
   type: "worker_failure";
@@ -87,7 +88,14 @@ class WorkerClient {
     if (options.onWorkerFailure) this.#failures.add(options.onWorkerFailure);
     const executable = options.executablePath ?? process.execPath;
     if (!path.isAbsolute(executable)) throw new Error("OMP worker requires an absolute Bun executable path");
-    const workerPath = options.workerPath ?? fileURLToPath(new URL("./entry.ts", import.meta.url));
+    const bundleRoot = getBundledRuntimeRoot();
+    const workerPath = bundleRoot ? fileURLToPath(new URL("./packaged-entry.ts", import.meta.url))
+      : options.workerPath ?? fileURLToPath(new URL("./entry.ts", import.meta.url));
+    if (bundleRoot) {
+      assertBundledRuntime(bundleRoot, executable);
+      if (options.workerPath !== undefined && options.workerPath !== workerPath)
+        throw new Error("Packaged OMP workers must use the app-owned worker entrypoint.");
+    }
     this.#readyDeadline = setTimeout(() => {
       this.#fail("OMP worker startup timed out");
       this.#process.kill("SIGKILL");

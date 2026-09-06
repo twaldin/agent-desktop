@@ -11,11 +11,19 @@ export interface HostArtifact {
   createdAt: string;
   bunVersion: "1.3.14";
   ompVersion: "18.1.10";
+  /** Historical releases launched server.ts directly. New packages validate ownership first. */
+  runtimeEntrypoint?: "apps/host/src/packaged-entry.ts";
   /** Absent only in historical artifacts, whose stores read schema 1. */
   stateSchemaVersions?: number[];
   excludedSources?: string[];
   nativeTerminals?: { protocol: "tmux-v1"; platforms: Array<"darwin-arm64" | "linux-x64"> };
   files: Record<string, string>;
+}
+
+export function assertHostRuntimePins(manifest: { packageManager?: string; dependencies?: Record<string, string> }): void {
+  const ompPackages = ["pi-ai", "pi-coding-agent", "pi-natives", "pi-tui", "pi-utils"];
+  if (manifest.packageManager !== "bun@1.3.14" || ompPackages.some(name => manifest.dependencies?.[`@oh-my-pi/${name}`] !== "18.1.10"))
+    throw new Error("Host runtime dependencies must match the agreed pinned versions.");
 }
 
 export function validateVersion(version: string): string {
@@ -54,8 +62,7 @@ export async function packageHost(options: { version: string; output: string; re
   try { await lstat(output); throw new Error("Refusing to overwrite an existing artifact."); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const manifest = JSON.parse(await readFile(join(repository, "package.json"), "utf8"));
-  if (manifest.packageManager !== "bun@1.3.14" || manifest.dependencies?.["@oh-my-pi/pi-coding-agent"] !== "18.1.10"
-    || manifest.dependencies?.["@oh-my-pi/pi-natives"] !== "18.1.10") throw new Error("Host runtime dependencies must match the agreed pinned versions.");
+  assertHostRuntimePins(manifest);
   const excluded = new Set(options.excludeSources ?? []);
   if (!options.nativeBundles?.length) throw new Error("Include the verified native terminal runtime with --tmux-bundle before packaging this host version.");
   const files = ["package.json", "bun.lock", "apps/host/package.json", "apps/desktop/package.json", "packages/shared/package.json",
@@ -63,7 +70,10 @@ export async function packageHost(options: { version: string; output: string; re
     ...await sources(join(repository, "packages/shared/src"), repository, excluded), ...patchedDependencySources(manifest)].sort();
   const staging = await mkdtemp(join(tmpdir(), "agent-desktop-package-"));
   try {
-    const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10", stateSchemaVersions: [1, 2, 3, 4, 5], excludedSources: [...excluded], files: {} };
+    if (!files.includes("apps/host/src/packaged-entry.ts") || !files.includes("apps/host/src/runtime-ownership.ts")
+      || !files.includes("apps/host/src/omp-workers/packaged-entry.ts")) throw new Error("Packaged runtime ownership entrypoints are required.");
+    const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10",
+      runtimeEntrypoint: "apps/host/src/packaged-entry.ts", stateSchemaVersions: [1, 2, 3, 4, 5], excludedSources: [...excluded], files: {} };
     for (const file of files) {
       const destination = join(staging, file);
       await mkdir(dirname(destination), { recursive: true });
