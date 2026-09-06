@@ -15,6 +15,7 @@ const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string
 let browserReads = 0, browserCreates = 0;
 const draftWrites: Extract<CommandEnvelope["command"],{type:"draft.put"}>[] = [];
 const branchWrites: CommandEnvelope[] = [];
+let checkoutGate: Promise<void> | undefined;
 let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
@@ -82,6 +83,7 @@ const methods: Partial<DesktopBridge> = {
     if (envelope.command.type === "workspace.mutate" && envelope.command.action.type === "git.checkout") {
       branchWrites.push(structuredClone(envelope));
       if (envelope.command.action.expectedRevision !== gitStatus.revision) throw new Error("Wrong reviewed Git revision");
+      await checkoutGate;
       gitStatus.branch = envelope.command.action.branch; gitStatus.revision += "-next";
       return {ok:true,commandId:envelope.id,value:{type:"git.checkout",status:structuredClone(gitStatus)}};
     }
@@ -205,6 +207,31 @@ Object.assign(window, {
       assert(!workspaceCalls.some(call=>(call.target as {projectId?:string})?.projectId==="delayed-project"),"Disposed context started a stale Git read after recovery");
       checks.push("switching project during delayed recovery cancels the old context read without disconnecting shared panels");
     }finally{offlineCache.read=original;gate.resolve(null);}
+  },
+  checkCompletedCheckoutContext: async () => {
+    document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Dock project"),"restore project for pending command");
+    button(document.querySelector('.composer-context-menu'),"Dock project")!.click();
+    await wait(()=>document.querySelector('[aria-label="Switch branch"]'),"restored branch context");
+    const gate=Promise.withResolvers<void>();checkoutGate=gate.promise;const count=branchWrites.length;
+    try{
+      document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')!.click();
+      await wait(()=>button(document.querySelector('.composer-context-menu'),"feature/dock"),"pending checkout menu");
+      button(document.querySelector('.composer-context-menu'),"feature/dock")!.click();
+      await wait(()=>branchWrites.length===count+1,"checkout delivered and waiting");
+      document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
+      await wait(()=>button(document.querySelector('.composer-context-menu'),"Don’t work in a project"),"switch context during command");
+      button(document.querySelector('.composer-context-menu'),"Don’t work in a project")!.click();
+      await wait(()=>!document.querySelector('[aria-label="Switch branch"]'),"changed context while checkout pending");
+      document.querySelector<HTMLButtonElement>('[aria-label="Select where to run the chat"]')!.click();
+      await wait(()=>document.querySelector('.composer-context-menu[aria-label="Select where to run the chat"]'),"new host menu while old checkout pending");
+      gate.resolve();await wait(()=>gitStatus.branch==="feature/dock","old checkout completed");
+      await new Promise(resolve=>setTimeout(resolve,100));
+      const menu=document.querySelector<HTMLElement>('.composer-context-menu[aria-label="Select where to run the chat"]');
+      assert(menu,"Old checkout completion dismissed the new context menu");
+      menu.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
+      checks.push("old checkout receipt cannot dismiss another project or host menu");
+    }finally{gate.resolve();checkoutGate=undefined;}
   },
   appDockProgress: () => ({ checks, route: route(), activityCalls, workspaceCalls: workspaceCalls.map(call => call.query.type), dock: windowState.dock }),
   runAppDockAcceptance: async () => {

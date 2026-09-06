@@ -16,6 +16,7 @@ export function ComposerContext({ hostId, hostName, hosts, projects, projectId, 
   const [open, setOpen] = useState<Menu>(), [query, setQuery] = useState(""), [newBranch, setNewBranch] = useState("");
   const [, redraw] = useReducer(value => value + 1, 0);
   const root = useRef<HTMLDivElement>(null), menu = useRef<HTMLDivElement>(null), anchor = useRef<HTMLButtonElement>(null);
+  const currentContext = useRef({ workspace, open }); currentContext.current = { workspace, open };
   const [position, setPosition] = useState<CSSProperties>();
   const project = projects.find(item => item.id === projectId), host = hosts.find(item => item.hostId === hostId);
   const disabledGit = !connected || !workspace?.status || !workspace.restored || workspace.busy || Boolean(workspace.pending);
@@ -64,12 +65,15 @@ export function ComposerContext({ hostId, hostName, hosts, projects, projectId, 
     const index = buttons.indexOf(event.target as HTMLButtonElement);
     const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length-1 : index < 0 ? event.key === "ArrowUp" ? buttons.length-1 : 0 : (index + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
     buttons[next]?.focus({preventScroll:true});
+    buttons[next]?.scrollIntoView({block:"nearest"});
   }
   const needle = query.trim().toLocaleLowerCase();
   const matches = (value:string) => value.toLocaleLowerCase().includes(needle);
   async function checkout(branch:string, create=false) {
     if (disabledGit) return;
     await onCheckout(branch,create);
+    // A completed command for an old project cannot dismiss the new context's menu.
+    if (currentContext.current.workspace !== workspace || !["branches","create-branch"].includes(currentContext.current.open ?? "")) return;
     // WorkspaceState retains rejected/uncertain receipts and exposes Retry.
     if (!workspace?.errors.action && !workspace?.pending) close();
   }
