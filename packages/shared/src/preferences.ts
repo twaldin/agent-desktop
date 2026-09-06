@@ -84,6 +84,7 @@ export type ThemeBackground =
 export interface SidebarSectionPreference { name: string; position: number }
 export interface SidebarEntityPreference { hostId: string; sectionId: string | "pinned" | null; position: number }
 export interface PreferenceValues {
+  "git.branchPrefix": string;
   "theme.material": "none" | "sidebar" | "under-window" | "hud";
   "theme.mode": "system" | "light" | "dark";
   "theme.tokens": ThemeTokens;
@@ -195,13 +196,18 @@ function background(value: unknown): ThemeBackground {
 
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
-  if (["theme.mode", "theme.material", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior"].includes(value)) return value as PreferenceKey;
+  if (["git.branchPrefix", "theme.mode", "theme.material", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior"].includes(value)) return value as PreferenceKey;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
   if (!match || !isPreferenceId(match[1])) return invalid("Only allowlisted app preferences and UUID sidebar entities can be shared.");
   return value as PreferenceKey;
 }
 
 function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[PreferenceKey] {
+  if (key === "git.branchPrefix") {
+    const text = boundedText(value, 120).trim();
+    if (!text.endsWith("/") || text.startsWith("/") || text.includes("//") || !/^[A-Za-z0-9._/-]+$/.test(text) || text.includes("..") || text.endsWith("/.")) return invalid("A branch prefix must be a safe nonempty Git path prefix ending in '/'.");
+    return text;
+  }
   if (key === "theme.mode") return enumeration(value, ["system", "light", "dark"] as const);
   if (key === "theme.material") return enumeration(value, ["none", "sidebar", "under-window", "hud"] as const);
   if (key === "theme.tokens") return parseThemeTokens(value);
