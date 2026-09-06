@@ -15,19 +15,21 @@ const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string
 let browserReads = 0, browserCreates = 0;
 const draftWrites: Extract<CommandEnvelope["command"],{type:"draft.put"}>[] = [];
 const branchWrites: CommandEnvelope[] = [];
+const sessionCreates: CommandEnvelope[] = [], sessionPrompts: CommandEnvelope[] = [];
 const preferenceWrites: CommandEnvelope[] = [];
 let preferenceCounter = 0;
 const preferenceRecords: any[] = [];
 const preferenceActor = crypto.randomUUID();
 let checkoutGate: Promise<void> | undefined;
 let checkoutUnknownOnce = false;
+let promptGate: PromiseWithResolvers<void> | undefined;
 let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
 const nativeTerminalListeners = new Set<(event: any) => void>();
 const model = { provider: "controlled", id: "text", name: "Controlled", input: ["text"], contextWindow: 1000, maxTokens: 1000, reasoning: true, thinkingLevels: ["off", "low", "high"], authenticated: true, available: true };
 const session: SessionSummary = { id: sessionId, hostId: owner, projectId, cwd: "/controlled/project", title: "Dock acceptance conversation", sessionFile: "/controlled/session.jsonl", status: questionFixture ? "running" : "idle", model, archived: false, createdAt: 1, updatedAt: 2 };
-const state: HostState = { protocolVersion: 1, host: { id: owner, name: "Controlled workstation", platform: "darwin", architecture: "arm64" }, projects: [{ id: projectId, hostId: owner, name: "Dock project", path: "/controlled/project", createdAt: 1 }], sessions: [session], models: [model], drafts: [], lastEventSequence: 1, imageAttachments: { protocolVersion:1, commandVersion:3, maxImages:4, maxImageBytes:20*1024*1024, maxBatchBytes:20*1024*1024, maxImagePixels:16_777_216, mimeTypes:["image/png","image/jpeg","image/gif","image/webp"] } };
+const state: HostState = { protocolVersion: 1, host: { id: owner, name: "Controlled workstation", platform: "darwin", architecture: "arm64" }, projects: [{ id: projectId, hostId: owner, name: "Dock project", path: "/controlled/project", createdAt: 1 }], sessions: [session], models: [model], drafts: [], lastEventSequence: 1, imageAttachments: { protocolVersion:1, commandVersion:3, maxImages:4, maxImageBytes:20*1024*1024, maxBatchBytes:20*1024*1024, maxImagePixels:16_777_216, mimeTypes:["image/png","image/jpeg","image/gif","image/webp"] }, newChatExecution: {commandVersion:4,worktrees:true} };
 const gitStatus = { revision: "git-revision-1", branch: "feature/dock", head: "abc123", upstream: "origin/feature/dock", ahead: 2, behind: 1, entries: [
   { path: "src/dock.tsx", indexStatus: ".", worktreeStatus: "M", kind: "tracked" as const, submodule: false },
   { path: "notes.txt", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const, submodule: false },
@@ -99,6 +101,16 @@ const methods: Partial<DesktopBridge> = {
       const preference = { key: change.key, ...(change.deleted ? { deleted: true } : { value: change.value, deleted: false }), revision: { counter: preferenceCounter, actor: preferenceActor, opId: crypto.randomUUID() } };
       const index = preferenceRecords.findIndex(record => record.key === change.key); if (index >= 0) preferenceRecords[index] = preference; else preferenceRecords.push(preference);
       return {ok:true,commandId:envelope.id,value:{type:"preferences.put",preference}};
+    }
+    if (envelope.command.type === "session.create") {
+      sessionCreates.push(structuredClone(envelope));
+      const created:SessionSummary={...session,id:"worktree-session",cwd:"/controlled/.worktrees/worktree-session",title:"Captured worktree prompt",status:"idle",createdAt:3,updatedAt:3};
+      if (!state.sessions.some(item=>item.id===created.id)) state.sessions.push(created);
+      return {ok:true,commandId:envelope.id,value:structuredClone(created)};
+    }
+    if (envelope.command.type === "session.prompt") {
+      sessionPrompts.push(structuredClone(envelope)); await promptGate?.promise;
+      return {ok:true,commandId:envelope.id};
     }
     throw new Error(`Unexpected controlled command: ${envelope.command.type}`);
   },
@@ -315,6 +327,43 @@ Object.assign(window, {
       menu.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
       checks.push("old checkout receipt cannot dismiss another project or host menu");
     }finally{gate.resolve();checkoutGate=undefined;}
+  },
+  beginWorktreeSubmission: async () => {
+    const projectButton=document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!; projectButton.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Dock project"),"worktree project choice"); button(document.querySelector('.composer-context-menu'),"Dock project")!.click();
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Select where to run the chat"]') && document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')?.textContent?.includes("feature/dock"),"worktree Git context");
+    const location=document.querySelector<HTMLButtonElement>('[aria-label="Select where to run the chat"]')!; location.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"New local worktree")?.disabled===false,"worktree mode option");
+    const beforeMutations=branchWrites.length, beforeCreates=sessionCreates.length;
+    button(document.querySelector('.composer-context-menu'),"New local worktree")!.click();
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]'),"worktree starting state control");
+    assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Selecting worktree mode mutated the repository or created a session");
+    document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')!.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Local file state"),"dirty local file state");
+    assert(document.querySelector<HTMLInputElement>('[aria-label="Search Dock project branches"]') && !button(document.querySelector('.composer-context-menu'),"origin/feature/dock"),"Starting-state menu is not the native local branch catalog");
+    button(document.querySelector('.composer-context-menu'),"Local file state")!.click();
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')?.textContent?.includes("Local file state"),"working-tree choice");
+    assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Selecting local file state mutated the source repository or created a session");
+    const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!; prompt.focus(); prompt.select(); document.execCommand('insertText',false,'Captured worktree prompt');
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled===false,"worktree Send enabled");
+    promptGate=Promise.withResolvers<void>(); document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click();
+    await wait(()=>sessionCreates.length===beforeCreates+1 && sessionPrompts.length===1,"captured worktree create and prompt");
+    assert(branchWrites.length===beforeMutations,"Send performed a source checkout");
+    const create=sessionCreates.at(-1)!;
+    assert(create.commandVersion===4 && create.command.type==='session.create' && create.command.projectId===projectId && create.command.worktree?.type==='working-tree',"Send did not capture the owning project and selected local file state");
+    const pending=document.querySelector('.subtle-notice details')?.textContent ?? '';
+    assert(pending.includes('New local worktree') && pending.includes('Local file state'),"Pending snapshot omitted its captured execution mode or starting state");
+    checks.push("worktree mode and dirty starting-state selection only update the durable draft; Send captures the owning project and working-tree state without checking out the source");
+    return {prompt:{x:prompt.getBoundingClientRect().x+20,y:prompt.getBoundingClientRect().y+20}};
+  },
+  finishWorktreeSubmission: async () => {
+    const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+    promptGate?.resolve();
+    await wait(()=>!document.querySelector('.subtle-notice details') && prompt.value.includes(' newer edit'),"worktree submission completion with newer edit");
+    assert(sessionCreates.length===1 && sessionPrompts.length===1,"Worktree submission created or prompted more than once");
+    const sent=sessionPrompts[0]!.command;
+    assert(sent.type==='session.prompt' && sent.text==='Captured worktree prompt' && prompt.value.includes(' newer edit') && prompt.value!==sent.text,"Captured prompt or newer draft edit changed during delivery");
+    checks.push("one worktree session and one prompt use the captured draft while newer text remains in the composer");
   },
   appDockProgress: () => ({ checks, route: route(), activityCalls, workspaceCalls: workspaceCalls.map(call => call.query.type), dock: windowState.dock }),
   runAppDockAcceptance: async () => {
