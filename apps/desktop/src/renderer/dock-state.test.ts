@@ -26,3 +26,9 @@ describe("dock state", () => {
     expect(resizeDock(state, "bottom", Number.NaN, { width: 100, height: 100 }).bottomHeight).toBe(50);
   });
 });
+test("browser target IDs are owner-qualified and do not collide by name", () => {
+  const one = dockTabId({ hostId: "home", target: "session:one", kind: "browser", browserTarget: { workerPid: 12, name: "main", targetId: "target-a" } });
+  const two = dockTabId({ hostId: "home", target: "session:one", kind: "browser", browserTarget: { workerPid: 13, name: "main", targetId: "target-a" } });
+  expect(one).not.toBe(two);
+  expect(one).toContain("target=");
+});

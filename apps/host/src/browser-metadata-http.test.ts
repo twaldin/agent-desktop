@@ -12,6 +12,16 @@ test("browser metadata binds exact owner and does not start an absent worker", a
   expect(response?.status).toBe(200); expect(await response?.json()).toMatchObject({ hostId: "host", sessionId: "session", availability: "not-started" }); expect(calls).toBe(1);
 });
 
+test("browser metadata exposes a fresh optional creation ticket without starting a worker", async () => {
+  let calls = 0;
+  const http = new BrowserMetadataHttp({ hostId: "host", sessionExists: () => true,
+    creationTicket: () => ({ controlEpoch: "process-epoch", observedAt: 1234 }),
+    getExistingHandle: async () => { calls++; return undefined; } });
+  expect(await (await http.route(request()))!.json()).toMatchObject({ availability: "not-started",
+    creationTicket: { controlEpoch: "process-epoch", observedAt: 1234 } });
+  expect(calls).toBe(1);
+});
+
 test("browser metadata rejects wrong owners and stale sessions before worker access", async () => {
   let calls = 0;
   const http = new BrowserMetadataHttp({ hostId: "host", sessionExists: () => false, getExistingHandle: async () => { calls++; return undefined; } });

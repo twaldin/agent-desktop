@@ -1,14 +1,40 @@
+diff --git a/src/tools/browser.ts b/src/tools/browser.ts
 --- a/src/tools/browser.ts
 +++ b/src/tools/browser.ts
-@@ -5,0 +6 @@
+@@ -3,6 +3,7 @@
+ import { untilAborted } from "@oh-my-pi/pi-utils";
+ import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
+ import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
 +import type { AgentSession } from "../session/agent-session";
-@@ -27,0 +29 @@
+ import type { ToolSession } from "../sdk";
+ import { enforceInlineByteCap } from "../session/streaming-output";
+ // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
+@@ -25,11 +26,13 @@
+ import {
+ 	type AcquireTabResult,
+ 	acquireTab,
 +	BrowserTabCreateRejected,
-@@ -32,0 +35 @@
+ 	dropHeadlessTabs,
+ 	getTab,
+ 	releaseAllTabs,
+ 	releaseTab,
+ 	runInTab,
 +	type TabSession,
-@@ -46,0 +50 @@
+ } from "./browser/tab-supervisor";
+ import { renderTabCall } from "./browser/tab-call";
+ import { resolveToCwd } from "./path-utils";
+@@ -44,6 +47,7 @@
+ export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
+ export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
+ export type { Observation, ObservationEntry } from "./browser/tab-protocol";
 +export { BrowserTabCreateRejected } from "./browser/tab-supervisor";
-@@ -100 +104,22 @@
+ 
+ const DEFAULT_TAB_NAME = "main";
+ const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
+@@ -97,7 +101,28 @@
+ 	value?: unknown;
+ }
+ 
 -function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
 +type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
 +
@@ -32,7 +58,13 @@
 +}
 +
 +function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
-@@ -203,0 +229,24 @@
+ 	const app = params.app;
+ 	if (app?.cdp_url) {
+ 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
+@@ -201,11 +226,35 @@
+ 	timeoutMs: number,
+ 	signal?: AbortSignal,
+ ): Promise<AgentToolResult<unknown>> {
 +	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
 +	details.browser = browser.kind.kind;
 +	const tab = result.tab;
@@ -57,13 +89,27 @@
 +	signal?: AbortSignal,
 +	createOnly = false,
 +): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
-@@ -205 +253,0 @@
+ 	const kind = resolveBrowserKind(params, session);
 -	details.browser = kind.kind;
-@@ -208,0 +257 @@
+ 
+ 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
+ 	const existing = getTab(name);
 +	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
-@@ -269,0 +319 @@
+ 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
+ 		throw new ToolError(
+ 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
+@@ -267,6 +316,7 @@
+ 					dialogs: params.dialogs,
+ 					signal: openSignal,
+ 					ownerSessionId: session.getSessionId?.() ?? undefined,
 +					createOnly,
-@@ -280,12 +330 @@
+ 				}),
+ 			);
+ 		} catch (error) {
+@@ -277,18 +327,7 @@
+ 		}
+ 		await releaseBrowser(browser, { kill: false });
+ 
 -		const tab = result.tab;
 -		const url = tab.info.url;
 -		const title = tab.info.title ?? "";
@@ -77,7 +123,13 @@
 -		].filter((line): line is string => typeof line === "string");
 -		return toolResult(details).text(lines.join("\n")).done();
 +		return { browser, result };
-@@ -298,0 +338,53 @@
+ 	} catch (error) {
+ 		// Caller cancellation stays a ToolAbortError; the requested timeout
+ 		// becomes a timeout ToolError; anything else passes through unchanged.
+@@ -296,6 +335,59 @@
+ 		if (timeoutSignal.aborted) throw new ToolError(`Browser open timed out after ${timeoutMs}ms`);
+ 		throw error;
+ 	}
 +}
 +
 +/**
@@ -131,12 +183,25 @@
 +		title: tab.info.title ?? "",
 +		viewport: Object.freeze({ ...tab.info.viewport }),
 +	});
+ }
+ 
+ async function closeBrowser(
+diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
-@@ -10 +10 @@
+@@ -7,7 +7,7 @@
+ 	withTimeout,
+ 	workerHostEntry,
+ } from "@oh-my-pi/pi-utils";
 -import type { Page, Target } from "puppeteer-core";
 +import type { KeyInput, MouseButton, Page, Target } from "puppeteer-core";
-@@ -89,0 +90,55 @@
+ import { callSessionTool } from "../../eval/js/tool-bridge";
+ import { webpExclusionForModel } from "../../utils/image-loading";
+ import type { ToolSession } from "../index";
+@@ -87,6 +87,61 @@
+ 	ownerSessionId?: string;
+ }
+ 
 +/**
 + * Read-only current metadata for a tab owned by one native session.
 + * This intentionally omits browser handles, workers, CDP endpoints, profile
@@ -192,23 +257,53 @@
 +	readonly title: string;
 +}
 +
-@@ -128,0 +184,2 @@
+ export interface WorkerTabSession extends TabSessionBase<PuppeteerBrowserHandle> {
+ 	backend: "worker";
+ 	worker: WorkerHandle;
+@@ -126,6 +181,8 @@
+ 	 * dispose. Optional — omitting it opts the tab out of session-scoped reap.
+ 	 */
+ 	ownerSessionId?: string;
 +	/** Reject an existing managed name after serialized acquisition instead of reusing or replacing it. */
 +	createOnly?: boolean;
-@@ -148,0 +206,5 @@
+ }
+ 
+ export interface AcquireTabResult {
+@@ -146,7 +203,14 @@
+ 	timeoutMs?: number;
+ }
+ 
 +/** A definite browser-tab creation refusal that occurs before publishing a new tab. */
 +export class BrowserTabCreateRejected extends ToolError {
 +	override name = "BrowserTabCreateRejected";
 +}
 +
-@@ -149,0 +212,2 @@
+ const tabs = new Map<string, TabSession>();
 +const viewportCaptures = new Map<string, Promise<Readonly<OwnerTabViewportCapture>>>();
 +const humanActions = new Map<string, Promise<Readonly<OwnerTabHumanActionResult>>>();
-@@ -263,0 +328 @@
+ // Headless targets a worker created before dying during init (page-created).
+ // A killed worker can't close its own page; the supervisor closes the
+ // recorded target instead. A shared browser's other targets must never be
+@@ -261,6 +325,7 @@
+ 	// to reuse (e.g. reopening the sole tab with a different dialogs policy).
+ 	let tempHold = false;
+ 	const existing = tabs.get(name);
 +	if (existing && opts.createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
-@@ -510,0 +576 @@
+ 	if (existing) {
+ 		if (existing.browser === browser && existing.state === "alive") {
+ 			const requestedCmuxSurface = "client" in browser ? (opts.cmuxSurface ?? browser.surface) : undefined;
+@@ -508,6 +573,7 @@
+ 	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
+ 	snapshot: SessionSnapshot,
+ ): Promise<RunResultOk> {
 +	if (humanActions.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is busy with a human browser action`);
-@@ -756,0 +823,212 @@
+ 	const tab = tabs.get(name);
+ 	if (!tab || tab.state === "dead") {
+ 		const killed = killedTabs.get(name);
+@@ -754,6 +820,218 @@
+ 		if (await releaseTab(name, opts)) count++;
+ 	}
+ 	return count;
 +}
 +
 +/**
@@ -421,3 +516,6 @@
 +		const rejected = new BrowserActionRejected(error instanceof Error ? error.message : "The human browser action timed out before dispatch");
 +		Object.defineProperty(rejected, "cause", { value: error, configurable: true }); throw rejected;
 +	}
+ }
+ 
+ /** Test-only accessor for the module-global tabs map. */

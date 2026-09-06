@@ -19,6 +19,9 @@ interface Props {
   hostId: string;
   sessionId: string;
   active: boolean;
+  /** A dock page observes exactly one native target, even after host restart. */
+  nativeTarget?: BrowserFrameTarget;
+  onMetadata?(tab: NativeBrowserTabMetadata): void;
 }
 const same = (a: BrowserFrameTarget | undefined, b: BrowserFrameTarget) =>
   Boolean(
@@ -77,16 +80,17 @@ export function BrowserPanel(props: Props) {
   // Changing owners must synchronously discard pixels from the previous owner.
   return (
     <SessionBrowserPreview
-      key={JSON.stringify([props.hostId, props.sessionId])}
+      key={JSON.stringify([props.hostId, props.sessionId, props.nativeTarget?.workerPid, props.nativeTarget?.name, props.nativeTarget?.targetId])}
       {...props}
     />
   );
 }
 
-function SessionBrowserPreview({ bridge, hostId, sessionId, active }: Props) {
+function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget, onMetadata }: Props) {
   const selectionKey = storageKey(hostId, sessionId);
   const [metadata, setMetadata] = useState<BrowserMetadataSnapshot | null>();
-  const [selected, setSelected] = useState(() => readSelection(selectionKey));
+  const [selected, setSelected] = useState(() => nativeTarget ?? readSelection(selectionKey));
+  const metadataCallback = useRef(onMetadata); metadataCallback.current = onMetadata;
   const selectedRef = useRef(selected);
   const [frame, setFrame] = useState<BrowserFrameSnapshot>();
   const frameRef = useRef(frame);
@@ -192,7 +196,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active }: Props) {
           setError(undefined);
           return;
         }
-        const previous = selectedRef.current;
+        const previous = nativeTarget ?? selectedRef.current;
         const tab =
           next.tabs.find(
             (tab) =>
@@ -202,14 +206,13 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active }: Props) {
                 name: tab.name,
                 targetId: tab.targetId,
               }),
-          ) ??
-          next.tabs.find(
+          ) ?? (nativeTarget ? undefined : next.tabs.find(
             (tab) => tab.state === "alive" && tab.backend === "worker",
           ) ??
-          next.tabs.find((tab) => tab.state === "alive");
+          next.tabs.find((tab) => tab.state === "alive"));
         if (!tab) {
           setFrame(undefined);
-          setError(undefined);
+          setError(nativeTarget ? "This native browser tab is no longer available. Open an existing tab or create a new one." : undefined);
           return;
         }
         const target = {
@@ -217,6 +220,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active }: Props) {
           name: tab.name,
           targetId: tab.targetId,
         };
+        metadataCallback.current?.(tab);
         if (!same(previous, target)) {
           selectedRef.current = target;
           setSelected(target);
@@ -243,6 +247,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active }: Props) {
             "The browser viewport belongs to a different session or tab.",
           );
         setFrame(image);
+        metadataCallback.current?.({ ...tab, url: image.url, title: image.title });
         if (!addressDirty.current) setAddress(image.url);
         setError(undefined);
       } catch (cause) {
@@ -512,7 +517,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active }: Props) {
   return (
     <section className="browser-panel" aria-label="Browser preview">
 
-      <div
+      {!nativeTarget && <div
         className="browser-tabs"
         role="tablist"
         aria-label="Native browser tabs"
@@ -537,7 +542,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active }: Props) {
             {tab.backend !== "worker" ? " · unavailable" : ""}
           </button>
         ))}
-      </div>
+      </div>}
       <div className="browser-controls" aria-label="Browser controls">
         <button
           aria-label="Back"

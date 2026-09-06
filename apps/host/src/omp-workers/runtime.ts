@@ -4,7 +4,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrowserFrameTarget, BrowserMetadataAvailability, ModelInfo, NativeBrowserFrame, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
-import type { OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
+import type { OmpBrowserTabCreateResult, OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
 import { copyPreparedImages } from "../omp/images";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
@@ -31,6 +31,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
+  createBrowserTab(name: string): Promise<OmpBrowserTabCreateResult>;
   controlBrowser(request: BrowserControlRequest): Promise<{name: string; targetId: string; context: BrowserDocumentContext; url: string; title: string}>;
   getBrowserFrame(target: BrowserFrameTarget): Promise<NativeBrowserFrame>;
   subscribe(listener: WorkerEventListener): () => void;
@@ -373,6 +374,10 @@ export class WorkerRuntime {
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };
         return metadata;
       },
+      // Native acquisition owns its configured finite timeout. Retain the IPC
+      // request until it settles so a desktop timeout cannot release the host's
+      // in-flight bound while creation may still be running.
+      createBrowserTab: name => client.request<OmpBrowserTabCreateResult>({ operation: "createBrowserTab", args: { name } }),
       controlBrowser: request => client.request({ operation: "controlBrowser", args: { request } }, 15_000),
       getBrowserFrame: target => {
         if (target.workerPid !== client.pid) return Promise.reject(new Error("The selected browser frame belongs to a stale worker."));

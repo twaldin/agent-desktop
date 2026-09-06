@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import type { ModelChoice, ModelInfo, NativeSessionActivity, TranscriptMessage } from "@agent-desktop/shared";
+import { parseNativeBrowserTabMetadata, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeSessionActivity, type TranscriptMessage } from "@agent-desktop/shared";
 import {
   AgentRegistry, createAgentSession, discoverAuthStorage, getAgentDir,
   ModelRegistry, SessionManager, Settings,
@@ -47,6 +47,10 @@ export interface OmpSessionOptions {
 }
 export interface OmpOpenOptions { sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
 export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[] }
+export interface OmpBrowserTabCreateResult {
+  tab: NativeBrowserTabMetadata;
+  targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
+}
 export interface OmpSession {
   readonly id: string;
   readonly sessionFile: string;
@@ -63,6 +67,7 @@ export interface OmpSession {
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
+  createBrowserTab(name: string): Promise<OmpBrowserTabCreateResult>;
   subscribe(listener: OmpEventListener): () => void;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
@@ -442,6 +447,28 @@ export class OmpRuntime {
           const entry = manager.getEntry(nativeEntryId);
           if (entry?.type !== "message" || !("content" in entry.message) || !Array.isArray(entry.message.content)) throw new Error("Native image entry is unavailable");
           return readNativeImage(entry.message.content[blockIndex]);
+        },
+        createBrowserTab: async name => {
+          assertSessionActive();
+          const module = await import("@oh-my-pi/pi-coding-agent/tools/browser") as unknown as {
+            createBrowserTabForSession?: (session: AgentSession, request: { name: string }) => Promise<{
+              created: true; name: string; ownerSessionId: string; targetId: string;
+              backend: "worker" | "cmux"; kindTag: NativeBrowserTabMetadata["kindTag"];
+              targetDisposition: OmpBrowserTabCreateResult["targetDisposition"];
+              url: string; title: string; viewport: NativeBrowserTabMetadata["viewport"];
+            }>;
+          };
+          if (typeof module.createBrowserTabForSession !== "function") {
+            const error = new Error("This pinned native OMP package does not include browser tab creation.");
+            error.name = "BrowserTabCreateRejected";
+            throw error;
+          }
+          const value = await module.createBrowserTabForSession(session, { name });
+          if (value.ownerSessionId !== session.sessionId || value.created !== true) throw new Error("Native browser creation changed session ownership.");
+          return {
+            tab: parseNativeBrowserTabMetadata({ ...value, state: "alive" }),
+            targetDisposition: value.targetDisposition,
+          };
         },
         subscribe: listener => {
           assertSessionActive(); listeners.add(listener);

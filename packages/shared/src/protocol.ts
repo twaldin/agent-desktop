@@ -1,4 +1,5 @@
 import type { BrowserControlRequest, BrowserControlReceipt } from './browser-control';
+import type { BrowserCreateRequest, BrowserCreateReceipt } from "./browser-create";
 import type { AccountInfo, LoginResponse, LoginSnapshot, ProviderCatalog, SessionAccountList } from "./accounts";
 import type { OmpInteraction, OmpInteractionResponse } from "./interactions";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "./workspace-protocol";
@@ -17,6 +18,7 @@ export * from "./session-activity";
 export * from "./browser";
 export * from "./browser-frame";
 export * from "./browser-control";
+export * from "./browser-create";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -252,6 +254,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;
+  createBrowserTab?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateReceipt>;
   controlBrowser?(sessionId: string, request: BrowserControlRequest, hostId?: string): Promise<BrowserControlReceipt>;
   getBrowserFrame?(sessionId: string, target: BrowserFrameTarget, hostId?: string): Promise<BrowserFrameSnapshot>;
   chooseDirectory(): Promise<string | null>;

@@ -35,7 +35,8 @@ const bridge = {
     } finally { inFlight--; }
   },
 } as unknown as DesktopBridge;
-function render(hostId = "host", active = true, override = bridge) { root.render(<BrowserPanel bridge={override} hostId={hostId} sessionId="session" active={active}/>); }
+const observedTitles: string[] = [];
+function render(hostId = "host", active = true, override = bridge, nativeTarget?: BrowserFrameTarget) { root.render(<BrowserPanel bridge={override} hostId={hostId} sessionId="session" active={active} nativeTarget={nativeTarget} onMetadata={tab => observedTitles.push(tab.title ?? "")}/>); }
 const caption = () => document.querySelector("figcaption")?.textContent ?? "";
 const image = () => document.querySelector<HTMLImageElement>("img");
 function button(text: string) {
@@ -51,19 +52,19 @@ Object.assign(window, {
     const selectionGate = holdFrame(); await wait(() => selectionGate.entered, "deferred old selection");
     button("two"); await wait(() => !image(), "selection clears old pixels");
     selectionGate.resolve(); await sleep(150); assert(!image(), "Old selection response painted after selection changed");
-    await wait(() => caption() === "two", "new selection frame");
+    await wait(() => caption().endsWith("· two"), "new selection frame");
     checks.push("deferred old tab response cannot replace the selected tab; valid JPEG decodes");
 
     const pauseGate = holdFrame(); await wait(() => pauseGate.entered, "deferred frame before pause");
     button("Pause"); pauseGate.resolve(); const pausedCalls = metadataCalls;
     await sleep(1200); assert(metadataCalls === pausedCalls && caption().includes("stale preview"), "Paused preview kept polling or failed to label retained pixels");
-    button("Resume"); await wait(() => caption() === "two", "resume captures again");
+    button("Resume"); await wait(() => caption().endsWith("· two"), "resume captures again");
     checks.push("pause stops scheduling and ignores in-flight completion; resume refreshes");
 
     const generationGate = holdFrame(); generation = 2;
     await wait(() => generationGate.entered, "new native worker capture");
     assert(!image(), "Old worker pixels remain during replacement capture");
-    generationGate.resolve(); await wait(() => caption() === "one", "new worker selection");
+    generationGate.resolve(); await wait(() => caption().endsWith("· one"), "new worker selection");
     fail = true; await wait(() => caption().includes("stale preview") && document.body.innerText.includes("Owner offline"), "offline retained frame");
     checks.push("worker replacement clears old pixels; offline retains explicitly stale preview");
 
@@ -83,7 +84,33 @@ Object.assign(window, {
     await sleep(1200); assert(metadataCalls === removedCalls, "Unmounted preview kept polling");
     checks.push("unsupported backend and old bridge stay explicit; unmount stops polling");
 
-    cmux = false; render("host", true); await wait(() => image()?.naturalWidth === 800, "final representative frame");
+    cmux = false;
+    const boundOne = { workerPid: generation, name: "one", targetId: "one" };
+    render("bound", true, bridge, boundOne);
+    await wait(() => image()?.naturalWidth === 800 && caption().endsWith("· one"), "exact bound native target");
+    assert(!document.querySelector(".browser-tabs"), "Bound target duplicated native tabs inside the dock content");
+    assert(observedTitles.includes("one"), "Bound title metadata did not reach the dock callback");
+    generation++;
+    await wait(() => !image() && document.body.innerText.includes("no longer available"), "bound target becomes unavailable after worker replacement");
+    const unavailableCalls = frameCalls;
+    await sleep(1200);
+    assert(frameCalls === unavailableCalls && !image(), "Bound target silently adopted a replacement worker's page");
+    checks.push("bound native identity survives as unavailable after worker replacement; no fallback or duplicate tab row");
+
+    const replacement = { workerPid: generation, name: "two", targetId: "two" };
+    const boundGate = holdFrame();
+    render("bound", true, bridge, replacement);
+    await wait(() => boundGate.entered, "bound target capture pending");
+    render("bound", false, bridge, { ...replacement, name: "one", targetId: "one" });
+    await wait(() => !document.body.innerText.includes("Capturing"), "replacement panel mounted hidden");
+    boundGate.resolve();
+    await sleep(150);
+    assert(!image(), "Pending bound target response painted into a different target");
+    render("bound", true, bridge, { ...replacement, name: "one", targetId: "one" });
+    await wait(() => image()?.naturalWidth === 800 && caption().endsWith("· one"), "changed bound target gets its own frame");
+    checks.push("changing a bound target discards pending pixels before capturing its own page");
+
+    render("host", true); await wait(() => image()?.naturalWidth === 800, "final representative frame");
     button("Pause"); assert(maximumInFlight === 1, "Viewport requests overlapped");
     return { passed: true, checks, metadataCalls, frameCalls, maximumInFlight, scope: "Production BrowserPanel with controlled transport and generated JPEG fixture; no native-browser or provider evidence." };
   },

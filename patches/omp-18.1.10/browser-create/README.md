@@ -13,3 +13,5 @@ bun patches/omp-18.1.10/browser-create/run-isolated.ts
 ```
 
 The proof uses a copied pristine 18.1.10 package, the selected patch, an isolated OMP profile, and an existing Chrome for Testing binary. It makes no provider request and does not touch an existing browser profile.
+
+Also run `bun patches/omp-18.1.10/browser-create/run-frozen-install.ts` before adopting a patch. It installs the frozen workspace manifests in a fresh external directory and verifies both native source hashes. Contextual patch hunks are required: Bun 1.3.14 applied an earlier zero-context deletion to the wrong adjacent line even though `/usr/bin/patch --fuzz=0` produced the expected bytes. Keep both checks; neither substitutes for native runtime acceptance.

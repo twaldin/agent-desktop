@@ -3,7 +3,7 @@ import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractio
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 
-export const WORKER_PROTOCOL_VERSION = 8;
+export const WORKER_PROTOCOL_VERSION = 9;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -33,6 +33,7 @@ export type WorkerOperation =
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }
   | { operation: "getBrowserMetadata" }
+  | { operation: "createBrowserTab"; args: { name: string } }
   | { operation: "controlBrowser"; args: { request: BrowserControlRequest } }
   | { operation: "getBrowserFrame"; args: { target: BrowserFrameTarget } }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }

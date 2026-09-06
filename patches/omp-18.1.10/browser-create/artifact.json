@@ -4,7 +4,7 @@
   "version": "18.1.10",
   "commit": "f241301c83726afe75a847e919b89977a54dafbe",
   "patch": "../../@oh-my-pi%2Fpi-coding-agent@18.1.10.patch",
-  "patchSha256": "4bc299dbfc7e240ac557010250c1cb13b695b100e60388f4b844f1a54a23fc2d",
+  "patchSha256": "64bd6db2a94c8009dc50138b6f49020d3a4ec597ac3cdd0555c28c8cdca79785",
   "baselineFiles": {
     "src/tools/browser.ts": "bcfaad44c5d0fdf2cba89a22e0d01ae5799556394c5ffc65db433d3e4515c7f1",
     "src/tools/browser/tab-supervisor.ts": "9215d5bed2a0f1069216db5d4691a2e72b1bd599914d46854c7cfaba7f1c3f9e"

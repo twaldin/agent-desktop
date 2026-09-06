@@ -14,6 +14,15 @@ test("desktop browser metadata client binds the owner header and response identi
   await expect(requestBrowserMetadata({ origin: "http://host", hostId: "host", token: "token" }, "session")).resolves.toMatchObject({ availability: "not-started" });
 });
 
+test("desktop browser metadata client preserves a valid optional creation ticket", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ protocolVersion: 1, hostId: "host", sessionId: "session",
+    availability: "not-started", reason: "No worker", creationTicket: { controlEpoch: "process-epoch", observedAt: 1234 } }),
+  { headers: { [BROWSER_METADATA_OWNER_HEADER]: "host" } })) as unknown as typeof fetch;
+  await expect(requestBrowserMetadata({ origin: "http://host", hostId: "host" }, "session")).resolves.toMatchObject({
+    creationTicket: { controlEpoch: "process-epoch", observedAt: 1234 },
+  });
+});
+
 test("desktop browser metadata client refuses an owner mismatch and typed remote error", async () => {
   globalThis.fetch = (async () => new Response(JSON.stringify({ protocolVersion: 1, hostId: "other", sessionId: "session", availability: "running", workerPid: 1, tabs: [] }), { headers: { [BROWSER_METADATA_OWNER_HEADER]: "other" } })) as unknown as typeof fetch;
   await expect(requestBrowserMetadata({ origin: "http://host", hostId: "host" }, "session")).rejects.toMatchObject({ code: "OWNER_MISMATCH" } satisfies Partial<HostRequestError>);

@@ -27,6 +27,6 @@ export default function (pi: ExtensionAPI) {
   });
   pi.registerCommand("inspect-browser-frame-contract", {
     description: "Record the isolated native browser state after capture",
-    handler: async () => { pi.appendEntry("browser-frame-contract-state", { phase: "after", ...(await pageState(name)) }); },
+    handler: async (args) => { pi.appendEntry("browser-frame-contract-state", { phase: "after", ...(await pageState(args.trim() || name)) }); },
   });
 }

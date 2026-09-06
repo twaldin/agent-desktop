@@ -9,7 +9,8 @@ import "../../apps/desktop/src/renderer/theme.css";
 
 const owner = "app-dock-owner", projectId = "dock-project", sessionId = "dock-session";
 const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string }[] = [], workspaceCalls: { query: WorkspaceQuery; hostId?: string }[] = [];
-let browserReads = 0;
+let browserReads = 0, browserCreates = 0;
+let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
 const model = { provider: "controlled", id: "text", name: "Controlled", input: ["text"], contextWindow: 1000, maxTokens: 1000, reasoning: false, authenticated: true, available: true };
@@ -49,8 +50,13 @@ const methods: Partial<DesktopBridge> = {
   getPreferences: async () => ({ version: 1, records: [] }), getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "theme", filePath: "/controlled/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {}, getMessages: async () => [], getInteractions: async () => [],
   getComposerCatalog: async () => catalog, getSessionControls: async () => ({ sessionId, revision: "controls", model, capabilities: { ...model, api: "controlled", thinkingSelectors: [], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
-  getBrowserMetadata: async (requestedSession, requestedOwner) => { if (requestedSession !== sessionId || requestedOwner !== owner) throw new Error("Browser owner changed"); browserReads++; return { protocolVersion: 1, hostId: owner, sessionId, availability: "running", workerPid: 42, tabs: [] }; },
-  getBrowserFrame: async () => { throw new Error("Empty native catalog must not request pixels"); },
+  getBrowserMetadata: async (requestedSession, requestedOwner) => { if (requestedSession !== sessionId || requestedOwner !== owner) throw new Error("Browser owner changed"); browserReads++; return { protocolVersion: 1, hostId: owner, sessionId, availability: "running", workerPid: 42, tabs: browserTab ? [browserTab] : [], creationTicket: { controlEpoch: "fixture-epoch", observedAt: Date.now() } }; },
+  createBrowserTab: async (requestedSession, request, requestedOwner) => {
+    if (requestedSession !== sessionId || requestedOwner !== owner) throw new Error("Browser creation owner changed");
+    browserCreates++; browserTab = { name: `desktop-${request.requestId}`, targetId: "cmux-fixture", backend: "cmux", kindTag: "cmux", state: "alive", title: "Browser", url: "about:blank", viewport: {width: 800, height: 600} };
+    return {protocolVersion: 1, hostId: owner, sessionId, requestId: request.requestId, outcome: "completed", workerPid: 42, tab: browserTab, targetDisposition: "created-surface"};
+  },
+  getBrowserFrame: async () => { throw new Error("Unsupported CMUX preview must not request pixels"); },
   getSessionActivity: async (requestedSession, hostId) => { activityCalls.push({ sessionId: requestedSession, hostId }); return structuredClone(activity); }, workspaceQuery,
   command: async (envelope: CommandEnvelope): Promise<CommandResult> => {
     if (envelope.command.type === "draft.put") return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: Date.now() } };
@@ -97,6 +103,7 @@ Object.assign(window, {
 
     add.open = true; button(add, "Browser")!.click();
     await wait(() => right.querySelector(".browser-panel") && browserReads > 0, "browser dock reads exact owner metadata");
+    assert(browserCreates === 1 && right.textContent?.includes("does not support viewport previews"), "Browser creation did not retain the exact unsupported CMUX target");
     document.querySelector<HTMLButtonElement>('[aria-label="Hide side panel"]')!.click();
     await wait(() => getComputedStyle(right).display === "none", "hide actual browser dock");
     const hiddenReads = browserReads; await new Promise(resolve => setTimeout(resolve, 1200));

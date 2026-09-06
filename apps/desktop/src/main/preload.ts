@@ -60,6 +60,7 @@ const bridge: DesktopBridge = {
   getMessages: (sessionId, hostId) => ipcRenderer.invoke("host:messages", sessionId, hostId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
   getBrowserMetadata: (sessionId, hostId) => ipcRenderer.invoke("host:browser-metadata", sessionId, hostId),
+  createBrowserTab: (sessionId, request, hostId) => ipcRenderer.invoke("host:browser-create", sessionId, request, hostId),
   controlBrowser: (sessionId, request, hostId) => ipcRenderer.invoke("host:browser-control", sessionId, request, hostId),
   getBrowserFrame: (sessionId, target, hostId) => ipcRenderer.invoke("host:browser-frame", sessionId, target, hostId),
   chooseDirectory: () => ipcRenderer.invoke("desktop:directory"),

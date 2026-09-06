@@ -158,6 +158,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         else respond(true, browserMetadata(native.listTabsForOwner(owner)));
         break;
       }
+      case "createBrowserTab": {
+        if (typeof message.args.name !== "string" || !/^desktop-[a-zA-Z0-9-]{1,100}$/.test(message.args.name)) {
+          const error = new Error("Invalid native browser tab creation identity.");
+          error.name = "BrowserTabCreateRejected";
+          throw error;
+        }
+        respond(true, await requireSession().createBrowserTab(message.args.name));
+        break;
+      }
       case "controlBrowser": {
         const owner = requireSession().id, request = parseBrowserControlRequest(message.args.request);
         if (request.target.workerPid !== process.pid) { const error = new Error("The browser worker changed."); error.name = "BrowserActionRejected"; throw error; }

@@ -216,3 +216,14 @@ This makes the **same-target CDP approach experimentally viable**. It also confi
 - A2 — [desktop window](/Users/twaldin/dev/agentic-app-expiriment/apps/desktop/src/main/main.ts:415), [renderer CSP](/Users/twaldin/dev/agentic-app-expiriment/apps/desktop/index.html:6).
 - A3 — [host request authentication](/Users/twaldin/dev/agentic-app-expiriment/apps/host/src/server.ts:430), [Tailscale transport contract](tailscale-transport.md).
 - R — [preserved Codex archive inventory](../.reference/codex-26.901.41600/asar-file-list.json), [reference methodology](reference-findings.md).
+
+
+## Native creation and individual browser dock targets
+
+The Browser dock action now requests one native resource using the session's live OMP browser configuration. A fresh owner-bound metadata ticket authorizes admission; observation alone never starts a worker. Explicit creation may resume an inactive session worker. Host admission reserves the request identity before awaiting native work, preserves identical retries, rejects conflicting/stale requests, and retains its eight-operation limit until native settlement. A desktop timeout never automatically retries or releases that underlying-operation bound.
+
+Worker IPC 9 returns the exact native target and whether OMP created a page/surface or adopted a configured connected/relay target. The dock persists worker PID, name and target ID alongside host/session identity. Viewer close is separate from native resource disposal; a missing/restarted worker cannot substitute another page. Existing legacy generic descriptors stay readable without inventing native identity. CMUX targets remain discoverable even though viewport capture is unsupported.
+
+The real native pipeline in `.data/ui-acceptance/native-browser-create-title-final/result.json` exercises production DockPanel and its hook, metadata/create/frame/control HTTP endpoints, main transports and BrowserPanel against an isolated OMP worker. It verifies one creation, navigation, title propagation, viewer close, persisted exact-target restore, original-page cookies/input and final owner disposal. Five screenshots are controlled hidden Electron captures, not native window originals matched to the reference. No provider or installed service is involved. The periodic JPEG viewport and existing toolbar remain visibly different from a complete Codex browser; streaming, native context/permission/file menus, annotations, find/print, history surfaces and remote installed acceptance remain open.
+
+Reproducibility requires both the isolated native proof and `browser-create/run-frozen-install.ts`. Bun 1.3.14 misapplied a prior zero-context deletion even when Unix patch succeeded. The contextual patch is byte-verified after fresh frozen installation; see the candidate README for the exact reproduction command.
