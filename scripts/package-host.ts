@@ -63,7 +63,7 @@ export async function packageHost(options: { version: string; output: string; re
     ...await sources(join(repository, "packages/shared/src"), repository, excluded), ...patchedDependencySources(manifest)].sort();
   const staging = await mkdtemp(join(tmpdir(), "agent-desktop-package-"));
   try {
-    const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10", stateSchemaVersions: [1, 2, 3, 4], excludedSources: [...excluded], files: {} };
+    const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10", stateSchemaVersions: [1, 2, 3, 4, 5], excludedSources: [...excluded], files: {} };
     for (const file of files) {
       const destination = join(staging, file);
       await mkdir(dirname(destination), { recursive: true });

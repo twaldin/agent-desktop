@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { checkHostStateCompatibility, supportedHostStateSchemaVersions } from "./host-state-compatibility";
 import { installHost, manageHost, serviceLayout, type HostServiceLifecycle, type ServiceLayout } from "./install-host";
+import { HostStore } from "../apps/host/src/store";
 
 const directories: string[] = [];
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -115,6 +116,39 @@ describe("host artifact state compatibility", () => {
       expect(await readFile(join(path, "state.sqlite"))).toEqual(bytes);
       expect(await readFile(join(path, "state.sqlite-wal"))).toEqual(wal);
     } finally { db.close(); }
+  });
+
+  test("real preparation schema5 rejects older artifacts and is accepted read-only by the new artifact", async () => {
+    const path = await temporary();
+    const projectPath = join(path, "project");
+    await mkdir(projectPath);
+    const store = new HostStore(path);
+    const project = store.addProject({ path: projectPath });
+    const preparation = store.createEnvironmentPreparation({
+      id: "compatibility-preparation",
+      projectId: project.id,
+      sourceRoot: project.path,
+      worktreePath: join(path, "worktrees", "compatibility-preparation"),
+      startingState: { type: "branch", branchName: "main" },
+      draft: { id: "new-conversation", revision: 1 },
+      environment: null,
+    });
+    expect(preparation.phase).toBe("validated");
+    store.close();
+
+    const file = join(path, "state.sqlite");
+    const before = await readFile(file);
+    const beforeStat = await stat(file);
+    expect(() => checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4] }, path)).toThrow("schema 5 is incompatible");
+    expect(checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4, 5] }, path)).toEqual({
+      checkedSchemaVersion: 5,
+      supportedStateSchemaVersions: [1, 2, 3, 4, 5],
+      legacyManifest: false,
+    });
+    expect(await readFile(file)).toEqual(before);
+    const afterStat = await stat(file);
+    expect(afterStat.mode).toBe(beforeStat.mode);
+    expect(afterStat.mtimeMs).toBe(beforeStat.mtimeMs);
   });
 
   test("installing an incompatible real archive never stops service or replaces current", async () => {

@@ -17,6 +17,14 @@ import { parseImageAttachments } from "../../../packages/shared/src/attachments"
 import { detachedAnswerDraft, type DetachedQuestionSnapshot } from '../../../packages/shared/src/detached-questions';
 import { parseNewChatExecution } from '../../../packages/shared/src/new-chat';
 import { hasNewChatIntent } from './new-chat-protocol';
+import {
+  initializeLocalEnvironmentPreparations,
+  LocalEnvironmentPreparations,
+  type LocalEnvironmentPreparation,
+  type LocalEnvironmentPreparationInput,
+  type LocalEnvironmentPreparationTransition,
+} from "./local-environments/preparations";
+import type { LocalEnvironmentWorkerEnvironment } from "./local-environments/environment";
 
 export type { DraftInput } from "../../../packages/shared/src/protocol";
 import type { DraftInput } from "../../../packages/shared/src/protocol";
@@ -52,11 +60,14 @@ export interface CommandClaim {
 type WithoutSequence<T> = T extends { sequence: number } ? Omit<T, "sequence"> : never;
 export type EventInput = WithoutSequence<HostEvent>;
 type JsonRow = { data: string };
+type EnvironmentPreparationAccessor = Pick<LocalEnvironmentPreparations, "get" | "list" | "transition" | "public">;
 
 /** Host-owned app state. Native OMP files remain the source of transcripts. */
 export class HostStore {
   readonly host: HostIdentity;
+  readonly environmentPreparations: EnvironmentPreparationAccessor;
   private readonly db: Database;
+  private readonly environmentPreparationStore: LocalEnvironmentPreparations;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -66,7 +77,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 4) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 5) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -78,6 +89,7 @@ export class HostStore {
           CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, data TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);
         `);
+        initializeLocalEnvironmentPreparations(this.db);
         if (version === 0) this.db.exec("PRAGMA user_version = 1");
       }).immediate();
       this.host = this.db.transaction(() => {
@@ -92,7 +104,10 @@ export class HostStore {
           .run("host", JSON.stringify(identity));
         return identity;
       }).immediate();
+      this.environmentPreparationStore = new LocalEnvironmentPreparations(this.db, this.host.id);
+      this.environmentPreparations = this.environmentPreparationStore;
       this.recoverInterruptedSessions();
+      this.environmentPreparationStore.reconcileInterrupted();
     } catch (error) {
       this.db.close();
       throw error;
@@ -289,6 +304,49 @@ export class HostStore {
     }).immediate();
   }
 
+  /** First preparation use upgrades the database together with the captured record. */
+  createEnvironmentPreparation(input: LocalEnvironmentPreparationInput): LocalEnvironmentPreparation {
+    return this.db.transaction(() => {
+      const project = this.getProject(input.projectId);
+      if (!project || project.hostId !== this.host.id) throw new Error("Unknown local-environment project");
+      if (project.path !== input.sourceRoot) throw new Error("Local-environment source root differs from its project");
+      this.requireVersion(5);
+      return this.environmentPreparationStore.create(input);
+    }).immediate();
+  }
+
+  /** Commit a command receipt and its exact preparation phase as one SQLite change. */
+  finishCommandWithEnvironmentTransition(
+    id: string,
+    requestHash: string,
+    result: CommandResult,
+    preparation: { id: string; expectedRevision: number; transition: LocalEnvironmentPreparationTransition },
+  ): { command: CommandRecord; preparation: LocalEnvironmentPreparation } {
+    return this.db.transaction(() => {
+      const prior = this.getCommand(id);
+      if (prior?.state === "done") {
+        const command = this.finishCommand(id, requestHash, result);
+        const current = this.environmentPreparationStore.get(preparation.id);
+        if (!current) throw new Error("Cannot finish a command for an unknown local-environment preparation");
+        return { command, preparation: current };
+      }
+      const transitioned = this.environmentPreparations.transition(preparation.id, preparation.expectedRevision, preparation.transition);
+      const command = this.finishCommand(id, requestHash, result);
+      return { command, preparation: transitioned };
+    }).immediate();
+  }
+
+  /** Resolve host-private setup state for one admitted native session. */
+  getSessionEnvironment(sessionId: string): LocalEnvironmentWorkerEnvironment | undefined {
+    const preparation = this.environmentPreparations.list().find(record => record.sessionId === sessionId && record.phase === "session-created");
+    if (!preparation?.environment) return undefined;
+    return {
+      environmentDelta: structuredClone(preparation.environmentDelta ?? null),
+      sourceRoot: preparation.sourceRoot,
+      worktreeRoot: preparation.worktreePath,
+    };
+  }
+
   get lastEventSequence(): number {
     return this.db.query<{ sequence: number }, []>("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events").get()!.sequence;
   }
@@ -339,9 +397,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 4) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 5) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

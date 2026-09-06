@@ -58,6 +58,7 @@ export interface LocalEnvironmentPreparationInput {
 }
 
 export type LocalEnvironmentPreparationTransition =
+  | { type: "outcome.unknown" }
   | { type: "worktree-create.started" }
   | { type: "worktree-create.succeeded"; worktreePath: string }
   | { type: "setup.started" }
@@ -203,7 +204,7 @@ export class LocalEnvironmentPreparations {
     const current = this.get(id);
     if (!current || current.revision !== expectedRevision) throw new LocalEnvironmentPreparationConflict(current);
     const next = this.apply(current, transition);
-    next.revision++; next.updatedAt = Date.now(); delete next.uncertainOperation;
+    next.revision++; next.updatedAt = Date.now(); if (next.phase !== "unknown") delete next.uncertainOperation;
     const result = this.database.query("UPDATE local_environment_preparations SET revision = ?, data = ? WHERE id = ? AND host_id = ? AND revision = ?")
       .run(next.revision, JSON.stringify(next), id, this.hostId, expectedRevision);
     if (result.changes !== 1) throw new LocalEnvironmentPreparationConflict(this.get(id));
@@ -245,6 +246,11 @@ export class LocalEnvironmentPreparations {
       if (!phases.includes(current.phase)) throw new Error(`Cannot apply ${transition.type} while preparation is ${current.phase}.`);
     };
     switch (transition.type) {
+      case "outcome.unknown": {
+        const operation = dispatched.get(current.phase);
+        if (!operation) throw new Error("Only a dispatched operation can become unknown.");
+        next.phase = "unknown"; next.uncertainOperation = operation; break;
+      }
       case "worktree-create.started": require("validated"); next.phase = "worktree-creating"; break;
       case "worktree-create.succeeded":
         require("worktree-creating");

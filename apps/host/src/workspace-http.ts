@@ -82,6 +82,9 @@ export class HostWorkspaces {
     if (!cwd) throw new Error("The workspace owner does not exist on this host.");
     return new WorkspaceService(cwd, { worktreeRoot: join(this.dataDirectory, "worktrees", project?.id ?? session!.id) });
   }
+  sessionWorktreeDestination(projectId: string, path: string): Promise<string> {
+    return this.#resolve({ projectId }).sessionWorktreeDestination(path);
+  }
   createSessionWorktree(projectId: string, path: string, startingState: WorktreeStartingState): Promise<GitWorktree> {
     return this.#resolve({ projectId }).createSessionWorktree(path, startingState);
   }

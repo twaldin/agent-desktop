@@ -45,4 +45,13 @@ The preparation ledger accepts the owning HostStore database so receipt and prep
 
 `WorkerRuntime.create/open` now accepts a separate host-private environment argument applied before spawning the worker. It never enters the native init/IPC payload. A real no-provider worker check verifies create/reopen receive allowed exports and unsets while ordinary sessions and discovery remain unchanged; host-owned profile/home/worktree variables stay protected. These checks do not establish authentication isolation or provider behavior. The runner, ledger and environment checks pass17 tests with93 assertions.
 
-The host creation/removal routes do not call this ledger or pass the environment argument yet. Schema migration, captured composer selection, failure/resume UI, terminal propagation, setup/cleanup orchestration and named-action execution remain unfinished. These modules are preparation for that integration, not completed local-environment functionality.
+The host creation/removal routes do not call this ledger or pass the environment argument yet. Captured composer selection, failure/resume UI, terminal propagation, route integration and named-action execution remain unfinished. These modules are preparation for that integration, not completed local-environment functionality.
+
+
+## Source28 real worktree lifecycle and rollback compatibility
+
+The host-owned preparation store now shares SQLite transactions with command receipts. Its first persisted preparation raises the database to schema5; earlier schemas remain unchanged until that feature is used. Interrupted dispatched operations become unknown once at host startup. A private session lookup restores captured exports for the owning session only. Packaging declares schema1–5 compatibility; an actual schema5 preparation database is refused by older artifacts without modifying its bytes, mode or modification time.
+
+The lifecycle coordinator validates exact configuration bytes before creating the managed directory, records dispatch before Git or shell effects, and preserves failed setup for an explicit revision-checked retry. Reobserving the original preparation identity never reruns setup or worktree creation. Cleanup uses the captured configuration even if its source file changes, and a failed cleanup retains the directory and Git registration. Actual Git/shell tests cover successful setup/cleanup, failed setup and explicit retry, stale configuration rejection, and a real worktree creation followed by an injected lost receipt. The lost-receipt case records unknown, creates no session and performs no second Git dispatch. Source index bytes, HEAD and files remain unchanged.
+
+These coordinator and store tests establish effect ordering in disposable local worktrees. They do not yet establish the server create/resume/removal routes, composer behavior or native UI parity. Those integration gates remain open.

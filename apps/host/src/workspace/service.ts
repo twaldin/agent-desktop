@@ -427,6 +427,16 @@ export class WorkspaceService {
     });
   }
 
+  /** Resolve a host-generated destination before dispatch so preparation can record its identity. */
+  async sessionWorktreeDestination(path: string): Promise<string> {
+    await this.requireGitRoot();
+    relativePath(path);
+    const root = await this.managedRoot(true);
+    const target = await this.parentOwned(path, root);
+    if (target === root || target === this.cwd) throw new WorkspaceError("INVALID_WORKTREE_PATH", "Choose a new directory below the managed worktree root.");
+    return target;
+  }
+
   /** Creates a detached session worktree from either a clean branch or an explicit snapshot of the source files and index. */
   async createSessionWorktree(path: string, startingState: WorktreeStartingState): Promise<GitWorktree> {
     return serialized(`git:${this.cwd}`, async () => {
