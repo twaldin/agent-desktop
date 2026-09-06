@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceService, type TextDocument } from "./service";
@@ -336,6 +336,99 @@ describe("actual local Git operations", () => {
     const created = await service.createWorktree({ path: "literal-topic", newBranch: "literal-topic" });
     expect(git(created.path, "branch", "--show-current").trim()).toBe("literal-topic");
     await service.removeWorktree("literal-topic");
+  });
+
+  test("session worktrees start detached from an exact local branch without copying source edits", async () => {
+    const { cwd, service } = await repository();
+    const branchCommit = git(cwd, "rev-parse", "HEAD");
+    git(cwd, "branch", "clean-start", branchCommit);
+    await writeFile(join(cwd, "tracked.txt"), "source edit must stay local\n");
+    await writeFile(join(cwd, "untracked.txt"), "source-only untracked file\n");
+
+    const tree = await service.createSessionWorktree("session-clean", { type: "branch", branchName: "clean-start" });
+    expect(tree).toMatchObject({ head: branchCommit, branch: null, detached: true, managed: true, managedRelativePath: "session-clean" });
+    expect(git(tree.path, "status", "--porcelain=v1", "--untracked-files=all")).toBe("");
+    expect(await readFile(join(tree.path, "tracked.txt"), "utf8")).toBe("first line\n");
+    expect(await Bun.file(join(tree.path, "untracked.txt")).exists()).toBe(false);
+    expect(git(cwd, "branch", "--show-current")).toBe("main");
+    expect(await readFile(join(cwd, "tracked.txt"), "utf8")).toBe("source edit must stay local\n");
+    expect(await readFile(join(cwd, "untracked.txt"), "utf8")).toBe("source-only untracked file\n");
+  });
+
+  test("working-tree session snapshot preserves source index and copies tracked, staged, untracked, binary, mode and symlink state", async () => {
+    const { cwd, service } = await repository();
+    await writeFile(join(cwd, ".gitignore"), "ignored.bin\n");
+    await writeFile(join(cwd, "deleted.txt"), "delete this\n");
+    git(cwd, "add", "--", ".gitignore", "deleted.txt"); git(cwd, "commit", "--message", "Snapshot fixtures");
+    const head = git(cwd, "rev-parse", "HEAD");
+    await writeFile(join(cwd, "tracked.txt"), "staged version\n"); git(cwd, "add", "--", "tracked.txt");
+    await writeFile(join(cwd, "tracked.txt"), "unstaged version\n");
+    await rm(join(cwd, "deleted.txt"));
+    const binary = Buffer.from([0, 255, 1, 254, 2, 253]);
+    await writeFile(join(cwd, "binary.dat"), binary);
+    await writeFile(join(cwd, "executable.sh"), "#!/bin/sh\necho snapshot\n"); await chmod(join(cwd, "executable.sh"), 0o755);
+    await symlink("tracked.txt", join(cwd, "tracked-link"));
+    await writeFile(join(cwd, "ignored.bin"), "ignored source data\n");
+    const indexPath = git(cwd, "rev-parse", "--git-path", "index");
+    const indexFile = indexPath.startsWith("/") ? indexPath : join(cwd, indexPath);
+    const statusBefore = git(cwd, "status", "--porcelain=v2", "-z", "--untracked-files=all"), indexBefore = await readFile(indexFile);
+
+    const tree = await service.createSessionWorktree("session-dirty", { type: "working-tree" });
+    expect(tree).toMatchObject({ head, branch: null, detached: true, managed: true, managedRelativePath: "session-dirty" });
+    expect(await readFile(indexFile)).toEqual(indexBefore);
+    expect(git(cwd, "rev-parse", "HEAD")).toBe(head);
+    expect(git(cwd, "status", "--porcelain=v2", "-z", "--untracked-files=all")).toBe(statusBefore);
+    expect(await readFile(join(cwd, "tracked.txt"), "utf8")).toBe("unstaged version\n");
+    expect(await readFile(join(tree.path, "tracked.txt"), "utf8")).toBe("unstaged version\n");
+    expect(git(tree.path, "show", ":tracked.txt")).toBe("staged version");
+    expect(await Bun.file(join(tree.path, "deleted.txt")).exists()).toBe(false);
+    expect(await readFile(join(tree.path, "binary.dat"))).toEqual(binary);
+    expect((await stat(join(tree.path, "executable.sh"))).mode & 0o777).toBe(0o755);
+    expect(await readlink(join(tree.path, "tracked-link"))).toBe("tracked.txt");
+    expect(await Bun.file(join(tree.path, "ignored.bin")).exists()).toBe(false);
+    const copied = await new WorkspaceService(tree.path).gitStatus();
+    expect(copied.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "tracked.txt", indexStatus: "M", worktreeStatus: "M", kind: "tracked" }),
+      expect.objectContaining({ path: "deleted.txt", indexStatus: ".", worktreeStatus: "D", kind: "tracked" }),
+      expect.objectContaining({ path: "binary.dat", kind: "untracked" }),
+      expect.objectContaining({ path: "executable.sh", kind: "untracked" }),
+      expect.objectContaining({ path: "tracked-link", kind: "untracked" }),
+    ]));
+  });
+
+  test("session snapshot rejects conflicts and dirty submodules before creation, and a destination collision preserves existing data", async () => {
+    const conflicted = await repository();
+    git(conflicted.cwd, "checkout", "-b", "conflict-side");
+    await writeFile(join(conflicted.cwd, "tracked.txt"), "side\n"); git(conflicted.cwd, "add", "tracked.txt"); git(conflicted.cwd, "commit", "-m", "Side");
+    git(conflicted.cwd, "checkout", "main");
+    await writeFile(join(conflicted.cwd, "tracked.txt"), "main\n"); git(conflicted.cwd, "add", "tracked.txt"); git(conflicted.cwd, "commit", "-m", "Main");
+    expect(Bun.spawnSync(["git", "-C", conflicted.cwd, "merge", "conflict-side"], { stdout: "pipe", stderr: "pipe" }).exitCode).toBe(1);
+    await expect(conflicted.service.createSessionWorktree("conflicted", { type: "working-tree" })).rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_CONFLICT" });
+    expect(await Bun.file(join(conflicted.worktreeRoot, "conflicted")).exists()).toBe(false);
+
+    const submodule = await repository();
+    const nested = join(submodule.directory, "nested-repository"); await mkdir(nested);
+    git(nested, "init", "--initial-branch=main"); git(nested, "config", "user.name", "Workspace Test"); git(nested, "config", "user.email", "workspace-tests@example.invalid");
+    await writeFile(join(nested, "nested.txt"), "nested baseline\n"); git(nested, "add", "nested.txt"); git(nested, "commit", "-m", "Nested");
+    git(submodule.cwd, "-c", "protocol.file.allow=always", "submodule", "add", nested, "vendor/nested"); git(submodule.cwd, "commit", "-am", "Add submodule");
+    await writeFile(join(submodule.cwd, "vendor/nested/nested.txt"), "dirty nested file\n");
+    await expect(submodule.service.createSessionWorktree("dirty-submodule", { type: "working-tree" })).rejects.toMatchObject({ code: "WORKTREE_SNAPSHOT_SUBMODULE" });
+    expect(await Bun.file(join(submodule.worktreeRoot, "dirty-submodule")).exists()).toBe(false);
+
+    await mkdir(submodule.worktreeRoot, { recursive: true });
+    const occupied = join(submodule.worktreeRoot, "occupied"); await mkdir(occupied); await writeFile(join(occupied, "keep.txt"), "keep me\n");
+    await expect(submodule.service.createSessionWorktree("occupied", { type: "branch", branchName: "main" })).rejects.toMatchObject({ code: "WORKTREE_EXISTS" });
+    expect(await readFile(join(occupied, "keep.txt"), "utf8")).toBe("keep me\n");
+    await expect(submodule.service.createSessionWorktree("injected", { type: "branch", branchName: "--guess" })).rejects.toMatchObject({ code: "INVALID_BRANCH" });
+    expect(await Bun.file(join(submodule.worktreeRoot, "injected")).exists()).toBe(false);
+    const concurrent = await Promise.allSettled([
+      submodule.service.createSessionWorktree("serialized", { type: "branch", branchName: "main" }),
+      submodule.service.createSessionWorktree("serialized", { type: "branch", branchName: "main" }),
+    ]);
+    expect(concurrent.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter(result => result.status === "rejected")).toHaveLength(1);
+    expect(concurrent.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "WORKTREE_EXISTS" } });
+    expect((await submodule.service.worktrees()).filter(tree => tree.managedRelativePath === "serialized")).toHaveLength(1);
   });
 
   test("detached worktree commits need a surviving reference before removal", async () => {

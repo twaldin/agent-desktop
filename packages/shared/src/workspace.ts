@@ -29,3 +29,4 @@ export interface GitBranch { name: string; ref: string; commit: string; current:
 export interface GitDiff { patch: string; binary: boolean; staged: boolean; path?: string }
 export interface GitWorktree { path: string; head: string | null; branch: string | null; detached: boolean; bare: boolean; locked: boolean; lockReason?: string; prunable?: string; managed: boolean; managedRelativePath?: string }
 export interface CreateWorktreeOptions { path: string; branch?: string; newBranch?: string; startPoint?: string }
+export type WorktreeStartingState = { type: "branch"; branchName: string } | { type: "working-tree" };

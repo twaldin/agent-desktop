@@ -1,10 +1,11 @@
-import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitCommitResult, GitWorktree, CreateWorktreeOptions } from "../../../../packages/shared/src/workspace";
+import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
 export type * from "../../../../packages/shared/src/workspace";
 
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, realpathSync, statSync } from "node:fs";
-import { access, link, lstat, mkdir, open, readdir, readlink, realpath, rename, stat, unlink } from "node:fs/promises";
+import { access, copyFile, link, lstat, mkdir, mkdtemp, open, readdir, readlink, realpath, rename, rm, stat, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -173,10 +174,10 @@ export class WorkspaceService {
     });
   }
 
-  private async git(args: string[], options: { cwd?: string; validExitCodes?: number[] } = {}): Promise<{ stdout: string; exitCode: number }> {
+  private async git(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; validExitCodes?: number[] } = {}): Promise<{ stdout: string; exitCode: number }> {
     const command = ["--no-pager", "--literal-pathspecs", "-c", "color.ui=false", "-C", options.cwd ?? this.cwd, ...args];
     try {
-      const result = await execute("git", command, { encoding: "buffer", timeout: this.gitTimeoutMs, maxBuffer: 8 * 1024 * 1024 });
+      const result = await execute("git", command, { encoding: "buffer", timeout: this.gitTimeoutMs, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", ...options.env } });
       return { stdout: decode(result.stdout), exitCode: 0 };
     } catch (error) {
       const failure = error as Error & { code?: number | string; killed?: boolean; stdout?: Buffer; stderr?: Buffer };
@@ -423,6 +424,86 @@ export class WorkspaceService {
       const created = (await this.worktrees()).find(tree => tree.path === target);
       if (!created) throw new WorkspaceError("WORKTREE_NOT_REGISTERED", "Git did not register the new worktree. Inspect its outcome before retrying.");
       return created;
+    });
+  }
+
+  /** Creates a detached session worktree from either a clean branch or an explicit snapshot of the source files and index. */
+  async createSessionWorktree(path: string, startingState: WorktreeStartingState): Promise<GitWorktree> {
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      relativePath(path);
+      if (!startingState || typeof startingState !== "object" || (startingState.type !== "branch" && startingState.type !== "working-tree")) {
+        throw new WorkspaceError("INVALID_STARTING_STATE", "Choose a branch or the current working tree as the worktree starting state.");
+      }
+      const root = await this.managedRoot(true);
+      const target = await this.parentOwned(path, root);
+      if (target === root || target === this.cwd) throw new WorkspaceError("INVALID_WORKTREE_PATH", "Choose a new directory below the managed worktree root.");
+      try { await lstat(target); throw new WorkspaceError("WORKTREE_EXISTS", "The worktree destination already exists."); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+
+      let commit: string, indexTree: string | undefined, workingTree: string | undefined;
+      if (startingState.type === "branch") {
+        const branch = startingState.branchName;
+        if (typeof branch !== "string" || !branch || branch.length > 200 || branch.startsWith("-") || branch.includes("\0")) throw new WorkspaceError("INVALID_BRANCH", "A valid local branch name is required.");
+        await this.requireLiteralBranch(branch);
+        const ref = `refs/heads/${branch}`;
+        if ((await this.git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1] })).exitCode !== 0) throw new WorkspaceError("BRANCH_NOT_FOUND", "The selected local branch no longer exists. Refresh the branch list.");
+        if ((await this.git(["symbolic-ref", "--quiet", ref], { validExitCodes: [1] })).exitCode === 0) throw new WorkspaceError("SYMBOLIC_BRANCH", "Symbolic branch references cannot start a worktree.");
+        commit = (await this.git(["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`])).stdout.trim();
+      } else {
+        const before = await this.indexState();
+        if (before.head === null) throw new WorkspaceError("UNBORN_BRANCH", "Create the repository's first commit before starting a worktree.");
+        const status = await this.readGitStatus();
+        if (status.entries.some(entry => entry.kind === "conflict")) throw new WorkspaceError("WORKTREE_SNAPSHOT_CONFLICT", "Resolve Git index conflicts before copying the current working tree.");
+        if (status.entries.some(entry => entry.submodule)) throw new WorkspaceError("WORKTREE_SNAPSHOT_SUBMODULE", "Commit or clean submodule changes before copying the current working tree.");
+        commit = before.head;
+        const temporary = await mkdtemp(join(tmpdir(), "agent-desktop-worktree-index-"));
+        const indexFile = join(temporary, "index");
+        const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+        try {
+          const sourceIndex = (await this.git(["rev-parse", "--path-format=absolute", "--git-path", "index"])).stdout.trim();
+          await copyFile(sourceIndex, indexFile);
+          indexTree = (await this.git(["write-tree"], { env })).stdout.trim();
+          const capture = async () => {
+            await this.git(["read-tree", indexTree!], { env });
+            await this.git(["add", "-A", "--", "."], { env });
+            return (await this.git(["write-tree"], { env })).stdout.trim();
+          };
+          workingTree = await capture();
+          if ((await this.indexState()).revision !== before.revision) throw new WorkspaceError("GIT_CHANGED", "The Git index or HEAD changed while the working tree was captured. Retry from a fresh review.");
+          if (await capture() !== workingTree || (await this.indexState()).revision !== before.revision) throw new WorkspaceError("GIT_CHANGED", "The working tree changed while it was captured. Retry from a stable source state.");
+        } finally { await rm(temporary, { recursive: true, force: true }); }
+      }
+
+      let effectPossible = false;
+      try {
+        await this.git(["worktree", "add", "--detach", "--", target, commit]);
+        effectPossible = true;
+        if (indexTree && workingTree) {
+          await this.git(["read-tree", "--reset", "-u", workingTree], { cwd: target });
+          await this.git(["read-tree", "--reset", indexTree], { cwd: target });
+        }
+        const created = (await this.worktrees()).find(tree => tree.path === target);
+        if (!created || !created.managed || !created.detached || created.head !== commit) throw new Error("The created worktree did not match its resolved starting commit.");
+        if (indexTree && (await this.git(["write-tree"], { cwd: target })).stdout.trim() !== indexTree) throw new Error("The created worktree did not retain the captured index.");
+        if (workingTree) {
+          const temporary = await mkdtemp(join(tmpdir(), "agent-desktop-worktree-verify-"));
+          const env = { ...process.env, GIT_INDEX_FILE: join(temporary, "index") };
+          try {
+            await this.git(["read-tree", indexTree!], { cwd: target, env });
+            await this.git(["add", "-A", "--", "."], { cwd: target, env });
+            if ((await this.git(["write-tree"], { cwd: target, env })).stdout.trim() !== workingTree) throw new Error("The created worktree did not retain the captured files.");
+          } finally { await rm(temporary, { recursive: true, force: true }); }
+        } else if ((await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: target })).stdout) throw new Error("The branch worktree was not created cleanly.");
+        return created;
+      } catch (error) {
+        if (!effectPossible) {
+          const observed = (await this.worktrees().catch(() => [])).find(tree => tree.path === target);
+          effectPossible = Boolean(observed || await lstat(target).catch(() => undefined));
+        }
+        if (effectPossible) throw new WorkspaceError("OUTCOME_UNKNOWN", `The session worktree may have been created at ${target}. Inspect it before retrying. ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
     });
   }
 
