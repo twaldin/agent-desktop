@@ -2,6 +2,12 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Independent Work21 question and browser acceptance
+
+The verifier launched21 once (source82c49b5) and proved one native receipt click reached the second page with counters2 loads/1 down/1 click, controls enabled, and no replay or manual recovery. The earlier transient frame error recovered automatically. Initial full-window fit bands remain separately under examination.
+
+At recorded frame560,180,1440×1000 and savedPNG2880×2000, the native question card measures736×232 points and its own-response field544×28 points; prior20.1 recorded736×324. Custom density and detail entered through the native card were accepted, the exact21 fixture hold gate was released, and exactly one ordinary answer message plus the fixture response appeared. Evidence: external `94-release21/03–06` and `public-question-evidence`. This proves the named packaged interactions and measured surfaces; full font/hover/whole-window parity is not inferred. The underlying full composer in21 remains a separate mismatch addressed only in subsequent source.
+
 ## Current source — collapsed composer beneath questions
 
 An empty ordinary composer collapses beneath a detached question; focusing or typing expands it, and an existing draft, image or notice remains visible. At1440×1000 the production App with controlled transport measures44 points collapsed/106 points focused, keeps Stop reachable and retains a natively typed ordinary draft after blur. Nine App workflow groups/nine views and five actual-input selector views pass with stable source hashes, including the reviewed non-reasoning model label correction. Typecheck passes. Evidence: `.data/question-composer22-production-final/`, `.data/power22-controls-reviewed-final/`. This batch is not in21 and still needs independent installed comparison.
