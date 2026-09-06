@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Process } from "@oh-my-pi/pi-natives";
@@ -48,6 +48,46 @@ async function viewer(manager: TmuxTerminalManager, terminalId: string) {
 afterEach(async () => { for (const resource of fixtures.splice(0)) { if (resource.child && resource.child.exitCode === null) { resource.child.kill(); await resource.child.exited; } await resource.manager?.shutdown(); rmSync(resource.directory, { recursive: true, force: true }); } });
 
 describe.skipIf(!bundle)("private bundled tmux integration (actual native programs)", () => {
+  test("per-terminal setup environments stay private across two panes and manager adoption", async () => {
+    const processEnvironment = { terminal:process.env.TERMINAL_VALUE, worktree:process.env.CODEX_WORKTREE_PATH };
+    const directory = mkdtempSync(join(tmpdir(), "agent-native-terminal-environment-")), source = join(directory, "source"), one = join(directory, "one"), two = join(directory, "two"), three = join(directory, "three");
+    for (const path of [source, one, two, three]) mkdirSync(path);
+    const probe = join(directory, "environment-probe.mjs"), managerModule = new URL("./native-manager.ts", import.meta.url).pathname, hostId = crypto.randomUUID();
+    writeFileSync(probe, `import {writeFileSync} from 'node:fs';const keys=['TERMINAL_VALUE','REMOVE_ME','STALE_UNSET','EXPLICIT_SAME','CODEX_SOURCE_TREE_PATH','CODEX_WORKTREE_PATH','AGENT_SOURCE_TREE_PATH','AGENT_WORKTREE_PATH','TERM','TERMINFO','COLORTERM'];writeFileSync(${JSON.stringify(directory+'/environment-')}+(process.env.TERMINAL_VALUE??'missing')+'.json',JSON.stringify(Object.fromEntries(keys.map(key=>[key,process.env[key]??null]))));setInterval(()=>{},1000);`);
+    const initialOptions = { dataDirectory: directory, hostId, bundleDirectory: resolve(bundle!), shell: { application: process.execPath, args: [probe], environment: { REMOVE_ME: "server-value", STALE_UNSET: "stale-global", EXPLICIT_SAME: "same" } }, pollIntervalMs: 100 };
+    writeFileSync(join(directory, "owner.ts"), `import {writeFileSync} from 'node:fs';import {TmuxTerminalManager} from ${JSON.stringify(managerModule)};const manager=await TmuxTerminalManager.open(${JSON.stringify(initialOptions)});const source=${JSON.stringify(source)};const make=(cwd,value,delta)=>manager.create({cwd,target:{projectId:crypto.randomUUID()},cols:80,rows:24},{sourceRoot:source,worktreeRoot:cwd,environmentDelta:{version:1,set:{TERMINAL_VALUE:value,...delta},unset:value==='first'?['REMOVE_ME']:[]}});const terminals=[await make(${JSON.stringify(one)},'first',{EXPLICIT_SAME:'same'}),await make(${JSON.stringify(two)},'second',{REMOVE_ME:'pane-two'})];writeFileSync(${JSON.stringify(join(directory,"ready.json"))},JSON.stringify(terminals));setInterval(()=>{},1000);`);
+    const ownerError = join(directory,"owner.stderr");
+    const child = Bun.spawn([process.execPath, join(directory, "owner.ts")], { stdout: "pipe", stderr: Bun.file(ownerError) });
+    const resource = { directory, child, manager: undefined as TmuxTerminalManager | undefined }; fixtures.push(resource);
+    try { await until(() => child.exitCode !== null || existsSync(join(directory, "ready.json")) && existsSync(join(directory, "environment-first.json")) && existsSync(join(directory, "environment-second.json")), "isolated terminal environments"); }
+    catch { throw new Error(`Environment terminal owner stalled. ${readFileSync(ownerError,"utf8")}`); }
+    if (child.exitCode !== null) throw new Error(`Environment terminal owner exited: ${readFileSync(ownerError,"utf8")}`);
+    const terminals = JSON.parse(readFileSync(join(directory, "ready.json"), "utf8"));
+    const first = JSON.parse(readFileSync(join(directory, "environment-first.json"), "utf8")), second = JSON.parse(readFileSync(join(directory, "environment-second.json"), "utf8"));
+    expect(first).toMatchObject({ TERMINAL_VALUE:"first", REMOVE_ME:null, EXPLICIT_SAME:"same", CODEX_SOURCE_TREE_PATH:source, AGENT_SOURCE_TREE_PATH:source, CODEX_WORKTREE_PATH:one, AGENT_WORKTREE_PATH:one, TERM:"xterm-256color",COLORTERM:"truecolor" });
+    expect(second).toMatchObject({ TERMINAL_VALUE:"second", REMOVE_ME:"pane-two", CODEX_WORKTREE_PATH:two, AGENT_WORKTREE_PATH:two });
+    expect({ terminal:process.env.TERMINAL_VALUE, worktree:process.env.CODEX_WORKTREE_PATH }).toEqual(processEnvironment);
+    const catalogPath = join(directory,"native-terminals-v1/catalog.json"), catalogText = readFileSync(catalogPath,"utf8"), catalog = JSON.parse(catalogText);
+    const global = Bun.spawnSync([join(resolve(bundle!),"bin/tmux"),"-S",catalog.socket,"show-environment","-g"],{stdout:"pipe",stderr:"pipe",env:{...process.env,TMUX:undefined}});
+    expect(global.exitCode).toBe(0); const globalText = new TextDecoder().decode(global.stdout);
+    expect(globalText).toContain("REMOVE_ME=server-value"); expect(globalText).not.toContain("TERMINAL_VALUE"); expect(globalText).not.toContain("CODEX_WORKTREE_PATH");
+    expect(catalogText).not.toContain("first"); expect(catalogText).not.toContain("pane-two");
+    expect(readdirSync(join(directory,"native-terminals-v1")).filter(name=>name.startsWith("environment-launch-"))).toEqual([]);
+    child.kill("SIGKILL"); await child.exited;
+    const reopened = await TmuxTerminalManager.open({ ...initialOptions, shell: { ...initialOptions.shell, environment: { EXPLICIT_SAME:"new-daemon" } } }); resource.manager = reopened;
+    expect(reopened.get(terminals[0].id).pid).toBe(terminals[0].pid); expect(reopened.get(terminals[1].id).pid).toBe(terminals[1].pid);
+    const third = await reopened.create({cwd:three,target:{projectId:crypto.randomUUID()},cols:80,rows:24},{sourceRoot:source,worktreeRoot:three,environmentDelta:{version:1,set:{EXPLICIT_SAME:"new-daemon",TERMINAL_VALUE:"third"},unset:["STALE_UNSET"]}});
+    await until(()=>existsSync(join(directory,"environment-third.json")),"adopted-server terminal environment");
+    expect(JSON.parse(readFileSync(join(directory,"environment-third.json"),"utf8"))).toMatchObject({TERMINAL_VALUE:"third",EXPLICIT_SAME:"new-daemon",STALE_UNSET:null,CODEX_WORKTREE_PATH:three});
+    expect(JSON.stringify(reopened.list())).not.toContain("new-daemon"); expect(reopened.get(third.id).cwd).toBe(realpathSync(three));
+  }, 20_000);
+
+  test("environment ownership mismatch is rejected before another pane is created", async () => {
+    const f = await fixture(), other = mkdtempSync(join(tmpdir(),"agent-native-terminal-other-")); fixtures.push({directory:other});
+    await expect(f.manager.create({cwd:f.directory,target:{projectId:crypto.randomUUID()}},{sourceRoot:f.directory,worktreeRoot:other,environmentDelta:null})).rejects.toThrow("does not own");
+    expect(f.manager.list()).toHaveLength(1);
+  });
+
   for (const code of [0, 7]) for (const cleanup of ["close", "shutdown"] as const) {
     test(`retained natural exit ${code} preserves its outcome through ${cleanup} and reopen`, async () => {
       const f = await fixture();

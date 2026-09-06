@@ -1,3 +1,4 @@
+import type { LocalEnvironmentWorkerEnvironment } from "./local-environments/environment";
 import { createHash } from "node:crypto";
 import type { TerminalControlAction, TerminalInputReceipt, TerminalInputRequest, TerminalInvalidation, TerminalQuery, TerminalViewerLease } from "../../../packages/shared/src/terminals";
 import type { WorkspaceTarget } from "../../../packages/shared/src/workspace";
@@ -73,6 +74,8 @@ export class TerminalsHttp {
     manager: TerminalManager;
     /** Resolve and check removal reservations synchronously, immediately before native create admission. */
     resolveTarget: (target: WorkspaceTarget) => string;
+    /** Host-private setup exports; never accepted from terminal request bodies. */
+    environmentForTarget?: (target: WorkspaceTarget) => LocalEnvironmentWorkerEnvironment | undefined;
     invalidate: (event: TerminalInvalidation) => void;
     viewerLeaseMs?: number;
   }) {
@@ -162,7 +165,7 @@ export class TerminalsHttp {
       if (path === "/v1/terminals/input") return Response.json(this.input(parseTerminalInput(body)));
       const action = parseTerminalAction(body);
       if (action.type === "create") {
-        const terminal = await this.options.manager.create({ ...action.options, cwd: this.options.resolveTarget(action.options.target) });
+        const terminal = await this.options.manager.create({ ...action.options, cwd: this.options.resolveTarget(action.options.target) }, this.options.environmentForTarget?.(action.options.target));
         if (action.viewerId) this.viewers.set(terminal.id, { lease: { leaseId: crypto.randomUUID(), viewerId: action.viewerId, expiresAt: Date.now() + (this.options.viewerLeaseMs ?? 6000), startSequence: 0, completedSequence: 0 }, replies: new Map() });
         return Response.json({ terminal, ...(action.viewerId ? { viewer: this.viewers.get(terminal.id)!.lease } : {}) });
       }

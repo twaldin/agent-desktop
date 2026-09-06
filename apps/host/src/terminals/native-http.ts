@@ -1,3 +1,4 @@
+import type { LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import type { NativeTerminalAction, NativeTerminalInputRequest, NativeTerminalInvalidation, NativeTerminalQuery } from "../../../../packages/shared/src/terminals";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace";
 import { TerminalError } from "./error";
@@ -46,7 +47,9 @@ export class TmuxTerminalsHttp {
   private readonly pending = new Map<string, Extract<NativeTerminalInvalidation, { type: "output" }>>();
   private timer?: ReturnType<typeof setTimeout>;
   private disposed = false;
-  constructor(private readonly options: { manager: TmuxTerminalManager; resolveTarget: (target: WorkspaceTarget) => string; invalidate: (event: NativeTerminalInvalidation) => void }) {
+  constructor(private readonly options: { manager: TmuxTerminalManager; resolveTarget: (target: WorkspaceTarget) => string;
+    /** Host-private setup exports; never accepted from terminal request bodies. */
+    environmentForTarget?: (target: WorkspaceTarget) => LocalEnvironmentWorkerEnvironment | undefined; invalidate: (event: NativeTerminalInvalidation) => void }) {
     this.unsubscribe = options.manager.subscribe(event => {
       if (event.type === "output") { this.pending.set(event.attachmentId, event); if (!this.timer) this.timer = setTimeout(() => { this.timer = undefined; for (const value of this.pending.values()) this.notify(value); this.pending.clear(); }, 40); }
       else { if (event.type === "detached") this.pending.delete(event.attachmentId); this.notify(event); }
@@ -71,7 +74,7 @@ export class TmuxTerminalsHttp {
         return Response.json({ type: "replay", replay: this.options.manager.replay(query.attachmentId, query.afterSequence) });
       }
       const action = parseNativeTerminalAction(value);
-      if (action.type === "create") return Response.json({ terminal: await this.options.manager.create({ ...action.options, cwd: this.options.resolveTarget(action.options.target) }) });
+      if (action.type === "create") return Response.json({ terminal: await this.options.manager.create({ ...action.options, cwd: this.options.resolveTarget(action.options.target) }, this.options.environmentForTarget?.(action.options.target)) });
       if (action.type === "attach") return Response.json({ attachment: await this.options.manager.attach(action.terminalId, action.viewerId), terminal: this.options.manager.get(action.terminalId) });
       if (action.type === "detach") { await this.options.manager.detach(action.attachmentId); return Response.json({}); }
       if (action.type === "focus") { this.options.manager.focus(action.attachmentId, action.focused); return Response.json({ accepted: true }); }

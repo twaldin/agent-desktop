@@ -6,6 +6,7 @@ import {
 } from "../../../../packages/shared/src/terminals";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace";
 import { defaultTerminalShell } from "./default-shell";
+import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 export type * from "../../../../packages/shared/src/terminals";
 
 import { TerminalError } from "./error";
@@ -106,13 +107,21 @@ export class TerminalManager {
     return [...this.entries.values()].filter(entry => key === undefined || ownerKey(entry.info.target) === key).map(entry => copy(entry.info));
   }
 
-  async create(input: TerminalCreateOptions & { cwd: string }): Promise<TerminalInfo> {
+  async create(input: TerminalCreateOptions & { cwd: string }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<TerminalInfo> {
     if (this.stopping) throw new TerminalError("TERMINALS_STOPPING", "The owning host is stopping its terminals.");
     if ([...this.entries.values()].filter(entry => !entry.settled).length >= this.maximumRunning) throw new TerminalError("TERMINAL_LIMIT", "Close a running terminal before creating another.");
     if (this.entries.size >= this.maximumRetained) throw new TerminalError("TERMINAL_HISTORY_LIMIT", "Forget an exited terminal before creating another.");
     const target = owner(input.target);
     const cwd = realpathSync(input.cwd);
     if (!statSync(cwd).isDirectory()) throw new TerminalError("NOT_DIRECTORY", "The owning terminal directory must exist.");
+    if (localEnvironment && realpathSync(localEnvironment.worktreeRoot) !== cwd) throw new TerminalError("TERMINAL_ENVIRONMENT_OWNER_MISMATCH", "The setup environment belongs to a different worktree.");
+    const baseEnvironment: Record<string, string | undefined> = { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor", ...this.shell.environment };
+    const environment: Record<string, string | undefined> = localEnvironment ? localEnvironmentForWorker(baseEnvironment, localEnvironment) : baseEnvironment;
+    // These describe the actual terminal transport rather than project setup.
+    for (const key of ["TERM", "COLORTERM", "TERMINFO", "TMUX"] as const) {
+      if (baseEnvironment[key] === undefined) delete environment[key];
+      else environment[key] = baseEnvironment[key];
+    }
     const size = dimensions(input.cols ?? 120, input.rows ?? 40);
     let ready!: Entry["ready"];
     const started = new Promise<TerminalInfo>((resolve, reject) => { ready = { resolve, reject }; });
@@ -124,7 +133,7 @@ export class TerminalManager {
     this.entries.set(entry.info.id, entry); this.state(entry);
     try {
       const child = Bun.spawn([this.shell.application, ...this.shell.args], {
-        cwd, env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor", ...this.shell.environment },
+        cwd, env: environment,
         terminal: { ...size, data: (_terminal, bytes) => this.output(entry, entry.decoder.decode(bytes, { stream: true })) },
       });
       entry.child = child; entry.pty = child.terminal!;

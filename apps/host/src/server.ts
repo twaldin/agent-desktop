@@ -156,7 +156,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     assertWorkspaceAvailable(cwd);
     return cwd;
   };
-  terminalsHttp = new TerminalsHttp({ manager: terminals, resolveTarget: resolveTerminalTarget, invalidate: event => {
+  const terminalEnvironment: NonNullable<ConstructorParameters<typeof TerminalsHttp>[0]["environmentForTarget"]> = target =>
+    "sessionId" in target ? store.getSessionEnvironment(target.sessionId) : undefined;
+  terminalsHttp = new TerminalsHttp({ manager: terminals, resolveTarget: resolveTerminalTarget, environmentForTarget: terminalEnvironment, invalidate: event => {
     if (stopping) return;
     const payload = JSON.stringify({ type: "terminal", event });
     for (const peer of peers) {
@@ -167,7 +169,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const nativeBundle = options.nativeTerminalBundle ?? join(import.meta.dir, "../../../runtime/tmux", `${process.platform}-${process.arch}`);
   if (options.nativeTerminalBundle || existsSync(nativeBundle)) {
     nativeTerminals = await TmuxTerminalManager.open({ dataDirectory, hostId: store.host.id, bundleDirectory: nativeBundle });
-    nativeTerminalsHttp = new TmuxTerminalsHttp({ manager: nativeTerminals, resolveTarget: resolveTerminalTarget, invalidate: event => {
+    nativeTerminalsHttp = new TmuxTerminalsHttp({ manager: nativeTerminals, resolveTarget: resolveTerminalTarget, environmentForTarget: terminalEnvironment, invalidate: event => {
       if (stopping) return;
       const payload = JSON.stringify({ type: "native-terminal", event });
       for (const peer of peers) {

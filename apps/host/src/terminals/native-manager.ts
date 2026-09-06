@@ -1,5 +1,5 @@
 import { Process } from "@oh-my-pi/pi-natives";
-import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync, unlinkSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import {
   NATIVE_TERMINAL_PROTOCOL, TERMINAL_DIMENSIONS, type NativeTerminalAttachment, type NativeTerminalCapabilities,
@@ -12,10 +12,12 @@ import { NativeControlError, TmuxControl } from "./control";
 import { TerminalError } from "./error";
 import { defaultTerminalShell } from "./default-shell";
 import { nativeInputCommand, nativeInputIdentity, validateNativeInput } from "./native-input";
-import { NativeTerminalStore, privateDirectory, atomicPrivateText, type NativeTerminalCatalog, type NativeTerminalRecord } from "./native-store";
+import { NativeTerminalStore, privateDirectory, privateFile, atomicPrivateText, type NativeTerminalCatalog, type NativeTerminalRecord } from "./native-store";
+import { isProtectedLocalEnvironmentKey, localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const copy = <T>(value: T): T => structuredClone(value);
+const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
 const active = (info: NativeTerminalInfo) => info.status === "running" || info.status === "starting" || info.status === "closing";
 function integer(value: number, minimum: number, maximum: number): number { if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new TerminalError("INVALID_TERMINAL_NUMBER", `Expected an integer between ${minimum} and ${maximum}.`); return value; }
 function targetKey(target: WorkspaceTarget): string {
@@ -120,6 +122,33 @@ export class TmuxTerminalManager {
   private socketPath(generation: string): string { return join(this.socketDirectory, `${generation.slice(0, 16)}.sock`); }
   private get configPath(): string { return join(this.store.directory, "tmux.conf"); }
   private environment(): Record<string, string | undefined> { return { ...process.env, ...this.shell.environment, TMUX: undefined, TERM: "xterm-256color", TERMINFO: this.bundle.terminfo, COLORTERM: "truecolor" }; }
+  private cleanupEnvironmentLaunch(id: string): void {
+    const path = join(this.store.directory, `environment-launch-${id}.sh`);
+    if (existsSync(path)) { privateFile(path); unlinkSync(path); }
+  }
+  private environmentLaunch(id: string, cwd: string, input?: LocalEnvironmentWorkerEnvironment): { application: string; args: string[]; payload?: string } {
+    if (!input) return { application: this.shell.application, args: this.shell.args };
+    let worktree: string;
+    try { worktree = realpathSync(input.worktreeRoot); }
+    catch { throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The local environment worktree no longer exists."); }
+    if (worktree !== cwd) throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The local environment worktree does not own this terminal directory.");
+    let desired: Record<string, string>;
+    try { desired = localEnvironmentForWorker(this.environment(), input); }
+    catch (cause) { throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", cause instanceof Error ? cause.message : "The local environment is invalid."); }
+    // The PTY transport owns these values even when a setup script exported different ones.
+    delete desired.TMUX; Object.assign(desired, { TERM: "xterm-256color", TERMINFO: this.bundle.terminfo, COLORTERM: "truecolor" });
+    const terminalOwned = new Set(["TERM", "TERMINFO", "TMUX", "COLORTERM"]);
+    const payload = join(this.store.directory, `environment-launch-${id}.sh`);
+    const removePayload = `/bin/rm -f -- ${shellQuote(payload)}`;
+    const lines = ["#!/bin/sh", "set -eu", `trap ${shellQuote(removePayload)} EXIT HUP INT TERM`];
+    for (const key of input.environmentDelta?.unset ?? []) if (!isProtectedLocalEnvironmentKey(key) && !terminalOwned.has(key)) lines.push(`unset ${key}`);
+    for (const key of Object.keys(input.environmentDelta?.set ?? {})) if (!isProtectedLocalEnvironmentKey(key) && !terminalOwned.has(key)) lines.push(`export ${key}=${shellQuote(desired[key]!)}`);
+    for (const key of ["CODEX_SOURCE_TREE_PATH", "CODEX_WORKTREE_PATH", "AGENT_SOURCE_TREE_PATH", "AGENT_WORKTREE_PATH"]) lines.push(`export ${key}=${shellQuote(desired[key]!)}`);
+    for (const key of ["TERM", "TERMINFO", "COLORTERM"]) lines.push(`export ${key}=${shellQuote(desired[key]!)}`);
+    lines.push(removePayload, "trap - EXIT HUP INT TERM", `exec ${shellQuote(this.shell.application)}${this.shell.args.map(arg => ` ${shellQuote(arg)}`).join("")}`, "");
+    atomicPrivateText(payload, lines.join("\n")); privateFile(payload);
+    return { application: "/bin/sh", args: [payload], payload };
+  }
   private args(...command: string[]): string[] { return [this.bundle.binary, "-S", this.catalog.socket, "-f", this.configPath, ...command]; }
   private async cli(command: string[], maximumBytes = 256 * 1024): Promise<string> {
     const child = Bun.spawn(this.args(...command), { env: this.environment(), stdout: "pipe", stderr: "pipe" });
@@ -198,18 +227,24 @@ export class TmuxTerminalManager {
     await this.cli(["new-session", "-d", "-s", "agent_control", "-x", "20", "-y", "5", "/usr/bin/true", "agent-desktop-control"]);
     await this.verifyServer(); this.save();
   }
-  create(input: TerminalCreateOptions & { cwd: string }): Promise<NativeTerminalInfo> {
+  create(input: TerminalCreateOptions & { cwd: string }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<NativeTerminalInfo> {
     const operation = this.createTail.then(async () => {
       if (this.stopping) throw new TerminalError("TERMINALS_STOPPING", "The native terminal host is stopping.");
       targetKey(input.target); const cwd = realpathSync(input.cwd); if (!statSync(cwd).isDirectory()) throw new TerminalError("NOT_DIRECTORY", "The owning terminal directory must exist.");
       if ([...this.entries.values()].filter(entry => active(entry.record.info)).length >= this.maximumRunning) throw new TerminalError("TERMINAL_LIMIT", "Close a native terminal before creating another.");
       if (this.entries.size >= 128) throw new TerminalError("TERMINAL_HISTORY_LIMIT", "Forget an exited terminal before creating another.");
-      await this.prepareServer();
       const id = crypto.randomUUID(), size = dimensions(input.cols ?? 120, input.rows ?? 40);
+      const launch = this.environmentLaunch(id, cwd, localEnvironment);
+      try { await this.prepareServer(); }
+      catch (error) {
+        // No pane launch was dispatched, so this payload cannot still be opening.
+        if (launch.payload) this.cleanupEnvironmentLaunch(id);
+        throw error;
+      }
       const entry: Entry = { record: { info: { id, target: copy(input.target), cwd, shell: basename(this.shell.application), pid: null, ...size, status: "starting", createdAt: Date.now(), protocol: NATIVE_TERMINAL_PROTOCOL, serverGeneration: this.catalog.serverGeneration, geometryRevision: 1, inputEpoch: this.inputEpoch }, sessionName: `agent_${id.replaceAll("-", "")}`, prepared: true }, mutating: true };
       this.entries.set(id, entry); this.save(); this.state(entry);
       try {
-        await this.cli(["new-session", "-d", "-s", entry.record.sessionName, "-x", String(size.cols), "-y", String(size.rows), "-c", cwd, this.shell.application, ...this.shell.args]);
+        await this.cli(["new-session", "-d", "-s", entry.record.sessionName, "-x", String(size.cols), "-y", String(size.rows), "-c", cwd, launch.application, ...launch.args]);
         await this.verifyServer();
         const row = (await this.panes()).find(row => row.session === entry.record.sessionName);
         if (!row) throw new TerminalError("TERMINAL_START_UNCERTAIN", "The native pane was created but could not be reconciled.");
@@ -350,7 +385,7 @@ export class TmuxTerminalManager {
   close(id: string): Promise<NativeTerminalInfo> {
     const entry = this.find(id); if (entry.closing) return entry.closing;
     entry.closing = (async () => {
-      if (entry.record.info.status === "interrupted" || !entry.record.paneId) return this.publicInfo(entry);
+      if (entry.record.info.status === "interrupted" || !entry.record.paneId) { this.cleanupEnvironmentLaunch(id); return this.publicInfo(entry); }
       entry.mutating = true;
       let finalOutcome = entry.record.info.status === "exited";
       try {
@@ -373,7 +408,7 @@ export class TmuxTerminalManager {
         }
         if (this.server?.status() === "running") await this.cli(["kill-session", "-t", entry.record.sessionName]);
         if (!finalOutcome) entry.record.info = { ...entry.record.info, status: "exited", exitedAt: Date.now(), cancelled: true };
-        entry.record.paneId = undefined; this.save(); this.state(entry); return this.publicInfo(entry);
+        entry.record.paneId = undefined; this.cleanupEnvironmentLaunch(id); this.save(); this.state(entry); return this.publicInfo(entry);
       } catch (error) { entry.record.info.error = error instanceof Error ? error.message : "Native terminal cleanup failed."; if (!finalOutcome) entry.record.info.status = "error"; this.save(); this.state(entry); throw error; }
       finally { entry.mutating = false; }
     })(); return entry.closing;
@@ -381,7 +416,7 @@ export class TmuxTerminalManager {
   async forget(id: string): Promise<void> {
     const entry = this.find(id); if (active(entry.record.info)) throw new TerminalError("TERMINAL_NOT_EXITED", "Close this native terminal before forgetting its history.");
     if (entry.record.paneId && entry.record.info.status !== "interrupted") await this.close(id);
-    this.entries.delete(id); this.store.forgetHistory(id); for (const key of this.streams.keys()) if (key.startsWith(`${id}:`)) this.streams.delete(key); this.save(); this.emit({ type: "removed", terminalId: id });
+    this.cleanupEnvironmentLaunch(id); this.entries.delete(id); this.store.forgetHistory(id); for (const key of this.streams.keys()) if (key.startsWith(`${id}:`)) this.streams.delete(key); this.save(); this.emit({ type: "removed", terminalId: id });
   }
   private async poll(): Promise<void> {
     if (this.polling || this.stopping) return; this.polling = true;

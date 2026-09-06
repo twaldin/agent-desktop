@@ -27,7 +27,7 @@ test('authenticated create/resume/reopen/cleanup use actual Git, sourced setup a
   await writeFile(workerPath, `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(observations)}, JSON.stringify({value:process.env.ENVIRONMENT_ROUTE_CHECK??null,cwd:process.env.AGENT_WORKTREE_PATH??null})+'\\n');\nawait import(${JSON.stringify(join(import.meta.dir, 'omp-workers/fixtures/no-provider-worker.ts'))});\n`);
   let host: Awaited<ReturnType<typeof startHost>> | undefined;
   try {
-    const start = () => startHost({ dataDirectory, agentDirectory, workerPath, discoveryDirectory: source, port: 0, tailscale: false });
+    const start = () => startHost({ dataDirectory, agentDirectory, workerPath, discoveryDirectory: source, port: 0, tailscale: false, ...(process.env.AGENT_TEST_TMUX_BUNDLE ? { nativeTerminalBundle: process.env.AGENT_TEST_TMUX_BUNDLE } : {}) });
     host = await start();
     const request = (path: string, body?: unknown, authorized = true) => fetch(host!.connection.origin + path, { method: body ? 'POST' : 'GET',
       headers: { 'Content-Type': 'application/json', ...(authorized ? { Authorization: `Bearer ${host!.connection.token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -85,8 +85,47 @@ test('authenticated create/resume/reopen/cleanup use actual Git, sourced setup a
     expect(await send(resume)).toEqual(resumed);
     expect(await readFile(join(session.cwd, 'setup-attempts'), 'utf8')).toBe('attempt\nattempt\n');
     expect(host.store.listSessions()).toHaveLength(1);
+    const terminalVersions = process.env.AGENT_TEST_TMUX_BUNDLE ? ['v1', 'v2'] : ['v1'];
+    const terminalEnvironment = async (version: string, target: { sessionId: string } | { projectId: string }, cwd: string, name: string, expected: string) => {
+      const action = async (body: unknown) => {
+        const response = await request(`/${version}/terminals/action`, body); expect(response.status).toBe(200); return response.json();
+      };
+      const created = await action({ type: 'create', options: { target } });
+      expect(JSON.stringify(created)).not.toContain('private-fixture-export');
+      expect(created.terminal.cwd).toBe(cwd);
+      const filename = `terminal-${version}-${name}.txt`;
+      const command = `printf '%s\\n' "\${ENVIRONMENT_ROUTE_CHECK-unset}" "\${AGENT_WORKTREE_PATH-unset}" > ${filename}`;
+      try {
+        if (version === 'v1') {
+          const input = await request('/v1/terminals/input', { terminalId: created.terminal.id, clientId: crypto.randomUUID(), sequence: 1, data: `${command}\r` });
+          expect(input.status).toBe(200); expect((await input.json()).accepted).toBe(true);
+        } else {
+          const attached = await action({ type: 'attach', terminalId: created.terminal.id, viewerId: crypto.randomUUID() });
+          const attachment = attached.attachment;
+          await action({ type: 'heartbeat', attachmentId: attachment.id, afterSequence: 0, geometryRevision: attachment.geometryRevision });
+          const input = { terminalId: created.terminal.id, attachmentId: attachment.id, inputEpoch: attachment.inputEpoch, geometryRevision: attachment.geometryRevision, clientId: crypto.randomUUID() };
+          for (const [index, key] of [{ kind: 'text', data: command }, { kind: 'key', key: 'Enter' }].entries()) {
+            const response = await request('/v2/terminals/input', { ...input, sequence: index + 1, input: key });
+            expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ outcome: 'accepted' });
+          }
+        }
+        const deadline = Date.now() + 8_000;
+        let actual = '';
+        while (Date.now() < deadline) {
+          actual = await readFile(join(cwd, filename), 'utf8').catch(() => '');
+          if (actual.endsWith('\n')) break;
+          await Bun.sleep(25);
+        }
+        expect(actual).toBe(`${expected}\n${'sessionId' in target ? session.cwd : 'unset'}\n`);
+      } finally { await action({ type: 'close', terminalId: created.terminal.id }); await rm(join(cwd, filename), { force: true }); }
+    };
+    for (const version of terminalVersions) {
+      await terminalEnvironment(version, { sessionId: session.id }, session.cwd, 'before-restart', 'private-fixture-export');
+      await terminalEnvironment(version, { projectId }, source, 'project-isolated', 'unset');
+    }
     await host.stop(); host = undefined; host = await start();
     expect(await send(resume)).toEqual(resumed);
+    for (const version of terminalVersions) await terminalEnvironment(version, { sessionId: session.id }, session.cwd, 'after-restart', 'private-fixture-export');
     const messages = await (await request(`/v1/sessions/${session.id}/messages`)).json();
     expect(messages.filter((item: { role: string }) => item.role === 'user')).toHaveLength(0);
     const rows = (await readFile(observations, 'utf8')).trim().split('\n').map(line => JSON.parse(line));

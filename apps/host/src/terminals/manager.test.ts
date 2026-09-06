@@ -185,3 +185,26 @@ describe("real pinned Bun PTY terminals", () => {
     expect((await create(value)).status).toBe("running");
   });
 });
+
+test("setup exports belong to one actual shell and never enter terminal metadata or the daemon", async () => {
+  const value = await fixture({ shell: { application: "/bin/bash", args: ["--noprofile", "--norc", "-i"], environment: {
+    HISTFILE: "/dev/null", BASH_ENV: "/dev/null", ENV: "/dev/null", PS1: "", BASH_SILENCE_DEPRECATION_WARNING: "1",
+    ENVIRONMENT_TERMINAL_VALUE: "base", ENVIRONMENT_TERMINAL_REMOVE: "base", TERM: "xterm-256color",
+  } } });
+  const cwd = await realpath(value.cwd);
+  const daemonBefore = { value: process.env.ENVIRONMENT_TERMINAL_VALUE, remove: process.env.ENVIRONMENT_TERMINAL_REMOVE };
+  const environment = { sourceRoot: cwd, worktreeRoot: cwd, environmentDelta: {
+    version: 1 as const, set: { ENVIRONMENT_TERMINAL_VALUE: "session-only ' $() `quoted`\nsecond line", TERM: "invalid-project-term" }, unset: ["ENVIRONMENT_TERMINAL_REMOVE"],
+  } };
+  const first = await value.manager.create({ cwd, target: { sessionId: crypto.randomUUID() } }, environment);
+  const second = await create(value);
+  await run(value.manager, first.id, "set +H; stty -echo; printf '%s\\n' \"$ENVIRONMENT_TERMINAL_VALUE\" \"${ENVIRONMENT_TERMINAL_REMOVE-unset}\" \"$CODEX_WORKTREE_PATH\" \"$TERM\" > first-env.txt");
+  await run(value.manager, second.id, "printf '%s\\n' \"$ENVIRONMENT_TERMINAL_VALUE\" \"${ENVIRONMENT_TERMINAL_REMOVE-unset}\" \"${CODEX_WORKTREE_PATH-unset}\" > second-env.txt");
+  expect(await readFile(join(cwd, "first-env.txt"), "utf8")).toBe(`${environment.environmentDelta.set.ENVIRONMENT_TERMINAL_VALUE}\nunset\n${cwd}\nxterm-256color\n`);
+  expect(await readFile(join(cwd, "second-env.txt"), "utf8")).toBe("base\nbase\nunset\n");
+  expect(JSON.stringify(value.manager.list())).not.toContain("session-only");
+  expect(JSON.stringify(value.manager.list())).not.toContain("environmentDelta");
+  expect({ value: process.env.ENVIRONMENT_TERMINAL_VALUE, remove: process.env.ENVIRONMENT_TERMINAL_REMOVE }).toEqual(daemonBefore);
+  await expect(value.manager.create({ cwd, target: value.target }, { ...environment, worktreeRoot: await realpath(tmpdir()) })).rejects.toThrow("different worktree");
+  expect(value.manager.list()).toHaveLength(2);
+});
