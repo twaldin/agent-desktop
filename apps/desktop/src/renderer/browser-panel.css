@@ -133,4 +133,5 @@
 .browser-controls form:focus-within::before { display: none; }
 
 .browser-options-menu button:hover:not(:disabled) { background: var(--selected); }
+.browser-options-menu [role="menuitemcheckbox"] > .icon { margin-left: auto; }
 .browser-panel .browser-status, .browser-panel figcaption { color: var(--secondary); font-size: 12px; }

@@ -101,6 +101,9 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
   const viewport = useRef<HTMLDivElement>(null);
   const [heldInput, setHeldInput] = useState<BrowserHumanAction[]>([]);
   const [paused, setPaused] = useState(false);
+  const [fitPage, setFitPage] = useState(true);
+  const [panelSize, setPanelSize] = useState<{ width: number; height: number }>();
+  const lastFit = useRef<string | undefined>(undefined);
   const [refresh, setRefresh] = useState(0);
   const [pending, setPending] = useState(false);
   const [address, setAddress] = useState("");
@@ -423,6 +426,34 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     }
   };
 
+  const fitControl = useRef(control); fitControl.current = control;
+  useLayoutEffect(() => {
+    const element = viewport.current;
+    if (!element || !active || !fitPage) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const measure = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return;
+        const width = Math.min(16384, Math.floor(rect.width)), height = Math.min(16384, Math.floor(rect.height));
+        setPanelSize(previous => previous?.width === width && previous.height === height ? previous : { width, height });
+      }, 180);
+    };
+    const observer = new ResizeObserver(measure); observer.observe(element); measure();
+    return () => { clearTimeout(timer); observer.disconnect(); };
+  }, [Boolean(frame), active, fitPage]);
+  useEffect(() => {
+    if (!fitPage || !panelSize || !controlsReady || !frame?.context?.navigation || !selected) return;
+    const key = JSON.stringify([selected.workerPid, selected.name, selected.targetId, panelSize.width, panelSize.height]);
+    if (lastFit.current === key) return;
+    // React only to this window's measured layout, never to another viewer's
+    // viewport update. Two clients therefore do not resize each other in a loop.
+    lastFit.current = key;
+    if (frame.context.width === panelSize.width && frame.context.height === panelSize.height) return;
+    void fitControl.current({ type: 'resize', ...panelSize });
+  }, [fitPage, panelSize, controlsReady, frame?.context?.navigation, selected]);
+
   const queuedCharacters = () =>
     textQueue.current.reduce(
       (count, item) => count + (item.type === "text" ? item.text.length : 0),
@@ -639,6 +670,10 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
             items[next]?.focus();
           }}>
             <p>Native browser preview</p>
+            <button role="menuitemcheckbox" aria-checked={fitPage} disabled={pending} onClick={() => {
+              if (optionsMenu.current) optionsMenu.current.open = false;
+              lastFit.current = undefined; setFitPage(value => !value);
+            }}><span>Fit page to panel</span>{fitPage && <Icon name="check"/>}</button>
             <button role="menuitem" disabled={!controlsReady || !frame?.context?.navigation} onClick={() => {
               const rect = viewport.current?.getBoundingClientRect();
               if (!rect || rect.width < 1 || rect.height < 1) return;

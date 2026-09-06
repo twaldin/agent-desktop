@@ -3,7 +3,7 @@ import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
 import { parsePreferenceChange } from "../../../packages/shared/src/preferences";
 import { approvalMode } from "./approval";
-import { parseImageAttachments } from "@agent-desktop/shared";
+import { parseImageAttachments, parseDetachedQuestionAnswers } from "@agent-desktop/shared";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object.");
@@ -63,6 +63,11 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
       ...(attachments === undefined ? {} : { attachments }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
     case "session.interrupt": return { id, command: { type, sessionId: text(input.sessionId, "session ID") } };
+    case "session.question.answer": {
+      const sessionId = text(input.sessionId, "session ID"), questionId = text(input.questionId, "question ID"), draft = draftReference(input.draft);
+      if (!draft || draft.id !== `question:${sessionId}:${questionId}`) throw new Error("A detached answer requires its own saved draft revision.");
+      return { id, command: { type, sessionId, questionId, questionEntryId: text(input.questionEntryId, "question entry ID"), answers: parseDetachedQuestionAnswers(input.answers), draft } };
+    }
     case "session.rename": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), title: text(input.title, "session title", 1000) } };
     case "session.archive": {
       if (typeof input.archived !== "boolean") throw new Error("Invalid archived flag.");

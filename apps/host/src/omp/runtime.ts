@@ -1,13 +1,15 @@
 import { constants } from "node:fs";
 import { access, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { goalControlState, parseNativeBrowserTabMetadata, type GoalMutationRequest, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeGoalActivity, type NativeSessionActivity, type TranscriptMessage } from "@agent-desktop/shared";
+import { goalControlState, parseNativeBrowserTabMetadata, type DetachedQuestionSnapshot, type GoalMutationRequest, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeGoalActivity, type NativeSessionActivity, type ResolveDetachedQuestionReceipt, type ResolveDetachedQuestionRequest, type TranscriptMessage } from "@agent-desktop/shared";
 import { createHash } from "node:crypto";
 import {
   AgentRegistry, createAgentSession, discoverAuthStorage, getAgentDir,
   ModelRegistry, SessionManager, Settings,
+  loadSessionExtensions,
   type AgentSession, type AgentSessionEvent, type AuthStorage,
 } from "@oh-my-pi/pi-coding-agent";
+import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { AUTO_THINKING, parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import { initThemeSync } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
@@ -31,9 +33,15 @@ import type { OmpApprovalMode, OmpComposerCatalog, OmpModelCapabilities, OmpSess
 import { approvalMode } from "../approval";
 import { copyPreparedImages, NativeImagePrompt, readNativeImage, type PreparedPromptImage, type OmpRecordedImage } from "./images";
 import { NativeGoalController, type GoalContinuationEligibility, type OmpGoalContinuationRun } from "./goal-controller";
+import { NativeDetachedQuestions, type OmpDetachedQuestionDeliveryRun } from "./detached-questions";
 export type { PreparedPromptImage, OmpRecordedImage } from "./images";
 export type { OmpPromptRun, OmpPromptReceipt } from "./prompt";
 export type { OmpSteerReceipt } from "./steer";
+export type { OmpDetachedQuestionDeliveryRun } from "./detached-questions";
+
+function detachedQuestionRejected(message: string): Error {
+  const error = new Error(message); error.name = "DetachedQuestionRejected"; return error;
+}
 
 type NativeModel = NonNullable<AgentSession["model"]>;
 export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent;
@@ -71,6 +79,9 @@ export interface OmpSession {
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
   getGoalContinuationEligibility(): GoalContinuationEligibility;
   startGoalContinuation(expectedGoalId: string): OmpGoalContinuationRun;
+  listQuestions(): Promise<DetachedQuestionSnapshot[]>;
+  resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
+  startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
@@ -94,6 +105,20 @@ export interface OmpSession {
 }
 
 interface NativeContext { settings: Settings; registry: ModelRegistry; auth: AuthStorage }
+
+/** Load configured extension providers into a registry before resolving models.
+ * Keep the resulting extension instances when attaching a session so provider
+ * factories are evaluated once and rebound by the SDK under the same session. */
+async function loadExtensionProviders(registry: ModelRegistry, settings: Settings, cwd: string, retainRegistrations = false) {
+  const extensions = await loadSessionExtensions({}, cwd, settings, new EventBus());
+  const activeSources = extensions.extensions.map(extension => extension.path);
+  registry.syncExtensionSources(activeSources);
+  for (const sourceId of new Set(activeSources)) registry.clearSourceRegistrations(sourceId);
+  for (const { name, config, sourceId } of extensions.runtime.pendingProviderRegistrations) registry.registerProvider(name, config, sourceId);
+  if (!retainRegistrations) extensions.runtime.pendingProviderRegistrations = [];
+  await registry.refreshRuntimeProviders("offline");
+  return extensions;
+}
 
 function goalFromNativeModeData(modeData: Record<string, unknown> | undefined): Goal | undefined {
   const goal = modeData?.goal;
@@ -212,7 +237,7 @@ export class OmpRuntime {
     this.#agentDir = options.agentDir ?? getAgentDir();
   }
 
-  async #context(cwd: string): Promise<NativeContext> {
+  async #context(cwd: string, loadExtensions = true): Promise<NativeContext> {
     // Readonly Settings cannot reload itself. Both capability files and the
     // default ModelsConfigFile may be cached by the native process.
     for (const file of [path.join(this.#agentDir, "config.yml"), path.join(this.#agentDir, "config.yaml"), path.join(cwd, ".omp", "config.yml")]) invalidate(file);
@@ -223,6 +248,7 @@ export class OmpRuntime {
       const registry = new ModelRegistry(auth, path.join(this.#agentDir, "models.yml"), { settings });
       if (registry.getError()) throw new Error("OMP model configuration is invalid; review the native models.yml");
       await registry.hydrateCredentialScopedModelCaches();
+      if (loadExtensions) await loadExtensionProviders(registry, settings, cwd);
       return { settings, auth, registry };
     } catch (error) { auth.close(); throw error; }
   }
@@ -348,7 +374,10 @@ export class OmpRuntime {
     const reservedFile = reservation ?? path.resolve(sessionFile);
     this.#reservedFiles.add(reservedFile);
     try {
-      context = await this.#context(options.cwd);
+      // Session extension factories are preloaded exactly once below, after
+      // host-owned settings overrides are applied. Discovery contexts still
+      // load providers so their catalogs include extension models.
+      context = await this.#context(options.cwd, false);
       this.#assertActive();
       // The native TUI startup normally initializes this module-global before
       // AskTool builds even its headless selector labels. SDK workers skip that
@@ -358,17 +387,22 @@ export class OmpRuntime {
       // SDK construction loads extension factories and tool policy. Restore the
       // owning host's intent before any native startup work observes Settings.
       if (options.approvalOverride !== undefined) context.settings.override("tools.approvalMode", approvalMode(options.approvalOverride));
+      const preloadedExtensions = await loadExtensionProviders(context.registry, context.settings, options.cwd, true);
       const thinkingLevel = options.thinkingLevel === undefined ? undefined : parseCliThinkingLevel(options.thinkingLevel);
       if (options.thinkingLevel !== undefined && thinkingLevel === undefined) throw new Error("Unknown OMP thinking level");
       const model = options.model ? this.#findModel(context.registry, options.model, context.settings) : undefined;
       const agentRegistry = new AgentRegistry();
+      const detachedQuestions = new NativeDetachedQuestions(manager);
+      if (reservation !== undefined) await detachedQuestions.repairOnReopen();
       const result = await createAgentSession({
         cwd: options.cwd, agentDir: this.#agentDir,
         settings: context.settings, modelRegistry: context.registry, authStorage: context.auth,
         agentRegistry, sessionManager: manager, model, thinkingLevel,
+        preloadedExtensions,
         // Tools cannot run until create finishes and installs the bridge below.
         hasUI: false, interactivePrompts: options.interactions === true,
         deferUsageReserveConfirmation: true,
+        extensions: [detachedQuestions.extension],
       });
       native = result.session;
       this.#assertActive();
@@ -427,6 +461,7 @@ export class OmpRuntime {
       let extensionStartup: Promise<void> | undefined;
       const unsubscribe = session.subscribe(event => {
         goalController?.observe(event);
+        detachedQuestions.observe(event);
         mirror.accept(event);
         for (const listener of listeners) listener(event);
       });
@@ -436,6 +471,7 @@ export class OmpRuntime {
       let admissionPending = false;
       let admissionAbort: AbortController | undefined;
       let interruptsInFlight = 0;
+      let interruptEpoch = 0;
       let accountMutation = false;
       let goalMutation = false;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
@@ -507,6 +543,51 @@ export class OmpRuntime {
             } finally { promptInFlight = false; admissionPending = false; if (admissionAbort === controller) admissionAbort = undefined; }
           });
           return run;
+        },
+        listQuestions: async () => {
+          assertSessionActive();
+          // A host may reconcile a lost answer receipt from this snapshot.
+          // Never expose an unflushed in-memory acceptance as durable evidence.
+          const snapshot = await detachedQuestions.snapshot(); assertSessionActive(); return snapshot;
+        },
+        resolveQuestion: request => {
+          assertSessionActive();
+          if (interruptsInFlight) throw detachedQuestionRejected("The native turn is being interrupted. Refresh its question state before answering.");
+          return detachedQuestions.resolve(request);
+        },
+        startQuestionDelivery: questionId => {
+          assertSessionActive();
+          const startedBeforeInterrupt = interruptEpoch;
+          const preflight = () => {
+            assertSessionActive();
+            if (admissionPending || accountMutation || goalMutation || interruptsInFlight || session.hasPostPromptWork
+              || session.queuedMessageCount > 0 || (ui?.list().length ?? 0) > 0) {
+              throw detachedQuestionRejected("The native session cannot accept a detached answer yet.");
+            }
+            return session.isStreaming ? "steer" as const : "followUp" as const;
+          };
+          const dispatch = (text: string, mode: "steer" | "followUp") => {
+            // Journaling the attempt yields. Stop may finish during that flush,
+            // so recheck its epoch before queuing any native user message.
+            let reason: string | undefined;
+            try {
+              if (interruptEpoch !== startedBeforeInterrupt) reason = "Interrupted before native answer delivery.";
+              else if (preflight() !== mode) reason = "The native turn changed before answer delivery.";
+            } catch (error) { reason = error instanceof Error ? error.message : String(error); }
+            if (reason) return { accepted: Promise.resolve({ kind: "not-recorded" as const, reason }), completion: Promise.resolve(false) };
+            const completed = Promise.withResolvers<boolean>();
+            const stop = session.subscribe(event => {
+              if (event.type !== "agent_end") return;
+              stop(); completed.resolve(true);
+            });
+            const admission = (mode === "steer" ? steering.submit(text) : steering.submitFollowUp(text)).then(receipt => {
+              if (receipt.kind !== "user-message") { stop(); completed.reject(new Error(receipt.reason)); }
+              return receipt;
+            }, error => { stop(); completed.reject(error); throw error; });
+            void completed.promise.catch(() => {});
+            return { accepted: admission, completion: completed.promise };
+          };
+          return detachedQuestions.startDelivery(questionId, preflight, dispatch);
         },
         mutateGoal: async request => {
           // Pause/drop mirror InteractiveMode: they may settle between native
@@ -671,6 +752,7 @@ export class OmpRuntime {
         },
         abort: async () => {
           assertSessionActive(); admissionAbort?.abort(); ui?.cancelAll("aborted");
+          interruptEpoch++;
           interruptsInFlight++;
           steering.cancelQueued("Interrupted before this steer left the native queue");
           try { await session.abort(); }
@@ -724,6 +806,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
+          detachedQuestions.dispose();
           admissionAbort?.abort();
           ui?.dispose();
           steering.cancelQueued("Session stopped before this steer left the native queue");
@@ -732,6 +815,7 @@ export class OmpRuntime {
             try { await session.dispose(); }
             finally {
               await steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified");
+              await detachedQuestions.settle();
               steering.close();
               unsubscribe(); listeners.clear(); auth.close();
               this.#sessions.delete(handle); this.#reservedFiles.delete(reservedFile);

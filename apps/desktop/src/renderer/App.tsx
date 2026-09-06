@@ -23,6 +23,7 @@ import { useTranscriptScroll } from "./use-transcript-scroll";
 import "./transcript-scroll.css";
 import { AccountsSettings } from "./AccountsSettings";
 import { PendingInteractions } from "./PendingInteractions";
+import { PendingDetachedQuestions } from "./DetachedQuestionCard";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { resolveTranscriptLink, type TranscriptLinkActions, type WorkspaceFileRequest } from "./transcript-links";
 import { WorkspaceState, workspaceKey } from "./workspace-state";
@@ -418,6 +419,7 @@ export function App() {
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <div className="welcome"><div className="welcome-mark"><Icon name="terminal"/></div><h1>What would you like to work on?</h1><p>{project ? project.name : "Choose a project or start a conversation."}</p></div>}
         <div className={`composer-region ${selectedId ? "" : "home-composer"}`}>
+          {selected && <PendingDetachedQuestions bridge={bridge} hostId={hostId} sessionId={selected.id} localHostId={desktop.localHostId} connected={connected} archived={selected.archived} drafts={drafts} submissions={submissions}/>}
           {(selectedId || pendingSessionId) && state && <>
             {!selectedId && <p className="subtle-notice">Requests for {knownPendingSession?.title ?? "the session being started"} on {state.host.name}.</p>}
             <PendingInteractions bridge={bridge} hostId={hostId} sessionId={(selectedId ?? pendingSessionId)!} localHostId={desktop.localHostId} connected={connected}/>

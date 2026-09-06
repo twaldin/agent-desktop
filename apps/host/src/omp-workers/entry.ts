@@ -1,4 +1,4 @@
-import { parseBrowserControlRequest, parseGoalMutationRequest } from "@agent-desktop/shared";
+import { parseBrowserControlRequest, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
 import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeBrowserTabMetadata } from "@agent-desktop/shared";
@@ -170,6 +170,19 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         ]);
         break;
       }
+      case "listQuestions": respond(true, await requireSession().listQuestions()); break;
+      case "resolveQuestion": respond(true, await requireSession().resolveQuestion(parseResolveDetachedQuestionRequest(message.args.request))); break;
+      case "startQuestionDelivery": {
+        if (typeof message.args.questionId !== "string" || message.args.questionId.length < 1 || message.args.questionId.length > 200) {
+          const error = new Error("Invalid detached question identity."); error.name = "DetachedQuestionRejected"; throw error;
+        }
+        const run = requireSession().startQuestionDelivery(message.args.questionId);
+        await Promise.all([
+          run.accepted.then(value => respond(true, value, undefined, "accepted"), error => respond(false, undefined, error, "accepted")),
+          run.completion.then(value => respond(true, value, undefined, "completion"), error => respond(false, undefined, error, "completion")),
+        ]);
+        break;
+      }
       case "getBrowserMetadata": {
         const owner = requireSession().id;
         let native: { listTabsForOwner?: (ownerSessionId: string) => unknown };
@@ -249,7 +262,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
     }
   } catch (error) {
-    if (message.operation === "startPrompt" || message.operation === "startGoalContinuation") {
+    if (message.operation === "startPrompt" || message.operation === "startGoalContinuation" || message.operation === "startQuestionDelivery") {
       respond(false, undefined, error, "accepted");
       respond(false, undefined, error, "completion");
     } else respond(false, undefined, error);

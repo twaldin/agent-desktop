@@ -30,6 +30,8 @@ export class NativeSteerAdmission {
   #messages = new Map<NativeMessage, Pending>();
   #original: AgentSession["agent"]["steer"];
   #wrapped: AgentSession["agent"]["steer"];
+  #originalFollowUp: AgentSession["agent"]["followUp"];
+  #wrappedFollowUp: AgentSession["agent"]["followUp"];
   #previous: SessionManager["onEntryAppended"];
   #observer: NonNullable<SessionManager["onEntryAppended"]>;
   #unsubscribe: () => void;
@@ -39,9 +41,10 @@ export class NativeSteerAdmission {
   constructor(private session: AgentSession, private manager: SessionManager) {
     const agent = session.agent;
     this.#original = agent.steer;
-    this.#wrapped = message => {
+    this.#originalFollowUp = agent.followUp;
+    const capture = (message: NativeMessage, enqueue: (message: NativeMessage) => void) => {
       const pending = this.#scope.getStore();
-      if (!pending) return this.#original.call(agent, message);
+      if (!pending) return enqueue(message);
       if (pending.cancelled || this.#closed) throw new Error(pending.cancelled ?? "OMP steer admission is closed");
       if (pending.message || message.role !== "user") throw new Error("Native steer did not produce one attributable user message");
       // Native persistence deduplicates by key + content. Reject a collision
@@ -55,9 +58,12 @@ export class NativeSteerAdmission {
       }
       pending.message = message;
       this.#messages.set(message, pending);
-      this.#original.call(agent, message);
+      enqueue(message);
     };
+    this.#wrapped = message => capture(message, value => this.#original.call(agent, value));
+    this.#wrappedFollowUp = message => capture(message, value => this.#originalFollowUp.call(agent, value));
     agent.steer = this.#wrapped;
+    agent.followUp = this.#wrappedFollowUp;
     this.#previous = manager.onEntryAppended;
     this.#observer = entry => {
       this.#previous?.(entry);
@@ -80,6 +86,15 @@ export class NativeSteerAdmission {
   }
 
   async submit(text: string): Promise<OmpSteerReceipt> {
+    return this.#submit(() => this.session.steer(text));
+  }
+
+  /** Queue an ordinary user follow-up and verify its exact native entry. */
+  async submitFollowUp(text: string): Promise<OmpSteerReceipt> {
+    return this.#submit(() => this.session.followUp(text, undefined, { expandPromptTemplates: false }));
+  }
+
+  async #submit(dispatch: () => Promise<void>): Promise<OmpSteerReceipt> {
     if (this.#closed) return { kind: "not-recorded", reason: "OMP steer admission is closed" };
     const pending: Pending = { result: Promise.withResolvers<OmpSteerReceipt>(), dispatched: false, settled: false };
     this.#pending.add(pending);
@@ -91,7 +106,7 @@ export class NativeSteerAdmission {
     }, 25);
     this.#timer.unref();
     try {
-      await this.#scope.run(pending, () => this.session.steer(text));
+      await this.#scope.run(pending, dispatch);
       pending.dispatched = true;
       if (!pending.message) this.#finish(pending, { kind: "not-recorded", reason: "Native steer did not enqueue a user message" });
     } catch (error) {
@@ -119,6 +134,7 @@ export class NativeSteerAdmission {
     this.#closed = true;
     this.#unsubscribe();
     if (this.session.agent.steer === this.#wrapped) this.session.agent.steer = this.#original;
+    if (this.session.agent.followUp === this.#wrappedFollowUp) this.session.agent.followUp = this.#originalFollowUp;
     if (this.manager.onEntryAppended === this.#observer) this.manager.onEntryAppended = this.#previous;
     if (this.#timer) clearInterval(this.#timer);
     for (const pending of this.#pending) this.#finish(pending, { kind: "outcome-unknown", reason: "Native steer admission closed without a verified receipt" });
@@ -126,9 +142,11 @@ export class NativeSteerAdmission {
   }
 
   #removeQueued(pending: Pending): boolean {
-    const queue = this.session.agent.peekSteeringQueue();
-    if (!pending.message || !queue.includes(pending.message)) return false;
-    this.session.agent.replaceQueues(queue.filter(message => message !== pending.message), [...this.session.agent.peekFollowUpQueue()]);
+    if (!pending.message) return false;
+    const steering = this.session.agent.peekSteeringQueue();
+    const followUp = this.session.agent.peekFollowUpQueue();
+    if (!steering.includes(pending.message) && !followUp.includes(pending.message)) return false;
+    this.session.agent.replaceQueues(steering.filter(message => message !== pending.message), followUp.filter(message => message !== pending.message));
     return true;
   }
 

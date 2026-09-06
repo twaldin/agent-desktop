@@ -6,7 +6,7 @@ Release 10 implements the model/reasoning portion of [composer-parity.md](compos
 
 `POST /v1/models/composer` accepts `{target?: WorkspaceTarget, refresh?: boolean}`. A target contains a catalog `projectId` or `sessionId`; the owning host resolves its cwd. Raw cwd values and unknown targets are rejected. The existing authenticated Settings HTTP path bounds inputs, returns `Cache-Control: no-store`, and avoids credential/event/command journals. The desktop calls `getComposerCatalog(target?, refresh?, hostId?)`.
 
-The existing discovery worker performs the read through `OmpRuntime.getComposerCatalog`. Worker protocol 2 remains intact. Refresh uses a fresh native settings/model/auth discovery context. The operation creates no session, writes no configuration, invokes no provider prompt and does not execute session extension factories. Native discovery itself retains its normal provider metadata behavior.
+The existing discovery worker performs the read through `OmpRuntime.getComposerCatalog`. Refresh uses a fresh native settings/model/auth discovery context. The current extension-provider fix loads configured native extension factories so their providers enter the catalog. It creates no session, writes no app configuration and invokes no provider prompt; configured extension initialization still runs its own native code. Session attach separately preloads extensions once, after applying its settings intent, then resolves an explicitly selected model and reuses those extensions in the SDK.
 
 `omp-settings/composer.ts` calls the pinned OMP 18.1.10 helpers at release commit `f241301c83726afe75a847e919b89977a54dafbe`:
 
@@ -16,7 +16,13 @@ The existing discovery worker performs the read through `OmpRuntime.getComposerC
 
 The public catalog projects only model identity, display name, input types, limits, reasoning levels, native authentication/availability flags, disabled-provider state and thinking defaults. URLs, headers, credential objects and secrets are not copied.
 
-The result explicitly declares `resolution: "native-registry-preview"`. Actual session startup remains authoritative and can register extension-defined models absent from a metadata-only discovery context. Projectless preview uses the host discovery cwd; a new projectless session later receives its own private cwd. Path-sensitive startup or extension behavior can therefore differ. A null draft does not force the preview's model onto that session.
+The result explicitly declares `resolution: "native-registry-preview"`. Actual session startup remains authoritative, including models registered later by extension lifecycle events. Projectless preview uses the host discovery cwd; a new projectless session later receives its own private cwd. Path-sensitive startup or extension behavior can therefore differ. A null draft does not force the preview's model onto that session.
+
+## Compact selection surface
+
+The current source combines model and effort into one composer trigger. It opens a compact Power control and nested model/effort menus. The native capability list defines the ordinal range; Auto and Off stay separate from ordinal effort. Search considers the complete host/workspace catalog while rendering at most 100 matches, with an explicit refine-search notice. Reset clears the model and effort draft overrides together; the collapsed label still reflects the effective native effort.
+
+Controlled Electron checks cover large catalogs, exact provider/model selection, disabled controls, keyboard dismissal, effort changes, reset, and narrow/zoomed layouts. These establish interactions, not visual parity: the current first-level structure, slider styling and geometry still differ from the frozen native effort popover and remain comparison work.
 
 ## Current session versus draft selection
 

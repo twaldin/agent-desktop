@@ -20,6 +20,7 @@ export * from "./browser-frame";
 export * from "./browser-control";
 export * from "./browser-create";
 export * from "./goal-control";
+export * from "./detached-questions";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -81,6 +82,8 @@ export interface SessionSummary {
   approvalOverride?: OmpApprovalMode;
   /** Host scheduler checkpoint. Native OMP remains authoritative for the goal. */
   goalContinuation?: { goalId: string; blocked?: 'no-tools' | 'unknown' | 'in-flight' };
+  /** Wake-up hint only; accepted answers and delivery receipts live in OMP's journal. */
+  questionDeliveryPending?: boolean;
   error?: string;
 }
 
@@ -151,6 +154,7 @@ export type HostCommand =
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode }
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
+  | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.interrupt"; sessionId: string }
   | { type: "session.rename"; sessionId: string; title: string }
   | { type: "session.archive"; sessionId: string; archived: boolean }
@@ -174,7 +178,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | { type: "preferences.put"; preference: PreferenceRecord } }
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } }
   | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -232,6 +236,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getAccounts(providerId: string, hostId?: string): Promise<AccountInfo[]>;
   getSessionAccounts(sessionId: string, hostId?: string): Promise<SessionAccountList>;
   getInteractions(sessionId: string, hostId?: string): Promise<OmpInteraction[]>;
+  getDetachedQuestions?(sessionId: string, hostId?: string): Promise<import('./detached-questions').DetachedQuestionsSnapshot | null>;
   workspaceQuery(target: WorkspaceTarget, query: WorkspaceQuery, hostId?: string): Promise<WorkspaceQueryResult>;
   getPreferences(): Promise<PreferencesSnapshot>;
   getTheme(): Promise<ThemeState>;

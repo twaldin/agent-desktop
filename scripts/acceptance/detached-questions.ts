@@ -1,0 +1,21 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
+import { build } from "vite";
+
+const root = resolve(import.meta.dir, "../..");
+const output = resolve(process.argv[2] ?? `.data/detached-questions-acceptance/${Date.now()}`);
+const profile = await mkdtemp(join(tmpdir(), "agent-detached-question-"));
+await mkdir(output, { recursive: true, mode: 0o700 });
+try {
+  await writeFile(join(output, "index.html"), `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'"><div id="root"></div><script type="module" src="${relative(output, join(import.meta.dir, "detached-questions-browser.tsx"))}"></script>`);
+  await build({ configFile: join(root, "apps/desktop/vite.config.ts"), root: output, logLevel: "warn", build: { outDir: join(output, "web"), emptyOutDir: true, rollupOptions: { input: join(output, "index.html") } } });
+  await writeFile(join(output, "main.cjs"), `const{app,BrowserWindow}=require('electron'),fs=require('node:fs'),path=require('node:path');app.setPath('userData',${JSON.stringify(profile)});app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,width:900,height:760,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});try{await win.loadFile(path.join(__dirname,'web/index.html'));await win.webContents.executeJavaScript('waitDetachedQuestionOpen()');const initial=path.join(__dirname,'question-open.png');await win.webContents.capturePage().then(image=>fs.writeFileSync(initial,image.toPNG()));const offlineResult=await win.webContents.executeJavaScript('prepareDetachedQuestionOffline()');const offline=path.join(__dirname,'question-offline.png');await win.webContents.capturePage().then(image=>fs.writeFileSync(offline,image.toPNG()));const result=await win.webContents.executeJavaScript('runDetachedQuestionAcceptance()');const accepted=path.join(__dirname,'question-accepted.png');await win.webContents.capturePage().then(image=>fs.writeFileSync(accepted,image.toPNG()));fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify({...offlineResult,...result,captures:[initial,offline,accepted]},null,2));app.exit(0)}catch(error){fs.writeFileSync(path.join(__dirname,'error.txt'),String(error&&error.stack||error));app.exit(1)}});`);
+  const electron = join(root, "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron");
+  const process = Bun.spawn([electron, join(output, "main.cjs")], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  const [code, stdout, stderr] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
+  await writeFile(join(output, "electron.log"), `${stdout}${stderr}`);
+  if (code !== 0) throw new Error(`Electron acceptance failed (${code}): ${await readFile(join(output, "error.txt"), "utf8").catch(() => stderr)}`);
+  console.log(await readFile(join(output, "result.json"), "utf8"));
+  console.log(`Evidence: ${output}`);
+} finally { await rm(profile, { recursive: true, force: true }); }

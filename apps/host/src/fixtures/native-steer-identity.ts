@@ -55,6 +55,14 @@ try {
   admission.cancelQueued("Controlled stop before delivery");
   assert.equal((await cancelled).kind, "not-recorded");
   assert.deepEqual(session.agent.peekSteeringQueue(), [preserved], "Stop preserves unrelated queue objects");
+  const cancelledFollowUp = admission.submitFollowUp("Only this pending desktop follow-up is removed");
+  await waitFor(() => session.agent.peekFollowUpQueue().length === 1, "Desktop follow-up queued");
+  const preservedFollowUp = { ...foreign, timestamp: Date.now() + 1, content: [{ type: "text" as const, text: "Unrelated follow-up queue entry" }] };
+  session.agent.followUp(preservedFollowUp);
+  admission.cancelQueued("Controlled stop before follow-up delivery");
+  assert.equal((await cancelledFollowUp).kind, "not-recorded");
+  assert.deepEqual(session.agent.peekSteeringQueue(), [preserved], "Stop still preserves an unrelated steering queue object");
+  assert.deepEqual(session.agent.peekFollowUpQueue(), [preservedFollowUp], "Stop preserves unrelated follow-up queue objects");
   // Test-owned extension cleanup, separate from the adapter cancellation.
   session.agent.replaceQueues([], []);
 

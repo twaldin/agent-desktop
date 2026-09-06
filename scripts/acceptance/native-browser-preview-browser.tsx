@@ -17,7 +17,7 @@ declare global {
       insertText(text: string): Promise<void>;
       key(key: string): Promise<void>;
       controlBrowser(sessionId: string, request: BrowserControlRequest, hostId: string): Promise<BrowserControlReceipt>;
-      capture(label: "initial" | "remounted" | "controlled" | "created" | "restored"): Promise<string>;
+      capture(label: "initial" | "fit" | "remounted" | "controlled" | "created" | "restored"): Promise<string>;
     };
     runNativeBrowserPreviewAcceptance(): Promise<unknown>;
     nativeBrowserPreviewProgress(): unknown;
@@ -39,7 +39,7 @@ async function wait(check: () => unknown, message: string) {
 const root = createRoot(document.getElementById("root")!);
 const checks: string[] = [];
 let metadataCalls = 0, frameCalls = 0;
-const actions: Array<{type: string; receipt: BrowserControlReceipt}> = [];
+const actions: Array<{type: string; request: BrowserControlRequest; receipt: BrowserControlReceipt}> = [];
 let lastMetadata: BrowserMetadataSnapshot | null | undefined, lastFrame: BrowserFrameSnapshot | undefined;
 let createCalls = 0, createdTarget: BrowserFrameTarget | undefined;
 let dockSnapshot: DockSnapshot | undefined;
@@ -51,7 +51,7 @@ const bridge = {
     return receipt;
   },
   controlBrowser: params.get("controls") !== "true" ? undefined : async (sessionId: string, request: BrowserControlRequest, hostId: string) => {
-    const receipt = await window.nativePreviewBridge.controlBrowser(sessionId, request, hostId); actions.push({type: request.action.type, receipt}); return receipt;
+    const receipt = await window.nativePreviewBridge.controlBrowser(sessionId, request, hostId); actions.push({type: request.action.type, request, receipt}); return receipt;
   },
   getBrowserMetadata: async (sessionId: string, hostId: string) => {
     metadataCalls++; lastMetadata = await window.nativePreviewBridge.getBrowserMetadata(sessionId, hostId); return lastMetadata;
@@ -73,6 +73,7 @@ const image = () => document.querySelector<HTMLImageElement>(".browser-viewport 
 window.nativeBrowserPreviewProgress = () => ({ checks, metadataCalls, frameCalls, actions, createCalls, createdTarget, dockErrors, dockSnapshot, text: document.body.innerText, lastMetadata,
   lastFrame: lastFrame && { ...lastFrame, data: `<${lastFrame.data.length} base64 characters>` } });
 window.runNativeBrowserPreviewAcceptance = async () => {
+  let fittedViewport: { width: number; height: number } | undefined;
   render(true);
   await wait(() => image()?.complete && image()?.naturalWidth === 640 && image()?.naturalHeight === 480, "actual native JPEG decode");
   assert(lastMetadata?.availability === "running", "Production main transport did not return running metadata");
@@ -88,6 +89,18 @@ window.runNativeBrowserPreviewAcceptance = async () => {
     .map(value => value.toString(16).padStart(2, "0")).join("");
   await window.nativePreviewBridge.capture("initial");
   checks.push("actual worker, authenticated HTTP route, production main transport, and BrowserPanel decoded the exact native JPEG");
+  if (params.get("controls") === "true") {
+    const viewport = document.querySelector<HTMLElement>(".browser-viewport")!.getBoundingClientRect();
+    const expectedFit = { width: Math.floor(viewport.width), height: Math.floor(viewport.height) };
+    fittedViewport = expectedFit;
+    await wait(() => actions.filter(action => action.type === "resize").length === 1, "initial automatic native fit receipt");
+    const fit = actions.find(action => action.type === "resize")!;
+    assert(fit.request.target.targetId === expected.targetId && fit.request.controlEpoch === lastFrame?.controlEpoch, "Automatic fit lost native frame ownership");
+    assert(fit.request.action.type === "resize" && fit.request.action.width === expectedFit.width && fit.request.action.height === expectedFit.height, "Automatic fit did not use the measured panel viewport");
+    await wait(() => lastFrame?.width === expectedFit.width && lastFrame?.height === expectedFit.height && image()?.naturalWidth === expectedFit.width && image()?.naturalHeight === expectedFit.height, "fitted native viewport frame");
+    await window.nativePreviewBridge.capture("fit");
+    checks.push("automatic panel fit resized the same real native viewport once and returned a matching decoded frame");
+  }
 
   render(false); await sleep(1_250); const hiddenCalls = { metadataCalls, frameCalls };
   await sleep(1_250); assert(metadataCalls === hiddenCalls.metadataCalls && frameCalls === hiddenCalls.frameCalls, "Hidden preview continued polling");
@@ -96,32 +109,33 @@ window.runNativeBrowserPreviewAcceptance = async () => {
   checks.push("hidden and unmounted viewers stopped native viewport polling");
 
   render(true);
-  await wait(() => image()?.complete && image()?.naturalWidth === 640 && frameCalls > hiddenCalls.frameCalls, "remounted native JPEG decode");
+  await wait(() => image()?.complete && image()?.naturalWidth === (fittedViewport?.width ?? 640) && image()?.naturalHeight === (fittedViewport?.height ?? 480) && frameCalls > hiddenCalls.frameCalls, "remounted native JPEG decode");
   assert(lastFrame?.targetId === expected.targetId && lastFrame.url === expected.url, "Remount substituted another native target");
   await window.nativePreviewBridge.capture("remounted");
   checks.push("remount retained selection and rendered the same live native tab");
   if (params.get("controls") === "true") {
     assert(lastFrame?.context && lastFrame.controlEpoch, "Native frame lacks control context/epoch");
+    const humanActions = () => actions.filter(action => action.type !== "resize");
     const click = (x: number, y: number) => {
       const img = image()!, rect = img.getBoundingClientRect();
-      img.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: rect.left + x * rect.width / 640, clientY: rect.top + y * rect.height / 480 }));
+      img.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: rect.left + x * rect.width / lastFrame!.width, clientY: rect.top + y * rect.height / lastFrame!.height }));
     };
     click(50, 180);
-    await wait(() => actions.length === 1, "same-target counter click receipt");
-    assert(actions[0]!.receipt.outcome === "completed", "Counter click did not complete");
+    await wait(() => humanActions().length === 1, "same-target counter click receipt");
+    assert(humanActions()[0]!.receipt.outcome === "completed", "Counter click did not complete");
     await wait(() => !document.body.innerText.includes("Sending browser action"), "counter UI ready");
     await sleep(1200);
     click(440, 100);
-    await wait(() => actions.length === 2, "native input focus click receipt");
-    assert(actions[1]!.receipt.outcome === "completed", "Input focus did not complete");
+    await wait(() => humanActions().length === 2, "native input focus click receipt");
+    assert(humanActions()[1]!.receipt.outcome === "completed", "Input focus did not complete");
     await sleep(200);
     const keyboard = document.querySelector<HTMLTextAreaElement>('[aria-label="Browser page keyboard input"]');
     assert(keyboard, "Direct native keyboard capture is missing"); keyboard.focus();
     await window.nativePreviewBridge.key("End");
-    await wait(() => actions.length === 3, "native End key receipt");
+    await wait(() => humanActions().length === 3, "native End key receipt");
     await sleep(100);
     await window.nativePreviewBridge.insertText(" typed through desktop");
-    await wait(() => actions.length === 4, "direct text input receipt");
+    await wait(() => humanActions().length === 4, "direct text input receipt");
     assert(actions.every(action => action.receipt.outcome === "completed"), "A native input action failed");
     await sleep(1400); await window.nativePreviewBridge.capture("controlled");
     checks.push("production BrowserPanel click, edit key and direct Electron text input reached the same native document");
@@ -182,5 +196,5 @@ window.runNativeBrowserPreviewAcceptance = async () => {
     root.render(null); await sleep(100);
   }
   return { passed: true, checks, expected, metadataCalls, frameCalls, actions, createCalls, createdTarget, decodedJpeg: { width: 640, height: 480, sha256: initialDigest, base64Characters: lastFrame.data.length },
-    captures: params.get("create") === "true" ? ["initial.png", "remounted.png", "controlled.png", "created.png", "restored.png"] : params.get("controls") === "true" ? ["initial.png", "remounted.png", "controlled.png"] : ["initial.png", "remounted.png"] };
+    captures: params.get("create") === "true" ? ["initial.png", "fit.png", "remounted.png", "controlled.png", "created.png", "restored.png"] : params.get("controls") === "true" ? ["initial.png", "fit.png", "remounted.png", "controlled.png"] : ["initial.png", "remounted.png"] };
 };

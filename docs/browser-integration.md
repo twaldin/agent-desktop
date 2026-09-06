@@ -1,5 +1,11 @@
 # Native OMP browser integration
 
+## Follow-up to independently exercised release 18
+
+The Work verifier isolated a navigation-only failure: counter clicks and typing succeeded, while both third-party and same-origin link clicks reached the destination but lost their acknowledgement. Read-only preview refresh restored history controls. The pinned patch now retries only transient post-click CDP observation for up to two seconds, revalidating the exact native owner/tab/target on each read. It never replays the click, substitutes another target, or treats an unverified result as success. Real isolated native-browser contract tests cover this patch; the independently launched release 18 remains unchanged and does not contain the fix.
+
+The source panel also fits the native page to its measured viewport on initial display and local panel-size changes. It does not resize again merely because another client changed the native viewport. Fit can be switched off, and explicit Resize remains available. An uncertain resize is not automatically replayed. Controlled Electron geometry tests and real OMP viewport/JPEG tests verify these behaviors; the next signed pair still requires the Work verifier's navigation and layout pass. Browser annotation, zoom and other unmatched reference controls remain open parity work.
+
 Source investigation, isolated feasibility evidence and source implementation, 2026-09-05. **Source 18 includes a native viewport panel and typed navigation/input controls; full browser parity remains incomplete.** The initial investigation read installed package source, the preserved Codex archive, and official Electron/CDP documentation. The later bounded experiment below opened only its own disposable native browser/profile and localhost page. Neither stage inspected live Codex or other apps, changed installed settings, accessed existing browser profiles, or made provider requests.
 
 ## Release 17 metadata transport

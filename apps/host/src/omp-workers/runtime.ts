@@ -1,10 +1,11 @@
-import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, GoalMutationRequest, NativeGoalActivity } from "@agent-desktop/shared";
+import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrowserFrameTarget, BrowserMetadataAvailability, ModelInfo, NativeBrowserFrame, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
-import type { GoalContinuationEligibility, OmpBrowserTabCreateResult, OmpGoalContinuationRun, OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
+import type { GoalContinuationEligibility, OmpBrowserTabCreateResult, OmpDetachedQuestionDeliveryRun, OmpGoalContinuationRun, OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
+import { DetachedQuestionOutcomeUnknown } from "../omp/detached-questions";
 import { copyPreparedImages } from "../omp/images";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
@@ -24,7 +25,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "subscribe"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "subscribe"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -33,6 +34,9 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
   getGoalContinuationEligibility(): Promise<GoalContinuationEligibility>;
   startGoalContinuation(expectedGoalId: string): OmpGoalContinuationRun;
+  listQuestions(): Promise<DetachedQuestionSnapshot[]>;
+  resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
+  startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
   createBrowserTab(name: string): Promise<OmpBrowserTabCreateResult>;
   controlBrowser(request: BrowserControlRequest): Promise<{name: string; targetId: string; context: BrowserDocumentContext; url: string; title: string}>;
@@ -58,7 +62,7 @@ interface Pending {
   resolve(value: unknown): void;
   reject(error: unknown): void;
   timeout?: ReturnType<typeof setTimeout>;
-  uncertainAdmission?: boolean;
+  uncertainTransport?: "prompt-admission" | "question-resolution";
 }
 
 class WorkerClient {
@@ -126,9 +130,15 @@ class WorkerClient {
     this.#ready.reject(error);
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
-      pending.reject(pending.uncertainAdmission ? new OmpPromptAdmissionError(error) : error);
+      pending.reject(this.#transportFailure(pending, error));
     }
     this.#pending.clear();
+  }
+
+  #transportFailure(pending: Pending | undefined, error: unknown): unknown {
+    if (pending?.uncertainTransport === "prompt-admission") return new OmpPromptAdmissionError(error);
+    if (pending?.uncertainTransport === "question-resolution") return new DetachedQuestionOutcomeUnknown(error);
+    return error;
   }
 
   #fail(message: string, pid = this.pid, exitCode?: number | null, signalCode?: number | null): void {
@@ -202,34 +212,34 @@ class WorkerClient {
     this.#process.send(message);
   }
 
-  #promise<T>(key: string, timeoutMs?: number, uncertainAdmission = false): Promise<T> {
+  #promise<T>(key: string, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"]): Promise<T> {
     if (this.#pending.size >= 128) throw new Error("OMP worker request limit reached");
     const deferred = Promise.withResolvers<T>();
     const pending: Pending = {
-      resolve: value => deferred.resolve(value as T), reject: deferred.reject, uncertainAdmission,
+      resolve: value => deferred.resolve(value as T), reject: deferred.reject, uncertainTransport,
     };
     if (timeoutMs) pending.timeout = setTimeout(() => {
       this.#pending.delete(key);
-      deferred.reject(new Error("OMP worker operation timed out; its outcome may be unknown"));
+      deferred.reject(this.#transportFailure(pending, new Error("OMP worker operation timed out; its outcome may be unknown")));
     }, timeoutMs);
     this.#pending.set(key, pending);
     void deferred.promise.catch(() => {});
     return deferred.promise;
   }
 
-  async request<T>(operation: WorkerOperation, timeoutMs?: number): Promise<T> {
+  async request<T>(operation: WorkerOperation, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"]): Promise<T> {
     await this.#ready.promise;
     if (this.failure) throw new WorkerFailureError(this.failure);
     if (this.#closing && operation.operation !== "dispose") throw new Error("OMP worker is closing");
     const id = String(++this.#requestId);
     if (operation.operation === "dispose") this.#disposeId = id;
-    const response = this.#promise<T>(id, timeoutMs);
+    const response = this.#promise<T>(id, timeoutMs, uncertainTransport);
     try { this.#send({ type: "request", id, ...operation }); }
     catch (error) {
       const pending = this.#pending.get(id);
       this.#pending.delete(id);
       clearTimeout(pending?.timeout);
-      pending?.reject(error);
+      pending?.reject(this.#transportFailure(pending, error));
     }
     return response;
   }
@@ -243,14 +253,14 @@ class WorkerClient {
     }
     const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images) } : undefined;
     const id = String(++this.#requestId);
-    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length) || text.trimStart().startsWith("/") || text.includes("/skill:"));
+    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
     const completion = this.#promise<boolean>(`${id}:completion`);
     try { this.#send({ type: "request", id, operation: "startPrompt", args: { text, options: preparedOptions } }); }
     catch (error) {
       for (const phase of ["accepted", "completion"]) {
         const key = `${id}:${phase}`;
         const pending = this.#pending.get(key);
-        pending?.reject(pending.uncertainAdmission ? new OmpPromptAdmissionError(error) : error);
+        pending?.reject(this.#transportFailure(pending, error));
         this.#pending.delete(key);
       }
     }
@@ -262,7 +272,7 @@ class WorkerClient {
     if (this.#closing) throw new Error("OMP worker is closing");
     if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
     const id = String(++this.#requestId);
-    const accepted = this.#promise<Awaited<OmpGoalContinuationRun["accepted"]>>(`${id}:accepted`, undefined, true);
+    const accepted = this.#promise<Awaited<OmpGoalContinuationRun["accepted"]>>(`${id}:accepted`, undefined, "prompt-admission");
     const completion = this.#promise<Awaited<OmpGoalContinuationRun["completion"]>>(`${id}:completion`);
     try { this.#send({ type: "request", id, operation: "startGoalContinuation", args: { expectedGoalId } }); }
     catch (error) {
@@ -270,6 +280,23 @@ class WorkerClient {
         const key = `${id}:${phase}`, pending = this.#pending.get(key);
         pending?.reject(phase === "accepted" ? new OmpPromptAdmissionError(error) : error);
         this.#pending.delete(key);
+      }
+    }
+    return { accepted, completion };
+  }
+
+  startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun {
+    if (this.failure) throw new WorkerFailureError(this.failure);
+    if (this.#closing) throw new Error("OMP worker is closing");
+    if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
+    const id = String(++this.#requestId);
+    const accepted = this.#promise<DetachedQuestionDeliveryReceipt>(`${id}:accepted`, undefined, "prompt-admission");
+    const completion = this.#promise<boolean>(`${id}:completion`);
+    try { this.#send({ type: "request", id, operation: "startQuestionDelivery", args: { questionId } }); }
+    catch (error) {
+      for (const phase of ["accepted", "completion"] as const) {
+        const key = `${id}:${phase}`, pending = this.#pending.get(key);
+        pending?.reject(error); this.#pending.delete(key);
       }
     }
     return { accepted, completion };
@@ -393,6 +420,9 @@ export class WorkerRuntime {
       mutateGoal: request => client.request({ operation: "mutateGoal", args: { request } }, 30_000),
       getGoalContinuationEligibility: () => client.request({ operation: "getGoalContinuationEligibility" }, 15_000),
       startGoalContinuation: expectedGoalId => client.startGoalContinuation(expectedGoalId),
+      listQuestions: () => client.request<DetachedQuestionSnapshot[]>({ operation: "listQuestions" }, 15_000),
+      resolveQuestion: request => client.request<ResolveDetachedQuestionReceipt>({ operation: "resolveQuestion", args: { request } }, 15_000, "question-resolution"),
+      startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
       getBrowserMetadata: async () => {
         const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };

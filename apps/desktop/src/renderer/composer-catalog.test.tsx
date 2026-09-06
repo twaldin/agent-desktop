@@ -36,8 +36,7 @@ describe("owning-workspace composer selection", () => {
     const data = new ComposerCatalogState(fixture(), "owner"); data.setConnected(true); await data.refresh();
     const saved = draft({ id: "new-conversation", model: null });
     const html = renderToStaticMarkup(<ComposerSelections data={data} draft={saved} disabled={false} onChange={() => {}}/>);
-    expect(html).toContain("Native default: Model first"); expect(html).toContain('aria-label="Reasoning effort"');
-    expect(html).toContain("Native default: high"); expect(html).toContain('value="off"');
+    expect(html).toContain('aria-label="Model and reasoning effort"'); expect(html).toContain("Model first");
     expect(saved.model).toBeNull(); expect(saved.thinkingLevel).toBeUndefined(); data.stop();
   });
   test("Settings changes refresh current session controls without replacing an explicit or legacy draft selection", async () => {
@@ -50,7 +49,7 @@ describe("owning-workspace composer selection", () => {
     expect(composerSelection(explicit, data.catalog, session(), data.controls)).toMatchObject({ model: { id: "first" }, thinking: "high", differingDraftModel: true });
     expect(explicit.model?.id).toBe("first");
     const html = renderToStaticMarkup(<ComposerSelections data={data} draft={explicit} session={session()} disabled={false} onChange={() => {}}/>);
-    expect(html).toContain("Model first"); expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain("Model first high"); expect(html).toContain('aria-haspopup="menu"');
     expect(explicit.model).toEqual({ provider: "contract", id: "first" });
     data.stop();
   });
@@ -66,9 +65,9 @@ describe("owning-workspace composer selection", () => {
     data.setConnected(true); await data.refresh();
     expect(data.error).toBeUndefined();
     const existing = renderToStaticMarkup(<ComposerSelections data={data} draft={draft()} session={session()} disabled={false} onChange={() => {}}/>);
-    expect(existing).toContain("Current session: first"); expect(existing).toContain("Current session: low");
+    expect(existing).toContain("Model first"); expect(existing).toContain('aria-label="Model and reasoning effort"');
     const explicit = renderToStaticMarkup(<ComposerSelections data={data} draft={draft({ model: { provider: "contract", id: "first" } })} session={session()} disabled={false} onChange={() => {}}/>);
-    expect(explicit).toContain("availability unknown"); expect(explicit).not.toContain("sign-in required");
+    expect(explicit).toContain("Model first"); expect(explicit).not.toContain("sign-in required");
     const home = renderToStaticMarkup(<ComposerSelections data={data} draft={draft()} disabled={false} onChange={() => {}}/>);
     expect(home).toContain("Native default (older host; unresolved)");
     expect(home).not.toContain('aria-label="Reasoning effort"');
@@ -92,7 +91,7 @@ describe("owning-workspace composer selection", () => {
     failed.setConnected(true); await failed.refresh(); expect(failed.error).toBe("Owning host unavailable");
     const saved = draft({ model: { provider: "missing", id: "retained" }, thinkingLevel: "max" });
     const html = renderToStaticMarkup(<ComposerSelections data={failed} draft={saved} disabled={false} onChange={() => {}}/>);
-    expect(html).toContain("retained (saved draft selection)"); expect(html).toContain("max (saved)");
+    expect(html).toContain("retained max"); expect(html).toContain('aria-label="Model and reasoning effort"');
     expect(saved.model?.id).toBe("retained"); failed.stop();
   });
   test("a follow-current draft omits model from delivery while explicit choices and later text survive", async () => {

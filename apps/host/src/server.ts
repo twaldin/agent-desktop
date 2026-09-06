@@ -15,7 +15,7 @@ import { TailnetNetwork, TAILNET_PORT } from "./network";
 import { hasAttachmentIntent, requiresAttachmentProtocol } from "./attachment-protocol";
 import { ImageAttachmentsHttp, AttachmentRequestError } from "./attachment-http";
 import { AttachmentImageError } from "./attachments";
-import { sameImageAttachments } from "@agent-desktop/shared";
+import { sameImageAttachments, detachedAnswerDraft, SESSION_ACTIVITY_OWNER_HEADER } from "@agent-desktop/shared";
 import type { PreparedPromptImage } from "./omp/images";
 import { AccountsHttp } from "./accounts-http";
 import { parseInteractionAnswer } from "./interaction-http";
@@ -25,6 +25,7 @@ import { ComposerActionsHttp } from "./composer-actions-http";
 import { SessionActivityHttp } from "./session-activity-http";
 import { GoalControlHttp } from "./goal-control-http";
 import { GoalContinuationController } from "./goal-continuation";
+import { QuestionDeliveryController } from "./question-delivery";
 import { BrowserMetadataHttp } from "./browser-metadata-http";
 import { BrowserControlHttp } from "./browser-control-http";
 import { BrowserFrameHttp } from "./browser-frame-http";
@@ -56,6 +57,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let nativeTerminalsHttp: TmuxTerminalsHttp | undefined;
   let themeAssets: ThemeAssets | undefined;
   let goalContinuations: GoalContinuationController | undefined;
+  let questionDeliveries: QuestionDeliveryController | undefined;
   let server: ReturnType<typeof Bun.serve<SocketData>> | undefined;
   let publishedConnection = false;
   let tailServer: ReturnType<typeof Bun.serve<SocketData>> | undefined;
@@ -190,7 +192,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   goalContinuations = new GoalContinuationController({
     session: id => store.getSession(id), ordered, getHandle,
     executing: id => executions.has(id),
-    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length); },
+    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length || store.getSession(id)?.questionDeliveryPending); },
     checkpoint: (id, state) => {
       const current = store.getSession(id);
       if (current && !stopping && JSON.stringify(current.goalContinuation) !== JSON.stringify(state)) updateSession(id, { goalContinuation: state });
@@ -215,6 +217,37 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (!stopping && store.getSession(id)?.status !== 'interrupted') updateSession(id, { status: 'error', error: errorMessage(error) });
       }).finally(() => { if (executions.get(id) === completion) executions.delete(id); goalContinuations?.request(id); });
       executions.set(id, completion);
+      return run;
+    },
+  });
+  questionDeliveries = new QuestionDeliveryController({
+    session: id => store.getSession(id), ordered, getHandle,
+    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length); },
+    isCurrent: async (id, handle) => !stopping && await handles.get(id)?.catch(() => undefined) === handle,
+    checkpoint: (id, pending) => {
+      if (!stopping && store.getSession(id)?.questionDeliveryPending !== pending) updateSession(id, { questionDeliveryPending: pending });
+      if (!pending) goalContinuations?.request(id);
+    },
+    changed: id => publish({ type: 'interactions', sessionId: id }),
+    error: (id, error) => { if (!stopping && store.getSession(id)?.status !== 'interrupted') updateSession(id, { error: errorMessage(error) }); },
+    start: (id, handle, questionId) => {
+      const current = store.getSession(id);
+      if (!current || stopping || current.archived || !['idle', 'running'].includes(current.status)) {
+        const error = new Error('This conversation is not ready for detached answer delivery.'); error.name = 'DetachedQuestionRejected'; throw error;
+      }
+      assertWorkspaceAvailable(current.cwd);
+      const run = handle.startQuestionDelivery(questionId);
+      // A steer shares the current execution. An idle native follow-up owns a
+      // new execution until its actual agent_end, not just its admission.
+      if (!executions.has(id)) {
+        runtimeErrors.delete(id); updateSession(id, { status: 'running', error: undefined });
+        const completion = run.completion.then(() => {
+          if (!stopping && store.getSession(id)?.status !== 'interrupted') updateSession(id, { status: runtimeErrors.has(id) ? 'error' : 'idle', error: runtimeErrors.get(id) });
+        }).catch(error => {
+          if (!stopping && store.getSession(id)?.status !== 'interrupted') updateSession(id, { status: error instanceof Error && error.name === 'DetachedQuestionRejected' ? 'idle' : 'error', error: error instanceof Error && error.name === 'DetachedQuestionRejected' ? undefined : errorMessage(error) });
+        }).finally(() => { if (executions.get(id) === completion) executions.delete(id); questionDeliveries?.request(id); goalContinuations?.request(id); });
+        executions.set(id, completion);
+      }
       return run;
     },
   });
@@ -300,9 +333,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const value = event as { type?: string; message?: { errorMessage?: string } };
     if (value.type === "extension_interaction_requested" || value.type === "extension_interaction_resolved") {
       if (value.type === "extension_interaction_resolved") goalContinuations?.request(sessionId);
+      if (value.type === "extension_interaction_resolved") questionDeliveries?.request(sessionId);
       publish({ type: "interactions", sessionId }); return;
     }
     if (value.type === 'goal_updated' || value.type === 'agent_end' || value.type === 'tool_execution_end') goalContinuations?.request(sessionId);
+    if (value.type === 'agent_end' || value.type === 'tool_execution_end') questionDeliveries?.request(sessionId);
     if (value.type === "message_end" && value.message?.errorMessage) runtimeErrors.set(sessionId, value.message.errorMessage);
     publish({ type: "runtime", sessionId, event });
   }
@@ -383,6 +418,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const save = async () => {
           const result = store.putDraft(command.draft, command.expectedRevision);
           if (result.ok && command.draft.id.startsWith('session:')) goalContinuations?.request(command.draft.id.slice('session:'.length));
+          if (result.ok && command.draft.id.startsWith('session:')) questionDeliveries?.request(command.draft.id.slice('session:'.length));
           return result.ok ? ok(result.draft) : { ...fail(envelope.id, "DRAFT_CONFLICT", "The draft changed elsewhere. Both versions were preserved."), currentDraft: result.currentDraft } as CommandResult;
         };
         return command.draft.attachments === undefined ? save() : attachments.withPrepared(command.draft.attachments, save);
@@ -407,15 +443,37 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "session.rename": return ok(updateSession(command.sessionId, { title: command.title.trim() || "New conversation" }));
       case "session.archive": {
         goalContinuations?.cancel(command.sessionId);
+        questionDeliveries?.cancel(command.sessionId);
         const session = updateSession(command.sessionId, { archived: command.archived });
         if (!command.archived) goalContinuations?.request(command.sessionId);
+        if (!command.archived) questionDeliveries?.request(command.sessionId);
         return ok(session);
       }
       case "session.interrupt": {
         goalContinuations?.cancel(command.sessionId);
+        questionDeliveries?.cancel(command.sessionId);
         const handle = await getHandle(command.sessionId);
         await handle.abort();
         return ok(updateSession(command.sessionId, { status: "interrupted", error: undefined }));
+      }
+      case 'session.question.answer': {
+        const saved = store.getDraft(command.draft.id);
+        if (command.draft.id !== `question:${command.sessionId}:${command.questionId}` || !saved || saved.revision !== command.draft.revision
+          || saved.text !== detachedAnswerDraft(command.answers) || saved.attachments?.length) {
+          return fail(envelope.id, 'DRAFT_CONFLICT', 'The question draft changed. Reload its preserved answers before submitting.');
+        }
+        const current = store.getSession(command.sessionId);
+        if (!current || current.archived || !['idle', 'running'].includes(current.status)) return fail(envelope.id, 'QUESTION_NOT_AVAILABLE', 'The question is no longer available for this conversation.');
+        questionDeliveries?.cancel(command.sessionId);
+        const handle = await getHandle(command.sessionId);
+        // Set the restart wake-up hint before native acceptance. OMP remains
+        // authoritative if acceptance succeeds but our command receipt is lost.
+        updateSession(command.sessionId, { questionDeliveryPending: true });
+        let receipt;
+        try { receipt = await handle.resolveQuestion({ questionId: command.questionId, questionEntryId: command.questionEntryId, commandId: envelope.id, answers: command.answers }); }
+        finally { questionDeliveries?.request(command.sessionId); }
+        publish({ type: 'interactions', sessionId: command.sessionId });
+        return ok({ type: command.type, receipt });
       }
       case "session.steer": {
         if (command.attachments?.length) return fail(envelope.id, "IMAGE_STEER_UNSUPPORTED", "Image steering is not supported yet. The draft was retained; stop the turn before sending its images.");
@@ -457,11 +515,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           });
         }).catch(error => {
           if (!stopping) updateSession(command.sessionId, { status: "error", error: errorMessage(error) });
-        }).finally(() => { if (executions.get(command.sessionId) === completion) executions.delete(command.sessionId); goalContinuations?.request(command.sessionId); });
+        }).finally(() => { if (executions.get(command.sessionId) === completion) executions.delete(command.sessionId); questionDeliveries?.request(command.sessionId); goalContinuations?.request(command.sessionId); });
         executions.set(command.sessionId, completion);
         const accepted = await turn.accepted;
         if (!accepted) return fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying.");
         goalContinuations?.explicitWork(command.sessionId);
+        questionDeliveries?.request(command.sessionId);
         const current = store.getSession(command.sessionId)!;
         if (handle.title && handle.title !== nativeTitleBefore) updateSession(command.sessionId, { title: handle.title });
         else if (accepted.kind === "user-message" && current.title === "New conversation") updateSession(command.sessionId, { title: (command.text.trim().split("\n")[0] || command.attachments?.map(image => image.name).join(", ") || "Image conversation").slice(0, 90) });
@@ -581,6 +640,24 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           const input = await request.json() as { target?: unknown; query?: unknown };
           return Response.json(await workspaces.query(parseWorkspaceTarget(input?.target), parseWorkspaceQuery(input?.query)), { headers: { "Cache-Control": "no-store" } });
         }
+        const questionsPath = /^\/v1\/sessions\/([^/]+)\/questions$/.exec(url.pathname);
+        if (questionsPath) {
+          const headers = { 'Cache-Control': 'no-store', [SESSION_ACTIVITY_OWNER_HEADER]: store.host.id };
+          if (request.headers.get(SESSION_ACTIVITY_OWNER_HEADER) !== store.host.id) return Response.json({ error: { code: 'OWNER_MISMATCH', message: 'The question owner no longer matches this host.' } }, { status: 409, headers });
+          if (request.method !== 'GET') return Response.json({ error: { code: 'INVALID_REQUEST', message: 'Use the ordered command endpoint to answer questions.' } }, { status: 405, headers });
+          const id = decodeURIComponent(questionsPath[1]!);
+          if (!id || id.length > 200 || id.includes('\0') || !store.getSession(id)) return Response.json({ error: { code: 'SESSION_NOT_FOUND', message: 'This conversation is not on this host.' } }, { status: 404, headers });
+          const questions = await (async () => {
+            const handle = await getHandle(id), questions = await handle.listQuestions();
+            if (!stopping && await handles.get(id)?.catch(() => undefined) === handle) {
+              let changed = false;
+              for (const question of questions) if (question.acceptance && !commands.has(question.acceptance.commandId)) changed = store.reconcileQuestionAcceptance(id, question) || changed;
+              if (changed) publishState();
+            }
+            return questions;
+          })();
+          return Response.json({ protocolVersion: 1, hostId: store.host.id, sessionId: id, questions }, { headers });
+        }
         const interactionPath = /^\/v1\/sessions\/([^/]+)\/interactions$/.exec(url.pathname);
         if (interactionPath) {
           const handle = await getHandle(decodeURIComponent(interactionPath[1]!));
@@ -657,6 +734,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   await rename(temporary, join(dataDirectory, "connection.json"));
   publishedConnection = true;
   for (const session of store.listSessions()) if (session.goalContinuation && !session.goalContinuation.blocked && session.status === 'idle' && !session.archived) goalContinuations.request(session.id);
+  for (const session of store.listSessions()) if (session.questionDeliveryPending) questionDeliveries.request(session.id);
   const discovery = runtime.listModels(options.discoveryDirectory ?? homedir()).then(value => { models = value; }).catch(error => { modelsError = errorMessage(error); })
     .finally(() => { modelsLoading = false; if (!stopping) publishState(); });
 
@@ -665,6 +743,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (stopCall) return stopCall;
     stopping = true;
     goalContinuations?.stop();
+    questionDeliveries?.stop();
     clearInterval(networkTimer);
     server!.stop(true); tailServer?.stop(true);
     stopCall = (async () => {
@@ -690,6 +769,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   return { connection, store, snapshot, dispatch, stop };
   } catch (error) {
     goalContinuations?.stop();
+    questionDeliveries?.stop();
     clearInterval(networkTimer);
     server?.stop(true); tailServer?.stop(true);
     try { terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose(); await Promise.allSettled([terminals?.shutdown(), nativeTerminals?.shutdown()]); await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await runtime?.dispose(); }

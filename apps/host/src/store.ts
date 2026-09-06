@@ -14,6 +14,7 @@ import type {
 import type { StoredPreferencesState } from "./preferences/store";
 import { approvalMode, hasApprovalIntent, validateCommandApproval } from "./approval";
 import { parseImageAttachments } from "../../../packages/shared/src/attachments";
+import { detachedAnswerDraft, type DetachedQuestionSnapshot } from '../../../packages/shared/src/detached-questions';
 
 export type { DraftInput } from "../../../packages/shared/src/protocol";
 import type { DraftInput } from "../../../packages/shared/src/protocol";
@@ -270,6 +271,10 @@ export class HostStore {
       if (result.ok && result.admission && (command?.type === "session.prompt" || command?.type === "session.steer") && command.draft) {
         this.consumeDraft(command.draft, id);
       }
+      if (result.ok && command?.type === 'session.question.answer' && result.value && 'type' in result.value
+        && result.value.type === 'session.question.answer' && result.value.receipt.questionId === command.questionId) {
+        this.consumeDraft(command.draft, id);
+      }
       const finished: CommandRecord = { ...record, state: "done", result, updatedAt: Date.now() };
       this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify(finished), id);
       return finished;
@@ -278,6 +283,24 @@ export class HostStore {
 
   get lastEventSequence(): number {
     return this.db.query<{ sequence: number }, []>("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events").get()!.sequence;
+  }
+
+  /** Reconcile only a matching durable native acceptance after a lost host
+   * receipt. Neither a new command nor delivery replay is performed. */
+  reconcileQuestionAcceptance(sessionId: string, question: DetachedQuestionSnapshot): boolean {
+    if (question.status !== 'accepted' || !question.acceptance) return false;
+    return this.db.transaction(() => {
+      const accepted = question.acceptance!, prior = this.getCommand(accepted.commandId), command = prior?.command;
+      if (!prior || command?.type !== 'session.question.answer' || command.sessionId !== sessionId || command.questionId !== question.questionId || command.questionEntryId !== question.questionEntryId
+        || detachedAnswerDraft(command.answers) !== detachedAnswerDraft(accepted.answers)) return false;
+      if (prior.state === 'done' && (prior.result?.ok || prior.result?.error.code !== 'OUTCOME_UNKNOWN')) return false;
+      const result: CommandResult = { ok: true, commandId: prior.id, value: { type: 'session.question.answer', receipt: {
+        questionId: question.questionId, acceptanceEntryId: accepted.acceptanceEntryId, delivery: 'waiting',
+      } } };
+      this.consumeDraft(command.draft, prior.id);
+      this.db.query('UPDATE commands SET data = ? WHERE id = ?').run(JSON.stringify({ ...prior, state: 'done', result, updatedAt: Date.now() }), prior.id);
+      return true;
+    }).immediate();
   }
 
   appendEvent(input: EventInput): HostEvent {

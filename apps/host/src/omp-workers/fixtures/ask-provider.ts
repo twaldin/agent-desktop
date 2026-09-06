@@ -2,8 +2,10 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Api, AssistantMessage } from "@oh-my-pi/pi-ai";
 import { AssistantMessageEventStream } from "@oh-my-pi/pi-ai/utils/event-stream";
+import { appendFileSync } from "node:fs";
 
 export default function (pi: ExtensionAPI) {
+  if (process.env.OMP_EXTENSION_FACTORY_COUNT) appendFileSync(process.env.OMP_EXTENSION_FACTORY_COUNT, "factory\n");
   pi.registerProvider("ask-contract", {
     baseUrl: "https://controlled.invalid", apiKey: "isolated-contract-not-a-real-key", api: "ask-contract-api" as Api,
     models: [{ id: "controlled", name: "Controlled ask fixture", reasoning: false, input: ["text"],

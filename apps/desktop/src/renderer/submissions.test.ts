@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandEnvelope, CommandResult, Draft, SessionSummary } from "../../../../packages/shared/src/protocol";
+import { detachedAnswerDraft, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { HostStore } from "../../../host/src/store";
 import type { DraftCache } from "./drafts";
 import { SubmissionController } from "./submissions";
@@ -95,5 +96,43 @@ describe("unknown submission outcomes", () => {
     await controller.submit(edited, session.id, "prompt");
     expect(calls[2]?.id).not.toBe(calls[0]?.id);
     expect(calls[2]?.command).toMatchObject({ text: edited.text, model: edited.model, draft: { id: edited.id, revision: edited.revision } });
+  });
+
+  test("a detached answer retry preserves its exact native question, answers, draft revision, and command identity", async () => {
+    const storage = cache(), calls: CommandEnvelope[] = [];
+    const answers: DetachedQuestionAnswer[] = [
+      { questionId: "density", selectedOptions: ["Compact"] },
+      { questionId: "accent", selectedOptions: [], customInput: "Cobalt" },
+    ];
+    const answerDraft: Draft = { id: "question:session-a:question-a", revision: 4, updatedAt: 20, text: detachedAnswerDraft(answers), projectId: null, model: null };
+    const controller = new SubmissionController(async envelope => {
+      calls.push(structuredClone(envelope));
+      if (calls.length < 3) return unknown(envelope);
+      return { ok: true, commandId: envelope.id, value: { type: "session.question.answer", receipt: { questionId: "question-a", acceptanceEntryId: "entry-accepted", delivery: "waiting" } } };
+    }, "host-a", storage);
+    await expect(controller.submitQuestion(answerDraft, "session-a", "question-a", "entry-opened", answers)).rejects.toThrow("uncertain");
+    const edited = { ...answerDraft, revision: 5, text: detachedAnswerDraft([{ questionId: "density", selectedOptions: ["Comfortable"] }, { questionId: "accent", selectedOptions: [], customInput: "Amber" }]) };
+    await expect(controller.submitQuestion(edited, "different-session", "different-question", "different-entry", [])).rejects.toThrow("uncertain");
+    const restored = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return { ok: true, commandId: envelope.id, value: { type: "session.question.answer", receipt: { questionId: "question-a", acceptanceEntryId: "entry-accepted", delivery: "waiting" } } }; }, "host-a", storage);
+    const result = await restored.submitQuestion(edited, "different-session", "different-question", "different-entry", []);
+    expect(result).toMatchObject({ sessionId: "session-a", submitted: answerDraft });
+    expect(calls).toHaveLength(3);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[2]).toEqual(calls[0]);
+    expect(calls[0]?.command).toEqual({ type: "session.question.answer", sessionId: "session-a", questionId: "question-a", questionEntryId: "entry-opened", answers, draft: { id: answerDraft.id, revision: 4 } });
+  });
+
+  test("a detached answer refuses a saved draft that differs from its canonical answer envelope", async () => {
+    const controller = new SubmissionController(async envelope => ({ ok: true, commandId: envelope.id }), "host-a", cache());
+    const answers: DetachedQuestionAnswer[] = [{ questionId: "density", selectedOptions: ["Compact"] }];
+    await expect(controller.submitQuestion({ ...original, id: "question:session-a:question-a" }, "session-a", "question-a", "entry-opened", answers)).rejects.toThrow("does not match");
+  });
+
+  test("a mismatched detached question receipt stays uncertain", async () => {
+    const answers: DetachedQuestionAnswer[] = [{ questionId: "density", selectedOptions: ["Compact"] }];
+    const draft: Draft = { ...original, id: "question:session-a:question-a", text: detachedAnswerDraft(answers) };
+    const controller = new SubmissionController(async envelope => ({ ok: true, commandId: envelope.id, value: { type: "session.question.answer", receipt: { questionId: "other-question", acceptanceEntryId: "entry-accepted", delivery: "waiting" } } }), "host-a", cache());
+    await expect(controller.submitQuestion(draft, "session-a", "question-a", "entry-opened", answers)).rejects.toThrow("matching detached question receipt");
+    expect(controller.get(draft.id)?.uncertain).toBe(true);
   });
 });

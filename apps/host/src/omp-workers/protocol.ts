@@ -1,10 +1,10 @@
-import type { BrowserControlRequest, BrowserFrameTarget, BrowserMetadataAvailability, ComposerCompletionQuery, GoalMutationRequest, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation } from "@agent-desktop/shared";
+import type { BrowserControlRequest, BrowserFrameTarget, BrowserMetadataAvailability, ComposerCompletionQuery, GoalMutationRequest, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractionResponse, PreparedPromptImage } from "../omp";
 import type { GoalContinuationEligibility } from "../omp/goal-controller";
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 
-export const WORKER_PROTOCOL_VERSION = 12;
+export const WORKER_PROTOCOL_VERSION = 13;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -36,6 +36,9 @@ export type WorkerOperation =
   | { operation: "mutateGoal"; args: { request: GoalMutationRequest } }
   | { operation: "getGoalContinuationEligibility" }
   | { operation: "startGoalContinuation"; args: { expectedGoalId: string } }
+  | { operation: "listQuestions" }
+  | { operation: "resolveQuestion"; args: { request: ResolveDetachedQuestionRequest } }
+  | { operation: "startQuestionDelivery"; args: { questionId: string } }
   | { operation: "getBrowserMetadata" }
   | { operation: "createBrowserTab"; args: { name: string } }
   | { operation: "controlBrowser"; args: { request: BrowserControlRequest } }

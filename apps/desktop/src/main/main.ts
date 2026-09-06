@@ -1,6 +1,7 @@
 import { requestGoalMutation } from "./goal-control-transport";
 import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
+import { requestDetachedQuestions } from './detached-questions-transport';
 import { requestBrowserMetadata } from "./browser-metadata-transport";
 import { requestBrowserFrame } from "./browser-frame-transport";
 import { requestBrowserControl } from "./browser-control-transport";
@@ -251,6 +252,9 @@ ipcMain.handle("host:goal-control", async (event, sessionId: string, request: im
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle('host:detached-questions', async (event, sessionId: string, hostId?: string) => {
+  assertTrustedSender(event); return requestDetachedQuestions(await endpointFor(hostId), sessionId);
 });
 ipcMain.handle("host:browser-metadata", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserMetadata(await endpointFor(hostId), sessionId);

@@ -4,14 +4,14 @@
   "version": "18.1.10",
   "commit": "f241301c83726afe75a847e919b89977a54dafbe",
   "patch": "../../@oh-my-pi%2Fpi-coding-agent@18.1.10.patch",
-  "patchSha256": "6b1f8f3b2d9ab9c4bfb6a5da71ff3eeb916b70bdbbbb99783d53825644eb9255",
+  "patchSha256": "5066235ccd59e5097349b96e4a1d848c19d20d07d75828c2da9766d306283799",
   "baselineFiles": {
     "src/tools/browser.ts": "bcfaad44c5d0fdf2cba89a22e0d01ae5799556394c5ffc65db433d3e4515c7f1",
     "src/tools/browser/tab-supervisor.ts": "9215d5bed2a0f1069216db5d4691a2e72b1bd599914d46854c7cfaba7f1c3f9e"
   },
   "patchedFiles": {
     "src/tools/browser.ts": "ef2aecb11fe2c9a914897b36ca8dea39b392724a048a73be839881d6e4c808de",
-    "src/tools/browser/tab-supervisor.ts": "765618528e11a5e8ad59a0f8090f68b21aff6533aedc3af8cf379c7e506ff59d"
+    "src/tools/browser/tab-supervisor.ts": "5248de639f010c20b741646ab889a6dfcaf8f85a249dc84641f74f454681872a"
   },
   "requiredExports": [
     "createBrowserTabForSession",

@@ -13,6 +13,7 @@ const bridge: DesktopBridge = {
   getAccounts: (providerId, hostId) => ipcRenderer.invoke("host:accounts", providerId, hostId),
   getSessionAccounts: (sessionId, hostId) => ipcRenderer.invoke("host:session-accounts", sessionId, hostId),
   getInteractions: (sessionId, hostId) => ipcRenderer.invoke("host:interactions", sessionId, hostId),
+  getDetachedQuestions: (sessionId, hostId) => ipcRenderer.invoke('host:detached-questions', sessionId, hostId),
   workspaceQuery: (target, query, hostId) => ipcRenderer.invoke("host:workspace-query", target, query, hostId),
   getPreferences: () => ipcRenderer.invoke("host:preferences"),
   getTheme: () => ipcRenderer.invoke("host:theme"),
