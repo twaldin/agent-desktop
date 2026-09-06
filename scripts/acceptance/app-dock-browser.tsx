@@ -3,6 +3,7 @@ import { App } from "../../apps/desktop/src/renderer/App";
 import { defaultWindowView, type WindowViewState } from "../../apps/desktop/src/window-state";
 import { createDockState, dockTabId, insertDockTab, type DockTab } from "../../apps/desktop/src/renderer/dock-state";
 import { DEFAULT_THEME } from "../../packages/shared/src/theme";
+import { TERMINAL_DIMENSIONS, type NativeTerminalInfo } from "../../packages/shared/src/terminals";
 import type { CommandEnvelope, CommandResult, DesktopBridge, DesktopEvent, HostState, OmpComposerCatalog, SessionActivitySnapshot, SessionSummary, WorkspaceQuery, WorkspaceQueryResult } from "@agent-desktop/shared";
 import "../../apps/desktop/src/renderer/styles.css";
 import "../../apps/desktop/src/renderer/theme.css";
@@ -13,6 +14,7 @@ let browserReads = 0, browserCreates = 0;
 let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
+const nativeTerminalListeners = new Set<(event: any) => void>();
 const model = { provider: "controlled", id: "text", name: "Controlled", input: ["text"], contextWindow: 1000, maxTokens: 1000, reasoning: false, authenticated: true, available: true };
 const session: SessionSummary = { id: sessionId, hostId: owner, projectId, cwd: "/controlled/project", title: "Dock acceptance conversation", sessionFile: "/controlled/session.jsonl", status: "idle", model, archived: false, createdAt: 1, updatedAt: 2 };
 const state: HostState = { protocolVersion: 1, host: { id: owner, name: "Controlled workstation", platform: "darwin", architecture: "arm64" }, projects: [{ id: projectId, hostId: owner, name: "Dock project", path: "/controlled/project", createdAt: 1 }], sessions: [session], models: [model], drafts: [], lastEventSequence: 1 };
@@ -25,6 +27,9 @@ const activity: SessionActivitySnapshot = { protocolVersion: 1, hostId: owner, s
   jobs: { availability: "available", value: { running: [{ id: "job-1", type: "task", status: "running", label: "Run dock acceptance", startTime: 1 }], recent: [], delivery: { queued: 0, delivering: false, pendingJobIds: [] } } },
   agents: { availability: "available", value: [{ id: "agent-1", displayName: "Dock verifier", status: "running", running: true, createdAt: 1, lastActivity: 2, activity: "Checking layout" }] },
   sources: { availability: "unsupported", reason: "No stable native source registry" } };
+const nativeTerminal: NativeTerminalInfo = { id: "controlled-native-terminal", target: { sessionId }, cwd: "/controlled/project", shell: "/bin/zsh", pid: 42, cols: 80, rows: 24, status: "running", createdAt: 1, protocol: "tmux-v1", serverGeneration: "controlled-server", geometryRevision: 1, inputEpoch: "controlled-input", attachable: true };
+const nativeAttachment = { id: "controlled-attachment", terminalId: nativeTerminal.id, viewerId: "controlled-viewer", inputEpoch: nativeTerminal.inputEpoch, geometryRevision: nativeTerminal.geometryRevision, cols: nativeTerminal.cols, rows: nativeTerminal.rows, expiresAt: Date.now() + 60_000 };
+const nativeOutput = "printf 'controlled terminal output\n'\r\ncontrolled terminal output\r\n";
 const restoredDescriptor = { kind: "worktrees" as const, hostId: owner, target: `session:${sessionId}` as const, title: "Worktrees" };
 const restoredTab: DockTab = { ...restoredDescriptor, id: dockTabId(restoredDescriptor) };
 const restoredState = insertDockTab(createDockState(), restoredTab, "bottom"); restoredState.bottom.open = false;
@@ -50,6 +55,11 @@ const methods: Partial<DesktopBridge> = {
   getPreferences: async () => ({ version: 1, records: [] }), getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "theme", filePath: "/controlled/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {}, getMessages: async () => [], getInteractions: async () => [],
   getComposerCatalog: async () => catalog, getSessionControls: async () => ({ sessionId, revision: "controls", model, capabilities: { ...model, api: "controlled", thinkingSelectors: [], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
+  getNativeTerminalCapabilities: async () => ({ ok: true as const, value: { protocol: "tmux-v1" as const, tmuxVersion: "3.7c" as const, inputEpoch: nativeTerminal.inputEpoch, dimensions: TERMINAL_DIMENSIONS } }),
+  nativeTerminalQuery: async query => ({ ok: true as const, value: query.type === "list" ? { type: "list" as const, terminals: [nativeTerminal] } : query.type === "replay" ? { type: "replay" as const, replay: { attachment: nativeAttachment, terminal: nativeTerminal, chunks: query.afterSequence ? [] : [{ sequence: 1, data: nativeOutput }], firstSequence: 1, lastSequence: 1, resetRequired: false } } : { type: "history" as const, history: { terminalId: nativeTerminal.id, serverGeneration: nativeTerminal.serverGeneration, revision: "controlled-history", capturedAt: 1, cols: nativeTerminal.cols, rows: nativeTerminal.rows, live: true, history: nativeOutput, truncated: false } } }),
+  nativeTerminalAction: async action => ({ ok: true as const, value: action.type === "attach" || action.type === "heartbeat" ? { terminal: nativeTerminal, attachment: nativeAttachment } : action.type === "reply" ? { accepted: true } : { terminal: nativeTerminal } }),
+  writeNativeTerminal: async input => ({ ok: true as const, value: { sequence: input.sequence, duplicate: false, outcome: "accepted" as const } }),
+  subscribeNativeTerminals: listener => { nativeTerminalListeners.add(listener); return () => nativeTerminalListeners.delete(listener); },
   getBrowserMetadata: async (requestedSession, requestedOwner) => { if (requestedSession !== sessionId || requestedOwner !== owner) throw new Error("Browser owner changed"); browserReads++; return { protocolVersion: 1, hostId: owner, sessionId, availability: "running", workerPid: 42, tabs: browserTab ? [browserTab] : [], creationTicket: { controlEpoch: "fixture-epoch", observedAt: Date.now() } }; },
   createBrowserTab: async (requestedSession, request, requestedOwner) => {
     if (requestedSession !== sessionId || requestedOwner !== owner) throw new Error("Browser creation owner changed");
@@ -122,6 +132,12 @@ Object.assign(window, {
     assert(button(card, "Close environment summary"), "Environment close action has no accessible name");
     checks.push("Environment card renders actual controlled Git status and owner-bound native activity");
 
+    const openTerminal = card.querySelector<HTMLButtonElement>('[aria-label="Open terminal"]'); assert(openTerminal, "Environment terminal action is unavailable"); openTerminal.click();
+    await wait(() => document.querySelector(".dock-slot-bottom .dock-native-terminal .native-terminal-view"), "production native terminal dock");
+    await wait(() => [...document.querySelectorAll(".dock-native-terminal .xterm-rows")].some(row => row.textContent?.includes("controlled terminal output")), "controlled native terminal output");
+    const nativePanel = document.querySelector<HTMLElement>(".dock-slot-bottom .dock-native-terminal")!; assert(button(nativePanel, "Refresh output"), "native terminal lost Refresh output control");
+    checks.push("Environment opens a real native terminal dock with controlled attached output and refresh controls");
+
     assert(route() === expectedRoute && document.querySelectorAll('[role="tab"]').length >= 1, "pane activity changed selected route or removed all tabs");
     return { passed: menuDismissal.add && menuDismissal.move, checks, menuDismissal, providerRequests: 0, route: route(), activityCalls, workspaceQueryKinds: [...new Set(workspaceCalls.map(call => call.query.type))] };
   },
@@ -130,11 +146,11 @@ Object.assign(window, {
     await wait(() => !document.querySelector(".environment-card"), "close Environment before short chooser capture");
     const right = document.querySelector<HTMLElement>(".dock-slot-right")!; button(right, "Close Review tab")!.click(); await wait(() => right.querySelector(".dock-empty-actions"), "empty side chooser after close");
     const side = document.querySelector<HTMLButtonElement>('[aria-label="Show side panel"]'); assert(side, "show side dock control"); side.click(); await wait(() => getComputedStyle(right).display !== "none", "show empty side chooser");
-    const terminal = document.querySelector<HTMLButtonElement>('[aria-label="Show terminal panel"]'); assert(terminal, "show bottom dock control"); terminal.click();
+    const terminal = document.querySelector<HTMLButtonElement>('[aria-label="Show terminal panel"]'); if (terminal) terminal.click();
     const bottom = document.querySelector<HTMLElement>(".dock-slot-bottom")!; await wait(() => getComputedStyle(bottom).display !== "none", "open bottom dock beside empty chooser");
     checks.push("short viewport keeps an empty side chooser reachable beside an open bottom dock");
   },
-  appDockGeometry: async (expectChooser = false) => {
+  appDockGeometry: async (expectChooser = false, expectTerminal = false) => {
     await document.fonts.ready; await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const app = document.querySelector<HTMLElement>(".app-shell")!.getBoundingClientRect(), workbench = document.querySelector<HTMLElement>(".workbench")!.getBoundingClientRect(), main = document.querySelector<HTMLElement>(".main-panel")!.getBoundingClientRect();
     const side = document.querySelector<HTMLElement>(".dock-slot-right")!.getBoundingClientRect(), cardElement = document.querySelector<HTMLElement>(".environment-card"), card = cardElement?.getBoundingClientRect();
@@ -151,8 +167,11 @@ Object.assign(window, {
       return bounds.width > 0 && bounds.height > 0 && Boolean(hit && control.contains(hit));
     });
     const inside = (box: DOMRect) => box.left >= -1 && box.top >= -1 && box.right <= innerWidth + 1 && box.bottom <= innerHeight + 1;
+    const terminalPanel = document.querySelector<HTMLElement>(".dock-slot-bottom .dock-native-terminal"), terminalView = terminalPanel?.querySelector<HTMLElement>(".native-terminal-view"), terminalFooter = terminalPanel?.querySelector<HTMLElement>(".terminal-view-footer"), terminalScrollport = terminalPanel?.querySelector<HTMLElement>(".native-terminal-scrollport"), refreshOutput = button(terminalPanel ?? document, "Refresh output");
+    const terminalBounds = terminalPanel?.getBoundingClientRect(), viewBounds = terminalView?.getBoundingClientRect(), footerBounds = terminalFooter?.getBoundingClientRect(), scrollportBounds = terminalScrollport?.getBoundingClientRect(), refreshBounds = refreshOutput?.getBoundingClientRect(), bottomBounds = document.querySelector<HTMLElement>(".dock-slot-bottom")!.getBoundingClientRect();
+    const terminalControlsReachable = Boolean(terminalBounds && viewBounds && footerBounds && refreshBounds && viewBounds.height > 0 && footerBounds.height > 0 && refreshBounds.height > 0 && terminalBounds.height >= 160 && terminalBounds.top >= bottomBounds.top - 1 && terminalBounds.bottom <= bottomBounds.bottom + 1 && footerBounds.bottom <= terminalBounds.bottom + 1 && refreshBounds.bottom <= terminalBounds.bottom + 1 && document.elementFromPoint(refreshBounds.left + refreshBounds.width / 2, refreshBounds.top + refreshBounds.height / 2) === refreshOutput);
     const hit = card && document.elementFromPoint(card.left + card.width / 2, card.top + Math.min(card.height / 2, 120)); const cardVisible = expectChooser ? !cardElement || Boolean(hit && (hit === cardElement || cardElement.contains(hit))) : Boolean(cardElement && hit && (hit === cardElement || cardElement.contains(hit)));
-    return { viewport: { width: innerWidth, height: innerHeight }, app: { width: app.width, height: app.height }, workbench: { width: workbench.width, height: workbench.height }, main: { width: main.width, height: main.height }, side: { width: side.width, height: side.height }, card: card ? { x: card.x, y: card.y, width: card.width, height: card.height } : null, chooser: chooserBounds ? { x: chooserBounds.x, y: chooserBounds.y, width: chooserBounds.width, height: chooserBounds.height } : null, chooserLast: lastBounds ? { x: lastBounds.x, y: lastBounds.y, width: lastBounds.width, height: lastBounds.height } : null, chooserReachable, namedControls, headerControlsClickable, cardVisible,
-      fitting: app.width > 0 && workbench.width > 0 && main.width > 0 && side.width > 0 && namedControls && headerControlsClickable && cardVisible && (!expectChooser || chooserReachable) && inside(app) && inside(workbench) && inside(side) && (!card || inside(card)) && document.documentElement.scrollWidth <= innerWidth + 1 && document.documentElement.scrollHeight <= innerHeight + 1 };
+    return { viewport: { width: innerWidth, height: innerHeight }, app: { width: app.width, height: app.height }, workbench: { width: workbench.width, height: workbench.height }, main: { width: main.width, height: main.height }, side: { width: side.width, height: side.height }, card: card ? { x: card.x, y: card.y, width: card.width, height: card.height } : null, chooser: chooserBounds ? { x: chooserBounds.x, y: chooserBounds.y, width: chooserBounds.width, height: chooserBounds.height } : null, chooserLast: lastBounds ? { x: lastBounds.x, y: lastBounds.y, width: lastBounds.width, height: lastBounds.height } : null, chooserReachable, terminal: terminalBounds ? { x: terminalBounds.x, y: terminalBounds.y, width: terminalBounds.width, height: terminalBounds.height, viewHeight: viewBounds?.height ?? 0, footerHeight: footerBounds?.height ?? 0, scrollport: scrollportBounds?.toJSON() ?? null, footer: footerBounds?.toJSON() ?? null, refresh: refreshBounds?.toJSON() ?? null, controlsReachable: terminalControlsReachable } : null, namedControls, headerControlsClickable, cardVisible,
+      fitting: app.width > 0 && workbench.width > 0 && main.width > 0 && side.width > 0 && namedControls && headerControlsClickable && cardVisible && (!expectChooser || chooserReachable) && (!expectTerminal || terminalControlsReachable) && inside(app) && inside(workbench) && inside(side) && (!card || inside(card)) && document.documentElement.scrollWidth <= innerWidth + 1 && document.documentElement.scrollHeight <= innerHeight + 1 };
   },
 });

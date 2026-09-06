@@ -5,6 +5,8 @@ import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace"
 import { Icon } from "./Icons";
 import { newestNativeTerminal } from "./native-terminal-state";
 import type { NativeTerminalView, NativeTerminalViewState } from "./native-terminal-view";
+import "@xterm/xterm/css/xterm.css";
+import "./terminal-panel.css";
 import "./native-terminal-panel.css";
 
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);

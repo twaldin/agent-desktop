@@ -9,6 +9,7 @@ import {
   type AgentSession, type AgentSessionEvent, type AuthStorage,
 } from "@oh-my-pi/pi-coding-agent";
 import { AUTO_THINKING, parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+import { initThemeSync } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
 import { parseTitleSlotLine } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
 import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
@@ -349,6 +350,11 @@ export class OmpRuntime {
     try {
       context = await this.#context(options.cwd);
       this.#assertActive();
+      // The native TUI startup normally initializes this module-global before
+      // AskTool builds even its headless selector labels. SDK workers skip that
+      // startup path, so initialize the same native theme from actual settings.
+      initThemeSync(context.settings.get("symbolPreset"), context.settings.get("colorBlindMode"),
+        context.settings.get("theme.dark"), context.settings.get("theme.light"));
       // SDK construction loads extension factories and tool policy. Restore the
       // owning host's intent before any native startup work observes Settings.
       if (options.approvalOverride !== undefined) context.settings.override("tools.approvalMode", approvalMode(options.approvalOverride));

@@ -2,6 +2,19 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Work17 blockers — source fixes, not yet installed
+
+The independent Work17 pass exercised a real model-invoked native `ask` failure and a clipped bottom terminal at 1440×1000. Both now have focused source fixes:
+
+- The SDK worker initializes OMP's native theme from the owning session settings before constructing the session. `AskTool` requires this even for headless selector labels; direct bridge-select tests had bypassed the failing path. Controlled real native-tool tests now complete recommended selection, Other/free-text entry, and the captured nullable-argument shape, with persisted tool results.
+- The direct native-terminal dock imports its terminal and xterm styles, and dock flex constraints bound its scrollport. The production App check keeps output and footer controls inside the bottom panel at 1440×1000 and 760×506 with both docks open. This uses controlled transport responses; it does not prove installed shell execution or reference pixel parity.
+
+The final suite passes **547 tests / 24,616 assertions**, 17 skips and zero failures across 114 files, with all 498 recorded source/config files unchanged. Production build, typecheck and diff checks pass. Separate controlled App acceptance passes seven groups/five views with stable hashes. Evidence: `.data/work17-blockers-full.log`, `work17-blockers-before-full.json`, `work17-blockers-after-full.json`, `.data/native-ask-fix/root-exact-confirm.log`, and `.data/app-dock-terminal-layout-root/`. The failed bare-filename Bun invocation remains recorded separately; the exact-path repository runner avoids its worker-IPC startup conflict.
+
+The signed frozen browser18 pair was transferred and verified in a separate Work directory. Its launcher creates a fresh credential-free native agent, data, profile and project, starts a loopback-only host on an ephemeral port, verifies identity, and opens a separate visible desktop. The external verifier received this entrypoint through the authorized exact pane. Browser18 excludes the goal batch and these two fixes; Work17 remains installed and unchanged. Transfer and Home startup evidence are in `.data/browser18-package/work-transfer.json` and `home-isolation-proof/`.
+
+The compact composer model/effort menu remains a confirmed mismatch. The full OMP catalog and native default/explicit model/reasoning semantics must remain accessible in the adapted menu; searchable catalog coverage alone is not interaction parity.
+
 ## Current goal batch and independent verification
 
 The frozen browser checkpoint `e727478` is separately packaged and signed as browser18, with its matching host archive. The artifact hashes and packaging checks are in `.data/browser18-package/result.json`; the transfer archive and isolated local-host recipe are beside it. This package excludes the goal work below and has not replaced the installed release17 apps/services.
