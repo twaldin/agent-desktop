@@ -1,6 +1,6 @@
 export {};
 
-type RpcRequest = { jsonrpc: "2.0"; id?: string | number; method: string };
+type RpcRequest = { jsonrpc: "2.0"; id?: string | number; method: string; params?: { name?: string; arguments?: Record<string, string> } };
 
 if (process.env.AGENT_DESKTOP_MCP_TEST_MARKER) {
 	await Bun.write(
@@ -25,11 +25,15 @@ for await (const chunk of Bun.stdin.stream()) {
 		if (!line) continue;
 		const message = JSON.parse(line) as RpcRequest;
 		if (message.id === undefined) continue;
+		if (process.env.AGENT_DESKTOP_MCP_TEST_REQUESTS) {
+			const { appendFileSync } = await import("node:fs");
+			appendFileSync(process.env.AGENT_DESKTOP_MCP_TEST_REQUESTS, JSON.stringify({ method: message.method, params: message.params }) + "\n");
+		}
 		switch (message.method) {
 			case "initialize":
 				send(message.id, {
 					protocolVersion: "2025-11-25",
-					capabilities: { tools: {}, resources: {}, prompts: {} },
+					capabilities: { tools: { listChanged: true }, resources: { listChanged: true, subscribe: true }, prompts: { listChanged: true } },
 					serverInfo: { name: "agent-desktop-test-mcp", version: "1.0.0" },
 				});
 				break;
@@ -43,13 +47,20 @@ for await (const chunk of Bun.stdin.stream()) {
 				if (process.env.AGENT_DESKTOP_MCP_TEST_RESOURCE_DELAY) {
 					await Bun.sleep(Number(process.env.AGENT_DESKTOP_MCP_TEST_RESOURCE_DELAY));
 				}
-				send(message.id, { resources: [{ uri: "fixture://resource", name: "Fixture resource" }] });
+				send(message.id, { resources: [{ uri: "fixture://resource", name: "Fixture resource", description: "A resource from this live connection", mimeType: "text/plain" }] });
 				break;
 			case "resources/templates/list":
-				send(message.id, { resourceTemplates: [{ uriTemplate: "fixture://{id}", name: "Fixture template" }] });
+				send(message.id, { resourceTemplates: [{ uriTemplate: "fixture://{id}", name: "Fixture template", description: "Select a fixture identifier", mimeType: "text/plain" }] });
 				break;
 			case "prompts/list":
-				send(message.id, { prompts: [{ name: "fixture_prompt", description: "Fixture prompt" }] });
+				send(message.id, { prompts: [{ name: "fixture_prompt", description: "Fixture prompt", arguments: [{ name: "topic", description: "Subject for this prompt", required: true }] }] });
+				break;
+			case "prompts/get":
+				send(message.id, { messages: message.params?.arguments?.topic === "empty" ? [] : [{ role: "user", content: { type: "text", text: `Native MCP prompt topic: ${message.params?.arguments?.topic ?? "none"}` } }] });
+				break;
+			case "resources/subscribe":
+			case "resources/unsubscribe":
+				send(message.id, {});
 				break;
 			default:
 				process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } })}\n`);

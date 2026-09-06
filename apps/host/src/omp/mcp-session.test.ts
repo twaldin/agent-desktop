@@ -83,15 +83,20 @@ test("reload uses native discovery filters and publishes only live MCP metadata"
 	expect(nativeSession.calls.prompts).toEqual([[]]);
 	expect(nativeSession.calls.tools).toHaveLength(1);
 	expect(reloaded.available).toBe(true);
-	expect(reloaded.servers[0]).toMatchObject({ resourceCount: null, promptCount: null });
-	expect(settled.servers).toEqual([{
+	expect(reloaded.servers[0]).toMatchObject({ resourceCount: null, promptCount: null, resources: null, resourceTemplates: null, prompts: null });
+	expect(settled.servers).toHaveLength(1);
+	expect(settled.servers[0]).toMatchObject({
 		name: "fixture",
 		status: "connected",
 		source: "Disposable fixture (project)",
 		tools: ["mcp__fixture_tool"],
 		resourceCount: 1,
 		promptCount: 1,
-	}]);
+		resources: [{ uri: "fixture://resource", name: "Fixture resource" }],
+		resourceTemplates: [{ uriTemplate: "fixture://{id}", name: "Fixture template" }],
+		prompts: [{ name: "fixture_prompt", description: "Fixture prompt" }],
+	});
+	expect(settled.servers[0]?.notifications).toMatchObject({ enabled: false, subscriptions: [] });
 	expect(controller.read().revision).toBe(settled.revision);
 	expect((await readFile(marker, "utf8")).trim().split("\n")).toEqual(["started"]);
 	const toolResult = await manager.getTools()[0]!.execute("fixture-call", {}, undefined, {} as never);
@@ -153,6 +158,10 @@ test("unavailable and native connection failures reveal no configuration error d
 		tools: [],
 		resourceCount: null,
 		promptCount: null,
+		resources: null,
+		resourceTemplates: null,
+		prompts: null,
+		notifications: null,
 		error: "Native MCP server could not connect.",
 	}]);
 	expect(serialized).not.toContain(secret);
@@ -178,4 +187,22 @@ test("a native discovery exception clears both prompt commands and tools without
  expect(nativeSession.calls.prompts).toEqual([[],[]]);expect(nativeSession.calls.tools).toEqual([[]]);
  expect(controller.read().revision).toBeGreaterThan(before.revision);
  await expect(controller.reload({epoch:before.epoch,expectedRevision:before.revision})).rejects.toThrow('changed before reload');
+});
+
+test("connected unsupported catalogs are measured empty while identities stay exact", () => {
+	const connection = { capabilities: { tools: { listChanged: true } } };
+	const manager = {
+		getTools: () => [{ mcpServerName: " server ", name: " tool " }],
+		getAllServerNames: () => [" server "],
+		getConnectionStatus: () => "connected",
+		getConnection: () => connection,
+		getSource: () => undefined,
+		getNotificationState: () => ({ enabled: true, subscriptions: new Map() }),
+	} as unknown as MCPManager;
+	const snapshot = new NativeSessionMcp(session().value, manager).read();
+	expect(snapshot.servers).toEqual([{
+		name: " server ", status: "connected", source: "Native MCP", tools: [" tool "],
+		resourceCount: 0, promptCount: 0, resources: [], resourceTemplates: [], prompts: [],
+		notifications: { enabled: true, toolsListChanged: true, resourcesListChanged: false, promptsListChanged: false, resourceSubscribe: false, subscriptions: [] },
+	}]);
 });

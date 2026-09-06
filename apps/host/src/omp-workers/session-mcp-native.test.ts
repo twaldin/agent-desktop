@@ -55,7 +55,7 @@ test('typed native MCP help and reload persist output without a model turn and r
     const catalog = await session.getComposerActions();
     const mcp = catalog.commands.find(row => row.id === 'builtin:mcp')!;
     expect(mcp.availability).toBe('partial');
-    expect(mcp.subcommands?.filter(row => row.availability === 'executable').map(row => row.name).sort()).toEqual(['help', 'reload']);
+    expect(mcp.subcommands?.filter(row => row.availability === 'executable').map(row => row.name).sort()).toEqual(['help', 'notifications', 'prompts', 'reload', 'resources']);
     const receipts: string[] = [];
     for (const text of ['/mcp', '/mcp help', '/mcp reload']) {
       const run = session.startPrompt(text);
@@ -88,5 +88,56 @@ test('typed native MCP help and reload persist output without a model turn and r
     expect(await readFile(shadowMarker, 'utf8')).toBe('reload');
     expect(await readFile(marker, 'utf8')).toBe(before);
     expect((await shadow.getMessages()).filter(row => row.role === 'user')).toHaveLength(0);
+  } finally { await runtime.dispose(); await rm(root, { recursive: true, force: true }); }
+}, 30000);
+
+test('live MCP inspection reuses cached resources/prompts/notifications and prompt invocation retains native argument semantics', async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'agent-session-mcp-details-')));
+  const agentDir = path.join(root, 'agent'), cwd = path.join(root, 'project'), gates = path.join(root, 'gates');
+  await Promise.all([agentDir, cwd, gates].map(p => mkdir(p)));
+  const requests = path.join(root, 'requests'), marker = path.join(root, 'starts');
+  await writeFile(path.join(agentDir, 'config.yml'), `extensions:\n  - ${JSON.stringify(path.join(import.meta.dir, 'fixtures/mcp-provider.ts'))}\nmcp:\n  notifications: true\nretry:\n  enabled: false\n`);
+  await writeFile(path.join(agentDir, 'mcp.json'), JSON.stringify({ mcpServers: { fixture: {
+    command: process.execPath, args: [path.join(import.meta.dir, '../omp/fixtures/mcp-server.ts')],
+    env: { AGENT_DESKTOP_MCP_TEST_MARKER: marker, AGENT_DESKTOP_MCP_TEST_REQUESTS: requests, AGENT_DESKTOP_MCP_TEST_RESOURCE_DELAY: '100' },
+  } } }));
+  const runtime = new WorkerRuntime({ agentDir, workerPath: path.join(import.meta.dir, 'fixtures/no-provider-worker.ts'),
+    environment: { HOME: root, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, MCP_CONTRACT_GATES: gates, TERM: 'dumb' } });
+  try {
+    const session = await runtime.create({ cwd, interactions: true, approvalOverride: 'yolo' });
+    let snapshot = await session.getSessionMcp();
+    for (let index = 0; index < 200 && !snapshot.servers[0]?.prompts?.length; index++) {
+      await Bun.sleep(5); snapshot = await session.getSessionMcp();
+    }
+    expect(snapshot.servers[0]?.resources?.[0]).toMatchObject({ uri: 'fixture://resource', description: 'A resource from this live connection', mimeType: 'text/plain' });
+    expect(snapshot.servers[0]?.resourceTemplates?.[0]?.uriTemplate).toBe('fixture://{id}');
+    expect(snapshot.servers[0]?.prompts?.[0]?.arguments).toEqual([{ name: 'topic', description: 'Subject for this prompt', required: true }]);
+    expect(snapshot.servers[0]?.notifications).toMatchObject({ enabled: true, toolsListChanged: true, resourcesListChanged: true, promptsListChanged: true, resourceSubscribe: true, subscriptions: ['fixture://resource'] });
+    const before = await readFile(requests, 'utf8');
+    const outputs = new Map<string, string>();
+    for (const verb of ['resources', 'prompts', 'notifications']) {
+      const run = session.startPrompt(`/mcp ${verb}`), receipt = await run.accepted;
+      expect(await run.completion).toBe(false);
+      if (receipt?.kind !== 'native-command' || !receipt.entryId || !receipt.output) throw new Error('Expected durable native inspection output');
+      outputs.set(verb, receipt.output);
+    }
+    expect(outputs.get('resources')).toContain('fixture://{id}');
+    expect(outputs.get('prompts')).toContain('topic= (required)');
+    expect(outputs.get('notifications')).toContain('resources/subscribe: 1 active subscriptions');
+    expect(await readFile(requests, 'utf8')).toBe(before);
+    expect((await readFile(marker, 'utf8')).trim().split('\n')).toHaveLength(1);
+    expect((await session.getMessages()).filter(row => row.role === 'user')).toHaveLength(0);
+    expect(await Bun.file(path.join(gates, 'provider-started')).exists()).toBe(false);
+    const catalog = await session.getComposerActions();
+    expect(catalog.commands.find(row => row.name === 'fixture:fixture_prompt')).toMatchObject({ availability: 'executable', source: { kind: 'mcp-prompt' } });
+    const run = session.startPrompt('/fixture:fixture_prompt topic=Blue topic="Cobalt detail" ignored', { model: { provider: 'mcp-contract', id: 'controlled' } });
+    expect((await run.accepted)?.kind).toBe('user-message'); expect(await run.completion).toBe(true);
+    const calls = (await readFile(requests, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    expect(calls.filter(call => call.method === 'prompts/get').map(call => call.params)).toEqual([{ name: 'fixture_prompt', arguments: { topic: 'Cobalt detail' } }]);
+    expect((await session.getMessages()).find(row => row.role === 'user')?.text).toBe('Native MCP prompt topic: Cobalt detail');
+    const messagesBefore = (await session.getMessages()).length;
+    const empty = session.startPrompt('/fixture:fixture_prompt topic=empty');
+    expect(await empty.accepted).toEqual({ kind: 'native-command', command: 'fixture:fixture_prompt' });
+    expect(await empty.completion).toBe(false); expect((await session.getMessages()).length).toBe(messagesBefore);
   } finally { await runtime.dispose(); await rm(root, { recursive: true, force: true }); }
 }, 30000);

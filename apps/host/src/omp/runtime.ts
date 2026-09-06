@@ -786,6 +786,7 @@ export class OmpRuntime {
                 await skillPrompt?.prepare();
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
                 return dispatchNativePrompt(session, text, imagePrompt?.images, skillPrompt, {
+                  inspectMcp: () => { assertSessionActive(); return mcp.read(); },
                   reloadMcp: async () => {
                     // This callback runs inside the existing native-command admission.
                     // Also fence side chats, whose lifecycle may otherwise overlap a prompt.

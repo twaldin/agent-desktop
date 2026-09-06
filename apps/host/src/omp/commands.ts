@@ -8,6 +8,8 @@ import { OmpPromptAdmissionError, type NativePromptDispatchResult } from "./prom
 import { builtinAvailability } from "./composer-actions";
 import type { NativeSkillPrompt } from "./skills";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
+import type { NativeSessionMcpSnapshot } from "@agent-desktop/shared";
+import { formatMcpInspection, type McpInspection } from "./mcp-output";
 
 /** Pinned 18.1.10 public native handlers/contexts. AgentSession.prompt catches
  * command exceptions and returns false for both handled commands and abandoned
@@ -17,6 +19,7 @@ import type { ImageContent } from "@oh-my-pi/pi-ai";
  */
 export interface NativeCommandBridges {
   reloadMcp(): Promise<void>;
+  inspectMcp(): NativeSessionMcpSnapshot;
 }
 export async function dispatchNativePrompt(session: AgentSession, text: string, images?: ImageContent[], skill?: NativeSkillPrompt, bridges?: NativeCommandBridges): Promise<NativePromptDispatchResult> {
   if (images?.length && text.trimStart().startsWith("/")) throw new Error("Image attachments are not supported on slash commands yet; no command was executed");
@@ -50,6 +53,15 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
     if (parsed && builtin) {
       const availability = builtinAvailability(builtin.name, parsed.args);
       if (availability.availability !== "executable" || !builtin.handle) throw new Error(`Native /${builtin.name} is not connected to the desktop command dispatcher for this invocation. ${availability.reason ?? ""} This input was not executed or sent to a model.`);
+      const verb = parsed.args.trim().split(/\s+/, 1)[0];
+      if (builtin.name === "mcp" && ["resources", "prompts", "notifications"].includes(verb!)) {
+        if (!bridges) throw new Error("The native MCP inspection bridge is unavailable; no command was executed.");
+        const output = formatMcpInspection(verb as McpInspection, bridges.inspectMcp());
+        try {
+          const commandEntryId = session.sessionManager.appendCustomEntry("agent-desktop.command-output", { command: "mcp", output });
+          return { agentInvoked: false, handledCommand: "mcp", commandEntryId, output };
+        } catch (error) { throw new OmpPromptAdmissionError(error); }
+      }
       const reloadMcp = builtin.name === "mcp" && parsed.args.trim().split(/\s+/,1)[0] === "reload";
       if (reloadMcp && !bridges) throw new Error("The native MCP runtime reload bridge is unavailable; no command was executed.");
       const chunks: string[] = []; let length = 0;

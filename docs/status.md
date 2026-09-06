@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — live MCP resource, prompt and notification details
+
+Live session settings now expand actual cached resources/templates, prompt arguments and notification capabilities/subscriptions. The matching `/mcp resources`, `/mcp prompts` and `/mcp notifications` commands persist those lists without opening another MCP connection or invoking a model. Names and URIs remain exact; missing enrichment is unmeasured, unsupported catalogs are empty, and bounded parsing rejects oversized metadata. Optional fields preserve older snapshots and worker protocol18 remains unchanged.
+
+The full regression suite passes **845 tests / 26,711 assertions across169 files**, with29 skips and no failures; the focused batch passes18 tests/183 assertions. Actual worker evidence confirms zero extra MCP requests for inspection and native prompt argument behavior, including quoted/duplicate keys and an empty prompt result. Nine final controlled Electron captures exercise real metadata expansion, a390px layout, reload acknowledgement loss/recovery and page reopen; source hashes match and no model messages were produced. Typecheck and production build pass. This is not new packaged/native-window or pixel-parity evidence. Private scope and validation are in `.data/mcp-details-checkpoint/` and `.data/mcp-details-ui-final/result.json`.
+
+Resource body viewing, reconnect, interactive authorization, plugin workflows and fine reference matching remain open. All1,737 sealed reference records match. Installed services, preserved Work runs and the frozen reference bundles remain unchanged.
+
 ## Source30 — native MCP composer help and reload
 
 Bare `/mcp` and `/mcp help` now persist native help output without a model turn. `/mcp reload` refreshes the selected session's existing MCP manager through normal command admission. Extensions/custom commands retain precedence. The host consumes only the submitted draft revision, preserves edits made during reload, returns the same receipt on duplicate delivery, and does not replay a completed reload after restart. The catalog still marks other MCP subcommands unavailable.

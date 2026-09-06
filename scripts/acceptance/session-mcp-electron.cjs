@@ -10,6 +10,11 @@ app.whenReady().then(async()=>{
   await win.loadFile(path.join(output,'web/index.html'),{query:{endpoint:launch.endpoint,sessionId:launch.sessionId}});win.webContents.focus();
   await wait(`document.body.innerText.includes('fixture') && [...document.querySelectorAll('button')].some(x=>x.textContent==='Reload servers'&&!x.disabled)`);await capture('01-native-connected');
   await click('summary','Tools');await wait(`document.body.innerText.includes('mcp__fixture_tool')`);await capture('02-native-tools');
+  await click('summary','Resources');await wait(`document.body.innerText.includes('fixture://{id}') && document.body.innerText.includes('text/plain')`);await capture('02a-native-resources');
+  await click('summary','Prompts');await wait(`document.body.innerText.includes('/fixture:fixture_prompt') && document.body.innerText.includes('Subject for this prompt') && document.body.innerText.includes('Required')`);await capture('02b-native-prompts');
+  await click('summary','Notifications');await wait(`document.body.innerText.includes('Tool list changes') && document.body.innerText.includes('Resource subscriptions')`);await capture('02c-native-notifications');
+  win.setContentSize(390,844);await wait(`innerWidth===390`);await capture('02d-narrow-details');if(await run('document.documentElement.scrollWidth>innerWidth'))throw new Error('MCP detail page overflows horizontally');
+  win.setContentSize(1440,1000);await wait(`innerWidth===1440`);
   await click('button','Reload servers');await wait(`document.body.innerText.includes('Reloading')`);await capture('03-native-reloading');
   await wait(`[...document.querySelectorAll('button')].some(x=>x.textContent==='Reload servers'&&!x.disabled)`);await capture('04-native-reloaded');
   await win.webContents.reload();await wait(`document.body.innerText.includes('fixture') && [...document.querySelectorAll('button')].some(x=>x.textContent==='Reload servers'&&!x.disabled)`);await capture('05-page-reopen-no-replay');

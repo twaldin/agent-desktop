@@ -1,0 +1,46 @@
+import { expect, test } from "bun:test";
+import { parseNativeSessionMcpSnapshot, type NativeSessionMcpSnapshot } from "./session-mcp";
+
+const legacy: NativeSessionMcpSnapshot = {
+	epoch: "epoch",
+	revision: 1,
+	available: true,
+	servers: [{ name: "server", status: "connected", source: "project", tools: [], resourceCount: 0, promptCount: 0 }],
+};
+
+test("legacy snapshots remain valid and optional live details preserve exact identities", () => {
+	expect(parseNativeSessionMcpSnapshot(legacy)).toEqual(legacy);
+	const value = structuredClone(legacy) as any;
+	Object.assign(value.servers[0], {
+		resources: [{ uri: " fixture://resource ", name: " Resource ", description: "", mimeType: "text/plain" }],
+		resourceTemplates: [{ uriTemplate: "fixture://{ value }", name: "Template" }],
+		prompts: [{ name: " prompt ", arguments: [{ name: " arg ", description: "Argument", required: true }] }],
+		notifications: { enabled: true, toolsListChanged: true, resourcesListChanged: false, promptsListChanged: true, resourceSubscribe: true, subscriptions: [" fixture://resource "] },
+	});
+	const parsed = parseNativeSessionMcpSnapshot(value);
+	expect(parsed.servers[0]?.resources?.[0]).toEqual({ uri: " fixture://resource ", name: " Resource ", description: "", mimeType: "text/plain" });
+	expect(parsed.servers[0]?.prompts?.[0]?.arguments?.[0]?.name).toBe(" arg ");
+	expect(parsed.servers[0]?.notifications?.subscriptions).toEqual([" fixture://resource "]);
+});
+
+test("detail parser rejects malformed, excessive, and unknown metadata", () => {
+	const invalidRequired = structuredClone(legacy) as any;
+	invalidRequired.servers[0].prompts = [{ name: "prompt", arguments: [{ name: "arg", required: "yes" }] }];
+	expect(() => parseNativeSessionMcpSnapshot(invalidRequired)).toThrow("prompt argument");
+
+	const tooMany = structuredClone(legacy) as any;
+	tooMany.servers[0].resources = Array.from({ length: 4097 }, (_, index) => ({ uri: `fixture://${index}`, name: String(index) }));
+	expect(() => parseNativeSessionMcpSnapshot(tooMany)).toThrow("metadata list");
+
+	const unknown = structuredClone(legacy) as any;
+	unknown.servers[0].resources = [{ uri: "fixture://one", name: "one", headers: { Authorization: "secret" } }];
+	expect(() => parseNativeSessionMcpSnapshot(unknown)).toThrow("resource field");
+
+	const multibyte = structuredClone(legacy) as any;
+	multibyte.servers[0].resources = [{ uri: `fixture://${"😀".repeat(5000)}`, name: "one" }];
+	expect(() => parseNativeSessionMcpSnapshot(multibyte)).toThrow("text");
+
+	const oversized = structuredClone(legacy) as any;
+	oversized.servers[0].resources = Array.from({ length: 140 }, (_, index) => ({ uri: `fixture://${index}/${"x".repeat(16_000)}`, name: String(index) }));
+	expect(() => parseNativeSessionMcpSnapshot(oversized)).toThrow("2 MiB");
+});

@@ -93,3 +93,18 @@
 .session-mcp-row details[open] summary .icon { transform:rotate(90deg); }
 .session-mcp-row summary:hover { color:var(--text); }
 .session-mcp-row ul { margin:8px 0 0 20px; padding:0; list-style:none; color:var(--secondary); overflow-wrap:anywhere; }
+.session-mcp-body { min-width:0; flex:1; }
+.session-mcp-details { font-size:var(--font-size-small,13px); }
+.session-mcp-details li + li { margin-top:12px; }
+.session-mcp-details li > strong { display:block; font-weight:500; color:var(--text); }
+.session-mcp-details code { display:block; font-family:var(--code-font); font-size:inherit; overflow-wrap:anywhere; white-space:pre-wrap; }
+.session-mcp-details p { margin:4px 0; line-height:1.5; }
+.session-mcp-details h3 { margin:14px 0 6px 20px; font-size:inherit; font-weight:500; }
+.session-mcp-details .integration-note { margin:8px 0 0 20px; }
+.session-mcp-details dl { margin:8px 0 0; }
+.session-mcp-details dl > div + div { margin-top:6px; }
+.session-mcp-details dt { color:var(--text); }
+.session-mcp-details dt span { color:var(--secondary); }
+.session-mcp-details dd { margin:2px 0 0; }
+.session-mcp .integration-list-heading > button { white-space:nowrap; flex-shrink:0; }
+@media(max-width:680px) { .session-mcp .integration-list-heading { flex-wrap:wrap; } }
