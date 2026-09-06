@@ -24,7 +24,8 @@
     "@xterm/xterm": "6.0.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "shiki": "3.20.0"
+    "shiki": "3.20.0",
+    "smol-toml": "1.8.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",

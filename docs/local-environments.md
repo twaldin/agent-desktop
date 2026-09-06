@@ -1,6 +1,6 @@
 # Local project environments
 
-Local environments remain an implementation gap. They are application features layered over OMP: reusable project setup/cleanup scripts and actions, selected in the composer and managed in settings. OMP's provider setup wizard does not supply this behavior. The app must give the resulting working directory and setup environment to the owning OMP session.
+Local environments remain incomplete. They are application features layered over OMP: reusable project setup/cleanup scripts and actions, selected in the composer and managed in settings. OMP's provider setup wizard does not supply this behavior. The app must give the resulting working directory and setup environment to the owning OMP session.
 
 ## Reference behavior
 
@@ -21,3 +21,9 @@ Source evidence: pinned `worktree-environment-dropdown-2cca23d397d0.js` (`st`), 
 - Provide setup progress/output, failure/recovery, revision conflicts and native editor controls. An inert selector, raw-file-only editor or source-only runner does not satisfy this feature.
 
 Before completion, exercise real temporary worktrees and shell scripts for successful setup and exported environment, failed/cancelled setup, crash/receipt uncertainty, explicit recovery, cleanup success/failure, platform selection and named actions. Confirm the source repository remains unchanged, drafts persist through navigation/restart, and remote selection stays on its owning host. Pair the actual UI states with the reference bundle. Parent/subdirectory discovery, terminal propagation and exact native recovery controls still need further tracing and implementation.
+
+## Source28 configuration groundwork
+
+`apps/host/src/local-environments/` now parses and serializes the traced configuration shape, lists individual configuration errors, selects nonempty platform overrides and performs revisioned saves. Authored files use `<project>/.agent-desktop/environments/*.toml` as an app-specific path choice; native discovery/import compatibility is not yet implemented. A matching revision can repair invalid TOML. Saves preserve file mode, return current and attempted edits on conflict, serialize canonical-project aliases, and recheck file bytes/identity before replacement. Descriptor reads refuse symlinks and nonregular files, enforce a1MiB bound and reject files that change during reading. The final check and rename are separate filesystem operations; this is not atomic compare-and-swap against arbitrary external processes.
+
+The configuration module's nine real-file/parser tests pass40 assertions, and typecheck passes. Independent review found no remaining concrete blocker in that bounded module. `smol-toml`1.8.0 is pinned for parsing; the serializer uses reference formatting where it roundtrips and library escaping otherwise. Private review/provenance: `.data/environment28/`. No script executor, HTTP/settings/composer integration, environment propagation or native UI proof is included in this groundwork. The implementation and acceptance boundaries above remain required.
