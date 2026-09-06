@@ -105,6 +105,18 @@ describe("host artifact state compatibility", () => {
     } finally { db.close(); }
   });
 
+  test("execution schema4 rejects release24 readers without changing durable state", async () => {
+    const path = await temporary(), db = await database(path, 1);
+    try {
+      db.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA user_version = 4;");
+      const bytes = await readFile(join(path, "state.sqlite")), wal = await readFile(join(path, "state.sqlite-wal"));
+      expect(() => checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3] }, path)).toThrow("schema 4 is incompatible");
+      expect(checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4] }, path).checkedSchemaVersion).toBe(4);
+      expect(await readFile(join(path, "state.sqlite"))).toEqual(bytes);
+      expect(await readFile(join(path, "state.sqlite-wal"))).toEqual(wal);
+    } finally { db.close(); }
+  });
+
   test("installing an incompatible real archive never stops service or replaces current", async () => {
     const { root, layout } = await installedFixture(2), candidate = join(root, "candidate");
     await artifact(candidate, "incoming11");
