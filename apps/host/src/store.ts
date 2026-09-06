@@ -97,7 +97,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 6) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 7) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -393,6 +393,11 @@ export class HostStore {
 
   /** Resolve host-private setup state for one admitted native session. */
   getSessionEnvironment(sessionId: string): LocalEnvironmentWorkerEnvironment | undefined {
+    const inherited = this.readMetadata<{ cwd: string; environment: LocalEnvironmentWorkerEnvironment }>(`session-environment:${sessionId}`);
+    if (inherited) {
+      if (this.getSession(sessionId)?.cwd !== inherited.cwd) throw new Error('Inherited session environment no longer matches its native working directory.');
+      return structuredClone(inherited.environment);
+    }
     const preparation = this.environmentPreparations.list().find(record => record.sessionId === sessionId && record.phase !== "removed");
     if (!preparation?.environment) return undefined;
     const worktreeRoot = preparation.version === 2
@@ -403,6 +408,30 @@ export class HostStore {
       sourceRoot: preparation.sourceRoot,
       worktreeRoot,
     };
+  }
+
+  finishBtwPromotion(commandId: string, session: SessionSummary, environment: LocalEnvironmentWorkerEnvironment | undefined,
+    intent: import('./btw-promotion').BtwPromotionIntent, intentKey: string): CommandResult {
+    return this.db.transaction(() => {
+      const claim = this.getCommand(commandId);
+      if (!claim || claim.command?.type !== 'session.btw.promote' || claim.command.sessionId !== intent.originId
+        || claim.command.runId !== intent.runId || intent.commandId !== commandId) throw new Error('Side promotion command identity does not match.');
+      if (claim.state === 'done') return claim.result!;
+      const cancelled = intent.state === 'cancelled';
+      const origin = this.getSession(intent.originId);
+      if (!origin || session.hostId !== origin.hostId || session.cwd !== origin.cwd || session.projectId !== origin.projectId
+        || (cancelled ? session.id !== origin.id : session.id === origin.id || session.sessionFile === origin.sessionFile || Boolean(this.getSession(session.id))))
+        throw new Error('Side promotion differs from its original session.');
+      if (!cancelled) {
+        this.requireVersion(7); // Older hosts must not reopen a branch without inherited setup exports.
+        this.upsertSession(session);
+        if (environment) this.writeMetadata(`session-environment:${session.id}`, { cwd: session.cwd, environment });
+      }
+      this.writeMetadata(intentKey, intent);
+      const result: CommandResult = { ok: true, commandId, value: { type: 'session.btw.promote', cancelled, session } };
+      this.finishCommand(commandId, claim.requestHash, result);
+      return result;
+    }).immediate();
   }
 
   /** Bind native identity, setup exports and the successful receipt in one durable commit. */
@@ -544,9 +573,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 6) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 7) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

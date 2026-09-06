@@ -443,8 +443,8 @@ export class WorkerRuntime {
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),
       startBtw: input => client.request({ operation: "startBtw", args: input }, 15_000),
       cancelBtw: runId => client.request({ operation: "cancelBtw", args: { runId } }, 15_000),
-      promoteBtw: async runId => {
-        try { return await client.request<{ cancelled: boolean; sessionId: string; sessionFile: string }>({ operation: "promoteBtw", args: { runId } }); }
+      promoteBtw: async (runId, operationId) => {
+        try { return await client.request<{ cancelled: boolean; sessionId: string; sessionFile: string }>({ operation: "promoteBtw", args: { runId, operationId } }); }
         finally { if (client.snapshot?.sessionFile) { const file = path.resolve(client.snapshot.sessionFile); this.#openFiles.add(file); reservedPaths.add(file); } }
       },
       getBrowserMetadata: async () => {

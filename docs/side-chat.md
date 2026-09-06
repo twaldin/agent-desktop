@@ -16,7 +16,7 @@ Questions are limited to32KiB, answers to1MiB, and errors to4KiB. Hitting the an
 
 The frozen7868 bundle supplies `14-side-chat/01–06` for empty/draft/running/completed/tab-menu states and `17-hover-states/19–26` for summary rows, active/inactive tabs and child composer. The pinned7982 static shell maps its Side chat icon to `plus-chat-bubble-right-light-16`; the same SVG geometry is used here. Private source/offset evidence is `.data/side-chat30/icon-reference.json`.
 
-The screenshots do not prove the behavior of a running tab on close, a worktree side chat, tool edits or restart. They also show a general child conversation with model/permission controls. Those controls cannot be falsely attributed to OMP's native same-model, tool-less ephemeral turn. The inspected native backend behavior above is the basis of this first slice; independent promotion/tool-capable sessions need their own ownership integration.
+The screenshots do not prove the behavior of a running tab on close, a worktree side chat, tool edits or restart. They also show a general child conversation with model/permission controls. Those controls cannot be falsely attributed to OMP's native same-model, tool-less ephemeral turn. The inspected native backend behavior above is the basis of this first slice; promotion uses the separate ownership transition described below; remaining child-composer behavior still needs its own comparison.
 
 ## Checks and remaining work
 
@@ -30,7 +30,7 @@ Earlier failed attempts remain in the private failure index and run directories.
 
 This is source/native-contract and controlled App evidence, not installed desktop or pixel acceptance. The renderer fixture reaches real host HTTP through a scoped bridge, bypassing desktop main-process IPC; the separate HTTP transport tests do not turn that into packaged IPC proof. The existing release29 Work verifier run predates this slice and cannot certify it.
 
-Still required for the full goal: safe native `branchFromBtw` promotion with the changed session/file identity, the remaining Codex multi-tab/child-composer behaviors, parent sidebar unread presentation, full hover/focus/geometry comparison and independent packaged cross-device acceptance. Native `/btw`'s one-request lifetime and inherited configuration must remain explicit through those additions. Scheduling and native plugin/MCP management are separate core gaps; agent-system addons remain deferred.
+Still required for the full goal: packaged/cross-device promotion acceptance and a recovery UI for unconfirmed branch binding, the remaining Codex multi-tab/child-composer behaviors, parent sidebar unread presentation, full hover/focus/geometry comparison and independent packaged cross-device acceptance. Native `/btw`'s one-request lifetime and inherited configuration must remain explicit through those additions. Scheduling and native plugin/MCP management are separate core gaps; agent-system addons remain deferred.
 
 ## Direct composer checkpoint
 
@@ -40,11 +40,11 @@ The first extended capture failed when its scoped bridge omitted host state deli
 
 Final direct-route evidence: `.data/btw-slash-ui-final/result.json` records seven captures, four explicit side operations, one unchanged parent session with two main messages, exact main-draft revision consumption, and all33 captured source hashes unchanged at completion and root recheck. The final focused command passes60 tests/285 assertions across11 files; build and typecheck pass. Private logs are `.data/side-chat30/slash-focused-final.log`, `slash-build.log` and `slash-typecheck-committable.log`. Independent source review found and then verified the catalog-worker identity correction.
 
-Promotion follow-up must retain the native assistant message and the origin session/leaf, not reconstruct an answer from rendered Markdown. The pinned `branchFromBtw` method rejects changed origins or active work and can be cancelled by a native extension. It then changes the worker's session file/identity; the host session map and file reservation must transition with it before exposing the promoted conversation. The current `/btw` route does not claim this behavior.
+The subsequent promotion boundary retains the native assistant message and the origin session/leaf, not reconstruct an answer from rendered Markdown. The pinned `branchFromBtw` method rejects changed origins or active work and can be cancelled by a native extension. It then changes the worker's session file/identity; the host session map and file reservation must transition with it before exposing the promoted conversation. The direct-route checkpoint alone does not claim this behavior; the later promotion checkpoints below add it.
 
 The clean final regression run passes800 tests/26,358 assertions across158 files, with29 platform/runtime skips and zero failures (`.data/side-chat30/slash-full-suite-final.log`). Earlier interrupted/failed runs are recorded separately in `.data/side-chat30/direct-route-checkpoint.json`; their results are not counted. After the accidental broad-test cleanup, root rechecked989 original reference records and its report hash plus748 refreshed-bundle records, all unchanged. No frozen payload was edited.
 
-## Native promotion boundary (not yet a desktop action)
+## Native promotion boundary checkpoint
 
 The source adapter now retains the actual native assistant message and originating session/leaf, applies the pinned TUI's reply normalization, and calls `branchFromBtw`. Unknown, unfinished, replaced or stale answers cannot promote. Once admitted, same-worker success, cancellation and errors retain their original outcome; concurrent promotion or replacement does not run another branch.
 
@@ -54,6 +54,23 @@ Real pinned-SDK worker checks prove a distinct persisted branch containing the o
 
 The focused native/controller/lifecycle checkpoint passes17 tests/161 assertions across4 files (`.data/side-chat30/promotion-focused-final.log`). Earlier event-queue and normal-exit expectation failures remain in their separate diagnostic logs. These are controlled native contracts, not provider-account, packaged desktop, UI, cross-device or pixel acceptance.
 
-Still to connect: durable host command/catalog binding for the new session, local-environment metadata ownership, partial-failure recovery, and the equivalent Side chat promotion UI. This private runtime method alone does not close the app parity gap; no promotion button is exposed yet.
+At this boundary-only checkpoint, the host catalog binding and desktop action were not exposed. The following integration adds them; the boundary tests alone are not UI proof.
 
 Existing worker, native goal and blocking-ask regressions additionally pass26 tests/19,311 assertions across3 files (`.data/side-chat30/promotion-worker-regressions.log`); typecheck/build pass. Independent review confirmed the promotion-replacement and disposal races are fixed. The prior800-test direct-route suite predates this boundary and is not presented as a rerun of it.
+
+
+## Host and desktop promotion integration
+
+A completed, still-current native side answer now exposes the compact **Fork chat from here** action. The host checks the original idle worker and captured native branch point, records intent, and passes the durable command ID through worker protocol16 as the promotion identity. A native extension confirmation remains interactive. Cancellation preserves the origin and permits a fresh explicit command; duplicate cancelled receipts do not ask again. Worker loss and stale origins disable promotion rather than reopening an ephemeral answer from rendered text.
+
+Successful native branching retires the changed worker and waits for acknowledged disposal. SQLite then binds the distinct native session, inherited host-private setup exports and the success receipt atomically. The parent stays in the catalog and both original drafts remain unchanged. Schema7 protects the inherited environment binding from older readers; new archives declare schemas1–7. A failed receipt cannot leave a partially bound child or consume a draft. Its actual new file identity is retained in private intent metadata when available, and duplicate/fresh commands cannot replay that run. Automatic reconciliation of an unconfirmed binding is still absent: the pending/unknown result requires inspecting the original effect.
+
+The renderer saves the exact envelope before dispatch, revalidates its host receipt after restart, and retains a confirmed child until navigation consumes it. It navigates only while the original owner and active Side chat remain selected. Moving to another conversation during a pending branch does not force navigation back; the created conversation remains discoverable in the host catalog.
+
+The focused integration checks pass27 tests/180 assertions across native HTTP branching, worker/controller and renderer state; the related store/HTTP/packaging compatibility batch passes42 tests/224 assertions. The actual HTTP fixture exercises a native branch confirmation cancellation followed by a fresh accepted intent, duplicate and competing commands, original transcript/draft preservation, SQL receipt failure and restart without replay. Real SQLite tests cover inherited environment persistence, cancellation without schema promotion, transactional rollback and read-only rejection by older artifact manifests. Build, typecheck and independent bounded source review pass.
+
+Seven controlled App/Electron captures exercise the visible promotion action and selection of the actual native child containing parent history plus the side question/answer. The disposable host records exactly start/cancel/start/promote, two sessions and retained original main/side drafts. Private evidence is `.data/btw-promotion-ui-final/result.json`, with focused logs `.data/side-chat30/promotion-host-focused.log` and `promotion-regressions.log`. Root inspected the before/after captures. As with the prior App harness, the scoped HTTP bridge bypasses packaged desktop IPC; this is not independent native-window, account-provider, cross-device or pixel-parity acceptance. Frozen29 and all prior verifier runs remain untouched.
+
+The first broad promotion run caught a test timing assumption: the completion RPC can precede queued parent `message_end`/`turn_end` delivery. The corrected native test observes the parent's `agent_end` FIFO boundary before beginning promotion, then strictly rejects branch events on the old callback. It does not discard late event types or weaken the owner assertion. The failed run remains at `.data/side-chat30/promotion-full-suite.log`; the corrected three native tests pass44 assertions in `promotion-event-boundary.log`.
+
+The clean final integrated suite passes814 tests/26,488 assertions across161 files, with29 platform/runtime skips and zero failures (`.data/side-chat30/promotion-full-suite-final.log`). All34 sources recorded by the final seven-state App capture still match at root recheck. The original989 reference records and748 refreshed records also retain their hashes (`promotion-seals-final.json`). This remains an unfrozen, uninstalled source checkpoint.

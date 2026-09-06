@@ -1,3 +1,4 @@
+import { BtwPromotionService } from "./btw-promotion";
 import { LocalEnvironmentActions } from "./local-environments/actions";
 import { hasNewChatIntent, requiresNewChatProtocol } from './new-chat-protocol';
 import { hasEnvironmentIntent, requiresEnvironmentProtocol } from './environment-protocol';
@@ -304,7 +305,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     } });
   const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getActivity: async id => (await getHandle(id)).getSessionActivity(), goalControlTicket: activity => goalControls.ticket(activity) });
+  const btwPromotion = new BtwPromotionService({ store,
+    existing: async id => handles.get(id)?.catch(() => undefined),
+    busy: id => executions.has(id),
+    forget: (id, handle) => { const pending = handles.get(id); if (pending) void pending.then(value => { if (value === handle && handles.get(id) === pending) handles.delete(id); }); },
+  });
   const btw = new BtwService({
+    promotionBlocked: (id, runId) => btwPromotion.blocked(id, runId),
     session: id => store.getSession(id),
     read: id => store.readMetadata<import("@agent-desktop/shared").NativeBtwSnapshot>(`btw:${id}`) ?? null,
     write: (id, value) => store.writeMetadata(`btw:${id}`, value),
@@ -488,6 +495,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const snapshot = await btw.start(command.sessionId, { runId: envelope.id, question: command.question }, checkedHandle);
         return ok({ type: "session.btw", snapshot });
       }
+      case "session.btw.promote": return btwPromotion.promote(envelope.id, command.sessionId, command.runId);
       case "session.btw.cancel": {
         const snapshot = await btw.cancel(command.sessionId, command.runId);
         return ok({ type: "session.btw", snapshot });

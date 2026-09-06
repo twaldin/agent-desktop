@@ -102,8 +102,8 @@ afterEach(() => {
 });
 
 describe("HostStore local-environment persistence", () => {
-  test("opens schemas 1 through 6 without changing their version and rejects newer state", () => {
-    for (const schema of [1, 2, 3, 4, 5, 6]) {
+  test("opens schemas 1 through 7 without changing their version and rejects newer state", () => {
+    for (const schema of [1, 2, 3, 4, 5, 6, 7]) {
       const path = root();
       const seeded = new Database(join(path, "state.sqlite"), { create: true, strict: true });
       seeded.exec(`PRAGMA user_version = ${schema}`);
@@ -118,9 +118,9 @@ describe("HostStore local-environment persistence", () => {
 
     const future = root();
     const database = new Database(join(future, "state.sqlite"), { create: true, strict: true });
-    database.exec("PRAGMA user_version = 7");
+    database.exec("PRAGMA user_version = 8");
     database.close();
-    expect(() => open(future)).toThrow("Unsupported host state schema version 7");
+    expect(() => open(future)).toThrow("Unsupported host state schema version 8");
   });
 
   test("raises schema 5 only when the first owned preparation commits", () => {

@@ -91,6 +91,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
       return { id, command: { type, sessionId, question,
         ...(draft ? { draft } : {}), ...(input.nativeCommand === "btw" ? { nativeCommand: "btw" as const } : {}) } };
     }
+    case "session.btw.promote":
     case "session.btw.cancel": {
       const runId = text(input.runId, "side question run ID", 200);
       if (!/^[a-zA-Z0-9_-]+$/.test(runId)) throw new Error("Invalid side question run ID.");

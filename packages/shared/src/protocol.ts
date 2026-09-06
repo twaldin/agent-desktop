@@ -173,6 +173,7 @@ export type HostCommand =
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.btw.start"; sessionId: string; question: string; draft?: { id: string; revision: number }; nativeCommand?: "btw" }
   | { type: "session.btw.cancel"; sessionId: string; runId: string }
+  | { type: "session.btw.promote"; sessionId: string; runId: string }
   | { type: "session.interrupt"; sessionId: string }
   | { type: "session.rename"; sessionId: string; title: string }
   | { type: "session.archive"; sessionId: string; archived: boolean }
@@ -198,7 +199,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } }
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
   | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
 
 export type HostEvent =

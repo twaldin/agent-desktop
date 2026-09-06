@@ -59,6 +59,17 @@ Object.assign(window, {
   awaitStopped: async () => { await wait(() => document.querySelector(".side-chat-transcript")?.textContent?.includes("Stopped") && document.querySelector('[aria-label="Send side question"]'), "stopped side chat"); checks.push("Stop cancelled only the side turn and restored Send"); return state(); },
   awaitSlashMenu: async () => { await wait(() => [...document.querySelectorAll('.composer-autocomplete-row')].some(item => item.querySelector('.completion-label')?.textContent === 'btw' && item.getAttribute('aria-disabled') === 'false'), 'enabled native btw command completion'); checks.push('native btw completion is enabled in the real main composer'); return state(); },
   awaitSlashComplete: async (question: string) => { await wait(() => document.querySelector('.side-chat-question')?.textContent === question && document.querySelector('.side-chat-copy') && document.querySelector<HTMLTextAreaElement>('#prompt')?.value === '', 'native composer side answer and consumed main draft'); checks.push('main composer native btw completes in Side chat and consumes only its submitted main draft'); return state(); },
+  awaitPromotionDrafts: async () => {
+    await wait(() => document.querySelector<HTMLTextAreaElement>('#prompt')?.value === 'Keep unsent main prompt'
+      && document.querySelector<HTMLTextAreaElement>('[aria-label="Side chat prompt"]')?.value === 'Keep unsent side prompt'
+      && document.querySelector<HTMLButtonElement>('.side-chat-promote')?.disabled === false, 'saved drafts and enabled promotion');
+    checks.push('both original drafts remain visible beside a completed promotable side answer'); return state();
+  },
+  awaitPromoted: async () => {
+    await wait(() => Boolean(windowState.route?.sessionId && windowState.route.sessionId !== sessionId)
+      && document.querySelector('main')?.textContent?.includes('Answer the second side question'), 'new native branch selected with its side question in history');
+    checks.push('one visible promotion action selected the distinct native conversation with the side answer in its history'); return state();
+  },
   awaitComplete: async (question: string) => { await wait(() => document.querySelector(".side-chat-question")?.textContent === question && document.querySelector(".side-chat-transcript")?.textContent?.includes("Side answer") && document.querySelector(".side-chat-copy"), "completed side chat", 25_000); checks.push("a second native side turn completed and rendered its streamed answer"); return state(); },
 });
 declare global { interface Window { acceptanceTarget(selector:string,text?:string):{x:number;y:number}; acceptanceState():unknown } }

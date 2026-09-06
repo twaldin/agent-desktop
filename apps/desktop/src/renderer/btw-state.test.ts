@@ -34,12 +34,71 @@ test('a stale GET cannot overwrite the side request accepted after that read beg
 });
 
 test('malformed persisted receipts remain blocked after a healthy read instead of generating a replacement send', async () => {
- for (const saved of ['{broken', '{}', JSON.stringify({envelope:{id:'known',command:{type:'session.btw.cancel',sessionId:'session'}}})]) {
+ for (const saved of ['{broken', '{}', JSON.stringify({envelope:{id:'known',command:{type:'session.btw.cancel',sessionId:'session'}}}), JSON.stringify({envelope:{id:'known',command:{type:'session.btw.promote',sessionId:'session'}}})]) {
   let calls=0; const memory=new Map<string,string>();
   memory.set('btw.pending.host.session',saved);
   const f=fixture(async()=>{calls++;throw Error('must not send');},{read:k=>memory.get(k)??null,write:(k,v)=>{memory.set(k,v);}});
   try {await f.controller.refresh();await f.controller.start();expect(calls).toBe(0);expect(f.controller.ready).toBe(false);expect(f.controller.error).toContain('Sending is disabled');expect(memory.get('btw.pending.host.session')).toBe(saved);}finally{f.drafts.dispose();}
  }
+});
+
+test('lost promotion receipt reuses its exact identity, preserves drafts, and exposes only the confirmed same-host session', async () => {
+ const calls:CommandEnvelope[]=[];
+ const promoted = {id:'promoted-session',hostId:'host',projectId:null,cwd:'/project',title:'Forked answer',status:'idle' as const,
+  sessionFile:'/sessions/promoted.jsonl',model:{provider:'fixture',id:'model'},createdAt:2,updatedAt:2,archived:false};
+ const f=fixture(async e=>{calls.push(e);if(calls.length===1)throw Error('connection lost');return {ok:true,commandId:e.id,value:{type:'session.btw.promote',cancelled:false,session:promoted}};});
+ try {
+  f.drafts.update('session:session',{text:'main draft stays'});f.drafts.update('btw:session',{text:'side draft stays'});
+  f.controller.value={...value('completed-run'),status:'complete',answer:'answer',canPromote:true};f.controller.promotionAvailable=true;f.controller.ready=true;
+  await f.controller.promote();expect(f.controller.pending?.envelope.command).toEqual({type:'session.btw.promote',sessionId:'session',runId:'completed-run'});
+  const restored=new BtwState(f.bridge,'host','session',f.drafts,f.cache);await restored.refresh(true);
+  expect(calls).toHaveLength(2);expect(calls[1]).toEqual(calls[0]);expect(restored.pending?.promotedSession).toEqual(promoted);
+  const afterReceiptRestart=new BtwState(f.bridge,'host','session',f.drafts,f.cache);expect(afterReceiptRestart.takePromotedSession()).toBeUndefined();
+  await afterReceiptRestart.refresh(true);expect(calls).toHaveLength(3);expect(calls[2]).toEqual(calls[0]);
+  expect(afterReceiptRestart.takePromotedSession()).toEqual(promoted);expect(afterReceiptRestart.pending).toBeUndefined();expect(afterReceiptRestart.takePromotedSession()).toBeUndefined();
+  expect(f.drafts.get('session:session').draft.text).toBe('main draft stays');expect(f.drafts.get('btw:session').draft.text).toBe('side draft stays');
+ }finally{f.drafts.dispose();}
+});
+
+test('cancelled promotion does not navigate and a foreign receipt remains pending for inspection', async () => {
+ const original={id:'session',hostId:'host',projectId:null,cwd:'/project',title:'Original',status:'idle' as const,
+  sessionFile:'/sessions/original.jsonl',model:{provider:'fixture',id:'model'},createdAt:1,updatedAt:1,archived:false};
+ let mode:'cancelled'|'foreign'='cancelled';
+ const f=fixture(async e=>({ok:true,commandId:e.id,value:{type:'session.btw.promote',cancelled:mode==='cancelled',session:{...original,hostId:mode==='foreign'?'other':'host'}}}));
+ try {
+  f.controller.value={...value('complete'),status:'complete',answer:'answer',canPromote:true};f.controller.promotionAvailable=true;f.controller.ready=true;
+  await f.controller.promote();expect(f.controller.takePromotedSession()).toBeUndefined();expect(f.controller.pending).toBeUndefined();
+  mode='foreign';await f.controller.promote();expect(f.controller.pending?.envelope.command.type).toBe('session.btw.promote');expect(f.controller.error).toContain('another host');expect(f.controller.takePromotedSession()).toBeUndefined();
+ }finally{f.drafts.dispose();}
+});
+
+test('promotion gates refuse unavailable states and a noncancelled origin-session receipt stays pending', async () => {
+ let calls=0;
+ const original={id:'session',hostId:'host',projectId:null,cwd:'/project',title:'Original',status:'idle' as const,
+  sessionFile:'/sessions/original.jsonl',model:{provider:'fixture',id:'model'},createdAt:1,updatedAt:1,archived:false};
+ const f=fixture(async e=>{calls++;return {ok:true,commandId:e.id,value:{type:'session.btw.promote',cancelled:false,session:original}};});
+ try {
+  f.controller.value={...value('complete'),status:'complete',answer:'answer',canPromote:true};f.controller.promotionAvailable=true;
+  await f.controller.promote();expect(calls).toBe(0);
+  f.controller.ready=true;f.controller.value.canPromote=false;await f.controller.promote();expect(calls).toBe(0);
+  f.controller.value={...f.controller.value,canPromote:true,status:'running'};await f.controller.promote();expect(calls).toBe(0);
+  f.controller.value={...f.controller.value,status:'complete'};await f.controller.promote();expect(calls).toBe(1);
+  expect(f.controller.pending?.envelope.command.type).toBe('session.btw.promote');expect(f.controller.error).toContain('distinct promoted conversation');expect(f.controller.takePromotedSession()).toBeUndefined();
+ }finally{f.drafts.dispose();}
+});
+
+test('a promotion receipt cache failure cannot navigate and retries the same host command after storage recovers', async () => {
+ const memory=new Map<string,string>();let rejectCompletion=true,calls:CommandEnvelope[]=[];
+ const cache:DraftCache={read:key=>memory.get(key)??null,write:(key,data)=>{if(rejectCompletion&&key.startsWith('btw.pending.')&&JSON.parse(data)?.promotedSession)throw Error('receipt disk full');memory.set(key,data);}};
+ const promoted={id:'new-session',hostId:'host',projectId:null,cwd:'/project',title:'Fork',status:'idle' as const,
+  sessionFile:'/sessions/new.jsonl',model:{provider:'fixture',id:'model'},createdAt:2,updatedAt:2,archived:false};
+ const f=fixture(async e=>{calls.push(e);return {ok:true,commandId:e.id,value:{type:'session.btw.promote',cancelled:false,session:promoted}};},cache);
+ try {
+  f.controller.value={...value('complete'),status:'complete',answer:'answer',canPromote:true};f.controller.promotionAvailable=true;f.controller.ready=true;
+  await f.controller.promote();expect(calls).toHaveLength(1);expect(f.controller.pending?.promotedSession).toBeUndefined();expect(f.controller.takePromotedSession()).toBeUndefined();expect(f.controller.error).toContain('disk full');
+  rejectCompletion=false;const restored=new BtwState(f.bridge,'host','session',f.drafts,cache);await restored.refresh(true);
+  expect(calls).toHaveLength(2);expect(calls[1]).toEqual(calls[0]);expect(restored.takePromotedSession()).toEqual(promoted);
+ }finally{f.drafts.dispose();}
 });
 test('a completed observation does not fabricate the new draft-consumption receipt', async()=>{
  const calls:CommandEnvelope[]=[];const f=fixture(async e=>{calls.push(e);throw Error('lost response');});

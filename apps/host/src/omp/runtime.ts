@@ -87,7 +87,7 @@ export interface OmpSession {
   getBtw(): NativeBtwSnapshot | null;
   startBtw(input: NativeBtwStart): NativeBtwSnapshot;
   cancelBtw(runId: string): NativeBtwSnapshot | null;
-  promoteBtw(runId: string): Promise<{ cancelled: boolean; sessionId: string; sessionFile: string }>;
+  promoteBtw(runId: string, operationId?: string): Promise<{ cancelled: boolean; sessionId: string; sessionFile: string }>;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
@@ -611,14 +611,14 @@ export class OmpRuntime {
         getBtw: () => { assertSessionActive(); return btw.get(); },
         startBtw: input => { assertSessionActive(); return btw.start(input); },
         cancelBtw: runId => { assertSessionActive(); return btw.cancel(runId); },
-        promoteBtw: runId => {
+        promoteBtw: (runId, operationId) => {
           assertIdle();
           if (ui?.list().length || interruptsInFlight) throw new Error("Resolve pending native interactions before promoting a side answer.");
           const originId = session.sessionId, originFile = session.sessionFile;
           promotionState = "running";
           promotionCall = (async () => {
           try {
-            const promoted = await btw.promote(runId);
+            const promoted = await btw.promote(runId, operationId);
             if (!promoted.cancelled) {
               if (session.sessionId === originId || !promoted.sessionFile || promoted.sessionFile !== session.sessionFile)
                 throw new Error("Native side-chat promotion did not establish a new persisted identity.");

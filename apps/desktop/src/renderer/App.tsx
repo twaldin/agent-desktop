@@ -489,7 +489,7 @@ export function App() {
     const online = Boolean(record?.connected);
     if (tab.kind === "side-chat") {
       if (!("sessionId" in target)) return <p>Side chat belongs to a conversation.</p>;
-      return <SideChat key={owner} controller={sideChatController(tab.hostId,target.sessionId)} hostId={tab.hostId} sessionId={target.sessionId} session={record?.state?.sessions.find(value => value.id === target.sessionId)} drafts={controllers(tab.hostId).drafts} connected={online} active={active} onTitle={title => dock.updateTitle(tab.id,title)} onUnread={unread => dock.setUnread(tab.id,unread)}/>;
+      return <SideChat key={owner} controller={sideChatController(tab.hostId,target.sessionId)} hostId={tab.hostId} sessionId={target.sessionId} session={record?.state?.sessions.find(value => value.id === target.sessionId)} drafts={controllers(tab.hostId).drafts} connected={online} active={active} onTitle={title => dock.updateTitle(tab.id,title)} onUnread={unread => dock.setUnread(tab.id,unread)} onPromoted={session => { if (active && session.hostId === tab.hostId && selectedRef.current === `${tab.hostId}:${target.sessionId}`) { navigate(session.id, tab.hostId); void refresh(); } }}/>;
     }
     if (tab.kind === "goal") {
       if (!("sessionId" in target)) return <p>A goal belongs to a conversation.</p>;

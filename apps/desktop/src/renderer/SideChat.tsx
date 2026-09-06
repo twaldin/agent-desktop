@@ -6,9 +6,9 @@ import { Icon } from './Icons';
 import { MarkdownText } from './MarkdownText';
 import './side-chat.css';
 
-export function SideChat({ controller, hostId, session, sessionId, drafts, connected, active, onTitle, onUnread }: {
+export function SideChat({ controller, hostId, session, sessionId, drafts, connected, active, onTitle, onUnread, onPromoted }: {
   controller: BtwState; hostId: string; sessionId: string; session?: SessionSummary;
-  drafts: DraftController; connected: boolean; active: boolean; onTitle(title: string): void; onUnread(unread: boolean): void;
+  drafts: DraftController; connected: boolean; active: boolean; onTitle(title: string): void; onUnread(unread: boolean): void; onPromoted(session: SessionSummary): void;
 }) {
   const [, redraw] = useReducer(value => value + 1, 0), textarea = useRef<HTMLTextAreaElement>(null), content = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -35,6 +35,7 @@ export function SideChat({ controller, hostId, session, sessionId, drafts, conne
     }
   }, [active, snapshot?.runId, snapshot?.status]);
   useEffect(() => { if (nearBottom.current && content.current) content.current.scrollTop = content.current.scrollHeight; }, [snapshot?.answer, snapshot?.runId]);
+  useEffect(() => { const promoted = controller.takePromotedSession(); if (promoted) onPromoted(promoted); });
   useEffect(() => { const field = textarea.current; if (field) { field.style.height = '0px'; field.style.height = `${Math.min(240, Math.max(56, field.scrollHeight))}px`; } }, [view.draft.text]);
   const running = snapshot?.status === 'running';
   const blocked = !connected || !controller.ready || !session || session.archived || controller.busy || Boolean(controller.pending) || Boolean(controller.unavailable) || view.status === 'conflict';
@@ -47,7 +48,7 @@ export function SideChat({ controller, hostId, session, sessionId, drafts, conne
         {running && <div className="side-chat-working" role="status"><span/>Thinking…</div>}
         {snapshot.status === 'cancelled' && <p className="side-chat-notice">Stopped</p>}
         {snapshot.error && <p className="side-chat-notice" role="alert">{snapshot.error}</p>}
-        {!running && snapshot.answer && <button className="side-chat-copy" onClick={() => void navigator.clipboard.writeText(snapshot.answer).catch(() => { controller.error = 'Could not copy the answer.'; redraw(); })}>Copy</button>}
+        {!running && snapshot.answer && <div className="side-chat-answer-actions"><button className="side-chat-copy" onClick={() => void navigator.clipboard.writeText(snapshot.answer).catch(() => { controller.error = 'Could not copy the answer.'; redraw(); })}>Copy</button>{snapshot.status === 'complete' && controller.promotionAvailable && <button className="side-chat-promote" disabled={!connected || !session || session.archived || !controller.ready || controller.busy || Boolean(controller.pending) || Boolean(controller.error) || Boolean(controller.unavailable) || Boolean(controller.receiptError) || snapshot.canPromote === false} onClick={() => void controller.promote()}>Fork chat from here</button>}</div>}
       </div>}
     </div>
     <div className="side-chat-footer">

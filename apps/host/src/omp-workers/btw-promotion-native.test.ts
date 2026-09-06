@@ -26,6 +26,12 @@ test('native side promotion persists a distinct branch, retires old callbacks an
   const events:unknown[]=[];const session=await runtime.create({cwd,interactions:true,onEvent:e=>events.push(e)});
   await writeFile(path.join(gates,'1.release'),'');
   await session.prompt('Parent history',{model:{provider:'btw-contract',id:'controlled'}});
+  // The completion RPC may precede the acknowledged event queue. Observe the
+  // parent's terminal event as the FIFO boundary, rather than excluding whatever
+  // late transcript events happen to arrive after promotion begins.
+  const parentEventDeadline=Date.now()+5000;
+  while(!events.some((event:any)=>event.type==='agent_end')&&Date.now()<parentEventDeadline)await Bun.sleep(5);
+  expect(events.some((event:any)=>event.type==='agent_end')).toBe(true);
   const originId=session.id,originFile=session.sessionFile,original=await readFile(originFile),messages=await session.getMessages();
   await writeFile(path.join(gates,'2.release'),'');await session.startBtw({runId:'promote-side',question:'A real side question'});
   let side=await session.getBtw();const deadline=Date.now()+8000;
@@ -34,9 +40,9 @@ test('native side promotion persists a distinct branch, retires old callbacks an
   const promoted=await session.promoteBtw('promote-side');
   expect(promoted.cancelled).toBe(false);expect(promoted.sessionId).not.toBe(originId);expect(promoted.sessionFile).not.toBe(originFile);
   expect(session.id).toBe(promoted.sessionId);expect(session.sessionFile).toBe(promoted.sessionFile);
-  expect(await readFile(originFile)).toEqual(original);// A queued parent agent_end can arrive after its completion RPC. No branch
-  // messages or new-owner UI events may be published to that origin callback.
-  expect(events.slice(beforeEvents).filter((e:any)=>e.type !== 'agent_end' && e.sessionId !== originId)).toEqual([]);
+  expect(await readFile(originFile)).toEqual(original);
+  // No branch messages may be published to the original owner's callback.
+  expect(events.slice(beforeEvents).filter((e:any)=>e.sessionId !== originId)).toEqual([]);
   await expect(session.getMessages()).rejects.toThrow('transitioning');
   await expect(session.promoteBtw('promote-side')).rejects.toThrow('transitioning');
   await expect(runtime.open({sessionFile:originFile})).rejects.toThrow('already open');

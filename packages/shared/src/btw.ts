@@ -9,6 +9,7 @@ export interface NativeBtwSnapshot {
   error?: string;
   startedAt: number;
   updatedAt: number;
+  canPromote?: boolean;
 }
 
 export interface NativeBtwStart {
@@ -33,6 +34,7 @@ export interface NativeBtwResponse {
   value: NativeBtwSnapshot | null;
   /** Start receipts atomically consume an exact submitted draft revision. */
   draftConsumption?: true;
+  promotion?: true;
   unavailable?: string;
 }
 
@@ -57,6 +59,7 @@ export function parseNativeBtwSnapshot(value: unknown): NativeBtwSnapshot {
     startedAt: timestamp(source.startedAt), updatedAt: timestamp(source.updatedAt),
   };
   if (result.updatedAt < result.startedAt) throw new Error("Invalid native btw update time.");
+  if (source.canPromote !== undefined) { if (typeof source.canPromote !== "boolean") throw new Error("Invalid native promotion capability."); result.canPromote = source.canPromote; }
   if (source.error !== undefined) result.error = text(source.error, "error", 4 * 1024);
   if (result.status === "failed" && !result.error) throw new Error("Failed native btw snapshots require an error.");
   if (result.status !== "failed" && result.error !== undefined) throw new Error("Only failed native btw snapshots may contain an error.");
@@ -73,5 +76,6 @@ export function parseNativeBtwResponse(value: unknown, owner: { hostId: string; 
   if (snapshot && snapshot.sessionId !== owner.sessionId) throw new Error("Native btw snapshot belongs to another session.");
   const unavailable = source.unavailable === undefined ? undefined : text(source.unavailable, "unavailable reason", 4 * 1024);
   if (source.draftConsumption !== undefined && source.draftConsumption !== true) throw new Error('Invalid native btw draft capability.');
-  return { protocolVersion: BTW_PROTOCOL_VERSION, hostId: owner.hostId, sessionId: owner.sessionId, value: snapshot, ...(unavailable ? { unavailable } : {}), ...(source.draftConsumption ? { draftConsumption: true } : {}) };
+  if (source.promotion !== undefined && source.promotion !== true) throw new Error('Invalid native btw promotion capability.');
+  return { protocolVersion: BTW_PROTOCOL_VERSION, hostId: owner.hostId, sessionId: owner.sessionId, value: snapshot, ...(unavailable ? { unavailable } : {}), ...(source.draftConsumption ? { draftConsumption: true } : {}), ...(source.promotion ? { promotion: true } : {}) };
 }

@@ -24,6 +24,8 @@ interface Request {
   origin: { leafId: string | null; sessionId: string };
   assistantMessage?: AssistantMessage;
   promotion?: Promotion;
+  promotions?: Map<string, Promotion>;
+  promotionFailed?: boolean;
 }
 
 function bounded(value: string, maxBytes: number): string {
@@ -57,7 +59,14 @@ export class NativeBtwController {
 
   constructor(private readonly session: NativeSideSession, private readonly now: () => number = Date.now) {}
 
-  get(): NativeBtwSnapshot | null { return this.#current ? copy(this.#current.snapshot) : null; }
+  get(): NativeBtwSnapshot | null {
+    const r = this.#current;
+    if (!r) return null;
+    return { ...r.snapshot, ...(r.snapshot.status === "complete" ? { canPromote: !this.#disposed && !r.promotionFailed
+      && r.promotion?.state !== "running" && Boolean(r.assistantMessage && r.origin.leafId)
+      && this.session.sessionManager.getSessionId() === r.origin.sessionId
+      && this.session.sessionManager.getLeafId() === r.origin.leafId } : {}) };
+  }
 
   start(input: NativeBtwStart): NativeBtwSnapshot {
     this.#assertActive();
@@ -98,16 +107,20 @@ export class NativeBtwController {
     return copy(retained.snapshot);
   }
 
-  async promote(runId: string): Promise<NativeBtwPromotion> {
+  async promote(runId: string, operationId = runId): Promise<NativeBtwPromotion> {
     this.#assertActive();
     const request = this.#records.get(runId);
     if (!request) throw new Error("Native /btw run is unknown or no longer inspectable");
     if (request !== this.#current) throw new Error("Native /btw run was replaced and cannot be promoted");
     if (request.snapshot.status !== "complete" || !request.assistantMessage) throw new Error("Native /btw answer is not complete");
-    if (request.promotion) {
-      if (request.promotion.state === "running") throw new Error("Native /btw promotion is already in progress");
-      return request.promotion.promise;
+    const prior = request.promotions?.get(operationId);
+    if (prior) {
+      if (prior.state === "running") throw new Error("Native /btw promotion is already in progress");
+      return prior.promise;
     }
+    if (request.promotion?.state === "running") throw new Error("Native /btw promotion is already in progress");
+    if (request.promotionFailed) throw new Error("Native /btw promotion outcome is unknown and cannot be replayed");
+    if (!operationId || operationId.length > 200 || (request.promotions?.size ?? 0) >= MAX_SEEN_RUNS) throw new Error("Invalid or exhausted native promotion identity");
     const { leafId, sessionId } = request.origin;
     if (!leafId) throw new Error("Native /btw session has no branch point");
     if (this.session.sessionManager.getSessionId() !== sessionId || this.session.sessionManager.getLeafId() !== leafId)
@@ -116,7 +129,8 @@ export class NativeBtwController {
       assistantMessageWithReplyText(request.assistantMessage, request.snapshot.answer), leafId, sessionId);
     const promotion: Promotion = { state: "running", promise };
     request.promotion = promotion;
-    void promise.then(() => { promotion.state = "settled"; }, () => { promotion.state = "settled"; });
+    (request.promotions ??= new Map()).set(operationId, promotion);
+    void promise.then(() => { promotion.state = "settled"; }, () => { promotion.state = "settled"; request.promotionFailed = true; });
     return promise;
   }
 

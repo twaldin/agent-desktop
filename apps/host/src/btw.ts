@@ -9,7 +9,7 @@ const unknown = (message: string) => Object.assign(new Error(message), { code: "
  * recreated by GET or a recovered pending command. All updates share one lane. */
 export class BtwService {
   private readonly locks = new Map<string, Promise<void>>();
-  constructor(private readonly options: { session(id: string): Session | undefined; read(id: string): Stored; write(id: string, value: Stored): void; getHandle(id: string): Promise<Handle>; getExistingHandle(id: string): Promise<Handle | undefined> }) {}
+  constructor(private readonly options: { session(id: string): Session | undefined; read(id: string): Stored; write(id: string, value: Stored): void; getHandle(id: string): Promise<Handle>; getExistingHandle(id: string): Promise<Handle | undefined>; promotionBlocked?(id: string, runId: string): boolean }) {}
   private async locked<T>(id: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(id) ?? Promise.resolve(); let release!: () => void;
     const current = new Promise<void>(resolve => { release = resolve; }); this.locks.set(id, current); await previous.catch(() => {});
@@ -28,11 +28,13 @@ export class BtwService {
     return parsed;
   }
   private lost(id: string, stored: Stored) {
-    return stored?.status === "running" ? this.save(id, { ...stored, status: "failed", error: "The native side-question worker was lost. Its outcome is unknown and it will not be replayed.", updatedAt: Math.max(Date.now(), stored.updatedAt) }) : stored;
+    return stored?.status === "running" ? this.save(id, { ...stored, status: "failed", error: "The native side-question worker was lost. Its outcome is unknown and it will not be replayed.", updatedAt: Math.max(Date.now(), stored.updatedAt) }) : stored?.status === "complete" ? this.save(id, { ...stored, canPromote: false }) : stored;
   }
   async snapshot(id: string): Promise<Stored> { return this.locked(id, async () => {
     this.session(id);
-    const stored = this.options.read(id), handle = await this.options.getExistingHandle(id);
+    const stored = this.options.read(id);
+    if (stored && this.options.promotionBlocked?.(id, stored.runId)) return { ...stored, canPromote: false };
+    const handle = await this.options.getExistingHandle(id);
     if (!handle || handle.workerFailure) return this.lost(id, stored);
     let live: Stored;
     try { live = await handle.getBtw(); }

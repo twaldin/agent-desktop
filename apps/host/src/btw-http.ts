@@ -13,7 +13,7 @@ export class BtwHttp {
       if (!sessionId || sessionId.length > 200 || !this.options.sessionExists(sessionId)) return Response.json({ error: { code: "STALE_TARGET", message: "The selected session no longer exists on this host." } }, { status: 409, headers });
       if (request.method !== "GET") return Response.json({ error: { code: "INVALID_BTW_REQUEST", message: "Use GET for btw state." } }, { status: 405, headers });
       const value = await this.options.service.snapshot(sessionId);
-      return Response.json({ protocolVersion: BTW_PROTOCOL_VERSION, hostId: this.options.hostId, sessionId, value, draftConsumption: true } satisfies NativeBtwResponse, { headers });
+      return Response.json({ protocolVersion: BTW_PROTOCOL_VERSION, hostId: this.options.hostId, sessionId, value, draftConsumption: true, promotion: true } satisfies NativeBtwResponse, { headers });
     } catch (error) { return Response.json({ error: { code: "BTW_FAILED", message: error instanceof Error ? error.message.slice(0, 4096) : "btw state failed." } }, { status: 500, headers }); }
   }
 }
