@@ -64,10 +64,10 @@ export function DetachedQuestionCard({ snapshot, sessionId, connected, archived,
     const selectedOptions = question.multi
       ? answer.selectedOptions.includes(label) ? answer.selectedOptions.filter(value => value !== label) : [...answer.selectedOptions, label]
       : [label];
-    save(parsed.answers.map(value => value.questionId === question.id ? { ...value, selectedOptions } : value));
+    save(parsed.answers.map(value => value.questionId === question.id ? { ...value, selectedOptions, ...(!question.multi ? { customInput: undefined } : {}) } : value));
   }
   function customInput(value: string) {
-    save(parsed.answers.map(item => item.questionId === question.id ? { ...item, ...(value ? { customInput: value } : { customInput: undefined }) } : item));
+    save(parsed.answers.map(item => item.questionId === question.id ? { ...item, customInput: value || undefined, ...(!question.multi ? { selectedOptions: [] } : {}) } : item));
   }
   async function submit() {
     if (submitDisabled || parsed.error) return;
@@ -108,24 +108,26 @@ export function DetachedQuestionCard({ snapshot, sessionId, connected, archived,
             <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}{option.preview && <small>{option.preview}</small>}</span>
           </label>;
         })}
-        <label className="detached-question-custom"><span className="detached-question-pencil" aria-hidden="true"><Icon name="compose"/></span><textarea aria-label={`Own response for ${question.question}`} value={answer.customInput ?? ""} disabled={editDisabled} placeholder="Or write your own response" onChange={event => customInput(event.target.value)}/></label>
-      </div> : <textarea className="detached-question-reply" aria-label={`Reply to ${question.question}`} value={answer.customInput ?? ""} disabled={editDisabled} placeholder="Reply…" onChange={event => customInput(event.target.value)} autoFocus/>}
+      </div> : <textarea rows={1} className="detached-question-reply" aria-label={`Reply to ${question.question}`} value={answer.customInput ?? ""} disabled={editDisabled} placeholder="Reply…" onChange={event => customInput(event.target.value)} autoFocus/>}
     </div>
     {(staleMessage || archived) && <p className="subtle-notice">{archived ? "Unarchive this conversation before answering." : staleMessage}</p>}
     {view.status === "conflict" && <div className="detached-question-conflict" role="alert"><strong>This answer draft changed on another device.</strong><p>Both versions are preserved. Choose which saved answer to continue editing.</p><div><button className="secondary-button" onClick={() => drafts.resolve(draftId, "remote")}>Use saved answer</button><button className="primary-button" onClick={() => drafts.resolve(draftId, "local")}>Keep my answer</button></div></div>}
     {(error || parsed.error) && <p className="inline-error" role="alert">{error ?? `This saved answer cannot be read: ${parsed.error}`}</p>}
     {pending?.uncertain && <p className="detached-question-uncertain" role="status">The answer outcome is unknown. Retry checks the original saved answer and command identity; it does not send a new copy.</p>}
-    <div className="detached-question-actions"><span className="detached-question-draft-state">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Saved on this device" : ""}</span><div>
+    <div className="detached-question-actions">
+      {question.options.length > 0 ? <label className="detached-question-custom"><span className="detached-question-pencil" aria-hidden="true"><Icon name="pencil"/></span><textarea rows={1} aria-label={`Own response for ${question.question}`} value={answer.customInput ?? ""} disabled={editDisabled} placeholder="Or write your own response" onChange={event => customInput(event.target.value)}/></label> : <span/>}
+      <div>
       <button type="button" className="secondary-button" disabled={editDisabled || Boolean(parsed.error)} onClick={() => { save(parsed.answers.map(item => item.questionId === question.id ? { questionId: item.questionId, selectedOptions: [] } : item)); if (index < snapshot.questions.length - 1) setIndex(index + 1); else if (connected) void submit(); }}>Skip</button>
       {index < snapshot.questions.length - 1
         ? <button type="button" className="primary-button" disabled={editDisabled || !hasDetachedAnswer(answer) || Boolean(parsed.error)} onClick={() => setIndex(index + 1)}>Next</button>
         : <button type="button" className="primary-button" disabled={submitDisabled || Boolean(parsed.error) || (!pending?.uncertain && !hasDetachedAnswer(answer))} onClick={() => void submit()}>{pending?.uncertain ? "Retry" : sending ? "Sending…" : "Send"}</button>}
     </div></div>
+    {(view.status === "saving" || view.status === "offline") && <p className="detached-question-draft-state" role="status">{view.status === "saving" ? "Saving…" : "Saved on this device"}</p>}
   </section>;
 }
 
 function QuestionHeader({ id, index, count, dismiss, previous, next }: { id: string; index: number; count: number; dismiss(): void; previous?(): void; next?(): void }) {
-  return <header className="detached-question-heading"><div className="detached-question-title"><span className="detached-question-symbol" aria-hidden="true">?</span><strong id={id}>Question</strong></div><div className="detached-question-navigation">
+  return <header className="detached-question-heading"><div className="detached-question-title"><Icon name="question"/><strong id={id}>Question</strong></div><div className="detached-question-navigation">
     <button type="button" className="icon-button small detached-question-previous" aria-label="Previous question" disabled={!previous || index === 0} onClick={previous}><Icon name="chevron"/></button>
     <span>{index + 1} of {count}</span>
     <button type="button" className="icon-button small" aria-label="Next question" disabled={!next || index === count - 1} onClick={next}><Icon name="chevron"/></button>

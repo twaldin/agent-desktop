@@ -15,3 +15,9 @@ The native journal is authoritative. `questionDeliveryPending` is only a persist
 ## Evidence boundary
 
 Source tests exercise real OMP workers and controlled local providers: immediate return alongside an independent tool, origin-end closure, two-client resolution, native steer and idle follow-up, restart recovery, lost acceptance response, and draft revision preservation. Separate Electron fixtures exercise card navigation, offline edits, reconnect, and explicit submission. These fixtures do not establish installed cross-device visual parity or replace real provider approval acceptance. Packaged native-window verification remains a separate gate.
+
+## Compact card follow-up
+
+The next source batch places the alternative response beside Skip/Next, uses a single-line free-text field that grows for longer answers, restores regular muted header text, and uses the pinned question and pencil artwork. A single-choice selection and its alternative text replace one another when edited; multi-select questions retain combined selections and text. Offline, conflict and uncertain-delivery behavior remains unchanged.
+
+Controlled Electron checks at 736-point card width record a 222-point choice card and 186-point free-text card, plus long-answer editing at a 368-point width. They exercise replacement in both directions, offline navigation/editing, reconnect and exactly one submitted answer envelope. Typecheck and 15 scoped question/submission/parser tests pass. Private captures and geometry are in `.data/question-card-compact-21-final/`. These are component checks; exact fonts, hover/selected states, whole-window registration and packaged Work verification remain open. Release20.1 is immutable and does not contain this follow-up.

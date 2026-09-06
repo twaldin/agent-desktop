@@ -10,8 +10,8 @@ import "../../apps/desktop/src/renderer/theme.css";
 
 const hostId = "host-a", sessionId = "session-a";
 let questionState: DetachedQuestionsSnapshot = { protocolVersion: 1, hostId, sessionId, questions: [{ questionId: "question-a", questionEntryId: "opened-a", originRunId: "run-a", openedAt: 1, status: "open", delivery: { status: "waiting" }, questions: [
-  { id: "density", header: "Density", question: "How dense should the layout be?", multi: false, recommended: 1, options: [{ label: "Comfortable", description: "More breathing room" }, { label: "Compact", description: "Fit more work on screen" }] },
-  { id: "accent", question: "Which accent should the interface use?", multi: false, options: [] },
+  { id: "density", question: "Which sample density?", multi: false, recommended: 1, options: [{ label: "Comfortable" }, { label: "Compact" }] },
+  { id: "accent", question: "What optional accent label?", multi: false, options: [] },
 ] }] };
 const listeners = new Set<(event: DesktopEvent) => void>(), commands: CommandEnvelope[] = [];
 const cache = { read: (key: string) => localStorage.getItem(key), write: (key: string, value: string) => localStorage.setItem(key, value) };
@@ -33,7 +33,7 @@ function Harness() {
   const [connected, setConnected] = useState(true); setHarnessConnected = setConnected;
   useEffect(() => { const offDrafts = drafts.subscribe(redraw), offSubmissions = submissions.subscribe(redraw); return () => { offDrafts(); offSubmissions(); }; }, []);
   useEffect(() => drafts.setConnected(connected), [connected]);
-  return <main style={{ width: "min(768px, calc(100vw - 32px))", margin: "40px auto" }}><PendingDetachedQuestions bridge={bridge} hostId={hostId} sessionId={sessionId} localHostId={hostId} connected={connected} archived={false} drafts={drafts} submissions={submissions}/></main>;
+  return <main style={{ width: "min(736px, calc(100vw - 32px))", margin: "40px auto" }}><PendingDetachedQuestions bridge={bridge} hostId={hostId} sessionId={sessionId} localHostId={hostId} connected={connected} archived={false} drafts={drafts} submissions={submissions}/></main>;
 }
 createRoot(document.getElementById("root")!).render(<Harness/>);
 
@@ -41,11 +41,40 @@ const wait = async (read: () => unknown, label: string) => { const start = perfo
 const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === name || item.getAttribute("aria-label") === name);
 const input = (element: HTMLTextAreaElement, value: string) => { const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!; setter.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); };
 const questionCommands = () => commands.filter(value => value.command.type === "session.question.answer");
-Object.assign(window, { waitDetachedQuestionOpen: () => wait(() => document.querySelector(".detached-question-card"), "question card"), prepareDetachedQuestionOffline: async () => {
+const rect = (selector: string) => {
+  const element = document.querySelector<HTMLElement>(selector)!;
+  const { x, y, width, height } = element.getBoundingClientRect();
+  return { x, y, width, height, scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth };
+};
+const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+Object.assign(window, { measureDetachedQuestion: async () => {
+  await frame();
+  const card = rect(".detached-question-card"), response = rect(".detached-question-custom, .detached-question-reply");
+  const actions = rect(".detached-question-actions > div");
+  const style = getComputedStyle(document.querySelector(".detached-question-card")!);
+  if (card.scrollWidth > card.width + 1 || response.x + response.width > actions.x + 1 && document.querySelector(".detached-question-custom")) throw new Error("Question card overlaps or overflows");
+  return { card, response, actions, background: style.backgroundColor, font: style.font, devicePixelRatio, innerWidth, innerHeight };
+}, exerciseDetachedQuestionOwnResponse: async () => {
+  const own = document.querySelector<HTMLTextAreaElement>(".detached-question-custom textarea")!;
+  const compact = document.querySelector<HTMLInputElement>('input[value="Compact"]')!;
+  compact.click(); await wait(() => compact.checked, "option selected");
+  input(own, "Custom density"); await wait(() => !compact.checked && own.value === "Custom density", "own response replaces a single choice");
+  compact.click(); await wait(() => compact.checked && own.value === "", "single choice replaces own response");
+  input(own, "A longer response that stays editable when the conversation pane becomes narrow. ".repeat(8));
+  await frame();
+  if (own.scrollHeight <= 28 || own.clientHeight > 140 || questionCommands().length) throw new Error("Long answer sizing or edit-only behavior failed");
+  return { exclusiveSingleChoice: true, longAnswer: true };
+}, resetDetachedQuestionChoice: async () => {
+  document.querySelector<HTMLInputElement>('input[value="Compact"]')!.click(); await frame();
+}, showDetachedQuestionFreeText: async () => {
+  button("Next")!.click(); await wait(() => document.querySelector(".detached-question-reply"), "free-text question");
+  input(document.querySelector<HTMLTextAreaElement>(".detached-question-reply")!, "Cobalt"); await frame();
+}, returnDetachedQuestionFirst: async () => { button("Previous question")!.click(); await frame(); },
+waitDetachedQuestionOpen: () => wait(() => document.querySelector(".detached-question-card"), "question card"), prepareDetachedQuestionOffline: async () => {
   setHarnessConnected(false); await wait(() => document.body.textContent?.includes("Offline question snapshot"), "offline question state");
   document.querySelector<HTMLInputElement>('input[value="Compact"]')!.click();
   if (questionCommands().length) throw new Error("Selecting an offline option submitted an answer");
-  await wait(() => !button("Next")!.disabled, "offline Next enabled"); button("Next")!.click(); await wait(() => document.body.textContent?.includes("Which accent"), "offline second question");
+  await wait(() => !button("Next")!.disabled, "offline Next enabled"); button("Next")!.click(); await wait(() => document.body.textContent?.includes("What optional accent"), "offline second question");
   input(document.querySelector<HTMLTextAreaElement>('.detached-question-reply')!, "Cobalt");
   await wait(() => document.querySelector<HTMLTextAreaElement>('.detached-question-reply')!.value === "Cobalt", "offline text persisted");
   if (!button("Send")!.disabled || button("Skip")!.disabled) throw new Error("Offline edit and delivery controls are coupled");
