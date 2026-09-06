@@ -4,6 +4,8 @@ Build a usable private macOS desktop app that reproduces the agreed local Codex 
 
 This contract is the implementation goal, not a claim that the app exists. Usable intermediate builds are checkpoints. Completion requires the acceptance gates below; incomplete or unverified requirements stay visible.
 
+Tim's September6 sequencing is explicit: complete the OMP-backed, faithfully reproduced Codex frontend first. Add agent-system control-center and phone web features afterward, using the same app components, contracts and visual style. Those additions must not displace or relax any core parity gate. Their coordination boundary is recorded in [agent-system integration](docs/agent-system-integration.md).
+
 ## Agreed scope
 
 - Reference Codex 26.901.41600, build 7982, archive SHA-256 `077cc65356aeae34c5d8b4de0b4cc383f6fb137ed1d69a9b3dfe69ffafa058ab`. Preserve this baseline across installed-app updates.
