@@ -2,11 +2,21 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Independent Work22 composer acceptance
+
+The separate signed22 run passes bottom anchoring, the visible256-point popup, pointer-opened model search with native typing, empty/unfocused one-row composer, focus expansion and visible Stop. Native ordinary draft input survived blur; clearing only that fixture draft restored the compact field. Question custom density/detail were accepted while the independent tool remained running. Releasing only the fixture gate produced one ordinary answer bubble, one delivered steer receipt and the final response; the card disappeared. Evidence: external `95-release22/05–12` and `public-question-evidence.json`. The reported36/56-point measurements describe the text field; they are not total composer heights.
+
+Both original fixture models declare reasoning:false, so those runs correctly do not prove the Power slider or Auto. A separate credential-free native reasoning catalog fixture uses the same signed22 package without creating sessions or sending prompts; visible verification remains a separate gate. No hosted-provider or approval proof is claimed.
+
+## Work21 browser fit follow-up
+
+The verifier additionally proves native counter input, genuine keyboard typing and fit-off/fit-on behavior. A narrow418-point preview retained14/13-point bands after typing for8seconds and filled on options/blur. Evidence: external `94-release21/11–13`. Source diagnosis found pending status temporarily consumes viewport height. The candidate invalidates automatic-fit measurements when controls begin and measures after pending status clears. Controlled acceptance records pre/pending/post heights392.5/364.5/392.5 with no transient native resize after a300ms successful action. The old-source synthetic run also passed: this is candidate regression coverage, not reproduction or closure of the Work defect. Private evidence: `.data/browser-controls/1788673042386/`. Independent packaged retesting remains required.
+
 ## Frozen22 — transferred for independent UI verification
 
 Release22 freezes source54a0de38469d9cbf188133f17251a3bf75c63cb1, including the portal clipping correction, compact Power popup, bottom-anchored fresh composer and collapsed empty composer beneath detached questions. The clean frozen suite passes576 tests, skips17 and fails0 (24,783 assertions/123 files); all527 tracked source hashes remain unchanged. The packaged app passes native import, immutable tmux and deep/strict signature checks. Its328 renderer files match the frozen build. Actual packaged local-provider startup proves catalog discovery and pending native blocking/detached question fixtures; its owned proof host was stopped.
 
-The separate Work artifact at `/Users/twaldin/.agent-desktop-release22.cy83_qx9` verifies337 transferred hashes and the signature. The exact launcher was handed to the external verifier without launching it here or replacing any17–21 run. Private evidence: `.data/release22-package/`. Native22 interaction and visual acceptance remains pending. The browser supervisor is byte-identical to independently exercised21; no new browser click evidence is claimed for22.
+The separate Work artifact at `/Users/twaldin/.agent-desktop-release22.cy83_qx9` verifies337 transferred hashes and the signature. The exact launcher was handed to the external verifier without launching it here or replacing any17–21 run. Private evidence: `.data/release22-package/`. The named native22 acceptance results are recorded above; remaining surfaces and pixel parity remain open. The browser supervisor is byte-identical to independently exercised21; no new browser click evidence is claimed for22.
 
 ## Independent Work21 question and browser acceptance
 

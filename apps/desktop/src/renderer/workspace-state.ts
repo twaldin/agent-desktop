@@ -184,7 +184,8 @@ export class WorkspaceState {
       if (!newer) item.text = value.result.document.text;
       item.dirty = item.text !== value.result.document.text;
       this.notice = newer ? "Saved the submitted version. Your newer edits remain unsaved." : "File saved on the owning host.";
-    } else if (value.type === "git.stage" || value.type === "git.unstage") { this.status = value.status; this.notice = value.type === "git.stage" ? "Selected paths staged." : "Selected paths unstaged."; }
+    } else if (value.type === "git.checkout") { this.status = value.status; this.notice = `Switched to ${value.status.branch ?? "detached HEAD"}.`; void this.loadWorktrees(); }
+    else if (value.type === "git.stage" || value.type === "git.unstage") { this.status = value.status; this.notice = value.type === "git.stage" ? "Selected paths staged." : "Selected paths unstaged."; }
     else if (value.type === "git.commit" && action.type === "git.commit") { if (this.commitMessage === action.message) this.commitMessage = ""; this.notice = value.summary || `Committed ${value.commit}`; }
     else if (value.type === "worktree.create") { this.notice = `Created worktree ${value.worktree.path}`; void this.loadWorktrees(); }
     else if (value.type === "worktree.remove") { this.notice = "Managed worktree removed."; void this.loadWorktrees(); }

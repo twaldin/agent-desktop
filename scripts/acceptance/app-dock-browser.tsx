@@ -1,3 +1,4 @@
+import { offlineCache } from "../../apps/desktop/src/renderer/offline-cache";
 import { createRoot } from "react-dom/client";
 import { App } from "../../apps/desktop/src/renderer/App";
 import { defaultWindowView, type WindowViewState } from "../../apps/desktop/src/window-state";
@@ -10,8 +11,10 @@ import "../../apps/desktop/src/renderer/theme.css";
 
 const questionFixture = new URLSearchParams(location.search).has("question");
 const owner = "app-dock-owner", projectId = "dock-project", sessionId = "dock-session";
-const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string }[] = [], workspaceCalls: { query: WorkspaceQuery; hostId?: string }[] = [];
+const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string }[] = [], workspaceCalls: { target: unknown; query: WorkspaceQuery; hostId?: string }[] = [];
 let browserReads = 0, browserCreates = 0;
+const draftWrites: Extract<CommandEnvelope["command"],{type:"draft.put"}>[] = [];
+const branchWrites: CommandEnvelope[] = [];
 let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
@@ -39,14 +42,14 @@ let windowState: WindowViewState = { ...defaultWindowView(), route: { hostId: ow
 window.agentDesktopWindow = { initial: { state: structuredClone(windowState) }, save: next => { windowState = structuredClone(next); return {}; } };
 
 const workspaceQuery = async (_target: unknown, query: WorkspaceQuery, hostId?: string): Promise<WorkspaceQueryResult> => {
-  workspaceCalls.push({ query: structuredClone(query), hostId });
+  workspaceCalls.push({ target:structuredClone(_target), query: structuredClone(query), hostId });
   switch (query.type) {
     case "files.list": return { type: query.type, entries: [{ path: "src", name: "src", kind: "directory", size: 0, modifiedAt: 1, mode: 0o755 }, { path: "README.md", name: "README.md", kind: "file", size: 42, modifiedAt: 1, mode: 0o644 }] };
     case "file.stat": return { type: query.type, entry: { path: query.path, name: query.path.split("/").at(-1)!, kind: "file", size: 42, modifiedAt: 1, mode: 0o644 } };
     case "file.read": return { type: query.type, content: { kind: "text", path: query.path, text: "controlled file\n", size: 16, modifiedAt: 1, mode: 0o644, revision: "file-revision", bom: false, encoding: "utf8" } };
     case "git.status": return { type: query.type, status: structuredClone(gitStatus) };
     case "git.diff": return { type: query.type, diff: { patch: "", binary: false, staged: Boolean(query.staged), ...(query.path ? { path: query.path } : {}) } };
-    case "git.branches": return { type: query.type, branches: [] };
+    case "git.branches": return { type: query.type, branches: ["feature/dock","context-fixture"].map(name=>({name,ref:`refs/heads/${name}`,current:name===gitStatus.branch,remote:false,commit:"abc123"})) };
     case "git.worktrees": return { type: query.type, worktrees: [{ path: "/controlled/project", head: "abc123", branch: "feature/dock", detached: false, bare: false, locked: false, managed: false }] };
   }
 };
@@ -72,7 +75,16 @@ const methods: Partial<DesktopBridge> = {
   getBrowserFrame: async () => { throw new Error("Unsupported CMUX preview must not request pixels"); },
   getSessionActivity: async (requestedSession, hostId) => { activityCalls.push({ sessionId: requestedSession, hostId }); return structuredClone(activity); }, workspaceQuery,
   command: async (envelope: CommandEnvelope): Promise<CommandResult> => {
-    if (envelope.command.type === "draft.put") return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: Date.now() } };
+    if (envelope.command.type === "draft.put") {
+      draftWrites.push(structuredClone(envelope.command));
+      return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: Date.now() } };
+    }
+    if (envelope.command.type === "workspace.mutate" && envelope.command.action.type === "git.checkout") {
+      branchWrites.push(structuredClone(envelope));
+      if (envelope.command.action.expectedRevision !== gitStatus.revision) throw new Error("Wrong reviewed Git revision");
+      gitStatus.branch = envelope.command.action.branch; gitStatus.revision += "-next";
+      return {ok:true,commandId:envelope.id,value:{type:"git.checkout",status:structuredClone(gitStatus)}};
+    }
     throw new Error(`Unexpected controlled command: ${envelope.command.type}`);
   },
 };
@@ -81,7 +93,7 @@ createRoot(document.getElementById("root")!).render(<App/>);
 
 const assert = (value: unknown, message: string): asserts value => { if (!value) throw new Error(message); };
 const wait = async (read: () => unknown, label: string, timeout = 8000) => { const start = performance.now(); while (performance.now() - start < timeout) { if (read()) return; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error(`Timed out: ${label}`); };
-const button = (scope: ParentNode, label: string) => [...scope.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === label || item.getAttribute("aria-label") === label);
+const button = (scope: ParentNode | null, label: string) => [...(scope?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(item => item.textContent?.trim() === label || item.getAttribute("aria-label") === label);
 const route = () => `${windowState.route.hostId}:${windowState.route.sessionId}`;
 
 Object.assign(window, {
@@ -113,6 +125,86 @@ Object.assign(window, {
     assert(innerHeight - composer.bottom <= 2 && popup.bottom < document.querySelector(".composer")!.getBoundingClientRect().bottom && control.contains(hit), "Fresh composer is not bottom anchored or model popup is clipped");
     checks.push("fresh-chat composer remains bottom anchored with visible Power/model control");
     return { fitting: true, composer: composer.toJSON(), popup: popup.toJSON(), viewport: { width: innerWidth, height: innerHeight, devicePixelRatio } };
+  },
+  prepareComposerContext: async () => {
+    document.querySelector<HTMLElement>(".composer-selection-menu")?.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
+    await wait(()=>document.querySelector(".composer-context"),"fresh context strip");
+    const projectButton = document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!;
+    projectButton.click(); await wait(()=>document.querySelector('.composer-context-menu input'),"project search");
+    return {focus:document.activeElement?.getAttribute("aria-label")};
+  },
+  exerciseComposerProject: async () => {
+    const popup = document.querySelector<HTMLElement>(".composer-context-menu")!;
+    await wait(()=>button(popup,"Dock project"),"filtered owning-host project");
+    button(popup,"Dock project")!.click();
+    await wait(()=>document.querySelector('[aria-label="Switch branch"]')?.textContent?.includes("feature/dock"),"project native branch");
+    const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!; prompt.focus();
+  },
+  exerciseComposerBranches: async () => {
+    const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
+    assert(prompt.value==="Keep context draft", "Native composer text was not inserted");
+    document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')!.click();
+    await wait(()=>button(document.querySelector(".composer-context-menu")!,"context-fixture"),"branch catalog");
+    button(document.querySelector('.composer-context-menu'),"feature/dock")!.click();
+    await wait(()=>!document.querySelector('.composer-context-menu'),"current branch dismisses without mutation");
+    assert(branchWrites.length===0,"Choosing current branch sent a mutation");
+    document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')!.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"context-fixture"),"reopened branch menu");
+    const popup=document.querySelector<HTMLElement>(".composer-context-menu")!, bounds=popup.getBoundingClientRect();
+    const branch=button(popup,"context-fixture")!, target=branch.getBoundingClientRect();
+    assert(bounds.top>=0 && bounds.bottom<=innerHeight && branch.contains(document.elementFromPoint(target.x+target.width/2,target.y+target.height/2)),"Branch menu is clipped");
+    branch.click(); await wait(()=>!document.querySelector(".composer-context-menu"),"checkout receipt closes menu");
+    assert(branchWrites.length===1 && gitStatus.branch==="context-fixture" && prompt.value==="Keep context draft","Branch checkout lost draft or repeated command");
+    assert(branchWrites[0]!.command.type==="workspace.mutate" && "projectId" in branchWrites[0]!.command.target && branchWrites[0]!.command.target.projectId===projectId,"Wrong project checkout target");
+    document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')!.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…"),"branch creation action");
+    button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…")!.click();
+    await wait(()=>document.activeElement?.getAttribute("aria-label")==="New branch name","new branch field focus");
+    return {menu:document.querySelector('.composer-context-menu')!.getBoundingClientRect().toJSON()};
+  },
+  finishComposerContext: async () => {
+    const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
+    const create=button(document.querySelector('.composer-context-menu'),"Create branch")!;
+    assert(!create.disabled,"Named new branch remains disabled"); create.click();
+    await wait(()=>!document.querySelector('.composer-context-menu'),"branch creation receipt");
+    assert(gitStatus.branch==="new-context-branch" && branchWrites.length===2,"Creation did not use expected branch command");
+    const command=branchWrites[1]!.command;
+    assert(command.type==="workspace.mutate" && command.action.type==="git.checkout" && command.action.create===true,"Create action omitted native creation intent");
+    document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
+    await wait(()=>document.querySelector('.composer-context-menu'),"clear project menu");
+    button(document.querySelector(".composer-context-menu")!,"Don’t work in a project")!.click();
+    await wait(()=>!document.querySelector('[aria-label="Switch branch"]'),"cleared project context");
+    assert(prompt.value==="Keep context draft","Changing project cleared typed text");
+    await wait(()=>draftWrites.some(write=>write.draft.id==="new-conversation" && write.draft.projectId===null && write.draft.text==="Keep context draft"),"durable text after project removal");
+    document.querySelector<HTMLButtonElement>('[aria-label="Select where to run the chat"]')!.click();
+    await wait(()=>document.querySelector('.composer-context-menu[aria-label="Select where to run the chat"]'),"host menu");
+    const hostMenu=document.querySelector<HTMLElement>('.composer-context-menu')!;
+    assert(hostMenu.textContent?.includes("Controlled workstation"),"Host menu hides actual owning host");
+    hostMenu.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
+    await wait(()=>!document.querySelector('.composer-context-menu'),"host popup dismissed");
+    assert(document.activeElement?.getAttribute("aria-label")==="Select where to run the chat","Context Escape lost focus");
+    checks.push("new-chat context menus search native project catalog, route reviewed branch commands, preserve durable text, clear project and restore host-trigger focus");
+    return {fitting:true,branchWrites,projectId:null,text:prompt.value,context:document.querySelector('.composer-context')!.getBoundingClientRect().toJSON()};
+  },
+  checkDisposedComposerContext: async () => {
+    const delayedProject={id:"delayed-project",hostId:owner,name:"Delayed project",path:"/controlled/delayed",createdAt:1};
+    state.projects.push(delayedProject);
+    for(const listener of listeners) listener({type:"state",hostId:owner,state:structuredClone(state)});
+    const original=offlineCache.read, gate=Promise.withResolvers<string|null>(); let requested=false;
+    offlineCache.read=async key=>{if(key.endsWith(":project:delayed-project")){requested=true;return gate.promise;} return original(key);};
+    try{
+      document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
+      await wait(()=>button(document.querySelector('.composer-context-menu'),"Delayed project"),"new delayed project catalog");
+      button(document.querySelector('.composer-context-menu'),"Delayed project")!.click();
+      await wait(()=>requested,"delayed recovery read started");
+      document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
+      await wait(()=>button(document.querySelector('.composer-context-menu'),"Don’t work in a project"),"clear delayed project");
+      button(document.querySelector('.composer-context-menu'),"Don’t work in a project")!.click();
+      await wait(()=>!document.querySelector('[aria-label="Switch branch"]'),"delayed context unmounted");
+      gate.resolve(null); await new Promise(resolve=>setTimeout(resolve,100));
+      assert(!workspaceCalls.some(call=>(call.target as {projectId?:string})?.projectId==="delayed-project"),"Disposed context started a stale Git read after recovery");
+      checks.push("switching project during delayed recovery cancels the old context read without disconnecting shared panels");
+    }finally{offlineCache.read=original;gate.resolve(null);}
   },
   appDockProgress: () => ({ checks, route: route(), activityCalls, workspaceCalls: workspaceCalls.map(call => call.query.type), dock: windowState.dock }),
   runAppDockAcceptance: async () => {

@@ -1,0 +1,22 @@
+.composer-context{display:flex;align-items:center;gap:8px;min-height:38px;padding:4px 6px 7px;margin:0 12px -3px;background:color-mix(in srgb,var(--composer-surface) 40%,var(--app-surface));border-radius:calc(var(--composer-radius) * var(--corner-radius-scale,1)) calc(var(--composer-radius) * var(--corner-radius-scale,1)) 0 0;corner-shape:superellipse(var(--corner-exponent));}
+.composer-context>button{display:flex;align-items:center;gap:6px;min-width:0;max-width:45%;height:28px;padding:4px 8px;border-radius:var(--button-radius,9px);font:inherit;font-size:var(--font-size,14px);color:var(--text);background:transparent}
+.composer-context>button>span:first-of-type{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.composer-context>button:hover,.composer-context>button[aria-expanded=true]{background:var(--hover)}
+.composer-context .icon{width:16px;height:16px;flex:none}
+.context-offline{font-size:11px;color:var(--secondary)}
+.composer-context-menu{position:fixed;z-index:120;padding:6px;border:var(--border-width,1px) solid var(--border);border-radius:calc(var(--menu-radius,12px) * var(--corner-radius-scale,1));corner-shape:superellipse(var(--corner-exponent));background:var(--menu-surface,var(--elevated-surface));box-shadow:0 8px 24px #0003;overflow:auto;color:var(--text);font:inherit}
+.composer-context-menu button{display:flex;align-items:center;gap:8px;width:100%;min-height:28px;padding:4px 8px;background:transparent;border:0;border-radius:var(--button-radius,9px);text-align:left;font:inherit}
+.composer-context-menu button:hover:not(:disabled),.composer-context-menu button:focus-visible{background:var(--hover);outline:0}
+.composer-context-menu button[aria-checked=true]{background:var(--selected)}
+.composer-context-menu button>span{min-width:0;flex:1;overflow-wrap:anywhere}.composer-context-menu button small{display:block;color:var(--secondary);font-size:12px}
+.composer-context-menu .icon{width:16px;height:16px;flex:none}.composer-context-menu hr{border:0;border-top:var(--border-width,1px) solid var(--border);margin:5px 8px}
+.context-search{display:flex;align-items:center;gap:7px;padding:6px 8px;color:var(--secondary)}
+.context-search input{background:transparent;border:0;outline:0;min-width:0;flex:1;color:var(--text);font:inherit}
+.context-options{max-height:290px;overflow:auto}.composer-context-menu p{margin:4px 8px;color:var(--secondary);font-size:12px;overflow-wrap:anywhere}
+.composer-context-menu form{padding:8px}.composer-context-menu form>label{display:grid;gap:6px}.composer-context-menu form input{width:100%;min-width:0;padding:7px 8px;background:var(--hover);border:1px solid var(--border);border-radius:var(--button-radius)}
+.context-form-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}.context-form-actions button{width:auto}
+@container composer-region (max-width:450px){.composer-context{gap:2px;margin-inline:4px;padding-inline:2px}.composer-context>button{padding-inline:4px}.context-offline{display:none}}
+
+.context-search input:focus-visible{outline:none}
+
+.context-branches{min-height:200px}

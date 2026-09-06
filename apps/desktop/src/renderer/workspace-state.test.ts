@@ -46,6 +46,7 @@ async function fixture() {
           case "file.write": value = { type: action.type, result: await native.writeText(action.path, action) }; break;
           case "git.stage": value = { type: action.type, status: await native.stage(action.paths) }; break;
           case "git.unstage": value = { type: action.type, status: await native.unstage(action.paths, action.expectedRevision) }; break;
+          case "git.checkout": value = { type:action.type, status: await native.checkout(action.branch,action.expectedRevision,action.create) }; break;
           case "git.commit": value = { type: action.type, ...await native.commit(action.message, action.expectedRevision) }; break;
           case "worktree.create": value = { type: action.type, worktree: await native.createWorktree(action.options) }; break;
           case "worktree.remove": throw new Error("Removal is covered through the host adapter's managed-path contract.");
@@ -63,6 +64,32 @@ async function fixture() {
 }
 
 describe("workspace renderer against actual file and Git services", () => {
+  test("branch checkout refreshes native files while preserving unsaved editor text", async () => {
+    const f = await fixture();
+    f.git("switch", "-c", "feature");
+    await writeFile(join(f.path, "sample.txt"), "feature version\n");
+    f.git("commit", "-am", "Feature file"); f.git("switch", "main");
+    await f.data.open("sample.txt"); f.data.edit("sample.txt", "my unsaved editor buffer\n");
+    await f.data.loadGit();
+    await f.data.mutate({ type: "git.checkout", branch: "feature", expectedRevision: f.data.status!.revision });
+    expect(f.git("branch", "--show-current")).toBe("feature");
+    expect(f.data.status?.branch).toBe("feature");
+    expect(f.data.documents.get("sample.txt")).toMatchObject({ text: "my unsaved editor buffer\n", dirty: true, conflict: { text: "feature version\n" } });
+    expect(f.owners.every(owner => owner === "home")).toBe(true);
+  });
+  test("branch creation recovers a lost receipt without attempting another checkout", async () => {
+    const f = await fixture(); await f.data.loadGit(); f.dropNextReceipt();
+    await f.data.mutate({ type: "git.checkout", branch: "recovered-feature", create: true, expectedRevision: f.data.status!.revision });
+    expect(f.git("branch", "--show-current")).toBe("recovered-feature");
+    expect(f.data.pending?.uncertain).toBe(true);
+    const original = f.deliveries[0]!;
+    const next = new WorkspaceState(f.bridge, "home", { projectId: "project" }, f.cache, "home");
+    await next.restore(); next.setConnected(true); await next.retry();
+    expect(f.deliveries).toEqual([original, original]);
+    expect(next.pending).toBeUndefined(); expect(next.errors.action).toBeUndefined();
+    expect(next.status?.branch).toBe("recovered-feature");
+    expect(next.notice).toBe("Switched to recovered-feature.");
+  });
   test("edits made during a real save survive its completion and following refresh", async () => {
     const f = await fixture(); await f.data.open("sample.txt"); f.data.edit("sample.txt", "submitted\n");
     const started = deferred(); const release = deferred(); f.delay(async () => { started.resolve(); await release.promise; });
