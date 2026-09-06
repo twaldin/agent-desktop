@@ -281,6 +281,10 @@ Object.assign(window, {
         "reload request lost target or epoch",
     );
     const fitCount = fitRequests.length;
+    assert(document.body.innerText.includes("Browser action in progress"), "Delayed action did not expose pending status");
+    const pendingHeight = document.querySelector<HTMLElement>(".browser-viewport")!.getBoundingClientRect().height;
+    await sleep(300);
+    assert(document.querySelector<HTMLElement>(".browser-viewport")!.getBoundingClientRect().height === pendingHeight, "Pending viewport geometry changed before receipt");
     third.resolve();
     await wait(() => !document.querySelector<HTMLButtonElement>('[aria-label="Reload page"]')!.disabled, "delayed successful browser action");
     await sleep(300);
