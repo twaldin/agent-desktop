@@ -15,6 +15,9 @@ let stopping = false;
 let shuttingDown: Promise<void> | undefined;
 let pendingDispose: { id: string; exitCode: number; deadline: ReturnType<typeof setTimeout> } | undefined;
 let snapshotRevision = 0;
+let activeRequests = 0;
+let promotionInFlight = false;
+let promotedOwnerRetired = false;
 let latestActivity: SessionSnapshot["activity"] | undefined;
 
 function snapshot(): SessionSnapshot | undefined {
@@ -111,12 +114,21 @@ function browserMetadata(value: unknown): BrowserMetadataAvailability {
 }
 
 async function request(message: Extract<ParentMessage, { type: "request" }>): Promise<void> {
+  let admitted = false, ownsPromotion = false;
+  const originId = session?.id, originFile = session?.sessionFile;
   const respond = (ok: boolean, value?: unknown, error?: unknown, phase?: "accepted" | "completion") => {
     send({ type: "response", id: message.id, ok, value,
       ...(error === undefined ? {} : { error: remoteError(error) }), phase, snapshot: snapshot() });
   };
   try {
     if (stopping && message.operation !== "dispose") throw new Error("OMP worker is stopping");
+    const interactive = ["listInteractions", "respondInteraction", "cancelInteractions", "dispose"].includes(message.operation);
+    if ((promotionInFlight || promotedOwnerRetired) && !interactive) throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
+    if (message.operation === "promoteBtw") {
+      if (activeRequests) throw new Error("Wait for the current native operation before promoting a side answer.");
+      promotionInFlight = ownsPromotion = true;
+    }
+    activeRequests++; admitted = true;
     switch (message.operation) {
       case "init": {
         if (runtime || initializing) throw new Error("OMP worker can initialize only once");
@@ -186,6 +198,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getBtw": respond(true, requireSession().getBtw()); break;
       case "startBtw": respond(true, requireSession().startBtw(message.args)); break;
       case "cancelBtw": respond(true, requireSession().cancelBtw(message.args.runId)); break;
+      case "promoteBtw": respond(true, await requireSession().promoteBtw(message.args.runId)); break;
       case "getBrowserMetadata": {
         const owner = requireSession().id;
         let native: { listTabsForOwner?: (ownerSessionId: string) => unknown };
@@ -269,6 +282,9 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       respond(false, undefined, error, "accepted");
       respond(false, undefined, error, "completion");
     } else respond(false, undefined, error);
+  } finally {
+    if (admitted) activeRequests--;
+    if (ownsPromotion) { promotionInFlight = false; promotedOwnerRetired = session?.id !== originId || session?.sessionFile !== originFile; }
   }
 }
 

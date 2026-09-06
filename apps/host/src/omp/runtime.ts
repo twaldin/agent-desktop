@@ -87,6 +87,7 @@ export interface OmpSession {
   getBtw(): NativeBtwSnapshot | null;
   startBtw(input: NativeBtwStart): NativeBtwSnapshot;
   cancelBtw(runId: string): NativeBtwSnapshot | null;
+  promoteBtw(runId: string): Promise<{ cancelled: boolean; sessionId: string; sessionFile: string }>;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
@@ -379,6 +380,7 @@ export class OmpRuntime {
     if (!sessionFile) throw new Error("OMP did not allocate a session file");
     const reservedFile = reservation ?? path.resolve(sessionFile);
     this.#reservedFiles.add(reservedFile);
+    const reservedPaths = new Set([reservedFile]);
     try {
       // Session extension factories are preloaded exactly once below, after
       // host-owned settings overrides are applied. Discovery contexts still
@@ -450,9 +452,16 @@ export class OmpRuntime {
         session.buildTranscriptSessionContext({ collapseCompactedHistory: false, keepDanglingToolCalls: true }).messages,
         transcriptEntries(),
       );
+      let promotionState: "idle" | "running" | "retired" = "idle";
+      let promotionCall: Promise<{ cancelled: boolean; sessionId: string; sessionFile: string }> | undefined;
       const listeners = new Set<OmpEventListener>();
       if (options.onEvent) listeners.add(options.onEvent);
-      const emitBridge = (event: OmpBridgeEvent) => { for (const listener of listeners) listener(event); };
+      const emitBridge = (event: OmpBridgeEvent) => {
+        // Native branch hooks may ask for input. Keep only those interactions
+        // on the still-owned origin; new-branch presentation waits for reopen.
+        if (promotionState === "idle" || promotionState === "running" && (event.type === "extension_interaction_requested" || event.type === "extension_interaction_resolved"))
+          for (const listener of listeners) listener(event);
+      };
       let goalController: NativeGoalController | undefined;
       if (options.interactions) {
         bridge = new OmpInteractionBridge(session.sessionId, emitBridge);
@@ -467,6 +476,7 @@ export class OmpRuntime {
       const ui = bridge;
       let extensionStartup: Promise<void> | undefined;
       const unsubscribe = session.subscribe(event => {
+        if (promotionState !== "idle") return;
         goalController?.observe(event);
         detachedQuestions.observe(event);
         mirror.accept(event);
@@ -482,7 +492,8 @@ export class OmpRuntime {
       let accountMutation = false;
       let goalMutation = false;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
-      const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); };
+      const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
+      const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session);
       const controls = new NativeSessionControls(session, options.approvalOverride);
       const nativeGoalController = goalController = new NativeGoalController(session, manager, () => ({
@@ -514,7 +525,8 @@ export class OmpRuntime {
           return transcript();
         },
         getSessionActivity: () => {
-          assertSessionActive();
+          // IPC needs final identity/activity metadata while this worker retires.
+          if (disposed) throw new Error("OMP session is disposed");
           const goal = goalActivity(session);
           const nativeJobs = session.getAsyncJobSnapshot({ recentLimit: 20 });
           const job = (value: NonNullable<typeof nativeJobs>["running"][number]) => ({ ...value, id: value.id.slice(0, 200), label: value.label.slice(0, 500), ...(value.agentId ? { agentId: value.agentId.slice(0, 200) } : {}) });
@@ -599,6 +611,30 @@ export class OmpRuntime {
         getBtw: () => { assertSessionActive(); return btw.get(); },
         startBtw: input => { assertSessionActive(); return btw.start(input); },
         cancelBtw: runId => { assertSessionActive(); return btw.cancel(runId); },
+        promoteBtw: runId => {
+          assertIdle();
+          if (ui?.list().length || interruptsInFlight) throw new Error("Resolve pending native interactions before promoting a side answer.");
+          const originId = session.sessionId, originFile = session.sessionFile;
+          promotionState = "running";
+          promotionCall = (async () => {
+          try {
+            const promoted = await btw.promote(runId);
+            if (!promoted.cancelled) {
+              if (session.sessionId === originId || !promoted.sessionFile || promoted.sessionFile !== session.sessionFile)
+                throw new Error("Native side-chat promotion did not establish a new persisted identity.");
+              await manager.flush();
+            }
+            return { cancelled: promoted.cancelled, sessionId: session.sessionId, sessionFile: session.sessionFile! };
+          } finally {
+            const changed = session.sessionId !== originId || session.sessionFile !== originFile;
+            // Hold both paths until native disposal has been acknowledged. Never
+            // let old handle callbacks/tool contexts continue under a new owner.
+            if (session.sessionFile) { const file = path.resolve(session.sessionFile); this.#reservedFiles.add(file); reservedPaths.add(file); }
+            promotionState = changed ? "retired" : "idle";
+          }
+          })();
+          return promotionCall;
+        },
         mutateGoal: async request => {
           // Pause/drop mirror InteractiveMode: they may settle between native
           // tool executions without aborting the provider turn. Other goal
@@ -792,13 +828,13 @@ export class OmpRuntime {
             return await accountBridge.list(session.sessionId);
           } finally { accountMutation = false; }
         },
-        listInteractions: async () => { assertSessionActive(); return ui?.list() ?? []; },
+        listInteractions: async () => { assertInteractionActive(); return ui?.list() ?? []; },
         respondInteraction: async (id, response) => {
-          assertSessionActive();
+          assertInteractionActive();
           if (!ui) throw new Error("OMP interaction bridge is not installed");
           ui.respond(id, response);
         },
-        cancelInteractions: async (reason = "cancelled") => { assertSessionActive(); ui?.cancelAll(reason); },
+        cancelInteractions: async (reason = "cancelled") => { assertInteractionActive(); ui?.cancelAll(reason); },
         getControls: async () => { assertSessionActive(); return controls.read(); },
         setApprovalOverride: async (mode, expectedRevision) => {
           assertIdle();
@@ -821,15 +857,18 @@ export class OmpRuntime {
           admissionAbort?.abort();
           ui?.dispose();
           steering.cancelQueued("Session stopped before this steer left the native queue");
-          session.beginDispose();
           disposeCall = (async () => {
+            // Resolving/cancelling UI above releases native branch hooks. A branch
+            // already in flight still owns both files until it settles.
+            await promotionCall?.catch(() => {});
+            session.beginDispose();
             try { await session.dispose(); }
             finally {
               await steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified");
               await detachedQuestions.settle();
               steering.close();
               unsubscribe(); listeners.clear(); auth.close();
-              this.#sessions.delete(handle); this.#reservedFiles.delete(reservedFile);
+              this.#sessions.delete(handle); for (const file of reservedPaths) this.#reservedFiles.delete(file);
             }
           })();
           return disposeCall;

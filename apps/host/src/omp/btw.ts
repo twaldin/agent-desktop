@@ -2,6 +2,7 @@ import { prompt } from "@oh-my-pi/pi-utils";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
+import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
 
 const nativeAgentEntry = Bun.resolveSync("@oh-my-pi/pi-coding-agent", import.meta.dir);
@@ -13,8 +14,17 @@ const MAX_ERROR_BYTES = 4 * 1024;
 const MAX_RETAINED_RUNS = 16;
 const MAX_SEEN_RUNS = 128;
 
-type NativeSideSession = Pick<AgentSession, "sessionId" | "model" | "runEphemeralTurn">;
-interface Request { input: NativeBtwStart; controller: AbortController; snapshot: NativeBtwSnapshot }
+type NativeSideSession = Pick<AgentSession, "sessionId" | "model" | "runEphemeralTurn" | "sessionManager" | "branchFromBtw">;
+export interface NativeBtwPromotion { cancelled: boolean; sessionFile: string | undefined }
+interface Promotion { state: "running" | "settled"; promise: Promise<NativeBtwPromotion> }
+interface Request {
+  input: NativeBtwStart;
+  controller: AbortController;
+  snapshot: NativeBtwSnapshot;
+  origin: { leafId: string | null; sessionId: string };
+  assistantMessage?: AssistantMessage;
+  promotion?: Promotion;
+}
 
 function bounded(value: string, maxBytes: number): string {
   const bytes = new TextEncoder().encode(value);
@@ -25,6 +35,19 @@ function bounded(value: string, maxBytes: number): string {
 }
 function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }
 function copy(snapshot: NativeBtwSnapshot): NativeBtwSnapshot { return { ...snapshot }; }
+function assistantMessageWithReplyText(assistantMessage: AssistantMessage, replyText: string): AssistantMessage {
+  const content: AssistantMessage["content"] = [];
+  let replacedText = false;
+  for (const part of assistantMessage.content) {
+    if (part.type === "thinking") { content.push({ type: "thinking", thinking: part.thinking }); continue; }
+    if (part.type === "redactedThinking") continue;
+    if (part.type !== "text") { content.push(part); continue; }
+    if (replacedText) continue;
+    content.push({ type: "text", text: replyText }); replacedText = true;
+  }
+  if (!replacedText) content.push({ type: "text", text: replyText });
+  return { ...assistantMessage, content, providerPayload: undefined };
+}
 
 export class NativeBtwController {
   #current?: Request;
@@ -38,6 +61,7 @@ export class NativeBtwController {
 
   start(input: NativeBtwStart): NativeBtwSnapshot {
     this.#assertActive();
+    if (this.#current?.promotion?.state === "running") throw new Error("Native /btw promotion is in progress");
     const runId = input.runId.trim(), question = input.question.trim();
     if (!runId || byteLength(runId) > 200) throw new Error("Invalid native /btw run identity");
     if (!question) throw new Error("Native /btw requires a question");
@@ -57,7 +81,7 @@ export class NativeBtwController {
     const startedAt = this.now();
     const request: Request = { input: { runId, question }, controller: new AbortController(), snapshot: {
       runId, sessionId: this.session.sessionId, question, status: "running", answer: "", startedAt, updatedAt: startedAt,
-    } };
+    }, origin: { leafId: this.session.sessionManager.getLeafId(), sessionId: this.session.sessionManager.getSessionId() } };
     this.#current = request;
     this.#records.set(runId, request);
     this.#seen.set(runId, question);
@@ -72,6 +96,28 @@ export class NativeBtwController {
     if (!retained) return null;
     if (this.#current === retained) this.#cancel(retained);
     return copy(retained.snapshot);
+  }
+
+  async promote(runId: string): Promise<NativeBtwPromotion> {
+    this.#assertActive();
+    const request = this.#records.get(runId);
+    if (!request) throw new Error("Native /btw run is unknown or no longer inspectable");
+    if (request !== this.#current) throw new Error("Native /btw run was replaced and cannot be promoted");
+    if (request.snapshot.status !== "complete" || !request.assistantMessage) throw new Error("Native /btw answer is not complete");
+    if (request.promotion) {
+      if (request.promotion.state === "running") throw new Error("Native /btw promotion is already in progress");
+      return request.promotion.promise;
+    }
+    const { leafId, sessionId } = request.origin;
+    if (!leafId) throw new Error("Native /btw session has no branch point");
+    if (this.session.sessionManager.getSessionId() !== sessionId || this.session.sessionManager.getLeafId() !== leafId)
+      throw new Error("Native /btw session changed since the side question started");
+    const promise = this.session.branchFromBtw(request.input.question,
+      assistantMessageWithReplyText(request.assistantMessage, request.snapshot.answer), leafId, sessionId);
+    const promotion: Promotion = { state: "running", promise };
+    request.promotion = promotion;
+    void promise.then(() => { promotion.state = "settled"; }, () => { promotion.state = "settled"; });
+    return promise;
   }
 
   dispose(): void {
@@ -100,6 +146,7 @@ export class NativeBtwController {
           error: "Native /btw answer exceeded 1 MiB", updatedAt: this.now() };
         return;
       }
+      request.assistantMessage = result.assistantMessage;
       request.snapshot = { ...request.snapshot, status: "complete", answer: result.replyText, updatedAt: this.now() };
     } catch (cause) {
       if (request.snapshot.status !== "running") return;

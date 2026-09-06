@@ -417,6 +417,7 @@ export class WorkerRuntime {
   #handle(client: WorkerClient): WorkerSession {
     if (!client.snapshot) throw new Error("OMP worker did not return native session metadata");
     const sessionFile = path.resolve(client.snapshot.sessionFile);
+    const reservedPaths = new Set([sessionFile]);
     this.#openFiles.add(sessionFile);
     const state = () => client.snapshot!;
     let disposeCall: Promise<void> | undefined;
@@ -442,6 +443,10 @@ export class WorkerRuntime {
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),
       startBtw: input => client.request({ operation: "startBtw", args: input }, 15_000),
       cancelBtw: runId => client.request({ operation: "cancelBtw", args: { runId } }, 15_000),
+      promoteBtw: async runId => {
+        try { return await client.request<{ cancelled: boolean; sessionId: string; sessionFile: string }>({ operation: "promoteBtw", args: { runId } }); }
+        finally { if (client.snapshot?.sessionFile) { const file = path.resolve(client.snapshot.sessionFile); this.#openFiles.add(file); reservedPaths.add(file); } }
+      },
       getBrowserMetadata: async () => {
         const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };
@@ -485,7 +490,7 @@ export class WorkerRuntime {
         if (!disposeCall) disposeCall = (async () => {
           try { await client.close(); }
           finally {
-            this.#sessions.delete(handle); this.#clients.delete(client); this.#openFiles.delete(sessionFile);
+            this.#sessions.delete(handle); this.#clients.delete(client); for (const file of reservedPaths) this.#openFiles.delete(file);
           }
         })();
         return disposeCall;
