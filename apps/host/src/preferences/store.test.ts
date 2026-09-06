@@ -164,6 +164,7 @@ describe("bounded preference schema and reusable visual registry", () => {
     expect(parsePreferenceChange({ key: "theme.background", value: { kind: "asset", sha256: "a".repeat(64), fit: "cover", opacity: .5, blur: 10 } })).toMatchObject({ value: { kind: "asset", sha256: "a".repeat(64) } });
     expect(parsePreferenceChange({ key: "theme.background", value: { kind: "gradient", angle: 45, stops: [{ color: "#123456", position: 0 }, { color: "#abcdef", position: 1 }] } })).toMatchObject({ value: { kind: "gradient" } });
     expect(parsePreferenceChange({ key: "git.branchPrefix", value: "work/" })).toEqual({ key: "git.branchPrefix", value: "work/" });
+    expect(parsePreferenceChange({ key: "git.branchPrefix", value: "" })).toEqual({ key: "git.branchPrefix", value: "" });
   });
 
   test("rejects host configuration, credentials, filesystem/URL payloads, window layout and malformed schema", () => {

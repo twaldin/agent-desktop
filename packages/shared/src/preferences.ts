@@ -204,8 +204,9 @@ export function parsePreferenceKey(value: unknown): PreferenceKey {
 
 function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[PreferenceKey] {
   if (key === "git.branchPrefix") {
-    const text = boundedText(value, 120).trim();
-    if (!text.endsWith("/") || text.startsWith("/") || text.includes("//") || !/^[A-Za-z0-9._/-]+$/.test(text) || text.includes("..") || text.endsWith("/.")) return invalid("A branch prefix must be a safe nonempty Git path prefix ending in '/'.");
+    if (typeof value !== "string" || value.length > 120 || /[\u0000-\u001f\u007f]/.test(value)) return invalid("A branch prefix is too long or contains control characters.");
+    const text = value.trim();
+    if (text && (!text.endsWith("/") || text.startsWith("/") || text.includes("//") || !/^[A-Za-z0-9._/-]+$/.test(text) || text.includes("..") || text.endsWith("/."))) return invalid("A branch prefix must be a safe Git path prefix ending in '/'.");
     return text;
   }
   if (key === "theme.mode") return enumeration(value, ["system", "light", "dark"] as const);

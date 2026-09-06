@@ -232,13 +232,18 @@ Object.assign(window, {
   },
   finishComposerContext: async () => {
     const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
-    const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!, create=button(dialog,"Create and checkout")!;
-    const setPrefix=button(dialog,"Set prefix")!; setPrefix.click();
-    const prefix=document.querySelector<HTMLInputElement>('[aria-label="Branch prefix"]')!;
-    prefix.value="team/"; prefix.dispatchEvent(new Event("input",{bubbles:true})); prefix.dispatchEvent(new Event("change",{bubbles:true}));
-    button(dialog,"Save prefix")!.click(); await wait(()=>preferenceWrites.length===1,"saved branch prefix");
+    const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!;
+    button(dialog,"Set prefix")!.click(); await wait(()=>document.querySelector<HTMLInputElement>('[aria-label="New branch prefix"]'),"Git settings navigation");
+    const prefix=document.querySelector<HTMLInputElement>('[aria-label="New branch prefix"]')!;
+    prefix.focus(); prefix.select(); document.execCommand("insertText",false,"team/");
+    button(document.querySelector<HTMLElement>('[aria-label="Git settings"]'),"Save")!.click(); await wait(()=>preferenceWrites.length===1,"saved branch prefix");
     assert(preferenceWrites[0]!.command.type==="preferences.put" && preferenceWrites[0]!.command.change.key==="git.branchPrefix" && (preferenceWrites[0]!.command.change as any).value==="team/","Set prefix did not persist through shared preferences");
-    assert(document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')!.value==="team/","Saved prefix did not update the branch draft");
+    button(document.querySelector<HTMLElement>('[aria-label="Git settings"]'),"Close Git settings")!.click();
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]'),"return from Git settings");
+    document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')!.click(); await wait(()=>button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…"),"reopen branch modal after settings"); button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…")!.click(); await wait(()=>document.querySelector<HTMLInputElement>('[aria-label="Branch name"]'),"reopened branch field");
+    const createDialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!, create=button(createDialog,"Create and checkout")!;
+    assert(document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')!.value==="team/" && prompt.value==="Keep context draft","Saved prefix or ordinary draft was lost when returning from Git settings");
+    document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')!.focus(); document.execCommand("insertText",false,"new-context-branch");
     const deliveriesBeforeCreate=branchWrites.length; checkoutUnknownOnce=true;
     assert(!create.disabled,"Named new branch remains disabled"); create.click();
     await wait(()=>button(document.querySelector('.composer-branch-dialog'),"Retry original workspace command"),"uncertain create receipt");

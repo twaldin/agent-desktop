@@ -28,3 +28,4 @@
 .context-search input:focus-visible{outline:none}
 
 .context-branches{min-height:200px}
+.git-settings .settings-field{display:flex;flex-direction:column;gap:6px;max-width:420px;font-size:14px;font-weight:550}.git-settings .settings-field input{height:36px;padding:7px 10px;color:var(--text);background:var(--app-surface);border:1px solid var(--border);border-radius:9px;font:inherit}.git-settings .settings-field input:focus{border-color:var(--accent,#2f7cf6);outline:1px solid var(--accent,#2f7cf6)}.git-settings .settings-success{color:var(--success,#39a96b)}

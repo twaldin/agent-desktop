@@ -12,19 +12,17 @@ export interface ComposerContextHandle { openProjects(anchor: HTMLButtonElement)
 export const ComposerContext = forwardRef<ComposerContextHandle, {
   hostId: string; hostName: string; hosts: HostOption[]; projects: Project[]; projectId: string | null; connected: boolean; addingProject: boolean;
   workspace?: WorkspaceState; onProject(id: string | null): void; onHost(id: string): void; onAddProject(): void;
-  branchPrefix?: string; onBranchPrefixChange?(prefix: string): Promise<void>;
+  branchPrefix?: string; onOpenGitSettings?(): void;
   onCheckout(branch: string, create: boolean): Promise<void>;
-}>(function ComposerContext({ hostId, hostName, hosts, projects, projectId, connected, addingProject, workspace, onProject, onHost, onAddProject, branchPrefix = "codex/", onBranchPrefixChange, onCheckout }, ref) {
+}>(function ComposerContext({ hostId, hostName, hosts, projects, projectId, connected, addingProject, workspace, onProject, onHost, onAddProject, branchPrefix = "codex/", onOpenGitSettings, onCheckout }, ref) {
   const [open, setOpen] = useState<Menu>(), [query, setQuery] = useState(""), [newBranch, setNewBranch] = useState("");
-  const [prefixEditor, setPrefixEditor] = useState(false), [prefixDraft, setPrefixDraft] = useState(branchPrefix), [prefixError, setPrefixError] = useState<string>();
   const [, redraw] = useReducer(value => value + 1, 0);
   const root = useRef<HTMLDivElement>(null), menu = useRef<HTMLDivElement>(null), branchDialog = useRef<HTMLDialogElement>(null), branchInput = useRef<HTMLInputElement>(null), anchor = useRef<HTMLButtonElement>(null), anchorAlign = useRef<"start" | "center">("start");
   const currentContext = useRef({ workspace, open }); currentContext.current = { workspace, open };
   const [position, setPosition] = useState<CSSProperties>();
   const project = projects.find(item => item.id === projectId), host = hosts.find(item => item.hostId === hostId);
   const disabledGit = !connected || !workspace?.status || !workspace.restored || workspace.busy || Boolean(workspace.pending);
-  useEffect(() => { setOpen(undefined); setQuery(""); setNewBranch(""); setPrefixEditor(false); }, [hostId, projectId]);
-  useEffect(() => { if (!prefixEditor) setPrefixDraft(branchPrefix); }, [branchPrefix, prefixEditor]);
+  useEffect(() => { setOpen(undefined); setQuery(""); setNewBranch(""); }, [hostId, projectId]);
   useEffect(() => {
     if (!workspace) return;
     let disposed = false;
@@ -121,15 +119,15 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
       </>}
     </div>,document.body)}
     {open === "create-branch" && createPortal(<dialog ref={branchDialog} className="composer-branch-dialog" aria-labelledby="composer-branch-dialog-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
-      <form onSubmit={event => { event.preventDefault(); if (prefixEditor) { const value = prefixDraft.trim(); if (!value || !value.endsWith("/") || !/^[A-Za-z0-9._/-]+$/.test(value) || value.includes("//") || value.includes("..")) { setPrefixError("Use a safe Git prefix ending in '/'."); return; } setPrefixError(undefined); void onBranchPrefixChange?.(value).then(() => { setPrefixEditor(false); setNewBranch(current => { const slash = current.indexOf("/"); return `${value}${slash >= 0 ? current.slice(slash + 1) : current}`; }); }, cause => setPrefixError(cause instanceof Error ? cause.message : String(cause))); return; } if (canCreateBranch) void checkout(trimmedBranch,true); }}>
+      <form onSubmit={event => { event.preventDefault(); if (canCreateBranch) void checkout(trimmedBranch,true); }}>
         <div className="context-dialog-header"><h2 id="composer-branch-dialog-title">Create and checkout branch</h2><button type="button" className="context-dialog-close" aria-label="Close dialog" onClick={close}><Icon name="close"/></button></div>
-        <div className="context-branch-label"><label htmlFor={prefixEditor ? "composer-branch-prefix" : "composer-new-branch"}>{prefixEditor ? "Branch prefix" : "Branch name"}</label><button type="button" onClick={() => { setPrefixError(undefined); setPrefixDraft(branchPrefix); setPrefixEditor(value => !value); }}>{prefixEditor ? "Cancel" : "Set prefix"}</button></div>
-        {prefixEditor ? <><input id="composer-branch-prefix" aria-label="Branch prefix" value={prefixDraft} onChange={event => setPrefixDraft(event.target.value)} placeholder="codex/" autoFocus aria-invalid={Boolean(prefixError)}/>{prefixError && <p className="context-branch-error" role="alert">{prefixError}</p>}</> : <input ref={branchInput} id="composer-new-branch" aria-label="Branch name" value={newBranch} onChange={event => setNewBranch(event.target.value)} placeholder="new-branch" autoFocus aria-invalid={branchEndsWithSlash || branchExists || undefined}/>} 
+        <div className="context-branch-label"><label htmlFor="composer-new-branch">Branch name</label><button type="button" onClick={() => { close(); onOpenGitSettings?.(); }}>Set prefix</button></div>
+        <input ref={branchInput} id="composer-new-branch" aria-label="Branch name" value={newBranch} onChange={event => setNewBranch(event.target.value)} placeholder="new-branch" autoFocus aria-invalid={branchEndsWithSlash || branchExists || undefined}/>
         {branchEndsWithSlash ? <p className="context-branch-error" role="alert">Branch name cannot end with “/”.</p> : branchExists && !workspace?.busy ? <p className="context-branch-error" role="alert">Branch already exists.</p> : null}
         {workspace?.cacheWarning && <p className="context-branch-error" role="alert">{workspace.cacheWarning}</p>}
         {workspace?.errors.action && <p className="context-branch-error" role="alert">{workspace.errors.action}</p>}
         {workspace?.pending && <button className="context-retry" type="button" disabled={!connected || workspace.busy} onClick={() => void retryCheckout()}>Retry original workspace command</button>}
-        <div className="context-dialog-actions"><button className="secondary-button" type="button" onClick={close}>Close</button><button className="primary-button" type="submit" disabled={prefixEditor ? !onBranchPrefixChange : !canCreateBranch}>{prefixEditor ? "Save prefix" : workspace?.busy ? <><span className="spinner"/> Create and checkout</> : "Create and checkout"}</button></div>
+        <div className="context-dialog-actions"><button className="secondary-button" type="button" onClick={close}>Close</button><button className="primary-button" type="submit" disabled={!canCreateBranch}>{workspace?.busy ? <><span className="spinner"/> Create and checkout</> : "Create and checkout"}</button></div>
       </form>
     </dialog>,document.body)}
   </div>;
