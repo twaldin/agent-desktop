@@ -26,6 +26,60 @@ test('execution selections require the matching consumption receipt and preserve
   } finally { controller.dispose(); }
 });
 
+test("environment format survives offline restore and a project switch clears the selection explicitly", async () => {
+  const storage = cache(); const calls: CommandEnvelope[] = [];
+  const selected = { projectId: "project-1", configPath: "/project-1/.agent-desktop/environments/dev.toml", revision: "a".repeat(64) };
+  const first = new DraftController(saver(calls), "host", storage);
+  first.ingest(draft({ environment: selected }));
+  first.update("new-conversation", { text: "offline edit" });
+  first.dispose();
+
+  const restored = new DraftController(saver(calls), "host", storage);
+  expect(restored.get("new-conversation")).toMatchObject({ status: "offline", draft: { text: "offline edit", environment: selected } });
+  expect(() => restored.update("new-conversation", { environment: undefined })).toThrow("No environment explicitly");
+  restored.update("new-conversation", { projectId: "project-2" });
+  expect(restored.get("new-conversation").draft).toMatchObject({ projectId: "project-2", environment: null, text: "offline edit" });
+  restored.setConnected(true);
+  await restored.flush("new-conversation");
+  expect(calls[0]).toMatchObject({ commandVersion: 5, command: { type: "draft.put", draft: { projectId: "project-2", environment: null } } });
+  restored.dispose();
+});
+
+test("an older client dropping environment metadata conflicts and remote resolution retains the marker", () => {
+  const selected = { projectId: "project-1", configPath: "/project-1/.agent-desktop/environments/dev.toml", revision: "b".repeat(64) };
+  const controller = new DraftController(saver([]), "host");
+  controller.ingest(draft({ environment: selected }));
+  controller.ingest(draft({ revision: 2, text: "older client edit" }));
+  expect(controller.get("new-conversation")).toMatchObject({
+    status: "conflict",
+    draft: { environment: selected },
+    conflict: { revision: 2 },
+  });
+  expect(controller.get("new-conversation").conflict?.environment).toBeUndefined();
+  controller.resolve("new-conversation", "remote");
+  expect(controller.get("new-conversation")).toMatchObject({ status: "offline", draft: { text: "older client edit", environment: null } });
+  controller.dispose();
+});
+
+test("consumption of the submitted environment revision preserves a newer selection", async () => {
+  const calls: CommandEnvelope[] = [];
+  const originalEnvironment = { projectId: "project-1", configPath: "/project-1/.agent-desktop/environments/a.toml", revision: "c".repeat(64) };
+  const newerEnvironment = { projectId: "project-1", configPath: "/project-1/.agent-desktop/environments/b.toml", revision: "d".repeat(64) };
+  const controller = new DraftController(saver(calls), "host");
+  const original = draft({ environment: originalEnvironment });
+  controller.ingest(original); controller.setConnected(true);
+  const submitted = await controller.prepareSubmission(original.id);
+  controller.beginPendingSubmission(submitted, "environment-send");
+  controller.update(original.id, { environment: newerEnvironment, text: "next prompt" });
+  controller.ingest({ ...original, revision: 2, text: "", lastConsumption: { commandId: "environment-send", submittedRevision: 1 } });
+  controller.finishSubmission(original.id, submitted, true, false, "environment-send");
+  expect(controller.get(original.id).draft).toMatchObject({ text: "next prompt", environment: newerEnvironment });
+  await controller.flush(original.id);
+  expect(calls[0]).toMatchObject({ commandVersion: 5, command: { type: "draft.put", expectedRevision: 2, draft: { environment: newerEnvironment, text: "next prompt" } } });
+  expect(controller.get(original.id).draft).toMatchObject({ revision: 3, environment: newerEnvironment, text: "next prompt" });
+  controller.dispose();
+});
+
 describe("revisioned draft persistence", () => {
   test("own save echo does not conflict with newer local typing", async () => {
     let acknowledge!: (result: CommandResult) => void;

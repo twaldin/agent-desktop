@@ -3,6 +3,23 @@ import type { CommandEnvelope } from "@agent-desktop/shared";
 import { commandEndpoint, requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { HostRequestError, requestHost } from "./host-transport";
 
+test('environment-aware drafts and consumption never downgrade to an older endpoint', async () => {
+  const envelopes: CommandEnvelope[] = [
+    { id: 'clear-environment', command: { type: 'draft.put', expectedRevision: 2, draft: { id: 'd', text: 'keep', projectId: null, model: null, environment: null } } },
+    { id: 'create-without-environment', command: { type: 'session.create', projectId: 'p', worktree: { type: 'working-tree' }, environment: null, draft: { id: 'd', revision: 3 } } },
+    { id: 'consume-environment-draft', commandVersion: 5, command: { type: 'session.prompt', sessionId: 's', text: 'keep', draft: { id: 'd', revision: 3 } } },
+  ];
+  for (const envelope of envelopes) {
+    const calls: string[] = [];
+    expect(commandEndpoint(envelope)).toBe('/v5/commands');
+    expect(await requestVersionedCommand(async path => { calls.push(path); throw new HostRequestError('Not found', 404); }, envelope))
+      .toMatchObject({ ok: false, commandId: envelope.id, error: { code: 'ENVIRONMENT_PROTOCOL_UNSUPPORTED' } });
+    expect(calls).toEqual(['/v5/commands']);
+    for (const error of [new Error('Lost response'), new HostRequestError('Not authorized', 401), new HostRequestError('Config missing', 404, 'CONFIG_NOT_FOUND')])
+      await expect(requestVersionedCommand(async () => { throw error; }, envelope)).rejects.toBe(error);
+  }
+});
+
 test('an older host cannot silently discard worktree choices or consume their draft through a fallback', async () => {
   const paths: string[] = [];
   const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {

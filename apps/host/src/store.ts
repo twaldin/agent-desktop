@@ -17,6 +17,8 @@ import { parseImageAttachments } from "../../../packages/shared/src/attachments"
 import { detachedAnswerDraft, type DetachedQuestionSnapshot } from '../../../packages/shared/src/detached-questions';
 import { parseNewChatExecution } from '../../../packages/shared/src/new-chat';
 import { hasNewChatIntent } from './new-chat-protocol';
+import { hasEnvironmentIntent } from './environment-protocol';
+import { parseEnvironmentSelection } from '../../../packages/shared/src/environment-selection';
 import {
   initializeLocalEnvironmentPreparations,
   LocalEnvironmentPreparations,
@@ -206,13 +208,16 @@ export class HostStore {
     if (input.attachments !== undefined) input = { ...input, attachments: parseImageAttachments(input.attachments, this.host.id) };
     if (input.approvalMode !== undefined) approvalMode(input.approvalMode);
     if (input.execution !== undefined) input = { ...input, execution: parseNewChatExecution(input.execution, input.projectId) };
+    if (Object.hasOwn(input, 'environment')) input = { ...input, environment: parseEnvironmentSelection(input.environment, input.projectId) };
     return this.db.transaction((): DraftWriteResult => {
       const currentDraft = this.getDraft(input.id);
+      if (currentDraft?.environment !== undefined && input.environment === undefined) throw new Error('This draft requires the environment protocol; its selection was preserved.');
       if (currentDraft?.execution !== undefined && input.execution === undefined) throw new Error('This draft requires the new-chat execution protocol; its choices were preserved.');
       if (currentDraft?.attachments !== undefined && input.attachments === undefined) throw new Error("This draft requires the attachment command protocol; its content was preserved.");
       if (input.approvalMode !== undefined) this.requirePermissionVersion();
       if (input.attachments !== undefined) this.requireVersion(3);
       if (input.execution !== undefined) this.requireVersion(4);
+      if (input.environment !== undefined) this.requireVersion(5);
       if ((currentDraft?.revision ?? 0) !== expectedRevision) {
         const conflict: DraftConflict = {
           id: crypto.randomUUID(), draftId: input.id, attempted: input, expectedRevision,
@@ -235,7 +240,7 @@ export class HostStore {
     return this.db.transaction(() => {
       const current = this.getDraft(submitted.id);
       if (!current || current.revision !== submitted.revision) return undefined;
-      const needsReceipt = current.attachments !== undefined || current.execution !== undefined;
+      const needsReceipt = current.attachments !== undefined || current.execution !== undefined || current.environment !== undefined;
       if (needsReceipt && !commandId) throw new Error("Draft consumption requires its accepted command identity.");
       const cleared: Draft = { ...current, text: "", revision: current.revision + 1, updatedAt: Date.now(),
         ...(current.attachments !== undefined ? { attachments: [] } : {}),
@@ -273,6 +278,7 @@ export class HostStore {
       if (command && hasApprovalIntent(command)) this.requirePermissionVersion();
       if (attachments !== undefined) this.requireVersion(3);
       if (command && hasNewChatIntent(command)) this.requireVersion(4);
+      if (command && hasEnvironmentIntent(command)) this.requireVersion(5);
       const now = Date.now();
       const record: CommandRecord = {
         id, requestHash, ...(command === undefined ? {} : { command }),

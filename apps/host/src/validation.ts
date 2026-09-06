@@ -3,7 +3,7 @@ import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
 import { parsePreferenceChange } from "../../../packages/shared/src/preferences";
 import { approvalMode } from "./approval";
-import { parseImageAttachments, parseDetachedQuestionAnswers, parseNewChatExecution, parseWorktreeStartingState } from "@agent-desktop/shared";
+import { parseImageAttachments, parseDetachedQuestionAnswers, parseNewChatExecution, parseWorktreeStartingState, parseEnvironmentSelection } from "@agent-desktop/shared";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object.");
@@ -35,8 +35,8 @@ function directory(value: unknown): string {
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
 export function parseCommandEnvelope(value: unknown): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && envelope.commandVersion !== 4) throw new Error('Unsupported command version.');
-  return { ...parseCommandBody(value), ...(envelope.commandVersion === 4 ? { commandVersion: 4 as const } : {}) };
+  if (envelope.commandVersion !== undefined && envelope.commandVersion !== 4 && envelope.commandVersion !== 5) throw new Error('Unsupported command version.');
+  return { ...parseCommandBody(value), ...(envelope.commandVersion === undefined ? {} : { commandVersion: envelope.commandVersion as 4 | 5 }) };
 }
 function parseCommandBody(value: unknown): CommandEnvelope {
   const envelope = object(value);
@@ -44,6 +44,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
   const input = object(envelope.command);
   const type = text(input.type, "command type");
   if (Object.hasOwn(input, 'worktree') && type !== 'session.create') throw new Error('Only new conversations can select a worktree.');
+  if (Object.hasOwn(input, 'environment') && type !== 'session.create') throw new Error('Only worktree creation accepts an environment selection.');
   if (Object.hasOwn(input, "attachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept image attachments.");
   const attachments = Object.hasOwn(input, "attachments") ? parseImageAttachments(input.attachments) : undefined;
   const promptText = () => attachments?.length && input.text === "" ? "" : text(input.text, "prompt", attachments?.length ? 500_000 : 4_000_000);
@@ -59,6 +60,11 @@ function parseCommandBody(value: unknown): CommandEnvelope {
         if (!input.projectId || input.cwd !== undefined) throw new Error('A worktree must belong to the selected project.');
         return parseWorktreeStartingState(input.worktree);
       })() }),
+      ...(Object.hasOwn(input, 'environment') ? { environment: (() => {
+        if (!input.worktree || !input.projectId || input.cwd !== undefined || !draftReference(input.draft)) throw new Error('Environment creation requires a project worktree and captured draft revision.');
+        return parseEnvironmentSelection(input.environment, text(input.projectId, 'project ID'));
+      })() } : {}),
+      ...(input.draft === undefined ? {} : { draft: draftReference(input.draft) }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
     case "session.prompt": return { id, command: { type,
@@ -95,6 +101,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
         thinkingLevel: draft.thinkingLevel === undefined ? undefined : text(draft.thinkingLevel, "thinking level"),
         ...(draft.approvalMode === undefined ? {} : { approvalMode: approvalMode(draft.approvalMode) }),
         ...(draft.execution === undefined ? {} : { execution: parseNewChatExecution(draft.execution, draft.projectId === null ? null : text(draft.projectId, 'project ID')) }),
+        ...(Object.hasOwn(draft, 'environment') ? { environment: parseEnvironmentSelection(draft.environment, draft.projectId === null ? null : text(draft.projectId, 'project ID')) } : {}),
       } } };
     }
     default: throw new Error(`Unsupported command: ${type}`);

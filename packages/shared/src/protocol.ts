@@ -1,4 +1,6 @@
 export * from "./local-environments";
+export * from "./environment-selection";
+import type { LocalEnvironmentSelection } from "./environment-selection";
 import type { BrowserControlRequest, BrowserControlReceipt } from './browser-control';
 import type { NewChatExecution } from './new-chat';
 import type { WorktreeStartingState } from './workspace';
@@ -101,6 +103,8 @@ export interface Draft {
   /** Absent follows the native default/new session or existing session policy. */
   approvalMode?: OmpApprovalMode;
   execution?: NewChatExecution;
+  /** Sticky format: null clears selection; absence is an older writer. */
+  environment?: LocalEnvironmentSelection;
   /** Presence persists after clearing the last chip; older command writers must refuse. */
   attachments?: ImageAttachmentRef[];
   /** Owning-host receipt, never editable draft input. */
@@ -158,7 +162,7 @@ export type HostCommand =
   | { type: "preferences.put"; change: PreferenceChange }
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
   | { type: "project.add"; path: string; name?: string }
-  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState }
+  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
@@ -171,7 +175,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4;
+  commandVersion?: 4 | 5;
 }
 
 export interface ImageAdmission {

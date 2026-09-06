@@ -1,4 +1,5 @@
 import { sameNewChatExecution } from "../../../../packages/shared/src/new-chat";
+import { sameEnvironmentSelection } from "../../../../packages/shared/src/environment-selection";
 import type { CommandEnvelope, CommandResult, Draft } from "../../../../packages/shared/src/protocol";
 import { detachedAnswerDraft, parseDetachedQuestionAnswers, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { captureDraft, sameDraftContent, type DraftCache } from "./drafts";
@@ -12,6 +13,10 @@ export interface PendingSubmission {
   send?: CommandEnvelope;
   uncertain: boolean;
 }
+const commandVersion = (draft: Draft): 4 | 5 | undefined => draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
+const sameDraftReference = (value: { id: string; revision: number } | undefined, draft: Draft, required: boolean) => required
+  ? value?.id === draft.id && value.revision === draft.revision
+  : value === undefined;
 /** Persist envelopes before delivery so an explicit retry uses the original command identity. */
 export class SubmissionController {
   private pending: Record<string, PendingSubmission> = {};
@@ -30,9 +35,17 @@ export class SubmissionController {
           if (item.create?.command.type === 'session.create' && (item.create.command.model?.id !== captured.model?.id
             || item.create.command.model?.provider !== captured.model?.provider || item.create.command.approvalMode !== captured.approvalMode)) throw new Error('Pending creation differs from its captured model or permissions.');
           if (item.send && 'sessionId' in item.send.command && item.send.command.sessionId !== item.sessionId) throw new Error("Pending input belongs to a different session.");
-          if (captured.execution !== undefined && [item.create, item.send].some(envelope => envelope && envelope.commandVersion !== 4)) throw new Error("Pending worktree choices require their original command protocol.");
+          const expectedVersion = commandVersion(captured);
+          if (item.mode !== "question" && [item.create, item.send].some(envelope => envelope && envelope.commandVersion !== expectedVersion)) throw new Error("Pending new-chat choices require their exact original command protocol.");
           if (item.create?.command.type === 'session.create' && !sameNewChatExecution(
             item.create.command.worktree ? { type: 'worktree', startingState: item.create.command.worktree } : captured.execution === undefined ? undefined : { type: 'local' }, captured.execution)) throw new Error("Pending worktree creation differs from its captured draft.");
+          if (item.create?.command.type === "session.create") {
+            const worktree = captured.execution?.type === "worktree";
+            if (!sameEnvironmentSelection(item.create.command.environment, worktree ? captured.environment : undefined)
+              || !sameDraftReference(item.create.command.draft, captured, worktree && captured.environment !== undefined)) {
+              throw new Error("Pending environment creation differs from its captured draft.");
+            }
+          }
           if (item.send && (item.send.command.type === "session.prompt" || item.send.command.type === "session.steer")) {
             const command = item.send.command;
             if (!sameDraftContent(captured, captureDraft({ ...captured, attachments: command.attachments }, hostId))
@@ -94,8 +107,11 @@ export class SubmissionController {
       this.pending[snapshot.id] = item;
     }
     if (!item.sessionId) {
-      item.create ??= { id: crypto.randomUUID(), ...(item.draft.execution !== undefined ? { commandVersion: 4 as const } : {}), command: { type: "session.create", projectId: item.draft.projectId, model: item.draft.model ?? undefined, approvalMode: item.draft.approvalMode,
-        ...(item.draft.execution?.type === 'worktree' ? { worktree: structuredClone(item.draft.execution.startingState) } : {}) } };
+      const version = commandVersion(item.draft);
+      const worktree = item.draft.execution?.type === "worktree" ? item.draft.execution : undefined;
+      item.create ??= { id: crypto.randomUUID(), ...(version ? { commandVersion: version } : {}), command: { type: "session.create", projectId: item.draft.projectId, model: item.draft.model ?? undefined, approvalMode: item.draft.approvalMode,
+        ...(worktree ? { worktree: structuredClone(worktree.startingState),
+          ...(item.draft.environment !== undefined ? { environment: structuredClone(item.draft.environment), draft: { id: item.draft.id, revision: item.draft.revision } } : {}) } : {}) } };
       this.save();
       const value = await this.deliver(item, "create");
       if (!value || !("sessionFile" in value)) { item.uncertain = true; this.save(); throw new Error("The host did not return the created session. Retry the pending submission to check the original command."); }
@@ -103,7 +119,8 @@ export class SubmissionController {
     }
     const saved = item.draft;
     const attachments = saved.attachments !== undefined ? { attachments: structuredClone(saved.attachments) } : {};
-    item.send ??= { id: crypto.randomUUID(), ...(saved.execution !== undefined ? { commandVersion: 4 as const } : {}), command: item.mode === "steer"
+    const version = commandVersion(saved);
+    item.send ??= { id: crypto.randomUUID(), ...(version ? { commandVersion: version } : {}), command: item.mode === "steer"
       ? { type: "session.steer", sessionId: item.sessionId, text: saved.text, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } }
       : { type: "session.prompt", sessionId: item.sessionId, text: saved.text, model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } } };
     this.save();

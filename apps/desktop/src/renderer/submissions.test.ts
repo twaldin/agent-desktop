@@ -35,6 +35,100 @@ test('worktree creation and subsequent prompt retain their captured starting sta
   expect(restored.entries()).toHaveLength(0);
 });
 
+test("environment-aware worktree retry preserves its exact v5 create, selection, draft reference, and prompt", async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  const environment = { projectId: original.projectId!, configPath: "/fixture/project-a/.agent-desktop/environments/dev.toml", revision: "e".repeat(64) };
+  const submitted: Draft = { ...original, environment, execution: { type: "worktree", startingState: { type: "branch", branchName: "topic/environment" } } };
+  const first = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return unknown(envelope); }, "host-a", storage);
+  await expect(first.submit(submitted, undefined, "prompt")).rejects.toThrow("pending");
+
+  const restored = new SubmissionController(async envelope => {
+    calls.push(structuredClone(envelope));
+    return { ok: true, commandId: envelope.id, value: session };
+  }, "host-a", storage);
+  const result = await restored.submit({ ...edited, environment: null, execution: { type: "local" } }, "different-session", "steer");
+  expect(calls).toHaveLength(3);
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[0]).toEqual({
+    id: calls[0]!.id,
+    commandVersion: 5,
+    command: {
+      type: "session.create",
+      projectId: original.projectId,
+      model: original.model!,
+      approvalMode: undefined,
+      worktree: { type: "branch", branchName: "topic/environment" },
+      environment,
+      draft: { id: original.id, revision: original.revision },
+    },
+  });
+  expect(calls[2]).toMatchObject({ commandVersion: 5, command: {
+    type: "session.prompt", sessionId: session.id, text: original.text,
+    draft: { id: original.id, revision: original.revision },
+  } });
+  expect(result.submitted).toEqual(submitted);
+});
+
+test("environment-aware Local, prompt, steer, and no-environment worktree envelopes retain v5 semantics", async () => {
+  const calls: CommandEnvelope[] = [];
+  const local: Draft = { ...original, execution: { type: "local" }, environment: null };
+  const controller = new SubmissionController(async envelope => {
+    calls.push(structuredClone(envelope));
+    return { ok: true, commandId: envelope.id, value: session };
+  }, "host-a", cache());
+  await controller.submit(local, undefined, "prompt");
+  expect(calls).toHaveLength(2);
+  expect(calls[0]).toMatchObject({ commandVersion: 5, command: { type: "session.create", projectId: original.projectId } });
+  if (calls[0]?.command.type !== "session.create") throw new Error("Fixture shape");
+  expect(calls[0].command.environment).toBeUndefined();
+  expect(calls[0].command.draft).toBeUndefined();
+  expect(calls[1]).toMatchObject({ commandVersion: 5, command: { type: "session.prompt", draft: { id: original.id, revision: original.revision } } });
+  await controller.submit(local, session.id, "steer");
+  expect(calls[2]).toMatchObject({ commandVersion: 5, command: { type: "session.steer", draft: { id: original.id, revision: original.revision } } });
+
+  const worktreeCalls: CommandEnvelope[] = [];
+  const noEnvironment: Draft = { ...original, environment: null, execution: { type: "worktree", startingState: { type: "working-tree" } } };
+  const worktreeController = new SubmissionController(async envelope => {
+    worktreeCalls.push(structuredClone(envelope));
+    return { ok: true, commandId: envelope.id, value: session };
+  }, "host-a", cache());
+  await worktreeController.submit(noEnvironment, undefined, "prompt");
+  expect(worktreeCalls[0]).toMatchObject({ commandVersion: 5, command: {
+    type: "session.create", worktree: { type: "working-tree" }, environment: null,
+    draft: { id: original.id, revision: original.revision },
+  } });
+});
+
+test("restored environment submissions reject changed ownership, snapshots, worktrees, and downgraded versions", async () => {
+  const environment = { projectId: original.projectId!, configPath: "/fixture/project-a/.agent-desktop/environments/dev.toml", revision: "f".repeat(64) };
+  const submitted: Draft = { ...original, environment, execution: { type: "worktree", startingState: { type: "branch", branchName: "topic/environment" } } };
+  for (const mutate of [
+    (pending: any) => { pending.create.commandVersion = 4; },
+    (pending: any) => { pending.create.command.environment.revision = "0".repeat(64); },
+    (pending: any) => { pending.create.command.draft.revision += 1; },
+    (pending: any) => { pending.create.command.worktree.branchName = "other"; },
+  ]) {
+    const storage = cache();
+    const controller = new SubmissionController(async envelope => unknown(envelope), "host-a", storage);
+    await expect(controller.submit(submitted, undefined, "prompt")).rejects.toThrow("pending");
+    const cached = JSON.parse(storage.read(controller.cacheKey)!);
+    mutate(cached[submitted.id]); storage.write(controller.cacheKey, JSON.stringify(cached));
+    const restored = new SubmissionController(async () => { throw new Error("Must not deliver"); }, "host-a", storage);
+    expect(restored.entries()).toEqual([]);
+    expect(restored.cacheWarning).toContain("could not be read");
+  }
+
+  const storage = cache();
+  const controller = new SubmissionController(async envelope => unknown(envelope), "host-a", storage);
+  await expect(controller.submit(submitted, session.id, "prompt")).rejects.toThrow("pending");
+  const cached = JSON.parse(storage.read(controller.cacheKey)!);
+  cached[submitted.id].send.commandVersion = 4;
+  storage.write(controller.cacheKey, JSON.stringify(cached));
+  const restored = new SubmissionController(async () => { throw new Error("Must not deliver"); }, "host-a", storage);
+  expect(restored.entries()).toEqual([]);
+  expect(restored.cacheWarning).toContain("could not be read");
+});
+
 test('restored submission caches cannot move a captured worktree request or prompt to another owner', async () => {
   for (const phase of ['create', 'send'] as const) {
     const storage = cache();

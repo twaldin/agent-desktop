@@ -2,8 +2,10 @@ import type { CommandEnvelope, CommandResult, OmpSessionControlMutation } from "
 import { HostRequestError } from "./host-transport";
 
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
-export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" {
+export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" {
   const command = envelope.command;
+  if (envelope.commandVersion === 5 || command.type === 'session.create' && Object.hasOwn(command, 'environment')
+    || command.type === 'draft.put' && Object.hasOwn(command.draft, 'environment')) return '/v5/commands';
   if (envelope.commandVersion === 4 || command.type === 'session.create' && Object.hasOwn(command, 'worktree')
     || command.type === 'draft.put' && Object.hasOwn(command.draft, 'execution')) return '/v4/commands';
   if (command.type === "draft.put" ? Object.hasOwn(command.draft, "attachments") : Object.hasOwn(command, "attachments")) return "/v3/commands";
@@ -23,6 +25,9 @@ export async function requestVersionedCommand(request: (path: string, body: unkn
   catch (error) {
     // A missing endpoint establishes that this versioned request was rejected.
     // A timeout or any other failure retains ordinary uncertain-delivery rules.
+    if (endpoint === '/v5/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) {
+      return { ok: false, commandId: envelope.id, error: { code: 'ENVIRONMENT_PROTOCOL_UNSUPPORTED', message: 'Update the owning host to retain local environment choices. This request was not accepted.' } } satisfies CommandResult;
+    }
     if (endpoint === '/v4/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) {
       return { ok: false, commandId: envelope.id, error: { code: 'NEW_CHAT_PROTOCOL_UNSUPPORTED', message: 'Update the owning host to use saved worktree choices. This request was not accepted.' } } satisfies CommandResult;
     }
