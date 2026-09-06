@@ -153,6 +153,7 @@ function input(data: string) {
     }),
   );
 }
+let delayedGeometry: { pre: number; pending: number; post: number } | undefined;
 Object.assign(window, {
   browserControlsProgress: () => ({
     checks,
@@ -271,6 +272,7 @@ Object.assign(window, {
     document
       .querySelector<HTMLButtonElement>('[aria-label="Reload page"]')!
       .click();
+    const preActionHeight = document.querySelector<HTMLElement>(".browser-viewport")!.getBoundingClientRect().height;
     await wait(
       () => humanRequests.length === 3 && humanRequests[2].action.type === "reload",
       "reload control request",
@@ -283,16 +285,20 @@ Object.assign(window, {
     const fitCount = fitRequests.length;
     assert(document.body.innerText.includes("Browser action in progress"), "Delayed action did not expose pending status");
     const pendingHeight = document.querySelector<HTMLElement>(".browser-viewport")!.getBoundingClientRect().height;
+    assert(pendingHeight < preActionHeight, `Pending status did not reduce viewport geometry (${pendingHeight} >= ${preActionHeight})`);
     await sleep(300);
     assert(document.querySelector<HTMLElement>(".browser-viewport")!.getBoundingClientRect().height === pendingHeight, "Pending viewport geometry changed before receipt");
     third.resolve();
     await wait(() => !document.querySelector<HTMLButtonElement>('[aria-label="Reload page"]')!.disabled, "delayed successful browser action");
+    const postActionHeight = document.querySelector<HTMLElement>(".browser-viewport")!.getBoundingClientRect().height;
+    assert(postActionHeight === preActionHeight, `Viewport did not restore after receipt (${postActionHeight} !== ${preActionHeight})`);
+    delayedGeometry = { pre: preActionHeight, pending: pendingHeight, post: postActionHeight };
     await sleep(300);
     assert(fitRequests.length === fitCount, "Successful pending browser action fit the transient status geometry");
     checks.push(
       "native control buttons send the current owner target and epoch",
     );
-    return { passed: true, checks, requests: requests.length, humanRequests: humanRequests.length, initialFit: fitRequests[0].action };
+    return { passed: true, checks, requests: requests.length, humanRequests: humanRequests.length, initialFit: fitRequests[0].action, delayedGeometry };
   },
   browserControlsExternalViewport: async () => {
     const before = fitRequests.length;
