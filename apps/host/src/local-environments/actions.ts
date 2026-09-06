@@ -1,7 +1,7 @@
 import { nativeActionText } from "../terminals/native-input";
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename } from "node:path";
 import type { NativeTerminalInfo } from "../../../../packages/shared/src/terminals";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace";
 import type { LocalEnvironmentCatalogItem, LocalEnvironmentActionsState } from "../../../../packages/shared/src/local-environments";
@@ -17,15 +17,9 @@ const platform = process.platform === "darwin" || process.platform === "win32" ?
 const digest = (...parts: string[]) => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const fail = (code: string, message: string): never => { throw new TerminalError(code, message); };
 
-function ownedConfig(root: string, value: string): string {
-  if (!isAbsolute(value) || value.includes("\0")) fail("INVALID_ENVIRONMENT_ACTION", "Environment config path must be absolute.");
-  const environmentRoot = resolve(root, ".agent-desktop", "environments");
-  let path = "";
-  try { path = resolve(realpathSync(dirname(value)), basename(value)); } catch { fail("INVALID_ENVIRONMENT_ACTION", "Environment config path no longer exists."); }
-  const child = relative(environmentRoot, path);
-  if (!child || child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child) || child.includes("/") || child.includes("\\") || !child.endsWith(".toml"))
-    fail("INVALID_ENVIRONMENT_ACTION", "Environment config path is outside this project's environment directory.");
-  return path;
+async function ownedConfig(root: string, value: string): Promise<string> {
+  try { return await new LocalEnvironmentStore(root).resolveConfigPath(value); }
+  catch (cause) { return fail("INVALID_ENVIRONMENT_ACTION", cause instanceof Error ? cause.message : "Environment config path is unavailable."); }
 }
 
 export class LocalEnvironmentActions {
@@ -98,7 +92,7 @@ export class LocalEnvironmentActions {
   async select(target: WorkspaceTarget, configPath: string | null, expectedRevision: number): Promise<LocalEnvironmentActionsState> {
     const resolved = await this.resolve(target), store = this.store;
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) fail("INVALID_ENVIRONMENT_SELECTION", "The environment selection revision is invalid.");
-    const selectedPath = configPath === null ? null : ownedConfig(resolved.configRoot, configPath);
+    const selectedPath = configPath === null ? null : await ownedConfig(resolved.configRoot, configPath);
     if (selectedPath !== null) {
       const exists = (await new LocalEnvironmentStore(resolved.configRoot).catalog()).some(item => item.configPath === selectedPath);
       if (!exists) fail("INVALID_ENVIRONMENT_SELECTION", "The selected environment configuration no longer exists.");
@@ -116,7 +110,7 @@ export class LocalEnvironmentActions {
     const currentRevision = persisted?.revision ?? 0;
     if (input.selectionRevision !== currentRevision || input.configPath !== effectiveSelection) fail("STALE_ENVIRONMENT_SELECTION", "The environment selection changed; refresh and try again.");
     if (!input.configPath) fail("INVALID_ENVIRONMENT_CONFIG", "An environment must be selected before running an action.");
-    const path = ownedConfig(resolved.configRoot, input.configPath);
+    const path = await ownedConfig(resolved.configRoot, input.configPath);
     const item = entries.find(entry => entry.configPath === path);
     if (!item) throw new TerminalError("INVALID_ENVIRONMENT_CONFIG", "The environment configuration no longer exists.");
     if (item.type === "error") throw new TerminalError("INVALID_ENVIRONMENT_CONFIG", item.error);

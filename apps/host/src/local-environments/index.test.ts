@@ -162,3 +162,45 @@ test("catalog bounds oversized config reads", async () => {
     { type: "error", configPath: path, error: expect.stringContaining("exceeds 1 MiB") },
   ]);
 });
+
+test("existing native configs are discovered, edited in place and revision conflicts retain both versions", async () => {
+  const project = root(), nativeDirectory = join(project, ".codex", "environments");
+  mkdirSync(nativeDirectory, { recursive: true });
+  const nativePath = join(nativeDirectory, "environment.toml"), raw = serializeLocalEnvironment(environment);
+  writeFileSync(nativePath, raw); chmodSync(nativePath, 0o640);
+  const store = new LocalEnvironmentStore(project);
+  const authored = await store.save({ expectedRevision: null, raw });
+  if (authored.type !== "saved") throw new Error("expected saved app config");
+  const entries = await store.catalog();
+  expect(entries.map(item => item.configPath)).toEqual([nativePath, authored.configPath]);
+  const native = await store.read(nativePath);
+  const alias = join(root(), "alias"); symlinkSync(project, alias);
+  const aliasStore = new LocalEnvironmentStore(alias);
+  expect((await aliasStore.read(nativePath)).raw).toBe(raw);
+  expect((await store.read(join(alias, ".codex", "environments", "environment.toml"))).raw).toBe(raw);
+  const editedRaw = serializeLocalEnvironment({ ...environment, name: "Native edited" });
+  const edited = await store.save({ configPath: join(alias, ".codex", "environments", "environment.toml"), expectedRevision: native.revision, raw: editedRaw });
+  expect(edited).toMatchObject({ type: "saved", configPath: nativePath });
+  expect(readFileSync(nativePath, "utf8")).toBe(editedRaw);
+  expect(statSync(nativePath).mode & 0o777).toBe(0o640);
+  expect(readFileSync(authored.configPath, "utf8")).toBe(raw);
+  const conflict = await new LocalEnvironmentStore(project).save({ configPath: nativePath, expectedRevision: native.revision, raw });
+  expect(conflict).toMatchObject({ type: "conflict", current: { environment: { name: "Native edited" } }, attempted: { raw } });
+  expect(readdirSync(nativeDirectory)).toEqual(["environment.toml"]);
+});
+
+test("native config ownership rejects nested paths and symlink directories without widening project scope", async () => {
+  const project = root(), outside = root(), directory = join(project, ".codex", "environments");
+  mkdirSync(directory, { recursive: true });
+  const raw = serializeLocalEnvironment(environment), outsidePath = join(outside, "external.toml");
+  writeFileSync(outsidePath, raw);
+  const store = new LocalEnvironmentStore(project);
+  symlinkSync(outsidePath, join(directory, "linked.toml"));
+  await expect(store.read(join(directory, "linked.toml"))).rejects.toThrow("symlink");
+  await expect(store.save({ configPath: join(directory, "nested", "file.toml"), expectedRevision: null, raw })).rejects.toThrow("outside");
+  await expect(store.read(outsidePath)).rejects.toThrow("outside");
+  rmSync(directory, { recursive: true }); symlinkSync(outside, directory);
+  await expect(store.catalog()).rejects.toThrow("owned directory");
+  await expect(store.save({ configPath: join(directory, "external.toml"), expectedRevision: null, raw })).rejects.toThrow("owned directory");
+  expect(readFileSync(outsidePath, "utf8")).toBe(raw);
+});

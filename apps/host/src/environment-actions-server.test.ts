@@ -14,12 +14,12 @@ async function until(check: () => Promise<boolean>) {
   while (!await check()) { if (Date.now() > end) throw new Error('Action output did not arrive'); await Bun.sleep(25); }
 }
 
-test.skipIf(!bundle)('configured actions use authenticated revisions, real terminals and durable renderer retry across host restart', async () => {
+for (const namespace of ['.agent-desktop', '.codex']) test.skipIf(!bundle)(`${namespace}: configured actions use authenticated revisions, real terminals and durable renderer retry across host restart`, async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'agent-action-http-')));
   const source = join(root, 'project'), foreign = join(root, 'foreign'), dataDirectory = join(root, 'data'), agentDirectory = join(root, 'agent');
   await Promise.all([source, foreign, agentDirectory].map(path => mkdir(path)));
   const configStore = new LocalEnvironmentStore(source);
-  const saved = await configStore.save({ expectedRevision: null, raw: serializeLocalEnvironment({ version: 1, name: 'Actions', setup: { script: 'touch SETUP_MUST_NOT_RUN' },
+  const saved = await configStore.save({ configPath: join(source, namespace, 'environments', 'environment.toml'), expectedRevision: null, raw: serializeLocalEnvironment({ version: 1, name: 'Actions', setup: { script: 'touch SETUP_MUST_NOT_RUN' },
     actions: [{ name: 'Count run', icon: 'run', command: "printf 'executed\\n' >> action-runs; printf 'ACTION_READY\\n'" }] }) });
   if (saved.type !== 'saved') throw new Error('Fixture config not saved');
   let host: Awaited<ReturnType<typeof startHost>> | undefined;

@@ -26,6 +26,22 @@ describe("LocalEnvironmentActions", () => {
     });
   });
 
+  test("selects native configs through project aliases without following storage symlinks", async () => {
+    const { service, record, root, project } = await fixture();
+    const directory = join(project, ".codex", "environments"); await mkdir(directory, { recursive: true });
+    const path = join(directory, "native.toml");
+    await writeFile(path, 'name="Native"\n[setup]\nscript=""\n[[actions]]\nname="Native action"\ncommand="printf native"\n');
+    const alias = join(root, "alias"); await symlink(project, alias);
+    const target = { projectId: record.id };
+    const selected = await service.select(target, join(alias, ".codex", "environments", "native.toml"), 0);
+    expect(selected).toMatchObject({ selectedConfigPath: await realpath(path), actions: [{ index: 0, name: "Native action" }] });
+    await expect(service.run(target, { configPath: selected.selectedConfigPath!, configRevision: selected.configRevision!, selectionRevision: selected.selectionRevision, actionIndex: 0 }))
+      .rejects.toMatchObject({ code: "NATIVE_TERMINAL_UNAVAILABLE" });
+    await rm(directory, { recursive: true });
+    await symlink(join(project, ".agent-desktop", "environments"), directory);
+    await expect(service.select(target, join(directory, "environment.toml"), 1)).rejects.toMatchObject({ code: "INVALID_ENVIRONMENT_ACTION" });
+  });
+
   test("uses CAS for selection and rejects stale action requests", async () => {
     const { service, record } = await fixture(); const target = { projectId: record.id };
     const state = await service.catalog(target);

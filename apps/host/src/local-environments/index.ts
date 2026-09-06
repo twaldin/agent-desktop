@@ -27,6 +27,7 @@ export class LocalEnvironmentStore {
   readonly directory: string;
   private readonly canonicalProjectRoot: string;
   private readonly canonicalDirectory: string;
+  private readonly directories: string[];
 
   constructor(projectRoot: string) {
     if (!isAbsolute(projectRoot)) throw new Error("Project root must be absolute.");
@@ -35,13 +36,14 @@ export class LocalEnvironmentStore {
     if (!statSync(this.canonicalProjectRoot).isDirectory()) throw new Error("Project root must be a directory.");
     this.directory = join(this.projectRoot, ".agent-desktop", "environments");
     this.canonicalDirectory = join(this.canonicalProjectRoot, ".agent-desktop", "environments");
+    this.directories = [this.directory, join(this.projectRoot, ".codex", "environments")];
   }
 
-  private async ownedRoot(create: boolean): Promise<string | null> {
+  private async ownedRoot(create: boolean, directory = this.directory): Promise<string | null> {
     const root = await realpath(this.projectRoot);
     if (root !== this.canonicalProjectRoot || !(await stat(root)).isDirectory()) throw new Error("Project root identity changed.");
-    const parent = dirname(this.directory);
-    for (const path of [parent, this.directory]) {
+    const parent = dirname(directory);
+    for (const path of [parent, directory]) {
       try {
         const info = await lstat(path);
         if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("Environment storage path is not an owned directory.");
@@ -51,8 +53,27 @@ export class LocalEnvironmentStore {
         await mkdir(path, { mode: 0o700 });
       }
     }
-    if (await realpath(this.directory) !== this.canonicalDirectory) throw new Error("Environment storage escaped the project.");
-    return this.directory;
+    if (await realpath(directory) !== join(this.canonicalProjectRoot, relative(this.projectRoot, directory))) throw new Error("Environment storage escaped the project.");
+    return directory;
+  }
+
+  private projectConfigPath(configPath: string): string {
+    if (!isAbsolute(configPath) || configPath.includes("\0")) throw new Error("Environment config path must be absolute.");
+    const path = resolve(configPath), parent = dirname(path), namespace = dirname(parent);
+    let project: string;
+    try { project = realpathSync(dirname(namespace)); }
+    catch { throw new Error("Environment config path is outside this project's environment directories."); }
+    const directory = this.directories.find(directory => basename(dirname(directory)) === basename(namespace));
+    if (project !== this.canonicalProjectRoot || basename(parent) !== "environments" || !directory)
+      throw new Error("Environment config path is outside this project's environment directories.");
+    // Normalize only the project alias. Storage directories and files must not follow symlinks.
+    return this.ownedPath(directory, join(directory, basename(path)));
+  }
+
+  async resolveConfigPath(configPath: string): Promise<string> {
+    const path = this.projectConfigPath(configPath), directory = dirname(path);
+    if (!await this.ownedRoot(false, directory)) throw new Error("Environment configuration no longer exists.");
+    return path;
   }
 
   private ownedPath(directory: string, configPath: string): string {
@@ -97,9 +118,7 @@ export class LocalEnvironmentStore {
   }
 
   async read(configPath: string): Promise<{ configPath: string; revision: string; raw: string }> {
-    const directory = await this.ownedRoot(false);
-    if (!directory) throw new Error("Environment configuration no longer exists.");
-    const path = this.ownedPath(directory, configPath);
+    const path = await this.resolveConfigPath(configPath);
     const entry = await this.readEntry(path);
     if (entry.type === "missing") throw new Error("Environment configuration no longer exists.");
     if (entry.raw === undefined || !entry.item.revision) throw new Error(entry.item.type === "error" ? entry.item.error : "Environment configuration cannot be read safely.");
@@ -107,14 +126,16 @@ export class LocalEnvironmentStore {
   }
 
   async catalog(): Promise<LocalEnvironmentCatalogItem[]> {
-    const directory = await this.ownedRoot(false); if (!directory) return [];
-    const names = (await readdir(directory)).filter(name => name.endsWith(".toml")).sort((a, b) => a.localeCompare(b));
     const items: LocalEnvironmentCatalogItem[] = [];
-    for (const name of names) {
-      const entry = await this.readEntry(join(directory, name));
-      if (entry.type === "item") items.push(entry.item);
+    for (const candidate of this.directories) {
+      const directory = await this.ownedRoot(false, candidate); if (!directory) continue;
+      const names = (await readdir(directory)).filter(name => name.endsWith(".toml"));
+      for (const name of names) {
+        const entry = await this.readEntry(join(directory, name));
+        if (entry.type === "item") items.push(entry.item);
+      }
     }
-    return items;
+    return items.sort((a, b) => Number(basename(b.configPath) === "environment.toml") - Number(basename(a.configPath) === "environment.toml") || a.configPath.localeCompare(b.configPath));
   }
 
   async save(input: { configPath?: string | null; expectedRevision: string | null; raw: string }): Promise<LocalEnvironmentSaveResult> {
@@ -128,9 +149,11 @@ export class LocalEnvironmentStore {
 
   private async saveOwned(input: { configPath?: string | null; expectedRevision: string | null; raw: string }): Promise<LocalEnvironmentSaveResult> {
     if (input.expectedRevision !== null && !/^[a-f0-9]{64}$/.test(input.expectedRevision)) throw new Error("Invalid environment revision.");
-    const environment = parseLocalEnvironment(input.raw), directory = (await this.ownedRoot(true))!;
+    const environment = parseLocalEnvironment(input.raw);
+    const existingPath = input.configPath ? this.projectConfigPath(input.configPath) : null;
+    const directory = (await this.ownedRoot(true, existingPath ? dirname(existingPath) : this.directory))!;
     let path: string;
-    if (input.configPath) path = this.ownedPath(directory, input.configPath);
+    if (existingPath) path = existingPath;
     else {
       if (input.expectedRevision !== null) throw new Error("A new environment cannot have an existing revision.");
       const stem = safeName(environment.name); path = join(directory, `${stem}.toml`);
@@ -156,7 +179,7 @@ export class LocalEnvironmentStore {
     catch (cause) { await file.close(); await unlink(temporary).catch(() => {}); throw cause; }
     await file.close();
     try {
-      await this.ownedRoot(false);
+      await this.ownedRoot(false, directory);
       const latest = await this.readEntry(path);
       const changed = original.type !== latest.type || (original.type === "item" && latest.type === "item" &&
         (original.identity !== latest.identity || original.item.revision !== latest.item.revision));

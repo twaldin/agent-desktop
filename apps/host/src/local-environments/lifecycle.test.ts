@@ -14,7 +14,7 @@ const exec = promisify(execFile);
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture(setup: string, cleanup: string) {
+async function fixture(setup: string, cleanup: string, namespace = ".agent-desktop") {
   const root = await realpath(await mkdtemp(join(tmpdir(), "agent-environment-lifecycle-")));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const source = join(root, "source"), data = join(root, "data");
@@ -27,7 +27,7 @@ async function fixture(setup: string, cleanup: string) {
   const store = new HostStore(data); cleanups.push(() => store.close());
   const project = store.addProject({ path: source, name: "Environment fixture" });
   const configStore = new LocalEnvironmentStore(source);
-  const saved = await configStore.save({ expectedRevision: null, raw: serializeLocalEnvironment({ version: 1, name: "Fixture", setup: { script: setup }, cleanup: { script: cleanup } }) });
+  const saved = await configStore.save({ configPath: join(source, namespace, "environments", "environment.toml"), expectedRevision: null, raw: serializeLocalEnvironment({ version: 1, name: "Fixture", setup: { script: setup }, cleanup: { script: cleanup } }) });
   if (saved.type !== "saved") throw new Error("Fixture config save failed");
   const workspaces = new HostWorkspaces(store, data, () => () => {});
   const lifecycle = new WorktreeEnvironmentLifecycle(store, workspaces, { timeoutMs: 5_000 });
@@ -37,8 +37,8 @@ async function fixture(setup: string, cleanup: string) {
   return { root, source, data, store, project, configStore, saved, workspaces, lifecycle, input, git, before };
 }
 
-test("actual setup is revision-pinned, runs once, captures private exports and cleanup precedes removal", async () => {
-  const f = await fixture('printf "setup\\n" >> setup-count\nexport ENVIRONMENT_FIXTURE_VALUE=private-value', 'rm setup-count');
+for (const namespace of [".agent-desktop", ".codex"]) test(`${namespace}: actual setup is revision-pinned, runs once, captures private exports and cleanup precedes removal`, async () => {
+  const f = await fixture('printf "setup\\n" >> setup-count\nexport ENVIRONMENT_FIXTURE_VALUE=private-value', 'rm setup-count', namespace);
   const ready = await f.lifecycle.prepare(f.input);
   expect(ready.phase).toBe("setup-succeeded");
   expect(f.store.environmentPreparations.getOutput(ready.id)).toMatchObject({ lifecycle: "setup", finished: true });

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile, symlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { serializeLocalEnvironment, type CommandEnvelope, type CommandResult } from '@agent-desktop/shared';
@@ -61,6 +61,20 @@ test('environment catalog and revisioned save use authenticated owning workspace
     expect(await send(create)).toEqual(first);
     expect(await readFile(saved.configPath,'utf8')).toBe(editRaw);
     expect(await (await query(projectA)).json()).toMatchObject({type:'environments.list',environments:[{type:'environment',environment:{name:'Saved edit'}}]});
+    const nativePath = join(await realpath(a), '.codex', 'environments', 'environment.toml');
+    await mkdir(dirname(nativePath), { recursive: true }); await writeFile(nativePath, raw);
+    const nativeCatalog = await (await query(projectA)).json();
+    expect(nativeCatalog.environments.map((item: { configPath: string }) => item.configPath)).toEqual([nativePath, saved.configPath]);
+    const nativeRead = await (await readConfig(projectA, nativePath)).json();
+    expect(nativeRead.raw).toBe(raw);
+    expect((await readConfig(projectB, nativePath)).ok).toBe(false);
+    const nativeEdit: CommandEnvelope = { id: 'native-environment-edit', command: { type: 'workspace.mutate', target: { projectId: projectA }, action: { type: 'environment.save', configPath: nativePath, expectedRevision: nativeRead.revision, raw: editRaw } } };
+    const nativeSaved = await send(nativeEdit);
+    expect(nativeSaved).toMatchObject({ ok: true, value: { result: { type: 'saved', configPath: nativePath } } });
+    expect(await send(nativeEdit)).toEqual(nativeSaved);
+    expect(await readFile(nativePath, 'utf8')).toBe(editRaw);
+    expect(await readdir(dirname(nativePath))).toEqual(['environment.toml']);
+    expect(await readFile(join(a, 'SHOULD_NOT_EXECUTE'), 'utf8').catch(() => null)).toBeNull();
     const state=await (await request('/v1/state')).json();
     expect(state.localEnvironments).toEqual({configuration:true,execution:{commandVersion:5,scriptOutput:true,scriptCancellation:true}}); expect(state.sessions).toHaveLength(0);
   } finally { await host?.stop(); await rm(root,{recursive:true,force:true}); }
