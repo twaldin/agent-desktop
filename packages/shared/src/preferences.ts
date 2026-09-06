@@ -10,6 +10,11 @@ export type ThemeTokenDefinition =
 export const THEME_TOKEN_DEFINITIONS = {
   "--app-surface": { kind: "color" }, "--sidebar-surface": { kind: "color" },
   "--composer-surface": { kind: "color" }, "--elevated-surface": { kind: "color" },
+  "--dialog-input-surface": { kind: "color" },
+  "--dialog-surface": { kind: "color" },
+  "--dialog-backdrop-color": { kind: "color" },
+  "--dialog-opacity": { kind: "number", minimum: 0, maximum: 1 },
+  "--dialog-blur": { kind: "length", minimum: 0, maximum: 100 },
   "--welcome-mark-color": { kind: "color" },
   "--welcome-mark-opacity": { kind: "number", minimum: 0, maximum: 1 },
   "--welcome-mark-hover-opacity": { kind: "number", minimum: 0, maximum: 1 },

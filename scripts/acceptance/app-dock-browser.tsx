@@ -22,6 +22,7 @@ const preferenceRecords: any[] = [];
 const preferenceActor = crypto.randomUUID();
 let checkoutGate: Promise<void> | undefined;
 let checkoutUnknownOnce = false;
+let modeSaveFailure: "conflict" | "error" | undefined;
 let promptGate: PromiseWithResolvers<void> | undefined;
 let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
 const menuDismissal = { add: false, move: false };
@@ -85,6 +86,12 @@ const methods: Partial<DesktopBridge> = {
   command: async (envelope: CommandEnvelope): Promise<CommandResult> => {
     if (envelope.command.type === "draft.put") {
       draftWrites.push(structuredClone(envelope.command));
+      if (envelope.command.draft.id.startsWith("new-chat-execution-mode:") && modeSaveFailure) {
+        const failure=modeSaveFailure; modeSaveFailure=undefined;
+        if (failure==="error") throw new Error("Controlled mode save unavailable");
+        const currentDraft={...envelope.command.draft,execution:{type:"worktree" as const,startingState:{type:"working-tree" as const}},revision:envelope.command.expectedRevision+2,updatedAt:Date.now()};
+        return {ok:false,commandId:envelope.id,error:{code:"DRAFT_CONFLICT",message:"The project mode changed on the owning host."},currentDraft};
+      }
       return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: Date.now() } };
     }
     if (envelope.command.type === "workspace.mutate" && envelope.command.action.type === "git.checkout") {
@@ -217,6 +224,11 @@ Object.assign(window, {
     assert(dialogBounds.width>=360 && dialogBounds.width<=420 && dialogBounds.top>=0 && dialogBounds.bottom<=innerHeight,"Branch creation dialog geometry is clipped or outside the native feature-dialog width");
     assert(document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')!.value==="codex/" && prompt.value==="Keep context draft","Branch modal did not retain its native prefix or the unsent draft");
     return {fitting:true,dialog:dialogBounds.toJSON(),viewport:{width:innerWidth,height:innerHeight,devicePixelRatio}};
+  },
+  measureBranchDialog: () => {
+    const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!, style=getComputedStyle(dialog), backdrop=getComputedStyle(dialog,'::backdrop');
+    const bounds=dialog.getBoundingClientRect();
+    return {fitting:bounds.width<=innerWidth && bounds.height<=innerHeight,dialog:bounds.toJSON(),style:{background:style.backgroundColor,backdropFilter:style.backdropFilter,radius:style.borderRadius,overlayColor:backdrop.backgroundColor,overlayBlur:backdrop.backdropFilter},viewport:{width:innerWidth,height:innerHeight,devicePixelRatio}};
   },
   checkBranchModalTrap: async () => {
     const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!;
@@ -369,6 +381,25 @@ Object.assign(window, {
     await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')?.textContent?.includes("Local file state"),"project restores remembered worktree mode");
     assert(prompt.value==='Captured worktree prompt' && !document.querySelector('[aria-label="Switch branch"]'),"Restored worktree mode lost prompt or retained source checkout control");
     assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Project mode restoration mutated Git or created a session");
+    await wait(()=>draftWrites.some(write=>write.draft.id===`new-chat-execution-mode:${projectId}` && write.draft.execution?.type==="worktree"),"initial mode preference reaches transport");
+    modeSaveFailure="conflict";
+    location.click(); await wait(()=>button(document.querySelector('.composer-context-menu'),"Local"),"mode conflict choice");
+    button(document.querySelector('.composer-context-menu'),"Local")!.click();
+    await wait(()=>button(document.querySelector('.draft-conflict'),"Keep my mode"),"opposite mode conflict is visible");
+    assert(document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled && prompt.value==='Captured worktree prompt',"Mode conflict permits new Send or alters prompt");
+    button(document.querySelector('.draft-conflict'),"Keep my mode")!.click();
+    await wait(()=>!document.querySelector('.draft-conflict') && document.querySelector('[aria-label="Switch branch"]'),"resolve mode conflict with explicit Local choice");
+    const resolvedModeWrites=draftWrites.filter(write=>write.draft.id===`new-chat-execution-mode:${projectId}`).length;
+    await wait(()=>draftWrites.filter(write=>write.draft.id===`new-chat-execution-mode:${projectId}`).length>resolvedModeWrites,"resolved mode save");
+    modeSaveFailure="error";
+    location.click(); await wait(()=>button(document.querySelector('.composer-context-menu'),"New local worktree")?.disabled===false,"mode retry choice");
+    button(document.querySelector('.composer-context-menu'),"New local worktree")!.click();
+    await wait(()=>button(document.querySelector('.inline-error'),"Retry mode save"),"mode save error exposes Retry");
+    assert(prompt.value==='Captured worktree prompt' && document.querySelector('[aria-label="What branch should this chat start from?"]'),"Failed mode save discarded current draft intent");
+    button(document.querySelector('.inline-error'),"Retry mode save")!.click();
+    await wait(()=>![...document.querySelectorAll('button')].some(item=>item.textContent==='Retry mode save'),"mode retry succeeds visibly");
+    assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Mode conflict or retry mutated Git or created a session");
+
 
     await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled===false,"worktree Send enabled");
     promptGate=Promise.withResolvers<void>(); document.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click();
