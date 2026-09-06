@@ -36,6 +36,16 @@ Object.assign(window, {
     await wait(() => latest.right.activeTabId === tabs[1]!.id, "tab selection");
     assert(document.querySelector<HTMLElement>(".fixture-tab[data-active='false']")?.parentElement?.hidden, "inactive panel hidden");
     checks.push("actual tab panel keeps inactive buffer mounted but hidden/inert");
+    const closeButton = (tab: HTMLElement) => tab.closest(".dock-pill")!.querySelector<HTMLElement>(".dock-tab-close")!;
+    const beforeFocus = files.getBoundingClientRect().width;
+    assert(getComputedStyle(closeButton(review)).opacity === "1", "active tab must expose its close control without hover");
+    assert(getComputedStyle(closeButton(files)).opacity === "0", "inactive idle tab must keep its close control hidden");
+    assert(closeButton(files).getBoundingClientRect().width > 0, "hidden close control must reserve its layout space");
+    closeButton(files).focus();
+    await wait(() => getComputedStyle(closeButton(files)).opacity === "1", "keyboard-focus close affordance");
+    assert(files.getBoundingClientRect().width === beforeFocus, "revealing the close button must not shift or truncate the tab label");
+    review.focus();
+    checks.push("active and keyboard-focused close affordances preserve idle tab geometry");
     review.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
     await wait(() => latest.right.activeTabId === tabs[0]!.id, "Home selection");
     checks.push("keyboard selection updates controlled dock state");

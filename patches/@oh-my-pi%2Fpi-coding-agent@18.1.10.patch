@@ -1,3 +1,136 @@
+--- a/src/tools/browser.ts
++++ b/src/tools/browser.ts
+@@ -5,0 +6 @@
++import type { AgentSession } from "../session/agent-session";
+@@ -27,0 +29 @@
++	BrowserTabCreateRejected,
+@@ -32,0 +35 @@
++	type TabSession,
+@@ -46,0 +50 @@
++export { BrowserTabCreateRejected } from "./browser/tab-supervisor";
+@@ -100 +104,22 @@
+-function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
++type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
++
++export interface SessionBrowserTabCreateRequest {
++	/** New managed OMP tab name. Existing names are rejected atomically. */
++	readonly name: string;
++}
++
++export interface SessionBrowserTabCreateResult {
++	readonly created: true;
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly targetId: string;
++	readonly backend: TabSession["backend"];
++	readonly kindTag: BrowserKindTag;
++	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
++	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++	readonly url: string;
++	readonly title: string;
++	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++
++function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
+@@ -203,0 +229,24 @@
++	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
++	details.browser = browser.kind.kind;
++	const tab = result.tab;
++	const url = tab.info.url;
++	const title = tab.info.title ?? "";
++	details.url = url;
++	details.viewport = tab.info.viewport;
++	const verb = result.created ? "Opened" : "Reused";
++	const lines = [
++		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
++		`URL: ${url}`,
++		title ? `Title: ${title}` : null,
++	].filter((line): line is string => typeof line === "string");
++	return toolResult(details).text(lines.join("\n")).done();
++}
++
++async function acquireBrowserTab(
++	session: BrowserOpenSession,
++	name: string,
++	params: BrowserParams,
++	timeoutMs: number,
++	signal?: AbortSignal,
++	createOnly = false,
++): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
+@@ -205 +253,0 @@
+-	details.browser = kind.kind;
+@@ -208,0 +257 @@
++	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
+@@ -269,0 +319 @@
++					createOnly,
+@@ -280,12 +330 @@
+-		const tab = result.tab;
+-		const url = tab.info.url;
+-		const title = tab.info.title ?? "";
+-		details.url = url;
+-		details.viewport = tab.info.viewport;
+-		const verb = result.created ? "Opened" : "Reused";
+-		const lines = [
+-			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
+-			`URL: ${url}`,
+-			title ? `Title: ${title}` : null,
+-		].filter((line): line is string => typeof line === "string");
+-		return toolResult(details).text(lines.join("\n")).done();
++		return { browser, result };
+@@ -298,0 +338,53 @@
++}
++
++/**
++ * Create one managed browser tab directly for an actual AgentSession. This is
++ * an explicit human resource action: it reads the live native browser settings
++ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
++ * conversation transcript.
++ */
++export async function createBrowserTabForSession(
++	session: AgentSession,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	if (
++		!request ||
++		typeof request.name !== "string" ||
++		request.name.length === 0 ||
++		request.name.length > 200 ||
++		/[\u0000-\u001f\u007f]/.test(request.name)
++	) {
++		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
++	}
++	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
++	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
++	const ownerSessionId = session.sessionManager.getSessionId();
++	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
++	const nativeSession: BrowserOpenSession = {
++		cwd: session.sessionManager.getCwd(),
++		settings: session.settings,
++		getSessionId: () => ownerSessionId,
++	};
++	const timeoutMs = clampTimeout("browser", undefined, session.settings.get("tools.maxTimeout")) * 1_000;
++	const params = { action: "open", name: request.name } as BrowserParams;
++	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, undefined, true);
++	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
++	if (session.isDisposed || session.sessionManager.getSessionId() !== ownerSessionId) {
++		await releaseTab(request.name, { kill: true, timeoutMs });
++		throw new ToolError("The native session changed while creating its browser tab");
++	}
++	const tab = result.tab;
++	const targetDisposition = tab.kindTag === "headless" ? "created-page"
++		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
++	return Object.freeze({
++		created: true,
++		name: tab.name,
++		ownerSessionId,
++		targetId: tab.targetId,
++		backend: tab.backend,
++		kindTag: tab.kindTag,
++		targetDisposition,
++		url: tab.info.url,
++		title: tab.info.title ?? "",
++		viewport: Object.freeze({ ...tab.info.viewport }),
++	});
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
 @@ -10 +10 @@
@@ -59,12 +192,23 @@
 +	readonly title: string;
 +}
 +
-@@ -149,0 +205,2 @@
+@@ -128,0 +184,2 @@
++	/** Reject an existing managed name after serialized acquisition instead of reusing or replacing it. */
++	createOnly?: boolean;
+@@ -148,0 +206,5 @@
++/** A definite browser-tab creation refusal that occurs before publishing a new tab. */
++export class BrowserTabCreateRejected extends ToolError {
++	override name = "BrowserTabCreateRejected";
++}
++
+@@ -149,0 +212,2 @@
 +const viewportCaptures = new Map<string, Promise<Readonly<OwnerTabViewportCapture>>>();
 +const humanActions = new Map<string, Promise<Readonly<OwnerTabHumanActionResult>>>();
-@@ -510,0 +568 @@
+@@ -263,0 +328 @@
++	if (existing && opts.createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
+@@ -510,0 +576 @@
 +	if (humanActions.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is busy with a human browser action`);
-@@ -756,0 +815,212 @@
+@@ -756,0 +823,212 @@
 +}
 +
 +/**

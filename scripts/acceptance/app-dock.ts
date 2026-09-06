@@ -7,7 +7,7 @@ import { build } from "vite";
 const root = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/app-dock-acceptance/${Date.now()}`);
 const profile = await mkdtemp(join(tmpdir(), "agent-app-dock-"));
-const sources = ["apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/styles.css", "apps/desktop/src/renderer/dock-layout.css", "apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/EnvironmentCard.tsx", "apps/desktop/src/renderer/BrowserPanel.tsx", "apps/desktop/src/renderer/browser-panel.css", "apps/desktop/src/renderer/Icons.tsx", "scripts/acceptance/app-dock-browser.tsx"];
+const sources = ["apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/styles.css", "apps/desktop/src/renderer/dock-layout.css", "apps/desktop/src/renderer/dock-panel.css", "apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/EnvironmentCard.tsx", "apps/desktop/src/renderer/BrowserPanel.tsx", "apps/desktop/src/renderer/browser-panel.css", "apps/desktop/src/renderer/Icons.tsx", "scripts/acceptance/app-dock-browser.tsx"];
 const hashes = () => Promise.all(sources.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])).then(Object.fromEntries);
 await mkdir(output, { recursive: true, mode: 0o700 });
 try {

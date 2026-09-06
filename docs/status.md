@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Supplied reference audit and current source work
+
+The supplied private reference bundle is now the default audit input, with the [project comparison workflow](ui-parity-workflow.md). The reproducible private ledger is `.data/parity-audit-2026-09-05/ledger.md` / `ledger.json`; it retains all supplied captures, interaction states, transitions and uncaptured requirements. Source findings and live comparison remain separate, with no visual passes inferred from source coverage. The captured helper build differs from the pinned reference, so comparisons retain both versions.
+
+The dock now reserves close-button space, exposes the active-tab close affordance, reveals the inactive affordance on hover/focus without shifting its label, and respects the configured UI font size. Seven actual Electron dock checks pass; the production-App controlled check also passes six workflow groups and four viewport captures with unchanged source hashes. Typecheck passes. These are component/layout checks, not registered reference comparisons. Evidence: `.data/parity-audit-2026-09-05/dock-close-candidate/` and `app-dock-final/`.
+
+The selected OMP patch now contains a direct native browser-creation seam using the actual AgentSession configuration. It admits names atomically, distinguishes newly created pages/surfaces from configured connected/relay target adoption, and preserves native disposal. Six isolated real-native creation checks and six existing native control checks pass; independent Terra review found no concrete patch regression. The desktop/HTTP/worker creation bridge is not implemented yet. This candidate has not replaced installed services or the existing root dependency tree. See [native creation contract](../patches/omp-18.1.10/browser-create/README.md). Earlier full-suite results below predate this candidate and remain bounded to their recorded source.
+
 ## Release 17 — browser metadata and native goal restoration
 
 The pinned OMP metadata patch, worker protocol 6 and owner-bound desktop transport now expose actual native browser tab metadata. This is the foundation for a shared-target browser panel; frames, input and browser controls remain unimplemented. The native worker test and separate real-tab candidate proof are described in [browser integration](browser-integration.md). Host artifacts include selected dependency patches so frozen installs can reproduce them.
