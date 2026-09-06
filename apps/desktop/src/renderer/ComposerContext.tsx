@@ -26,8 +26,12 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
   const localBranches = workspace?.branches.filter(item => !item.remote && !item.symbolicTarget) ?? [];
   const currentBranch = workspace?.status?.branch ?? localBranches.find(item => item.current)?.name;
   const dirty = Boolean(workspace?.status?.entries.length);
+  const fallbackStartingState = currentBranch ? { type: "branch" as const, branchName: currentBranch }
+    : dirty ? { type: "working-tree" as const }
+    : localBranches[0] ? { type: "branch" as const, branchName: localBranches[0].name }
+    : undefined;
   const worktreeSelected = execution?.type === "worktree";
-  const worktreeDisabled = !project || !worktreesAvailable || disabledGit || !currentBranch;
+  const worktreeDisabled = !project || !worktreesAvailable || disabledGit || !fallbackStartingState;
   const resolvedExecutionProject = useRef(projectId);
   useEffect(() => { setOpen(undefined); setQuery(""); setNewBranch(""); }, [hostId, projectId]);
   useEffect(() => {
@@ -41,13 +45,13 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
   }, [workspace, connected]);
   useEffect(() => {
     if (!worktreeSelected) { resolvedExecutionProject.current = projectId; return; }
-    if (!project || !connected || !workspace?.restored || !workspace.status || !currentBranch) return;
+    if (!project || !connected || !workspace?.restored || !workspace.status || !fallbackStartingState) return;
     const changedProject = resolvedExecutionProject.current !== projectId;
     resolvedExecutionProject.current = projectId;
     const selected = execution.startingState;
-    const valid = selected.type === "branch" ? localBranches.some(item => item.name === selected.branchName) : dirty;
-    if (changedProject || !valid) onExecution({ type: "worktree", startingState: { type: "branch", branchName: currentBranch } });
-  }, [projectId, project, connected, workspace?.restored, workspace?.status?.revision, currentBranch, dirty, worktreeSelected, execution, localBranches, onExecution]);
+    const valid = selected.type === "branch" ? selected.branchName === workspace.status.branch || localBranches.some(item => item.name === selected.branchName) : dirty;
+    if (changedProject || !valid) onExecution({ type: "worktree", startingState: fallbackStartingState });
+  }, [projectId, project, connected, workspace?.restored, workspace?.status?.revision, dirty, worktreeSelected, execution, localBranches, fallbackStartingState, onExecution]);
   useLayoutEffect(() => {
     if (!open || !anchor.current) return;
     const target = anchor.current;
@@ -84,7 +88,7 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
   }
   function toggle(value:Menu, button:HTMLButtonElement, align: "start" | "center" = "start") {
     anchor.current = button; anchorAlign.current = align; setQuery(""); setNewBranch(""); setOpen(open === value ? undefined : value);
-    if ((value === "branches" || value === "starting-state") && connected) void workspace?.loadWorktrees();
+    if ((value === "hosts" || value === "branches" || value === "starting-state") && connected) void workspace?.loadWorktrees();
   }
   useImperativeHandle(ref, () => ({ openProjects(button) { toggle("projects", button, "center"); } }), [open]);
   function key(event:KeyboardEvent<HTMLDivElement>) {
@@ -125,7 +129,7 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
     {open && open !== "create-branch" && position && createPortal(<div ref={menu} role="menu" aria-label={label} className="composer-context-menu" style={position} onKeyDown={key}>
       {open !== "starting-state" && <label className="context-search"><Icon name="search"/><input type="search" aria-label={`Search ${open}`} placeholder={`Search ${open}`} value={query} onChange={event => setQuery(event.target.value)}/></label>}
       {open === "projects" && <><div className="context-options">{projects.filter(item => matches(`${item.name} ${item.path}`)).map(item => <button role="menuitemradio" aria-checked={item.id === projectId} key={item.id} type="button" title={item.path} onClick={() => { onProject(item.id); close(); }}><Icon name="folder"/><span>{item.name}</span>{item.id === projectId && <Icon name="check"/>}</button>)}{!projects.some(item => matches(`${item.name} ${item.path}`)) && <p>No matching projects.</p>}</div><hr/><button role="menuitem" type="button" disabled={!connected || addingProject} onClick={() => { close(); onAddProject(); }}><Icon name="plus"/><span>{addingProject ? "Adding project…" : "New project"}</span></button><button role="menuitem" type="button" onClick={() => { onProject(null); close(); }}><Icon name="close"/><span>Don’t work in a project</span></button></>}
-      {open === "hosts" && <><div className="context-options"><p className="context-menu-heading">Work in</p><button role="menuitemradio" aria-label="Local" aria-checked={!worktreeSelected} type="button" onClick={() => { onExecution({type:"local"}); close(); }}><Icon name="laptop"/><span>Local</span>{!worktreeSelected && <Icon name="check"/>}</button><button role="menuitemradio" aria-label="New local worktree" aria-checked={worktreeSelected} type="button" disabled={worktreeDisabled} title={!worktreesAvailable ? "Update the owning host to create local worktrees." : !project ? "Choose a project first." : undefined} onClick={() => { if (currentBranch) { onExecution({type:"worktree",startingState:{type:"branch",branchName:currentBranch}}); close(); } }}><Icon name="branch"/><span>New local worktree<small>{worktreeDisabled ? "Unavailable for this project" : `Start from ${currentBranch}`}</small></span>{worktreeSelected && <Icon name="check"/>}</button></div><hr/><div className="context-options"><p className="context-menu-heading">Run on</p>{hosts.filter(item => matches(item.name)).map(item => <button role="menuitemradio" aria-checked={item.hostId === hostId} key={item.key} type="button" disabled={!item.hostId} title={item.error} onClick={() => { if (item.hostId) { close(); onHost(item.hostId); } }}><Icon name="laptop"/><span>{item.local ? "Local host" : item.name}<small>{item.local ? item.name : item.availability === "available" ? "Connected" : item.cached ? "Offline · cached projects" : item.availability}</small></span>{item.hostId === hostId && <Icon name="check"/>}</button>)}{!hosts.some(item => matches(item.name)) && <p>No matching hosts.</p>}</div></>}
+      {open === "hosts" && <><div className="context-options"><p className="context-menu-heading">Work in</p><button role="menuitemradio" aria-label="Local" aria-checked={!worktreeSelected} type="button" onClick={() => { onExecution({type:"local"}); close(); }}><Icon name="laptop"/><span>Local</span>{!worktreeSelected && <Icon name="check"/>}</button><button role="menuitemradio" aria-label="New local worktree" aria-checked={worktreeSelected} type="button" disabled={worktreeDisabled} title={!worktreesAvailable ? "Update the owning host to create local worktrees." : !project ? "Choose a project first." : undefined} onClick={() => { if (fallbackStartingState) { onExecution({type:"worktree",startingState:fallbackStartingState}); close(); } }}><Icon name="branch"/><span>New local worktree<small>{worktreeDisabled ? "Unavailable for this project" : fallbackStartingState?.type === "working-tree" ? "Start from local file state" : `Start from ${fallbackStartingState?.branchName}`}</small></span>{worktreeSelected && <Icon name="check"/>}</button></div><hr/><div className="context-options"><p className="context-menu-heading">Run on</p>{hosts.filter(item => matches(item.name)).map(item => <button role="menuitemradio" aria-checked={item.hostId === hostId} key={item.key} type="button" disabled={!item.hostId} title={item.error} onClick={() => { if (item.hostId) { close(); onHost(item.hostId); } }}><Icon name="laptop"/><span>{item.local ? "Local host" : item.name}<small>{item.local ? item.name : item.availability === "available" ? "Connected" : item.cached ? "Offline · cached projects" : item.availability}</small></span>{item.hostId === hostId && <Icon name="check"/>}</button>)}{!hosts.some(item => matches(item.name)) && <p>No matching hosts.</p>}</div></>}
       {open === "starting-state" && <><label className="context-search"><Icon name="search"/><input type="search" aria-label={`Search ${project?.name ?? "project"} branches`} placeholder={`Search ${project?.name ?? "project"} branches`} value={query} onChange={event => setQuery(event.target.value)}/></label><div className="context-options context-starting-states">{workspace?.loading.has("worktrees") && <p>Loading branches…</p>}{dirty && matches(`Local file state ${currentBranch ?? ""}`) && <button type="button" role="menuitemradio" aria-label="Local file state" aria-checked={execution?.type === "worktree" && execution.startingState.type === "working-tree"} onClick={() => { onExecution({type:"worktree",startingState:{type:"working-tree"}}); close(); }}><Icon name="folder"/><span>Local file state<small>{currentBranch ?? "Detached HEAD"} with local code changes</small></span>{execution?.type === "worktree" && execution.startingState.type === "working-tree" && <Icon name="check"/>}</button>}{localBranches.filter(item => matches(item.name)).map(item => <button type="button" role="menuitemradio" aria-checked={execution?.type === "worktree" && execution.startingState.type === "branch" && execution.startingState.branchName === item.name} key={item.ref} onClick={() => { onExecution({type:"worktree",startingState:{type:"branch",branchName:item.name}}); close(); }}><Icon name="branch"/><span>{item.name}</span>{execution?.type === "worktree" && execution.startingState.type === "branch" && execution.startingState.branchName === item.name && <Icon name="check"/>}</button>)}</div></>}
       {open === "branches" && <>
         {workspace?.cacheWarning && <p role="alert">{workspace.cacheWarning}</p>}

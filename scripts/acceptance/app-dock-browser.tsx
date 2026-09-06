@@ -329,14 +329,16 @@ Object.assign(window, {
     }finally{gate.resolve();checkoutGate=undefined;}
   },
   beginWorktreeSubmission: async () => {
+    gitStatus.branch=null; gitStatus.revision+="-detached";
     const projectButton=document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!; projectButton.click();
     await wait(()=>button(document.querySelector('.composer-context-menu'),"Dock project"),"worktree project choice"); button(document.querySelector('.composer-context-menu'),"Dock project")!.click();
-    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Select where to run the chat"]') && document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')?.textContent?.includes("feature/dock"),"worktree Git context");
+    await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="Select where to run the chat"]') && document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')?.textContent?.includes("Detached HEAD"),"detached worktree Git context");
     const location=document.querySelector<HTMLButtonElement>('[aria-label="Select where to run the chat"]')!; location.click();
     await wait(()=>button(document.querySelector('.composer-context-menu'),"New local worktree")?.disabled===false,"worktree mode option");
     const beforeMutations=branchWrites.length, beforeCreates=sessionCreates.length;
     button(document.querySelector('.composer-context-menu'),"New local worktree")!.click();
     await wait(()=>document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]'),"worktree starting state control");
+    assert(document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')!.textContent?.includes("Local file state"),"Dirty detached HEAD did not fall back to local file state");
     assert(branchWrites.length===beforeMutations && sessionCreates.length===beforeCreates,"Selecting worktree mode mutated the repository or created a session");
     document.querySelector<HTMLButtonElement>('[aria-label="What branch should this chat start from?"]')!.click();
     await wait(()=>button(document.querySelector('.composer-context-menu'),"Local file state"),"dirty local file state");
@@ -353,7 +355,7 @@ Object.assign(window, {
     assert(create.commandVersion===4 && create.command.type==='session.create' && create.command.projectId===projectId && create.command.worktree?.type==='working-tree',"Send did not capture the owning project and selected local file state");
     const pending=document.querySelector('.subtle-notice details')?.textContent ?? '';
     assert(pending.includes('New local worktree') && pending.includes('Local file state'),"Pending snapshot omitted its captured execution mode or starting state");
-    checks.push("worktree mode and dirty starting-state selection only update the durable draft; Send captures the owning project and working-tree state without checking out the source");
+    checks.push("dirty detached HEAD selects local file state for a worktree without mutating the source; Send captures the owning project and working-tree state");
     return {prompt:{x:prompt.getBoundingClientRect().x+20,y:prompt.getBoundingClientRect().y+20}};
   },
   finishWorktreeSubmission: async () => {
