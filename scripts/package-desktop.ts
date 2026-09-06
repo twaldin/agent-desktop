@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { verifyTmuxBundle } from "../apps/host/src/terminals/bundle";
 
@@ -20,6 +20,13 @@ function run(command: string, args: string[], cwd = root): void {
   if (result.status !== 0) throw new Error(`${command} exited ${result.status}.`);
 }
 try {
+  // A frozen Bun install can restore package files without the vendor binary
+  // populated by Electron's install script. Use that exact pinned installer.
+  try { await access(electron); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    run(process.execPath, [join(root, "node_modules/electron/install.js")]);
+  }
   run(process.execPath, ["scripts/build.ts"]);
   run("/bin/cp", ["-cR", electron, application]);
   const resources = join(application, "Contents/Resources");
