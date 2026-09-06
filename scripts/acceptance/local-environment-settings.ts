@@ -63,7 +63,7 @@ app.whenReady().then(async()=>{
   await wait('[...document.querySelectorAll("button")].some(e=>e.textContent.trim()==="Add environment"&&!e.disabled)','catalog');
   step='new';await click('button.primary-button');await wait('document.querySelector(".local-environment-field input")','editor');
   await type('.local-environment-field input','Fixture environment');await click('.local-environment-platforms button:nth-child(2)');
-  await type('textarea[aria-label="setup script for macOS"]','touch SHOULD_NOT_EXECUTE');await capture('01-editor');
+  await type('textarea[aria-label="setup script for macOS"]','touch SHOULD_NOT_EXECUTE');await capture('01-editor');await click('.environment-variables-trigger');await wait('document.querySelector(".environment-variables-popover")?.matches(":popover-open")','variables popup');await wait('(()=>{const p=document.querySelector(".environment-variables-popover").getBoundingClientRect(),b=document.querySelector(".environment-variables-trigger").getBoundingClientRect();return Math.abs(p.right-b.right)<1&&Math.abs(p.top-b.bottom-4)<1&&p.bottom<innerHeight})()','variables anchored within viewport');await capture('01b-variables');window.webContents.sendInputEvent({type:'keyDown',keyCode:'ESCAPE'});window.webContents.sendInputEvent({type:'keyUp',keyCode:'ESCAPE'});await wait('!document.querySelector(".environment-variables-popover")?.matches(":popover-open")','variables dismissed');
   step='save';await click('.local-environment-form-actions button[type=submit]');await wait('document.body.textContent.includes("Environment saved.")','save receipt');
   await capture('02-saved');
   step='draft';await type('.local-environment-field input',' unsaved');await sleep(300);window.webContents.reload();

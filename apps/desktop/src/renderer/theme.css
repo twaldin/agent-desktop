@@ -146,3 +146,8 @@ h2, h3 { font-family:var(--heading-font); font-weight:var(--heading-font-weight)
 /* Authenticated reference welcome foreground; independent of body text tone. */
 :root { --welcome-mark-color:var(--text); --welcome-mark-opacity:.3; --welcome-mark-hover-opacity:.4; }
 :root[data-theme="dark"] { --welcome-mark-color:#fff; }
+/* System dark uses the same foreground as explicit dark; inline custom tokens
+   still override it, and explicit light never follows this media query. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) { --welcome-mark-color:#fff; }
+}

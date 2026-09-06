@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
 import type { DesktopBridge, LocalEnvironmentAction, LocalEnvironmentConfig, LocalEnvironmentPlatform, Project } from "@agent-desktop/shared";
 import { LocalEnvironmentState } from "./local-environment-state";
 import { offlineCache } from "./offline-cache";
@@ -46,7 +46,6 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
   useEffect(() => { if (!state) return; const off = state.subscribe(redraw); state.start(); void state.restore(); return () => { off(); state.stop(); }; }, [state]);
   useEffect(() => { state?.setConnected(connected); }, [state, connected]);
   const [scriptPlatforms, setScriptPlatforms] = useState<Record<ScriptKind, typeof platforms[number]>>({ setup: "default", cleanup: "default" });
-  const [variablesOpen, setVariablesOpen] = useState(false);
   useEffect(() => { setRawEditor(Boolean(state?.editor && !state.config)); }, [state, state?.selected]);
   useEffect(() => {
     if (!state?.restored) return;
@@ -100,8 +99,7 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
         {editor && config && !rawEditor && <form onSubmit={submit} className="local-environment-form">
           <div className="local-environment-form-heading"><h2>Edit local environment</h2></div>
           <label className="local-environment-field">Name<input value={config.name} onChange={event => update(current => ({ ...current, name: event.target.value }))} placeholder="Project environment" /></label>
-          <ScriptEditor kind="setup" config={config} platform={scriptPlatforms.setup} script={scriptValue("setup")} onScriptChange={value => editScript("setup", value)} onPlatform={value => setScriptPlatforms(current => ({ ...current, setup: value }))} variablesOpen={variablesOpen} onVariables={() => setVariablesOpen(value => !value)} />
-          {variablesOpen && <div className="local-environment-variables" role="note"><strong>Available variables</strong><code>CODEX_SOURCE_TREE_PATH</code><code>CODEX_WORKTREE_PATH</code><p>These variables identify the source repository and managed worktree.</p></div>}
+          <ScriptEditor kind="setup" config={config} platform={scriptPlatforms.setup} script={scriptValue("setup")} onScriptChange={value => editScript("setup", value)} onPlatform={value => setScriptPlatforms(current => ({ ...current, setup: value }))} />
           <ScriptEditor kind="cleanup" config={config} platform={scriptPlatforms.cleanup} script={scriptValue("cleanup")} onScriptChange={value => editScript("cleanup", value)} onPlatform={value => setScriptPlatforms(current => ({ ...current, cleanup: value }))} />
           <section className="local-environment-actions"><div className="local-environment-section-heading"><div><h3>Actions</h3><p>Named commands saved with this environment.</p></div><button type="button" className="secondary-button" onClick={addAction}>Add action</button></div>{(config.actions ?? []).map((action, index) => <ActionEditor key={index} action={action} onChange={change => editAction(index, change)} onRemove={() => removeAction(index)} />)}{!config.actions?.length && <p className="local-environment-empty">Add a named command to this environment.</p>}</section>
           <div className="local-environment-form-actions"><button type="submit" className="primary-button" disabled={!connected || state.busy || Boolean(state.pending) || editor.conflict !== undefined}>{state.busy ? "Saving…" : "Save"}</button></div>
@@ -111,12 +109,22 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
   </section>;
 }
 
-function ScriptEditor({ kind, config, platform, script, onScriptChange, onPlatform, variablesOpen, onVariables }: { kind: ScriptKind; config: LocalEnvironmentConfig; platform: typeof platforms[number]; script: string; onScriptChange(value: string): void; onPlatform(platform: typeof platforms[number]): void; variablesOpen?: boolean; onVariables?: () => void }) {
-  return <section className="local-environment-script"><div className="local-environment-section-heading"><div><h3>{kind === "setup" ? "Setup script" : "Cleanup script"}</h3><p>{kind === "setup" ? "Setup script for new project worktrees" : "Cleanup script for project worktrees"}</p></div>{kind === "setup" && <button type="button" className="secondary-button" onClick={onVariables}>{variablesOpen ? "Hide variables" : "Variables"}</button>}</div><div className="local-environment-platforms" role="tablist" aria-label={`${kind} script platform`}>
+function ScriptEditor({ kind, config, platform, script, onScriptChange, onPlatform }: { kind: ScriptKind; config: LocalEnvironmentConfig; platform: typeof platforms[number]; script: string; onScriptChange(value: string): void; onPlatform(platform: typeof platforms[number]): void }) {
+  return <section className="local-environment-script"><div className="local-environment-section-heading"><div><h3>{kind === "setup" ? "Setup script" : "Cleanup script"}</h3><p>{kind === "setup" ? "Setup script for new project worktrees" : "Cleanup script for project worktrees"}</p></div>{kind === "setup" && <EnvironmentVariables/>}</div><div className="local-environment-platforms" role="tablist" aria-label={`${kind} script platform`}>
     {platforms.map(value => <button type="button" role="tab" aria-selected={value === platform} className={value === platform ? "selected" : ""} key={value} onClick={() => onPlatform(value)}>{platformLabel(value)}</button>)}
   </div><textarea aria-label={`${kind} script for ${platformLabel(platform)}`} value={script} onChange={event => onScriptChange(event.target.value)} rows={6} spellCheck={false} /></section>;
 }
 
 function ActionEditor({ action, onChange, onRemove }: { action: LocalEnvironmentAction; onChange(change: Partial<LocalEnvironmentAction>): void; onRemove(): void }) {
   return <div className="local-environment-action"><div className="local-environment-action-fields"><label>Name<input value={action.name} onChange={event => onChange({ name: event.target.value })} /></label><label>Command<textarea rows={3} value={action.command} onChange={event => onChange({ command: event.target.value })} spellCheck={false} /></label><label>Icon<select value={action.icon ?? ""} onChange={event => onChange({ icon: (event.target.value || null) as LocalEnvironmentAction["icon"] })}><option value="">No icon</option><option value="tool">Tool</option><option value="run">Run</option><option value="debug">Debug</option><option value="test">Test</option></select></label><label>Platform<select value={action.platform ?? ""} onChange={event => onChange({ platform: (event.target.value || undefined) as LocalEnvironmentPlatform | undefined })}><option value="">All platforms</option>{platforms.slice(1).map(value => <option key={value} value={value}>{platformLabel(value)}</option>)}</select></label></div><button type="button" className="icon-button small" aria-label={`Remove ${action.name || "action"}`} onClick={onRemove}><Icon name="close" /></button></div>;
+}
+
+function EnvironmentVariables() {
+  const id = useId();
+  return <><button type="button" className="secondary-button environment-variables-trigger" popoverTarget={id}>Variables</button>
+    <div id={id} popover="auto" className="environment-variables-popover" aria-label="Setup script environment variables">
+      <h4>Setup script environment variables</h4>
+      <p>Source workspace path</p><code>CODEX_SOURCE_TREE_PATH</code>
+      <p>New worktree path</p><code>CODEX_WORKTREE_PATH</code>
+    </div></>;
 }
