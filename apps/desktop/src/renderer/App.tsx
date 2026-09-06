@@ -23,7 +23,7 @@ import { useTranscriptScroll } from "./use-transcript-scroll";
 import "./transcript-scroll.css";
 import { AccountsSettings } from "./AccountsSettings";
 import { PendingInteractions } from "./PendingInteractions";
-import { ComposerContext } from "./ComposerContext";
+import { ComposerContext, type ComposerContextHandle } from "./ComposerContext";
 import { PendingDetachedQuestions } from "./DetachedQuestionCard";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { resolveTranscriptLink, type TranscriptLinkActions, type WorkspaceFileRequest } from "./transcript-links";
@@ -53,6 +53,7 @@ import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace-
 import { Welcome } from "./Welcome";
 
 export function App() {
+  const composerContext = useRef<ComposerContextHandle>(null);
   const bridge = window.agentDesktop;
   const [windowRestoration] = useState(readWindowRestoration);
   const [route, setRoute] = useState<WindowNavigation>(windowRestoration.state.route);
@@ -419,7 +420,7 @@ export function App() {
             <TranscriptMessages messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }}/>
             {running && <div className="working-state" role="status"><span className="working-dot"/>Working…</div>}
           </div>
-        </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={() => document.querySelector<HTMLButtonElement>('.composer-context > button[aria-label="Select project"]')?.click()}/>}
+        </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={anchor => composerContext.current?.openProjects(anchor)}/>}
         <div className={`composer-region ${selectedId ? "" : "home-composer"}`}>
           {selected && <PendingDetachedQuestions bridge={bridge} hostId={hostId} sessionId={selected.id} localHostId={desktop.localHostId} connected={connected} archived={selected.archived} drafts={drafts} submissions={submissions}/>}
           {(selectedId || pendingSessionId) && state && <>
@@ -438,7 +439,7 @@ export function App() {
           {composer.catalog && !permissionChoice.supported && <p className="subtle-notice">This host does not support saved composer permission choices yet. Update the owning host to enable this control; its native permissions continue to apply.</p>}
           {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
           {selected && <GoalStrip key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
-          {!selectedId && <ComposerContext hostId={hostId} hostName={state?.host.name ?? hostId} hosts={desktop.hosts} projects={state?.projects ?? []} projectId={draft.projectId} connected={connected} addingProject={addingProject} workspace={workspace}
+          {!selectedId && <ComposerContext ref={composerContext} hostId={hostId} hostName={state?.host.name ?? hostId} hosts={desktop.hosts} projects={state?.projects ?? []} projectId={draft.projectId} connected={connected} addingProject={addingProject} workspace={workspace}
             onProject={projectId => drafts.update(draftId,{projectId})} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}
             onCheckout={async (branch,create) => { if (!workspace?.status || !connected) return; await workspace.mutate({type:"git.checkout",branch,expectedRevision:workspace.status.revision,...(create ? {create:true} : {})}); }}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>

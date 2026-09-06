@@ -17,6 +17,9 @@ describe("new-chat welcome", () => {
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain("Codex UI Reference?</button>");
     expect(html).toContain('class="welcome-mark"');
+    expect(html).toContain('width="716" height="716" viewBox="149 149 418 418"');
+    expect(html).toContain('mask="url(#welcome-mark-outline)"');
+    expect(html.match(/stroke-width="24"/g)).toHaveLength(2);
     expect(html).not.toContain("Choose a project or start a conversation.");
     expect(html).not.toContain("<p>");
   });
@@ -26,7 +29,7 @@ describe("new-chat welcome", () => {
     const projectless = renderToStaticMarkup(<Welcome workspace={undefined} onSelectProject={() => {}}/>);
     expect(directory).toContain("What should we work on in ");
     expect(directory).not.toContain("What should we build in ");
-    expect(projectless).toContain("What should we work on?");
+    expect(projectless).toContain("What should we build?");
     expect(projectless).not.toContain("aria-haspopup");
   });
 });

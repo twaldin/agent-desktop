@@ -142,6 +142,30 @@ Object.assign(window, {
     await wait(()=>document.querySelector('[aria-label="Switch branch"]')?.textContent?.includes("feature/dock"),"project native branch");
     const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!; prompt.focus();
   },
+  exerciseWelcomeProjectHeading: async () => {
+    const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
+    await wait(()=>document.querySelector<HTMLButtonElement>('.welcome h1 button[aria-label="Dock project?"]') && document.querySelector(".welcome h1")?.textContent==="What should we build in Dock project?","project-aware welcome heading");
+    const heading=document.querySelector<HTMLButtonElement>('.welcome h1 button[aria-label="Dock project?"]')!, anchor=heading.getBoundingClientRect();
+    assert(prompt.value==="Keep context draft","Draft was absent before opening the welcome project menu");
+    heading.click();
+    await wait(()=>document.querySelector('.composer-context-menu[aria-label="Select project"]'),"welcome project popup");
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const popup=document.querySelector<HTMLElement>('.composer-context-menu[aria-label="Select project"]')!, bounds=popup.getBoundingClientRect();
+    assert(prompt.value==="Keep context draft","Welcome project popup cleared the unsent draft");
+    assert(bounds.bottom<=anchor.top+1 || bounds.top>=anchor.bottom-1,"Welcome project popup is not anchored to the heading trigger");
+    assert(Math.abs((bounds.left+bounds.width/2)-(anchor.left+anchor.width/2))<=1,"Welcome project popup is not centered on its heading trigger");
+    assert(document.activeElement?.getAttribute("aria-label")==="Search projects","Welcome project popup did not move keyboard focus into its search");
+    checks.push("project-aware welcome heading opens the existing project menu at its own anchor without clearing the unsent draft");
+    return {fitting:bounds.top>=0&&bounds.bottom<=innerHeight&&bounds.left>=0&&bounds.right<=innerWidth,anchor:anchor.toJSON(),popup:bounds.toJSON(),text:prompt.value};
+  },
+  closeWelcomeProjectHeading: async () => {
+    const heading=document.querySelector<HTMLButtonElement>('.welcome h1 button[aria-label="Dock project?"]')!, prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
+    document.querySelector<HTMLElement>('.composer-context-menu[aria-label="Select project"]')!.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
+    await wait(()=>!document.querySelector('.composer-context-menu'),"welcome project popup Escape");
+    assert(document.activeElement===heading,"Welcome project popup Escape did not restore heading focus");
+    assert(prompt.value==="Keep context draft","Welcome project popup Escape changed the unsent draft");
+    checks.push("welcome project popup Escape restores focus to the heading trigger and preserves the draft");
+  },
   exerciseComposerBranches: async () => {
     const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
     assert(prompt.value==="Keep context draft", "Native composer text was not inserted");

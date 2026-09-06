@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { Project } from "@agent-desktop/shared";
 import type { HostOption } from "./host-catalog";
@@ -8,14 +8,15 @@ import { retainWorkspace } from "./workspace-lease";
 import "./composer-context.css";
 
 type Menu = "projects" | "hosts" | "branches" | "create-branch";
-export function ComposerContext({ hostId, hostName, hosts, projects, projectId, connected, addingProject, workspace, onProject, onHost, onAddProject, onCheckout }: {
+export interface ComposerContextHandle { openProjects(anchor: HTMLButtonElement): void; }
+export const ComposerContext = forwardRef<ComposerContextHandle, {
   hostId: string; hostName: string; hosts: HostOption[]; projects: Project[]; projectId: string | null; connected: boolean; addingProject: boolean;
   workspace?: WorkspaceState; onProject(id: string | null): void; onHost(id: string): void; onAddProject(): void;
   onCheckout(branch: string, create: boolean): Promise<void>;
-}) {
+}>(function ComposerContext({ hostId, hostName, hosts, projects, projectId, connected, addingProject, workspace, onProject, onHost, onAddProject, onCheckout }, ref) {
   const [open, setOpen] = useState<Menu>(), [query, setQuery] = useState(""), [newBranch, setNewBranch] = useState("");
   const [, redraw] = useReducer(value => value + 1, 0);
-  const root = useRef<HTMLDivElement>(null), menu = useRef<HTMLDivElement>(null), anchor = useRef<HTMLButtonElement>(null);
+  const root = useRef<HTMLDivElement>(null), menu = useRef<HTMLDivElement>(null), anchor = useRef<HTMLButtonElement>(null), anchorAlign = useRef<"start" | "center">("start");
   const currentContext = useRef({ workspace, open }); currentContext.current = { workspace, open };
   const [position, setPosition] = useState<CSSProperties>();
   const project = projects.find(item => item.id === projectId), host = hosts.find(item => item.hostId === hostId);
@@ -34,8 +35,9 @@ export function ComposerContext({ hostId, hostName, hosts, projects, projectId, 
     if (!open || !anchor.current) return;
     const target = anchor.current;
     const measure = () => {
-      const box = target.getBoundingClientRect(), width = Math.min(open === "projects" ? 261 : 297, innerWidth - 24), above = box.top >= Math.min(200, innerHeight / 2);
-      setPosition({ width, left: Math.max(12, Math.min(box.left, innerWidth - width - 12)), ...(above
+      const box = target.getBoundingClientRect(), width = Math.min(open === "projects" ? 261 : 297, innerWidth - 24), above = anchorAlign.current === "center" || box.top >= Math.min(200, innerHeight / 2);
+      const desiredLeft = anchorAlign.current === "center" ? box.left + (box.width - width) / 2 : box.left;
+      setPosition({ width, left: Math.max(12, Math.min(desiredLeft, innerWidth - width - 12)), ...(above
         ? { bottom:innerHeight - box.top + 4, top:"auto", maxHeight:Math.max(40,Math.min(420,box.top - 16)) }
         : { top:box.bottom + 4, bottom:"auto", maxHeight:Math.max(40,Math.min(420,innerHeight - box.bottom - 16)) }) });
     };
@@ -51,10 +53,11 @@ export function ComposerContext({ hostId, hostName, hosts, projects, projectId, 
     return () => { cancelAnimationFrame(frame); window.removeEventListener("pointerdown",outside); };
   }, [open]);
   function close() { setOpen(undefined); anchor.current?.focus({preventScroll:true}); }
-  function toggle(value:Menu, button:HTMLButtonElement) {
-    anchor.current = button; setQuery(""); setNewBranch(""); setOpen(open === value ? undefined : value);
+  function toggle(value:Menu, button:HTMLButtonElement, align: "start" | "center" = "start") {
+    anchor.current = button; anchorAlign.current = align; setQuery(""); setNewBranch(""); setOpen(open === value ? undefined : value);
     if (value === "branches" && connected) void workspace?.loadWorktrees();
   }
+  useImperativeHandle(ref, () => ({ openProjects(button) { toggle("projects", button, "center"); } }), [open]);
   function key(event:KeyboardEvent<HTMLDivElement>) {
     if (event.nativeEvent.isComposing) return;
     if (event.key === "Escape") { event.preventDefault(); close(); return; }
@@ -96,4 +99,4 @@ export function ComposerContext({ hostId, hostName, hosts, projects, projectId, 
       </>}
     </div>,document.body)}
   </div>;
-}
+});
