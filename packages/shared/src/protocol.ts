@@ -156,7 +156,7 @@ export interface HostState {
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
   newChatExecution?: { commandVersion: 4; worktrees: true };
-  localEnvironments?: { configuration: true };
+  localEnvironments?: { configuration: true; execution?: { commandVersion: 5 } };
   diagnostics?: { models?: string; preferences?: string };
 }
 

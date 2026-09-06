@@ -52,6 +52,13 @@ test('authenticated create/resume/reopen/cleanup use actual Git, sourced setup a
     const readPrep = () => request(`/v5/environment-preparations/${prep.id}`);
     expect((await request(`/v5/environment-preparations/${prep.id}`, undefined, false)).status).toBe(401);
     expect(await (await readPrep()).json()).toEqual(prep);
+    const queryPreparation = (target: { projectId: string } | { sessionId: string }, authorized = true) => request('/v1/workspace/query', { target, query: { type: 'environment.preparation', preparationId: prep.id } }, authorized);
+    expect((await queryPreparation({ projectId }, false)).status).toBe(401);
+    expect(await (await queryPreparation({ projectId })).json()).toEqual({ type: 'environment.preparation', preparation: prep });
+    const foreignPath = join(root, 'foreign'); await mkdir(foreignPath);
+    const foreign = await send({ id: 'foreign-project', command: { type: 'project.add', path: foreignPath } });
+    if (!foreign.ok || !foreign.value || !('path' in foreign.value)) throw new Error('Foreign fixture not added');
+    expect((await queryPreparation({ projectId: foreign.value.id })).status).toBe(400);
     expect(JSON.stringify(failed)).not.toContain('private-fixture-export');
     // A newer edit must not replace the captured setup or get consumed by recovery.
     expect(await send({ id: 'newer-edit', commandVersion: 5, command: { type: 'draft.put', draft: { ...draft, text: 'Newer preserved prompt', environment: null }, expectedRevision: 1 } })).toMatchObject({ ok: true });
@@ -73,6 +80,7 @@ test('authenticated create/resume/reopen/cleanup use actual Git, sourced setup a
     if (!resumed.ok || !resumed.value || !('sessionFile' in resumed.value)) throw new Error(`Native session not created: ${JSON.stringify(resumed)}`);
     const session = resumed.value;
     expect(notificationFailed).toBe(true);
+    expect(await (await queryPreparation({ sessionId: session.id })).json()).toMatchObject({ type: 'environment.preparation', preparation: { id: prep.id, sessionId: session.id, phase: 'session-created' } });
     expect(session.cwd).toBe(prep.worktreePath); expect(session.status).toBe('idle');
     expect(await send(resume)).toEqual(resumed);
     expect(await readFile(join(session.cwd, 'setup-attempts'), 'utf8')).toBe('attempt\nattempt\n');

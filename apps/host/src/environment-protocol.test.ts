@@ -88,7 +88,7 @@ test('actual host refuses old writers and invalid environment creation while pre
     await host.stop(); host = undefined; host = await start();
     expect(await send(save)).toEqual(result);
     const state = await (await request('/v1/state')).json() as HostState;
-    expect(state.localEnvironments).toEqual({ configuration: true });
+    expect(state.localEnvironments).toEqual({ configuration: true, execution: { commandVersion: 5 } });
     expect(state.drafts).toMatchObject([{ ...draft, revision: 1 }]); expect(state.sessions).toHaveLength(0);
     expect(await readdir(source)).toEqual([]);
   } finally { await host?.stop(); await rm(root, { recursive: true, force: true }); }

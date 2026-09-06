@@ -332,7 +332,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, execution: { commandVersion: 5 } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence };
   }
   function publish(input: EventInput): void {

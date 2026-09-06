@@ -4,10 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandEnvelope, CommandResult, Draft, SessionSummary } from "../../../../packages/shared/src/protocol";
+import type { LocalEnvironmentPreparationPublic } from "../../../../packages/shared/src/environment-preparations";
 import { detachedAnswerDraft, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { HostStore } from "../../../host/src/store";
 import type { DraftCache } from "./drafts";
-import { SubmissionController } from "./submissions";
+import { EnvironmentPreparationPause, SubmissionController } from "./submissions";
 
 const original: Draft = { id: "new-conversation", revision: 7, text: "Original submitted input", projectId: "project-a", model: { provider: "fixture", id: "original" }, thinkingLevel: "low", updatedAt: 10 };
 const edited: Draft = { ...original, revision: 8, text: "Newer local edit", projectId: "project-b", model: { provider: "fixture", id: "edited" }, thinkingLevel: "high" };
@@ -18,6 +19,15 @@ function cache(): DraftCache {
 }
 const hash = (envelope: CommandEnvelope) => createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
 const unknown = (envelope: CommandEnvelope): CommandResult => ({ ok: false, commandId: envelope.id, error: { code: "OUTCOME_UNKNOWN", message: "This command was pending when the service stopped." } });
+const environment = { projectId: original.projectId!, configPath: "/fixture/project-a/.agent-desktop/environments/dev.toml", revision: "e".repeat(64) };
+const environmentDraft: Draft = { ...original, environment, execution: { type: "worktree", startingState: { type: "branch", branchName: "topic/environment" } } };
+const preparation = (id: string, phase: LocalEnvironmentPreparationPublic["phase"], revision = 5, overrides: Partial<LocalEnvironmentPreparationPublic> = {}): LocalEnvironmentPreparationPublic => ({
+  id, revision, hostId: "host-a", projectId: original.projectId!, worktreePath: "/fixture/worktrees/environment",
+  phase, needsAttention: ["setup-failed", "cleanup-failed", "unknown"].includes(phase),
+  environment: { configPath: environment.configPath, revision: environment.revision, name: "Fixture" },
+  createdAt: 10, updatedAt: 20 + revision, ...overrides,
+});
+const environmentSession: SessionSummary = { ...session, cwd: "/fixture/worktrees/environment" };
 
 test('worktree creation and subsequent prompt retain their captured starting state across a lost receipt, edits and restart', async () => {
   const storage = cache(), calls: CommandEnvelope[] = [];
@@ -143,6 +153,230 @@ test('restored submission caches cannot move a captured worktree request or prom
   }
 });
 
+describe("resumable environment preparation", () => {
+  test("a known failed setup pauses without implicit create or retry and retains newer editor content outside the snapshot", async () => {
+    const storage = cache(), calls: CommandEnvelope[] = [];
+    let known: LocalEnvironmentPreparationPublic | undefined;
+    const controller = new SubmissionController(async envelope => {
+      calls.push(structuredClone(envelope));
+      known = preparation(envelope.id, "setup-failed");
+      return { ok: true, commandId: envelope.id, value: { type: "environment.preparation", preparation: known } };
+    }, "host-a", storage);
+    let pause: unknown;
+    try { await controller.submit(environmentDraft, undefined, "prompt"); } catch (error) { pause = error; }
+    expect(pause).toBeInstanceOf(EnvironmentPreparationPause);
+    expect((pause as EnvironmentPreparationPause).preparation).toEqual(known!);
+    expect(controller.get(original.id)).toMatchObject({ draft: environmentDraft, uncertain: false, preparation: known, create: { commandVersion: 5 } });
+
+    const newer = { ...environmentDraft, revision: 8, text: "Newer editor text remains separate" };
+    await expect(controller.submit(newer, undefined, "prompt")).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    expect(calls).toHaveLength(1);
+    expect(controller.get(original.id)?.draft.text).toBe(original.text);
+
+    const restored = new SubmissionController(async () => { throw new Error("Must not dispatch during restore"); }, "host-a", storage);
+    expect(restored.get(original.id)).toMatchObject({ draft: environmentDraft, uncertain: false, preparation: known });
+  });
+
+  test("each definitive failed retry clears its resume identity and requires another explicit resume", async () => {
+    const storage = cache(), calls: CommandEnvelope[] = [];
+    let failed: LocalEnvironmentPreparationPublic | undefined;
+    const controller = new SubmissionController(async envelope => {
+      calls.push(structuredClone(envelope));
+      if (envelope.command.type === "session.create") {
+        failed = preparation(envelope.id, "setup-failed", 5);
+      } else if (envelope.command.type === "session.environment.resume") {
+        failed = preparation(envelope.command.preparationId, "setup-failed", envelope.command.expectedRevision + 2);
+      } else throw new Error("Prompt must not run after failed setup");
+      return { ok: true, commandId: envelope.id, value: { type: "environment.preparation", preparation: failed } };
+    }, "host-a", storage);
+    await expect(controller.submit(environmentDraft, undefined, "prompt")).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    await expect(controller.resumeEnvironment(original.id)).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    const firstResume = calls[1]!;
+    expect(firstResume).toMatchObject({ commandVersion: 5, command: { type: "session.environment.resume", expectedRevision: 5 } });
+    expect(controller.get(original.id)).toMatchObject({ uncertain: false, preparation: { revision: 7 }, resume: undefined });
+    await expect(controller.submit({ ...environmentDraft, revision: 9, text: "do not replace" }, undefined, "prompt")).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    expect(calls).toHaveLength(2);
+    await expect(controller.resumeEnvironment(original.id)).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    expect(calls[2]).toMatchObject({ commandVersion: 5, command: { type: "session.environment.resume", expectedRevision: 7 } });
+    expect(calls[2]!.id).not.toBe(firstResume.id);
+  });
+
+  test("a lost resume response survives restart and continues only the original captured prompt", async () => {
+    const storage = cache(), calls: CommandEnvelope[] = [];
+    let disconnectResume = true;
+    const transport = async (envelope: CommandEnvelope): Promise<CommandResult> => {
+      calls.push(structuredClone(envelope));
+      if (envelope.command.type === "session.create") {
+        const failed = preparation(envelope.id, "setup-failed");
+        return { ok: true, commandId: envelope.id, value: { type: "environment.preparation", preparation: failed } };
+      }
+      if (envelope.command.type === "session.environment.resume" && disconnectResume) {
+        disconnectResume = false;
+        throw new Error("lost response after durable native creation");
+      }
+      return { ok: true, commandId: envelope.id, value: environmentSession };
+    };
+    let controller = new SubmissionController(transport, "host-a", storage);
+    await expect(controller.submit(environmentDraft, undefined, "prompt")).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    await expect(controller.resumeEnvironment(original.id)).rejects.toThrow("uncertain");
+    const resumeEnvelope = calls[1]!;
+    expect(controller.get(original.id)).toMatchObject({ uncertain: true, resume: resumeEnvelope, draft: environmentDraft });
+
+    controller = new SubmissionController(transport, "host-a", storage);
+    controller.observePreparation(original.id, preparation(calls[0]!.id, "session-created", 9, { sessionId: environmentSession.id }));
+    const sent = await controller.resumeEnvironment(original.id);
+    expect(calls[2]).toEqual(resumeEnvelope);
+    expect(calls[3]).toMatchObject({ commandVersion: 5, command: {
+      type: "session.prompt", sessionId: environmentSession.id, text: original.text,
+      model: original.model, draft: { id: original.id, revision: original.revision },
+    } });
+    expect(sent).toMatchObject({ sessionId: environmentSession.id, submitted: environmentDraft });
+    expect(controller.get(original.id)).toBeUndefined();
+  });
+
+  test("two concurrent explicit resumes share one native lookup and one prompt", async () => {
+    const storage = cache();
+    let releaseResume!: (result: CommandResult) => void;
+    const waiting = new Promise<CommandResult>(resolve => { releaseResume = resolve; });
+    const calls: CommandEnvelope[] = [];
+    const controller = new SubmissionController(async envelope => {
+      calls.push(structuredClone(envelope));
+      if (envelope.command.type === "session.create") {
+        const failed = preparation(envelope.id, "setup-failed");
+        return { ok: true, commandId: envelope.id, value: { type: "environment.preparation", preparation: failed } };
+      }
+      if (envelope.command.type === "session.environment.resume") return waiting;
+      return { ok: true, commandId: envelope.id, value: environmentSession };
+    }, "host-a", storage);
+    await expect(controller.submit(environmentDraft, undefined, "prompt")).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    const first = controller.resumeEnvironment(original.id);
+    const second = controller.resumeEnvironment(original.id);
+    expect(second).toBe(first);
+    const resume = calls[1]!;
+    releaseResume({ ok: true, commandId: resume.id, value: environmentSession });
+    expect(await first).toEqual(await second);
+    expect(calls.filter(call => call.command.type === "session.environment.resume")).toHaveLength(1);
+    expect(calls.filter(call => call.command.type === "session.prompt")).toHaveLength(1);
+  });
+
+  test("observed state is owner-bound and monotonic; unknown and removed phases remain inspect-only", async () => {
+    const calls: CommandEnvelope[] = [];
+    const controller = new SubmissionController(async envelope => {
+      calls.push(structuredClone(envelope));
+      if (envelope.command.type !== "session.create") throw new Error("Must not dispatch a recovery");
+      return unknown(envelope);
+    }, "host-a", cache());
+    await expect(controller.submit(environmentDraft, undefined, "prompt")).rejects.toThrow("pending");
+    const createId = calls[0]!.id;
+    controller.observePreparation(original.id, preparation(createId, "setup-failed", 5));
+    controller.observePreparation(original.id, preparation(createId, "worktree-created", 4));
+    expect(controller.get(original.id)?.preparation?.revision).toBe(5);
+    expect(() => controller.observePreparation(original.id, preparation(createId, "setup-failed", 6, { hostId: "other" }))).toThrow("captured submission");
+    expect(() => controller.observePreparation(original.id, preparation("other-preparation", "setup-failed", 6))).toThrow("captured submission");
+
+    await expect(controller.resumeEnvironment(original.id)).rejects.toThrow("uncertain");
+    expect(calls).toHaveLength(2);
+    controller.observePreparation(original.id, preparation(createId, "unknown", 6, { uncertainOperation: "setup" }));
+    await expect(controller.resumeEnvironment(original.id)).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    expect(calls).toHaveLength(2);
+    controller.observePreparation(original.id, preparation(createId, "removed", 7));
+    await expect(controller.resumeEnvironment(original.id)).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("an observed session-created preparation checks the original create receipt before sending", async () => {
+    const storage = cache(), calls: CommandEnvelope[] = [];
+    let first = true;
+    const controller = new SubmissionController(async envelope => {
+      calls.push(structuredClone(envelope));
+      if (first) { first = false; return unknown(envelope); }
+      if (envelope.command.type === "session.create") {
+        const originalReceipt = preparation(envelope.id, "setup-failed", 5);
+        return { ok: true, commandId: envelope.id, value: { type: "environment.preparation", preparation: originalReceipt } };
+      }
+      return { ok: true, commandId: envelope.id, value: environmentSession };
+    }, "host-a", storage);
+    await expect(controller.submit(environmentDraft, undefined, "prompt")).rejects.toThrow("pending");
+    const originalCreate = calls[0]!;
+    controller.observePreparation(original.id, preparation(originalCreate.id, "session-created", 9, { sessionId: environmentSession.id }));
+    const result = await controller.resumeEnvironment(original.id);
+    expect(calls[1]).toEqual(originalCreate);
+    expect(calls[2]).toMatchObject({ commandVersion: 5, command: { type: "session.prompt", sessionId: environmentSession.id, text: original.text } });
+    expect(result.submitted).toEqual(environmentDraft);
+  });
+
+  test("an observation racing direct create success retains its identity through a lost prompt receipt and restart", async () => {
+    const storage = cache(), calls: CommandEnvelope[] = [];
+    const createReceipt = Promise.withResolvers<CommandResult>();
+    let losePrompt = true;
+    const transport = async (envelope: CommandEnvelope): Promise<CommandResult> => {
+      calls.push(structuredClone(envelope));
+      if (envelope.command.type === "session.create") return createReceipt.promise;
+      if (envelope.command.type === "session.prompt" && losePrompt) {
+        losePrompt = false;
+        throw new Error("lost prompt receipt");
+      }
+      return { ok: true, commandId: envelope.id, value: environmentSession };
+    };
+    let controller = new SubmissionController(transport, "host-a", storage);
+    const submitting = controller.submit(environmentDraft, undefined, "prompt");
+    const originalCreate = calls[0]!;
+    controller.observePreparation(original.id, preparation(originalCreate.id, "native-creating", 8));
+    createReceipt.resolve({ ok: true, commandId: originalCreate.id, value: environmentSession });
+    await expect(submitting).rejects.toThrow("uncertain");
+    const originalPrompt = calls[1]!;
+    expect(controller.get(original.id)).toMatchObject({
+      create: originalCreate,
+      preparation: { id: originalCreate.id, phase: "native-creating" },
+      sessionId: environmentSession.id,
+      send: originalPrompt,
+      uncertain: true,
+    });
+
+    controller = new SubmissionController(transport, "host-a", storage);
+    const completed = await controller.submit({ ...environmentDraft, revision: 12, text: "newer local text" }, undefined, "prompt");
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toEqual(originalPrompt);
+    expect(calls.filter(call => call.command.type === "session.create")).toHaveLength(1);
+    expect(completed.submitted).toEqual(environmentDraft);
+    expect(controller.get(original.id)).toBeUndefined();
+  });
+
+  test("restored preparation and resume state rejects changed identity, ownership, revision, and protocol", async () => {
+    for (const mutate of [
+      (pending: any) => { pending.preparation.hostId = "other-host"; },
+      (pending: any) => { pending.preparation.projectId = "other-project"; },
+      (pending: any) => { pending.preparation.id = "other-preparation"; },
+      (pending: any) => { pending.preparation.environment.revision = "f".repeat(64); },
+      (pending: any) => { pending.preparation.revision = 0; },
+      (pending: any) => { pending.preparation.phase = "unknown"; },
+      (pending: any) => { pending.resume.commandVersion = 4; },
+      (pending: any) => { pending.resume.id = ""; },
+      (pending: any) => { pending.resume.command.preparationId = "other-preparation"; },
+      (pending: any) => { pending.resume.command.expectedRevision = -1; },
+      (pending: any) => { pending.resume.command.expectedRevision = pending.preparation.revision + 1; },
+      (pending: any) => { pending.resume.command.unexpected = true; },
+    ]) {
+      const storage = cache();
+      const controller = new SubmissionController(async envelope => {
+        if (envelope.command.type === "session.create") {
+          const failed = preparation(envelope.id, "setup-failed");
+          return { ok: true, commandId: envelope.id, value: { type: "environment.preparation", preparation: failed } };
+        }
+        return unknown(envelope);
+      }, "host-a", storage);
+      await expect(controller.submit(environmentDraft, undefined, "prompt")).rejects.toBeInstanceOf(EnvironmentPreparationPause);
+      await expect(controller.resumeEnvironment(original.id)).rejects.toThrow("pending");
+      const cached = JSON.parse(storage.read(controller.cacheKey)!);
+      mutate(cached[original.id]);
+      storage.write(controller.cacheKey, JSON.stringify(cached));
+      const restored = new SubmissionController(async () => { throw new Error("Must not dispatch malformed cache"); }, "host-a", storage);
+      expect(restored.entries()).toEqual([]);
+      expect(restored.cacheWarning).toContain("could not be read");
+    }
+  });
+});
+
 describe("unknown submission outcomes", () => {
   for (const phase of ["create", "prompt", "steer"] as const) {
     test(`${phase}: real reopened command ledger keeps one identity until a matching result resolves it`, async () => {
@@ -259,4 +493,30 @@ describe("unknown submission outcomes", () => {
     await expect(controller.submitQuestion(draft, "session-a", "question-a", "entry-opened", answers)).rejects.toThrow("matching detached question receipt");
     expect(controller.get(draft.id)?.uncertain).toBe(true);
   });
+});
+
+
+test("a recorded create failure after preparation observation retains recovery ownership across restart", async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  let finish!: (result: CommandResult) => void;
+  const controller = new SubmissionController(envelope => {
+    calls.push(structuredClone(envelope));
+    return new Promise(resolve => { finish = resolve; });
+  }, "host-a", storage);
+  const outcome = controller.submit(environmentDraft, undefined, "prompt");
+  const observed = preparation(calls[0]!.id, "setup-failed");
+  controller.observePreparation(environmentDraft.id, observed);
+  const rejection = outcome.catch(error => error as Error);
+  finish({ ok: false, commandId: calls[0]!.id, error: { code: "COMMAND_FAILED", message: "Publication failed" } });
+  expect(await rejection).toEqual(new Error("Publication failed"));
+  const restored = new SubmissionController(async envelope => {
+    calls.push(structuredClone(envelope));
+    return { ok: true, commandId: envelope.id, value: environmentSession };
+  }, "host-a", storage);
+  expect(restored.cacheWarning).toBeUndefined();
+  expect(restored.get(environmentDraft.id)?.create).toEqual(calls[0]);
+  expect(restored.get(environmentDraft.id)?.preparation).toEqual(observed);
+  await restored.resumeEnvironment(environmentDraft.id);
+  expect(calls.map(item => item.command.type)).toEqual(["session.create", "session.environment.resume", "session.prompt"]);
+  expect(calls[2]?.command).toMatchObject({ text: environmentDraft.text, sessionId: environmentSession.id });
 });

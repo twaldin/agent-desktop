@@ -5,7 +5,9 @@ import type { Draft, Project, SessionSummary } from "../../../../packages/shared
 import { readWindowRestoration, useWindowViewPersistence } from "./window-view-state";
 import type { SettingsPage, WindowNavigation, WorkspaceTab } from "../window-state";
 import { DraftController, hasDraftContent } from "./drafts";
-import { SubmissionController } from "./submissions";
+import { EnvironmentPreparationPause, SubmissionController } from "./submissions";
+import { EnvironmentCatalog } from "./environment-catalog";
+import { EnvironmentPreparationCard } from "./EnvironmentPreparationCard";
 import { ComposerCatalogState, composerSelection, composerTargetKey } from "./composer-catalog";
 import { ComposerSelections } from "./ComposerSelections";
 import { useComposerAutocomplete } from "./ComposerAutocomplete";
@@ -201,6 +203,16 @@ export function App() {
   const view = drafts.get(draftId, selected ? { projectId: selected.projectId } : undefined);
   const draft = view.draft;
   const project = state?.projects.find(project => project.id === (selected?.projectId ?? draft.projectId));
+  const environmentAvailable = state?.localEnvironments?.execution?.commandVersion === 5;
+  const environmentCatalog = useMemo(() => !selectedId && draft.projectId && state?.localEnvironments?.configuration
+    ? new EnvironmentCatalog(bridge, hostId, draft.projectId, offlineCache, desktop.localHostId) : undefined,
+    [bridge, hostId, draft.projectId, selectedId, state?.localEnvironments?.configuration, desktop.localHostId]);
+  useEffect(() => {
+    if (!environmentCatalog) return;
+    const off = environmentCatalog.subscribe(redraw); environmentCatalog.start(); void environmentCatalog.restore();
+    return () => { off(); environmentCatalog.stop(); };
+  }, [environmentCatalog]);
+  useEffect(() => { environmentCatalog?.setConnected(connected); }, [environmentCatalog, connected]);
   const workspaceTarget: WorkspaceTarget | undefined = selected ? { sessionId: selected.id } : project ? { projectId: project.id } : undefined;
   const dock = useWorkbenchDock(bridge, windowRestoration.state, hostId, workspaceTarget, connected, setActionError);
   const workspaceOpen = dock.snapshot.state.right.open;
@@ -249,6 +261,10 @@ export function App() {
   const transcriptReading = useTranscriptScroll(selectedId ? `${hostId}:${selectedId}` : undefined);
   const running = selected?.status === "running";
   const pendingSubmission = submissions.get(draftId);
+  useEffect(() => {
+    if (!selectedId && environmentAvailable && draft.execution?.type === 'worktree' && draft.environment === undefined && !pendingSubmission && !view.conflict)
+      drafts.update(draftId, { environment: null });
+  }, [drafts, draftId, selectedId, environmentAvailable, draft.execution?.type, draft.environment, Boolean(pendingSubmission), view.conflict]);
   const pendingSessionId = pendingSubmission?.sessionId;
   const knownPendingSession = state?.sessions.find(session => session.id === pendingSessionId);
   const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls);
@@ -267,7 +283,9 @@ export function App() {
   const executionReady = Boolean(selectedId || draft.execution?.type !== "worktree" || worktreesAvailable && project && workspace?.restored && workspace.status && !workspace.busy && !workspace.pending && (draft.execution.startingState.type === "working-tree"
     ? workspace.status.entries.length
     : executionBranch === workspace.status.branch || workspace.branches.some(branch => !branch.remote && !branch.symbolicTarget && branch.name === executionBranch)));
-  const canSend = connected && Boolean(state) && !busy && !missingSession && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !imagesStaging && executionReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
+  const environmentReady = Boolean(selectedId || draft.execution?.type !== 'worktree' || (draft.environment === undefined ? !environmentAvailable : environmentAvailable && (draft.environment === null
+    || environmentCatalog?.restored && !environmentCatalog.loading && !environmentCatalog.error && environmentCatalog.items.some(item => item.type === 'environment' && item.configPath === draft.environment?.configPath && item.revision === draft.environment?.revision))));
+  const canSend = connected && Boolean(state) && !busy && !missingSession && !pendingSubmission?.preparation && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !imagesStaging && executionReady && environmentReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
 
   const navigate = useCallback((id: string | null, owner = route.hostId ?? state?.host.id ?? desktop.localHostId, keepSettings = false) => {
     setRoute({ sessionId: id, hostId: owner }); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false); setAppMenuOpen(false);
@@ -359,8 +377,26 @@ export function App() {
       if (selectedRef.current === originalRoute && !hasDraftContent(drafts.get(sendingDraftId).draft)) navigate(result.sessionId);
     } catch (cause) {
       if (snapshot) drafts.finishSubmission(sendingDraftId, snapshot, false, submissions.get(sendingDraftId)?.uncertain, submissions.get(sendingDraftId)?.send?.id);
-      setActionError(errorMessage(cause));
+      if (!(cause instanceof EnvironmentPreparationPause)) setActionError(errorMessage(cause));
     } finally { submitting.current = false; setBusy(false); textarea.current?.focus(); }
+  }
+  async function resumeEnvironment() {
+    if (submitting.current || !connected || !pendingSubmission?.preparation) return;
+    const ownerDraftId = draftId, originalRoute = selectedRef.current, captured = pendingSubmission.draft;
+    submitting.current = true; setBusy(true); setActionError(null);
+    try {
+      drafts.beginPendingSubmission(captured);
+      const result = await submissions.resumeEnvironment(ownerDraftId, (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId));
+      drafts.finishSubmission(ownerDraftId, result.submitted, true, false, result.commandId);
+      await refresh(); transcript.refresh();
+      const savedDraft = desktop.catalog.records.get(hostId)?.state?.drafts.find(value => value.id === ownerDraftId);
+      if (savedDraft) drafts.ingest(savedDraft);
+      if (selectedRef.current === originalRoute && !hasDraftContent(drafts.get(ownerDraftId).draft)) navigate(result.sessionId);
+    } catch (cause) {
+      const pending = submissions.get(ownerDraftId);
+      drafts.finishSubmission(ownerDraftId, captured, false, pending?.uncertain, pending?.send?.id);
+      if (!(cause instanceof EnvironmentPreparationPause)) setActionError(errorMessage(cause));
+    } finally { submitting.current = false; setBusy(false); }
   }
   async function interrupt() {
     if (!selectedId) return;
@@ -476,7 +512,8 @@ export function App() {
           {actionError && <div className="inline-error" role="alert"><span>{actionError}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
           {modeView?.conflict && !sameModeConflict(modeView) && draft.projectId && <div className="draft-conflict" role="alert"><strong>Work in changed on another device.</strong><p>Your prompt and other selections are preserved. Choose which execution mode to use for this project.</p><dl><dt>My choice</dt><dd>{executionModeLabel(modeView.draft.execution)}</dd><dt>Host’s saved choice</dt><dd>{executionModeLabel(modeView.conflict.execution)}</dd></dl><div><button className="secondary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"remote")}>Use saved mode</button><button className="primary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"local")}>Keep my mode</button></div></div>}
           {modeView?.status === "error" && draft.projectId && <div className="inline-error" role="alert"><span>{modeView.error ?? "The Work in choice was not saved to the host."}</span><button disabled={!connected} onClick={() => void drafts.flush(projectExecutionModeDraftId(draft.projectId!)).catch(() => {})}>Retry mode save</button></div>}
-          {pendingSubmission && <div className="subtle-notice">{pendingSubmission.uncertain ? "A submission is awaiting confirmation. Retry checks its original command; newer draft edits stay here." : pendingSessionId ? busy ? "Waiting for this session to accept the captured prompt." : "A session was created. Sending again continues that session." : "Creating this prompt’s session."}{pendingSessionId && <button onClick={() => navigate(pendingSessionId)}>Open {knownPendingSession?.title ?? "session"}</button>}<details><summary>View pending prompt and selections</summary><DraftSnapshot draft={pendingSubmission.draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/>{knownPendingSession && <p>Bound session: {knownPendingSession.title} · {knownPendingSession.cwd}</p>}{pendingSubmission.draft.approvalMode && pendingSessionId && <p>The permission choice applies to this session before the prompt runs and remains if the prompt is rejected.</p>}</details></div>}
+          {pendingSubmission && (pendingSubmission.preparation || pendingSubmission.create?.command.type === "session.create" && pendingSubmission.create.command.environment !== undefined) && <EnvironmentPreparationCard key={`${hostId}:${pendingSubmission.preparation?.id ?? pendingSubmission.create?.id}`} bridge={bridge} hostId={hostId} pending={pendingSubmission} submissions={submissions} connected={connected} busy={busy} onResume={() => void resumeEnvironment()} onSettings={() => { if (pendingSubmission.draft.projectId) setEnvironmentProject({hostId,projectId:pendingSubmission.draft.projectId}); setSettingsPage("environments"); openSettings(); }}/>}
+          {pendingSubmission && <div className="subtle-notice">{pendingSubmission.preparation ? "The original prompt and selections remain captured below." : pendingSubmission.uncertain ? "A submission is awaiting confirmation. Retry checks its original command; newer draft edits stay here." : pendingSessionId ? busy ? "Waiting for this session to accept the captured prompt." : "A session was created. Sending again continues that session." : "Creating this prompt’s session."}{pendingSessionId && <button onClick={() => navigate(pendingSessionId)}>Open {knownPendingSession?.title ?? "session"}</button>}<details><summary>View pending prompt and selections</summary><DraftSnapshot draft={pendingSubmission.draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/>{knownPendingSession && <p>Bound session: {knownPendingSession.title} · {knownPendingSession.cwd}</p>}{pendingSubmission.draft.approvalMode && pendingSessionId && <p>The permission choice applies to this session before the prompt runs and remains if the prompt is rejected.</p>}</details></div>}
           {view.conflict && <div className="draft-conflict" role="alert"><strong>This draft changed on another device.</strong><p>Your text, images, and selections are preserved. Choose which version to continue with.</p><details><summary>View my draft</summary><DraftSnapshot draft={draft} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/></details><details><summary>View host’s saved draft</summary><DraftSnapshot draft={view.conflict} hostName={state?.host.name ?? hostId} projects={state?.projects ?? []} media={attachmentMedia} hostId={hostId} connected={connected}/></details><div><button className="secondary-button" onClick={() => drafts.resolve(draftId, "remote")}>Use saved draft</button><button className="primary-button" onClick={() => drafts.resolve(draftId, "local")}>Keep my draft</button></div></div>}
           {view.status === "error" && <div className="inline-error" role="alert"><span>{view.error ?? "Draft could not be saved."}</span><button onClick={() => void drafts.flush(draftId).catch(cause => setActionError(errorMessage(cause)))}>Retry save</button></div>}
           {composer.loading && <p className="subtle-notice" role="status">Loading this workspace’s native models and defaults…</p>}
@@ -488,6 +525,8 @@ export function App() {
           {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
           {selected && <GoalStrip key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
           {!selectedId && <ComposerContext ref={composerContext} hostId={hostId} hostName={state?.host.name ?? hostId} hosts={desktop.hosts} projects={state?.projects ?? []} projectId={draft.projectId} connected={connected} addingProject={addingProject} workspace={workspace}
+            environment={draft.environment} environmentAvailable={environmentAvailable} environments={environmentCatalog ? {items:environmentCatalog.items,loading:environmentCatalog.loading,error:environmentCatalog.error ?? environmentCatalog.cacheWarning,refresh:() => { void environmentCatalog.refresh(); }} : undefined}
+            onEnvironment={environment => drafts.update(draftId,{environment})} onOpenEnvironmentSettings={() => { if (draft.projectId) setEnvironmentProject({hostId,projectId:draft.projectId}); setSettingsPage("environments"); openSettings(); }}
             execution={draft.execution} worktreesAvailable={worktreesAvailable} onExecution={(execution: NewChatExecution) => drafts.update(draftId,{execution})}
             onExecutionMode={(execution: NewChatExecution) => {
               if (worktreesAvailable && draft.projectId) selectProjectExecutionMode(drafts,draftId,draft.projectId,execution);

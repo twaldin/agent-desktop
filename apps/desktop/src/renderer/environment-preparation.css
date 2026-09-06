@@ -1,0 +1,9 @@
+.environment-preparation-card { margin: 8px 12px; padding: 12px; border: 1px solid var(--border); border-radius: calc(var(--composer-radius,20px) * var(--corner-radius-scale,1)); background: var(--composer-surface); corner-shape: superellipse(var(--corner-exponent)); font-size: 13px; line-height: 1.45; }
+.environment-preparation-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.environment-preparation-heading > span:last-child { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--secondary); }
+.environment-preparation-heading .icon { width: 16px; height: 16px; }
+.environment-preparation-card p { margin: 8px 0 0; color: var(--secondary); }
+.environment-preparation-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.environment-preparation-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font: inherit; }
+.environment-preparation-actions button:hover:enabled { background: var(--hover); }
+.environment-preparation-actions button:disabled { opacity: .5; }

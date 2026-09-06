@@ -29,6 +29,7 @@ export function parseWorkspaceTarget(value: unknown): WorkspaceTarget {
 export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
   const query = object(value);
   switch (query.type) {
+    case "environment.preparation": return { type: query.type, preparationId: text(query.preparationId, 200) };
     case "environment.read": return { type: query.type, configPath: text(query.configPath) };
     case "files.list": return { type: query.type, path: optionalText(query.path) };
     case "file.stat": case "file.read": return { type: query.type, path: text(query.path) };
@@ -92,6 +93,12 @@ export class HostWorkspaces {
   async query(target: WorkspaceTarget, query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
     const workspace = this.#resolve(target);
     switch (query.type) {
+      case "environment.preparation": {
+        const projectId = 'projectId' in target ? target.projectId : this.store.getSession(target.sessionId)?.projectId;
+        const preparation = this.store.environmentPreparations.get(query.preparationId);
+        if (!preparation || preparation.projectId !== projectId) throw new Error('Preparation does not belong to this workspace.');
+        return { type: query.type, preparation: this.store.environmentPreparations.public(preparation) };
+      }
       case "environment.read": return { type: query.type, ...await new LocalEnvironmentStore(workspace.cwd).read(query.configPath) };
       case "environments.list": return { type: query.type, environments: await new LocalEnvironmentStore(workspace.cwd).catalog() };
       case "files.list": return { type: query.type, entries: await workspace.list(query.path) };

@@ -2,11 +2,13 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
-## Source28 — environment routes verified locally; composer recovery still pending
+## Source28 — environment composer and explicit recovery verified locally
 
 Source28 corrects Follow system welcome colors and adds host-owned environment settings, revisioned configuration/draft storage, and private setup exports. Actual local Git/shell/OMP route checks now cover failed setup, explicit resume, native session creation/reopen and cleanup-before-removal without provider prompts. Preparation/session/receipt commits are atomic; old clients cannot drop environment selections. Failed cleanup retains the worktree and its exports. The new schema5 artifact guard prevents rollback to an unaware host.
 
-The 67-test targeted route suite passes; a follow-up46-assertion actual-host check additionally proves a lost post-commit notification does not change the durable creation result. Source28 is not frozen or installed. Composer catalog/recovery wiring, terminal propagation, named actions and native paired UI acceptance remain open. See [local environments](local-environments.md) for scope and evidence boundaries.
+The composer now loads host/project-owned configuration choices, preserves exact revisions in drafts and shows preparation status with explicit recovery. A controlled production-App check exercises actual pointer/text input, settings return, setup failure, a newer draft, renderer reload and explicit retry against real Git/shell/OMP. It observes one create, one resume, one original prompt and one managed worktree; the newer draft and source HEAD/index/README remain unchanged. Its deterministic local provider establishes delivery behavior only. It is hidden Electron evidence, not installed-window or native pixel parity.
+
+The targeted route suite previously passed67 tests; the subsequent host check proves a lost post-commit notification does not change the durable creation result. New focused catalog/submission checks pass29 tests with245 assertions, including deferred restore, overlapping queries/cache writes and pending creation receipts observed before success or recorded failure. The integrated host/draft/catalog suite passes59 tests with461 assertions. Typecheck passes. Source28 remains unfrozen and uninstalled. Setup output/cancellation, terminal exports, named actions, native configuration discovery/import and paired native UI acceptance remain open. See [local environments](local-environments.md) for the evidence boundaries.
 
 ## Frozen27 — native scoped verification complete; system-dark mismatch remains
 
