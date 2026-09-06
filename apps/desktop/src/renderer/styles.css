@@ -250,13 +250,13 @@ button { touch-action: manipulation; }
 .connection-banner { margin: 0 16px 8px; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 9px 12px; background: var(--hover); border: 1px solid var(--border); border-radius: 10px; color: var(--secondary); font-size: calc(var(--font-size, 14px) * 0.8571428571428571); }
 .connection-banner button { display: flex; align-items: center; gap: 5px; color: var(--text); padding: 3px 5px; border-radius: 5px; white-space: nowrap; }
 .connection-banner .icon { width: calc(var(--icon-size, 20px) * 0.65); height: calc(var(--icon-size, 20px) * 0.65); }
-.welcome { display: flex; flex-direction: column; align-items: center; justify-content: end; flex: 1; min-height: 130px; padding: 30px 24px 22px; text-align: center; }
+.welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-height: 130px; padding: 30px 24px 22px; text-align: center; }
 .welcome-mark { width: 38px; height: 38px; color: var(--secondary); margin-bottom: 15px; }
 .welcome-mark .icon { width: calc(var(--icon-size, 20px) * 1.9); height: calc(var(--icon-size, 20px) * 1.9); stroke-width: 1.15; }
 .welcome h1 { font-size: calc(var(--font-size, 14px) * 1.9285714285714286); font-weight: clamp(100, calc(var(--font-weight, 400) + 100), 1000); letter-spacing: -.8px; margin: 0; line-height: 1.25; }
 .welcome p { font-size: calc(var(--font-size, 14px) * 0.9285714285714286); color: var(--secondary); margin: 9px 0 0; }
 .composer-region { width: min(100% - 32px, 768px); margin: 0 auto; flex-shrink: 0; padding: 8px 0 16px; }
-.composer-region.home-composer { margin-bottom: max(28px, calc(29vh - 100px)); padding-top: 10px; }
+.composer-region.home-composer { margin-bottom: 0; padding-top: 10px; }
 .composer { background: var(--composer-surface); border: 0 solid var(--border); border-radius: 25px; box-shadow: var(--composer-shadow); overflow: hidden; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--text) 15%, transparent); }
 .composer textarea { width: 100%; display: block; background: transparent; border: 0; resize: none; min-height: 52px; max-height: 240px; padding: 12px 12px 4px; line-height: 1.5; font-size: calc(var(--font-size, 14px) * 1.0); outline: none; }
@@ -356,7 +356,7 @@ button { touch-action: manipulation; }
   .composer-footnote { justify-content: flex-end; }
   .header-breadcrumb > span { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 }
-@media (max-height: 620px) { .welcome { justify-content: center; padding-top: 10px; } .welcome-mark { display: none; } .composer-region.home-composer { margin-bottom: 20px; } }
+@media (max-height: 620px) { .welcome { justify-content: center; padding-top: 10px; } .welcome-mark { display: none; } .composer-region.home-composer { margin-bottom: 0; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 
 /* Owning-workspace panels share the desktop surface and keep independent scrolling. */
@@ -482,6 +482,6 @@ button { touch-action: manipulation; }
 .terminal-toggle.workspace-toggle { margin-left:0; }
 .terminal-toggle + .header-actions { margin-left:0; }
 .terminal-dock { height:clamp(200px,34vh,420px); min-height:180px; flex-shrink:0; }
-.with-terminal .composer-region.home-composer { margin-bottom:18px; }
+.with-terminal .composer-region.home-composer { margin-bottom:0; }
 .with-terminal .welcome { min-height:70px; padding-top:18px; }
 .with-terminal .welcome-mark { display:none; }

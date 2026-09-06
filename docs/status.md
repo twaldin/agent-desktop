@@ -2,6 +2,12 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Current source — compact Power and bottom-anchored fresh chats
+
+After frozen21, the source popup is 256 points wide with the model/effort summary, reset and full-width ordinal slider. The summary opens the searchable OMP catalog; a separate effort menu retains native default, Auto, Off and all reported levels. No provider capability is renamed into Codex fast mode. Fresh-chat composers stay at the bottom. Controlled Electron input checks cover four selector views and native choice callbacks; the production App checks nine workflow groups and six views, including fresh-chat anchoring and model-popup hit testing at1440×1000. These are source/component evidence, not installed parity credit. Evidence: `.data/power22-controls/`, `.data/power22-production-fresh/`.
+
+Work21 first-frame evidence was corrected by the verifier: the native viewport error approximately1.2 seconds after address submission recovered automatically before the paired capture, with counters1/0/0 and no manual Refresh/Fit/Resize or page click. Preserve the original transient-error PNG separately; it is not a persistent failure. The one-click navigation receipt check is still pending. No Work17–20.1 run changed.
+
 ## Isolated Work19 verification and release20.1 handoff
 
 The external verifier exercised the signed Work19 package at 1440×1000: actual model-invoked OMP asks completed recommended, Other/editor, and captured nullable paths; the terminal executed a typed command and exposed a reachable Refresh control. These close the two named Work17 blockers in the isolated 19 build. Work17 remains installed and its state is preserved. Source-only or direct bridge tests are not substituted for this native evidence.

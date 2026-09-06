@@ -64,15 +64,15 @@ const modelRow = () => [...document.querySelectorAll<HTMLButtonElement>('.compos
   .find(item => item.textContent?.includes(`Model ${targetIndex}`) && item.textContent?.includes(`${targetProvider} · ${targetId}`));
 const namedElement = (name: string): HTMLElement | null => {
   if (name === "trigger") return trigger();
-  if (name === "model-menu") return [...document.querySelectorAll<HTMLButtonElement>('.composer-selection-menu > button[role="menuitem"]')]
-    .find(item => item.firstChild?.textContent?.trim() === "Model") ?? null;
+  if (name === "model-menu") return document.querySelector('.composer-selection-menu [aria-label="Select model"]');
+  if (name === "effort-menu") return document.querySelector('.composer-selection-menu [aria-label="Select effort"]');
   if (name === "power") return document.querySelector('[aria-label="Reasoning power"]');
   if (name === "search") return document.querySelector('[aria-label="Search models"]');
   if (name === "target-model") return modelRow() ?? null;
   if (name === "auto") return [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]')]
-    .find(item => item.textContent?.trim() === "auto") ?? null;
+    .find(item => item.textContent?.trim().toLowerCase() === "auto") ?? null;
   if (name === "off") return [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]')]
-    .find(item => item.textContent?.trim() === "off") ?? null;
+    .find(item => item.textContent?.trim().toLowerCase() === "off") ?? null;
   if (name === "reset") return document.querySelector('[aria-label="Reset composer selections"]');
   if (name === "outside") return document.getElementById("outside-target");
   if (name === "toggle-disabled") return document.getElementById("toggle-disabled");

@@ -82,6 +82,22 @@ const button = (scope: ParentNode, label: string) => [...scope.querySelectorAll<
 const route = () => `${windowState.route.hostId}:${windowState.route.sessionId}`;
 
 Object.assign(window, {
+  prepareFreshComposer: async () => {
+    document.querySelector<HTMLButtonElement>('[aria-label="Hide terminal panel"]')?.click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Hide side panel"]')?.click();
+    document.querySelector<HTMLButtonElement>(".nav-action")!.click();
+    await wait(() => document.querySelector(".home-composer") && !document.querySelector<HTMLButtonElement>(".composer-selection-trigger")?.disabled, "fresh composer");
+    document.querySelector<HTMLButtonElement>(".composer-selection-trigger")!.click();
+    await wait(() => document.querySelector(".composer-selection-menu"), "fresh Power popup");
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const composer = document.querySelector(".composer-region")!.getBoundingClientRect();
+    const popup = document.querySelector(".composer-selection-menu")!.getBoundingClientRect();
+    const control = document.querySelector('[aria-label="Select model"]')!, box = control.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    assert(innerHeight - composer.bottom <= 2 && popup.bottom < document.querySelector(".composer")!.getBoundingClientRect().bottom && control.contains(hit), "Fresh composer is not bottom anchored or model popup is clipped");
+    checks.push("fresh-chat composer remains bottom anchored with visible Power/model control");
+    return { fitting: true, composer: composer.toJSON(), popup: popup.toJSON(), viewport: { width: innerWidth, height: innerHeight, devicePixelRatio } };
+  },
   appDockProgress: () => ({ checks, route: route(), activityCalls, workspaceCalls: workspaceCalls.map(call => call.query.type), dock: windowState.dock }),
   runAppDockAcceptance: async () => {
     const expectedRoute = `${owner}:${sessionId}`;
@@ -91,7 +107,7 @@ Object.assign(window, {
     await wait(() => document.querySelector<HTMLButtonElement>(".composer-selection-trigger")?.disabled === false, "composer model catalog");
     const pickerTrigger = document.querySelector<HTMLButtonElement>(".composer-selection-trigger")!;
     pickerTrigger.click(); await wait(() => document.querySelector(".composer-selection-menu"), "composer popup");
-    const modelRow = [...document.querySelectorAll<HTMLButtonElement>('.composer-selection-menu [role="menuitem"]')].find(item => item.textContent?.startsWith("Model"))!;
+    const modelRow = document.querySelector<HTMLButtonElement>('.composer-selection-menu [aria-label="Select model"]')!;
     const bounds = modelRow.getBoundingClientRect();
     const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     assert(bounds.height > 0 && hit && modelRow.contains(hit), "Production composer clips the Model menu row");

@@ -49,7 +49,7 @@ describe("owning-workspace composer selection", () => {
     expect(composerSelection(explicit, data.catalog, session(), data.controls)).toMatchObject({ model: { id: "first" }, thinking: "high", differingDraftModel: true });
     expect(explicit.model?.id).toBe("first");
     const html = renderToStaticMarkup(<ComposerSelections data={data} draft={explicit} session={session()} disabled={false} onChange={() => {}}/>);
-    expect(html).toContain("Model first high"); expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain("Model first High"); expect(html).toContain('aria-haspopup="menu"');
     expect(explicit.model).toEqual({ provider: "contract", id: "first" });
     data.stop();
   });
@@ -91,7 +91,7 @@ describe("owning-workspace composer selection", () => {
     failed.setConnected(true); await failed.refresh(); expect(failed.error).toBe("Owning host unavailable");
     const saved = draft({ model: { provider: "missing", id: "retained" }, thinkingLevel: "max" });
     const html = renderToStaticMarkup(<ComposerSelections data={failed} draft={saved} disabled={false} onChange={() => {}}/>);
-    expect(html).toContain("retained max"); expect(html).toContain('aria-label="Model and reasoning effort"');
+    expect(html).toContain("retained Max"); expect(html).toContain('aria-label="Model and reasoning effort"');
     expect(saved.model?.id).toBe("retained"); failed.stop();
   });
   test("a follow-current draft omits model from delivery while explicit choices and later text survive", async () => {

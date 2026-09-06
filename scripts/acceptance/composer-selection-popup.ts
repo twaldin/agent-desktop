@@ -9,6 +9,7 @@ const output = resolve(process.argv[2] ?? ".data/composer-selection-popup-contro
 const profile = await mkdtemp(join(tmpdir(), "composer-popup-"));
 const sources = [
   "apps/desktop/src/renderer/ComposerSelections.tsx",
+  "apps/desktop/src/renderer/styles.css",
   "apps/desktop/src/renderer/ComposerSelectionPopup.tsx",
   "apps/desktop/src/renderer/composer-selection-popup.css",
   "apps/desktop/src/renderer/composer-catalog.test.tsx",
@@ -95,20 +96,24 @@ app.whenReady().then(async () => {
 
     nativeInputs.push(await nativeClick("trigger"));
     await waitFor(async () => (await snapshot()).menuLabel === "Composer selections", "main menu after model");
+    nativeInputs.push(await nativeClick("effort-menu"));
+    await waitFor(async () => (await snapshot()).menuLabel === "Select effort", "native effort choices");
     nativeInputs.push(await nativeClick("auto"));
     await waitFor(async () => (await snapshot()).patches.some(patch => patch.thinkingLevel === "auto"), "native auto selection");
     nativeInputs.push(await nativeClick("trigger"));
     const autoState = await waitFor(async () => { const value = await snapshot(); return value.menuLabel === "Composer selections" ? value : null; }, "main menu after auto");
-    if (!autoState.powerDisabled || autoState.powerOutput !== "Select effort" || !autoState.checkedEfforts.includes("auto")) throw new Error("Auto was treated as ordinal reasoning power");
+    if (!autoState.powerDisabled || autoState.powerOutput !== "Select effort") throw new Error("Auto was treated as ordinal reasoning power");
+    nativeInputs.push(await nativeClick("effort-menu"));
+    await waitFor(async () => (await snapshot()).menuLabel === "Select effort", "native effort choices after auto");
     nativeInputs.push(await nativeClick("off"));
     await waitFor(async () => (await snapshot()).patches.some(patch => patch.thinkingLevel === "off"), "native off selection");
     nativeInputs.push(await nativeClick("trigger"));
     const offState = await waitFor(async () => { const value = await snapshot(); return value.menuLabel === "Composer selections" ? value : null; }, "main menu after off");
-    if (!offState.powerDisabled || offState.powerOutput !== "Select effort" || !offState.checkedEfforts.includes("off")) throw new Error("Off was treated as ordinal reasoning power");
+    if (!offState.powerDisabled || offState.powerOutput !== "Select effort") throw new Error("Off was treated as ordinal reasoning power");
     nativeInputs.push(await nativeClick("reset"));
     await waitFor(async () => (await snapshot()).patches.some(patch => patch.model === null && Object.hasOwn(patch, "thinkingLevel")), "combined reset");
     const afterReset = await snapshot();
-    if (!afterReset.triggerText?.includes("low")) throw new Error("Collapsed selection did not display the effective native effort after reset");
+    if (!afterReset.triggerText?.includes("Low")) throw new Error("Collapsed selection did not display the effective native effort after reset");
 
     nativeInputs.push(await nativeClick("trigger"));
     await waitFor(async () => (await snapshot()).open, "main menu before Escape");
