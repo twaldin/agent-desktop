@@ -15,6 +15,10 @@ const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string
 let browserReads = 0, browserCreates = 0;
 const draftWrites: Extract<CommandEnvelope["command"],{type:"draft.put"}>[] = [];
 const branchWrites: CommandEnvelope[] = [];
+const preferenceWrites: CommandEnvelope[] = [];
+let preferenceCounter = 0;
+const preferenceRecords: any[] = [];
+const preferenceActor = crypto.randomUUID();
 let checkoutGate: Promise<void> | undefined;
 let checkoutUnknownOnce = false;
 let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
@@ -60,7 +64,7 @@ const methods: Partial<DesktopBridge> = {
   subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   getDetachedQuestions: async () => questionFixture ? { protocolVersion:1, hostId:owner, sessionId, questions:[{questionId:"question-a",questionEntryId:"opened-a",originRunId:"run-a",openedAt:1,status:"open",delivery:{status:"waiting"},questions:[{id:"density",question:"Which sample density?",multi:false,options:[{label:"Comfortable"},{label:"Compact"}]}]}] } : null,
   getState: async () => structuredClone(state), getHosts: async () => ({ status: "connected", ownNodeId: "controlled", checkedAt: 1, hosts: [] }),
-  getPreferences: async () => ({ version: 1, records: [] }), getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "theme", filePath: "/controlled/theme.json" }),
+  getPreferences: async () => ({ version: 1, records: structuredClone(preferenceRecords) }), getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "theme", filePath: "/controlled/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {}, getMessages: async () => [], getInteractions: async () => [],
   getComposerCatalog: async () => catalog, getSessionControls: async () => ({ sessionId, revision: "controls", model, capabilities: { ...model, api: "controlled", thinkingSelectors: ["off", "low", "high"], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
   getNativeTerminalCapabilities: async () => ({ ok: true as const, value: { protocol: "tmux-v1" as const, tmuxVersion: "3.7c" as const, inputEpoch: nativeTerminal.inputEpoch, dimensions: TERMINAL_DIMENSIONS } }),
@@ -88,6 +92,13 @@ const methods: Partial<DesktopBridge> = {
       if (checkoutUnknownOnce) { checkoutUnknownOnce = false; throw new Error("Controlled checkout outcome is unknown"); }
       gitStatus.branch = envelope.command.action.branch; gitStatus.revision += "-next";
       return {ok:true,commandId:envelope.id,value:{type:"git.checkout",status:structuredClone(gitStatus)}};
+    }
+    if (envelope.command.type === "preferences.put") {
+      preferenceWrites.push(structuredClone(envelope)); const change = envelope.command.change;
+      preferenceCounter += 1;
+      const preference = { key: change.key, ...(change.deleted ? { deleted: true } : { value: change.value, deleted: false }), revision: { counter: preferenceCounter, actor: preferenceActor, opId: crypto.randomUUID() } };
+      const index = preferenceRecords.findIndex(record => record.key === change.key); if (index >= 0) preferenceRecords[index] = preference; else preferenceRecords.push(preference);
+      return {ok:true,commandId:envelope.id,value:{type:"preferences.put",preference}};
     }
     throw new Error(`Unexpected controlled command: ${envelope.command.type}`);
   },
@@ -222,15 +233,21 @@ Object.assign(window, {
   finishComposerContext: async () => {
     const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
     const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!, create=button(dialog,"Create and checkout")!;
+    const setPrefix=button(dialog,"Set prefix")!; setPrefix.click();
+    const prefix=document.querySelector<HTMLInputElement>('[aria-label="Branch prefix"]')!;
+    prefix.value="team/"; prefix.dispatchEvent(new Event("input",{bubbles:true})); prefix.dispatchEvent(new Event("change",{bubbles:true}));
+    button(dialog,"Save prefix")!.click(); await wait(()=>preferenceWrites.length===1,"saved branch prefix");
+    assert(preferenceWrites[0]!.command.type==="preferences.put" && preferenceWrites[0]!.command.change.key==="git.branchPrefix" && (preferenceWrites[0]!.command.change as any).value==="team/","Set prefix did not persist through shared preferences");
+    assert(document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')!.value==="team/","Saved prefix did not update the branch draft");
     const deliveriesBeforeCreate=branchWrites.length; checkoutUnknownOnce=true;
     assert(!create.disabled,"Named new branch remains disabled"); create.click();
     await wait(()=>button(document.querySelector('.composer-branch-dialog'),"Retry original workspace command"),"uncertain create receipt");
-    assert(branchWrites.length===deliveriesBeforeCreate+1 && document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')?.value==="codex/new-context-branch","Uncertain creation lost its modal input or original delivery");
+    assert(branchWrites.length===deliveriesBeforeCreate+1 && document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')?.value==="team/new-context-branch","Uncertain creation lost its modal input or original delivery");
     await new Promise(resolve=>setTimeout(resolve,100));
     assert(branchWrites.length===deliveriesBeforeCreate+1,"Uncertain branch creation replayed without an explicit retry");
     button(document.querySelector('.composer-branch-dialog'),"Retry original workspace command")!.click();
     await wait(()=>!document.querySelector('.composer-branch-dialog'),"branch creation receipt");
-    assert(gitStatus.branch==="codex/new-context-branch" && branchWrites.length===deliveriesBeforeCreate+2 && branchWrites.at(-1)!.id===branchWrites.at(-2)!.id && prompt.value==="Keep context draft","Creation retry changed command identity, branch text, or unsent draft");
+    assert(gitStatus.branch==="team/new-context-branch" && branchWrites.length===deliveriesBeforeCreate+2 && branchWrites.at(-1)!.id===branchWrites.at(-2)!.id && prompt.value==="Keep context draft","Creation retry changed command identity, branch text, or unsent draft");
     const command=branchWrites.at(-1)!.command;
     assert(command.type==="workspace.mutate" && command.action.type==="git.checkout" && command.action.create===true,"Create action omitted native creation intent");
     document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
