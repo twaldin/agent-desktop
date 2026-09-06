@@ -104,6 +104,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
   const [fitPage, setFitPage] = useState(true);
   const [panelSize, setPanelSize] = useState<{ width: number; height: number }>();
   const lastFit = useRef<string | undefined>(undefined);
+  const panelSizeFresh = useRef(false);
   const [refresh, setRefresh] = useState(0);
   const [pending, setPending] = useState(false);
   const [address, setAddress] = useState("");
@@ -359,6 +360,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     // Invalidates a capture already in progress before this native mutation.
     const revision = ++selectionRevision.current;
     pendingRef.current = true;
+    panelSizeFresh.current = false;
     setPending(true);
     try {
       const receipt = await bridge.controlBrowser(
@@ -437,6 +439,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
         const rect = element.getBoundingClientRect();
         if (rect.width < 1 || rect.height < 1) return;
         const width = Math.min(16384, Math.floor(rect.width)), height = Math.min(16384, Math.floor(rect.height));
+        if (!pendingRef.current) panelSizeFresh.current = true;
         setPanelSize(previous => previous?.width === width && previous.height === height ? previous : { width, height });
       }, 180);
     };
@@ -444,7 +447,19 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     return () => { clearTimeout(timer); observer.disconnect(); };
   }, [Boolean(frame), active, fitPage]);
   useEffect(() => {
-    if (!fitPage || !panelSize || !controlsReady || !frame?.context?.navigation || !selected) return;
+    if (pending || !active || !fitPage) return;
+    let frameId = requestAnimationFrame(() => {
+      const rect = viewport.current?.getBoundingClientRect();
+      if (!rect || rect.width < 1 || rect.height < 1) return;
+      const width = Math.min(16384, Math.floor(rect.width));
+      const height = Math.min(16384, Math.floor(rect.height));
+      panelSizeFresh.current = true;
+      setPanelSize(previous => previous?.width === width && previous.height === height ? previous : { width, height });
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [pending, active, fitPage]);
+  useEffect(() => {
+    if (!fitPage || !panelSize || !panelSizeFresh.current || !controlsReady || !frame?.context?.navigation || !selected) return;
     const key = JSON.stringify([selected.workerPid, selected.name, selected.targetId, panelSize.width, panelSize.height]);
     if (lastFit.current === key) return;
     // React only to this window's measured layout, never to another viewer's

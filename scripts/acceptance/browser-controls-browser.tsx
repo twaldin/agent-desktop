@@ -229,8 +229,11 @@ Object.assign(window, {
       humanRequests.length === 1,
       "typing started a concurrent browser control",
     );
+    const fitCount = fitRequests.length;
     first.resolve();
     await wait(() => humanRequests.length === 2, "serialized second text request");
+    await sleep(300);
+    assert(fitRequests.length === fitCount, "Pending browser status caused a transient geometry fit");
     assert(
       humanRequests[1].context.documentId === "doc-2",
       "queued text ignored the completed receipt context",
