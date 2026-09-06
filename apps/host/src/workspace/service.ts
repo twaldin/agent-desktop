@@ -332,7 +332,8 @@ export class WorkspaceService {
     return serialized(`git:${this.cwd}`, async () => {
       await this.requireGitRoot();
       const before = await this.checkIndexRevision(expectedRevision);
-      await this.git(["check-ref-format", "--branch", branch]);
+      const checkedBranch = await this.git(["check-ref-format", "--branch", branch]);
+      if (checkedBranch.stdout.trim() !== branch) throw new WorkspaceError("INVALID_BRANCH", "Branch syntax must name the requested local branch exactly.");
       const ref = `refs/heads/${branch}`;
       if (create) {
         if (before.head === null) throw new WorkspaceError("UNBORN_BRANCH", "Create the repository's first commit before creating another branch.");

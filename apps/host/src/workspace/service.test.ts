@@ -184,6 +184,7 @@ describe("actual local Git operations", () => {
     await expect(service.checkout("origin/topic", reviewed.revision)).rejects.toMatchObject({ code: "BRANCH_NOT_FOUND" });
     await expect(service.checkout("alias", reviewed.revision)).rejects.toMatchObject({ code: "SYMBOLIC_BRANCH" });
     await expect(service.checkout("--detach", reviewed.revision)).rejects.toMatchObject({ code: "INVALID_BRANCH" });
+    await expect(service.checkout("@{-1}", reviewed.revision, true)).rejects.toMatchObject({ code: "INVALID_BRANCH" });
 
     const head = reviewed.head;
     const created = await service.checkout("new-local", reviewed.revision, true);
