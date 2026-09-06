@@ -1,0 +1,23 @@
+# Local project environments
+
+Local environments remain an implementation gap. They are application features layered over OMP: reusable project setup/cleanup scripts and actions, selected in the composer and managed in settings. OMP's provider setup wizard does not supply this behavior. The app must give the resulting working directory and setup environment to the owning OMP session.
+
+## Reference behavior
+
+Pinned7982 provides an Environment selector separate from execution mode and starting state. It exposes loading/error, selected configuration, No environment, Work without environment, Set up project and Environment settings/repair. Selection is a project-owned configuration path, independent of branch selection. The editor supports a name, common and platform-specific setup/cleanup scripts, and named actions with optional platform and icon.
+
+The native TOML schema has `version` (integer, default1), `name`, required `[setup].script`, optional `[cleanup].script`, and optional platform script overrides under setup/cleanup. A nonempty platform script replaces the common script; an empty override falls back to it. Actions contain name/command, optional platform, and a tool/run/debug/test icon. Configuration reads and saves carry a revision; an edit conflict must preserve the editor draft.
+
+Setup executes after creating the worktree, in the configuration's project-relative working directory. Native pending creation preserves the new worktree and enters a failed state with an error and attention flag when setup fails; it does not advance to worktree-ready. A successful setup captures exported environment changes for later processes. Cleanup executes before worktree removal, and failure prevents that removal. Selecting a menu item alone does not run scripts.
+
+Source evidence: pinned `worktree-environment-dropdown-2cca23d397d0.js` (`st`), `local-environment-editor-73dc2c51b8c0.js` (`Ke`, `Ze`, `ot`), native `worker.js` (`K4`, `K2`, `gde`, `Sde`) and the pending-worktree manager in `main-C5K7o1Hr.js`. Private excerpts and trace: `.data/environment28/`. These source facts do not establish measured UI parity or complete discovery/recovery semantics.
+
+## Implementation boundaries
+
+- Reuse the host's project ownership, revisioned drafts, command receipts and managed worktree lifecycle. Add an environment selection to the captured submission only through an explicitly compatible protocol; older clients must not silently drop it.
+- Resolve and validate the selected configuration revision before side effects. Save the selected configuration identity with the managed worktree so later cleanup cannot use an unrelated project's selection.
+- Record worktree creation and setup as distinct steps. Setup failure preserves the directory and original prompt; an unknown result must be reconciled before any explicit retry. Never replay a script because a client lost its response.
+- Keep setup environment values private to the host. Apply the intended environment to subsequent owning-session and terminal processes without changing host-global credentials or another session's configuration. UI status and ordinary command receipts must not contain captured environment values.
+- Provide setup progress/output, failure/recovery, revision conflicts and native editor controls. An inert selector, raw-file-only editor or source-only runner does not satisfy this feature.
+
+Before completion, exercise real temporary worktrees and shell scripts for successful setup and exported environment, failed/cancelled setup, crash/receipt uncertainty, explicit recovery, cleanup success/failure, platform selection and named actions. Confirm the source repository remains unchanged, drafts persist through navigation/restart, and remote selection stays on its owning host. Pair the actual UI states with the reference bundle. Parent/subdirectory discovery, terminal propagation and exact native recovery controls still need further tracing and implementation.
