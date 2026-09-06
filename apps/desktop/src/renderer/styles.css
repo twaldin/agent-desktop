@@ -487,3 +487,8 @@ button { touch-action: manipulation; }
 .with-terminal .composer-region.home-composer { margin-bottom:0; }
 .with-terminal .welcome { min-height:70px; padding-top:18px; }
 .with-terminal .welcome-mark { display:none; }
+
+.app-shell.settings-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
+.settings-host-picker { display: flex; flex-direction: column; gap: 4px; color: var(--secondary); font-size: 12px; }
+.settings-host-picker select { width: 100%; min-width: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 5px; color: var(--text); }
+.settings-unavailable { padding: 0 24px; color: var(--secondary); }

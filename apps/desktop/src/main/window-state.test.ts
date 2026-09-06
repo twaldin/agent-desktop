@@ -416,3 +416,13 @@ test("browser target persistence accepts native names and retains legacy browser
     parseDockSnapshot({ state, tabs: [generic, exact, files, terminal] })?.tabs,
   ).toEqual([generic, exact, files, terminal]);
 });
+
+test("Git and environment settings reopen without changing the saved host, conversation or docks", () => {
+  const directory = temporary();
+  for (const settingsPage of ["git", "environments"] as const) {
+    const state = { ...selected(), settingsOpen: true, settingsPage };
+    const store = new WindowStateStore(directory, "primary");
+    expect(store.saveView(state)).toEqual({});
+    expect(new WindowStateStore(directory, "primary").bootstrap().state).toEqual(state);
+  }
+});

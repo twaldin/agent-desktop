@@ -3,7 +3,7 @@ import { GoalPanel } from "./GoalPanel";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Draft, Project, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { readWindowRestoration, useWindowViewPersistence } from "./window-view-state";
-import type { WindowNavigation, WorkspaceTab } from "../window-state";
+import type { SettingsPage, WindowNavigation, WorkspaceTab } from "../window-state";
 import { DraftController, hasDraftContent } from "./drafts";
 import { SubmissionController } from "./submissions";
 import { ComposerCatalogState, composerSelection, composerTargetKey } from "./composer-catalog";
@@ -33,6 +33,8 @@ import { PreferencesState } from "./preferences-state";
 import { OrganizedSidebar } from "./OrganizedSidebar";
 import { NativeSettings } from "./NativeSettings";
 import { GitSettings } from "./GitSettings";
+import { SettingsSidebar } from "./SettingsSidebar";
+import { LocalEnvironmentSettings } from "./LocalEnvironmentSettings";
 import { ThemeSettings } from "./ThemeSettings";
 import { ThemeEditor } from "./theme-state";
 import { ThemeImageState } from "./theme-image-state";
@@ -80,7 +82,28 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(windowRestoration.state.settingsOpen);
-  const [settingsPage, setSettingsPage] = useState<"accounts" | "omp" | "appearance" | "git">(windowRestoration.state.settingsPage as "accounts" | "omp" | "appearance" | "git");
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>(windowRestoration.state.settingsPage);
+  const [environmentProject, setEnvironmentProject] = useState<{hostId:string;projectId:string}>();
+  const projectAddContext = useRef<{hostId:string;environments:boolean} | undefined>(undefined);
+  const settingsOriginLabel = useRef<string | null>(null);
+  const settingsWasOpen = useRef(false);
+  const openSettings = useCallback(() => {
+    settingsOriginLabel.current = document.activeElement?.getAttribute("aria-label") ?? null;
+    setSettingsOpen(true);
+  }, []);
+  useEffect(() => {
+    const closing = settingsWasOpen.current && !settingsOpen;
+    settingsWasOpen.current = settingsOpen;
+    if (!settingsOpen && !closing) return;
+    const frame = requestAnimationFrame(() => {
+      if (settingsOpen) document.querySelector<HTMLElement>(".settings-sidebar-back")?.focus();
+      else {
+        const origin = settingsOriginLabel.current ? document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(settingsOriginLabel.current)}"]`) : null;
+        (origin ?? (settingsPage === "git" ? document.querySelector<HTMLElement>('[aria-label="Switch branch"]') : null) ?? textarea.current)?.focus();
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [settingsOpen]);
   const [workspaceFileRequest, setWorkspaceFileRequest] = useState<{ owner: string; request: WorkspaceFileRequest }>();
   const [environmentOpen, setEnvironmentOpen] = useState(windowRestoration.state.environmentOpen ?? false);
   const [sourcePreview, setSourcePreview] = useState<{hostId:string;source:Extract<RecordedSource,{kind:"image"}>}>();
@@ -183,7 +206,7 @@ export function App() {
   const workspaceOpen = dock.snapshot.state.right.open;
   const terminalOpen = dock.snapshot.state.bottom.open;
   const windowWarning = useWindowViewPersistence({ route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,
-    expandedProjects: [...expandedProjects], settingsOpen, settingsPage: settingsPage === "git" ? "omp" : settingsPage, dock: dock.persisted, environmentOpen }, windowRestoration);
+    expandedProjects: [...expandedProjects], settingsOpen, settingsPage, dock: dock.persisted, environmentOpen }, windowRestoration);
   const composerTarget = composerTargetKey(workspaceTarget);
   const composer = useMemo(() => new ComposerCatalogState(bridge, hostId, workspaceTarget), [bridge, hostId, composerTarget]);
   useEffect(() => {
@@ -269,7 +292,7 @@ export function App() {
       "new-chat": () => newConversation(),
       search: () => { setSidebarOpen(true); setSearchOpen(true); requestAnimationFrame(() => searchInput.current?.focus()); },
       sidebar: () => setSidebarOpen(value => !value),
-      settings: () => { setSettingsOpen(true); setAppMenuOpen(false); },
+      settings: () => { openSettings(); setAppMenuOpen(false); },
     },
   }), [newConversation, dialog, menuOpen, appMenuOpen]);
   useEffect(() => {
@@ -293,23 +316,25 @@ export function App() {
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setMenuOpen(false); setAppMenuOpen(false); } };
     window.addEventListener("keydown", close); return () => window.removeEventListener("keydown", close);
   }, [menuOpen, appMenuOpen]);
-  async function addProject() {
+  async function addProject(environments = false) {
     if (!bridge || !connected) return;
+    projectAddContext.current = { hostId, environments };
     if (hostId !== desktop.localHostId) { setRemotePath(""); setActionError(null); setDialog("project"); return; }
     setAddingProject(true); setActionError(null);
     try {
       const path = await bridge.chooseDirectory(); if (!path) return;
       const value = await command({ type: "project.add", path });
-      if (value && "path" in value) { if (worktreesAvailable) selectProjectWithExecutionMode(drafts, "new-conversation", value.id); else drafts.update("new-conversation", { projectId: value.id }); navigate(null); await refresh(); }
+      if (value && "path" in value) { if (environments) setEnvironmentProject({hostId,projectId:value.id}); else { if (worktreesAvailable) selectProjectWithExecutionMode(drafts, "new-conversation", value.id); else drafts.update("new-conversation", { projectId: value.id }); navigate(null); } await refresh(); }
     } catch (cause) { setActionError(errorMessage(cause)); }
     finally { setAddingProject(false); }
   }
   async function addRemoteProject(event: React.FormEvent) {
     event.preventDefault(); if (!remotePath.trim() || !connected) return;
+    if (projectAddContext.current?.hostId !== hostId) { setActionError("Return to the selected host before adding this project."); return; }
     setAddingProject(true); setActionError(null);
     try {
       const value = await command({ type: "project.add", path: remotePath.trim() });
-      if (value && "path" in value) { if (worktreesAvailable) selectProjectWithExecutionMode(drafts, "new-conversation", value.id); else drafts.update("new-conversation", { projectId: value.id }); navigate(null); setDialog(null); await refresh(); }
+      if (value && "path" in value) { if (projectAddContext.current?.environments) setEnvironmentProject({hostId,projectId:value.id}); else { if (worktreesAvailable) selectProjectWithExecutionMode(drafts, "new-conversation", value.id); else drafts.update("new-conversation", { projectId: value.id }); navigate(null); } setDialog(null); await refresh(); }
     } catch (cause) { setActionError(errorMessage(cause)); }
     finally { setAddingProject(false); }
   }
@@ -370,7 +395,7 @@ export function App() {
       { id: "terminal", name: "Terminal", description: "Open the workspace terminal", icon: "terminal", reason: !workspace ? "Choose a project to open its terminal." : undefined,
         run: () => dock.terminal() },
       { id: "new-chat", name: "New chat", description: "Start a new conversation", icon: "compose", run: () => newConversation() },
-      { id: "settings", name: "Settings", description: "Open native OMP settings", icon: "more", run: () => { setSettingsPage("omp"); setSettingsOpen(true); } },
+      { id: "settings", name: "Settings", description: "Open native OMP settings", icon: "more", run: () => { setSettingsPage("omp"); openSettings(); } },
     ],
   });
   const hostGroups = desktop.hosts.flatMap(host => { const hostState = host.hostId ? desktop.catalog.records.get(host.hostId)?.state : undefined; return hostState ? [{ host, hostState }] : []; });
@@ -400,8 +425,8 @@ export function App() {
     const ownerProject = record?.state?.projects.find(value => value.id === ("projectId" in target ? target.projectId : ownerSession?.projectId));
     return <WorkspacePanel embedded data={data} connected={online} tab={tab.kind === "review" ? "changes" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={tab.kind === "files" && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
   }
-  return <div className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}>
-    <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
+  return <div className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
+    {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={<label className="settings-host-picker"><span>Machine</span><select aria-label="Settings machine" value={state?.host.id ?? route.hostId ?? ""} onChange={event => navigate(null,event.target.value,true)}>{!desktop.hosts.length && <option value={route.hostId ?? ""}>{loading ? "Connecting…" : "Host unavailable"}</option>}{desktop.hosts.map(host => <option key={host.key} value={host.hostId ?? host.key} disabled={!host.hostId}>{host.name}{host.local ? " · This machine" : ""}{host.availability !== "available" ? ` · ${host.availability}` : ""}</option>)}</select></label>}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
       <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search conversations" title="Search conversations (⌘ K)" aria-expanded={searchOpen} onClick={() => { setSearchOpen(value => !value); requestAnimationFrame(() => searchInput.current?.focus()); }}><Icon name="search"/></button></div>
       <nav className="sidebar-actions" aria-label="Main navigation">
@@ -409,8 +434,8 @@ export function App() {
         {(searchOpen || query) && <label className="sidebar-search"><Icon name="search"/><input ref={searchInput} type="search" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { setQuery(""); setSearchOpen(false); } }} placeholder="Search conversations" aria-label="Search conversations"/></label>}
       </nav>
       <div className="sidebar-scroll"><OrganizedSidebar preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} query={query} showArchived={showArchived} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)}/></div>
-      <footer className="sidebar-footer"><span className={`connection-dot ${connected ? "online" : ""}`}/><div className="host-label"><label className="sr-only" htmlFor="active-host">Active machine</label><select id="active-host" value={state?.host.id ?? route.hostId ?? ""} onChange={event => navigate(null, event.target.value, true)}>{route.hostId && !desktop.hosts.some(host => host.hostId === route.hostId) && <option value={route.hostId}>Saved machine · {loading ? "Connecting" : "Unavailable"}</option>}{!desktop.hosts.length && !route.hostId && <option value="">Connecting to host…</option>}{desktop.hosts.map(host => <option key={host.key} value={host.hostId ?? host.key} disabled={!host.hostId}>{host.name}{host.local ? " · This machine" : ""}{host.availability !== "available" ? ` · ${host.availability}` : ""}</option>)}</select><span>{connected ? hostId === desktop.localHostId ? "Connected · This machine" : "Connected · Tailscale" : loading ? "Connecting…" : state ? "Offline · cached view" : "Host unavailable"}</span></div><div className="menu-anchor"><button className="icon-button" aria-label="App menu" title="App menu" aria-expanded={appMenuOpen} onClick={() => setAppMenuOpen(value => !value)}><Icon name="more"/></button>{appMenuOpen && <><button className="menu-dismiss" onClick={() => setAppMenuOpen(false)} tabIndex={-1} aria-label="Close app menu"/><div className="action-menu footer-menu"><button onClick={() => { setSettingsOpen(true); setAppMenuOpen(false); }}>Settings</button><button onClick={() => { setDialog("status"); setAppMenuOpen(false); }}>Build status</button></div></>}</div></footer>
-    </aside>
+      <footer className="sidebar-footer"><span className={`connection-dot ${connected ? "online" : ""}`}/><div className="host-label"><label className="sr-only" htmlFor="active-host">Active machine</label><select id="active-host" value={state?.host.id ?? route.hostId ?? ""} onChange={event => navigate(null, event.target.value, true)}>{route.hostId && !desktop.hosts.some(host => host.hostId === route.hostId) && <option value={route.hostId}>Saved machine · {loading ? "Connecting" : "Unavailable"}</option>}{!desktop.hosts.length && !route.hostId && <option value="">Connecting to host…</option>}{desktop.hosts.map(host => <option key={host.key} value={host.hostId ?? host.key} disabled={!host.hostId}>{host.name}{host.local ? " · This machine" : ""}{host.availability !== "available" ? ` · ${host.availability}` : ""}</option>)}</select><span>{connected ? hostId === desktop.localHostId ? "Connected · This machine" : "Connected · Tailscale" : loading ? "Connecting…" : state ? "Offline · cached view" : "Host unavailable"}</span></div><div className="menu-anchor"><button className="icon-button" aria-label="App menu" title="App menu" aria-expanded={appMenuOpen} onClick={() => setAppMenuOpen(value => !value)}><Icon name="more"/></button>{appMenuOpen && <><button className="menu-dismiss" onClick={() => setAppMenuOpen(false)} tabIndex={-1} aria-label="Close app menu"/><div className="action-menu footer-menu"><button onClick={() => { openSettings(); setAppMenuOpen(false); }}>Settings</button><button onClick={() => { setDialog("status"); setAppMenuOpen(false); }}>Build status</button></div></>}</div></footer>
+    </aside>}
     <div ref={workbenchElement} className={`workbench ${workspaceOpen && dockViewport.width < 672 ? "dock-narrow" : ""}`} style={{
       "--right-dock-size": !settingsOpen && workspaceOpen && dockViewport.width >= 672 ? `${Math.max(320,Math.min(dockViewport.width - 352,dock.snapshot.state.rightWidthRatio*dockViewport.width))}px` : "0px",
       "--bottom-dock-size": !settingsOpen && terminalOpen ? `${Math.min(dockViewport.height/2,Math.max(160,dock.snapshot.state.bottomHeight))}px` : "0px",
@@ -418,7 +443,7 @@ export function App() {
     <main className="main-panel">
       {appliedTheme.background.kind === "asset" && themeImage.sha256 === imageHash && themeImage.dataUrl && <div className="theme-image-background" aria-hidden="true" style={{ backgroundImage: `url("${themeImage.dataUrl}")`, backgroundSize: appliedTheme.background.fit === "tile" ? "auto" : appliedTheme.background.fit, backgroundRepeat: appliedTheme.background.fit === "tile" ? "repeat" : "no-repeat", opacity: appliedTheme.background.opacity, filter: `blur(${appliedTheme.background.blur}px)` }}/> }
       {windowWarning && <div className="connection-banner" role="status"><span>{windowWarning}</span></div>}
-      {settingsOpen ? <><nav className="settings-navigation" aria-label="Settings pages"><button aria-current={settingsPage === "accounts" ? "page" : undefined} onClick={() => setSettingsPage("accounts")}>Accounts</button><button aria-current={settingsPage === "omp" ? "page" : undefined} onClick={() => setSettingsPage("omp")}>OMP</button><button aria-current={settingsPage === "git" ? "page" : undefined} onClick={() => setSettingsPage("git")}>Git</button><button aria-current={settingsPage === "appearance" ? "page" : undefined} onClick={() => setSettingsPage("appearance")}>Appearance</button></nav>{settingsPage === "appearance" ? <ThemeSettings data={theme} preferences={preferences} fonts={localFonts} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget} onClose={() => setSettingsOpen(false)}/> : settingsPage === "git" ? <GitSettings preferences={preferences} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : <>
+      {settingsOpen ? <>{settingsPage === "environments" ? state?.localEnvironments?.configuration ? <LocalEnvironmentSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state.host.name} localHostId={desktop.localHostId} connected={connected} projects={state.projects} initialProjectId={environmentProject?.hostId === hostId ? environmentProject.projectId : project?.id} onSelectProject={projectId => setEnvironmentProject({hostId,projectId})} onAddProject={() => void addProject(true)} onClose={() => setSettingsOpen(false)}/> : <section className="settings-page"><header className="settings-header"><h1>Environments</h1></header><p className="settings-unavailable" role="status">{loading ? "Connecting to the owning host…" : "This host does not support environment configuration. Update its host service to edit environments here."}</p></section> : settingsPage === "appearance" ? <ThemeSettings data={theme} preferences={preferences} fonts={localFonts} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget} onClose={() => setSettingsOpen(false)}/> : settingsPage === "git" ? <GitSettings preferences={preferences} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : <>
       <header className="main-header drag-region">
         {!sidebarOpen && <button className="icon-button no-drag" onClick={() => setSidebarOpen(true)} aria-label="Show sidebar"><Icon name="sidebar"/></button>}
         <div className="header-breadcrumb" title={project?.path}>{selected && <Icon name="folder"/>}<strong className="truncate">{selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "New chat")}</strong>{selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>}</div>
@@ -468,7 +493,7 @@ export function App() {
               if (worktreesAvailable && draft.projectId) selectProjectExecutionMode(drafts,draftId,draft.projectId,execution);
               else if (execution.type === "local" && draft.execution?.type === "worktree") drafts.update(draftId,{execution});
             }}
-            branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); setSettingsOpen(true); }}
+            branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }}
             onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}
             onCheckout={async (branch,create) => { if (!workspace?.status || !connected) return; await workspace.mutate({type:"git.checkout",branch,expectedRevision:workspace.status.revision,...(create ? {create:true} : {})}); }}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>

@@ -8,6 +8,7 @@ interface Pending { envelope: SaveEnvelope; key: string; version: number }
 interface CachedState { version: 1; items: LocalEnvironmentCatalogItem[]; edits: Array<[string, EnvironmentEdit]>; selected?: string; pending?: Pending }
 
 const revisionPattern = /^[a-f0-9]{64}$/;
+const uncertainCommandCodes = new Set(["OUTCOME_UNKNOWN", "HOST_STOPPING", "COMMAND_ID_REUSED"]);
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 const blank = (): LocalEnvironmentConfig => ({ version: 1, name: "", setup: { script: "" } });
 const configBytes = (raw: string) => new TextEncoder().encode(raw).length;
@@ -188,11 +189,11 @@ export class LocalEnvironmentState {
       return;
     }
     try {
-      const value = await this.bridge.workspaceQuery({ projectId: this.projectId }, { type: "file.read", path: configPath }, this.hostId);
+      const value = await this.bridge.workspaceQuery({ projectId: this.projectId }, { type: "environment.read", configPath }, this.hostId);
       if (selection !== this.selectionEpoch) return;
-      if (value.type !== "file.read" || value.content.kind !== "text") throw new Error("The configuration cannot be opened as a text file.");
-      if (!validRevision(value.content.revision) || configBytes(value.content.text) > 1024 * 1024) throw new Error("The configuration is too large or has an invalid revision.");
-      this.edits.set(configPath, { configPath, expectedRevision: value.content.revision, raw: value.content.text, version: 0, dirty: false });
+      if (value.type !== "environment.read" || value.configPath !== configPath) throw new Error("The configuration cannot be opened as a text file.");
+      if (!validRevision(value.revision) || configBytes(value.raw) > 1024 * 1024) throw new Error("The configuration is too large or has an invalid revision.");
+      this.edits.set(configPath, { configPath, expectedRevision: value.revision, raw: value.raw, version: 0, dirty: false });
       this.selected = configPath;
       this.error = undefined;
       this.saveSoon();
@@ -262,7 +263,9 @@ export class LocalEnvironmentState {
       if (response.commandId !== pending.envelope.id) throw new Error("The host returned a different command receipt.");
       let refreshCatalog = false;
       if (!response.ok) {
-        if (response.error.code === "OUTCOME_UNKNOWN") throw new Error(response.error.message);
+        // These responses do not prove whether this exact command reached the
+        // host ledger or applied. Retain its durable identity for inspection.
+        if (uncertainCommandCodes.has(response.error.code)) throw new Error(response.error.message);
         this.pending = undefined;
         this.error = response.error.message;
       } else {

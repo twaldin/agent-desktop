@@ -17,7 +17,7 @@ function safeName(name: string) {
 
 type LocalEnvironmentReadResult =
   | { type: "missing" }
-  | { type: "item"; item: LocalEnvironmentCatalogItem; identity?: string; mode?: number };
+  | { type: "item"; item: LocalEnvironmentCatalogItem; identity?: string; mode?: number; raw?: string };
 
 const fileIdentity = (info: Stats) =>
   `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.mode}`;
@@ -92,8 +92,18 @@ export class LocalEnvironmentStore {
       return { type: "item", item: { type: "error", configPath: path, error } };
     } finally { await file?.close().catch(() => {}); }
     const currentRevision = revision(raw);
-    try { return { type: "item", identity, mode, item: { type: "environment", configPath: path, revision: currentRevision, environment: parseLocalEnvironment(raw.toString("utf8")) } }; }
-    catch (cause) { return { type: "item", identity, mode, item: { type: "error", configPath: path, revision: currentRevision, error: cause instanceof Error ? cause.message : String(cause) } }; }
+    try { return { type: "item", identity, mode, raw: raw.toString("utf8"), item: { type: "environment", configPath: path, revision: currentRevision, environment: parseLocalEnvironment(raw.toString("utf8")) } }; }
+    catch (cause) { return { type: "item", identity, mode, raw: raw.toString("utf8"), item: { type: "error", configPath: path, revision: currentRevision, error: cause instanceof Error ? cause.message : String(cause) } }; }
+  }
+
+  async read(configPath: string): Promise<{ configPath: string; revision: string; raw: string }> {
+    const directory = await this.ownedRoot(false);
+    if (!directory) throw new Error("Environment configuration no longer exists.");
+    const path = this.ownedPath(directory, configPath);
+    const entry = await this.readEntry(path);
+    if (entry.type === "missing") throw new Error("Environment configuration no longer exists.");
+    if (entry.raw === undefined || !entry.item.revision) throw new Error(entry.item.type === "error" ? entry.item.error : "Environment configuration cannot be read safely.");
+    return { configPath: path, revision: entry.item.revision, raw: entry.raw };
   }
 
   async catalog(): Promise<LocalEnvironmentCatalogItem[]> {

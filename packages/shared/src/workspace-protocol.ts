@@ -3,6 +3,7 @@ import type { CreateWorktreeOptions, FileContent, FileWriteResult, GitBranch, Gi
 
 export type { WorkspaceTarget } from "./workspace";
 export type WorkspaceQuery =
+  | { type: "environment.read"; configPath: string }
   | { type: "environments.list" }
   | { type: "files.list"; path?: string }
   | { type: "file.stat"; path: string }
@@ -12,6 +13,7 @@ export type WorkspaceQuery =
   | { type: "git.diff"; path?: string; staged?: boolean; context?: number }
   | { type: "git.worktrees" };
 export type WorkspaceQueryResult =
+  | { type: "environment.read"; configPath: string; revision: string; raw: string }
   | { type: "environments.list"; environments: LocalEnvironmentCatalogItem[] }
   | { type: "files.list"; entries: WorkspaceEntry[] }
   | { type: "file.stat"; entry: WorkspaceEntry }

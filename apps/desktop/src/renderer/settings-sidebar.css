@@ -1,0 +1,56 @@
+.settings-sidebar {
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 275px;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 48px 10px 16px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar-surface);
+  color: var(--text);
+}
+
+.settings-sidebar-back,
+.settings-sidebar-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  gap: 9px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-sidebar-back { padding: 6px 10px; margin-bottom: 16px; font-weight: 550; }
+.settings-sidebar-back:hover, .settings-sidebar-item:hover { background: var(--hover); color: var(--text); }
+.settings-sidebar-back:focus-visible, .settings-sidebar-item:focus-visible, .settings-sidebar-search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-sidebar-back .icon, .settings-sidebar-item .icon { width: 16px; height: 16px; flex: 0 0 16px; }
+.settings-sidebar-host { margin: 0 4px 12px; }
+
+.settings-sidebar-search { display: flex; align-items: center; gap: 7px; min-height: 32px; margin: 0 2px 20px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--secondary); background: var(--sidebar-surface); }
+.settings-sidebar-search .icon { width: 15px; height: 15px; flex: 0 0 15px; }
+.settings-sidebar-search input { min-width: 0; width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: 12px; }
+.settings-sidebar-search input::placeholder { color: var(--secondary); }
+.settings-sidebar-nav { display: flex; flex-direction: column; gap: 18px; min-height: 0; }
+.settings-sidebar-nav section { display: flex; flex-direction: column; gap: 2px; }
+.settings-sidebar-nav h2 { margin: 0 10px 5px; color: var(--secondary); font-size: 13px; font-weight: 400; }
+.settings-sidebar-item { padding: 7px 10px; }
+.settings-sidebar-item.selected { color: var(--text); background: var(--hover); font-weight: 600; }
+.settings-sidebar-item.selected .icon { color: inherit; }
+.settings-sidebar-empty { margin: 4px 10px; color: var(--secondary); font-size: 12px; }
+
+@media (max-width: 680px) {
+  .settings-sidebar { flex-basis: 240px; padding-inline: 8px; }
+}
+
+.settings-sidebar { position: relative; }
+.settings-sidebar-titlebar { position: absolute; inset: 0 0 auto; height: 40px; }
+.settings-open .settings-header { -webkit-app-region: drag; }

@@ -122,4 +122,3 @@ export function scriptForPlatform(script: LocalEnvironmentScript | undefined, pl
   if (!script) return null;
   return script[platform]?.script || script.script;
 }
-

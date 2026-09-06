@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { serializeLocalEnvironment, type CommandEnvelope, type CommandResult } from '@agent-desktop/shared';
 import { startHost } from './server';
@@ -39,6 +39,16 @@ test('environment catalog and revisioned save use authenticated owning workspace
     expect(await send(create)).toEqual(first);
     expect(await readdir(join(a,'.agent-desktop','environments'))).toEqual(['web-project.toml']);
     expect(await readdir(a)).toEqual(['.agent-desktop']);
+    const brokenPath = join(dirname(saved.configPath),'broken.toml');
+    await writeFile(brokenPath, 'name = [\n');
+    const readConfig = (projectId: string, configPath: string) => request('/v1/workspace/query',{target:{projectId},query:{type:'environment.read',configPath}});
+    expect(await (await readConfig(projectA,brokenPath)).json()).toMatchObject({type:'environment.read',configPath:brokenPath,raw:'name = [\n'});
+    expect((await readConfig(projectB,brokenPath)).ok).toBe(false);
+    const linked = join(dirname(saved.configPath),'link.toml');
+    await symlink(saved.configPath,linked);
+    expect((await readConfig(projectA,linked)).ok).toBe(false);
+    await rm(linked); await rm(brokenPath);
+
     const foreign = await send({id:'foreign-path',command:{type:'workspace.mutate',target:{projectId:projectB},action:{type:'environment.save',configPath:saved.configPath,expectedRevision:saved.revision,raw}}});
     expect(foreign.ok).toBe(false);
     const editRaw = raw.replace('Web project','Saved edit');

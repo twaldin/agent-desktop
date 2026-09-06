@@ -77,14 +77,14 @@ test("malformed cache is quarantined visibly without bricking a new edit", async
 
 test("a late broken-file read cannot steal selection from a newer create action", async () => {
   const storage = memoryCache(), bridge = bridgeFixture(), reading = deferred<any>(), path = "/owned/project/broken.toml";
-  bridge.setQuery(async (_target, query) => query.type === "file.read" ? reading.promise : { type: "environments.list", environments: [] });
+  bridge.setQuery(async (_target, query) => query.type === "environment.read" ? reading.promise : { type: "environments.list", environments: [] });
   const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
   await state.restore(); state.items = [{ type: "error", configPath: path, revision: revision("b"), error: "invalid TOML" }];
   const opening = state.open(path); state.create();
-  reading.resolve({ type: "file.read", path, content: { kind: "text", revision: revision("b"), text: "name='late'" } });
+  reading.resolve({ type: "environment.read", configPath: path, revision: revision("b"), raw: "name='late'" });
   await opening;
   expect(state.selected).toBe("new"); expect(state.edits.has(path)).toBeFalse();
-  expect(bridge.queries[0]).toEqual({ target: { projectId: "project" }, query: { type: "file.read", path }, hostId: "owner" });
+  expect(bridge.queries[0]).toEqual({ target: { projectId: "project" }, query: { type: "environment.read", configPath: path }, hostId: "owner" });
 });
 
 test("workspace events and definite command errors stay scoped to their exact host and project", async () => {
@@ -105,26 +105,28 @@ test("workspace events and definite command errors stay scoped to their exact ho
   expect(bridge.queries).toHaveLength(0);
 });
 
-test("unknown save retries its exact command while newer editor text remains unsaved", async () => {
-  const storage = memoryCache(), bridge = bridgeFixture(), first = deferred<CommandResult>();
-  bridge.setCommand(envelope => bridge.commands.length === 1 ? first.promise : Promise.resolve({ ok: true, commandId: envelope.id, value: { type: "environment.save", result: { type: "saved", configPath: "/owned/saved.toml", revision: revision("c"), environment: environment("Saved") } } }));
-  const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
-  await state.restore(); state.connected = true; state.create(); state.edit(environment("Original", "echo original"));
-  const saving = state.save(); await until(() => bridge.commands.length === 1, "first save command");
-  const originalEnvelope = bridge.commands[0]!;
-  state.edit(environment("Newer", "echo newer"));
-  first.resolve({ ok: false, commandId: originalEnvelope.id, error: { code: "OUTCOME_UNKNOWN", message: "receipt lost" } });
-  await saving;
-  expect(JSON.stringify(state.pending?.envelope)).toBe(JSON.stringify(originalEnvelope)); expect(state.error).toContain("original request");
-  await until(() => storage.values.get(state.cacheKey)?.includes("Newer") === true, "durable newer edit and pending receipt");
-  const restarted = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
-  await restarted.restore(); restarted.connected = true;
-  expect(JSON.stringify(restarted.pending?.envelope)).toBe(JSON.stringify(originalEnvelope));
-  await restarted.retry();
-  expect(bridge.commands).toHaveLength(2); expect(bridge.commands[1]).toEqual(originalEnvelope);
-  expect(restarted).toMatchObject({ pending: undefined, selected: "/owned/saved.toml", notice: "Saved. Newer edits remain unsaved.", editor: { dirty: true, expectedRevision: revision("c") } });
-  expect(restarted.config).toMatchObject({ name: "Newer", setup: { script: "echo newer" } });
-});
+for (const uncertainCode of ["OUTCOME_UNKNOWN", "HOST_STOPPING", "COMMAND_ID_REUSED"] as const) {
+  test(`${uncertainCode} retains and retries its exact command while newer editor text remains unsaved`, async () => {
+    const storage = memoryCache(), bridge = bridgeFixture(), first = deferred<CommandResult>();
+    bridge.setCommand(envelope => bridge.commands.length === 1 ? first.promise : Promise.resolve({ ok: true, commandId: envelope.id, value: { type: "environment.save", result: { type: "saved", configPath: "/owned/saved.toml", revision: revision("c"), environment: environment("Saved") } } }));
+    const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+    await state.restore(); state.connected = true; state.create(); state.edit(environment("Original", "echo original"));
+    const saving = state.save(); await until(() => bridge.commands.length === 1, "first save command");
+    const originalEnvelope = bridge.commands[0]!;
+    state.edit(environment("Newer", "echo newer"));
+    first.resolve({ ok: false, commandId: originalEnvelope.id, error: { code: uncertainCode, message: `${uncertainCode} did not establish the save outcome` } });
+    await saving;
+    expect(JSON.stringify(state.pending?.envelope)).toBe(JSON.stringify(originalEnvelope)); expect(state.error).toContain("original request");
+    await until(() => storage.values.get(state.cacheKey)?.includes("Newer") === true, "durable newer edit and pending receipt");
+    const restarted = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+    await restarted.restore(); restarted.connected = true;
+    expect(JSON.stringify(restarted.pending?.envelope)).toBe(JSON.stringify(originalEnvelope));
+    await restarted.retry();
+    expect(bridge.commands).toHaveLength(2); expect(bridge.commands[1]).toEqual(originalEnvelope);
+    expect(restarted).toMatchObject({ pending: undefined, selected: "/owned/saved.toml", notice: "Saved. Newer edits remain unsaved.", editor: { dirty: true, expectedRevision: revision("c") } });
+    expect(restarted.config).toMatchObject({ name: "Newer", setup: { script: "echo newer" } });
+  });
+}
 
 test("a failed completion cache write rolls back identity and retains concurrent edits for exact retry after restart", async () => {
   const storage = memoryCache(), bridge = bridgeFixture(), remote = item("/owned/conflict.toml", "Remote", revision("d"));

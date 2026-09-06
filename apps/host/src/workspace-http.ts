@@ -29,6 +29,7 @@ export function parseWorkspaceTarget(value: unknown): WorkspaceTarget {
 export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
   const query = object(value);
   switch (query.type) {
+    case "environment.read": return { type: query.type, configPath: text(query.configPath) };
     case "files.list": return { type: query.type, path: optionalText(query.path) };
     case "file.stat": case "file.read": return { type: query.type, path: text(query.path) };
     case "environments.list": case "git.status": case "git.branches": case "git.worktrees": return { type: query.type };
@@ -87,6 +88,7 @@ export class HostWorkspaces {
   async query(target: WorkspaceTarget, query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
     const workspace = this.#resolve(target);
     switch (query.type) {
+      case "environment.read": return { type: query.type, ...await new LocalEnvironmentStore(workspace.cwd).read(query.configPath) };
       case "environments.list": return { type: query.type, environments: await new LocalEnvironmentStore(workspace.cwd).catalog() };
       case "files.list": return { type: query.type, entries: await workspace.list(query.path) };
       case "file.stat": return { type: query.type, entry: await workspace.stat(query.path) };

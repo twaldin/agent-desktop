@@ -4,6 +4,7 @@ export interface WindowNavigation {
   hostId?: string;
   sessionId: string | null;
 }
+export type SettingsPage = "accounts" | "omp" | "appearance" | "git" | "environments";
 export type WorkspaceTab = "files" | "changes" | "worktrees";
 export interface WindowViewState {
   route: WindowNavigation;
@@ -16,7 +17,7 @@ export interface WindowViewState {
   showArchived: boolean;
   expandedProjects: string[];
   settingsOpen: boolean;
-  settingsPage: "accounts" | "omp" | "appearance";
+  settingsPage: SettingsPage;
 }
 export interface WindowStateBootstrap {
   state?: WindowViewState;
@@ -66,7 +67,7 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     if (typeof value[key] !== "boolean") return;
   if (
     !["files", "changes", "worktrees"].includes(String(value.workspaceTab)) ||
-    !["accounts", "omp", "appearance"].includes(String(value.settingsPage))
+    !["accounts", "omp", "appearance", "git", "environments"].includes(String(value.settingsPage))
   )
     return;
   if (

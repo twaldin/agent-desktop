@@ -1,0 +1,64 @@
+.local-environment-settings { min-width: 0; }
+.local-environment-header { min-height: 76px; }
+.local-environment-breadcrumbs { display: flex; align-items: center; gap: 16px; flex: 0 0 46px; min-width: 0; padding: 0 28px; color: var(--secondary); -webkit-app-region: drag; }
+.local-environment-breadcrumbs button { -webkit-app-region: no-drag; }
+.local-environment-breadcrumbs span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-environment-breadcrumbs [aria-current] { color: var(--text); }
+.local-environment-breadcrumbs .icon { width: 16px; height: 16px; flex-shrink: 0; }
+.local-environment-layout { display: flex; flex: 1; min-height: 0; }
+.local-environment-projects { flex: 0 0 275px; min-width: 0; padding: 22px 12px; overflow-y: auto; border-right: 1px solid var(--border); background: var(--sidebar-surface); }
+.local-environment-project-heading, .local-environment-section-heading, .local-environment-editor-title, .local-environment-form-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.local-environment-project-heading h2, .local-environment-editor-title h2, .local-environment-form-heading h2 { margin: 0; font-size: 20px; font-weight: 550; }
+.local-environment-project-heading { align-items: center; margin: 0 8px 14px; }
+.local-environment-project-heading h2 { font-size: 14px; }
+.local-environment-project-list { display: flex; flex-direction: column; gap: 2px; }
+.local-environment-project { display: flex; align-items: center; gap: 2px; border-radius: 8px; }
+.local-environment-project > button:first-child { display: flex; flex: 1; align-items: center; min-width: 0; gap: 9px; padding: 8px; border: 0; border-radius: 8px; color: var(--secondary); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.local-environment-project > button:first-child:hover, .local-environment-project.selected > button:first-child { color: var(--text); background: var(--selected); }
+.local-environment-project .icon { width: 16px; height: 16px; flex: 0 0 16px; }
+.local-environment-editor { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 18px clamp(24px, 6vw, 96px) 48px; }
+.local-environment-editor-title, .local-environment-form-heading { max-width: 768px; margin: 0 auto 28px; }
+.local-environment-editor-title p, .local-environment-form-heading p { margin: 5px 0 0; color: var(--secondary); font-size: 12px; overflow-wrap: anywhere; }
+.local-environment-list { max-width: 768px; margin: auto; }
+.local-environment-row { display: flex; align-items: center; width: 100%; min-height: 54px; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--app-surface); font: inherit; text-align: left; cursor: pointer; }
+.local-environment-row + .local-environment-row { margin-top: 8px; }
+.local-environment-row span { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.local-environment-row small { color: var(--secondary); overflow-wrap: anywhere; }
+.local-environment-row.error { align-items: flex-start; justify-content: space-between; cursor: default; }
+.local-environment-row.error p { margin: 5px 0 0; color: var(--danger); }
+.local-environment-form { max-width: 768px; margin: auto; }
+.local-environment-form-heading { align-items: center; margin-bottom: 54px; }
+.local-environment-form-heading h2 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 500; }
+.text-button { padding: 0; border: 0; color: var(--secondary); background: transparent; font: inherit; cursor: pointer; }
+.text-button:hover { color: var(--text); }
+.local-environment-field, .local-environment-action-fields label { display: flex; flex-direction: column; gap: 4px; color: var(--text); font-size: 13px; line-height: 20px; font-weight: 500; }
+.local-environment-field { max-width: 288px; margin-bottom: 24px; }
+.local-environment-field input, .local-environment-action-fields input, .local-environment-action-fields select { height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--composer-surface); font: inherit; font-weight: 400; }
+.local-environment-script { margin: 24px 0; }
+.local-environment-section-heading h3 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }
+.local-environment-section-heading p { margin: 4px 0 8px; color: var(--secondary); font-size: 13px; line-height: 20px; }
+.local-environment-platforms { display: flex; gap: 4px; margin: 0 0 4px; }
+.local-environment-platforms button { padding: 2px 9px; line-height: 20px; border: 0; border-radius: 999px; color: var(--secondary); background: transparent; font: inherit; cursor: pointer; }
+.local-environment-platforms button:hover, .local-environment-platforms button.selected { color: var(--text); background: var(--selected); }
+.local-environment-script textarea, .local-environment-action-fields textarea { display: block; width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--composer-surface); font: 13px/1.4 var(--code-font); resize: vertical; }
+.local-environment-variables { display: flex; flex-direction: column; gap: 6px; margin: -16px 0 20px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; color: var(--secondary); background: var(--selected); font-size: 12px; }
+.local-environment-variables code { color: var(--text); }
+.local-environment-variables p { margin: 2px 0 0; }
+.local-environment-actions { margin-top: 32px; }
+.local-environment-script textarea { height: 128px; }
+.local-environment-repair textarea { display: block; width: 100%; padding: 12px; color: var(--text); background: var(--composer-surface); border: 1px solid var(--border); border-radius: 8px; font: 13px/1.5 var(--code-font); resize: vertical; }
+.local-environment-form .secondary-button { min-height: 28px; padding: 3px 10px; border: 0; background: var(--selected); }
+.local-environment-form .primary-button { min-height: 28px; padding: 3px 10px; }
+.local-environment-action { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--selected); }
+.local-environment-action-fields { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; }
+.local-environment-action-fields label:nth-child(n+3) { grid-column: span 1; }
+.local-environment-action-fields textarea { min-height: 64px; }
+.local-environment-empty { display: grid; min-height: 68px; place-items: center; border: 1px solid var(--border); border-radius: 10px; color: var(--secondary); }
+.local-environment-conflict { margin: 0 0 18px; padding: 12px; border: 1px solid var(--danger); border-radius: 9px; color: var(--text); background: var(--error-surface); }
+.local-environment-conflict p { margin: 0 0 10px; }
+.local-environment-conflict button + button { margin-left: 8px; }
+.local-environment-pending { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; color: var(--secondary); background: var(--selected); font-size: 12px; }
+.local-environment-form-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+.settings-success { color: var(--success, #39a96b); }
+.local-environment-form :is(input, textarea, select, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 760px) { .local-environment-layout { flex-direction: column; } .local-environment-projects { flex: 0 0 auto; max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border); } .local-environment-editor { padding: 20px 16px 32px; } .local-environment-action-fields { grid-template-columns: 1fr; } .local-environment-action-fields label:nth-child(n+3) { grid-column: auto; } }
