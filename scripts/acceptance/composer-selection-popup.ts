@@ -139,6 +139,13 @@ app.whenReady().then(async () => {
     const disabledState = await snapshot();
     if (disabledState.open || disabledState.patches.length !== callbacksBeforeDisable) throw new Error("Disabled control opened or invoked a callback");
 
+    nativeInputs.push(await nativeClick("toggle-disabled"));
+    nativeInputs.push(await nativeClick("toggle-reasoning"));
+    nativeInputs.push(await nativeClick("trigger"));
+    const noReasoning = await waitFor(async () => { const value = await snapshot(); return value.open ? value : null; }, "non-reasoning model summary");
+    if (!noReasoning.headerText?.includes("Default") || noReasoning.headerText?.includes("Select model") || noReasoning.power) throw new Error("Non-reasoning model summary lost the selected model identity");
+    captures.push(await capture("non-reasoning-main", "Composer selections"));
+
     const behavior = await evaluate("composerSelectionResult()");
 
     await window.loadFile(path.join(__dirname, "web/index.html"));
@@ -160,7 +167,7 @@ app.whenReady().then(async () => {
 
     const result = {
       ...behavior,
-      passed: behavior.passed && captures.length === 4 && captures.every(scene => scene.fitting),
+      passed: behavior.passed && captures.length === 5 && captures.every(scene => scene.fitting),
       initialCatalogRows: initialCatalog.catalogRows,
       narrowInitialCatalogRows: narrowCatalog.catalogRows,
       target: { provider: "provider-17", id: "m4790", value: "p17\\0m4790" },

@@ -56,8 +56,8 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
     {open && position && createPortal(<div style={position} ref={menu} className={`composer-selection-menu ${open === "main" ? "composer-power-menu" : ""}`} role="menu" aria-label={open === "models" ? "Select model" : open === "effort" ? "Select effort" : "Composer selections"} onKeyDown={moveMenuFocus}>
       {open === "main" && <>
         <div className="composer-selection-header">
-          {levels.length > 0 && <button role="menuitem" type="button" className="composer-effort-button" aria-label="Select effort" title="Select effort" onClick={() => setOpen("effort")}><Icon name="sliders"/></button>}
-          <button role="menuitem" type="button" className="composer-model-summary" aria-label="Select model" onClick={() => setOpen("models")}><span><b>{activeEffort ? effortLabel(activeEffort) : "Select model"}<Icon name="chevron"/></b><small>{modelLabel}</small></span></button>
+          {levels.length > 0 && <button role="menuitem" type="button" className="composer-effort-button" aria-label="Select effort" title="Select effort" onClick={() => { if (!disabled) setOpen("effort"); }}><Icon name="sliders"/></button>}
+          <button role="menuitem" type="button" className="composer-model-summary" aria-label="Select model" onClick={() => { if (!disabled) setOpen("models"); }}><span><b>{activeEffort ? effortLabel(activeEffort) : modelLabel}<Icon name="chevron"/></b>{activeEffort && <small>{modelLabel}</small>}</span></button>
           <button type="button" aria-label="Reset composer selections" title="Reset to default" disabled={disabled || (!modelValue && !effort)} onClick={() => { if (disabled) return; onReset(); close(); }}><Icon name="refresh"/></button>
         </div>
         {ordinal.length > 0 && <div className="composer-selection-power" style={{ "--power-progress": `${activeOrdinal < 0 ? 0 : ordinal.length === 1 ? 100 : activeOrdinal / (ordinal.length - 1) * 100}%` } as CSSProperties}>

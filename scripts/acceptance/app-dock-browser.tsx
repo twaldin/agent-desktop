@@ -8,6 +8,7 @@ import type { CommandEnvelope, CommandResult, DesktopBridge, DesktopEvent, HostS
 import "../../apps/desktop/src/renderer/styles.css";
 import "../../apps/desktop/src/renderer/theme.css";
 
+const questionFixture = new URLSearchParams(location.search).has("question");
 const owner = "app-dock-owner", projectId = "dock-project", sessionId = "dock-session";
 const checks: string[] = [], activityCalls: { sessionId: string; hostId?: string }[] = [], workspaceCalls: { query: WorkspaceQuery; hostId?: string }[] = [];
 let browserReads = 0, browserCreates = 0;
@@ -16,8 +17,8 @@ const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
 const nativeTerminalListeners = new Set<(event: any) => void>();
 const model = { provider: "controlled", id: "text", name: "Controlled", input: ["text"], contextWindow: 1000, maxTokens: 1000, reasoning: true, thinkingLevels: ["off", "low", "high"], authenticated: true, available: true };
-const session: SessionSummary = { id: sessionId, hostId: owner, projectId, cwd: "/controlled/project", title: "Dock acceptance conversation", sessionFile: "/controlled/session.jsonl", status: "idle", model, archived: false, createdAt: 1, updatedAt: 2 };
-const state: HostState = { protocolVersion: 1, host: { id: owner, name: "Controlled workstation", platform: "darwin", architecture: "arm64" }, projects: [{ id: projectId, hostId: owner, name: "Dock project", path: "/controlled/project", createdAt: 1 }], sessions: [session], models: [model], drafts: [], lastEventSequence: 1 };
+const session: SessionSummary = { id: sessionId, hostId: owner, projectId, cwd: "/controlled/project", title: "Dock acceptance conversation", sessionFile: "/controlled/session.jsonl", status: questionFixture ? "running" : "idle", model, archived: false, createdAt: 1, updatedAt: 2 };
+const state: HostState = { protocolVersion: 1, host: { id: owner, name: "Controlled workstation", platform: "darwin", architecture: "arm64" }, projects: [{ id: projectId, hostId: owner, name: "Dock project", path: "/controlled/project", createdAt: 1 }], sessions: [session], models: [model], drafts: [], lastEventSequence: 1, imageAttachments: { protocolVersion:1, commandVersion:3, maxImages:4, maxImageBytes:20*1024*1024, maxBatchBytes:20*1024*1024, maxImagePixels:16_777_216, mimeTypes:["image/png","image/jpeg","image/gif","image/webp"] } };
 const gitStatus = { revision: "git-revision-1", branch: "feature/dock", head: "abc123", upstream: "origin/feature/dock", ahead: 2, behind: 1, entries: [
   { path: "src/dock.tsx", indexStatus: ".", worktreeStatus: "M", kind: "tracked" as const, submodule: false },
   { path: "notes.txt", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const, submodule: false },
@@ -33,6 +34,7 @@ const nativeOutput = "printf 'controlled terminal output\n'\r\ncontrolled termin
 const restoredDescriptor = { kind: "worktrees" as const, hostId: owner, target: `session:${sessionId}` as const, title: "Worktrees" };
 const restoredTab: DockTab = { ...restoredDescriptor, id: dockTabId(restoredDescriptor) };
 const restoredState = insertDockTab(createDockState(), restoredTab, "bottom"); restoredState.bottom.open = false;
+if (questionFixture) { restoredState.right.visible = false; restoredState.bottom.visible = false; }
 let windowState: WindowViewState = { ...defaultWindowView(), route: { hostId: owner, sessionId }, dock: { tabs: [restoredTab], state: restoredState } };
 window.agentDesktopWindow = { initial: { state: structuredClone(windowState) }, save: next => { windowState = structuredClone(next); return {}; } };
 
@@ -51,6 +53,7 @@ const workspaceQuery = async (_target: unknown, query: WorkspaceQuery, hostId?: 
 const catalog: OmpComposerCatalog = { models: [model], cwd: "/controlled/project", default: { model, approvalMode: "always-ask", source: "configured-role" }, resolution: "native-registry-preview" };
 const methods: Partial<DesktopBridge> = {
   subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  getDetachedQuestions: async () => questionFixture ? { protocolVersion:1, hostId:owner, sessionId, questions:[{questionId:"question-a",questionEntryId:"opened-a",originRunId:"run-a",openedAt:1,status:"open",delivery:{status:"waiting"},questions:[{id:"density",question:"Which sample density?",multi:false,options:[{label:"Comfortable"},{label:"Compact"}]}]}] } : null,
   getState: async () => structuredClone(state), getHosts: async () => ({ status: "connected", ownNodeId: "controlled", checkedAt: 1, hosts: [] }),
   getPreferences: async () => ({ version: 1, records: [] }), getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "theme", filePath: "/controlled/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {}, getMessages: async () => [], getInteractions: async () => [],
@@ -82,6 +85,19 @@ const button = (scope: ParentNode, label: string) => [...scope.querySelectorAll<
 const route = () => `${windowState.route.hostId}:${windowState.route.sessionId}`;
 
 Object.assign(window, {
+  measureQuestionComposer: async (focus = false, edited = false) => {
+    await wait(() => document.querySelector(".detached-question-card"), "production async question");
+    const prompt = document.querySelector<HTMLTextAreaElement>("#prompt")!;
+    if (focus) prompt.focus(); else prompt.blur();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const composer = document.querySelector(".composer")!.getBoundingClientRect(), card = document.querySelector(".detached-question-card")!.getBoundingClientRect();
+    const stop = document.querySelector('[aria-label="Stop response"]')!, bounds = stop.getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    assert(stop.contains(hit) && card.bottom <= composer.top && composer.bottom <= innerHeight, "Question composer hides stop or overlaps the card");
+    assert(focus || edited ? composer.height > 60 : composer.height <= 48, `Question composer did not collapse when empty or expand for typing: focus=${focus}, height=${composer.height}, active=${document.activeElement?.id}, matches=${prompt.matches(":focus")}`);
+    if (edited) assert(prompt.value === "Keep this ordinary draft", "Question composer lost the ordinary draft");
+    return { fitting:true, focused:focus, edited, composer:composer.toJSON(), card:card.toJSON(), stop:bounds.toJSON(), viewport:{width:innerWidth,height:innerHeight,devicePixelRatio} };
+  },
   prepareFreshComposer: async () => {
     document.querySelector<HTMLButtonElement>('[aria-label="Hide terminal panel"]')?.click();
     document.querySelector<HTMLButtonElement>('[aria-label="Hide side panel"]')?.click();

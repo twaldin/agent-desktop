@@ -24,7 +24,9 @@ function Fixture() {
   const [model, setModel] = useState("p0\0m0");
   const [effort, setEffort] = useState<string | undefined>("high");
   const [disabled, setDisabled] = useState(false);
+  const [reasoning, setReasoning] = useState(true);
   return <main>
+    <button id="toggle-reasoning" type="button" onClick={() => setReasoning(value => !value)}>toggle reasoning</button>
     <button id="outside-target" type="button">outside target</button>
     <button id="toggle-disabled" type="button" onClick={() => setDisabled(value => !value)}>toggle disabled</button>
     <div style={{ position: "fixed", right: 24, bottom: 24 }}>
@@ -33,9 +35,9 @@ function Fixture() {
         modelLabel={models.find(item => item.value === model)?.label ?? "retained"}
         modelTitle="controlled"
         models={models}
-        levels={["auto", "off", "low", "high", "max"]}
-        effort={effort}
-        effectiveEffort="low"
+        levels={reasoning ? ["auto", "off", "low", "high", "max"] : []}
+        effort={reasoning ? effort : undefined}
+        effectiveEffort={reasoning ? "low" : undefined}
         defaultEffortLabel="Native default: low"
         disabled={disabled}
         onModel={value => {
@@ -74,6 +76,7 @@ const namedElement = (name: string): HTMLElement | null => {
   if (name === "off") return [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]')]
     .find(item => item.textContent?.trim().toLowerCase() === "off") ?? null;
   if (name === "reset") return document.querySelector('[aria-label="Reset composer selections"]');
+  if (name === "toggle-reasoning") return document.getElementById("toggle-reasoning");
   if (name === "outside") return document.getElementById("outside-target");
   if (name === "toggle-disabled") return document.getElementById("toggle-disabled");
   return null;
