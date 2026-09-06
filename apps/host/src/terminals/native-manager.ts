@@ -1,6 +1,6 @@
 import { Process } from "@oh-my-pi/pi-natives";
 import { existsSync, lstatSync, realpathSync, statSync, unlinkSync } from "node:fs";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join, sep } from "node:path";
 import {
   NATIVE_TERMINAL_PROTOCOL, TERMINAL_DIMENSIONS, type NativeTerminalAttachment, type NativeTerminalCapabilities,
   type NativeTerminalHistory, type NativeTerminalInfo, type NativeTerminalInputReceipt, type NativeTerminalInputRequest,
@@ -127,12 +127,27 @@ export class TmuxTerminalManager {
     const path = join(this.store.directory, `environment-launch-${id}.sh`);
     if (existsSync(path)) { privateFile(path); unlinkSync(path); }
   }
-  private environmentLaunch(id: string, cwd: string, input?: LocalEnvironmentWorkerEnvironment): { application: string; args: string[]; payload?: string } {
+  private actionCwd(cwd: string, root?: string): string {
+    if (!root || !isAbsolute(cwd) || !isAbsolute(root)) throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "A trusted action directory is required.");
+    const actionRoot = realpathSync(root), actionCwd = realpathSync(cwd);
+    if (actionRoot !== root || actionCwd !== cwd || !statSync(actionRoot).isDirectory() || !statSync(actionCwd).isDirectory()
+      || (actionCwd !== actionRoot && !actionCwd.startsWith(`${actionRoot}${sep}`)))
+      throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The action directory is outside its owning Git root.");
+    return actionCwd;
+  }
+  private environmentLaunch(id: string, cwd: string, input?: LocalEnvironmentWorkerEnvironment, trustedActionRoot?: string): { application: string; args: string[]; payload?: string } {
+    const actionRoot = trustedActionRoot ? this.actionCwd(trustedActionRoot, trustedActionRoot) : undefined;
+    if (actionRoot && cwd !== actionRoot && !cwd.startsWith(`${actionRoot}${sep}`))
+      throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The action directory is outside its owning Git root.");
     if (!input) return { application: this.shell.application, args: this.shell.args };
     let worktree: string;
     try { worktree = realpathSync(input.worktreeRoot); }
     catch { throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The local environment worktree no longer exists."); }
-    if (worktree !== cwd) throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The local environment worktree does not own this terminal directory.");
+    if (actionRoot) {
+      if ((cwd !== actionRoot && !cwd.startsWith(`${actionRoot}${sep}`))
+        || (worktree !== actionRoot && !worktree.startsWith(`${actionRoot}${sep}`)))
+        throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The action and environment directories are outside their owning Git root.");
+    } else if (worktree !== cwd) throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The local environment worktree does not own this terminal directory.");
     let desired: Record<string, string>;
     try { desired = localEnvironmentForWorker(this.environment(), input); }
     catch (cause) { throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", cause instanceof Error ? cause.message : "The local environment is invalid."); }
@@ -240,7 +255,7 @@ export class TmuxTerminalManager {
   create(
     input: TerminalCreateOptions & { cwd: string },
     localEnvironment?: LocalEnvironmentWorkerEnvironment,
-    action?: { actionKey: string },
+    action?: { actionKey: string; actionRoot?: string },
   ): Promise<NativeTerminalInfo> {
     const operation = this.createTail.then(async () => {
       if (this.stopping) throw new TerminalError("TERMINALS_STOPPING", "The native terminal host is stopping.");
@@ -250,7 +265,7 @@ export class TmuxTerminalManager {
       if (action && !ACTION_KEY.test(action.actionKey)) throw new TerminalError("INVALID_TERMINAL_ACTION", "A terminal action key must be a SHA-256 digest.");
       if (action && [...this.entries.values()].some(entry => entry.record.actionKey === action.actionKey)) throw new TerminalError("TERMINAL_ACTION_EXISTS", "This configured action already owns a native terminal.");
       const id = crypto.randomUUID(), size = dimensions(input.cols ?? 120, input.rows ?? 40);
-      const launch = this.environmentLaunch(id, cwd, localEnvironment);
+      const launch = this.environmentLaunch(id, cwd, localEnvironment, action?.actionRoot);
       try { await this.prepareServer(); }
       catch (error) {
         // No pane launch was dispatched, so this payload cannot still be opening.
@@ -276,7 +291,7 @@ export class TmuxTerminalManager {
     this.createTail = operation.then(() => {}, () => {}); return operation;
   }
 
-  restartAction(terminalId: string, command: string, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<NativeTerminalInfo> {
+  restartAction(terminalId: string, command: string, localEnvironment?: LocalEnvironmentWorkerEnvironment, action?: { actionRoot?: string }): Promise<NativeTerminalInfo> {
     if (typeof command !== "string" || !command.trim() || command.includes("\0") || Buffer.byteLength(command) > 64 * 1024)
       return Promise.reject(new TerminalError("INVALID_TERMINAL_ACTION", "A terminal action command must contain between 1 and 65536 bytes."));
     const operation = this.createTail.then(async () => {
@@ -292,7 +307,7 @@ export class TmuxTerminalManager {
       if (knownExited && [...this.entries.values()].filter(value => active(value.record.info)).length >= this.maximumRunning)
         throw new TerminalError("TERMINAL_LIMIT", "Close a native terminal before running this action.");
       const initial = nativeActionText(info.cwd, command);
-      const launch = this.environmentLaunch(terminalId, info.cwd, localEnvironment);
+      const launch = this.environmentLaunch(terminalId, info.cwd, localEnvironment, action?.actionRoot);
       entry.mutating = true;
       let restartDispatched = false;
       try {

@@ -7,6 +7,8 @@ import type { LocalEnvironmentPreparation } from "./preparations";
 import type { LocalEnvironmentPreparations } from "./preparations";
 import { LocalEnvironmentRuns } from "./runs";
 import type { LocalEnvironmentRunInput } from "./runner";
+import { materializeWorktreeEnvironment } from "./worktree-config";
+import { dirname, relative } from "node:path";
 
 export interface PrepareEnvironmentWorktree {
   commandId: string;
@@ -51,12 +53,13 @@ export class WorktreeEnvironmentLifecycle {
       parseLocalEnvironment(configuration.raw);
     }
     // Validate the configuration before creating even the managed parent directory.
+    const directories = await this.workspaces.directoryContext(project.id, configuration?.configPath ?? null);
     const name = `chat-${createHash("sha256").update(input.commandId).digest("hex")}`;
-    const worktreePath = await this.workspaces.sessionWorktreeDestination(project.id, name);
+    const worktreePath = await this.workspaces.sessionWorktreeDestination(project.id, name, directories);
     onDestination?.(worktreePath);
     let record = this.store.createEnvironmentPreparation({ id: input.commandId, projectId: project.id, sourceRoot: project.path,
       worktreePath, startingState: input.startingState, draft: input.draft, model: input.model, approvalMode: input.approvalMode,
-      environment: configuration });
+      environment: configuration, directories });
     return this.createWorktree(record);
   }
 
@@ -78,8 +81,16 @@ export class WorktreeEnvironmentLifecycle {
     let record = this.store.environmentPreparations.transition(current.id, current.revision, { type: "worktree-create.started" });
     try {
       const name = `chat-${createHash("sha256").update(record.id).digest("hex")}`;
-      const worktree = await this.workspaces.createSessionWorktree(record.projectId, name, record.startingState);
-      record = this.store.environmentPreparations.transition(record.id, record.revision, { type: "worktree-create.succeeded", worktreePath: worktree.path });
+      const worktree = await this.workspaces.createSessionWorktree(record.projectId, name, record.startingState, record.directories);
+      if (record.directories) {
+        await this.workspaces.verifyPreparedWorktree(record.projectId, worktree.path, { ...record.directories, configCwdRelativePath: null });
+        const effective = await materializeWorktreeEnvironment({ sourceWorkspaceRoot: record.sourceRoot,
+          sourceGitRoot: record.directories.sourceGitRoot, worktreeGitRoot: worktree.path, selected: record.environment });
+        await this.workspaces.verifyPreparedWorktree(record.projectId, worktree.path,
+          { ...record.directories, configCwdRelativePath: effective.configPath ? record.directories.configCwdRelativePath : null });
+        record = this.store.environmentPreparations.transition(record.id, record.revision, { type: "worktree-create.succeeded", worktreePath: worktree.path,
+          materializedEnvironment: effective.configPath === null ? null : { configPath: effective.configPath, revision: effective.revision!, raw: effective.raw! } });
+      } else record = this.store.environmentPreparations.transition(record.id, record.revision, { type: "worktree-create.succeeded", worktreePath: worktree.path });
     } catch (error) {
       this.store.environmentPreparations.transition(record.id, record.revision, { type: "outcome.unknown" });
       throw error;
@@ -95,11 +106,11 @@ export class WorktreeEnvironmentLifecycle {
   }
 
   private async setup(current: LocalEnvironmentPreparation): Promise<LocalEnvironmentPreparation> {
+    const directories = await this.executionDirectories(current);
     const record = this.store.environmentPreparations.transition(current.id, current.revision, { type: "setup.started" });
     try {
       const config = parseLocalEnvironment(record.environment!.raw);
-      const result = await this.runs.run(record, { ...this.runOptions, cwd: record.worktreePath, sourceRoot: record.sourceRoot,
-        worktreeRoot: record.worktreePath, lifecycle: "setup", script: scriptForPlatform(config.setup, process.platform as LocalEnvironmentPlatform) ?? "" });
+      const result = await this.runs.run(record, { ...this.runOptions, ...directories, lifecycle: "setup", script: scriptForPlatform(config.setup, process.platform as LocalEnvironmentPlatform) ?? "" });
       return this.store.environmentPreparations.transition(record.id, record.revision, { type: result.status === "succeeded" ? "setup.succeeded" : "setup.failed", result });
     } catch (error) {
       this.store.environmentPreparations.transition(record.id, record.revision, { type: "outcome.unknown" });
@@ -112,17 +123,45 @@ export class WorktreeEnvironmentLifecycle {
     const current = this.store.environmentPreparations.get(id);
     if (!current || current.revision !== expectedRevision) throw new Error("The worktree preparation changed. Refresh before cleanup.");
     if (current.phase === "cleanup-succeeded" || current.phase === "removed") return current;
+    const selected = await this.cleanupConfiguration(current);
     const record = this.store.environmentPreparations.transition(id, expectedRevision, { type: "cleanup.started" });
     try {
-      const config = record.environment ? parseLocalEnvironment(record.environment.raw) : null;
+      const config = selected.raw ? parseLocalEnvironment(selected.raw) : null;
       const script = config ? scriptForPlatform(config.cleanup, process.platform as LocalEnvironmentPlatform) : null;
-      const result = script ? await this.runs.run(record, { ...this.runOptions, cwd: record.worktreePath, sourceRoot: record.sourceRoot,
-        worktreeRoot: record.worktreePath, lifecycle: "cleanup", script }) : undefined;
+      const result = script ? await this.runs.run(record, { ...this.runOptions, ...selected.directories, lifecycle: "cleanup", script }) : undefined;
       if (result && result.status !== "succeeded") return this.store.environmentPreparations.transition(id, record.revision, { type: "cleanup.failed", result });
       return this.store.environmentPreparations.transition(id, record.revision, { type: "cleanup.succeeded", result });
     } catch (error) {
       this.store.environmentPreparations.transition(id, record.revision, { type: "outcome.unknown" });
       throw error;
     }
+  }
+
+  private async cleanupConfiguration(record: LocalEnvironmentPreparation) {
+    if (!record.directories) return { raw: record.environment?.raw, directories: await this.executionDirectories(record) };
+    const mapped = await this.workspaces.verifyPreparedWorktree(record.projectId, record.worktreePath, { ...record.directories, configCwdRelativePath: null });
+    const selection = this.store.getActionEnvironmentSelection(mapped.worktreeWorkspaceRoot);
+    const configPath = selection ? selection.configPath : record.environment?.configPath ?? null;
+    let raw: string | undefined, configCwdRelativePath: string | null = null;
+    if (configPath !== null) {
+      const sourceFallback = configPath === record.environment?.configPath && configPath === record.selectedEnvironment?.configPath;
+      const config = await new LocalEnvironmentStore(sourceFallback ? record.sourceRoot : mapped.worktreeWorkspaceRoot).read(configPath);
+      raw = config.raw;
+      configCwdRelativePath = relative(sourceFallback ? record.directories.sourceGitRoot : record.worktreePath, dirname(dirname(dirname(config.configPath))));
+    }
+    const directories = await this.workspaces.verifyPreparedWorktree(record.projectId, record.worktreePath, { ...record.directories, configCwdRelativePath });
+    const latest = this.store.getActionEnvironmentSelection(mapped.worktreeWorkspaceRoot);
+    if (latest?.revision !== selection?.revision || latest?.configPath !== selection?.configPath)
+      throw new Error("The selected cleanup environment changed. Refresh before removing the worktree.");
+    return { raw, directories: { cwd: directories.scriptCwd ?? directories.worktreeWorkspaceRoot, sourceRoot: record.sourceRoot,
+      worktreeRoot: directories.worktreeWorkspaceRoot, worktreeGitRoot: directories.worktreeGitRoot } };
+  }
+
+  private async executionDirectories(record: LocalEnvironmentPreparation) {
+    if (!record.directories) return { cwd: record.worktreePath, sourceRoot: record.sourceRoot, worktreeRoot: record.worktreePath };
+    const mapped = await this.workspaces.verifyPreparedWorktree(record.projectId, record.worktreePath,
+      { ...record.directories, configCwdRelativePath: record.environment ? record.directories.configCwdRelativePath : null });
+    return { cwd: mapped.scriptCwd ?? mapped.worktreeWorkspaceRoot, sourceRoot: record.sourceRoot,
+      worktreeRoot: mapped.worktreeWorkspaceRoot, worktreeGitRoot: mapped.worktreeGitRoot };
   }
 }

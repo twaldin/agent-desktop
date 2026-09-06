@@ -6,6 +6,8 @@ import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, Worksp
 import type { HostStore } from "./store";
 import { WorkspaceService } from "./workspace";
 import type { WorktreeStartingState, GitWorktree } from '@agent-desktop/shared';
+import { resolveWorktreeDirectoryContext, verifyWorktreeDirectories } from "./local-environments/worktree-directory-resolution";
+import type { WorktreeDirectoryContext } from "./local-environments/worktree-directories";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid workspace request.");
@@ -96,14 +98,33 @@ export class HostWorkspaces {
     if (!cwd) throw new Error("The workspace owner does not exist on this host.");
     return new WorkspaceService(cwd, { worktreeRoot: join(this.dataDirectory, "worktrees", project?.id ?? session!.id) });
   }
-  sessionWorktreeDestination(projectId: string, path: string): Promise<string> {
-    return this.#resolve({ projectId }).sessionWorktreeDestination(path);
+  directoryContext(projectId: string, configPath: string | null): Promise<WorktreeDirectoryContext> {
+    return resolveWorktreeDirectoryContext(this.#resolve({ projectId }), configPath);
   }
-  createSessionWorktree(projectId: string, path: string, startingState: WorktreeStartingState): Promise<GitWorktree> {
-    return this.#resolve({ projectId }).createSessionWorktree(path, startingState);
+  private async preparationWorkspace(projectId: string, context?: WorktreeDirectoryContext): Promise<WorkspaceService> {
+    const workspace = this.#resolve({ projectId });
+    if (!context) return workspace;
+    const actual = await workspace.gitWorkspaceContext();
+    if (workspace.cwd !== context.sourceWorkspaceRoot || actual.gitRoot !== context.sourceGitRoot || actual.workspaceRelativePath !== context.workspaceRelativePath)
+      throw new Error("The captured source project directory changed.");
+    return workspace.gitRootService();
+  }
+  async sessionWorktreeDestination(projectId: string, path: string, context?: WorktreeDirectoryContext): Promise<string> {
+    return (await this.preparationWorkspace(projectId, context)).sessionWorktreeDestination(path);
+  }
+  async createSessionWorktree(projectId: string, path: string, startingState: WorktreeStartingState, context?: WorktreeDirectoryContext): Promise<GitWorktree> {
+    return (await this.preparationWorkspace(projectId, context)).createSessionWorktree(path, startingState);
+  }
+  async verifyPreparedWorktree(projectId: string, path: string, context: WorktreeDirectoryContext) {
+    const workspace = await this.preparationWorkspace(projectId, context);
+    const registered = (await workspace.worktrees()).find(tree => tree.path === path && tree.managed);
+    if (!registered || registered.locked) throw new Error("The captured checkout is not an unlocked managed worktree of this project.");
+    return verifyWorktreeDirectories(context, path);
   }
   async query(target: WorkspaceTarget, query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
-    const workspace = this.#resolve(target);
+    const owner = this.#resolve(target);
+    // Git controls intentionally address the containing repository; file controls stay project-confined.
+    const workspace = query.type.startsWith("git.") ? await owner.gitRootService() : owner;
     switch (query.type) {
       case "environment.actions": {
         if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");
@@ -129,7 +150,8 @@ export class HostWorkspaces {
     }
   }
   async mutate(target: WorkspaceTarget, action: WorkspaceMutation): Promise<WorkspaceMutationResult> {
-    const workspace = this.#resolve(target);
+    const owner = this.#resolve(target);
+    const workspace = action.type.startsWith("git.") || action.type.startsWith("worktree.") ? await owner.gitRootService() : owner;
     switch (action.type) {
       case "environment.select": {
         if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");

@@ -1,7 +1,9 @@
 import { nativeActionText } from "../terminals/native-input";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import type { NativeTerminalInfo } from "../../../../packages/shared/src/terminals";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace";
 import type { LocalEnvironmentCatalogItem, LocalEnvironmentActionsState } from "../../../../packages/shared/src/local-environments";
@@ -9,13 +11,25 @@ import { LocalEnvironmentStore } from "./index";
 import type { HostStore } from "../store";
 import type { TmuxTerminalManager } from "../terminals/native-manager";
 import { TerminalError } from "../terminals/error";
+import { verifyWorktreeDirectories } from "./worktree-directory-resolution";
+import { WorkspaceService } from "../workspace/service";
 
 export interface LocalEnvironmentActionRun { configPath: string; configRevision: string; selectionRevision: number; actionIndex: number }
 
-type Resolved = { cwd: string; configRoot: string; targetKey: string; preparationSessionId?: string; initialConfigPath?: string | null };
+type Resolved = { cwd: string; configRoot: string; targetKey: string; preparationSessionId?: string; initialConfigPath?: string | null; actionRoot?: string; sourceGitRoot?: string; sourceFallbackConfig?: string; sourceFallbackRoot?: string };
 const platform = process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux";
 const digest = (...parts: string[]) => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const fail = (code: string, message: string): never => { throw new TerminalError(code, message); };
+const execute = promisify(execFile);
+
+async function commonGitDirectory(root: string): Promise<string> {
+  try {
+    const result = await execute("git", ["--no-pager", "--literal-pathspecs", "-c", "color.ui=false", "-C", root, "rev-parse", "--git-common-dir"],
+      { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } });
+    const value = result.stdout.replace(/\r?\n$/, "");
+    return realpathSync(isAbsolute(value) ? value : resolve(root, value));
+  } catch { return fail("WORKSPACE_NOT_FOUND", "The environment preparation no longer belongs to its source Git repository."); }
+}
 
 async function ownedConfig(root: string, value: string): Promise<string> {
   try { return await new LocalEnvironmentStore(root).resolveConfigPath(value); }
@@ -55,6 +69,24 @@ export class LocalEnvironmentActions {
     if (sessionId) {
       const prep = store.environmentPreparations.list().find(item => item.sessionId === sessionId && item.phase !== "removed");
       if (prep) {
+        if (prep.version === 2) {
+          if (realpathSync(prep.directories.sourceWorkspaceRoot) !== projectRoot) fail("WORKSPACE_NOT_FOUND", "The environment preparation does not own this project.");
+          const sourceWorkspace = new WorkspaceService(prep.directories.sourceWorkspaceRoot, { worktreeRoot: dirname(prep.worktreePath) });
+          const registered = (await (await sourceWorkspace.gitRootService()).worktrees())
+            .find(tree => tree.path === prep.worktreePath && tree.managed);
+          if (!registered || registered.locked)
+            fail("WORKSPACE_NOT_FOUND", "The captured checkout is not an unlocked managed worktree of this project.");
+          const mapped = await verifyWorktreeDirectories(prep.directories, prep.worktreePath);
+          if (await commonGitDirectory(prep.directories.sourceGitRoot) !== await commonGitDirectory(mapped.worktreeGitRoot))
+            fail("WORKSPACE_NOT_FOUND", "The environment preparation and managed worktree belong to different Git repositories.");
+          const mappedCwd = realpathSync(mapped.worktreeWorkspaceRoot);
+          if (mappedCwd !== cwd) fail("WORKSPACE_NOT_FOUND", "The environment preparation does not own this workspace.");
+          configRoot = mappedCwd;
+          initialConfigPath = prep.environment?.configPath ?? null;
+          const sourceFallbackConfig = prep.selectedEnvironment && prep.environment?.configPath === prep.selectedEnvironment.configPath ? prep.selectedEnvironment.configPath : undefined;
+          const sourceFallbackRoot = sourceFallbackConfig ? realpathSync(dirname(dirname(dirname(sourceFallbackConfig)))) : undefined;
+          return { cwd, configRoot, targetKey, preparationSessionId: sessionId, initialConfigPath, actionRoot: realpathSync(mapped.worktreeGitRoot), sourceGitRoot: realpathSync(prep.directories.sourceGitRoot), sourceFallbackConfig, sourceFallbackRoot };
+        }
         configRoot = realpathSync(prep.sourceRoot);
         if (configRoot !== projectRoot || realpathSync(prep.worktreePath) !== cwd) fail("WORKSPACE_NOT_FOUND", "The environment preparation does not own this workspace.");
         initialConfigPath = prep.environment?.configPath ?? null;
@@ -67,7 +99,7 @@ export class LocalEnvironmentActions {
   private async build(target: WorkspaceTarget, resolved?: Resolved): Promise<LocalEnvironmentActionsState> {
     resolved ??= await this.resolve(target);
     const store = this.store;
-    const entries = await new LocalEnvironmentStore(resolved.configRoot).catalog();
+    const entries = await this.entries(resolved);
     const byPath = new Map(entries.map(item => [item.configPath, item]));
     const persisted = store.getActionEnvironmentSelection(resolved.cwd);
     const selected = persisted ? persisted.configPath : resolved.initialConfigPath === undefined ? this.default(entries) : resolved.initialConfigPath;
@@ -92,9 +124,9 @@ export class LocalEnvironmentActions {
   async select(target: WorkspaceTarget, configPath: string | null, expectedRevision: number): Promise<LocalEnvironmentActionsState> {
     const resolved = await this.resolve(target), store = this.store;
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) fail("INVALID_ENVIRONMENT_SELECTION", "The environment selection revision is invalid.");
-    const selectedPath = configPath === null ? null : await ownedConfig(resolved.configRoot, configPath);
+    const selectedPath = configPath === null ? null : await this.ownedConfig(resolved, configPath);
     if (selectedPath !== null) {
-      const exists = (await new LocalEnvironmentStore(resolved.configRoot).catalog()).some(item => item.configPath === selectedPath);
+      const exists = (await this.entries(resolved)).some(item => item.configPath === selectedPath);
       if (!exists) fail("INVALID_ENVIRONMENT_SELECTION", "The selected environment configuration no longer exists.");
     }
     store.putActionEnvironmentSelection(resolved.cwd, selectedPath, expectedRevision);
@@ -103,14 +135,13 @@ export class LocalEnvironmentActions {
 
   async run(target: WorkspaceTarget, input: LocalEnvironmentActionRun): Promise<NativeTerminalInfo> {
     const resolved = await this.resolve(target), store = this.store;
-    const environmentStore = new LocalEnvironmentStore(resolved.configRoot);
-    const entries = await environmentStore.catalog();
+    const entries = await this.entries(resolved);
     const persisted = store.getActionEnvironmentSelection(resolved.cwd);
     const effectiveSelection = persisted ? persisted.configPath : resolved.initialConfigPath === undefined ? this.default(entries) : resolved.initialConfigPath;
     const currentRevision = persisted?.revision ?? 0;
     if (input.selectionRevision !== currentRevision || input.configPath !== effectiveSelection) fail("STALE_ENVIRONMENT_SELECTION", "The environment selection changed; refresh and try again.");
     if (!input.configPath) fail("INVALID_ENVIRONMENT_CONFIG", "An environment must be selected before running an action.");
-    const path = await ownedConfig(resolved.configRoot, input.configPath);
+    const path = await this.ownedConfig(resolved, input.configPath);
     const item = entries.find(entry => entry.configPath === path);
     if (!item) throw new TerminalError("INVALID_ENVIRONMENT_CONFIG", "The environment configuration no longer exists.");
     if (item.type === "error") throw new TerminalError("INVALID_ENVIRONMENT_CONFIG", item.error);
@@ -123,19 +154,51 @@ export class LocalEnvironmentActions {
     if (!action) throw new TerminalError("INVALID_ENVIRONMENT_ACTION", "The configured action is unavailable on this host.");
     if ((action.platform && action.platform !== platform) || !action.name.trim() || !action.command.trim() || action.command.includes("\0")) fail("INVALID_ENVIRONMENT_ACTION", "The configured action is unavailable on this host.");
     const command = action.command.trim();
-    nativeActionText(resolved.cwd, command); // Reject oversize assembled input before a first terminal is created.
-    const release = this.reserveRun(resolved.cwd);
+    const actionCwd = this.actionCwdFor(resolved, path);
+    nativeActionText(actionCwd, command); // Reject oversize assembled input before a first terminal is created.
+    const release = this.reserveRun(resolved.actionRoot ?? actionCwd);
     try {
     const native = this.manager(); if (!native) throw new TerminalError("NATIVE_TERMINAL_UNAVAILABLE", "Native terminals are unavailable on this host.");
-    const actionKey = digest(store.host.id, resolved.targetKey, resolved.cwd, path, String(input.actionIndex));
+    const actionKey = digest(store.host.id, resolved.targetKey, actionCwd, path, String(input.actionIndex));
     const existing = native.getAction(actionKey);
     if (existing?.status === "starting") fail("OUTCOME_UNKNOWN", "The previous environment action is still starting; inspect its terminal before retrying.");
     if (existing?.status === "closing") fail("TERMINAL_BUSY", "This environment action is already closing.");
     if (existing?.status === "error" || existing?.status === "interrupted") fail("OUTCOME_UNKNOWN", "The previous environment action outcome is unknown; inspect its terminal, then close and forget it before starting a new action.");
     const environment = resolved.preparationSessionId ? store.getSessionEnvironment(resolved.preparationSessionId) : undefined;
-    if (existing) return await native.restartAction(existing.id, command, environment);
-    const created = await native.create({ target, cwd: resolved.cwd }, environment, { actionKey });
-    return await native.restartAction(created.id, command, environment);
+    if (existing) return await native.restartAction(existing.id, command, environment, { actionRoot: resolved.actionRoot });
+    const created = await native.create({ target, cwd: actionCwd }, environment, { actionKey, actionRoot: resolved.actionRoot });
+    return await native.restartAction(created.id, command, environment, { actionRoot: resolved.actionRoot });
     } finally { release(); }
+  }
+
+  private async entries(resolved: Resolved): Promise<LocalEnvironmentCatalogItem[]> {
+    const entries = await new LocalEnvironmentStore(resolved.configRoot).catalog();
+    if (resolved.sourceFallbackConfig && resolved.sourceFallbackRoot && !entries.some(item => item.configPath === resolved.sourceFallbackConfig)) {
+      const source = (await new LocalEnvironmentStore(resolved.sourceFallbackRoot).catalog())
+        .find(item => item.configPath === resolved.sourceFallbackConfig);
+      if (source) entries.push(source);
+    }
+    return entries;
+  }
+
+  private ownedConfig(resolved: Resolved, configPath: string): Promise<string> {
+    if (configPath === resolved.sourceFallbackConfig && resolved.sourceFallbackRoot)
+      return ownedConfig(resolved.sourceFallbackRoot, configPath);
+    return ownedConfig(resolved.configRoot, configPath);
+  }
+
+  private actionCwdFor(resolved: Resolved, configPath: string): string {
+    let owner: string;
+    if (resolved.sourceFallbackConfig && configPath === resolved.sourceFallbackConfig) {
+      if (!resolved.sourceGitRoot || !resolved.actionRoot) fail("INVALID_ENVIRONMENT_CONFIG", "The retained environment source is unavailable.");
+      const sourceGitRoot = resolved.sourceGitRoot!, actionRoot = resolved.actionRoot!;
+      const sourceOwner = dirname(dirname(dirname(configPath)));
+      const ownerRelative = relative(sourceGitRoot, sourceOwner);
+      owner = `${actionRoot}${ownerRelative ? sep + ownerRelative : ""}`;
+    } else owner = dirname(dirname(dirname(configPath)));
+    try { owner = realpathSync(owner); if (!statSync(owner).isDirectory()) throw new Error(); }
+    catch { fail("INVALID_ENVIRONMENT_CONFIG", "The environment action owner is unavailable."); }
+    if (resolved.actionRoot && owner !== resolved.actionRoot && !owner.startsWith(`${resolved.actionRoot}${sep}`)) fail("INVALID_ENVIRONMENT_CONFIG", "The environment action owner is outside its managed Git root.");
+    return owner;
   }
 }

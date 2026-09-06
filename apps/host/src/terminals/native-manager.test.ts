@@ -114,6 +114,33 @@ describe.skipIf(!bundle)("private bundled tmux integration (actual native progra
     expect(f.manager.list()).toHaveLength(1);
   });
 
+  test("configured actions keep their cwd and environment aliases inside one trusted nested worktree", async () => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "agent-native-nested-action-")));
+    const managed = join(directory, "managed"), nested = join(managed, "apps", "web"), source = join(directory, "source"), outside = join(directory, "outside");
+    for (const path of [managed, nested, source, outside]) mkdirSync(path, { recursive: true });
+    const resource = { directory, manager: undefined as TmuxTerminalManager | undefined }; fixtures.push(resource);
+    const manager = await TmuxTerminalManager.open({ dataDirectory: join(directory, "state"), hostId: crypto.randomUUID(), bundleDirectory: resolve(bundle!),
+      shell: { application: "/bin/bash", args: ["--noprofile", "--norc", "-i"] }, pollIntervalMs: 100 });
+    resource.manager = manager;
+    const environment = { sourceRoot: source, worktreeRoot: nested,
+      environmentDelta: { version: 1 as const, set: { NESTED_ACTION_VALUE: "private-nested" }, unset: [] } };
+    const key = "c".repeat(64), target = { sessionId: crypto.randomUUID() };
+    const terminal = await manager.create({ cwd: managed, target }, environment, { actionKey: key, actionRoot: managed });
+    const result = join(managed, "nested-action.json");
+    await manager.restartAction(terminal.id,
+      `printf '{"cwd":"%s","worktree":"%s","agent":"%s","source":"%s","value":"%s"}' "$PWD" "$CODEX_WORKTREE_PATH" "$AGENT_WORKTREE_PATH" "$CODEX_SOURCE_TREE_PATH" "$NESTED_ACTION_VALUE" > ${quote(result)}`,
+      environment, { actionRoot: managed });
+    await until(() => existsSync(result), "nested action environment");
+    expect(JSON.parse(readFileSync(result, "utf8"))).toEqual({ cwd: managed, worktree: nested, agent: nested, source, value: "private-nested" });
+    expect(manager.getAction(key)).toMatchObject({ id: terminal.id, cwd: managed });
+
+    await expect(manager.create({ cwd: managed, target: { projectId: crypto.randomUUID() } }, environment,
+      { actionKey: "d".repeat(64), actionRoot: outside })).rejects.toMatchObject({ code: "INVALID_TERMINAL_ENVIRONMENT" });
+    await expect(manager.restartAction(terminal.id, "true", { ...environment, worktreeRoot: outside }, { actionRoot: managed }))
+      .rejects.toMatchObject({ code: "INVALID_TERMINAL_ENVIRONMENT" });
+    expect(manager.list()).toHaveLength(1);
+  }, 20_000);
+
   test("configured actions restart one native pane under the same terminal identity", async () => {
     const directory = realpathSync(mkdtempSync(join(tmpdir(), "agent-native-terminal-action-")));
     const resource = { directory, manager: undefined as TmuxTerminalManager | undefined }; fixtures.push(resource);

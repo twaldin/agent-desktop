@@ -61,7 +61,7 @@ for (const namespace of ['.agent-desktop', '.codex', 'inherited']) test.skipIf(!
     };
     const first = new WorkspaceState(bridge, host.store.host.id, target, cache); first.setConnected(true); await first.restore(); await first.loadEnvironmentActions();
     await first.mutate(action);
-    await until(async () => await readFile(join(source, 'action-runs'), 'utf8').catch(() => '') === 'executed\n');
+    await until(async () => await readFile(join(configRoot, 'action-runs'), 'utf8').catch(() => '') === 'executed\n');
     const db = new Database(join(dataDirectory, 'state.sqlite'), { readonly: true });
     try { expect(db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version).toBe(5); } finally { db.close(); }
     expect(first.pending?.uncertain).toBe(true); expect(first.mutationReceipt).toBeUndefined();
@@ -73,15 +73,16 @@ for (const namespace of ['.agent-desktop', '.codex', 'inherited']) test.skipIf(!
     expect(receipt?.commandId).toBe(original.id);
     if (receipt?.value.type !== 'environment.action') throw new Error('Action receipt missing');
     const terminal: NativeTerminalInfo = receipt.value.terminal;
-    expect(await readFile(join(source, 'action-runs'), 'utf8')).toBe('executed\n');
-    await second.mutate(action); expect(second.errors.action).toBeUndefined(); await until(async () => await readFile(join(source, 'action-runs'), 'utf8') === 'executed\nexecuted\n');
+    expect(terminal.cwd).toBe(configRoot);
+    expect(await readFile(join(configRoot, 'action-runs'), 'utf8')).toBe('executed\n');
+    await second.mutate(action); expect(second.errors.action).toBeUndefined(); await until(async () => await readFile(join(configRoot, 'action-runs'), 'utf8') === 'executed\nexecuted\n');
     expect(second.mutationReceipt?.value).toMatchObject({ type: 'environment.action', terminal: { id: terminal.id } }); expect(nativeIds.size).toBe(1);
     expect(await send({ id: 'select-none', command: { type: 'workspace.mutate', target, action: { type: 'environment.select', configPath: null, expectedRevision: 0 } } })).toMatchObject({ ok: true, value: { state: { selectionRevision: 1, selectedConfigPath: null, actions: [] } } });
     expect(await send({ id: 'stale-selection', command: { type: 'workspace.mutate', target, action } })).toMatchObject({ ok: false });
     await host.stop(); host = undefined; host = await start();
     expect(await catalog()).toMatchObject({ selectionRevision: 1, selectedConfigPath: null, actions: [] });
     expect(host.store.listSessions()).toHaveLength(0);
-    expect(await readFile(join(source, 'SETUP_MUST_NOT_RUN'), 'utf8').catch(() => null)).toBeNull();
+    expect(await readFile(join(configRoot, 'SETUP_MUST_NOT_RUN'), 'utf8').catch(() => null)).toBeNull();
     expect(JSON.stringify(await (await request('/v1/state')).json())).not.toContain('action-runs');
   } finally {
     if (host) for (const id of nativeIds) await fetch(host.connection.origin + '/v2/terminals/action', { method: 'POST', headers: { Authorization: `Bearer ${host.connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'close', terminalId: id }) }).catch(() => {});

@@ -79,7 +79,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 5) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 6) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -333,7 +333,7 @@ export class HostStore {
       const project = this.getProject(input.projectId);
       if (!project || project.hostId !== this.host.id) throw new Error("Unknown local-environment project");
       if (project.path !== input.sourceRoot) throw new Error("Local-environment source root differs from its project");
-      this.requireVersion(5);
+      this.requireVersion(input.directories !== undefined ? 6 : 5);
       return this.environmentPreparationStore.create(input);
     }).immediate();
   }
@@ -363,10 +363,13 @@ export class HostStore {
   getSessionEnvironment(sessionId: string): LocalEnvironmentWorkerEnvironment | undefined {
     const preparation = this.environmentPreparations.list().find(record => record.sessionId === sessionId && record.phase !== "removed");
     if (!preparation?.environment) return undefined;
+    const worktreeRoot = preparation.version === 2
+      ? join(preparation.worktreePath, preparation.directories.workspaceRelativePath)
+      : preparation.worktreePath;
     return {
       environmentDelta: structuredClone(preparation.environmentDelta ?? null),
       sourceRoot: preparation.sourceRoot,
-      worktreeRoot: preparation.worktreePath,
+      worktreeRoot,
     };
   }
 
@@ -380,8 +383,9 @@ export class HostStore {
       if (!prior || prior.requestHash !== requestHash) throw new Error("Environment creation command identity does not match.");
       if (prior.state === 'done') return prior.result!;
       const record = this.environmentPreparations.get(preparation.id);
+      const expectedCwd = record?.version === 2 ? join(record.worktreePath, record.directories.workspaceRelativePath) : record?.worktreePath;
       if (!record || record.revision !== preparation.expectedRevision || record.phase !== 'native-creating'
-        || record.projectId !== session.projectId || record.hostId !== session.hostId || record.worktreePath !== session.cwd)
+        || record.projectId !== session.projectId || record.hostId !== session.hostId || expectedCwd !== session.cwd)
         throw new Error("Native session differs from its captured environment preparation.");
       const value = this.upsertSession(session);
       const result: CommandResult = { ok: true, commandId, value };
@@ -440,9 +444,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 5) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 6) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

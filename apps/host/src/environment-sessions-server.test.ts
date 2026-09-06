@@ -144,6 +144,11 @@ test('authenticated create/resume/reopen/cleanup use actual Git, sourced setup a
     expect(host.store.getSessionEnvironment(session.id)?.environmentDelta?.set.ENVIRONMENT_ROUTE_CHECK).toBe('private-fixture-export');
     expect((await (await readPrep()).json()).phase).toBe('cleanup-failed');
     await rm(join(session.cwd, 'block-cleanup'));
+    expect(await remove('retain-materialized-config')).toMatchObject({ ok: false });
+    const materialized = host.store.environmentPreparations.get(prep.id)!.environment!;
+    // The unchanged dirty-worktree guard retains copied configuration until the user cleans it.
+    expect(await readFile(materialized.configPath, 'utf8')).toBe(materialized.raw);
+    await rm(materialized.configPath);
     expect(await remove('explicit-remove')).toMatchObject({ ok: true });
     expect((await (await readPrep()).json()).phase).toBe('removed');
     expect(git('worktree', 'list', '--porcelain').match(/^worktree /gm)).toHaveLength(1);

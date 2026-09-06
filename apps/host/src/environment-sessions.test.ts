@@ -26,7 +26,7 @@ afterEach(async () => {
 const hash = (command: HostCommand) =>
   createHash("sha256").update(JSON.stringify(command)).digest("hex");
 
-async function fixture(setupScript: string) {
+async function fixture(setupScript: string, nestedProject = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "agent-environment-session-")));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const source = join(root, "source");
@@ -39,12 +39,17 @@ async function fixture(setupScript: string) {
   await git("config", "user.name", "Environment fixture");
   await git("config", "user.email", "fixture@example.invalid");
   await writeFile(join(source, "README.md"), "source content\n");
+  if (nestedProject) {
+    await mkdir(join(source, "apps/web"), { recursive: true });
+    await writeFile(join(source, "apps/web/README.md"), "nested content\n");
+    await git("add", "apps/web/README.md");
+  }
   await git("add", "README.md");
   await git("commit", "-m", "Initial fixture");
 
   const store = new HostStore(data);
   cleanups.push(() => store.close());
-  const project = store.addProject({ path: source, name: "Environment fixture" });
+  const project = store.addProject({ path: nestedProject ? join(source, "apps/web") : source, name: "Environment fixture" });
   const saved = await new LocalEnvironmentStore(source).save({
     expectedRevision: null,
     raw: serializeLocalEnvironment({
@@ -123,7 +128,7 @@ async function fixture(setupScript: string) {
     onHandle: (handle) => handles.push(handle),
     changed: () => { changed++; },
   });
-  return { root, source, data, saved, store, project, command, envelope, runtime, handles, reserved, sessions, changed: () => changed };
+  return { root, source, data, saved, store, project, command, envelope, runtime, handles, reserved, sessions, workspaces, changed: () => changed };
 }
 
 test("real Git, setup exports, native creation, and receipt commit keep exact ownership", async () => {
@@ -151,6 +156,34 @@ test("real Git, setup exports, native creation, and receipt commit keep exact ow
   expect(f.reserved.size).toBe(0);
   expect(f.store.getDraft("new-conversation")?.text).toBe("Prompt remains durable until admission");
   expect(f.changed()).toBeGreaterThan(1);
+  await f.handles[0]!.dispose();
+}, 30_000);
+
+test("native OMP creation keeps a nested session cwd and duplicate receipt after inherited root setup", async () => {
+  const f = await fixture('printf "%s\\n" "$PWD" "$CODEX_WORKTREE_PATH" > setup-paths\nexport NESTED_SETUP=ready', true);
+  const sourceIndex = await readFile(join(f.source, ".git/index"));
+  const result = await f.sessions.create(f.envelope);
+  if (!result.ok || !result.value || !("sessionFile" in result.value)) throw new Error("Native nested session missing");
+  const prep = f.store.environmentPreparations.get(f.envelope.id)!;
+  const cwd = join(prep.worktreePath, "apps/web");
+  expect(result.value.cwd).toBe(cwd);
+  expect(f.handles).toHaveLength(1);
+  expect(f.handles[0]!.cwd).toBe(cwd);
+  const header = (await readFile(result.value.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(entry => entry.type === "session");
+  expect(header?.cwd).toBe(cwd);
+  expect((await f.workspaces.query({ projectId: f.project.id }, { type: "git.branches" })).type).toBe("git.branches");
+  expect((await f.workspaces.query({ sessionId: result.value.id }, { type: "git.status" })).type).toBe("git.status");
+  const file = await f.workspaces.query({ sessionId: result.value.id }, { type: "file.read", path: "README.md" });
+  expect(file).toMatchObject({ type: "file.read", content: { text: "nested content\n" } });
+  await expect(f.workspaces.query({ sessionId: result.value.id }, { type: "file.read", path: "../../README.md" })).rejects.toThrow();
+  expect(f.store.getSessionEnvironment(result.value.id)).toMatchObject({ sourceRoot: f.project.path, worktreeRoot: cwd,
+    environmentDelta: { set: { NESTED_SETUP: "ready" } } });
+  expect((await readFile(join(prep.worktreePath, "setup-paths"), "utf8")).trim().split("\n")).toEqual([prep.worktreePath, cwd]);
+  expect(await f.sessions.create(f.envelope)).toEqual(result);
+  expect(f.handles).toHaveLength(1);
+  expect(f.store.listSessions()).toHaveLength(1);
+  expect(f.store.getDraft("new-conversation")?.text).toBe("Prompt remains durable until admission");
+  expect(await readFile(join(f.source, ".git/index"))).toEqual(sourceIndex);
   await f.handles[0]!.dispose();
 }, 30_000);
 

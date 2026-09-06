@@ -155,6 +155,36 @@ describe("host artifact state compatibility", () => {
     expect(afterStat.mtimeMs).toBe(beforeStat.mtimeMs);
   });
 
+  test("version-2 preparation schema6 rejects schema5 artifacts without changing database bytes", async () => {
+    const path = await temporary();
+    const gitRoot = join(path, "repository"), projectPath = join(gitRoot, "apps", "web");
+    await mkdir(projectPath, { recursive: true });
+    const store = new HostStore(path);
+    const project = store.addProject({ path: projectPath });
+    const canonicalGitRoot = join(project.path, "..", "..");
+    const raw = 'version = 1\nname = "Inherited"\n[setup]\nscript = "printf ready"\n';
+    const preparation = store.createEnvironmentPreparation({
+      id: "compatibility-preparation-v2", projectId: project.id, sourceRoot: project.path,
+      worktreePath: join(path, "worktrees", "compatibility-preparation-v2"),
+      startingState: { type: "branch", branchName: "main" }, draft: { id: "new-conversation", revision: 2 },
+      environment: { configPath: join(canonicalGitRoot, ".codex", "environments", "environment.toml"),
+        revision: createHash("sha256").update(raw).digest("hex"), raw },
+      directories: { sourceGitRoot: canonicalGitRoot, sourceWorkspaceRoot: project.path, workspaceRelativePath: "apps/web", configCwdRelativePath: "" },
+    });
+    expect(preparation.version).toBe(2);
+    store.close();
+
+    const file = join(path, "state.sqlite"), before = await readFile(file), beforeStat = await stat(file);
+    expect(() => checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4, 5] }, path)).toThrow("schema 6 is incompatible");
+    expect(checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4, 5, 6] }, path)).toEqual({
+      checkedSchemaVersion: 6, supportedStateSchemaVersions: [1, 2, 3, 4, 5, 6], legacyManifest: false,
+    });
+    expect(await readFile(file)).toEqual(before);
+    const afterStat = await stat(file);
+    expect(afterStat.mode).toBe(beforeStat.mode);
+    expect(afterStat.mtimeMs).toBe(beforeStat.mtimeMs);
+  });
+
   test("installing an incompatible real archive never stops service or replaces current", async () => {
     const { root, layout } = await installedFixture(2), candidate = join(root, "candidate");
     await artifact(candidate, "incoming11");

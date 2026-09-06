@@ -59,6 +59,22 @@ function preparation(store: HostStore, path: string, environment = true): LocalE
   };
 }
 
+function nestedPreparation(store: HostStore, path: string): LocalEnvironmentPreparationInput {
+  const fixtureGitRoot = join(path, "nested-repository"), sourceRoot = join(fixtureGitRoot, "apps", "web");
+  mkdirSync(sourceRoot, { recursive: true });
+  const project = store.addProject({ path: sourceRoot });
+  const sourceGitRoot = join(project.path, "..", "..");
+  const raw = 'version = 1\nname = "Inherited environment"\n[setup]\nscript = "export CONTRACT_VALUE=nested"\n';
+  return {
+    id: `preparation-${crypto.randomUUID()}`, projectId: project.id, sourceRoot: project.path,
+    worktreePath: join(path, "worktrees", crypto.randomUUID()), startingState: { type: "branch", branchName: "main" },
+    draft: { id: "nested-conversation", revision: 4 },
+    environment: { configPath: join(sourceGitRoot, ".codex", "environments", "inherited.toml"),
+      revision: createHash("sha256").update(raw).digest("hex"), raw },
+    directories: { sourceGitRoot, sourceWorkspaceRoot: project.path, workspaceRelativePath: "apps/web", configCwdRelativePath: "" },
+  };
+}
+
 function runResult(status: "succeeded" | "failed", withDelta = false): LocalEnvironmentRunResult {
   return {
     status,
@@ -86,8 +102,8 @@ afterEach(() => {
 });
 
 describe("HostStore local-environment persistence", () => {
-  test("opens schemas 1 through 5 without changing their version and rejects newer state", () => {
-    for (const schema of [1, 2, 3, 4, 5]) {
+  test("opens schemas 1 through 6 without changing their version and rejects newer state", () => {
+    for (const schema of [1, 2, 3, 4, 5, 6]) {
       const path = root();
       const seeded = new Database(join(path, "state.sqlite"), { create: true, strict: true });
       seeded.exec(`PRAGMA user_version = ${schema}`);
@@ -102,9 +118,9 @@ describe("HostStore local-environment persistence", () => {
 
     const future = root();
     const database = new Database(join(future, "state.sqlite"), { create: true, strict: true });
-    database.exec("PRAGMA user_version = 6");
+    database.exec("PRAGMA user_version = 7");
     database.close();
-    expect(() => open(future)).toThrow("Unsupported host state schema version 6");
+    expect(() => open(future)).toThrow("Unsupported host state schema version 7");
   });
 
   test("raises schema 5 only when the first owned preparation commits", () => {
@@ -126,6 +142,24 @@ describe("HostStore local-environment persistence", () => {
 
     const reopened = open(path);
     expect(version(database)).toBe(5);
+    expect(reopened.environmentPreparations.get(created.id)).toEqual(created);
+  });
+
+  test("raises schema 6 atomically for the first version-2 preparation and reopens its directory context", () => {
+    const path = root(), store = open(path), database = inspect(path);
+    const input = nestedPreparation(store, path);
+    expect(version(database)).toBe(1);
+    expect(() => store.createEnvironmentPreparation({ ...input, directories: { ...input.directories!, sourceWorkspaceRoot: join(path, "wrong") } }))
+      .toThrow("Source workspace root does not match");
+    expect(version(database)).toBe(1);
+    expect(store.environmentPreparations.list()).toEqual([]);
+
+    const created = store.createEnvironmentPreparation(input);
+    expect(version(database)).toBe(6);
+    expect(created).toMatchObject({ version: 2, directories: input.directories, selectedEnvironment: input.environment });
+    close(store);
+    const reopened = open(path);
+    expect(version(database)).toBe(6);
     expect(reopened.environmentPreparations.get(created.id)).toEqual(created);
   });
 
@@ -235,5 +269,26 @@ describe("HostStore local-environment persistence", () => {
     transition(store, record, { type: 'cleanup.failed', result: runResult('failed') });
     expect(store.getSessionEnvironment('native')).toEqual(originalExports);
     expect(originalExports?.environmentDelta?.set).toEqual({ CONTRACT_VALUE: 'private' });
+  });
+
+  test("version-2 session and private environment bind to the mapped nested workspace", () => {
+    const path = root(), store = open(path);
+    const input = nestedPreparation(store, path);
+    let record = store.createEnvironmentPreparation(input);
+    record = transition(store, record, { type: "worktree-create.started" });
+    const materialized = { ...input.environment!, configPath: join(record.worktreePath, ".codex", "environments", "inherited.toml") };
+    record = transition(store, record, { type: "worktree-create.succeeded", worktreePath: record.worktreePath, materializedEnvironment: materialized });
+    record = transition(store, record, { type: "setup.started" });
+    record = transition(store, record, { type: "setup.succeeded", result: runResult("succeeded", true) });
+    record = transition(store, record, { type: "native-create.started" });
+    const nestedCwd = join(record.worktreePath, "apps", "web");
+    const session = { id: "nested-native", hostId: store.host.id, projectId: record.projectId, cwd: nestedCwd,
+      title: "Nested", status: "idle" as const, model: null, sessionFile: join(path, "nested.jsonl"), createdAt: 1, updatedAt: 1, archived: false };
+    const target = { id: record.id, expectedRevision: record.revision };
+    store.claimCommand("nested-admit", "nested-hash");
+    expect(() => store.finishEnvironmentSessionCreation("nested-admit", "nested-hash", { ...session, cwd: record.worktreePath }, target)).toThrow("captured");
+    expect(store.finishEnvironmentSessionCreation("nested-admit", "nested-hash", session, target)).toMatchObject({ ok: true, value: session });
+    expect(store.getSessionEnvironment(session.id)).toEqual({ sourceRoot: input.sourceRoot, worktreeRoot: nestedCwd,
+      environmentDelta: { version: 1, set: { CONTRACT_VALUE: "private" }, unset: ["OLD_CONTRACT_VALUE"] } });
   });
 });

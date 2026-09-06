@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLocalEnvironmentScript, type LocalEnvironmentRunInput } from "./runner";
@@ -30,6 +30,19 @@ function processExists(pid: number) {
   try { process.kill(pid, 0); return true; }
   catch (cause) { return (cause as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
+
+test("inherited setup runs at its Git folder while injected paths retain the nested workspace", async () => {
+  const sourceRoot = realpathSync(root()), worktreeGitRoot = realpathSync(root());
+  const worktreeRoot = join(worktreeGitRoot, "apps/web"); mkdirSync(worktreeRoot, { recursive: true });
+  const run = input('printf "%s\\n" "$PWD" "$CODEX_SOURCE_TREE_PATH" "$CODEX_WORKTREE_PATH" "$AGENT_WORKTREE_PATH"',
+    { cwd: worktreeGitRoot, sourceRoot, worktreeRoot, worktreeGitRoot });
+  const result = await runLocalEnvironmentScript(run);
+  expect(result.status).toBe("succeeded");
+  expect(result.stdout.trim().split("\n")).toEqual([worktreeGitRoot, sourceRoot, worktreeRoot, worktreeRoot]);
+  await expect(runLocalEnvironmentScript({ ...run, cwd: sourceRoot })).rejects.toThrow("inside the owned worktree root");
+  await expect(runLocalEnvironmentScript({ ...run, worktreeRoot: sourceRoot })).rejects.toThrow("inside the owned worktree root");
+  await expect(runLocalEnvironmentScript({ ...run, worktreeGitRoot: undefined })).rejects.toThrow("inside the owned worktree root");
+});
 
 test("setup runs once, injects owned paths and returns only allowed exported environment changes", async () => {
   const marker = join(root(), "setup-count"), output: string[] = [], originalHome = process.env.HOME;

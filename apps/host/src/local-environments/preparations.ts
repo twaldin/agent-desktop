@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { parseLocalEnvironment, type LocalEnvironmentExecutionOutput, type LocalEnvironmentPreparationPhase, type LocalEnvironmentPreparationPublic, type LocalEnvironmentUncertainOperation, type ModelChoice, type OmpApprovalMode, type WorktreeStartingState } from "@agent-desktop/shared";
 import type { LocalEnvironmentEnvironmentDelta, LocalEnvironmentRunResult } from "./runner";
+import { validateWorktreeDirectoryContext, type WorktreeDirectoryContext } from "./worktree-directories";
 
 export type { LocalEnvironmentPreparationPhase, LocalEnvironmentPreparationPublic, LocalEnvironmentUncertainOperation } from "@agent-desktop/shared";
 
@@ -15,8 +16,7 @@ export interface LocalEnvironmentConfigSnapshot {
 
 type StoredRunResult = Omit<LocalEnvironmentRunResult, "environmentDelta">;
 
-export interface LocalEnvironmentPreparation {
-  version: 1;
+interface LocalEnvironmentPreparationBase {
   id: string;
   revision: number;
   hostId: string;
@@ -39,6 +39,21 @@ export interface LocalEnvironmentPreparation {
   updatedAt: number;
 }
 
+export interface LocalEnvironmentPreparationV1 extends LocalEnvironmentPreparationBase {
+  version: 1;
+  directories?: never;
+  selectedEnvironment?: never;
+}
+
+export interface LocalEnvironmentPreparationV2 extends LocalEnvironmentPreparationBase {
+  version: 2;
+  directories: WorktreeDirectoryContext;
+  /** Original source selection retained even when materialization changes the effective environment. */
+  selectedEnvironment: LocalEnvironmentConfigSnapshot | null;
+}
+
+export type LocalEnvironmentPreparation = LocalEnvironmentPreparationV1 | LocalEnvironmentPreparationV2;
+
 export interface LocalEnvironmentPreparationInput {
   id: string;
   projectId: string;
@@ -49,12 +64,14 @@ export interface LocalEnvironmentPreparationInput {
   model?: ModelChoice;
   approvalMode?: OmpApprovalMode;
   environment: LocalEnvironmentConfigSnapshot | null;
+  /** Presence creates a version-2 preparation and requires a materialized environment receipt. */
+  directories?: WorktreeDirectoryContext;
 }
 
 export type LocalEnvironmentPreparationTransition =
   | { type: "outcome.unknown" }
   | { type: "worktree-create.started" }
-  | { type: "worktree-create.succeeded"; worktreePath: string }
+  | { type: "worktree-create.succeeded"; worktreePath: string; materializedEnvironment?: LocalEnvironmentConfigSnapshot | null }
   | { type: "setup.started" }
   | { type: "setup.failed"; result: LocalEnvironmentRunResult }
   | { type: "setup.succeeded"; result: LocalEnvironmentRunResult }
@@ -93,6 +110,40 @@ function configSnapshot(value: LocalEnvironmentConfigSnapshot | null, sourceRoot
   if (!revisionPattern.test(value.revision) || createHash("sha256").update(value.raw).digest("hex") !== value.revision) throw new Error("Environment config revision does not match its exact bytes.");
   parseLocalEnvironment(value.raw);
   return { configPath, revision: value.revision, raw: value.raw };
+}
+function directorySnapshot(value: WorktreeDirectoryContext, sourceRoot: string, selected: LocalEnvironmentConfigSnapshot | null): WorktreeDirectoryContext {
+  const directories = validateWorktreeDirectoryContext(value);
+  if (directories.sourceWorkspaceRoot !== sourceRoot) throw new Error("Preparation source root differs from its directory context.");
+  if (selected === null) {
+    if (directories.configCwdRelativePath !== null) throw new Error("An environment owner was captured without an environment selection.");
+    return structuredClone(directories);
+  }
+  if (directories.configCwdRelativePath === null) throw new Error("The selected environment has no captured config owner.");
+  const relativeConfig = relative(directories.sourceGitRoot, selected.configPath);
+  const owner = directories.configCwdRelativePath;
+  const allowed = [".agent-desktop", ".codex"].some(namespace => {
+    const directory = joinRelative(owner, namespace, "environments");
+    return relativeConfig.startsWith(`${directory}${sep}`) && !relativeConfig.slice(directory.length + 1).includes(sep)
+      && relativeConfig.endsWith(".toml");
+  });
+  if (!allowed) throw new Error("The selected environment does not match its captured config owner.");
+  return structuredClone(directories);
+}
+function joinRelative(...parts: string[]): string {
+  return parts.filter(Boolean).join(sep);
+}
+function materializedSnapshot(current: LocalEnvironmentPreparationV2, value: LocalEnvironmentConfigSnapshot | null): LocalEnvironmentConfigSnapshot | null {
+  if (value === null) return null;
+  if (!current.selectedEnvironment) throw new Error("A materialized environment cannot appear without an original selection.");
+  const capturedRelative = relative(current.directories.sourceGitRoot, current.selectedEnvironment.configPath);
+  const mapped = resolve(current.worktreePath, capturedRelative);
+  if (value.configPath !== current.selectedEnvironment.configPath && value.configPath !== mapped)
+    throw new Error("Materialized environment path differs from the captured source mapping.");
+  if (value.configPath === current.selectedEnvironment.configPath
+      && (value.revision !== current.selectedEnvironment.revision || value.raw !== current.selectedEnvironment.raw))
+    throw new Error("Materialized source environment differs from its captured snapshot.");
+  const ownerRoot = value.configPath === current.selectedEnvironment.configPath ? current.directories.sourceGitRoot : current.worktreePath;
+  return configSnapshot(value, ownerRoot);
 }
 function startingState(value: WorktreeStartingState): WorktreeStartingState {
   if (value?.type === "working-tree") return { type: "working-tree" };
@@ -161,13 +212,19 @@ export class LocalEnvironmentPreparations {
     if (!Number.isSafeInteger(input.draft.revision) || input.draft.revision < 0) throw new Error("Draft revision is invalid.");
     if (input.model && (!input.model.provider || !input.model.id || input.model.provider.includes("\0") || input.model.id.includes("\0"))) throw new Error("Model choice is invalid.");
     if (input.approvalMode !== undefined && !approvalModes.has(input.approvalMode)) throw new Error("Approval mode is invalid.");
-    const now = Date.now(), record: LocalEnvironmentPreparation = {
-      version: 1, id: identifier(input.id, "Preparation identity"), revision: 1, hostId: this.hostId,
+    const directoriesInput = input.directories;
+    const selectedEnvironment = configSnapshot(input.environment, directoriesInput ? directoriesInput.sourceGitRoot : sourceRoot);
+    const directories = directoriesInput ? directorySnapshot(directoriesInput, sourceRoot, selectedEnvironment) : undefined;
+    const now = Date.now(), base: LocalEnvironmentPreparationBase = {
+      id: identifier(input.id, "Preparation identity"), revision: 1, hostId: this.hostId,
       projectId: identifier(input.projectId, "Project identity"), sourceRoot, worktreePath,
       startingState: startingState(input.startingState), draft: { id: identifier(input.draft.id, "Draft identity"), revision: input.draft.revision },
       ...(input.model ? { model: structuredClone(input.model) } : {}), ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
-      environment: configSnapshot(input.environment, sourceRoot), phase: "validated", createdAt: now, updatedAt: now,
+      environment: selectedEnvironment, phase: "validated", createdAt: now, updatedAt: now,
     };
+    const record: LocalEnvironmentPreparation = directories
+      ? { ...base, version: 2, directories, selectedEnvironment }
+      : { ...base, version: 1 };
     this.database.query("INSERT INTO local_environment_preparations (id, host_id, project_id, worktree_path, revision, data) VALUES (?, ?, ?, ?, ?, ?)")
       .run(record.id, record.hostId, record.projectId, record.worktreePath, record.revision, JSON.stringify(record));
     return structuredClone(record);
@@ -289,6 +346,11 @@ export class LocalEnvironmentPreparations {
       case "worktree-create.succeeded":
         require("worktree-creating");
         if (absolute(transition.worktreePath, "Created worktree path") !== current.worktreePath) throw new Error("Created worktree path differs from the captured target.");
+        if (current.version === 2) {
+          if (!("materializedEnvironment" in transition) || transition.materializedEnvironment === undefined)
+            throw new Error("Version-2 preparation requires a materialized environment receipt.");
+          next.environment = materializedSnapshot(current, transition.materializedEnvironment ?? null);
+        } else if ("materializedEnvironment" in transition) throw new Error("Legacy preparation cannot accept a materialized environment receipt.");
         next.phase = "worktree-created"; break;
       case "setup.started": require("worktree-created", "setup-failed"); if (!current.environment) throw new Error("No environment setup was selected."); next.phase = "setup-running"; break;
       case "setup.failed": require("setup-running"); next.setupResult = storedResult(transition.result, "failed"); next.environmentDelta = null; next.phase = "setup-failed"; break;

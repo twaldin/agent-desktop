@@ -51,6 +51,15 @@ function input(root: string, id = "preparation-1", environment = true): LocalEnv
   };
 }
 
+function nestedInput(root: string, id = "nested-preparation"): LocalEnvironmentPreparationInput {
+  const value = input(root, id);
+  const sourceGitRoot = join(root, "source"), sourceRoot = join(sourceGitRoot, "apps", "web");
+  const environment = { ...value.environment!, configPath: join(sourceGitRoot, ".codex", "environments", "private.toml") };
+  return { ...value, sourceRoot, environment, directories: {
+    sourceGitRoot, sourceWorkspaceRoot: sourceRoot, workspaceRelativePath: "apps/web", configCwdRelativePath: "",
+  } };
+}
+
 function result(status: "succeeded" | "failed" | "cancelled", delta = false): LocalEnvironmentRunResult {
   return {
     status,
@@ -244,5 +253,57 @@ describe("LocalEnvironmentPreparations", () => {
     invalidDelta.environmentDelta!.unset = ["BAD=VALUE"];
     expect(() => advance(preparations, record, { type: "setup.succeeded", result: invalidDelta })).toThrow("Invalid environment delta");
     expect(preparations.get(record.id)).toEqual(record);
+  });
+
+  test("version 2 retains its selected source snapshot and requires an exact materialization receipt", () => {
+    const { root, preparations } = fixture();
+    const captured = nestedInput(root);
+    let record = preparations.create(captured);
+    expect(record).toMatchObject({ version: 2, sourceRoot: captured.sourceRoot, worktreePath: captured.worktreePath,
+      directories: captured.directories, selectedEnvironment: captured.environment, environment: captured.environment });
+    record = advance(preparations, record, { type: "worktree-create.started" });
+    expect(() => advance(preparations, record, { type: "worktree-create.succeeded", worktreePath: record.worktreePath }))
+      .toThrow("requires a materialized environment receipt");
+    expect(() => advance(preparations, record, { type: "worktree-create.succeeded", worktreePath: record.worktreePath,
+      materializedEnvironment: { ...captured.environment!, configPath: join(record.worktreePath, "sibling", "private.toml") } }))
+      .toThrow("captured source mapping");
+    const changedSourceRaw = captured.environment!.raw.replace("Private setup", "Changed source");
+    expect(() => advance(preparations, record, { type: "worktree-create.succeeded", worktreePath: record.worktreePath,
+      materializedEnvironment: { configPath: captured.environment!.configPath,
+        revision: createHash("sha256").update(changedSourceRaw).digest("hex"), raw: changedSourceRaw } }))
+      .toThrow("captured snapshot");
+
+    const materializedRaw = 'version = 1\nname = "Branch environment"\n[setup]\nscript = "printf branch"\n';
+    record = advance(preparations, record, { type: "worktree-create.succeeded", worktreePath: record.worktreePath,
+      materializedEnvironment: { configPath: join(record.worktreePath, ".codex", "environments", "private.toml"),
+        revision: createHash("sha256").update(materializedRaw).digest("hex"), raw: materializedRaw } });
+    expect(record).toMatchObject({ phase: "worktree-created", version: 2,
+      environment: { configPath: join(record.worktreePath, ".codex", "environments", "private.toml"), raw: materializedRaw },
+      selectedEnvironment: captured.environment });
+
+    const fallbackInput = nestedInput(root, "source-fallback");
+    let fallback = preparations.create(fallbackInput);
+    fallback = advance(preparations, fallback, { type: "worktree-create.started" });
+    fallback = advance(preparations, fallback, { type: "worktree-create.succeeded", worktreePath: fallback.worktreePath,
+      materializedEnvironment: fallbackInput.environment });
+    expect(fallback).toMatchObject({ phase: "worktree-created", environment: fallbackInput.environment,
+      selectedEnvironment: fallbackInput.environment });
+
+    let legacy = preparations.create(input(root, "legacy"));
+    legacy = advance(preparations, legacy, { type: "worktree-create.started" });
+    expect(() => advance(preparations, legacy, { type: "worktree-create.succeeded", worktreePath: legacy.worktreePath, materializedEnvironment: null }))
+      .toThrow("Legacy preparation");
+  });
+
+  test("version 2 rejects mismatched source and logical config owners before persistence", () => {
+    const { root, preparations } = fixture();
+    const wrongSource = nestedInput(root, "wrong-source");
+    wrongSource.directories = { ...wrongSource.directories!, sourceWorkspaceRoot: join(root, "source", "apps", "other") };
+    expect(() => preparations.create(wrongSource)).toThrow("Source workspace root does not match");
+
+    const wrongOwner = nestedInput(root, "wrong-owner");
+    wrongOwner.directories = { ...wrongOwner.directories!, configCwdRelativePath: "apps/web" };
+    expect(() => preparations.create(wrongOwner)).toThrow("captured config owner");
+    expect(preparations.list()).toEqual([]);
   });
 });

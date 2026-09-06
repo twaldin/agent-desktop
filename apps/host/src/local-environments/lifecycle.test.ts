@@ -58,6 +58,9 @@ for (const namespace of [".agent-desktop", ".codex"]) test(`${namespace}: actual
   if (listing.type !== "git.worktrees") throw new Error("Missing registered worktrees");
   const relativePath = listing.worktrees.find(tree => tree.path === ready.worktreePath)?.managedRelativePath;
   if (!relativePath) throw new Error("Missing managed removal path");
+  // Materialization retains the selected untracked config. Cleanup is not authority to discard it.
+  await expect(f.workspaces.mutate({ projectId: f.project.id }, { type: "worktree.remove", path: relativePath })).rejects.toMatchObject({ code: "DIRTY_WORKTREE" });
+  await rm(ready.environment!.configPath);
   await f.workspaces.mutate({ projectId: f.project.id }, { type: "worktree.remove", path: relativePath });
   f.store.environmentPreparations.transition(cleaned.id, cleaned.revision, { type: "removed" });
   expect(await access(ready.worktreePath).then(() => true, () => false)).toBe(false);
@@ -97,17 +100,48 @@ test("stale configuration is rejected before even a managed directory or prepara
   expect(await readFile(join(f.source, ".git", "index"))).toEqual(f.before.index);
 }, 30_000);
 
-test("unsupported nested worktree creation cannot execute an inherited script in the wrong folder", async () => {
+test("a starting branch without the nested project retains the checkout without running setup or falling back to its root", async () => {
   const f = await fixture("touch must-not-exist", "");
   const nested = join(f.source, "nested"); await mkdir(nested);
   const project = f.store.addProject({ path: nested });
   const inherited = await new LocalEnvironmentStore(nested).read(f.saved.configPath);
   expect(inherited.configPath).toBe(f.saved.configPath);
-  await expect(f.lifecycle.prepare({ ...f.input, projectId: project.id })).rejects.toThrow("Select the repository root");
-  expect(f.store.environmentPreparations.list()).toHaveLength(0);
-  expect(await access(join(f.data, "worktrees")).then(() => true, () => false)).toBe(false);
+  await expect(f.lifecycle.prepare({ ...f.input, projectId: project.id })).rejects.toThrow("captured worktree directory is missing");
+  const [retained] = f.store.environmentPreparations.list();
+  expect(retained).toMatchObject({ phase: "unknown", uncertainOperation: "worktree-create" });
+  expect(await access(join(retained!.worktreePath, "must-not-exist")).then(() => true, () => false)).toBe(false);
   expect(await access(join(nested, "must-not-exist")).then(() => true, () => false)).toBe(false);
   expect(await readFile(join(f.source, ".git", "index"))).toEqual(f.before.index);
+}, 30_000);
+
+for (const selectNested of [false, true]) test(`nested workspace inherits root setup and reparses ${selectNested ? "newly selected nested" : "materialized root"} cleanup`, async () => {
+  const f = await fixture('printf "%s\\n" "$PWD" "$CODEX_SOURCE_TREE_PATH" "$CODEX_WORKTREE_PATH" > setup-paths', 'exit 8');
+  const nested = join(f.source, "apps/web"); await mkdir(nested, { recursive: true });
+  await writeFile(join(nested, "README.md"), "nested content\n");
+  await f.git("add", "apps/web/README.md"); await f.git("commit", "-m", "Nested project fixture");
+  const index = await readFile(join(f.source, ".git/index")), head = (await f.git("rev-parse", "HEAD")).stdout;
+  const project = f.store.addProject({ path: nested });
+  const ready = await f.lifecycle.prepare({ ...f.input, projectId: project.id });
+  const workspace = join(ready.worktreePath, "apps/web");
+  expect(ready).toMatchObject({ version: 2, phase: "setup-succeeded", sourceRoot: nested,
+    directories: { sourceGitRoot: f.source, workspaceRelativePath: "apps/web", configCwdRelativePath: "" } });
+  expect((await readFile(join(ready.worktreePath, "setup-paths"), "utf8")).trim().split("\n")).toEqual([ready.worktreePath, nested, workspace]);
+  expect(ready.environment?.configPath).toBe(join(ready.worktreePath, ".agent-desktop/environments/environment.toml"));
+  expect(ready.selectedEnvironment?.configPath).toBe(f.saved.configPath);
+  expect(await readFile(ready.environment!.configPath, "utf8")).toBe((await f.configStore.read(f.saved.configPath)).raw);
+  const managedConfig = new LocalEnvironmentStore(workspace);
+  const cleanupPath = selectNested ? join(workspace, ".agent-desktop/environments/cleanup.toml") : ready.environment!.configPath;
+  const saved = await managedConfig.save({ configPath: cleanupPath, expectedRevision: selectNested ? null : ready.environment!.revision,
+    raw: serializeLocalEnvironment({ version: 1, name: "Managed cleanup", setup: { script: "" }, cleanup: { script: 'printf "%s\\n" "$PWD" "$CODEX_WORKTREE_PATH" > cleanup-paths' } }) });
+  expect(saved.type).toBe("saved");
+  if (selectNested) f.store.putActionEnvironmentSelection(workspace, cleanupPath, 0);
+  const cleaned = await f.lifecycle.cleanup(ready.id, ready.revision);
+  expect(cleaned.phase).toBe("cleanup-succeeded");
+  const cleanupCwd = selectNested ? workspace : ready.worktreePath;
+  expect((await readFile(join(cleanupCwd, "cleanup-paths"), "utf8")).trim().split("\n")).toEqual([cleanupCwd, workspace]);
+  expect(await readFile(join(f.source, ".git/index"))).toEqual(index);
+  expect((await f.git("rev-parse", "HEAD")).stdout).toBe(head);
+  expect(f.store.listSessions()).toHaveLength(0);
 }, 30_000);
 
 test("a lost receipt after real Git creation records uncertainty immediately and never replays", async () => {

@@ -19,6 +19,8 @@ export interface LocalEnvironmentRunInput {
   cwd: string;
   sourceRoot: string;
   worktreeRoot: string;
+  /** Execution authority for inherited scripts; path variables still name the selected workspace. */
+  worktreeGitRoot?: string;
   script: string;
   lifecycle: LocalEnvironmentLifecycle;
   baseEnvironment?: Record<string, string | undefined>;
@@ -141,7 +143,9 @@ export async function runLocalEnvironmentScript(input: LocalEnvironmentRunInput)
     ownedDirectory(input.sourceRoot, "Local environment source root"),
     ownedDirectory(input.worktreeRoot, "Local environment worktree root"),
   ]);
-  if (!inside(worktreeRoot, cwd)) throw new Error("Local environment cwd must be inside the owned worktree root.");
+  const executionRoot = input.worktreeGitRoot === undefined ? worktreeRoot
+    : await ownedDirectory(input.worktreeGitRoot, "Local environment Git root");
+  if (!inside(executionRoot, worktreeRoot) || !inside(executionRoot, cwd)) throw new Error("Local environment cwd and workspace must be inside the owned worktree root.");
   const startedAt = Date.now();
   if (input.signal?.aborted) return { status: "cancelled", cancelReason: "aborted", exitCode: null, signal: null, startedAt, finishedAt: Date.now(), stdout: "", stderr: "", outputTruncated: false, environmentDelta: null };
 

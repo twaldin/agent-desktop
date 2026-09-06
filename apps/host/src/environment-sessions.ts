@@ -265,6 +265,8 @@ export class EnvironmentSessions {
         ? this.signal.reason
         : new Error("Host is stopping");
     }
+    const workspaceRoot = record.directories ? (await this.workspaces.verifyPreparedWorktree(record.projectId, record.worktreePath,
+      { ...record.directories, configCwdRelativePath: record.environment ? record.directories.configCwdRelativePath : null })).worktreeWorkspaceRoot : record.worktreePath;
     const started = this.store.environmentPreparations.transition(
       record.id,
       record.revision,
@@ -278,7 +280,7 @@ export class EnvironmentSessions {
     try {
       handle = await this.runtime.create(
         {
-          cwd: started.worktreePath,
+          cwd: workspaceRoot,
           model: started.model,
           approvalOverride: started.approvalMode,
           interactions: true,
@@ -290,7 +292,7 @@ export class EnvironmentSessions {
           ? {
               environmentDelta: started.environmentDelta ?? null,
               sourceRoot: started.sourceRoot,
-              worktreeRoot: started.worktreePath,
+              worktreeRoot: workspaceRoot,
             }
           : undefined,
       );
