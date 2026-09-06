@@ -5,7 +5,7 @@ type Bridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe">;
 type SaveEnvelope = CommandEnvelope & { command: { type: "workspace.mutate"; target: { projectId: string }; action: { type: "environment.save"; configPath?: string | null; expectedRevision: string | null; raw: string } } };
 export interface EnvironmentEdit { configPath: string | null; expectedRevision: string | null; raw: string; version: number; dirty: boolean; conflict?: LocalEnvironmentCatalogItem | null }
 interface Pending { envelope: SaveEnvelope; key: string; version: number }
-interface CachedState { version: 1; items: LocalEnvironmentCatalogItem[]; edits: Array<[string, EnvironmentEdit]>; selected?: string; pending?: Pending }
+interface CachedState { version: 1; items: LocalEnvironmentCatalogItem[]; edits: Array<[string, EnvironmentEdit]>; selected?: string; view?: "summary" | "edit"; pending?: Pending }
 
 const revisionPattern = /^[a-f0-9]{64}$/;
 const uncertainCommandCodes = new Set(["OUTCOME_UNKNOWN", "HOST_STOPPING", "COMMAND_ID_REUSED"]);
@@ -63,6 +63,7 @@ export class LocalEnvironmentState {
   items: LocalEnvironmentCatalogItem[] = [];
   edits = new Map<string, EnvironmentEdit>();
   selected?: string;
+  view: "summary" | "edit" = "summary";
   pending?: Pending;
   connected = false;
   restored = false;
@@ -118,6 +119,8 @@ export class LocalEnvironmentState {
           this.items = saved.items.map(catalogItem);
           this.edits = edits;
           this.selected = typeof saved.selected === "string" && edits.has(saved.selected) ? saved.selected : undefined;
+          // Older caches always displayed the editor; preserve that recovery behavior.
+          this.view = saved.view === "summary" ? "summary" : "edit";
           this.pending = pending;
         }
         this.restored = true;
@@ -136,7 +139,7 @@ export class LocalEnvironmentState {
 
   private persist() {
     if (!this.restored) return Promise.reject(new Error(this.cacheWarning ?? "Environment editor is still restoring."));
-    const serialized = JSON.stringify({ version: 1, items: this.items, edits: [...this.edits], selected: this.selected, pending: this.pending });
+    const serialized = JSON.stringify({ version: 1, items: this.items, edits: [...this.edits], selected: this.selected, view: this.view, pending: this.pending });
     const task = this.writes.catch(() => {}).then(() => this.cache.write(this.cacheKey, serialized));
     this.writes = task;
     return task.then(() => { this.cacheWarning = undefined; this.changed(); }, cause => {
@@ -172,6 +175,7 @@ export class LocalEnvironmentState {
     this.selectionEpoch++;
     this.edits.has("new") || this.edits.set("new", { configPath: null, expectedRevision: null, raw: serializeLocalEnvironment({ ...blank(), name }), version: 0, dirty: true });
     this.selected = "new";
+    this.view = "edit";
     this.notice = undefined;
     this.saveSoon();
   }
@@ -179,12 +183,14 @@ export class LocalEnvironmentState {
   async open(configPath: string) {
     if (!this.restored) return;
     const selection = ++this.selectionEpoch;
-    if (this.edits.has(configPath)) { this.selected = configPath; this.saveSoon(); return; }
+    const cached = this.edits.get(configPath);
+    if (cached && (cached.dirty || this.pending?.key === configPath)) { this.selected = configPath; this.view = "summary"; this.saveSoon(); return; }
     const item = this.items.find(candidate => candidate.configPath === configPath);
     if (!item) return;
     if (item.type === "environment") {
       this.edits.set(configPath, { configPath, expectedRevision: item.revision, raw: serializeLocalEnvironment(item.environment), version: 0, dirty: false });
       this.selected = configPath;
+      this.view = "summary";
       this.saveSoon();
       return;
     }
@@ -195,6 +201,7 @@ export class LocalEnvironmentState {
       if (!validRevision(value.revision) || configBytes(value.raw) > 1024 * 1024) throw new Error("The configuration is too large or has an invalid revision.");
       this.edits.set(configPath, { configPath, expectedRevision: value.revision, raw: value.raw, version: 0, dirty: false });
       this.selected = configPath;
+      this.view = "summary";
       this.error = undefined;
       this.saveSoon();
     } catch (cause) {
@@ -205,6 +212,31 @@ export class LocalEnvironmentState {
   }
 
   back() { this.selectionEpoch++; this.selected = undefined; this.saveSoon(); }
+  async beginEdit() {
+    const editor = this.editor;
+    if (!editor || !this.restored) return;
+    const selection = ++this.selectionEpoch, version = editor.version;
+    if (editor.configPath && !editor.dirty && this.connected && !this.pending) {
+      try {
+        const value = await this.bridge.workspaceQuery({ projectId: this.projectId }, { type: "environment.read", configPath: editor.configPath }, this.hostId);
+        if (selection !== this.selectionEpoch || this.editor !== editor || editor.version !== version) return;
+        if (value.type !== "environment.read" || value.configPath !== editor.configPath) throw new Error("The configuration cannot be opened as a text file.");
+        if (!validRevision(value.revision) || configBytes(value.raw) > 1024 * 1024) throw new Error("The configuration is too large or has an invalid revision.");
+        editor.raw = value.raw;
+        editor.expectedRevision = value.revision;
+        editor.version++;
+        this.error = undefined;
+      } catch (cause) {
+        if (selection !== this.selectionEpoch) return;
+        this.error = message(cause);
+        this.changed();
+        return;
+      }
+    }
+    this.view = "edit";
+    this.saveSoon();
+  }
+  showSummary() { this.selectionEpoch++; if (this.editor?.configPath) { this.view = "summary"; this.saveSoon(); } else this.back(); }
   edit(config: LocalEnvironmentConfig) { this.editRaw(serializeLocalEnvironment(config)); }
   editRaw(raw: string) {
     const editor = this.editor;
@@ -303,7 +335,7 @@ export class LocalEnvironmentState {
     if (!editor) throw new Error("The saved environment edit is no longer available.");
     const before = {
       configPath: editor.configPath, expectedRevision: editor.expectedRevision, dirty: editor.dirty,
-      conflict: editor.conflict, selected: this.selected, notice: this.notice,
+      conflict: editor.conflict, selected: this.selected, view: this.view, notice: this.notice,
     };
     if (result.type === "conflict") {
       editor.conflict = result.current;
@@ -322,7 +354,7 @@ export class LocalEnvironmentState {
     if (editor.version === pending.version) { editor.raw = pending.envelope.command.action.raw; editor.dirty = false; }
     this.edits.delete(pending.key);
     this.edits.set(result.configPath, editor);
-    if (this.selected === pending.key) this.selected = result.configPath;
+    if (this.selected === pending.key) { this.selected = result.configPath; if (!editor.dirty) this.view = "summary"; }
     this.notice = editor.dirty ? "Saved. Newer edits remain unsaved." : "Environment saved.";
     return () => {
       if (result.configPath !== pending.key && this.edits.get(result.configPath) === editor) {
@@ -335,6 +367,7 @@ export class LocalEnvironmentState {
       if (before.conflict === undefined) delete editor.conflict; else editor.conflict = before.conflict;
       if (this.selected === result.configPath) this.selected = pending.key;
       else if (this.selected === before.selected) this.selected = before.selected;
+      if (this.selected === before.selected) this.view = before.view;
       this.notice = before.notice;
     };
   }

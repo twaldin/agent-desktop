@@ -33,6 +33,10 @@ export function MarkdownText({ text, blockKey }: { text: string; blockKey: strin
 function syntax(nodes: SyntaxNode[], prefix = ""): ReactNode[] {
   return nodes.map((node, index) => node.type === "text" ? node.value : node.type === "element" ? <span key={`${prefix}${index}`} className={Array.isArray(node.properties.className) ? node.properties.className.filter(value => typeof value === "string" && /^hljs-|^[a-z][a-z_]*$/.test(value)).join(" ") : undefined}>{syntax(node.children, `${prefix}${index}.`)}</span> : null);
 }
+export function HighlightedCode({ code, language }: { code: string; language: string }) {
+  const highlighted = useMemo(() => highlightCode(code, language), [code, language]);
+  return <SelectableCode text={code}>{highlighted.kind === "highlighted" ? syntax(highlighted.tree.children) : code}</SelectableCode>;
+}
 function textOf(node: Element["children"][number]): string { return node.type === "text" ? node.value : node.type === "element" ? node.children.map(textOf).join("") : ""; }
 function CodeBlock({ node }: ExtraProps) {
   const context = useContext(MarkdownBlockContext), [, redraw] = useState(0);

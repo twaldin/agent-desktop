@@ -3,6 +3,7 @@ import type { DesktopBridge, LocalEnvironmentAction, LocalEnvironmentCatalogItem
 import { LocalEnvironmentState } from "./local-environment-state";
 import { offlineCache } from "./offline-cache";
 import { Icon } from "./Icons";
+import { EnvironmentSummary } from "./EnvironmentSummary";
 import "./local-environment-settings.css";
 
 type ScriptKind = "setup" | "cleanup";
@@ -49,18 +50,21 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
   }, [projectStates]);
   useEffect(() => { projectStates.forEach(state => state.setConnected(connected)); }, [projectStates, connected]);
   const [scriptPlatforms, setScriptPlatforms] = useState<Record<ScriptKind, typeof platforms[number]>>({ setup: "default", cleanup: "default" });
-  useEffect(() => { setRawEditor(Boolean(state?.editor && !state.config)); }, [state, state?.selected]);
+  useEffect(() => { setRawEditor(Boolean(state?.editor && !state.config)); }, [state, state?.selected, state?.view]);
   useEffect(() => {
     if (!state?.restored) return;
     const frame = requestAnimationFrame(() => {
-      const selector = state.editor ? state.config ? ".local-environment-field input" : ".local-environment-repair textarea" : ".environment-project-add";
+      const selector = state.editor ? state.view === "summary" ? ".environment-summary-edit button" : state.config ? ".local-environment-field input" : ".local-environment-repair textarea" : ".environment-project-add";
       section.current?.querySelector<HTMLElement>(selector)?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [state, state?.selected, state?.restored]);
+  }, [state, state?.selected, state?.view, state?.restored]);
   if (!state || !selected) return <section ref={section} className="settings-page local-environment-settings" aria-label="Environments settings"><header className="settings-header local-environment-header"><button className="icon-button" type="button" onClick={onClose} aria-label="Back to settings"><Icon name="browserBack" /></button><div><h1>Environments</h1><p>Reusable setup for project worktrees</p></div></header><div className="center-state"><p>{projects.length ? "Select a project to manage its environments." : "Add a project to manage its environments."}</p>{onAddProject && <button className="primary-button" disabled={!connected} onClick={onAddProject}>Add project</button>}</div></section>;
   const config = state.config;
   const editor = state.editor;
+  const editing = state.view === "edit";
+  const savedItem = state.items.find(item => item.configPath === editor?.configPath);
+  const summaryConfig = editor?.dirty ? savedItem?.type === "environment" ? savedItem.environment : undefined : config;
 
   function update(change: (current: LocalEnvironmentConfig) => LocalEnvironmentConfig) {
     if (!config) return;
@@ -85,7 +89,7 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
   function submit(event: FormEvent) { event.preventDefault(); void state!.save(); }
 
   return <section ref={section} className="settings-page local-environment-settings" aria-label="Environments settings">
-    {editor && <header className="local-environment-breadcrumbs"><button type="button" className="text-button" onClick={() => state.back()}>Environments</button><Icon name="chevron" /><span>{selected.name}</span><Icon name="chevron" /><span aria-current="page">edit</span></header>}
+    {editor && <header className="local-environment-breadcrumbs"><button type="button" className="text-button" onClick={() => state.back()}>Environments</button><Icon name="chevron" />{editing ? <><button type="button" className="text-button" onClick={() => state.showSummary()}>{selected.name}</button><Icon name="chevron" /><span aria-current="page">edit</span></> : <span aria-current="page">{selected.name}</span>}</header>}
     <div className="local-environment-layout">
       <div className="local-environment-editor">
         {state.cacheWarning && <p className="inline-error" role="alert">{state.cacheWarning}</p>}
@@ -100,8 +104,9 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
             onSelect={() => { setSelectedProjectId(project.id); onSelectProject?.(project.id); }}/>)}</div>
         </div>}
 
-        {editor && (!config || rawEditor) && <div className="local-environment-form local-environment-repair"><div className="local-environment-form-heading"><div><button type="button" className="text-button" onClick={() => state.back()}>Environments</button><h2>Repair local environment</h2><p>{editor.configPath}</p></div></div>{!config && <p className="inline-error" role="alert">This configuration is invalid. Correct the TOML below before saving.</p>}<textarea aria-label="Raw environment configuration" value={editor.raw} onChange={event => state.editRaw(event.target.value)} rows={18} spellCheck={false} /><div className="local-environment-form-actions">{config && <button type="button" className="secondary-button" onClick={() => setRawEditor(false)}>Show form</button>}<button type="button" className="primary-button" disabled={!connected || state.busy || Boolean(state.pending) || editor?.conflict !== undefined} onClick={() => void state.save()}>{state.busy ? "Saving…" : "Save repaired configuration"}</button></div></div>}
-        {editor && config && !rawEditor && <form onSubmit={submit} className="local-environment-form">
+        {editor && !editing && <EnvironmentSummary config={summaryConfig} dirty={editor.dirty} error={savedItem?.type === "error" ? savedItem.error : undefined} onEdit={() => void state.beginEdit()} variables={<EnvironmentVariables />} />}
+        {editor && editing && (!config || rawEditor) && <div className="local-environment-form local-environment-repair"><div className="local-environment-form-heading"><div><button type="button" className="text-button" onClick={() => state.back()}>Environments</button><h2>Repair local environment</h2><p>{editor.configPath}</p></div></div>{!config && <p className="inline-error" role="alert">This configuration is invalid. Correct the TOML below before saving.</p>}<textarea aria-label="Raw environment configuration" value={editor.raw} onChange={event => state.editRaw(event.target.value)} rows={18} spellCheck={false} /><div className="local-environment-form-actions">{config && <button type="button" className="secondary-button" onClick={() => setRawEditor(false)}>Show form</button>}<button type="button" className="primary-button" disabled={!connected || state.busy || Boolean(state.pending) || editor?.conflict !== undefined} onClick={() => void state.save()}>{state.busy ? "Saving…" : "Save repaired configuration"}</button></div></div>}
+        {editor && editing && config && !rawEditor && <form onSubmit={submit} className="local-environment-form">
           <div className="local-environment-form-heading"><h2>Edit local environment</h2></div>
           <label className="local-environment-field">Name<input value={config.name} onChange={event => update(current => ({ ...current, name: event.target.value }))} placeholder="Project environment" /></label>
           <ScriptEditor kind="setup" config={config} platform={scriptPlatforms.setup} script={scriptValue("setup")} onScriptChange={value => editScript("setup", value)} onPlatform={value => setScriptPlatforms(current => ({ ...current, setup: value }))} />

@@ -6,6 +6,7 @@ import { LocalEnvironmentState } from "./local-environment-state";
 const revision = (character: string) => character.repeat(64);
 const environment = (name: string, script = "echo setup"): LocalEnvironmentConfig => ({ version: 1, name, setup: { script } });
 const item = (path: string, name = "Project", currentRevision = revision("a")): LocalEnvironmentCatalogItem => ({ type: "environment", configPath: path, revision: currentRevision, environment: environment(name) });
+const validItem = (value: LocalEnvironmentCatalogItem) => { if (value.type !== "environment") throw new Error("expected valid environment"); return value; };
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (cause: unknown) => void;
@@ -103,6 +104,87 @@ test("workspace events and definite command errors stay scoped to their exact ho
   state.create(); state.edit(environment("Rejected")); await state.save();
   expect(state).toMatchObject({ pending: undefined, error: "Save rejected" });
   expect(bridge.queries).toHaveLength(0);
+});
+
+test("opens an existing environment in summary, edits it, and resumes the draft", async () => {
+  const storage = memoryCache(), bridge = bridgeFixture(), path = "/owned/project/environment.toml";
+  bridge.setCatalog([item(path)]); bridge.setQuery(async (_target, query) => query.type === "environment.read" ? { type: "environment.read", configPath: path, revision: revision("a"), raw: serializeLocalEnvironment(environment("Project")) } : { type: "environments.list", environments: [item(path)] });
+  const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  await state.restore(); state.connected = true; await state.refresh(); await state.open(path);
+  expect(state.view).toBe("summary");
+  await state.beginEdit(); expect(state.view).toBe("edit");
+  state.edit(environment("Unsaved", "echo draft")); state.showSummary();
+  expect(state.view).toBe("summary"); expect(state.editor?.dirty).toBeTrue(); expect(state.config?.name).toBe("Unsaved");
+  await state.beginEdit(); expect(state.view).toBe("edit"); expect(state.config?.setup.script).toBe("echo draft");
+});
+
+test("successful save returns to summary only when no newer edit arrived during the pending request", async () => {
+  const storage = memoryCache(), bridge = bridgeFixture(), response = deferred<CommandResult>(), path = "/owned/project/environment.toml";
+  bridge.setCatalog([item(path)]); bridge.setQuery(async (_target, query) => query.type === "environment.read" ? { type: "environment.read", configPath: path, revision: revision("a"), raw: serializeLocalEnvironment(environment("Project")) } : { type: "environments.list", environments: [item(path)] }); bridge.setCommand(() => response.promise);
+  const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  await state.restore(); state.connected = true; await state.refresh(); await state.open(path); await state.beginEdit(); state.edit(environment("First"));
+  const saving = state.save(); await until(() => bridge.commands.length === 1, "save command");
+  state.edit(environment("Newer", "echo newer"));
+  response.resolve({ ok: true, commandId: bridge.commands[0]!.id, value: { type: "environment.save", result: { type: "saved", configPath: path, revision: revision("c"), environment: environment("First") } } });
+  await saving;
+  expect(state.view).toBe("edit"); expect(state.editor?.dirty).toBeTrue(); expect(state.config?.name).toBe("Newer");
+  bridge.setCommand(async envelope => ({ ok: true, commandId: envelope.id, value: { type: "environment.save", result: { type: "saved", configPath: path, revision: revision("d"), environment: environment("Newer", "echo newer") } } }));
+  await state.save();
+  expect(state.pending).toBeUndefined(); expect(state.error).toBeUndefined();
+  expect(state.view).toBe("summary"); expect(state.editor?.dirty).toBeFalse();
+  const restored = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  await restored.restore(); expect(restored.view).toBe("summary"); expect(restored.config?.name).toBe("Newer");
+});
+
+test("legacy cache without a view restores the existing selected editor", async () => {
+  const storage = memoryCache(), bridge = bridgeFixture(), path = "/owned/project/environment.toml";
+  const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  storage.values.set(state.cacheKey, JSON.stringify({ version: 1, items: [item(path)], edits: [[path, { configPath: path, expectedRevision: revision("a"), raw: serializeLocalEnvironment(environment("Legacy")), version: 0, dirty: false }]], selected: path }));
+  await state.restore();
+  expect(state.selected).toBe(path); expect(state.view).toBe("edit"); expect(state.config?.name).toBe("Legacy");
+});
+
+test("reopening a clean cached config refreshes its revision while a dirty cache stays local", async () => {
+  const storage = memoryCache(), bridge = bridgeFixture(), path = "/owned/project/environment.toml";
+  const old = validItem(item(path, "Old", revision("a"))), fresh = validItem(item(path, "Fresh", revision("b")));
+  const seed = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  storage.values.set(seed.cacheKey, JSON.stringify({ version: 1, items: [old], edits: [[path, { configPath: path, expectedRevision: old.revision, raw: serializeLocalEnvironment(old.environment), version: 0, dirty: false }]], selected: path, view: "summary" }));
+  bridge.setCatalog([fresh]); bridge.setQuery(async (_target, query) => query.type === "environment.read" ? { type: "environment.read", configPath: path, revision: fresh.revision, raw: serializeLocalEnvironment(fresh.environment) } : { type: "environments.list", environments: [fresh] });
+  const clean = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  await clean.restore(); clean.connected = true; await clean.refresh(); await clean.open(path);
+  expect(clean.editor).toMatchObject({ expectedRevision: fresh.revision, dirty: false }); expect(clean.config?.name).toBe("Fresh");
+
+  const dirtyStorage = memoryCache(), dirtySeed = new LocalEnvironmentState(bridge.bridge, "owner", "project", dirtyStorage.cache);
+  dirtyStorage.values.set(dirtySeed.cacheKey, JSON.stringify({ version: 1, items: [old], edits: [[path, { configPath: path, expectedRevision: old.revision, raw: serializeLocalEnvironment(environment("Dirty local")), version: 1, dirty: true }]], selected: path, view: "summary" }));
+  const dirty = new LocalEnvironmentState(bridge.bridge, "owner", "project", dirtyStorage.cache);
+  await dirty.restore(); dirty.connected = true; await dirty.refresh(); await dirty.open(path);
+  expect(dirty.editor).toMatchObject({ expectedRevision: old.revision, dirty: true }); expect(dirty.config?.name).toBe("Dirty local");
+});
+
+test("beginEdit refreshes a clean connected draft and ignores a stale read", async () => {
+  const storage = memoryCache(), bridge = bridgeFixture(), path = "/owned/project/environment.toml", read = deferred<any>();
+  bridge.setCatalog([item(path)]); bridge.setQuery(async (_target, query) => query.type === "environment.read" ? read.promise : { type: "environments.list", environments: [item(path)] });
+  const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  await state.restore(); state.connected = true; await state.refresh(); await state.open(path);
+  const beginning = state.beginEdit();
+  await until(() => bridge.queries.some(entry => (entry.query as any).type === "environment.read"), "clean begin-edit read");
+  state.showSummary(); state.create();
+  read.resolve({ type: "environment.read", configPath: path, revision: revision("b"), raw: serializeLocalEnvironment(environment("Late")) });
+  await beginning;
+  await until(() => state.selected === "new", "new selection");
+  expect(state.selected).toBe("new"); expect(state.config?.name).toBe("");
+});
+
+test("a clean beginEdit read failure keeps the summary visible with an error", async () => {
+  const storage = memoryCache(), bridge = bridgeFixture(), path = "/owned/project/environment.toml", read = deferred<any>();
+  bridge.setCatalog([item(path)]); bridge.setQuery(async (_target, query) => query.type === "environment.read" ? read.promise : { type: "environments.list", environments: [item(path)] });
+  const state = new LocalEnvironmentState(bridge.bridge, "owner", "project", storage.cache);
+  await state.restore(); state.connected = true; await state.refresh(); await state.open(path); const beginning = state.beginEdit();
+  await until(() => bridge.queries.some(entry => (entry.query as any).type === "environment.read"), "environment read");
+  read.reject(new Error("read failed"));
+  await beginning;
+  await until(() => state.error === "read failed", "read failure");
+  expect(state.view).toBe("summary"); expect(state.error).toBe("read failed");
 });
 
 for (const uncertainCode of ["OUTCOME_UNKNOWN", "HOST_STOPPING", "COMMAND_ID_REUSED"] as const) {
