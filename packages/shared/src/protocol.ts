@@ -1,3 +1,4 @@
+export * from "./local-environments";
 import type { BrowserControlRequest, BrowserControlReceipt } from './browser-control';
 import type { NewChatExecution } from './new-chat';
 import type { WorktreeStartingState } from './workspace';
@@ -149,6 +150,7 @@ export interface HostState {
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
   newChatExecution?: { commandVersion: 4; worktrees: true };
+  localEnvironments?: { configuration: true };
   diagnostics?: { models?: string; preferences?: string };
 }
 

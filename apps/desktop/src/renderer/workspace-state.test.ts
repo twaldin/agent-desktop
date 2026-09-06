@@ -24,6 +24,7 @@ async function fixture() {
     workspaceQuery: async (_target: unknown, query: Parameters<ConstructorParameters<typeof WorkspaceState>[0]["workspaceQuery"]>[1], hostId?: string): Promise<WorkspaceQueryResult> => {
       owners.push(hostId!);
       switch (query.type) {
+        case "environments.list": throw new Error("Environment catalog is outside this file/Git fixture.");
         case "files.list": return { type: query.type, entries: await native.list(query.path) };
         case "file.stat": return { type: query.type, entry: await native.stat(query.path) };
         case "file.read": return { type: query.type, content: await native.readText(query.path) };
@@ -43,6 +44,7 @@ async function fixture() {
       try {
         let value: WorkspaceMutationResult;
         switch (action.type) {
+          case "environment.save": throw new Error("Environment editing is outside this file/Git fixture.");
           case "file.write": value = { type: action.type, result: await native.writeText(action.path, action) }; break;
           case "git.stage": value = { type: action.type, status: await native.stage(action.paths) }; break;
           case "git.unstage": value = { type: action.type, status: await native.unstage(action.paths, action.expectedRevision) }; break;

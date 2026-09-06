@@ -1,3 +1,4 @@
+import { LocalEnvironmentStore } from "./local-environments";
 import { join, resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "@agent-desktop/shared";
@@ -30,7 +31,7 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
   switch (query.type) {
     case "files.list": return { type: query.type, path: optionalText(query.path) };
     case "file.stat": case "file.read": return { type: query.type, path: text(query.path) };
-    case "git.status": case "git.branches": case "git.worktrees": return { type: query.type };
+    case "environments.list": case "git.status": case "git.branches": case "git.worktrees": return { type: query.type };
     case "git.diff": {
       if (query.context !== undefined && (!Number.isSafeInteger(query.context) || (query.context as number) < 0 || (query.context as number) > 1000)) throw new Error("Invalid diff context.");
       return { type: query.type, path: optionalText(query.path), staged: optionalBoolean(query.staged), context: query.context as number | undefined };
@@ -41,6 +42,11 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
 export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
   const action = object(value);
   switch (action.type) {
+    case "environment.save": {
+      if (typeof action.raw !== "string" || new TextEncoder().encode(action.raw).length > 1024 * 1024) throw new Error("Invalid environment config or config exceeds 1 MiB.");
+      if (action.expectedRevision !== null && (typeof action.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error("The exact environment revision is required.");
+      return { type: action.type, raw: action.raw, expectedRevision: action.expectedRevision, ...(action.configPath === null ? { configPath: null } : action.configPath === undefined ? {} : { configPath: text(action.configPath) }) };
+    }
     case "file.write": {
       if (typeof action.text !== "string" || action.text.length > 2 * 1024 * 1024) throw new Error("Invalid file contents or file too large.");
       if (action.expectedRevision !== null && (typeof action.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error("The exact file revision is required.");
@@ -81,6 +87,7 @@ export class HostWorkspaces {
   async query(target: WorkspaceTarget, query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
     const workspace = this.#resolve(target);
     switch (query.type) {
+      case "environments.list": return { type: query.type, environments: await new LocalEnvironmentStore(workspace.cwd).catalog() };
       case "files.list": return { type: query.type, entries: await workspace.list(query.path) };
       case "file.stat": return { type: query.type, entry: await workspace.stat(query.path) };
       case "file.read": return { type: query.type, content: await workspace.readText(query.path) };
@@ -93,6 +100,7 @@ export class HostWorkspaces {
   async mutate(target: WorkspaceTarget, action: WorkspaceMutation): Promise<WorkspaceMutationResult> {
     const workspace = this.#resolve(target);
     switch (action.type) {
+      case "environment.save": return { type: action.type, result: await new LocalEnvironmentStore(workspace.cwd).save(action) };
       case "file.write": return { type: action.type, result: await workspace.writeText(action.path, action) };
       case "git.stage": return { type: action.type, status: await workspace.stage(action.paths) };
       case "git.unstage": return { type: action.type, status: await workspace.unstage(action.paths, action.expectedRevision) };
