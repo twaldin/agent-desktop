@@ -137,6 +137,72 @@ describe("owning workspace files", () => {
 });
 
 describe("actual local Git operations", () => {
+  test("nested workspaces expose their canonical Git context and an explicitly root-scoped service", async () => {
+    const { cwd, worktreeRoot } = await repository();
+    const nested = join(cwd, "apps", "web");
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, "local.txt"), "nested only\n");
+    await writeFile(join(cwd, "large-root.txt"), "x".repeat(1025));
+    const service = new WorkspaceService(nested, { worktreeRoot, maxTextBytes: 1024, gitTimeoutMs: 10_000 });
+
+    expect(await service.gitWorkspaceContext()).toEqual({ gitRoot: await realpath(cwd), workspaceRelativePath: "apps/web" });
+    await expect(service.readText("../../tracked.txt")).rejects.toMatchObject({ code: "OUTSIDE_WORKSPACE" });
+    await expect(service.gitStatus()).rejects.toMatchObject({ code: "GIT_ROOT_OUTSIDE_WORKSPACE" });
+
+    const rootService = await service.gitRootService();
+    expect(rootService.cwd).toBe(await realpath(cwd));
+    expect(rootService.worktreeRoot).toBe(worktreeRoot);
+    expect(await text(rootService, "tracked.txt")).toMatchObject({ text: "first line\n" });
+    expect(await rootService.readText("large-root.txt")).toMatchObject({ kind: "too-large", maximumBytes: 1024 });
+    expect(await rootService.gitStatus()).toMatchObject({ branch: "main" });
+  });
+
+  test("Git workspace context handles repository roots, linked worktrees, and rejects non-repositories", async () => {
+    const { directory, cwd, worktreeRoot } = await repository();
+    const rootService = new WorkspaceService(cwd, { worktreeRoot });
+    expect(await rootService.gitWorkspaceContext()).toEqual({ gitRoot: await realpath(cwd), workspaceRelativePath: "" });
+    expect((await rootService.gitRootService()).cwd).toBe(await realpath(cwd));
+
+    const linked = join(directory, "linked");
+    git(cwd, "worktree", "add", "--detach", linked);
+    const linkedNested = join(linked, "packages", "api");
+    await mkdir(linkedNested, { recursive: true });
+    const linkedService = new WorkspaceService(linkedNested, { worktreeRoot });
+    expect(await linkedService.gitWorkspaceContext()).toEqual({ gitRoot: await realpath(linked), workspaceRelativePath: "packages/api" });
+    expect((await linkedService.gitRootService()).cwd).toBe(await realpath(linked));
+
+    const plain = join(directory, "plain");
+    await mkdir(plain);
+    const nonGit = new WorkspaceService(plain, { worktreeRoot });
+    await expect(nonGit.gitWorkspaceContext()).rejects.toMatchObject({ code: "GIT_FAILED" });
+    await expect(nonGit.gitRootService()).rejects.toMatchObject({ code: "GIT_FAILED" });
+
+    const redirected = join(directory, "redirected-git-directory");
+    await mkdir(redirected);
+    git(cwd, "config", "core.worktree", cwd);
+    await writeFile(join(redirected, ".git"), `gitdir: ${join(cwd, ".git")}\n`);
+    const escaped = join(directory, "selected-through-symlink");
+    await symlink(redirected, escaped);
+    const escapedService = new WorkspaceService(escaped, { worktreeRoot });
+    await expect(escapedService.gitWorkspaceContext()).rejects.toMatchObject({ code: "GIT_ROOT_OUTSIDE_WORKSPACE" });
+    await expect(escapedService.gitRootService()).rejects.toMatchObject({ code: "GIT_ROOT_OUTSIDE_WORKSPACE" });
+  });
+
+  test("Git context rejects an in-repository workspace replaced by a sibling symlink", async () => {
+    const { cwd, worktreeRoot } = await repository();
+    const selected = join(cwd, "packages", "selected"), sibling = join(cwd, "packages", "sibling"), displaced = join(cwd, "packages", "displaced");
+    await mkdir(selected, { recursive: true });
+    await mkdir(sibling);
+    const service = new WorkspaceService(selected, { worktreeRoot });
+    expect(await service.gitWorkspaceContext()).toMatchObject({ workspaceRelativePath: "packages/selected" });
+
+    await rename(selected, displaced);
+    await symlink("sibling", selected);
+    await expect(service.gitWorkspaceContext()).rejects.toMatchObject({ code: "PATH_CHANGED" });
+    await expect(service.gitRootService()).rejects.toMatchObject({ code: "PATH_CHANGED" });
+    await expect(service.gitStatus()).rejects.toMatchObject({ code: "PATH_CHANGED" });
+  });
+
   test("branch checkout uses the reviewed status and preserves compatible tracked and untracked edits", async () => {
     const { cwd, service } = await repository();
     git(cwd, "branch", "feature");

@@ -13,6 +13,11 @@ const execute = promisify(execFile);
 const editTails = new Map<string, Promise<void>>();
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
+export interface GitWorkspaceContext {
+  gitRoot: string;
+  workspaceRelativePath: string;
+}
+
 export class WorkspaceError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "WorkspaceError"; }
 }
@@ -44,10 +49,13 @@ export class WorkspaceService {
   readonly worktreeRoot?: string;
   private readonly maxTextBytes: number;
   private readonly gitTimeoutMs: number;
+  private readonly cwdIdentity: { dev: number; ino: number };
 
   constructor(cwd: string, options: { worktreeRoot?: string; maxTextBytes?: number; gitTimeoutMs?: number } = {}) {
     this.cwd = realpathSync(cwd);
-    if (!statSync(this.cwd).isDirectory()) throw new WorkspaceError("NOT_DIRECTORY", "The workspace must be an existing directory.");
+    const cwdMetadata = statSync(this.cwd);
+    if (!cwdMetadata.isDirectory()) throw new WorkspaceError("NOT_DIRECTORY", "The workspace must be an existing directory.");
+    this.cwdIdentity = { dev: cwdMetadata.dev, ino: cwdMetadata.ino };
     if (options.worktreeRoot && !isAbsolute(options.worktreeRoot)) throw new WorkspaceError("INVALID_WORKTREE_ROOT", "The host must provide an absolute managed worktree root.");
     this.worktreeRoot = options.worktreeRoot && resolve(options.worktreeRoot);
     this.maxTextBytes = options.maxTextBytes ?? 2 * 1024 * 1024;
@@ -190,8 +198,33 @@ export class WorkspaceService {
   }
 
   private async requireGitRoot(): Promise<void> {
-    const top = (await this.git(["rev-parse", "--show-toplevel"])).stdout.trimEnd();
-    if (await realpath(top) !== this.cwd) throw new WorkspaceError("GIT_ROOT_OUTSIDE_WORKSPACE", "Select the repository root before performing Git operations.");
+    if ((await this.gitWorkspaceContext()).gitRoot !== this.cwd) throw new WorkspaceError("GIT_ROOT_OUTSIDE_WORKSPACE", "Select the repository root before performing Git operations.");
+  }
+
+  /** Canonical repository ownership and the selected workspace's path within it. This does not broaden file access. */
+  async gitWorkspaceContext(): Promise<GitWorkspaceContext> {
+    const assertWorkspaceIdentity = async () => {
+      let current, canonical;
+      try { current = await lstat(this.cwd); canonical = await realpath(this.cwd); }
+      catch { throw new WorkspaceError("PATH_CHANGED", "The selected workspace changed identity. Reopen it before resolving Git context."); }
+      if (!current.isDirectory() || current.dev !== this.cwdIdentity.dev || current.ino !== this.cwdIdentity.ino || canonical !== this.cwd) {
+        throw new WorkspaceError("PATH_CHANGED", "The selected workspace changed identity. Reopen it before resolving Git context.");
+      }
+    };
+    await assertWorkspaceIdentity();
+    const top = (await this.git(["rev-parse", "--show-toplevel"])).stdout.replace(/\r?\n$/, "");
+    const gitRoot = await realpath(top);
+    await assertWorkspaceIdentity();
+    if (!(await stat(gitRoot)).isDirectory() || !within(gitRoot, this.cwd)) {
+      throw new WorkspaceError("GIT_ROOT_OUTSIDE_WORKSPACE", "The selected workspace resolves outside its Git repository root.");
+    }
+    return { gitRoot, workspaceRelativePath: relative(gitRoot, this.cwd) };
+  }
+
+  /** Explicitly enter repository-wide Git/worktree authority while retaining this service's host-owned limits. */
+  async gitRootService(): Promise<WorkspaceService> {
+    const { gitRoot } = await this.gitWorkspaceContext();
+    return new WorkspaceService(gitRoot, { worktreeRoot: this.worktreeRoot, maxTextBytes: this.maxTextBytes, gitTimeoutMs: this.gitTimeoutMs });
   }
 
   /** Content revision of HEAD and the index, independent of working-file edits. */

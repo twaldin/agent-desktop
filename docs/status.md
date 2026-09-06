@@ -2,7 +2,11 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
-## Frozen28 — packaged environment workflows ready for native verification
+## Current source29 — configuration parity and directory integration
+
+Source29 adds native/ancestor environment discovery, project cards, saved-summary/edit navigation, and primary Run catalog loading when the owning workspace connects. These changes have source and controlled component evidence, not installed native credit. The next integration separates repository, session and environment-script directories for nested projects; the new context/resolution foundation does not yet enable nested worktree creation. Persisted preparation/session bindings, configuration materialization and selection, terminal ownership, and subsequent native verification remain required. See [local environments](local-environments.md) for scoped checks and remaining work.
+
+## Frozen28 — scoped native verification delivered
 
 Release28 freezes `cf18cefc6fa3f16b3fd8b39552407a633d923816`: environment settings and revisioned choices, managed setup/recovery, live script output/cancellation, session-specific exports, configured native terminal actions and the system-dark welcome fix. It remains an intermediate release. Native discovery/import, worktree Git-key selection, action recency/shortcuts, Auto-fix, whole-worktree cancellation and matched appearance are still open.
 
@@ -10,7 +14,13 @@ The clean frozen suite passes699 tests with22 platform/runtime skips and no fail
 
 An actual packaged Home check creates an idle native OMP session after successful worktree setup, executes two explicit actions in one native terminal with restored session exports, verifies duplicate receipts, and cancels a separate running setup script. It sends zero provider prompts and preserves source HEAD/index/README/status. The initial fixture helper left a stale locator because its independent SIGTERM listener raced OMP's native exit; the production service already used the correct cleanup hook. Separate reproduction confirms this fixture-only cause. Corrected helper v2 passes the full check and removes its locator on exit. Original failed-cleanup runs remain preserved.
 
-The separate Work copy verifies488 recorded file hashes and the app signature. Its exact v2 host-only run measures local credential mode with zero stored credentials/origins, one idle seed and zero prompts, then exits with its locator removed. The authenticated verifier route received the exact v2 launcher and scope for one new visible run. No installed service was replaced; native UI verification is pending. Private artifacts, provenance, cleanup diagnosis, Work proofs and handoff are under `.data/release28-package/`. The source checkpoints below retain their earlier validation scope.
+The separate Work copy verifies488 recorded file hashes and the app signature. Its exact v2 host-only run measures local credential mode with zero stored credentials/origins, one idle seed and zero prompts, then exits with its locator removed. The authenticated verifier route received the exact v2 launcher and scope for one new visible run. No installed service was replaced. The subsequent native delivery is recorded below. Private artifacts, provenance, cleanup diagnosis, Work proofs and handoff are under `.data/release28-package/`. The source checkpoints below retain their earlier validation scope.
+
+## Independent Work28 native checkpoint
+
+The sole visible v2 run exercised setup details and one actual OMP README read, four explicit configured Runs across one project terminal and one session terminal, and one separate setup Cancel with zero Retry. Two Sends produced one delivered prompt; both worktrees and the original Git state were retained. Refresh and hide/show did not execute actions. The sealed independent bundle contains21 native PNG/AX pairs,90 files,89 SHA-256 records and11,642,683 bytes. Home re-verification matches every recorded hash and the checksum-manifest digest. The gallery is `.data/codex-screenshots-refresh-release28-2026-09-06/index.html`; through27 remains separately sealed.
+
+Two qualifications remain: primary Run appeared only after opening Actions, and a saved DONE line disappeared during a278.717-second interval containing terminal fit, prompt settling, refresh and hide/show. That interval is not an isolated resize experiment. Exact cursor coordinates and savedNormalScreen were not captured; the shell PID stayed the same. Source29's action-loading fix and local resize checks do not alter this frozen native result. Exact28 remains preserved without further native actions or queries.
 
 ## Source28 — configured actions run in the native terminal dock
 
