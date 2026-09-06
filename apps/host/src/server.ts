@@ -1,5 +1,7 @@
 import { hasNewChatIntent, requiresNewChatProtocol } from './new-chat-protocol';
 import { hasEnvironmentIntent, requiresEnvironmentProtocol } from './environment-protocol';
+import { WorktreeEnvironmentLifecycle } from './local-environments/lifecycle';
+import { EnvironmentSessions } from './environment-sessions';
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -47,6 +49,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string } = {}) {
   const dataDirectory = options.dataDirectory ?? getDataDirectory();
   const lease = acquireHostLease(dataDirectory);
+  const environmentAbort = new AbortController();
   let store!: HostStore;
   let runtime!: WorkerRuntime;
   let accounts: AccountsHttp | undefined;
@@ -71,7 +74,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   store = new HostStore(dataDirectory);
   const mutatingWorkspaces = new Set<string>();
   const within = (parent: string, path: string) => path === parent || path.startsWith(parent + sep);
-  const workspaces = new HostWorkspaces(store, dataDirectory, path => {
+  const reserveWorkspaceMutation = (path: string) => {
     if ([...mutatingWorkspaces].some(current => within(current, path) || within(path, current))) {
       throw new Error("This workspace is already being changed. Wait for it to finish before trying again.");
     }
@@ -83,7 +86,20 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     }
     mutatingWorkspaces.add(path);
     return () => { mutatingWorkspaces.delete(path); };
+  };
+  const workspaces = new HostWorkspaces(store, dataDirectory, reserveWorkspaceMutation, {
+    before: async path => {
+      const record = store.environmentPreparations.list().find(item => item.worktreePath === path && item.phase !== 'removed');
+      if (!record) return;
+      const result = await environmentLifecycle.cleanup(record.id, record.revision);
+      if (result.phase !== 'cleanup-succeeded') throw new Error('Environment cleanup failed. The worktree was preserved; inspect cleanup before explicitly retrying removal.');
+    },
+    after: path => {
+      const record = store.environmentPreparations.list().find(item => item.worktreePath === path && item.phase === 'cleanup-succeeded');
+      if (record) store.environmentPreparations.transition(record.id, record.revision, { type: 'removed' });
+    },
   });
+  const environmentLifecycle = new WorktreeEnvironmentLifecycle(store, workspaces, { signal: environmentAbort.signal });
   function assertWorkspaceAvailable(cwd: string): void {
     if ([...mutatingWorkspaces].some(path => within(path, cwd))) throw new Error("This workspace is being changed. Wait for it to finish before starting work.");
   }
@@ -111,6 +127,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const sessionTails = new Map<string, Promise<unknown>>();
   const executions = new Map<string, Promise<unknown>>();
   const runtimeErrors = new Map<string, string>();
+  const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, reserve: reserveWorkspaceMutation,
+    signal: environmentAbort.signal, onEvent: onRuntimeEvent,
+    onHandle: handle => { handles.set(handle.id, Promise.resolve(handle)); }, changed: () => publishState() });
   let models: ModelInfo[] = [];
   let modelsLoading = true;
   let modelsError: string | undefined;
@@ -354,7 +373,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (!pending) {
       const session = store.getSession(sessionId);
       if (!session) throw new Error("Session does not exist on this host.");
-      pending = runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) });
+      assertWorkspaceAvailable(session.cwd);
+      pending = runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) }, store.getSessionEnvironment(sessionId));
       handles.set(sessionId, pending);
       pending.catch(() => { if (handles.get(sessionId) === pending) handles.delete(sessionId); });
     }
@@ -415,6 +435,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const ok = (value?: Extract<CommandResult, { ok: true }>["value"], admission?: Extract<CommandResult, { ok: true }>["admission"]): CommandResult =>
       ({ ok: true, commandId: envelope.id, value, ...(admission ? { admission } : {}) });
     switch (command.type) {
+      case "session.environment.resume": return environmentSessions.resume(envelope.id, command.preparationId, command.expectedRevision);
       case "preferences.put": return ok({ type: command.type, preference: preferences!.put(command.change) });
       case "workspace.mutate": {
         try { return ok(await workspaces.mutate(command.target, command.action)); }
@@ -433,9 +454,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "session.create": {
         if (command.worktree && command.draft && store.getDraft(command.draft.id)?.environment !== undefined && command.environment === undefined)
           return fail(envelope.id, "ENVIRONMENT_PROTOCOL_REQUIRED", "Send the captured environment selection with this worktree draft. Its choices were preserved.");
-        // Do not accept environment effects until the resumable creation route is connected.
-        // Configuration/draft support is separate from the unadvertised execution capability.
-        if (command.environment !== undefined) return fail(envelope.id, "ENVIRONMENT_EXECUTION_UNAVAILABLE", "Environment execution is not available on this host yet. The draft and selection were preserved.");
+        if (command.environment !== undefined) return environmentSessions.create({ ...envelope, commandVersion: 5, command });
         const project = command.projectId ? store.getProject(command.projectId) : undefined;
         if (command.projectId && !project) throw new Error("The selected project is not on this host.");
         if (command.worktree && (!project || command.cwd !== undefined)) throw new Error("A worktree must belong to the selected project.");
@@ -570,9 +589,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try { result = await execute(envelope, commandVersion); }
       catch (error) { result = fail(envelope.id, error instanceof AttachmentRequestError || error instanceof AttachmentImageError ? error.code
         : error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN" ? "OUTCOME_UNKNOWN" : "COMMAND_FAILED", errorMessage(error)); }
-      store.finishCommand(envelope.id, hash, result);
+      const completed = store.finishCommand(envelope.id, hash, result);
       publishState();
-      return result;
+      // A handler can atomically commit its successful receipt with native binding.
+      // A later notification error cannot replace that already-durable outcome.
+      return completed.result!;
     });
     commands.set(envelope.id, pending);
     if (command.type !== "session.interrupt") sessionTails.set(key, pending);
@@ -690,6 +711,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
             return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
           }
         }
+        const preparationPath = /^\/v5\/environment-preparations\/([^/]+)$/.exec(url.pathname);
+        if (request.method === 'GET' && preparationPath) {
+          const record = store.environmentPreparations.get(decodeURIComponent(preparationPath[1]!));
+          if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
+          return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
+        }
         if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands"].includes(url.pathname)) {
           const value = await request.json();
           if (url.pathname !== "/v5/commands" && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
@@ -765,6 +792,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function stop(): Promise<void> {
     if (stopCall) return stopCall;
     stopping = true;
+    environmentAbort.abort();
     goalContinuations?.stop();
     questionDeliveries?.stop();
     clearInterval(networkTimer);
@@ -791,6 +819,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   }
   return { connection, store, snapshot, dispatch, stop };
   } catch (error) {
+    environmentAbort.abort();
     goalContinuations?.stop();
     questionDeliveries?.stop();
     clearInterval(networkTimer);

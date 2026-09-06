@@ -51,7 +51,7 @@ test('saved environment format survives conflicts, newer edits, consumption and 
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test('actual host refuses old writers and premature environment execution while preserving a revisioned draft', async () => {
+test('actual host refuses old writers and invalid environment creation while preserving a revisioned draft', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-environment-protocol-'));
   const source = join(root, 'source'), agentDirectory = join(root, 'agent'), dataDirectory = join(root, 'data');
   await mkdir(source); await mkdir(agentDirectory);
@@ -80,10 +80,10 @@ test('actual host refuses old writers and premature environment execution while 
       .toMatchObject({ ok: false, error: { code: 'ENVIRONMENT_PROTOCOL_REQUIRED' } });
     expect(await send({ id: 'old-consumer', command: { type: 'session.prompt', sessionId: 'does-not-exist', text: draft.text, draft: { id: draft.id, revision: 1 } } }, 4))
       .toMatchObject({ ok: false, error: { code: 'ENVIRONMENT_PROTOCOL_REQUIRED' } });
-    // This milestone has not connected the resumable route yet: no silent fallback to ordinary creation.
+    // A missing selected config must fail before Git/worker effects, without falling back.
     const create: CommandEnvelope = { id: 'create', commandVersion: 5, command: { type: 'session.create', projectId, worktree: { type: 'working-tree' },
       environment: config, draft: { id: draft.id, revision: 1 } } };
-    expect(await send(create)).toMatchObject({ ok: false, error: { code: 'ENVIRONMENT_EXECUTION_UNAVAILABLE' } });
+    expect(await send(create)).toMatchObject({ ok: false, error: { code: 'COMMAND_FAILED' } });
     expect(await readdir(source)).toEqual([]);
     await host.stop(); host = undefined; host = await start();
     expect(await send(save)).toEqual(result);

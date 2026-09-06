@@ -1,16 +1,10 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { parseLocalEnvironment, type ModelChoice, type OmpApprovalMode, type WorktreeStartingState } from "@agent-desktop/shared";
+import { parseLocalEnvironment, type LocalEnvironmentPreparationPhase, type LocalEnvironmentPreparationPublic, type LocalEnvironmentUncertainOperation, type ModelChoice, type OmpApprovalMode, type WorktreeStartingState } from "@agent-desktop/shared";
 import type { LocalEnvironmentEnvironmentDelta, LocalEnvironmentRunResult } from "./runner";
 
-export type LocalEnvironmentPreparationPhase =
-  | "validated" | "worktree-creating" | "worktree-created"
-  | "setup-running" | "setup-failed" | "setup-succeeded"
-  | "native-creating" | "session-created"
-  | "cleanup-running" | "cleanup-failed" | "cleanup-succeeded"
-  | "removed" | "unknown";
-export type LocalEnvironmentUncertainOperation = "worktree-create" | "setup" | "native-create" | "cleanup";
+export type { LocalEnvironmentPreparationPhase, LocalEnvironmentPreparationPublic, LocalEnvironmentUncertainOperation } from "@agent-desktop/shared";
 
 export interface LocalEnvironmentConfigSnapshot {
   configPath: string;
@@ -70,23 +64,6 @@ export type LocalEnvironmentPreparationTransition =
   | { type: "cleanup.failed"; result: LocalEnvironmentRunResult }
   | { type: "cleanup.succeeded"; result?: LocalEnvironmentRunResult }
   | { type: "removed" };
-
-export interface LocalEnvironmentPreparationPublic {
-  id: string;
-  revision: number;
-  hostId: string;
-  projectId: string;
-  worktreePath: string;
-  phase: LocalEnvironmentPreparationPhase;
-  uncertainOperation?: LocalEnvironmentUncertainOperation;
-  needsAttention: boolean;
-  environment: null | { configPath: string; revision: string; name: string };
-  setup?: Pick<StoredRunResult, "status" | "cancelReason" | "exitCode" | "signal" | "startedAt" | "finishedAt" | "outputTruncated">;
-  cleanup?: Pick<StoredRunResult, "status" | "cancelReason" | "exitCode" | "signal" | "startedAt" | "finishedAt" | "outputTruncated">;
-  sessionId?: string;
-  createdAt: number;
-  updatedAt: number;
-}
 
 type Row = { data: string };
 const revisionPattern = /^[a-f0-9]{64}$/;

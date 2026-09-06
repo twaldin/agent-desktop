@@ -344,13 +344,33 @@ export class HostStore {
 
   /** Resolve host-private setup state for one admitted native session. */
   getSessionEnvironment(sessionId: string): LocalEnvironmentWorkerEnvironment | undefined {
-    const preparation = this.environmentPreparations.list().find(record => record.sessionId === sessionId && record.phase === "session-created");
+    const preparation = this.environmentPreparations.list().find(record => record.sessionId === sessionId && record.phase !== "removed");
     if (!preparation?.environment) return undefined;
     return {
       environmentDelta: structuredClone(preparation.environmentDelta ?? null),
       sourceRoot: preparation.sourceRoot,
       worktreeRoot: preparation.worktreePath,
     };
+  }
+
+  /** Bind native identity, setup exports and the successful receipt in one durable commit. */
+  finishEnvironmentSessionCreation(
+    commandId: string, requestHash: string, session: SessionSummary,
+    preparation: { id: string; expectedRevision: number },
+  ): CommandResult {
+    return this.db.transaction(() => {
+      const prior = this.getCommand(commandId);
+      if (!prior || prior.requestHash !== requestHash) throw new Error("Environment creation command identity does not match.");
+      if (prior.state === 'done') return prior.result!;
+      const record = this.environmentPreparations.get(preparation.id);
+      if (!record || record.revision !== preparation.expectedRevision || record.phase !== 'native-creating'
+        || record.projectId !== session.projectId || record.hostId !== session.hostId || record.worktreePath !== session.cwd)
+        throw new Error("Native session differs from its captured environment preparation.");
+      const value = this.upsertSession(session);
+      const result: CommandResult = { ok: true, commandId, value };
+      this.finishCommandWithEnvironmentTransition(commandId, requestHash, result, { ...preparation, transition: { type: 'native-create.succeeded', sessionId: session.id } });
+      return result;
+    }).immediate();
   }
 
   get lastEventSequence(): number {

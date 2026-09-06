@@ -22,7 +22,10 @@ type RunOptions = Pick<LocalEnvironmentRunInput, "signal" | "onOutput" | "timeou
 export class WorktreeEnvironmentLifecycle {
   constructor(private store: HostStore, private workspaces: HostWorkspaces, private runOptions: RunOptions = {}) {}
 
-  async prepare(input: PrepareEnvironmentWorktree): Promise<LocalEnvironmentPreparation> {
+  async prepare(
+    input: PrepareEnvironmentWorktree,
+    onDestination?: (path: string) => void,
+  ): Promise<LocalEnvironmentPreparation> {
     const existing = this.store.environmentPreparations.get(input.commandId);
     if (existing) {
       if (existing.projectId !== input.projectId) throw new Error("Preparation belongs to a different project.");
@@ -39,12 +42,32 @@ export class WorktreeEnvironmentLifecycle {
     // Validate the configuration before creating even the managed parent directory.
     const name = `chat-${createHash("sha256").update(input.commandId).digest("hex")}`;
     const worktreePath = await this.workspaces.sessionWorktreeDestination(project.id, name);
+    onDestination?.(worktreePath);
     let record = this.store.createEnvironmentPreparation({ id: input.commandId, projectId: project.id, sourceRoot: project.path,
       worktreePath, startingState: input.startingState, draft: input.draft, model: input.model, approvalMode: input.approvalMode,
       environment: configuration });
-    record = this.store.environmentPreparations.transition(record.id, record.revision, { type: "worktree-create.started" });
+    return this.createWorktree(record);
+  }
+
+  /** Continue only a caller-authorized, current, known phase. Unknown effects are inspection-only. */
+  async continuePreparation(id: string, expectedRevision: number): Promise<LocalEnvironmentPreparation> {
+    const record = this.store.environmentPreparations.get(id);
+    if (!record || record.revision !== expectedRevision) throw new Error("The worktree preparation changed. Refresh before continuing.");
+    switch (record.phase) {
+      case "validated": return this.createWorktree(record);
+      case "worktree-created": return record.environment ? this.setup(record) : record;
+      case "setup-failed": return this.setup(record);
+      case "setup-succeeded": return record;
+      case "unknown": throw new Error("This preparation has an unknown outcome. Inspect it before choosing a recovery action.");
+      default: throw new Error(`Preparation cannot continue while it is ${record.phase}.`);
+    }
+  }
+
+  private async createWorktree(current: LocalEnvironmentPreparation): Promise<LocalEnvironmentPreparation> {
+    let record = this.store.environmentPreparations.transition(current.id, current.revision, { type: "worktree-create.started" });
     try {
-      const worktree = await this.workspaces.createSessionWorktree(project.id, name, record.startingState);
+      const name = `chat-${createHash("sha256").update(record.id).digest("hex")}`;
+      const worktree = await this.workspaces.createSessionWorktree(record.projectId, name, record.startingState);
       record = this.store.environmentPreparations.transition(record.id, record.revision, { type: "worktree-create.succeeded", worktreePath: worktree.path });
     } catch (error) {
       this.store.environmentPreparations.transition(record.id, record.revision, { type: "outcome.unknown" });

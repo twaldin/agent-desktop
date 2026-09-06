@@ -203,4 +203,37 @@ describe("HostStore local-environment persistence", () => {
     })).toEqual(committed);
     expect(store.environmentPreparations.get(record.id)?.revision).toBe(record.revision + 1);
   });
+
+  test("native session binding and successful receipt commit together; failed cleanup retains private exports", () => {
+    const path = root(), store = open(path);
+    let record = store.createEnvironmentPreparation(preparation(store, path));
+    record = transition(store, record, { type: 'worktree-create.started' });
+    record = transition(store, record, { type: 'worktree-create.succeeded', worktreePath: record.worktreePath });
+    record = transition(store, record, { type: 'setup.started' });
+    record = transition(store, record, { type: 'setup.succeeded', result: runResult('succeeded', true) });
+    record = transition(store, record, { type: 'native-create.started' });
+    const session = { id: 'native', hostId: store.host.id, projectId: record.projectId, cwd: record.worktreePath,
+      title: 'Fixture', status: 'idle' as const, model: null, sessionFile: join(path, 'native.jsonl'), createdAt: 1, updatedAt: 1, archived: false };
+    const target = { id: record.id, expectedRevision: record.revision };
+    store.claimCommand('admit-native', 'hash');
+    expect(() => store.finishEnvironmentSessionCreation('admit-native', 'wrong', session, target)).toThrow('identity');
+    expect(() => store.finishEnvironmentSessionCreation('admit-native', 'hash', { ...session, cwd: record.sourceRoot }, target)).toThrow('captured');
+    const db = inspect(path);
+    db.exec("CREATE TRIGGER reject_binding_receipt BEFORE UPDATE ON commands BEGIN SELECT RAISE(ABORT, 'binding receipt failure'); END");
+    expect(() => store.finishEnvironmentSessionCreation('admit-native', 'hash', session, target)).toThrow('binding receipt failure');
+    expect(store.listSessions()).toHaveLength(0);
+    expect(store.environmentPreparations.get(record.id)).toEqual(record);
+    expect(store.getCommand('admit-native')?.state).toBe('pending');
+    db.exec('DROP TRIGGER reject_binding_receipt');
+    const result = store.finishEnvironmentSessionCreation('admit-native', 'hash', session, target);
+    expect(result).toMatchObject({ ok: true, value: session });
+    expect(store.finishEnvironmentSessionCreation('admit-native', 'hash', { ...session, title: 'must not overwrite' }, target)).toEqual(result);
+    expect(store.getSession('native')?.title).toBe('Fixture');
+    const originalExports = store.getSessionEnvironment('native');
+    record = store.environmentPreparations.get(record.id)!;
+    record = transition(store, record, { type: 'cleanup.started' });
+    transition(store, record, { type: 'cleanup.failed', result: runResult('failed') });
+    expect(store.getSessionEnvironment('native')).toEqual(originalExports);
+    expect(originalExports?.environmentDelta?.set).toEqual({ CONTRACT_VALUE: 'private' });
+  });
 });

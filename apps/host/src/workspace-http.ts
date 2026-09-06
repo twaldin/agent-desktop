@@ -73,7 +73,8 @@ export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
 }
 
 export class HostWorkspaces {
-  constructor(private store: HostStore, private dataDirectory: string, private reserveMutation: (path: string) => () => void) {}
+  constructor(private store: HostStore, private dataDirectory: string, private reserveMutation: (path: string) => () => void,
+    private removal?: { before(path: string): Promise<void>; after(path: string): void }) {}
   #resolve(target: WorkspaceTarget): WorkspaceService {
     const session = "sessionId" in target ? this.store.getSession(target.sessionId) : undefined;
     const projectId = "projectId" in target ? target.projectId : session?.projectId;
@@ -123,7 +124,14 @@ export class HostWorkspaces {
         const path = await realpath(candidate);
         if (!path.startsWith(root + sep)) throw new Error("Only a managed worktree can be removed.");
         const release = this.reserveMutation(path);
-        try { await workspace.removeWorktree(action.path); return { type: action.type }; }
+        try {
+          const registered = (await workspace.worktrees()).find(tree => tree.path === path && tree.managed);
+          if (!registered || registered.locked) throw new Error("Only an unlocked registered managed worktree can be removed.");
+          await this.removal?.before(path);
+          await workspace.removeWorktree(action.path);
+          this.removal?.after(path);
+          return { type: action.type };
+        }
         finally { release(); }
       }
     }
