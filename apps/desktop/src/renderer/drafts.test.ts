@@ -8,6 +8,24 @@ function cache(): DraftCache { const values = new Map<string, string>(); return 
 function saver(calls: CommandEnvelope[]) { return async (envelope: CommandEnvelope): Promise<CommandResult> => { calls.push(envelope); if (envelope.command.type !== "draft.put") throw new Error("Unexpected command"); return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: 2 } }; }; }
 const session: SessionSummary = { id: "session-1", hostId: "host", projectId: "project-1", cwd: "/project", title: "New conversation", status: "idle", sessionFile: "/session.jsonl", model: null, createdAt: 1, updatedAt: 1, archived: false };
 
+test('execution selections require the matching consumption receipt and preserve unrelated clears as conflicts', async () => {
+  const controller = new DraftController(saver([]), 'host');
+  try {
+    const original = draft({ execution: { type: 'worktree', startingState: { type: 'branch', branchName: 'main' } } });
+    controller.ingest(original); controller.setConnected(true);
+    const submitted = await controller.prepareSubmission(original.id);
+    controller.beginPendingSubmission(submitted, 'accepted-command');
+    controller.finishSubmission(original.id, submitted, true, false, 'accepted-command');
+    expect(controller.get(original.id).draft.text).toBe(original.text);
+    await expect(controller.prepareSubmission(original.id)).rejects.toThrow('confirm consumption');
+    controller.ingest({ ...original, revision: 2, text: '' });
+    expect(controller.get(original.id)).toMatchObject({ status: 'conflict', draft: { text: original.text, execution: original.execution } });
+    controller.ingest({ ...original, revision: 2, text: '', lastConsumption: { commandId: 'accepted-command', submittedRevision: 1 } });
+    expect(controller.get(original.id)).toMatchObject({ status: 'saved', draft: { text: '', execution: original.execution, revision: 2 } });
+    expect(() => controller.update(original.id, { execution: undefined })).toThrow('Local explicitly');
+  } finally { controller.dispose(); }
+});
+
 describe("revisioned draft persistence", () => {
   test("own save echo does not conflict with newer local typing", async () => {
     let acknowledge!: (result: CommandResult) => void;

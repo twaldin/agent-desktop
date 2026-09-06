@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "@agent-desktop/shared";
 import type { HostStore } from "./store";
 import { WorkspaceService } from "./workspace";
+import type { WorktreeStartingState, GitWorktree } from '@agent-desktop/shared';
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid workspace request.");
@@ -73,6 +74,9 @@ export class HostWorkspaces {
     const cwd = session?.cwd ?? project?.path;
     if (!cwd) throw new Error("The workspace owner does not exist on this host.");
     return new WorkspaceService(cwd, { worktreeRoot: join(this.dataDirectory, "worktrees", project?.id ?? session!.id) });
+  }
+  createSessionWorktree(projectId: string, path: string, startingState: WorktreeStartingState): Promise<GitWorktree> {
+    return this.#resolve({ projectId }).createSessionWorktree(path, startingState);
   }
   async query(target: WorkspaceTarget, query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
     const workspace = this.#resolve(target);

@@ -1,3 +1,4 @@
+import { sameNewChatExecution } from "../../../../packages/shared/src/new-chat";
 import type { CommandEnvelope, CommandResult, Draft } from "../../../../packages/shared/src/protocol";
 import { detachedAnswerDraft, parseDetachedQuestionAnswers, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { captureDraft, sameDraftContent, type DraftCache } from "./drafts";
@@ -25,6 +26,13 @@ export class SubmissionController {
         const item = value as PendingSubmission;
         if (item?.draft?.id === id && typeof item.draft.text === "string" && ["prompt", "steer", "question"].includes(item.mode) && (!item.create || item.create.command.type === "session.create") && (!item.send || ["session.prompt", "session.steer", "session.question.answer"].includes(item.send.command.type))) {
           const captured = captureDraft(item.draft, hostId);
+          if (item.create?.command.type === 'session.create' && (item.create.command.projectId !== captured.projectId || item.create.command.cwd !== undefined)) throw new Error("Pending creation belongs to a different project.");
+          if (item.create?.command.type === 'session.create' && (item.create.command.model?.id !== captured.model?.id
+            || item.create.command.model?.provider !== captured.model?.provider || item.create.command.approvalMode !== captured.approvalMode)) throw new Error('Pending creation differs from its captured model or permissions.');
+          if (item.send && 'sessionId' in item.send.command && item.send.command.sessionId !== item.sessionId) throw new Error("Pending input belongs to a different session.");
+          if (captured.execution !== undefined && [item.create, item.send].some(envelope => envelope && envelope.commandVersion !== 4)) throw new Error("Pending worktree choices require their original command protocol.");
+          if (item.create?.command.type === 'session.create' && !sameNewChatExecution(
+            item.create.command.worktree ? { type: 'worktree', startingState: item.create.command.worktree } : captured.execution === undefined ? undefined : { type: 'local' }, captured.execution)) throw new Error("Pending worktree creation differs from its captured draft.");
           if (item.send && (item.send.command.type === "session.prompt" || item.send.command.type === "session.steer")) {
             const command = item.send.command;
             if (!sameDraftContent(captured, captureDraft({ ...captured, attachments: command.attachments }, hostId))
@@ -86,7 +94,8 @@ export class SubmissionController {
       this.pending[snapshot.id] = item;
     }
     if (!item.sessionId) {
-      item.create ??= { id: crypto.randomUUID(), command: { type: "session.create", projectId: item.draft.projectId, model: item.draft.model ?? undefined, approvalMode: item.draft.approvalMode } };
+      item.create ??= { id: crypto.randomUUID(), ...(item.draft.execution !== undefined ? { commandVersion: 4 as const } : {}), command: { type: "session.create", projectId: item.draft.projectId, model: item.draft.model ?? undefined, approvalMode: item.draft.approvalMode,
+        ...(item.draft.execution?.type === 'worktree' ? { worktree: structuredClone(item.draft.execution.startingState) } : {}) } };
       this.save();
       const value = await this.deliver(item, "create");
       if (!value || !("sessionFile" in value)) { item.uncertain = true; this.save(); throw new Error("The host did not return the created session. Retry the pending submission to check the original command."); }
@@ -94,7 +103,7 @@ export class SubmissionController {
     }
     const saved = item.draft;
     const attachments = saved.attachments !== undefined ? { attachments: structuredClone(saved.attachments) } : {};
-    item.send ??= { id: crypto.randomUUID(), command: item.mode === "steer"
+    item.send ??= { id: crypto.randomUUID(), ...(saved.execution !== undefined ? { commandVersion: 4 as const } : {}), command: item.mode === "steer"
       ? { type: "session.steer", sessionId: item.sessionId, text: saved.text, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } }
       : { type: "session.prompt", sessionId: item.sessionId, text: saved.text, model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } } };
     this.save();

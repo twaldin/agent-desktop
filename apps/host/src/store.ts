@@ -15,6 +15,8 @@ import type { StoredPreferencesState } from "./preferences/store";
 import { approvalMode, hasApprovalIntent, validateCommandApproval } from "./approval";
 import { parseImageAttachments } from "../../../packages/shared/src/attachments";
 import { detachedAnswerDraft, type DetachedQuestionSnapshot } from '../../../packages/shared/src/detached-questions';
+import { parseNewChatExecution } from '../../../packages/shared/src/new-chat';
+import { hasNewChatIntent } from './new-chat-protocol';
 
 export type { DraftInput } from "../../../packages/shared/src/protocol";
 import type { DraftInput } from "../../../packages/shared/src/protocol";
@@ -64,7 +66,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 3) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 4) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -188,11 +190,14 @@ export class HostStore {
     if ("lastConsumption" in input) throw new Error("Draft consumption receipts are owned by the host.");
     if (input.attachments !== undefined) input = { ...input, attachments: parseImageAttachments(input.attachments, this.host.id) };
     if (input.approvalMode !== undefined) approvalMode(input.approvalMode);
+    if (input.execution !== undefined) input = { ...input, execution: parseNewChatExecution(input.execution, input.projectId) };
     return this.db.transaction((): DraftWriteResult => {
       const currentDraft = this.getDraft(input.id);
+      if (currentDraft?.execution !== undefined && input.execution === undefined) throw new Error('This draft requires the new-chat execution protocol; its choices were preserved.');
       if (currentDraft?.attachments !== undefined && input.attachments === undefined) throw new Error("This draft requires the attachment command protocol; its content was preserved.");
       if (input.approvalMode !== undefined) this.requirePermissionVersion();
       if (input.attachments !== undefined) this.requireVersion(3);
+      if (input.execution !== undefined) this.requireVersion(4);
       if ((currentDraft?.revision ?? 0) !== expectedRevision) {
         const conflict: DraftConflict = {
           id: crypto.randomUUID(), draftId: input.id, attempted: input, expectedRevision,
@@ -215,9 +220,11 @@ export class HostStore {
     return this.db.transaction(() => {
       const current = this.getDraft(submitted.id);
       if (!current || current.revision !== submitted.revision) return undefined;
-      if (current.attachments !== undefined && !commandId) throw new Error("Image draft consumption requires its accepted command identity.");
+      const needsReceipt = current.attachments !== undefined || current.execution !== undefined;
+      if (needsReceipt && !commandId) throw new Error("Draft consumption requires its accepted command identity.");
       const cleared: Draft = { ...current, text: "", revision: current.revision + 1, updatedAt: Date.now(),
-        ...(current.attachments !== undefined ? { attachments: [], lastConsumption: { commandId: commandId!, submittedRevision: submitted.revision } } : {}) };
+        ...(current.attachments !== undefined ? { attachments: [] } : {}),
+        ...(needsReceipt ? { lastConsumption: { commandId: commandId!, submittedRevision: submitted.revision } } : {}) };
       this.db.query("UPDATE drafts SET data = ? WHERE id = ?").run(JSON.stringify(cleared), current.id);
       return cleared;
     }).immediate();
@@ -250,6 +257,7 @@ export class HostStore {
       if (existing) return { kind: existing.requestHash === requestHash ? existing.state : "conflict", record: existing };
       if (command && hasApprovalIntent(command)) this.requirePermissionVersion();
       if (attachments !== undefined) this.requireVersion(3);
+      if (command && hasNewChatIntent(command)) this.requireVersion(4);
       const now = Date.now();
       const record: CommandRecord = {
         id, requestHash, ...(command === undefined ? {} : { command }),
@@ -331,9 +339,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3): void {
+  private requireVersion(minimum: 2 | 3 | 4): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 3) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 4) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

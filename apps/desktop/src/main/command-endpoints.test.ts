@@ -3,6 +3,28 @@ import type { CommandEnvelope } from "@agent-desktop/shared";
 import { commandEndpoint, requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { HostRequestError, requestHost } from "./host-transport";
 
+test('an older host cannot silently discard worktree choices or consume their draft through a fallback', async () => {
+  const paths: string[] = [];
+  const old = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+    const path = new URL(request.url).pathname; paths.push(path);
+    return path === '/v4/commands' ? Response.json({ error: 'Not found' }, { status: 404 }) : Response.json({ ok: true });
+  } });
+  const envelopes: CommandEnvelope[] = [
+    { id: 'worktree', command: { type: 'session.create', projectId: 'p', worktree: { type: 'working-tree' } } },
+    { id: 'local-again', command: { type: 'draft.put', expectedRevision: 2, draft: { id: 'd', text: 'keep', projectId: 'p', model: null, execution: { type: 'local' }, attachments: [] } } },
+    { id: 'consume', commandVersion: 4, command: { type: 'session.prompt', sessionId: 's', text: 'keep', draft: { id: 'd', revision: 3 } } },
+  ];
+  try {
+    for (const envelope of envelopes) {
+      expect(await requestVersionedCommand((path, body) => requestHost({ origin: old.url.origin, hostId: 'old' }, path, body), envelope))
+        .toMatchObject({ ok: false, error: { code: 'NEW_CHAT_PROTOCOL_UNSUPPORTED' } });
+      const lost = new Error('Connection lost after creation');
+      await expect(requestVersionedCommand(async () => { throw lost; }, envelope)).rejects.toBe(lost);
+    }
+    expect(paths).toEqual(['/v4/commands', '/v4/commands', '/v4/commands']);
+  } finally { old.stop(true); }
+});
+
 test("sticky image manifests require v3 even when empty and never fall back after an old host or uncertain delivery", async () => {
   const envelopes: CommandEnvelope[] = [
     { id: "draft", command: { type: "draft.put", expectedRevision: 1, draft: { id: "d", projectId: null, text: "kept", model: null, attachments: [] } } },

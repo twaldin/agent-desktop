@@ -442,4 +442,17 @@ describe("actual local Git operations", () => {
     await service.removeWorktree("detached");
     expect(git(cwd, "show-ref", "--verify", "refs/heads/preserved-detached")).toContain("refs/heads/preserved-detached");
   });
+
+  test('a native checkout hook failure preserves the created session worktree and reports an uncertain outcome', async () => {
+    const { cwd, directory, worktreeRoot, service } = await repository();
+    await writeFile(join(directory, 'no-hooks', 'post-checkout'), '#!/bin/sh\nexit 17\n', { mode: 0o755 });
+    await expect(service.createSessionWorktree('hook-failed', { type: 'branch', branchName: 'main' })).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN' });
+    const target = join(worktreeRoot, 'hook-failed');
+    expect(await readFile(join(target, 'tracked.txt'), 'utf8')).toBe('first line\n');
+    expect(git(target, 'rev-parse', 'HEAD')).toBe(git(cwd, 'rev-parse', 'HEAD'));
+    const canonicalTarget = await realpath(target);
+    expect((await service.worktrees()).filter(tree => tree.path === canonicalTarget)).toHaveLength(1);
+    await expect(service.createSessionWorktree('hook-failed', { type: 'working-tree' })).rejects.toMatchObject({ code: 'WORKTREE_EXISTS' });
+    expect(await readFile(join(target, 'tracked.txt'), 'utf8')).toBe('first line\n');
+  });
 });

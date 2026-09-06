@@ -475,10 +475,10 @@ export class WorkspaceService {
         } finally { await rm(temporary, { recursive: true, force: true }); }
       }
 
-      let effectPossible = false;
       try {
+        // Once dispatched, a timeout or missing directory cannot prove that Git
+        // made no changes. Preserve the target and the command identity on error.
         await this.git(["worktree", "add", "--detach", "--", target, commit]);
-        effectPossible = true;
         if (indexTree && workingTree) {
           await this.git(["read-tree", "--reset", "-u", workingTree], { cwd: target });
           await this.git(["read-tree", "--reset", indexTree], { cwd: target });
@@ -497,12 +497,7 @@ export class WorkspaceService {
         } else if ((await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: target })).stdout) throw new Error("The branch worktree was not created cleanly.");
         return created;
       } catch (error) {
-        if (!effectPossible) {
-          const observed = (await this.worktrees().catch(() => [])).find(tree => tree.path === target);
-          effectPossible = Boolean(observed || await lstat(target).catch(() => undefined));
-        }
-        if (effectPossible) throw new WorkspaceError("OUTCOME_UNKNOWN", `The session worktree may have been created at ${target}. Inspect it before retrying. ${error instanceof Error ? error.message : String(error)}`);
-        throw error;
+        throw new WorkspaceError("OUTCOME_UNKNOWN", `The session worktree may have been created at ${target}. Inspect it before retrying. ${error instanceof Error ? error.message : String(error)}`);
       }
     });
   }

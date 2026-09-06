@@ -1,4 +1,4 @@
-import { parseImageAttachments, sameImageAttachments, type CommandEnvelope, type CommandResult, type Draft, type DraftInput, type ModelChoice } from "../../../../packages/shared/src/protocol";
+import { parseImageAttachments, sameImageAttachments, parseNewChatExecution, sameNewChatExecution, type CommandEnvelope, type CommandResult, type Draft, type DraftInput, type ModelChoice } from "../../../../packages/shared/src/protocol";
 
 export type DraftStatus = "saved" | "unsaved" | "saving" | "offline" | "conflict" | "error";
 export interface DraftView {
@@ -24,25 +24,28 @@ export interface DraftCache {
   write(key: string, value: string): void;
 }
 const equalModel = (a: ModelChoice | null, b: ModelChoice | null) => a?.id === b?.id && a?.provider === b?.provider;
-export const sameDraftContent = (a: Draft, b: Draft) => a.text === b.text && a.projectId === b.projectId && equalModel(a.model, b.model) && a.thinkingLevel === b.thinkingLevel && a.approvalMode === b.approvalMode && sameImageAttachments(a.attachments, b.attachments);
+export const sameDraftContent = (a: Draft, b: Draft) => a.text === b.text && a.projectId === b.projectId && equalModel(a.model, b.model) && a.thinkingLevel === b.thinkingLevel && a.approvalMode === b.approvalMode && sameNewChatExecution(a.execution, b.execution) && sameImageAttachments(a.attachments, b.attachments);
 export const hasDraftContent = (draft: Pick<Draft, "text" | "attachments">) => Boolean(draft.text.trim() || draft.attachments?.length);
 /** Copy nested mutable input and preserve the distinction between legacy and image-aware empty drafts. */
 export function captureDraft(draft: Draft, hostId?: string): Draft {
   return { ...draft, model: draft.model ? { ...draft.model } : null,
+    ...(draft.execution !== undefined ? { execution: parseNewChatExecution(draft.execution, draft.projectId) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments, hostId) } : {}),
     ...(draft.lastConsumption ? { lastConsumption: { commandId: draft.lastConsumption.commandId, submittedRevision: draft.lastConsumption.submittedRevision } } : {}) };
 }
 function editableDraft(draft: Draft): DraftInput {
   return { id: draft.id, text: draft.text, projectId: draft.projectId, model: draft.model ? { ...draft.model } : null,
     thinkingLevel: draft.thinkingLevel, approvalMode: draft.approvalMode,
+    ...(draft.execution !== undefined ? { execution: parseNewChatExecution(draft.execution, draft.projectId) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments) } : {}) };
 }
+const needsReceipt = (draft?: Draft) => draft !== undefined && (draft.attachments !== undefined || draft.execution !== undefined);
 function directConsumption(remote: Draft, submitted: SubmissionCorrelation) {
-  if (submitted.draft.attachments === undefined) return remote.revision > submitted.draft.revision && remote.text === "" && remote.attachments === undefined;
+  if (!needsReceipt(submitted.draft)) return remote.revision > submitted.draft.revision && remote.text === "" && remote.attachments === undefined;
   // This marker is retained by later saves. Those later revisions require ordinary conflict handling.
   return Boolean(submitted.commandId && remote.lastConsumption?.commandId === submitted.commandId
     && remote.lastConsumption.submittedRevision === submitted.draft.revision && remote.revision === submitted.draft.revision + 1
-    && remote.text === "" && remote.attachments?.length === 0);
+    && remote.text === "" && (submitted.draft.attachments === undefined ? remote.attachments === undefined : remote.attachments?.length === 0));
 }
 
 /** Owner revisions are authoritative; local changes remain recoverable until acknowledged. */
@@ -111,8 +114,8 @@ export class DraftController {
       entry.consuming = undefined;
       this.publish(); if (entry.dirty && !entry.sending) this.schedule(remote.id); return;
     }
-    if (entry.base.attachments !== undefined && remote.attachments === undefined) {
-      entry.view = { ...entry.view, status: "conflict", conflict: remote, error: "The host draft is missing its attachment format. Local images were preserved." };
+    if (entry.base.attachments !== undefined && remote.attachments === undefined || entry.base.execution !== undefined && remote.execution === undefined) {
+      entry.view = { ...entry.view, status: "conflict", conflict: remote, error: "The host draft is missing saved image or execution information. Local content and choices were preserved." };
       this.publish(); return;
     }
     if (entry.pendingDraft && sameDraftContent(remote, entry.pendingDraft)) {
@@ -120,7 +123,7 @@ export class DraftController {
       if (entry.consuming && remote.revision > entry.consuming.draft.revision) entry.consuming = undefined;
       this.publish(); return;
     }
-    if ((entry.dirty || submitted?.draft.attachments !== undefined) && remote.revision > entry.base.revision && !sameDraftContent(remote, entry.view.draft)) {
+    if ((entry.dirty || needsReceipt(submitted?.draft)) && remote.revision > entry.base.revision && !sameDraftContent(remote, entry.view.draft)) {
       entry.view = { ...entry.view, status: "conflict", conflict: remote, error: undefined };
       this.publish(); return;
     }
@@ -132,9 +135,10 @@ export class DraftController {
       this.publish();
     }
   }
-  update(id: string, patch: Partial<Pick<Draft, "text" | "projectId" | "model" | "thinkingLevel" | "approvalMode" | "attachments">>) {
+  update(id: string, patch: Partial<Pick<Draft, "text" | "projectId" | "model" | "thinkingLevel" | "approvalMode" | "attachments" | "execution">>) {
     this.get(id); const entry = this.entries.get(id)!;
     if (entry.view.draft.attachments !== undefined && "attachments" in patch && patch.attachments === undefined) throw new Error("An image-aware draft must retain its attachment format. Remove images with an empty array.");
+    if (entry.view.draft.execution !== undefined && "execution" in patch && patch.execution === undefined) throw new Error("Select Local explicitly to clear a worktree choice.");
     const next = captureDraft({ ...entry.view.draft, ...patch }, this.hostId);
     entry.version += 1; entry.dirty = true;
     entry.view = { ...entry.view, draft: next, error: undefined, status: entry.view.conflict ? "conflict" : this.connected ? "unsaved" : "offline" };
@@ -186,7 +190,7 @@ export class DraftController {
   }
   async prepareSubmission(id: string): Promise<Draft> {
     this.get(id); const entry = this.entries.get(id)!;
-    if (entry.consuming?.draft.attachments !== undefined) throw new Error("Waiting for the host to confirm consumption of the pending image-aware draft.");
+    if (needsReceipt(entry.consuming?.draft)) throw new Error("Waiting for the host to confirm consumption of the previous draft.");
     // Capture the click/keypress, not later typing that arrives while disk/network saves finish.
     const captured = { draft: captureDraft(entry.view.draft, this.hostId), version: entry.version };
     entry.sending = { draft: captured.draft };
@@ -205,7 +209,7 @@ export class DraftController {
     const correlation = { draft: captureDraft(submitted, this.hostId), commandId: commandId ?? entry.sending?.commandId ?? entry.consuming?.commandId };
     entry.sending = undefined;
     entry.consuming = (accepted || uncertain) && entry.base.revision <= submitted.revision ? correlation : undefined;
-    if (accepted && submitted.attachments === undefined && sameDraftContent(entry.view.draft, submitted)) {
+    if (accepted && !needsReceipt(submitted) && sameDraftContent(entry.view.draft, submitted)) {
       // The host owns revision increments and consumes the supplied revision.
       // Clear locally now, then reconcile the authoritative state event.
       entry.view = { draft: { ...entry.view.draft, text: "" }, status: "saved" }; entry.dirty = false;
@@ -219,8 +223,10 @@ export class DraftController {
     entry.base = remote;
     entry.consuming = undefined;
     if (choice === "remote") {
-      const retainFormat = entry.view.draft.attachments !== undefined && remote.attachments === undefined;
-      entry.view = { draft: retainFormat ? { ...remote, attachments: [] } : remote, status: retainFormat ? this.connected ? "unsaved" : "offline" : "saved" }; entry.dirty = retainFormat;
+      const retainImages = entry.view.draft.attachments !== undefined && remote.attachments === undefined;
+      const retainExecution = entry.view.draft.execution !== undefined && remote.execution === undefined;
+      const retainFormat = retainImages || retainExecution;
+      entry.view = { draft: { ...remote, ...(retainImages ? { attachments: [] } : {}), ...(retainExecution ? { execution: { type: 'local' as const } } : {}) }, status: retainFormat ? this.connected ? "unsaved" : "offline" : "saved" }; entry.dirty = retainFormat;
     }
     else { entry.view = { draft: { ...entry.view.draft, revision: remote.revision }, status: this.connected ? "unsaved" : "offline" }; entry.dirty = true; entry.version += 1; }
     this.publish(); if (entry.dirty) this.schedule(id);

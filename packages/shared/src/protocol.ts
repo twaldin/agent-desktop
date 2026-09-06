@@ -1,4 +1,7 @@
 import type { BrowserControlRequest, BrowserControlReceipt } from './browser-control';
+import type { NewChatExecution } from './new-chat';
+import type { WorktreeStartingState } from './workspace';
+export * from './new-chat';
 import type { BrowserCreateRequest, BrowserCreateReceipt } from "./browser-create";
 import type { AccountInfo, LoginResponse, LoginSnapshot, ProviderCatalog, SessionAccountList } from "./accounts";
 import type { OmpInteraction, OmpInteractionResponse } from "./interactions";
@@ -96,6 +99,7 @@ export interface Draft {
   thinkingLevel?: string;
   /** Absent follows the native default/new session or existing session policy. */
   approvalMode?: OmpApprovalMode;
+  execution?: NewChatExecution;
   /** Presence persists after clearing the last chip; older command writers must refuse. */
   attachments?: ImageAttachmentRef[];
   /** Owning-host receipt, never editable draft input. */
@@ -144,6 +148,7 @@ export interface HostState {
   lastEventSequence: number;
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
+  newChatExecution?: { commandVersion: 4; worktrees: true };
   diagnostics?: { models?: string; preferences?: string };
 }
 
@@ -151,7 +156,7 @@ export type HostCommand =
   | { type: "preferences.put"; change: PreferenceChange }
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
   | { type: "project.add"; path: string; name?: string }
-  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode }
+  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState }
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
@@ -163,6 +168,8 @@ export type HostCommand =
 export interface CommandEnvelope {
   id: string;
   command: HostCommand;
+  /** Required for consumption of a draft carrying new-chat execution state. */
+  commandVersion?: 4;
 }
 
 export interface ImageAdmission {

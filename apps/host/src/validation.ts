@@ -3,7 +3,7 @@ import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
 import { parsePreferenceChange } from "../../../packages/shared/src/preferences";
 import { approvalMode } from "./approval";
-import { parseImageAttachments, parseDetachedQuestionAnswers } from "@agent-desktop/shared";
+import { parseImageAttachments, parseDetachedQuestionAnswers, parseNewChatExecution, parseWorktreeStartingState } from "@agent-desktop/shared";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object.");
@@ -35,9 +35,15 @@ function directory(value: unknown): string {
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
 export function parseCommandEnvelope(value: unknown): CommandEnvelope {
   const envelope = object(value);
+  if (envelope.commandVersion !== undefined && envelope.commandVersion !== 4) throw new Error('Unsupported command version.');
+  return { ...parseCommandBody(value), ...(envelope.commandVersion === 4 ? { commandVersion: 4 as const } : {}) };
+}
+function parseCommandBody(value: unknown): CommandEnvelope {
+  const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
   const type = text(input.type, "command type");
+  if (Object.hasOwn(input, 'worktree') && type !== 'session.create') throw new Error('Only new conversations can select a worktree.');
   if (Object.hasOwn(input, "attachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept image attachments.");
   const attachments = Object.hasOwn(input, "attachments") ? parseImageAttachments(input.attachments) : undefined;
   const promptText = () => attachments?.length && input.text === "" ? "" : text(input.text, "prompt", attachments?.length ? 500_000 : 4_000_000);
@@ -49,6 +55,10 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
       projectId: input.projectId === null ? null : text(input.projectId, "project ID"),
       cwd: input.cwd === undefined ? undefined : directory(input.cwd),
       model: input.model === undefined ? undefined : model(input.model),
+      ...(input.worktree === undefined ? {} : { worktree: (() => {
+        if (!input.projectId || input.cwd !== undefined) throw new Error('A worktree must belong to the selected project.');
+        return parseWorktreeStartingState(input.worktree);
+      })() }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
     case "session.prompt": return { id, command: { type,
@@ -84,6 +94,7 @@ export function parseCommandEnvelope(value: unknown): CommandEnvelope {
         model: draft.model === null ? null : model(draft.model),
         thinkingLevel: draft.thinkingLevel === undefined ? undefined : text(draft.thinkingLevel, "thinking level"),
         ...(draft.approvalMode === undefined ? {} : { approvalMode: approvalMode(draft.approvalMode) }),
+        ...(draft.execution === undefined ? {} : { execution: parseNewChatExecution(draft.execution, draft.projectId === null ? null : text(draft.projectId, 'project ID')) }),
       } } };
     }
     default: throw new Error(`Unsupported command: ${type}`);

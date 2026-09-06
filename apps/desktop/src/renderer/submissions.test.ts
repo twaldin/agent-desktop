@@ -19,6 +19,36 @@ function cache(): DraftCache {
 const hash = (envelope: CommandEnvelope) => createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
 const unknown = (envelope: CommandEnvelope): CommandResult => ({ ok: false, commandId: envelope.id, error: { code: "OUTCOME_UNKNOWN", message: "This command was pending when the service stopped." } });
 
+test('worktree creation and subsequent prompt retain their captured starting state across a lost receipt, edits and restart', async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  const draft: Draft = { ...original, execution: { type: 'worktree', startingState: { type: 'branch', branchName: 'topic/original' } } };
+  const first = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return unknown(envelope); }, 'host-a', storage);
+  await expect(first.submit(draft, undefined, 'prompt')).rejects.toThrow('pending');
+  if (draft.execution?.type !== 'worktree' || draft.execution.startingState.type !== 'branch') throw new Error('Fixture shape');
+  draft.execution.startingState.branchName = 'later-edit';
+  const restored = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return { ok: true, commandId: envelope.id, value: session }; }, 'host-a', storage);
+  const result = await restored.submit({ ...edited, execution: { type: 'local' } }, undefined, 'prompt');
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[0]).toMatchObject({ commandVersion: 4, command: { type: 'session.create', projectId: original.projectId, worktree: { type: 'branch', branchName: 'topic/original' } } });
+  expect(calls[2]).toMatchObject({ commandVersion: 4, command: { type: 'session.prompt', sessionId: session.id, text: original.text } });
+  expect(result.submitted.execution).toEqual({ type: 'worktree', startingState: { type: 'branch', branchName: 'topic/original' } });
+  expect(restored.entries()).toHaveLength(0);
+});
+
+test('restored submission caches cannot move a captured worktree request or prompt to another owner', async () => {
+  for (const phase of ['create', 'send'] as const) {
+    const storage = cache();
+    const controller = new SubmissionController(async envelope => unknown(envelope), 'host-a', storage);
+    await expect(controller.submit({ ...original, execution: { type: 'local' } }, phase === 'send' ? session.id : undefined, 'prompt')).rejects.toThrow('pending');
+    const pending = JSON.parse(storage.read(controller.cacheKey)!);
+    if (phase === 'create') pending[original.id].create.command.projectId = 'another-project';
+    else pending[original.id].send.command.sessionId = 'another-session';
+    storage.write(controller.cacheKey, JSON.stringify(pending));
+    const restored = new SubmissionController(async () => { throw new Error('Must not execute'); }, 'host-a', storage);
+    expect(restored.entries()).toHaveLength(0); expect(restored.cacheWarning).toContain('could not be read');
+  }
+});
+
 describe("unknown submission outcomes", () => {
   for (const phase of ["create", "prompt", "steer"] as const) {
     test(`${phase}: real reopened command ledger keeps one identity until a matching result resolves it`, async () => {

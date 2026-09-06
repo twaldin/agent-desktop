@@ -1,3 +1,4 @@
+import { hasNewChatIntent, requiresNewChatProtocol } from './new-chat-protocol';
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -311,7 +312,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence };
   }
   function publish(input: EventInput): void {
@@ -399,8 +400,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4): Promise<CommandResult> {
     const command = envelope.command;
+    if (commandVersion < 4 && requiresNewChatProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "NEW_CHAT_PROTOCOL_REQUIRED", "This draft requires the new-chat execution protocol. Its choices were preserved.");
     if (commandVersion < 3 && requiresAttachmentProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "ATTACHMENT_PROTOCOL_REQUIRED", "This draft requires the image attachment protocol. Its content was preserved.");
     if ((command.type === "session.prompt" || command.type === "session.steer") && command.draft) {
       const draft = store.getDraft(command.draft.id);
@@ -429,19 +431,28 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "session.create": {
         const project = command.projectId ? store.getProject(command.projectId) : undefined;
         if (command.projectId && !project) throw new Error("The selected project is not on this host.");
-        const cwd = project?.path ?? command.cwd ?? join(dataDirectory, "workspaces", crypto.randomUUID());
-        assertWorkspaceAvailable(cwd);
-        if (!project && !command.cwd) await mkdir(cwd, { recursive: true, mode: 0o700 });
-        let sessionId: string | undefined;
-        const handle = await runtime.create({ cwd, model: command.model, approvalOverride: command.approvalMode, interactions: true, onEvent: event => { if (sessionId) onRuntimeEvent(sessionId, event); } });
-        sessionId = handle.id;
-        handles.set(handle.id, Promise.resolve(handle));
-        const now = Date.now();
-        try { return ok(store.upsertSession({ id: handle.id, hostId: store.host.id, projectId: project?.id ?? null,
-          cwd: handle.cwd, title: handle.title || "New conversation", status: "idle", sessionFile: handle.sessionFile,
-          model: handle.model, createdAt: Number.isFinite(handle.createdAt) ? handle.createdAt : now, updatedAt: now,
-          archived: false, error: handle.modelFallbackMessage, approvalOverride: command.approvalMode })); }
-        catch (error) { await handle.dispose(); handles.delete(handle.id); throw error; }
+        if (command.worktree && (!project || command.cwd !== undefined)) throw new Error("A worktree must belong to the selected project.");
+        const createdWorktree = command.worktree && project
+          ? await workspaces.createSessionWorktree(project.id, `chat-${createHash("sha256").update(envelope.id).digest("hex")}`, command.worktree)
+          : undefined;
+        const cwd = createdWorktree?.path ?? project?.path ?? command.cwd ?? join(dataDirectory, "workspaces", crypto.randomUUID());
+        try {
+          assertWorkspaceAvailable(cwd);
+          if (!project && !command.cwd) await mkdir(cwd, { recursive: true, mode: 0o700 });
+          let sessionId: string | undefined;
+          const handle = await runtime.create({ cwd, model: command.model, approvalOverride: command.approvalMode, interactions: true, onEvent: event => { if (sessionId) onRuntimeEvent(sessionId, event); } });
+          sessionId = handle.id;
+          handles.set(handle.id, Promise.resolve(handle));
+          const now = Date.now();
+          try { return ok(store.upsertSession({ id: handle.id, hostId: store.host.id, projectId: project?.id ?? null,
+            cwd: handle.cwd, title: handle.title || "New conversation", status: "idle", sessionFile: handle.sessionFile,
+            model: handle.model, createdAt: Number.isFinite(handle.createdAt) ? handle.createdAt : now, updatedAt: now,
+            archived: false, error: handle.modelFallbackMessage, approvalOverride: command.approvalMode })); }
+          catch (error) { await handle.dispose(); handles.delete(handle.id); throw error; }
+        } catch (error) {
+          if (createdWorktree) throw Object.assign(new Error(`The worktree exists at ${createdWorktree.path}, but conversation creation did not return a receipt. Inspect it before creating another. ${errorMessage(error)}`), { code: 'OUTCOME_UNKNOWN' });
+          throw error;
+        }
       }
       case "session.rename": return ok(updateSession(command.sessionId, { title: command.title.trim() || "New conversation" }));
       case "session.archive": {
@@ -534,7 +545,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     }
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -672,11 +683,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
             return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
           }
         }
-        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands"].includes(url.pathname)) {
+        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands"].includes(url.pathname)) {
           const value = await request.json();
-          if (url.pathname !== "/v3/commands" && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
+          if (url.pathname !== "/v4/commands" && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v3/commands", "/v4/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
           if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
-          return Response.json(await dispatch(parseCommandEnvelope(value), url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1));
+          return Response.json(await dispatch(parseCommandEnvelope(value), url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1));
         }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
         if (request.method === "GET" && messagePath) return Response.json(await (await getHandle(decodeURIComponent(messagePath[1]!))).getMessages());
