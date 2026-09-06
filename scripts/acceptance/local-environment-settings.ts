@@ -25,6 +25,15 @@ try {
   const added = await (await requestHost("/v1/commands", { id: crypto.randomUUID(), command: { type: "project.add", path: projectRoot, name: "Environment fixture" } })).json() as CommandResult;
   if (!added.ok || !added.value || !("path" in added.value)) throw new Error("Failed to add owned fixture project");
   const project = added.value as Project;
+  const secondRoot = join(fixture, "second"); await mkdir(secondRoot);
+  const secondAdded = await (await requestHost("/v1/commands", { id: crypto.randomUUID(), command: { type: "project.add", path: secondRoot, name: "Second fixture" } })).json() as CommandResult;
+  if (!secondAdded.ok || !secondAdded.value || !("path" in secondAdded.value)) throw new Error("Second project missing");
+  const second = secondAdded.value as Project, projects = [project, second];
+  const projectIds = new Set(projects.map(project => project.id));
+  await mkdir(join(fixture, ".git"));
+  const inheritedDir = join(fixture, ".codex", "environments"), inheritedPath = join(inheritedDir, "environment.toml");
+  await mkdir(inheritedDir, { recursive: true });
+  await writeFile(inheritedPath, 'name="Shared environment"\n[setup]\nscript="touch SHOULD_NOT_EXECUTE"\n');
   const envDir = join(projectRoot, ".agent-desktop", "environments");
   await mkdir(envDir, { recursive: true }); await writeFile(join(envDir, "broken.toml"), "name = [\n");
   const capability = crypto.randomUUID(), saves: string[] = [];
@@ -35,8 +44,8 @@ try {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     if (request.method !== "POST") return new Response(null, { status: 405, headers: cors });
     const path = url.pathname.slice(capability.length + 1), body = await request.json() as any;
-    const allowedQuery = path === "/v1/workspace/query" && body.target?.projectId === project.id && ["environments.list", "environment.read"].includes(body.query?.type);
-    const allowedSave = path === "/v1/commands" && body.command?.type === "workspace.mutate" && body.command.target?.projectId === project.id && body.command.action?.type === "environment.save";
+    const allowedQuery = path === "/v1/workspace/query" && projectIds.has(body.target?.projectId) && ["environments.list", "environment.read"].includes(body.query?.type);
+    const allowedSave = path === "/v1/commands" && body.command?.type === "workspace.mutate" && projectIds.has(body.command.target?.projectId) && body.command.action?.type === "environment.save";
     if (!allowedQuery && !allowedSave) return new Response(null, { status: 403, headers: cors });
     if (allowedSave) saves.push(body.id);
     const response = await requestHost(path, body);
@@ -55,24 +64,33 @@ app.whenReady().then(async()=>{
  const wait=async(source,label)=>{for(let i=0;i<250;i++){if(await evaluate('Boolean('+source+')'))return;await sleep(20)}throw Error('Timed out: '+label)};
  const click=async(selector)=>{const p=await evaluate('acceptanceTarget('+JSON.stringify(selector)+')');await sleep(30);const z=window.webContents.getZoomFactor(),x=Math.round(p.x*z),y=Math.round(p.y*z);for(const type of ['mouseMove','mouseDown','mouseUp'])window.webContents.sendInputEvent({type,x,y,button:'left',clickCount:1});inputs.push({selector,p,zoom:z});await sleep(80)};
  const type=async(selector,value)=>{await click(selector);await window.webContents.insertText(value);await sleep(80)};
- const capture=async(name)=>{const state=await evaluate('acceptanceState()');if(state.horizontalOverflow)throw Error('Horizontal overflow');const image=await window.webContents.capturePage();fs.writeFileSync(path.join(__dirname,name+'.png'),image.toPNG());captures.push({name,...state,raster:image.getSize(),zoom:window.webContents.getZoomFactor(),frame:window.getBounds()})};
+ const capture=async(name)=>{const state=await evaluate('acceptanceState()');if(state.horizontalOverflow)throw Error('Horizontal overflow');const image=await window.webContents.capturePage();fs.writeFileSync(path.join(__dirname,name+'.png'),image.toPNG());captures.push({captureId:name,...state,raster:image.getSize(),zoom:window.webContents.getZoomFactor(),frame:window.getBounds()})};
  let step='load';
  try {
-  await window.loadFile(path.join(__dirname,'web/index.html'),{query:{endpoint:${JSON.stringify(`http://127.0.0.1:${proxy.port}/${capability}`)},project:${JSON.stringify(JSON.stringify(project))}}});
+  await window.loadFile(path.join(__dirname,'web/index.html'),{query:{endpoint:${JSON.stringify(`http://127.0.0.1:${proxy.port}/${capability}`)},project:${JSON.stringify(JSON.stringify(project))},projects:${JSON.stringify(JSON.stringify(projects))}}});
   window.setContentSize(1440,1000);window.webContents.focus();
-  await wait('[...document.querySelectorAll("button")].some(e=>e.textContent.trim()==="Add environment"&&!e.disabled)','catalog');
-  step='new';await click('button.primary-button');await wait('document.querySelector(".local-environment-field input")','editor');
-  await type('.local-environment-field input','Fixture environment');await click('.local-environment-platforms button:nth-child(2)');
+  await wait('document.querySelector(".environment-project-add:not(:disabled)") && document.querySelector(".environment-inherited-heading")','catalog');
+  await wait('document.querySelector(".environment-inherited-heading button")?.getAttribute("aria-expanded")==="false"','inherited collapsed');await capture('00-overview');
+  await click('.environment-inherited-heading button');await wait('document.querySelector(".environment-inherited-heading button")?.getAttribute("aria-expanded")==="true"','inherited expanded');await capture('00b-inherited');
+  await click('button[aria-label="View Shared environment"]');await wait('document.querySelector(".local-environment-field input")?.value==="Shared environment"','inherited editor');
+  await click('.local-environment-field input');window.webContents.selectAll();await window.webContents.insertText('Shared edited');
+  await click('.local-environment-form-actions button[type=submit]');await wait('document.body.textContent.includes("Environment saved.")','inherited saved');await capture('00c-inherited-saved');
+  await click('.local-environment-breadcrumbs .text-button');
+  step='new';await click('.environment-project-add');await wait('document.querySelector(".local-environment-field input")','editor');
+  await wait('document.querySelector(".local-environment-field input")?.value==="project"','project-derived initial name');await click('.local-environment-field input');window.webContents.selectAll();await window.webContents.insertText('Fixture environment');await click('.local-environment-platforms button:nth-child(2)');
   await type('textarea[aria-label="setup script for macOS"]','touch SHOULD_NOT_EXECUTE');await capture('01-editor');await click('.environment-variables-trigger');await wait('document.querySelector(".environment-variables-popover")?.matches(":popover-open")','variables popup');await wait('(()=>{const p=document.querySelector(".environment-variables-popover").getBoundingClientRect(),b=document.querySelector(".environment-variables-trigger").getBoundingClientRect();return Math.abs(p.right-b.right)<1&&Math.abs(p.top-b.bottom-4)<1&&p.bottom<innerHeight})()','variables anchored within viewport');await capture('01b-variables');window.webContents.sendInputEvent({type:'keyDown',keyCode:'ESCAPE'});window.webContents.sendInputEvent({type:'keyUp',keyCode:'ESCAPE'});await wait('!document.querySelector(".environment-variables-popover")?.matches(":popover-open")','variables dismissed');
   step='save';await click('.local-environment-form-actions button[type=submit]');await wait('document.body.textContent.includes("Environment saved.")','save receipt');
   await capture('02-saved');
   step='draft';await type('.local-environment-field input',' unsaved');await sleep(300);window.webContents.reload();
   await wait('document.querySelector(".local-environment-field input")?.value==="Fixture environment unsaved"','cached unsaved edit');await capture('03-restored');
-  step='repair';await click('.local-environment-breadcrumbs .text-button');await wait('document.querySelector(".local-environment-row.error button")','broken entry');await click('.local-environment-row.error button');
+  step='repair';await click('.local-environment-breadcrumbs .text-button');await wait('document.querySelector(".environment-config-row.error")','broken entry');await click('.environment-config-row.error');
   await wait('document.querySelector(".local-environment-repair textarea")','raw repair');await capture('04-repair');
   await click('.local-environment-repair textarea');window.webContents.selectAll();await wait('document.activeElement?.selectionStart===0 && document.activeElement?.selectionEnd===document.activeElement?.value?.length','native select all');inputs.push({command:'webContents.selectAll',target:'raw repair'});
   await window.webContents.insertText('version=1\\nname="Repaired"\\n[setup]\\nscript=""\\n');await sleep(100);
   await click('.local-environment-repair .local-environment-form-actions .primary-button');await wait('document.body.textContent.includes("Environment saved.")','repair receipt');await capture('05-repaired');
+  step='project ownership';await click('.local-environment-breadcrumbs .text-button');await click('button[aria-label="Add environment to Second fixture"]');
+  await wait('document.querySelector(".local-environment-field input")?.value==="second"','second project initial name');await type('.local-environment-field input',' unsaved');await capture('06-second-draft');
+  await click('.local-environment-breadcrumbs .text-button');await click('button[aria-label="View Fixture environment"]');await wait('document.querySelector(".local-environment-field input")?.value==="Fixture environment unsaved"','first project draft retained');await capture('07-first-draft-retained');
   fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify({passed:true,captures,inputs,hidden:true,electron:process.versions.electron},null,2));
   app.exit(0);
  }catch(error){fs.writeFileSync(path.join(__dirname,'failure.png'),(await window.webContents.capturePage()).toPNG());fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify({passed:false,error:String(error),step,captures,inputs,state:await evaluate('acceptanceState()').catch(()=>null)},null,2));app.exit(1)}
@@ -82,12 +100,13 @@ app.whenReady().then(async()=>{
   const result = await Bun.file(join(output, "result.json")).json();
   const saved = await readFile(join(envDir, "fixture-environment.toml"), "utf8").catch(() => "");
   const repaired = await readFile(join(envDir, "broken.toml"), "utf8");
+  const inherited = await readFile(inheritedPath, "utf8");
   const markerExists = await access(join(projectRoot, "SHOULD_NOT_EXECUTE")).then(() => true, () => false);
   const state = await (await requestHost("/v1/state")).json();
-  Object.assign(result, { exitCode, saves, saved, repaired, markerExists, sessionCount: state.sessions.length, sourceAtBuild: before, sourceAfter: await hashes(),
+  Object.assign(result, { exitCode, saves, saved, repaired, inherited, markerExists, sessionCount: state.sessions.length, sourceAtBuild: before, sourceAfter: await hashes(),
     scope: "Controlled hidden Electron component with actual native pointer/text input, real authenticated owning-host API and real files. Not a native window/reference comparison or provider test." });
   result.sourceHashesStable = JSON.stringify(result.sourceAtBuild) === JSON.stringify(result.sourceAfter);
-  result.passed &&= exitCode === 0 && result.sourceHashesStable && saves.length === 2 && new Set(saves).size === 2 && saved.includes('name = "Fixture environment"') && saved.includes("touch SHOULD_NOT_EXECUTE") && repaired.includes('name="Repaired"') && !markerExists && state.sessions.length === 0;
+  result.passed &&= exitCode === 0 && result.sourceHashesStable && saves.length === 3 && new Set(saves).size === 3 && inherited.includes('name = "Shared edited"') && saved.includes('name = "Fixture environment"') && saved.includes("touch SHOULD_NOT_EXECUTE") && repaired.includes('name="Repaired"') && !markerExists && state.sessions.length === 0;
   await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2));
   console.log(JSON.stringify({ passed: result.passed, captures: result.captures?.length, result: join(output, "result.json") }));
   if (!result.passed) throw new Error("Environment settings acceptance failed");

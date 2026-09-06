@@ -20,6 +20,32 @@
 .local-environment-editor-title, .local-environment-form-heading { max-width: 768px; margin: 0 auto 28px; }
 .local-environment-editor-title p, .local-environment-form-heading p { margin: 5px 0 0; color: var(--secondary); font-size: 12px; overflow-wrap: anywhere; }
 .local-environment-list { max-width: 768px; margin: auto; }
+.local-environment-overview { max-width: 768px; margin: 0 auto; padding-top: 30px; }
+.local-environment-overview-heading { margin-bottom: 40px; }
+.local-environment-overview-heading h1 { margin: 0 0 6px; font-size: 24px; line-height: 32px; font-weight: 500; }
+.local-environment-overview-heading p { margin: 0; color: var(--secondary); font-size: 14px; line-height: 20px; }
+.local-environment-overview .local-environment-project-heading { margin: 0 0 12px; }
+.environment-project-cards { display: flex; flex-direction: column; gap: 12px; }
+.environment-project-card { overflow: hidden; border: var(--border-width, 1px) solid var(--border); border-radius: var(--radius-large, 16px); corner-shape: superellipse(1.25); background: var(--sidebar-surface); }
+.environment-project-card-heading { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 16px; }
+.environment-project-card-heading > .icon { width: 16px; height: 16px; color: var(--secondary); flex-shrink: 0; }
+.environment-project-open { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; font: inherit; color: var(--text); border: 0; padding: 0; background: transparent; }
+button.environment-project-open { cursor: pointer; }
+.environment-project-add { width: 28px; height: 28px; border-radius: var(--radius-medium, 10px); background: var(--selected); }
+.environment-project-add .icon { width: 16px; height: 16px; }
+.environment-config-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 8px 16px; border: 0; border-top: var(--border-width, 1px) solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.environment-config-row:hover, button.environment-project-open:hover { background: var(--hover); }
+.environment-config-label { flex: 1; min-width: 0; }
+.environment-config-label > span, .environment-config-label small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.environment-config-label small { color: var(--secondary); font-size: 12px; line-height: 18px; }
+.environment-config-row > .icon { width: 12px; height: 12px; color: var(--tertiary, var(--secondary)); }
+.environment-inherited-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 4px 12px 4px 16px; border-top: var(--border-width, 1px) solid var(--border); color: var(--secondary); font-size: 13px; }
+.environment-inherited-heading .icon-button { width: 28px; height: 28px; }
+.environment-inherited-heading .icon { width: 12px; height: 12px; transition: transform 120ms ease; }
+.environment-inherited-heading [aria-expanded="true"] .icon { transform: rotate(90deg); }
+.environment-card-status { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 8px 16px; color: var(--secondary); font-size: 13px; }
+.environment-config-row.error, .environment-card-status.error { color: var(--danger); }
+.environment-project-card button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .local-environment-row { display: flex; align-items: center; width: 100%; min-height: 54px; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--app-surface); font: inherit; text-align: left; cursor: pointer; }
 .local-environment-row + .local-environment-row { margin-top: 8px; }
 .local-environment-row span { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }

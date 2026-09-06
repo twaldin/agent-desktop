@@ -167,10 +167,10 @@ export class LocalEnvironmentState {
     }
   }
 
-  create() {
+  create(name = "") {
     if (!this.restored || this.busy) return;
     this.selectionEpoch++;
-    this.edits.has("new") || this.edits.set("new", { configPath: null, expectedRevision: null, raw: serializeLocalEnvironment(blank()), version: 0, dirty: true });
+    this.edits.has("new") || this.edits.set("new", { configPath: null, expectedRevision: null, raw: serializeLocalEnvironment({ ...blank(), name }), version: 0, dirty: true });
     this.selected = "new";
     this.notice = undefined;
     this.saveSoon();

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalEnvironmentStore, parseLocalEnvironment, scriptForPlatform, serializeLocalEnvironment, type LocalEnvironmentConfig } from "./index";
@@ -203,4 +203,88 @@ test("native config ownership rejects nested paths and symlink directories witho
   await expect(store.catalog()).rejects.toThrow("owned directory");
   await expect(store.save({ configPath: join(directory, "external.toml"), expectedRevision: null, raw })).rejects.toThrow("owned directory");
   expect(readFileSync(outsidePath, "utf8")).toBe(raw);
+});
+
+test("catalog discovers both namespaces upward through the first Git root without descending", async () => {
+  const outside = root(), repository = join(outside, "repository"), selected = join(repository, "packages", "app");
+  mkdirSync(join(repository, ".git"), { recursive: true });
+  mkdirSync(selected, { recursive: true });
+  const writeEnvironment = (directory: string, name: string, configName = name) => {
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, name);
+    writeFileSync(path, serializeLocalEnvironment({ ...environment, name: configName }));
+    return path;
+  };
+  const selectedDefault = writeEnvironment(join(selected, ".codex", "environments"), "environment.toml", "Selected default");
+  const selectedApp = writeEnvironment(join(selected, ".agent-desktop", "environments"), "selected.toml", "Selected app");
+  const parentBroken = join(repository, "packages", ".codex", "environments", "broken.toml");
+  mkdirSync(join(repository, "packages", ".codex", "environments"), { recursive: true });
+  writeFileSync(parentBroken, "name = [");
+  const rootDefault = writeEnvironment(join(repository, ".agent-desktop", "environments"), "environment.toml", "Root default");
+  const rootNative = writeEnvironment(join(repository, ".codex", "environments"), "root.toml", "Root native");
+  writeEnvironment(join(outside, ".codex", "environments"), "environment.toml", "Above Git boundary");
+  writeEnvironment(join(selected, "child", ".codex", "environments"), "environment.toml", "Descendant");
+
+  const catalog = await new LocalEnvironmentStore(selected).catalog();
+  expect(catalog.map(item => realpathSync(item.configPath))).toEqual([
+    selectedDefault,
+    rootDefault,
+    selectedApp,
+    parentBroken,
+    rootNative,
+  ].map(path => realpathSync(path)));
+  expect(catalog.find(item => realpathSync(item.configPath) === realpathSync(parentBroken))).toMatchObject({
+    type: "error",
+    revision: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
+});
+
+test("a nested Git marker stops inherited discovery at the selected project", async () => {
+  const repository = root(), selected = join(repository, "nested");
+  mkdirSync(join(repository, ".git"));
+  mkdirSync(join(selected, ".git"), { recursive: true });
+  const parentDirectory = join(repository, ".codex", "environments");
+  const selectedDirectory = join(selected, ".agent-desktop", "environments");
+  mkdirSync(parentDirectory, { recursive: true }); mkdirSync(selectedDirectory, { recursive: true });
+  writeFileSync(join(parentDirectory, "environment.toml"), serializeLocalEnvironment({ ...environment, name: "Parent" }));
+  writeFileSync(join(selectedDirectory, "local.toml"), serializeLocalEnvironment({ ...environment, name: "Selected" }));
+  expect((await new LocalEnvironmentStore(selected).catalog()).map(item => item.type === "environment" ? item.environment.name : item.error)).toEqual(["Selected"]);
+});
+
+test("inherited saves serialize by canonical directory and preserve the original ancestor file", async () => {
+  const repository = root(), selected = join(repository, "packages", "app"), ancestorDirectory = join(repository, ".codex", "environments");
+  mkdirSync(join(repository, ".git"), { recursive: true }); mkdirSync(selected, { recursive: true }); mkdirSync(ancestorDirectory, { recursive: true });
+  const inheritedPath = join(ancestorDirectory, "environment.toml"), initialRaw = serializeLocalEnvironment({ ...environment, name: "Inherited" });
+  writeFileSync(inheritedPath, initialRaw); chmodSync(inheritedPath, 0o640);
+  const childStore = new LocalEnvironmentStore(selected), ancestorStore = new LocalEnvironmentStore(repository);
+  const inherited = await childStore.read(inheritedPath);
+  const childRaw = serializeLocalEnvironment({ ...environment, name: "Child edit" });
+  const ancestorRaw = serializeLocalEnvironment({ ...environment, name: "Ancestor edit" });
+  const [childResult, ancestorResult] = await Promise.all([
+    childStore.save({ configPath: inheritedPath, expectedRevision: inherited.revision, raw: childRaw }),
+    ancestorStore.save({ configPath: inheritedPath, expectedRevision: inherited.revision, raw: ancestorRaw }),
+  ]);
+  expect([childResult.type, ancestorResult.type].sort()).toEqual(["conflict", "saved"]);
+  const saved = childResult.type === "saved" ? childResult : ancestorResult;
+  const conflicted = childResult.type === "conflict" ? childResult : ancestorResult;
+  if (saved.type !== "saved" || conflicted.type !== "conflict") throw new Error("expected one saved inherited edit and one conflict");
+  expect(conflicted.current).toMatchObject({ type: "environment", revision: saved.revision });
+  expect(readFileSync(inheritedPath, "utf8")).toBe(saved.environment.name === "Child edit" ? childRaw : ancestorRaw);
+  expect(statSync(inheritedPath).mode & 0o777).toBe(0o640);
+  expect(existsSync(join(selected, ".agent-desktop", "environments"))).toBeFalse();
+});
+
+test("inherited reads and saves reject paths above the Git boundary and symlinked ancestor storage", async () => {
+  const outside = root(), repository = join(outside, "repository"), selected = join(repository, "nested");
+  mkdirSync(join(repository, ".git"), { recursive: true }); mkdirSync(selected, { recursive: true });
+  const aboveDirectory = join(outside, ".codex", "environments"), abovePath = join(aboveDirectory, "environment.toml");
+  mkdirSync(aboveDirectory, { recursive: true }); writeFileSync(abovePath, serializeLocalEnvironment(environment));
+  const store = new LocalEnvironmentStore(selected);
+  await expect(store.read(abovePath)).rejects.toThrow("outside");
+  await expect(store.save({ configPath: abovePath, expectedRevision: null, raw: serializeLocalEnvironment(environment) })).rejects.toThrow("outside");
+  await expect(store.save({ configPath: join(repository, ".codex", "environments", "new.toml"), expectedRevision: null, raw: serializeLocalEnvironment(environment) })).rejects.toThrow("selected project");
+
+  const externalDirectory = root(), ancestorNamespace = join(repository, ".codex");
+  mkdirSync(ancestorNamespace); symlinkSync(externalDirectory, join(ancestorNamespace, "environments"));
+  await expect(store.catalog()).rejects.toThrow("owned directory");
 });

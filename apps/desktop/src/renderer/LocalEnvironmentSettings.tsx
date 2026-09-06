@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
-import type { DesktopBridge, LocalEnvironmentAction, LocalEnvironmentConfig, LocalEnvironmentPlatform, Project } from "@agent-desktop/shared";
+import type { DesktopBridge, LocalEnvironmentAction, LocalEnvironmentCatalogItem, LocalEnvironmentConfig, LocalEnvironmentPlatform, Project } from "@agent-desktop/shared";
 import { LocalEnvironmentState } from "./local-environment-state";
 import { offlineCache } from "./offline-cache";
 import { Icon } from "./Icons";
@@ -36,21 +36,24 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
   const section = useRef<HTMLElement>(null);
   const [rawEditor, setRawEditor] = useState(false);
   const selected = projects.find(project => project.id === selectedProjectId);
-  const state = useMemo(() => {
-    if (!selected) return undefined;
-    const key = `${hostId}:${selected.id}`;
+  const projectStates = useMemo(() => projects.map(project => {
+    const key = `${hostId}:${project.id}`;
     let value = states.current.get(key);
-    if (!value) { value = new LocalEnvironmentState(bridge, hostId, selected.id, offlineCache, localHostId); states.current.set(key, value); }
+    if (!value) { value = new LocalEnvironmentState(bridge, hostId, project.id, offlineCache, localHostId); states.current.set(key, value); }
     return value;
-  }, [bridge, hostId, localHostId, selected]);
-  useEffect(() => { if (!state) return; const off = state.subscribe(redraw); state.start(); void state.restore(); return () => { off(); state.stop(); }; }, [state]);
-  useEffect(() => { state?.setConnected(connected); }, [state, connected]);
+  }), [bridge, hostId, localHostId, projects]);
+  const state = projectStates.find(state => state.projectId === selectedProjectId);
+  useEffect(() => {
+    const off = projectStates.map(state => { const off = state.subscribe(redraw); state.start(); void state.restore(); return off; });
+    return () => { off.forEach(stop => stop()); projectStates.forEach(state => state.stop()); };
+  }, [projectStates]);
+  useEffect(() => { projectStates.forEach(state => state.setConnected(connected)); }, [projectStates, connected]);
   const [scriptPlatforms, setScriptPlatforms] = useState<Record<ScriptKind, typeof platforms[number]>>({ setup: "default", cleanup: "default" });
   useEffect(() => { setRawEditor(Boolean(state?.editor && !state.config)); }, [state, state?.selected]);
   useEffect(() => {
     if (!state?.restored) return;
     const frame = requestAnimationFrame(() => {
-      const selector = state.editor ? state.config ? ".local-environment-field input" : ".local-environment-repair textarea" : ".local-environment-editor-title .primary-button";
+      const selector = state.editor ? state.config ? ".local-environment-field input" : ".local-environment-repair textarea" : ".environment-project-add";
       section.current?.querySelector<HTMLElement>(selector)?.focus();
     });
     return () => cancelAnimationFrame(frame);
@@ -82,19 +85,21 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
   function submit(event: FormEvent) { event.preventDefault(); void state!.save(); }
 
   return <section ref={section} className="settings-page local-environment-settings" aria-label="Environments settings">
-    <header className="local-environment-breadcrumbs"><button type="button" className="text-button" onClick={() => state.back()}>Environments</button><Icon name="chevron" /><span>{selected.name}</span>{editor && <><Icon name="chevron" /><span aria-current="page">edit</span></>}</header>
+    {editor && <header className="local-environment-breadcrumbs"><button type="button" className="text-button" onClick={() => state.back()}>Environments</button><Icon name="chevron" /><span>{selected.name}</span><Icon name="chevron" /><span aria-current="page">edit</span></header>}
     <div className="local-environment-layout">
-      {!editor && <aside className="local-environment-projects" aria-label="Available projects">
-        <div className="local-environment-project-heading"><h2>Projects</h2>{onAddProject && <button type="button" className="secondary-button" disabled={!connected} onClick={onAddProject}>Add project</button>}</div>
-        <div className="local-environment-project-list">{projects.map(project => <div className={`local-environment-project ${project.id === selectedProjectId ? "selected" : ""}`} key={project.id}><button type="button" onClick={() => { setSelectedProjectId(project.id); onSelectProject?.(project.id); }} aria-current={project.id === selectedProjectId ? "page" : undefined} title={project.path}><Icon name="folder" /><span>{project.name}</span></button><button type="button" className="icon-button small" aria-label={`Select ${project.name}`} onClick={() => { setSelectedProjectId(project.id); onSelectProject?.(project.id); }}><Icon name="plus" /></button></div>)}</div>
-      </aside>}
       <div className="local-environment-editor">
         {state.cacheWarning && <p className="inline-error" role="alert">{state.cacheWarning}</p>}
         {state.error && <p className="inline-error" role="alert">{state.error}</p>}
         {state.pending && <div className="local-environment-pending" role="status"><span>Save is awaiting confirmation from the host.</span><button type="button" className="secondary-button" disabled={!connected || state.busy} onClick={() => void state.retry()}>Retry original save</button></div>}
         {editor?.conflict !== undefined && <div className="local-environment-conflict" role="alert"><p>{editor.conflict === null ? "This environment was removed on the host. Your edits are preserved." : "This environment changed on the host. Your edits are preserved."}</p><button type="button" className="secondary-button" disabled={editor.conflict?.type !== "environment"} onClick={() => void state.acceptCurrent()}>Use host version</button><button type="button" className="secondary-button" disabled={editor.conflict !== null && !editor.conflict.revision} onClick={() => state.keepEdit()}>Keep my edits</button></div>}
         {state.notice && <p className="settings-success" role="status">{state.notice}</p>}
-        {!editor && <><div className="local-environment-editor-title"><div><h2>{selected.name}</h2><p>{selected.path} · {hostName}</p></div><button type="button" className="primary-button" onClick={() => state.create()} disabled={!state.restored || state.busy || !connected}>Add environment</button></div><div className="local-environment-list">{state.loading && <p role="status">Loading environments…</p>}{state.items.map(item => item.type === "error" ? <div className="local-environment-row error" key={item.configPath}><div><strong>Unreadable environment</strong><small>{item.configPath}</small><p>{item.error}</p></div><button type="button" className="secondary-button" disabled={!connected || !item.revision} title={!item.revision ? "The host cannot safely edit this file." : !connected ? "Reconnect to read this configuration." : undefined} onClick={() => void state.open(item.configPath)}>Repair</button></div> : <button type="button" className="local-environment-row" key={item.configPath} onClick={() => void state.open(item.configPath)}><Icon name="folder" /><span><strong>{item.environment.name}</strong><small>{item.configPath}</small></span><Icon name="chevron" /></button>)}</div></>}
+        {!editor && <div className="local-environment-overview">
+          <header className="local-environment-overview-heading"><h1>Environments</h1><p>Local environments define setup for project worktrees.</p></header>
+          <div className="local-environment-project-heading"><h2>Select a project</h2>{onAddProject && <button type="button" className="secondary-button" disabled={!connected} onClick={onAddProject}>Add project</button>}</div>
+          <div className="environment-project-cards" role="list" aria-label="Project environments">{projects.map(project => <EnvironmentProjectCard key={project.id} project={project} state={projectStates.find(state => state.projectId === project.id)!} connected={connected}
+            onSelect={() => { setSelectedProjectId(project.id); onSelectProject?.(project.id); }}/>)}</div>
+        </div>}
+
         {editor && (!config || rawEditor) && <div className="local-environment-form local-environment-repair"><div className="local-environment-form-heading"><div><button type="button" className="text-button" onClick={() => state.back()}>Environments</button><h2>Repair local environment</h2><p>{editor.configPath}</p></div></div>{!config && <p className="inline-error" role="alert">This configuration is invalid. Correct the TOML below before saving.</p>}<textarea aria-label="Raw environment configuration" value={editor.raw} onChange={event => state.editRaw(event.target.value)} rows={18} spellCheck={false} /><div className="local-environment-form-actions">{config && <button type="button" className="secondary-button" onClick={() => setRawEditor(false)}>Show form</button>}<button type="button" className="primary-button" disabled={!connected || state.busy || Boolean(state.pending) || editor?.conflict !== undefined} onClick={() => void state.save()}>{state.busy ? "Saving…" : "Save repaired configuration"}</button></div></div>}
         {editor && config && !rawEditor && <form onSubmit={submit} className="local-environment-form">
           <div className="local-environment-form-heading"><h2>Edit local environment</h2></div>
@@ -107,6 +112,41 @@ export function LocalEnvironmentSettings({ bridge, hostId, localHostId, hostName
       </div>
     </div>
   </section>;
+}
+
+const normalizedFolder = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+const fileName = (path: string) => normalizedFolder(path).split("/").at(-1) ?? path;
+const environmentFolder = (path: string) => normalizedFolder(path).replace(/\/(?:\.codex|\.agent-desktop)\/environments\/[^/]+$/, "");
+
+function EnvironmentProjectCard({ project, state, connected, onSelect }: { project: Project; state: LocalEnvironmentState; connected: boolean; onSelect(): void }) {
+  const [expanded, setExpanded] = useState(false), id = useId();
+  const local = state.items.filter(item => environmentFolder(item.configPath) === normalizedFolder(project.path));
+  const inherited = state.items.filter(item => environmentFolder(item.configPath) !== normalizedFolder(project.path));
+  const defaultItem = local.find(item => item.type === "environment" && fileName(item.configPath) === "environment.toml") ?? local.find(item => item.type === "environment") ?? local[0];
+  const open = (item: LocalEnvironmentCatalogItem) => { onSelect(); void state.open(item.configPath); };
+  const row = (item: LocalEnvironmentCatalogItem, inherited = false) => {
+    const filename = fileName(item.configPath), name = item.type === "environment" ? item.environment.name || filename : "Environment needs attention";
+    const description = inherited ? `From ${fileName(environmentFolder(item.configPath))} · ${filename}` : filename !== name ? filename : undefined;
+    return <button type="button" className={`environment-config-row${item.type === "error" ? " error" : ""}`} key={item.configPath} title={item.type === "error" ? item.error : item.configPath}
+      disabled={!state.restored || (item.type === "error" && (!item.revision || !connected))} onClick={() => open(item)} aria-label={`View ${item.type === "error" ? filename : name}`}>
+      <span className="environment-config-label"><span>{name}</span>{description && <small>{description}</small>}</span><Icon name="chevron" />
+    </button>;
+  };
+  return <div className="environment-project-card" role="listitem" aria-label={project.name}>
+    <div className="environment-project-card-heading">
+      <Icon name="projectNotebook" />
+      {defaultItem ? <button type="button" className="environment-project-open" onClick={() => open(defaultItem)} aria-label={`Open ${project.name}`}>{project.name}</button> : <span className="environment-project-open">{project.name}</span>}
+      <button type="button" className="icon-button environment-project-add" aria-label={`Add environment to ${project.name}`} disabled={!state.restored || state.busy || !connected}
+        onClick={() => { onSelect(); state.create(fileName(project.path).trim().split(/\s+/).slice(0, 3).join(" ")); }}><Icon name="plus" /></button>
+    </div>
+    {state.loading && !state.items.length && <p className="environment-card-status" role="status">Loading environment…</p>}
+    {state.error && <div className="environment-card-status error" role="alert"><span>{state.error}</span><button type="button" className="text-button" disabled={!connected} onClick={() => void state.refresh()}>Retry</button></div>}
+    {local.map(item => row(item))}
+    {inherited.length > 0 && <>
+      <div className="environment-inherited-heading"><span>Inherited environments ({inherited.length})</span><button type="button" className="icon-button" aria-controls={id} aria-expanded={expanded} aria-label={`${expanded ? "Hide" : "Show"} inherited environments`} onClick={() => setExpanded(!expanded)}><Icon name="chevron" /></button></div>
+      <div id={id} hidden={!expanded}>{inherited.map(item => row(item, true))}</div>
+    </>}
+  </div>;
 }
 
 function ScriptEditor({ kind, config, platform, script, onScriptChange, onPlatform }: { kind: ScriptKind; config: LocalEnvironmentConfig; platform: typeof platforms[number]; script: string; onScriptChange(value: string): void; onPlatform(platform: typeof platforms[number]): void }) {

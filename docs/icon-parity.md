@@ -49,3 +49,7 @@ The Source 18 browser toolbar now uses separate `browserBack`, `browserReload`, 
 ## Source 21 question card
 
 The detached question header uses the pinned `chat-bubble-questionmark-light-16` artwork (primary bundle character offset 6,897,600; the native async-question header calls this asset). Its alternative-response row uses `pencil-light-16` rather than the new-chat compose artwork. Both retain their native 16-point canvas. Exact static bodies, source hashes and extraction offsets are private in `.data/question-card-compact-21/static-icons.json`. Controlled component captures exercise the actual card, not a registered native-window comparison.
+
+## Source29 environment project card
+
+The project card uses the pinned settings caller's notebook glyph (`zp` export, `S8o`, initial bundle character offset8,804,021). All three filled paths and the16-point canvas are retained. The settings caller selects this icon for an ordinary project. Controlled environment-settings captures exercise the artwork in the actual React component; its use is source-supported, without a new native pixel-equality claim.

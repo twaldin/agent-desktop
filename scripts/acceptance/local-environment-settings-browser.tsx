@@ -5,6 +5,7 @@ import type { DesktopBridge, Project, WorkspaceQueryResult, CommandResult } from
 import "../../apps/desktop/src/renderer/styles.css";
 const params = new URLSearchParams(location.search);
 const endpoint = params.get("endpoint")!, project = JSON.parse(params.get("project")!) as Project;
+const projects = params.has("projects") ? JSON.parse(params.get("projects")!) as Project[] : [project];
 const post = async <T,>(path: string, body: unknown): Promise<T> => {
   const response = await fetch(`${endpoint}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`Fixture request failed: ${response.status}`);
@@ -16,7 +17,7 @@ const bridge: Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe"> = 
 };
 createRoot(document.getElementById("root")!).render(<div className="app-shell settings-open">
   <SettingsSidebar page="environments" environmentAvailable onSelect={() => {}} onBack={() => {}} />
-  <main className="main-panel"><LocalEnvironmentSettings bridge={bridge as DesktopBridge} hostId={project.hostId} hostName="Fixture host" connected projects={[project]} initialProjectId={project.id} onClose={() => {}} /></main>
+  <main className="main-panel"><LocalEnvironmentSettings bridge={bridge as DesktopBridge} hostId={project.hostId} hostName="Fixture host" connected projects={projects} initialProjectId={project.id} onClose={() => {}} /></main>
 </div>);
 Object.assign(window, {
   acceptanceTarget(selector: string) {
@@ -35,6 +36,7 @@ Object.assign(window, {
     return { dpr: devicePixelRatio, viewport: { width: innerWidth, height: innerHeight },
       font: getComputedStyle(document.body).fontFamily, background: getComputedStyle(document.documentElement).backgroundColor,
       sidebar: box(".settings-sidebar"), form: box(".local-environment-form"), name: box(".local-environment-field input"),
+      overview: box(".local-environment-overview"), projectCards: [...document.querySelectorAll('.environment-project-card')].map(element => ({ label: element.getAttribute('aria-label'), expanded: element.querySelector('[aria-expanded]')?.getAttribute('aria-expanded') })),
       repair: Boolean(document.querySelector(".local-environment-repair textarea")),
       horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
       focus: document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName,

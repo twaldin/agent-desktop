@@ -97,6 +97,19 @@ test("stale configuration is rejected before even a managed directory or prepara
   expect(await readFile(join(f.source, ".git", "index"))).toEqual(f.before.index);
 }, 30_000);
 
+test("unsupported nested worktree creation cannot execute an inherited script in the wrong folder", async () => {
+  const f = await fixture("touch must-not-exist", "");
+  const nested = join(f.source, "nested"); await mkdir(nested);
+  const project = f.store.addProject({ path: nested });
+  const inherited = await new LocalEnvironmentStore(nested).read(f.saved.configPath);
+  expect(inherited.configPath).toBe(f.saved.configPath);
+  await expect(f.lifecycle.prepare({ ...f.input, projectId: project.id })).rejects.toThrow("Select the repository root");
+  expect(f.store.environmentPreparations.list()).toHaveLength(0);
+  expect(await access(join(f.data, "worktrees")).then(() => true, () => false)).toBe(false);
+  expect(await access(join(nested, "must-not-exist")).then(() => true, () => false)).toBe(false);
+  expect(await readFile(join(f.source, ".git", "index"))).toEqual(f.before.index);
+}, 30_000);
+
 test("a lost receipt after real Git creation records uncertainty immediately and never replays", async () => {
   const f = await fixture("touch setup-must-not-run", "");
   const create = f.workspaces.createSessionWorktree.bind(f.workspaces);
