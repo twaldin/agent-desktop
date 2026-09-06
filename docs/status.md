@@ -2,6 +2,12 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Frozen22 — transferred for independent UI verification
+
+Release22 freezes source54a0de38469d9cbf188133f17251a3bf75c63cb1, including the portal clipping correction, compact Power popup, bottom-anchored fresh composer and collapsed empty composer beneath detached questions. The clean frozen suite passes576 tests, skips17 and fails0 (24,783 assertions/123 files); all527 tracked source hashes remain unchanged. The packaged app passes native import, immutable tmux and deep/strict signature checks. Its328 renderer files match the frozen build. Actual packaged local-provider startup proves catalog discovery and pending native blocking/detached question fixtures; its owned proof host was stopped.
+
+The separate Work artifact at `/Users/twaldin/.agent-desktop-release22.cy83_qx9` verifies337 transferred hashes and the signature. The exact launcher was handed to the external verifier without launching it here or replacing any17–21 run. Private evidence: `.data/release22-package/`. Native22 interaction and visual acceptance remains pending. The browser supervisor is byte-identical to independently exercised21; no new browser click evidence is claimed for22.
+
 ## Independent Work21 question and browser acceptance
 
 The verifier launched21 once (source82c49b5) and proved one native receipt click reached the second page with counters2 loads/1 down/1 click, controls enabled, and no replay or manual recovery. The earlier transient frame error recovered automatically. Initial full-window fit bands remain separately under examination.
