@@ -30,6 +30,7 @@ async function wait(check: () => unknown, description: string) {
 let data = "";
 let first = Promise.withResolvers<void>();
 let second = Promise.withResolvers<void>();
+let third = Promise.withResolvers<void>();
 let initialFrame = Promise.withResolvers<void>();
 let initialFrameRequested = false;
 let humanControls = 0;
@@ -125,6 +126,7 @@ const bridge: DesktopBridge = {
         message: "Native acknowledgement was lost.",
       };
     }
+    if (humanControls === 3) await third.promise;
     currentContext = { ...currentContext, documentId: "doc-3" };
     return {
       protocolVersion: 1,
@@ -276,8 +278,13 @@ Object.assign(window, {
     assert(
       humanRequests[2].target.targetId === "tab" &&
         humanRequests[2].controlEpoch === "epoch-1",
-      "reload request lost target or epoch",
+        "reload request lost target or epoch",
     );
+    const fitCount = fitRequests.length;
+    third.resolve();
+    await wait(() => !document.querySelector<HTMLButtonElement>('[aria-label="Reload page"]')!.disabled, "delayed successful browser action");
+    await sleep(300);
+    assert(fitRequests.length === fitCount, "Successful pending browser action fit the transient status geometry");
     checks.push(
       "native control buttons send the current owner target and epoch",
     );
