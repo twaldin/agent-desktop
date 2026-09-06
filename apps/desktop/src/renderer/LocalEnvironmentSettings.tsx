@@ -1,9 +1,11 @@
-import { useEffect, useId, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
-import type { DesktopBridge, LocalEnvironmentAction, LocalEnvironmentCatalogItem, LocalEnvironmentConfig, LocalEnvironmentPlatform, Project } from "@agent-desktop/shared";
+import { useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
+import type { DesktopBridge, LocalEnvironmentAction, LocalEnvironmentCatalogItem, LocalEnvironmentConfig, LocalEnvironmentIcon, LocalEnvironmentPlatform, Project } from "@agent-desktop/shared";
 import { LocalEnvironmentState } from "./local-environment-state";
 import { offlineCache } from "./offline-cache";
 import { Icon } from "./Icons";
 import { EnvironmentSummary } from "./EnvironmentSummary";
+import { ActionIcon } from "./EnvironmentActions";
 import "./local-environment-settings.css";
 
 type ScriptKind = "setup" | "cleanup";
@@ -161,7 +163,83 @@ function ScriptEditor({ kind, config, platform, script, onScriptChange, onPlatfo
 }
 
 function ActionEditor({ action, onChange, onRemove }: { action: LocalEnvironmentAction; onChange(change: Partial<LocalEnvironmentAction>): void; onRemove(): void }) {
-  return <div className="local-environment-action"><div className="local-environment-action-fields"><label>Name<input value={action.name} onChange={event => onChange({ name: event.target.value })} /></label><label>Command<textarea rows={3} value={action.command} onChange={event => onChange({ command: event.target.value })} spellCheck={false} /></label><label>Icon<select value={action.icon ?? ""} onChange={event => onChange({ icon: (event.target.value || null) as LocalEnvironmentAction["icon"] })}><option value="">No icon</option><option value="tool">Tool</option><option value="run">Run</option><option value="debug">Debug</option><option value="test">Test</option></select></label><label>Platform<select value={action.platform ?? ""} onChange={event => onChange({ platform: (event.target.value || undefined) as LocalEnvironmentPlatform | undefined })}><option value="">All platforms</option>{platforms.slice(1).map(value => <option key={value} value={value}>{platformLabel(value)}</option>)}</select></label></div><button type="button" className="icon-button small" aria-label={`Remove ${action.name || "action"}`} onClick={onRemove}><Icon name="close" /></button></div>;
+  return <div className="local-environment-action"><div className="local-environment-action-fields"><label>Name<input value={action.name} onChange={event => onChange({ name: event.target.value })} /></label><label>Command<textarea rows={3} value={action.command} onChange={event => onChange({ command: event.target.value })} spellCheck={false} /></label><label>Icon<EnvironmentActionIconPicker value={action.icon} onChange={icon => onChange({ icon })}/></label><label>Platform<select value={action.platform ?? ""} onChange={event => onChange({ platform: (event.target.value || undefined) as LocalEnvironmentPlatform | undefined })}><option value="">All platforms</option>{platforms.slice(1).map(value => <option key={value} value={value}>{platformLabel(value)}</option>)}</select></label></div><button type="button" className="icon-button small" aria-label={`Remove ${action.name || "action"}`} onClick={onRemove}><Icon name="close" /></button></div>;
+}
+
+const actionIcons: Array<{ value: LocalEnvironmentIcon; label: string }> = [
+  { value: "tool", label: "Tool" }, { value: "run", label: "Run" },
+  { value: "debug", label: "Debug" }, { value: "test", label: "Test" },
+];
+
+function EnvironmentActionIconPicker({ value, onChange }: { value: LocalEnvironmentIcon | null; onChange(value: LocalEnvironmentIcon): void }) {
+  const selected = actionIcons.find(option => option.value === (value ?? "tool")) ?? actionIcons[0]!;
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number }>();
+  const trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !menu.current || !position) return;
+    const bounds = menu.current.getBoundingClientRect(), anchor = trigger.current?.getBoundingClientRect();
+    const left = Math.max(8, Math.min(position.left, innerWidth - bounds.width - 8));
+    const preferredTop = anchor?.bottom === undefined ? position.top : anchor.bottom + 4;
+    const flippedTop = anchor?.top === undefined ? preferredTop : anchor.top - bounds.height - 4;
+    const top = Math.max(8, Math.min(preferredTop + bounds.height <= innerHeight - 8 || flippedTop < 8 ? preferredTop : flippedTop, innerHeight - bounds.height - 8));
+    if (left !== position.left || top !== position.top) setPosition({ left, top });
+  }, [open, position]);
+  useEffect(() => {
+    if (!open) return;
+    menu.current?.querySelector<HTMLButtonElement>(`[data-icon="${selected.value}"]`)?.focus();
+    const dismiss = () => close(false);
+    window.addEventListener("resize", dismiss);
+    return () => window.removeEventListener("resize", dismiss);
+  }, [open, selected.value]);
+
+  function close(restoreFocus = true) {
+    setOpen(false); setPosition(undefined);
+    if (restoreFocus) queueMicrotask(() => trigger.current?.focus());
+  }
+  function show() {
+    if (open) { close(); return; }
+    const bounds = trigger.current?.getBoundingClientRect();
+    if (!bounds) return;
+    setPosition({ left: bounds.left, top: bounds.bottom + 4 }); setOpen(true);
+  }
+  function move(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") { event.preventDefault(); close(); return; }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const candidates = [...document.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')]
+        .filter(element => element.offsetParent !== null && !menu.current?.contains(element) && !element.classList.contains("environment-action-icon-dismiss"));
+      const index = trigger.current ? candidates.indexOf(trigger.current) : -1;
+      const target = index < 0 ? trigger.current : candidates[index + (event.shiftKey ? -1 : 1)];
+      close(false); queueMicrotask(() => target?.focus());
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+    if (!items.length) return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "Home") items[0]!.focus();
+    else if (event.key === "End") items.at(-1)!.focus();
+    else items[(current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]!.focus();
+  }
+
+  return <>
+    <button ref={trigger} type="button" className={`environment-action-icon-trigger${open ? " active" : ""}`} aria-label={selected.label}
+      aria-haspopup="menu" aria-expanded={open} onClick={show} onKeyDown={event => {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); if (!open) show(); }
+      }}><ActionIcon icon={selected.value}/></button>
+    {open && position && createPortal(<>
+      <button type="button" className="environment-action-icon-dismiss" aria-label="Close icon menu" tabIndex={-1}
+        onPointerDown={event => event.preventDefault()} onClick={() => close(false)}/>
+      <div ref={menu} className="environment-action-icon-menu" role="menu" aria-label="Action icon" style={position} onKeyDown={move}
+        onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(false); }}>
+        {actionIcons.map(option => <button key={option.value} type="button" role="menuitem" data-icon={option.value}
+          onClick={() => { onChange(option.value); close(); }}><ActionIcon icon={option.value}/><span>{option.label}</span></button>)}
+      </div>
+    </>, document.body)}
+  </>;
 }
 
 function EnvironmentVariables() {

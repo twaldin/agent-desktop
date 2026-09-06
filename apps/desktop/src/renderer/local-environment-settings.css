@@ -79,6 +79,14 @@ button.environment-project-open { cursor: pointer; }
 .local-environment-action-fields { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; }
 .local-environment-action-fields label:nth-child(n+3) { grid-column: span 1; }
 .local-environment-action-fields textarea { min-height: 64px; }
+.environment-action-icon-trigger { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 36px; padding: 0; border: 0; border-radius: 8px; color: var(--text); background: var(--composer-surface); cursor: pointer; }
+.environment-action-icon-trigger:hover, .environment-action-icon-trigger.active { background: var(--hover); }
+.environment-action-icon-trigger .environment-action-icon { width: 16px; height: 16px; }
+.environment-action-icon-dismiss { position: fixed; inset: 0; z-index: 79; padding: 0; border: 0; background: transparent; }
+.environment-action-icon-menu { position: fixed; z-index: 80; display: flex; flex-direction: column; width: 160px; padding: 4px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--menu-radius, 12px); color: var(--text); background: var(--menu-surface, var(--elevated-surface)); box-shadow: 0 8px 24px #0004; }
+.environment-action-icon-menu button { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 8px; border: 0; border-radius: 7px; color: inherit; background: transparent; font: inherit; font-size: 14px; line-height: 20px; text-align: left; cursor: pointer; }
+.environment-action-icon-menu button:hover, .environment-action-icon-menu button:focus-visible { outline: 0; background: var(--hover); }
+.environment-action-icon-menu .environment-action-icon { width: 16px; height: 16px; flex: 0 0 16px; }
 .local-environment-empty { display: grid; min-height: 68px; place-items: center; border: 1px solid var(--border); border-radius: 10px; color: var(--secondary); }
 .local-environment-conflict { margin: 0 0 18px; padding: 12px; border: 1px solid var(--danger); border-radius: 9px; color: var(--text); background: var(--error-surface); }
 .local-environment-conflict p { margin: 0 0 10px; }
