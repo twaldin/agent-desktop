@@ -1,5 +1,6 @@
 export type DockDestination = "right" | "bottom";
 export type DockTabKind =
+  | "side-chat"
   | "goal"
   | "review"
   | "files"
@@ -10,6 +11,7 @@ export type DockTarget = `session:${string}` | `project:${string}`;
 export interface DockTab {
   id: string;
   title: string;
+  unread?: boolean;
   kind: DockTabKind;
   hostId: string;
   target: DockTarget;

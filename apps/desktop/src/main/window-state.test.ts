@@ -426,3 +426,13 @@ test("Git and environment settings reopen without changing the saved host, conve
     expect(new WindowStateStore(directory, "primary").bootstrap().state).toEqual(state);
   }
 });
+
+test("side-chat layout survives restart with its offline session owner and unread state", () => {
+  const tab = { id: "offline-machine:session:saved-session:side-chat", title: "Explain the previous change", hostId: "offline-machine", target: "session:saved-session", kind: "side-chat", unread: true } as const;
+  const dock = { tabs: [tab], state: { ...createDockState(), right: { tabIds: [tab.id], activeTabId: tab.id, open: true } } };
+  const directory = temporary();
+  new WindowStateStore(directory, "primary").saveView({ ...selected(), dock });
+  expect(new WindowStateStore(directory, "primary").bootstrap().state?.dock).toEqual(dock);
+  const invalid = { ...tab, target: "project:saved-session", id: "offline-machine:project:saved-session:side-chat" };
+  expect(parseDockSnapshot({ tabs: [invalid], state: { ...dock.state, right: { tabIds: [invalid.id], activeTabId: invalid.id, open: true } } })).toBeUndefined();
+});

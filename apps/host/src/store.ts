@@ -138,6 +138,15 @@ export class HostStore {
     this.db.close();
   }
 
+  readMetadata<T>(key: string): T | undefined {
+    const row = this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key = ?").get(key);
+    return row ? JSON.parse(row.data) as T : undefined;
+  }
+  writeMetadata<T>(key: string, value: T): void {
+    this.db.query("INSERT INTO metadata (key, data) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data")
+      .run(key, JSON.stringify(value));
+  }
+
   getActionEnvironmentSelection(canonicalCwd: string): { revision: number; configPath: string | null } | undefined {
     const row = this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key = ?").get(`environment-selection:${canonicalCwd}`);
     return row ? JSON.parse(row.data) : undefined;

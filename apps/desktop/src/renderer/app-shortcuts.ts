@@ -1,11 +1,12 @@
-export type AppShortcut = "new-chat" | "search" | "sidebar" | "settings";
+export type AppShortcut = "new-chat" | "search" | "sidebar" | "settings" | "side-chat";
 export type AppShortcutPlatform = "mac" | "other";
 type ShortcutKey = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "repeat" | "isComposing" | "keyCode" | "defaultPrevented" | "getModifierState">;
 
 /** Keep the existing four commands; Control on macOS belongs to text/terminal editing. */
 export function matchAppShortcut(event: ShortcutKey, platform: AppShortcutPlatform): AppShortcut | undefined {
-  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat || event.altKey || event.shiftKey || event.getModifierState("AltGraph")) return;
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat || event.shiftKey || event.getModifierState("AltGraph")) return;
   if (platform === "mac" ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) return;
+  if (event.altKey) return event.key.toLowerCase() === "s" ? "side-chat" : undefined;
   switch (event.key.toLowerCase()) {
     case "n": return "new-chat";
     case "k": return "search";
@@ -15,7 +16,7 @@ export function matchAppShortcut(event: ShortcutKey, platform: AppShortcutPlatfo
 }
 
 export interface AppShortcutOptions {
-  actions: Record<AppShortcut, () => void>;
+  actions: Partial<Record<AppShortcut, () => void>>;
   /** The prompt deliberately retains app commands. Other editors keep their input. */
   composer?: () => HTMLElement | null;
   /** Explicit React-owned transient state, including menus not yet committed to the DOM. */
@@ -60,11 +61,11 @@ export function installAppShortcuts(window: Window, options: AppShortcutOptions)
   const blur = (event: FocusEvent) => { if (event.target === window) composing = false; };
   const onKey = (event: KeyboardEvent) => {
     const command = matchAppShortcut(event, platform);
-    if (!command || composing || options.blocked?.() || visiblePopup(window.document)) return;
+    if (!command || !options.actions[command] || composing || options.blocked?.() || visiblePopup(window.document)) return;
     const composer = options.composer?.();
     if (focusedElements(event, window.document).some(value => ownsInput(value, composer))) return;
     event.preventDefault();
-    options.actions[command]();
+    options.actions[command]!();
   };
   window.addEventListener("compositionstart", start, true);
   window.addEventListener("compositionend", end, true);

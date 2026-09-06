@@ -12,6 +12,7 @@ import type { WorkerEventListener } from "./events";
 import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation } from "./protocol";
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
+import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
 
 export interface WorkerFailure {
   type: "worker_failure";
@@ -27,7 +28,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "subscribe"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -39,6 +40,9 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
+  getBtw(): Promise<NativeBtwSnapshot | null>;
+  startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
+  cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
   createBrowserTab(name: string): Promise<OmpBrowserTabCreateResult>;
   controlBrowser(request: BrowserControlRequest): Promise<{name: string; targetId: string; context: BrowserDocumentContext; url: string; title: string}>;
@@ -435,6 +439,9 @@ export class WorkerRuntime {
       listQuestions: () => client.request<DetachedQuestionSnapshot[]>({ operation: "listQuestions" }, 15_000),
       resolveQuestion: request => client.request<ResolveDetachedQuestionReceipt>({ operation: "resolveQuestion", args: { request } }, 15_000, "question-resolution"),
       startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
+      getBtw: () => client.request({ operation: "getBtw" }, 15_000),
+      startBtw: input => client.request({ operation: "startBtw", args: input }, 15_000),
+      cancelBtw: runId => client.request({ operation: "cancelBtw", args: { runId } }, 15_000),
       getBrowserMetadata: async () => {
         const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };

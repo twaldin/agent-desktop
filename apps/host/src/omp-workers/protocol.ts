@@ -3,8 +3,9 @@ import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractio
 import type { GoalContinuationEligibility } from "../omp/goal-controller";
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
+import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 13;
+export const WORKER_PROTOCOL_VERSION = 14;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -39,6 +40,9 @@ export type WorkerOperation =
   | { operation: "listQuestions" }
   | { operation: "resolveQuestion"; args: { request: ResolveDetachedQuestionRequest } }
   | { operation: "startQuestionDelivery"; args: { questionId: string } }
+  | { operation: "getBtw" }
+  | { operation: "startBtw"; args: NativeBtwStart }
+  | { operation: "cancelBtw"; args: { runId: string } }
   | { operation: "getBrowserMetadata" }
   | { operation: "createBrowserTab"; args: { name: string } }
   | { operation: "controlBrowser"; args: { request: BrowserControlRequest } }

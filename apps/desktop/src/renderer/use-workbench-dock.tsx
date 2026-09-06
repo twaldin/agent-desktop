@@ -54,13 +54,13 @@ export function useWorkbenchDock(
     owner = hostId,
     workspace = target,
   ) {
-    if (!workspace) return;
+    if (!workspace || (kind === "side-chat" && !("sessionId" in workspace))) return;
     const descriptor = {
       kind,
       hostId: owner,
       target: workspaceKey(workspace) as DockTarget,
       title:
-        kind === "goal" ? "Edit goal" : kind === "review"
+        kind === "side-chat" ? "Side chat" : kind === "goal" ? "Edit goal" : kind === "review"
           ? "Review"
           : kind === "worktrees"
             ? "Worktrees"
@@ -79,6 +79,12 @@ export function useWorkbenchDock(
       if (!previous.tabs.some(tab => tab.id === id && tab.title !== bounded)) return previous;
       return { ...previous, tabs: previous.tabs.map(tab => tab.id === id ? { ...tab, title: bounded } : tab) };
     });
+  const updateTitle = (id: string, title: string) => setSnapshot(previous => {
+    const bounded = title.slice(0, 1000);
+    if (!previous.tabs.some(tab => tab.id === id && tab.title !== bounded)) return previous;
+    return { ...previous, tabs: previous.tabs.map(tab => tab.id === id ? { ...tab, title: bounded } : tab) };
+  });
+  const setUnread = (id: string, unread: boolean) => setSnapshot(previous => previous.tabs.some(tab => tab.id === id && Boolean(tab.unread) !== unread) ? { ...previous, tabs: previous.tabs.map(tab => tab.id === id ? { ...tab, unread } : tab) } : previous);
   const bindBrowser = (
     browserTarget: BrowserFrameTarget,
     title: string,
@@ -375,6 +381,8 @@ export function useWorkbenchDock(
     bindTerminal,
     browser,
     updateBrowserTitle,
+    updateTitle,
+    setUnread,
     workspaceTab,
   };
 }

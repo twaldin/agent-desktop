@@ -81,6 +81,17 @@ function parseCommandBody(value: unknown): CommandEnvelope {
       ...(attachments === undefined ? {} : { attachments }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
     case "session.interrupt": return { id, command: { type, sessionId: text(input.sessionId, "session ID") } };
+    case "session.btw.start": {
+      if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid side question command ID.");
+      const question = text(input.question, "side question", 32_768).trim();
+      if (!question || new TextEncoder().encode(question).byteLength > 32_768) throw new Error("Invalid side question.");
+      return { id, command: { type, sessionId: text(input.sessionId, "session ID"), question } };
+    }
+    case "session.btw.cancel": {
+      const runId = text(input.runId, "side question run ID", 200);
+      if (!/^[a-zA-Z0-9_-]+$/.test(runId)) throw new Error("Invalid side question run ID.");
+      return { id, command: { type, sessionId: text(input.sessionId, "session ID"), runId } };
+    }
     case "session.question.answer": {
       const sessionId = text(input.sessionId, "session ID"), questionId = text(input.questionId, "question ID"), draft = draftReference(input.draft);
       if (!draft || draft.id !== `question:${sessionId}:${questionId}`) throw new Error("A detached answer requires its own saved draft revision.");

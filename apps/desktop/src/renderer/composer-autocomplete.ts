@@ -43,7 +43,7 @@ export function replaceComposerToken(text: string, token: ComposerToken, inserti
   const value = /\s$/.test(insertion) && /^\s/.test(suffix) ? insertion.replace(/\s+$/, "") : insertion;
   return { text: text.slice(0, token.start) + value + suffix, caret: token.start + value.length };
 }
-export interface ComposerAppAction { id: string; name: string; description: string; icon: "archive" | "folder" | "terminal" | "compose" | "refresh" | "more"; reason?: string; run(): void | Promise<void> }
+export interface ComposerAppAction { id: string; name: string; description: string; icon: "sideChat" | "archive" | "folder" | "terminal" | "compose" | "refresh" | "more"; reason?: string; run(): void | Promise<void> }
 export interface ComposerSuggestion { id: string; label: string; description: string; origin: string; insertText: string; icon: ComposerAppAction["icon"] | "skill" | "file" | "command"; disabled?: string; action?: ComposerAppAction; native?: ComposerAction }
 export function targetIdentity(target?: WorkspaceTarget): string { return target ? "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}` : "default"; }
 export function assertComposerOwner<T extends Pick<ComposerActionsCatalog, "hostId" | "target" | "protocolVersion"> | null>(value: T, hostId: string, target?: WorkspaceTarget): asserts value is NonNullable<T> {

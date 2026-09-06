@@ -2,6 +2,21 @@ import { expect, test } from "bun:test";
 import { parseCommandEnvelope } from "./validation";
 import type { ImageAttachmentRef } from "@agent-desktop/shared";
 
+test("side questions reach their dedicated start and cancel commands with bounded native inputs", () => {
+  const command = { type: "session.btw.start", sessionId: "parent", question: "  Explain this  " } as const;
+  expect(parseCommandEnvelope({ id: "side-1", commandVersion: 5, command })).toEqual({
+    id: "side-1", commandVersion: 5, command: { ...command, question: "Explain this" },
+  });
+  expect(parseCommandEnvelope({ id: "stop-1", command: { type: "session.btw.cancel", sessionId: "parent", runId: "side-1" } }).command)
+    .toEqual({ type: "session.btw.cancel", sessionId: "parent", runId: "side-1" });
+  for (const question of [null, " ", "x".repeat(32_769), "é".repeat(16_385)]) {
+    expect(() => parseCommandEnvelope({ id: "side-1", command: { ...command, question } })).toThrow();
+  }
+  expect(() => parseCommandEnvelope({ id: "side-1", command: { ...command, attachments: [] } })).toThrow();
+  expect(() => parseCommandEnvelope({ id: "bad/id", command })).toThrow();
+  expect(() => parseCommandEnvelope({ id: "stop-1", command: { type: "session.btw.cancel", sessionId: "parent", runId: "../other" } })).toThrow();
+});
+
 test("image-aware validation preserves ordered metadata and allows image-only prompts without silently accepting unknown image fields", () => {
   const image: ImageAttachmentRef = { id: "chip", hostId: "owner", kind: "image", sha256: "a".repeat(64), name: "image.png", bytes: 10, mimeType: "image/png" };
   const prompt = { type: "session.prompt", sessionId: "s", text: "", attachments: [image] };

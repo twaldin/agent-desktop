@@ -29,6 +29,8 @@ import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./wor
 import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
 import { SessionActivityHttp } from "./session-activity-http";
+import { BtwService } from "./btw";
+import { BtwHttp } from "./btw-http";
 import { GoalControlHttp } from "./goal-control-http";
 import { GoalContinuationController } from "./goal-continuation";
 import { QuestionDeliveryController } from "./question-delivery";
@@ -300,6 +302,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     } });
   const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getActivity: async id => (await getHandle(id)).getSessionActivity(), goalControlTicket: activity => goalControls.ticket(activity) });
+  const btw = new BtwService({
+    session: id => store.getSession(id),
+    read: id => store.readMetadata<import("@agent-desktop/shared").NativeBtwSnapshot>(`btw:${id}`) ?? null,
+    write: (id, value) => store.writeMetadata(`btw:${id}`, value),
+    getHandle,
+    getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; },
+  });
+  const btwHttp = new BtwHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)), service: btw });
   const browserControls = new BrowserControlHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
   const browserMetadata = new BrowserMetadataHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
@@ -456,6 +466,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         return { ok: true, commandId: envelope.id };
       }
       case "session.environment.resume": return environmentSessions.resume(envelope.id, command.preparationId, command.expectedRevision);
+      case "session.btw.start": {
+        if (!command.question.trim() || command.question.length > 32 * 1024) return fail(envelope.id, "INVALID_BTW_REQUEST", "The btw question is empty or too large.");
+        const snapshot = await btw.start(command.sessionId, { runId: envelope.id, question: command.question });
+        return ok({ type: "session.btw", snapshot });
+      }
+      case "session.btw.cancel": {
+        const snapshot = await btw.cancel(command.sessionId, command.runId);
+        return ok({ type: "session.btw", snapshot });
+      }
       case "preferences.put": return ok({ type: command.type, preference: preferences!.put(command.change) });
       case "workspace.mutate": {
         try { return ok(await workspaces.mutate(command.target, command.action, envelope.id)); }
@@ -684,6 +703,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const btwResponse = await btwHttp.route(request, url);
+        if (btwResponse) return btwResponse;
         const goalControlResponse = await goalControls.route(request, url);
         if (goalControlResponse) return goalControlResponse;
         const browserMetadataResponse = await browserMetadata.route(request, url);

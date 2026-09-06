@@ -5,9 +5,9 @@ import type { WorkspaceState } from "./workspace-state";
 import "./environment-card.css";
 
 export interface EnvironmentSource { id: string; label: string; kind: "image" | "file"; onOpen(): void }
-export interface EnvironmentCardProps { hostName: string; cwd: string; local: boolean; connected: boolean; workspace: WorkspaceState; activity?: SessionActivitySnapshot | null; activityError?: string; sources: readonly EnvironmentSource[]; onReview(): void; onCommit(): void; onFiles(): void; onTerminal(): void; onHost(): void; onClose(): void; actions?: ReactNode }
+export interface EnvironmentCardProps { hostName: string; cwd: string; local: boolean; connected: boolean; workspace: WorkspaceState; activity?: SessionActivitySnapshot | null; activityError?: string; sources: readonly EnvironmentSource[]; onReview(): void; onCommit(): void; onFiles(): void; onTerminal(): void; onHost(): void; onClose(): void; actions?: ReactNode; sideChats?: readonly { id: string; title: string; unread: boolean; onOpen(): void }[] }
 
-export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, onClose, actions }: EnvironmentCardProps) {
+export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, onClose, actions, sideChats = [] }: EnvironmentCardProps) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [expandedSources, setExpandedSources] = useState(false);
   const [copyError, setCopyError] = useState<string>();
@@ -35,6 +35,7 @@ export function EnvironmentCard({ hostName, cwd, local, connected, workspace, ac
       {copyError && <p className="environment-note" role="alert">{copyError}</p>}
       <button className="environment-row" disabled={commitDisabled} onClick={onCommit}><Icon name="check"/><span><strong>Commit</strong><small>{commitDisabled ? (conflict ? "Resolve conflicts first" : !connected ? "Offline" : !staged.length ? "Nothing staged" : "Unavailable") : `${staged.length} staged ${staged.length === 1 ? "file" : "files"}`}</small></span><Icon name="chevron"/></button>
     </section>
+    {sideChats.length > 0 && <section className="environment-section"><h3>Side chats</h3>{sideChats.map(chat => <button className="environment-row" key={chat.id} onClick={chat.onOpen}><Icon name="sideChat"/><span>{chat.title}</span>{chat.unread && <i className="dock-unread" aria-label="Unread answer"/>}</button>)}</section>}
     <NativeActivity activity={activity} error={activityError}/>
     <section className="environment-section environment-sources"><h3>Sources</h3>{shownSources.length ? <ul>{shownSources.map(source => <li key={source.id}><button onClick={source.onOpen}><Icon name={source.kind === "image" ? "compose" : "folder"}/><span>{source.label}</span><small>{source.kind === "image" ? "Image" : "File"}</small></button></li>)}</ul> : <p className="environment-note">No consumed sources are available.</p>}{sources.length > 3 && <button className="environment-link" onClick={() => setExpandedSources(value => !value)}>{expandedSources ? "Show less" : "View all"}</button>}<button className="environment-link" title={cwd || "Browse files"} onClick={onFiles}>Browse files</button></section>
   </aside>;

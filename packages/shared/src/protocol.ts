@@ -29,6 +29,7 @@ export * from "./browser-control";
 export * from "./browser-create";
 export * from "./goal-control";
 export * from "./detached-questions";
+export * from "./btw";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -170,6 +171,8 @@ export type HostCommand =
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
+  | { type: "session.btw.start"; sessionId: string; question: string }
+  | { type: "session.btw.cancel"; sessionId: string; runId: string }
   | { type: "session.interrupt"; sessionId: string }
   | { type: "session.rename"; sessionId: string; title: string }
   | { type: "session.archive"; sessionId: string; archived: boolean }
@@ -195,7 +198,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } }
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } }
   | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -228,6 +231,7 @@ export interface NetworkState {
   checkedAt: number;
 }
 export type DesktopEvent = HostEvent & { hostId?: string };
+
 
 export type AccountAction =
   | { type: "login.start"; providerId: string }
@@ -281,6 +285,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
+  getBtw?(sessionId: string, hostId?: string): Promise<import('./btw').NativeBtwResponse>;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;
   createBrowserTab?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateReceipt>;
   controlBrowser?(sessionId: string, request: BrowserControlRequest, hostId?: string): Promise<BrowserControlReceipt>;

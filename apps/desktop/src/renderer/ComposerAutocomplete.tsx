@@ -130,7 +130,7 @@ export function useComposerAutocomplete(props: Props) {
 }
 
 function CompletionIcon({ item }: { item: ComposerSuggestion }) {
-  if (["archive", "folder", "terminal", "compose", "refresh", "more"].includes(item.icon)) return <Icon name={item.icon as ComposerAppAction["icon"]}/>;
+  if (["archive", "folder", "terminal", "compose", "refresh", "more", "sideChat"].includes(item.icon)) return <Icon name={item.icon as ComposerAppAction["icon"]}/>;
   // Semantic fallback glyphs are deliberately separate from the fifteen
   // source-matched app icons. Their exact reference variants remain unverified.
   return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">{item.icon === "skill" ? <><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></> : item.icon === "file" ? <><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Z"/><path d="M14 3v5h5"/></> : <><path d="m8 5-4 7 4 7m8-14 4 7-4 7M13.5 4l-3 16"/></>}</svg>;

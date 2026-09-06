@@ -34,6 +34,8 @@ import { approvalMode } from "../approval";
 import { copyPreparedImages, NativeImagePrompt, readNativeImage, type PreparedPromptImage, type OmpRecordedImage } from "./images";
 import { NativeGoalController, type GoalContinuationEligibility, type OmpGoalContinuationRun } from "./goal-controller";
 import { NativeDetachedQuestions, type OmpDetachedQuestionDeliveryRun } from "./detached-questions";
+import { NativeBtwController } from "./btw";
+import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
 export type { PreparedPromptImage, OmpRecordedImage } from "./images";
 export type { OmpPromptRun, OmpPromptReceipt } from "./prompt";
 export type { OmpSteerReceipt } from "./steer";
@@ -82,6 +84,9 @@ export interface OmpSession {
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
+  getBtw(): NativeBtwSnapshot | null;
+  startBtw(input: NativeBtwStart): NativeBtwSnapshot;
+  cancelBtw(runId: string): NativeBtwSnapshot | null;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
@@ -417,6 +422,7 @@ export class OmpRuntime {
       }
       await manager.ensureOnDisk();
       const session = native;
+      const btw = new NativeBtwController(session);
       const steering = new NativeSteerAdmission(session, manager);
       const auth = context.auth;
       const registry = context.registry;
@@ -590,6 +596,9 @@ export class OmpRuntime {
           };
           return detachedQuestions.startDelivery(questionId, preflight, dispatch);
         },
+        getBtw: () => { assertSessionActive(); return btw.get(); },
+        startBtw: input => { assertSessionActive(); return btw.start(input); },
+        cancelBtw: runId => { assertSessionActive(); return btw.cancel(runId); },
         mutateGoal: async request => {
           // Pause/drop mirror InteractiveMode: they may settle between native
           // tool executions without aborting the provider turn. Other goal
@@ -807,6 +816,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
+          btw.dispose();
           detachedQuestions.dispose();
           admissionAbort?.abort();
           ui?.dispose();
