@@ -18,7 +18,7 @@ const sourceFiles = [
   "apps/host/src/browser-create-http.ts", "apps/desktop/src/main/browser-create-transport.ts", "packages/shared/src/browser-create.ts",
   "apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/dock-panel.css", "apps/desktop/src/window-state.ts", "apps/host/src/omp/runtime.ts",
   "apps/host/src/browser-control-http.ts", "apps/desktop/src/main/browser-control-transport.ts", "packages/shared/src/browser-control.ts", "apps/desktop/src/renderer/browser-input.ts",
-  "apps/desktop/src/main/browser-frame-transport.ts", "apps/desktop/src/main/browser-metadata-transport.ts", "apps/desktop/src/renderer/BrowserPanel.tsx",
+  "apps/desktop/src/main/browser-frame-transport.ts", "apps/desktop/src/main/browser-metadata-transport.ts", "apps/desktop/src/renderer/BrowserPanel.tsx", "apps/desktop/src/renderer/browser-address.ts", "apps/desktop/src/renderer/Icons.tsx", "apps/desktop/package.json", "bun.lock",
   "apps/desktop/src/renderer/browser-panel.css", "apps/host/src/browser-frame-http.ts", "apps/host/src/browser-metadata-http.ts", "apps/host/src/omp-browser/frame.ts",
   "apps/host/src/omp-workers/entry.ts", "apps/host/src/omp-workers/protocol.ts", "apps/host/src/omp-workers/runtime.ts",
   "apps/host/src/omp-workers/fixtures/browser-frame-extension.ts", "apps/host/src/omp-workers/fixtures/local-browser-worker.ts",

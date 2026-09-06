@@ -2,7 +2,8 @@ import { test, expect } from 'bun:test';
 import { BROWSER_METADATA_OWNER_HEADER, type BrowserControlRequest } from '@agent-desktop/shared';
 import { BrowserControlHttp } from './browser-control-http';
 import { requestBrowserControl } from '../../desktop/src/main/browser-control-transport';
-const context = { documentId: 'document', width: 640, height: 480, scrollX: 0, scrollY: 0 };
+const context = { documentId: 'document', width: 640, height: 480, scrollX: 0, scrollY: 0,
+  navigation: { entryId: 7, canGoBack: true, canGoForward: false } };
 const target = { workerPid: 42, name: 'main', targetId: 'native-target' };
 const result = { name: 'main', targetId: 'native-target', context, url: 'http://localhost/page', title: '' };
 function setup(control = async (_: BrowserControlRequest) => result) {
@@ -21,8 +22,19 @@ test('browser actions reject invalid owner, stale host/worker/document inputs be
   expect((await s.http.route(s.request({ ...s.input, action: { type: 'navigate', url: 'javascript:alert(1)' } })))?.status).toBe(400);
   expect((await s.http.route(s.request({ ...s.input, context: { ...context, width: Infinity } })))?.status).toBe(400);
   expect((await s.http.route(s.request({ ...s.input, action: { type: 'click', x: 640, y: 0 } })))?.status).toBe(400);
+  expect((await s.http.route(s.request({ ...s.input, action: { type: 'resize', width: 16_384, height: 16_384 } })))?.status).toBe(400);
   s.advance(61_000); expect((await (await s.http.route(s.request()))!.json()).outcome).toBe('rejected');
   expect(s.calls()).toBe(0);
+});
+test('explicit resize admission preserves the exact native history and resulting viewport context', async () => {
+  const resized = { ...context, width: 800, height: 600 };
+  const s = setup(async input => {
+    expect(input.action).toEqual({ type: 'resize', width: 800, height: 600 });
+    return { ...result, context: resized };
+  });
+  const response = await s.http.route(s.request({ ...s.input, action: { type: 'resize', width: 800, height: 600 } }));
+  expect(await response!.json()).toMatchObject({ outcome: 'completed', context: resized });
+  expect(s.calls()).toBe(1);
 });
 test('concurrent action retries share one receipt; changed input cannot reuse identity', async () => {
   const gate = Promise.withResolvers<typeof result>(), s = setup(async () => gate.promise);

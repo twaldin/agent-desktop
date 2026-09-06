@@ -1,12 +1,18 @@
 import { validBrowserFrameTarget } from './browser-frame';
 import type { BrowserFrameTarget } from './browser';
 
-export interface BrowserDocumentContext { documentId: string; width: number; height: number; scrollX: number; scrollY: number }
+export interface BrowserNavigationContext { entryId: number; canGoBack: boolean; canGoForward: boolean }
+export interface BrowserDocumentContext {
+  documentId: string; width: number; height: number; scrollX: number; scrollY: number;
+  /** Present on hosts that capture the native CDP navigation entry. */
+  navigation?: BrowserNavigationContext;
+}
 export type BrowserModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
 export type BrowserHumanAction =
   | { type: 'navigate'; url: string } | { type: 'reload' | 'back' | 'forward' }
   | { type: 'click'; x: number; y: number; button?: 'left' | 'middle' | 'right'; clickCount?: 1 | 2 | 3 }
   | { type: 'wheel'; x: number; y: number; deltaX: number; deltaY: number }
+  | { type: 'resize'; width: number; height: number }
   | { type: 'text'; text: string }
   | { type: 'key'; key: string; modifiers?: BrowserModifier[] };
 export interface BrowserControlRequest {
@@ -27,7 +33,15 @@ export function parseBrowserDocumentContext(v: unknown): BrowserDocumentContext 
   if (typeof c.documentId !== 'string' || !c.documentId || c.documentId.length > 200 || c.documentId.includes('\0')
     || !finite(c.width, 1, 16384) || !finite(c.height, 1, 16384) || c.width * c.height > 32_000_000
     || !finite(c.scrollX, -1e9, 1e9) || !finite(c.scrollY, -1e9, 1e9)) throw new Error('Invalid browser document context.');
-  return { documentId: c.documentId, width: c.width, height: c.height, scrollX: c.scrollX, scrollY: c.scrollY };
+  let navigation: BrowserNavigationContext | undefined;
+  if (c.navigation !== undefined) {
+    const value = c.navigation as BrowserNavigationContext;
+    if (!value || typeof value !== 'object' || !Number.isSafeInteger(value.entryId) || value.entryId < 0
+      || typeof value.canGoBack !== 'boolean' || typeof value.canGoForward !== 'boolean') throw new Error('Invalid browser navigation context.');
+    navigation = { entryId: value.entryId, canGoBack: value.canGoBack, canGoForward: value.canGoForward };
+  }
+  return { documentId: c.documentId, width: c.width, height: c.height, scrollX: c.scrollX, scrollY: c.scrollY,
+    ...(navigation ? { navigation } : {}) };
 }
 export function parseBrowserHumanAction(v: unknown, context: BrowserDocumentContext): BrowserHumanAction {
   if (!v || typeof v !== 'object') throw new Error('Missing browser action.');
@@ -39,7 +53,10 @@ export function parseBrowserHumanAction(v: unknown, context: BrowserDocumentCont
       if (!['http:', 'https:'].includes(url.protocol) && a.url !== 'about:blank') throw new Error('This address requires an unsupported browser operation.');
       return { type: a.type, url: a.url };
     }
-    case 'back': case 'forward': case 'reload': return { type: a.type };
+    case 'back': case 'forward':
+      if (!context.navigation) throw new Error('Refresh this browser preview before using its history.');
+      return { type: a.type };
+    case 'reload': return { type: a.type };
     case 'click': case 'wheel': {
       if (!finite(a.x, 0, context.width) || !finite(a.y, 0, context.height) || a.x === context.width || a.y === context.height) throw new Error('Pointer is outside the captured browser viewport.');
       if (a.type === 'wheel') {
@@ -50,6 +67,11 @@ export function parseBrowserHumanAction(v: unknown, context: BrowserDocumentCont
         || a.clickCount !== undefined && ![1, 2, 3].includes(a.clickCount)) throw new Error('Invalid browser click.');
       return { type: a.type, x: a.x, y: a.y, ...(a.button ? { button: a.button } : {}), ...(a.clickCount ? { clickCount: a.clickCount } : {}) };
     }
+    case 'resize':
+      if (!context.navigation) throw new Error('Refresh this browser preview before resizing it.');
+      if (!Number.isSafeInteger(a.width) || !Number.isSafeInteger(a.height) || a.width < 1 || a.height < 1
+        || a.width > 16384 || a.height > 16384 || a.width * a.height > 32_000_000) throw new Error('Invalid browser viewport size.');
+      return { type: a.type, width: a.width, height: a.height };
     case 'text':
       if (typeof a.text !== 'string' || !a.text || a.text.length > 16384 || a.text.includes('\0')) throw new Error('Invalid browser text input.');
       return { type: a.type, text: a.text };

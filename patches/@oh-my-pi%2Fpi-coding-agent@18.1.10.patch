@@ -1,195 +1,8 @@
-diff --git a/src/tools/browser.ts b/src/tools/browser.ts
---- a/src/tools/browser.ts
-+++ b/src/tools/browser.ts
-@@ -3,6 +3,7 @@
- import { untilAborted } from "@oh-my-pi/pi-utils";
- import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
- import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
-+import type { AgentSession } from "../session/agent-session";
- import type { ToolSession } from "../sdk";
- import { enforceInlineByteCap } from "../session/streaming-output";
- // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
-@@ -25,11 +26,13 @@
- import {
- 	type AcquireTabResult,
- 	acquireTab,
-+	BrowserTabCreateRejected,
- 	dropHeadlessTabs,
- 	getTab,
- 	releaseAllTabs,
- 	releaseTab,
- 	runInTab,
-+	type TabSession,
- } from "./browser/tab-supervisor";
- import { renderTabCall } from "./browser/tab-call";
- import { resolveToCwd } from "./path-utils";
-@@ -44,6 +47,7 @@
- export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
- export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
- export type { Observation, ObservationEntry } from "./browser/tab-protocol";
-+export { BrowserTabCreateRejected } from "./browser/tab-supervisor";
- 
- const DEFAULT_TAB_NAME = "main";
- const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
-@@ -97,7 +101,28 @@
- 	value?: unknown;
- }
- 
--function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
-+type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
-+
-+export interface SessionBrowserTabCreateRequest {
-+	/** New managed OMP tab name. Existing names are rejected atomically. */
-+	readonly name: string;
-+}
-+
-+export interface SessionBrowserTabCreateResult {
-+	readonly created: true;
-+	readonly name: string;
-+	readonly ownerSessionId: string;
-+	readonly targetId: string;
-+	readonly backend: TabSession["backend"];
-+	readonly kindTag: BrowserKindTag;
-+	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
-+	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
-+	readonly url: string;
-+	readonly title: string;
-+	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-+}
-+
-+function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
- 	const app = params.app;
- 	if (app?.cdp_url) {
- 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
-@@ -201,11 +226,35 @@
- 	timeoutMs: number,
- 	signal?: AbortSignal,
- ): Promise<AgentToolResult<unknown>> {
-+	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
-+	details.browser = browser.kind.kind;
-+	const tab = result.tab;
-+	const url = tab.info.url;
-+	const title = tab.info.title ?? "";
-+	details.url = url;
-+	details.viewport = tab.info.viewport;
-+	const verb = result.created ? "Opened" : "Reused";
-+	const lines = [
-+		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
-+		`URL: ${url}`,
-+		title ? `Title: ${title}` : null,
-+	].filter((line): line is string => typeof line === "string");
-+	return toolResult(details).text(lines.join("\n")).done();
-+}
-+
-+async function acquireBrowserTab(
-+	session: BrowserOpenSession,
-+	name: string,
-+	params: BrowserParams,
-+	timeoutMs: number,
-+	signal?: AbortSignal,
-+	createOnly = false,
-+): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
- 	const kind = resolveBrowserKind(params, session);
--	details.browser = kind.kind;
- 
- 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
- 	const existing = getTab(name);
-+	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
- 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
- 		throw new ToolError(
- 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
-@@ -267,6 +316,7 @@
- 					dialogs: params.dialogs,
- 					signal: openSignal,
- 					ownerSessionId: session.getSessionId?.() ?? undefined,
-+					createOnly,
- 				}),
- 			);
- 		} catch (error) {
-@@ -277,18 +327,7 @@
- 		}
- 		await releaseBrowser(browser, { kill: false });
- 
--		const tab = result.tab;
--		const url = tab.info.url;
--		const title = tab.info.title ?? "";
--		details.url = url;
--		details.viewport = tab.info.viewport;
--		const verb = result.created ? "Opened" : "Reused";
--		const lines = [
--			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
--			`URL: ${url}`,
--			title ? `Title: ${title}` : null,
--		].filter((line): line is string => typeof line === "string");
--		return toolResult(details).text(lines.join("\n")).done();
-+		return { browser, result };
- 	} catch (error) {
- 		// Caller cancellation stays a ToolAbortError; the requested timeout
- 		// becomes a timeout ToolError; anything else passes through unchanged.
-@@ -296,6 +335,59 @@
- 		if (timeoutSignal.aborted) throw new ToolError(`Browser open timed out after ${timeoutMs}ms`);
- 		throw error;
- 	}
-+}
-+
-+/**
-+ * Create one managed browser tab directly for an actual AgentSession. This is
-+ * an explicit human resource action: it reads the live native browser settings
-+ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
-+ * conversation transcript.
-+ */
-+export async function createBrowserTabForSession(
-+	session: AgentSession,
-+	request: SessionBrowserTabCreateRequest,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	if (
-+		!request ||
-+		typeof request.name !== "string" ||
-+		request.name.length === 0 ||
-+		request.name.length > 200 ||
-+		/[\u0000-\u001f\u007f]/.test(request.name)
-+	) {
-+		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
-+	}
-+	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
-+	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
-+	const ownerSessionId = session.sessionManager.getSessionId();
-+	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
-+	const nativeSession: BrowserOpenSession = {
-+		cwd: session.sessionManager.getCwd(),
-+		settings: session.settings,
-+		getSessionId: () => ownerSessionId,
-+	};
-+	const timeoutMs = clampTimeout("browser", undefined, session.settings.get("tools.maxTimeout")) * 1_000;
-+	const params = { action: "open", name: request.name } as BrowserParams;
-+	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, undefined, true);
-+	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
-+	if (session.isDisposed || session.sessionManager.getSessionId() !== ownerSessionId) {
-+		await releaseTab(request.name, { kill: true, timeoutMs });
-+		throw new ToolError("The native session changed while creating its browser tab");
-+	}
-+	const tab = result.tab;
-+	const targetDisposition = tab.kindTag === "headless" ? "created-page"
-+		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
-+	return Object.freeze({
-+		created: true,
-+		name: tab.name,
-+		ownerSessionId,
-+		targetId: tab.targetId,
-+		backend: tab.backend,
-+		kindTag: tab.kindTag,
-+		targetDisposition,
-+		url: tab.info.url,
-+		title: tab.info.title ?? "",
-+		viewport: Object.freeze({ ...tab.info.viewport }),
-+	});
- }
- 
- async function closeBrowser(
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
+index c6b8dd5..ca35c68 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
-@@ -7,7 +7,7 @@
+@@ -7,7 +7,7 @@ import {
  	withTimeout,
  	workerHostEntry,
  } from "@oh-my-pi/pi-utils";
@@ -198,7 +11,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
  import { callSessionTool } from "../../eval/js/tool-bridge";
  import { webpExclusionForModel } from "../../utils/image-loading";
  import type { ToolSession } from "../index";
-@@ -87,6 +87,61 @@
+@@ -87,6 +87,70 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
  	ownerSessionId?: string;
  }
  
@@ -232,12 +45,20 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +	readonly context: OwnerTabDocumentContext;
 +}
 +
++export interface OwnerTabNavigationContext {
++	readonly entryId: number;
++	readonly canGoBack: boolean;
++	readonly canGoForward: boolean;
++}
++
 +export interface OwnerTabDocumentContext {
 +	readonly documentId: string;
 +	readonly width: number;
 +	readonly height: number;
 +	readonly scrollX: number;
 +	readonly scrollY: number;
++	/** Absent only for compatibility with a context captured by an older host. */
++	readonly navigation?: OwnerTabNavigationContext;
 +}
 +
 +export type OwnerTabHumanAction =
@@ -245,6 +66,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +	| { readonly type: "reload" | "back" | "forward" }
 +	| { readonly type: "click"; readonly x: number; readonly y: number; readonly button?: MouseButton; readonly clickCount?: 1 | 2 | 3 }
 +	| { readonly type: "wheel"; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number }
++	| { readonly type: "resize"; readonly width: number; readonly height: number }
 +	| { readonly type: "text"; readonly text: string }
 +	| { readonly type: "key"; readonly key: string; readonly modifiers?: readonly ("Alt" | "Control" | "Meta" | "Shift")[] };
 +
@@ -260,7 +82,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
  export interface WorkerTabSession extends TabSessionBase<PuppeteerBrowserHandle> {
  	backend: "worker";
  	worker: WorkerHandle;
-@@ -126,6 +181,8 @@
+@@ -126,6 +190,8 @@ export interface AcquireTabOptions {
  	 * dispose. Optional — omitting it opts the tab out of session-scoped reap.
  	 */
  	ownerSessionId?: string;
@@ -269,7 +91,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
  }
  
  export interface AcquireTabResult {
-@@ -146,7 +203,14 @@
+@@ -146,7 +212,14 @@ export interface ReleaseTabOptions {
  	timeoutMs?: number;
  }
  
@@ -284,7 +106,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
  // Headless targets a worker created before dying during init (page-created).
  // A killed worker can't close its own page; the supervisor closes the
  // recorded target instead. A shared browser's other targets must never be
-@@ -261,6 +325,7 @@
+@@ -261,6 +334,7 @@ async function acquireTabImpl(
  	// to reuse (e.g. reopening the sole tab with a different dialogs policy).
  	let tempHold = false;
  	const existing = tabs.get(name);
@@ -292,7 +114,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
  	if (existing) {
  		if (existing.browser === browser && existing.state === "alive") {
  			const requestedCmuxSurface = "client" in browser ? (opts.cmuxSurface ?? browser.surface) : undefined;
-@@ -508,6 +573,7 @@
+@@ -508,6 +582,7 @@ async function runInTabWithSnapshot(
  	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
  	snapshot: SessionSnapshot,
  ): Promise<RunResultOk> {
@@ -300,12 +122,10 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
  	const tab = tabs.get(name);
  	if (!tab || tab.state === "dead") {
  		const killed = killedTabs.get(name);
-@@ -754,6 +820,218 @@
- 		if (await releaseTab(name, opts)) count++;
- 	}
+@@ -756,6 +831,247 @@ export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptio
  	return count;
-+}
-+
+ }
+ 
 +/**
 + * Enumerates current authoritative tab metadata for one creator session.
 + * Empty/unknown owners never act as a wildcard. Results are cloned immutable
@@ -388,28 +208,39 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +function validDocumentContext(value: OwnerTabDocumentContext): boolean {
 +	return Boolean(value && typeof value.documentId === "string" && value.documentId.length > 0 && value.documentId.length <= 200 && !value.documentId.includes("\0")
 +		&& validFinite(value.width, 1, 16_384) && validFinite(value.height, 1, 16_384) && value.width * value.height <= 32_000_000
-+		&& validFinite(value.scrollX, -1_000_000_000, 1_000_000_000) && validFinite(value.scrollY, -1_000_000_000, 1_000_000_000));
++		&& validFinite(value.scrollX, -1_000_000_000, 1_000_000_000) && validFinite(value.scrollY, -1_000_000_000, 1_000_000_000)
++		&& (value.navigation === undefined || (value.navigation && Number.isSafeInteger(value.navigation.entryId) && value.navigation.entryId >= 0
++			&& typeof value.navigation.canGoBack === "boolean" && typeof value.navigation.canGoForward === "boolean")));
 +}
 +
 +function sameOwnerTabDocumentContext(expected: OwnerTabDocumentContext, actual: OwnerTabDocumentContext, navigation: boolean): boolean {
 +	return expected.documentId === actual.documentId && expected.width === actual.width && expected.height === actual.height
-+		&& (navigation || (expected.scrollX === actual.scrollX && expected.scrollY === actual.scrollY));
++		&& (navigation || (expected.scrollX === actual.scrollX && expected.scrollY === actual.scrollY))
++		&& (expected.navigation === undefined || (actual.navigation !== undefined && expected.navigation.entryId === actual.navigation.entryId
++			&& expected.navigation.canGoBack === actual.navigation.canGoBack && expected.navigation.canGoForward === actual.navigation.canGoForward));
 +}
 +
++interface NavigationHistorySnapshot { currentIndex: number; entries: readonly { id: number }[] }
++const currentHistoryEntry = (history: NavigationHistorySnapshot) => history.entries[history.currentIndex];
 +async function readOwnerTabDocumentContext(page: Page): Promise<OwnerTabDocumentContext> {
 +	const client = await page.target().createCDPSession();
 +	try {
-+		const [tree, viewport] = await Promise.all([
-+			client.send("Page.getFrameTree") as Promise<{ frameTree?: { frame?: { loaderId?: string } } }>,
-+			page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY })),
-+		]);
-+		const documentId = tree.frameTree?.frame?.loaderId;
-+		if (!documentId || documentId.length > 200 || documentId.includes("\0")
++		const historyBefore = await client.send("Page.getNavigationHistory") as NavigationHistorySnapshot;
++		const treeBefore = await client.send("Page.getFrameTree") as { frameTree?: { frame?: { loaderId?: string } } };
++		const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY }));
++		const treeAfter = await client.send("Page.getFrameTree") as { frameTree?: { frame?: { loaderId?: string } } };
++		const historyAfter = await client.send("Page.getNavigationHistory") as NavigationHistorySnapshot;
++		const documentId = treeBefore.frameTree?.frame?.loaderId, finalDocumentId = treeAfter.frameTree?.frame?.loaderId;
++		const entry = currentHistoryEntry(historyAfter), beforeEntry = currentHistoryEntry(historyBefore);
++		if (!documentId || documentId !== finalDocumentId || documentId.length > 200 || documentId.includes("\0")
++			|| !entry || !beforeEntry || !Number.isSafeInteger(entry.id) || entry.id < 0 || entry.id !== beforeEntry.id
++			|| historyBefore.currentIndex !== historyAfter.currentIndex || historyBefore.entries.length !== historyAfter.entries.length
 +			|| !validFinite(viewport.width, 1, 16_384) || !validFinite(viewport.height, 1, 16_384) || viewport.width * viewport.height > 32_000_000
 +			|| !validFinite(viewport.scrollX, -1_000_000_000, 1_000_000_000) || !validFinite(viewport.scrollY, -1_000_000_000, 1_000_000_000)) {
 +			throw new ToolError("The selected browser document has no stable viewport context");
 +		}
-+		return Object.freeze({ documentId, ...viewport });
++		const navigation = Object.freeze({ entryId: entry.id, canGoBack: historyAfter.currentIndex > 0, canGoForward: historyAfter.currentIndex < historyAfter.entries.length - 1 });
++		return Object.freeze({ documentId, ...viewport, navigation });
 +	} finally { await client.detach().catch(() => undefined); }
 +}
 +
@@ -421,7 +252,17 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +		if (!(["http:", "https:"].includes(url.protocol) || action.url === "about:blank")) rejectHumanAction("This browser navigation protocol is not supported");
 +		return;
 +	}
-+	if (["reload", "back", "forward"].includes(action.type)) return;
++	if (["back", "forward"].includes(action.type)) {
++		if (!expected.navigation) rejectHumanAction("Refresh the browser preview before using its history");
++		return;
++	}
++	if (action.type === "reload") return;
++	if (action.type === "resize") {
++		if (!expected.navigation) rejectHumanAction("Refresh the browser preview before resizing it");
++		if (!Number.isSafeInteger(action.width) || !Number.isSafeInteger(action.height) || action.width < 1 || action.height < 1
++			|| action.width > 16_384 || action.height > 16_384 || action.width * action.height > 32_000_000) rejectHumanAction("Invalid browser viewport size");
++		return;
++	}
 +	if (action.type === "click") {
 +		if (!validFinite(action.x, 0, expected.width) || action.x >= expected.width || !validFinite(action.y, 0, expected.height) || action.y >= expected.height
 +			|| (action.button !== undefined && !["left", "middle", "right"].includes(action.button))
@@ -467,7 +308,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +	if (tab.pending.size > 0) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy with native browser work`);
 +	let dispatched = false, callerTimedOut = false;
 +	const pending = Promise.resolve().then(async () => {
-+		let page: Page;
++		let page: Page, resizeViewport: NonNullable<ReturnType<Page["viewport"]>> | undefined;
 +		try {
 +			if (existingCapture) await existingCapture.catch(() => undefined);
 +			let exactTarget: Target | undefined;
@@ -476,6 +317,13 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +			const resolved = await exactTarget.page(); if (!resolved) return rejectHumanAction("The selected browser target is not a page"); page = resolved;
 +			const before = await readOwnerTabDocumentContext(page), navigation = ["navigate", "reload", "back", "forward"].includes(action.type);
 +			if (!sameOwnerTabDocumentContext(expected, before, navigation)) rejectHumanAction("The browser document or viewport changed; refresh before acting");
++			if (action.type === "back" && !before.navigation?.canGoBack) rejectHumanAction("This browser tab has no previous history entry");
++			if (action.type === "forward" && !before.navigation?.canGoForward) rejectHumanAction("This browser tab has no next history entry");
++			if (action.type === "resize") {
++				const viewport = page.viewport();
++				if (!viewport) rejectHumanAction("Viewport resize is unavailable for this connected browser tab");
++				resizeViewport = { ...viewport, width: action.width, height: action.height };
++			}
 +			const current = tabs.get(target.name);
 +			if (current !== tab || current?.state !== "alive" || current?.ownerSessionId !== ownerSessionId || current?.targetId !== target.targetId || tab.pending.size > 0) rejectHumanAction("The selected browser tab changed or became busy before the action");
 +			if (callerTimedOut) rejectHumanAction("The human browser action timed out before dispatch");
@@ -492,6 +340,7 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +			case "forward": await page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
 +			case "click": await page.mouse.click(action.x, action.y, { button: action.button, count: action.clickCount }); break;
 +			case "wheel": await page.mouse.move(action.x, action.y); await page.mouse.wheel({ deltaX: action.deltaX, deltaY: action.deltaY }); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))); break;
++			case "resize": await page.setViewport(resizeViewport!); break;
 +			case "text": await page.keyboard.sendCharacter(action.text); break;
 +			case "key": {
 +				const modifiers = [...(action.modifiers ?? [])] as KeyInput[], pressed: KeyInput[] = [];
@@ -516,6 +365,197 @@ diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervi
 +		const rejected = new BrowserActionRejected(error instanceof Error ? error.message : "The human browser action timed out before dispatch");
 +		Object.defineProperty(rejected, "cause", { value: error, configurable: true }); throw rejected;
 +	}
++}
++
+ /** Test-only accessor for the module-global tabs map. */
+ export function getTabsMapForTest(): ReadonlyMap<string, TabSession> {
+ 	return tabs;
+diff --git a/src/tools/browser.ts b/src/tools/browser.ts
+index b191f31..415087f 100644
+--- a/src/tools/browser.ts
++++ b/src/tools/browser.ts
+@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
+ import { untilAborted } from "@oh-my-pi/pi-utils";
+ import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
+ import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
++import type { AgentSession } from "../session/agent-session";
+ import type { ToolSession } from "../sdk";
+ import { enforceInlineByteCap } from "../session/streaming-output";
+ // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
+@@ -25,11 +26,13 @@ import type { OutputMeta } from "./output-meta";
+ import {
+ 	type AcquireTabResult,
+ 	acquireTab,
++	BrowserTabCreateRejected,
+ 	dropHeadlessTabs,
+ 	getTab,
+ 	releaseAllTabs,
+ 	releaseTab,
+ 	runInTab,
++	type TabSession,
+ } from "./browser/tab-supervisor";
+ import { renderTabCall } from "./browser/tab-call";
+ import { resolveToCwd } from "./path-utils";
+@@ -44,6 +47,7 @@ export { CmuxSocketClient } from "./browser/cmux/socket-client";
+ export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
+ export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
+ export type { Observation, ObservationEntry } from "./browser/tab-protocol";
++export { BrowserTabCreateRejected } from "./browser/tab-supervisor";
+ 
+ const DEFAULT_TAB_NAME = "main";
+ const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
+@@ -97,7 +101,28 @@ interface BrowserPreludeDetails {
+ 	value?: unknown;
  }
  
- /** Test-only accessor for the module-global tabs map. */
+-function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
++type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
++
++export interface SessionBrowserTabCreateRequest {
++	/** New managed OMP tab name. Existing names are rejected atomically. */
++	readonly name: string;
++}
++
++export interface SessionBrowserTabCreateResult {
++	readonly created: true;
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly targetId: string;
++	readonly backend: TabSession["backend"];
++	readonly kindTag: BrowserKindTag;
++	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
++	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++	readonly url: string;
++	readonly title: string;
++	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++
++function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
+ 	const app = params.app;
+ 	if (app?.cdp_url) {
+ 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
+@@ -201,11 +226,35 @@ async function openBrowser(
+ 	timeoutMs: number,
+ 	signal?: AbortSignal,
+ ): Promise<AgentToolResult<unknown>> {
++	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
++	details.browser = browser.kind.kind;
++	const tab = result.tab;
++	const url = tab.info.url;
++	const title = tab.info.title ?? "";
++	details.url = url;
++	details.viewport = tab.info.viewport;
++	const verb = result.created ? "Opened" : "Reused";
++	const lines = [
++		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
++		`URL: ${url}`,
++		title ? `Title: ${title}` : null,
++	].filter((line): line is string => typeof line === "string");
++	return toolResult(details).text(lines.join("\n")).done();
++}
++
++async function acquireBrowserTab(
++	session: BrowserOpenSession,
++	name: string,
++	params: BrowserParams,
++	timeoutMs: number,
++	signal?: AbortSignal,
++	createOnly = false,
++): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
+ 	const kind = resolveBrowserKind(params, session);
+-	details.browser = kind.kind;
+ 
+ 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
+ 	const existing = getTab(name);
++	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
+ 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
+ 		throw new ToolError(
+ 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
+@@ -267,6 +316,7 @@ async function openBrowser(
+ 					dialogs: params.dialogs,
+ 					signal: openSignal,
+ 					ownerSessionId: session.getSessionId?.() ?? undefined,
++					createOnly,
+ 				}),
+ 			);
+ 		} catch (error) {
+@@ -277,18 +327,7 @@ async function openBrowser(
+ 		}
+ 		await releaseBrowser(browser, { kill: false });
+ 
+-		const tab = result.tab;
+-		const url = tab.info.url;
+-		const title = tab.info.title ?? "";
+-		details.url = url;
+-		details.viewport = tab.info.viewport;
+-		const verb = result.created ? "Opened" : "Reused";
+-		const lines = [
+-			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
+-			`URL: ${url}`,
+-			title ? `Title: ${title}` : null,
+-		].filter((line): line is string => typeof line === "string");
+-		return toolResult(details).text(lines.join("\n")).done();
++		return { browser, result };
+ 	} catch (error) {
+ 		// Caller cancellation stays a ToolAbortError; the requested timeout
+ 		// becomes a timeout ToolError; anything else passes through unchanged.
+@@ -298,6 +337,59 @@ async function openBrowser(
+ 	}
+ }
+ 
++/**
++ * Create one managed browser tab directly for an actual AgentSession. This is
++ * an explicit human resource action: it reads the live native browser settings
++ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
++ * conversation transcript.
++ */
++export async function createBrowserTabForSession(
++	session: AgentSession,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	if (
++		!request ||
++		typeof request.name !== "string" ||
++		request.name.length === 0 ||
++		request.name.length > 200 ||
++		/[\u0000-\u001f\u007f]/.test(request.name)
++	) {
++		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
++	}
++	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
++	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
++	const ownerSessionId = session.sessionManager.getSessionId();
++	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
++	const nativeSession: BrowserOpenSession = {
++		cwd: session.sessionManager.getCwd(),
++		settings: session.settings,
++		getSessionId: () => ownerSessionId,
++	};
++	const timeoutMs = clampTimeout("browser", undefined, session.settings.get("tools.maxTimeout")) * 1_000;
++	const params = { action: "open", name: request.name } as BrowserParams;
++	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, undefined, true);
++	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
++	if (session.isDisposed || session.sessionManager.getSessionId() !== ownerSessionId) {
++		await releaseTab(request.name, { kill: true, timeoutMs });
++		throw new ToolError("The native session changed while creating its browser tab");
++	}
++	const tab = result.tab;
++	const targetDisposition = tab.kindTag === "headless" ? "created-page"
++		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
++	return Object.freeze({
++		created: true,
++		name: tab.name,
++		ownerSessionId,
++		targetId: tab.targetId,
++		backend: tab.backend,
++		kindTag: tab.kindTag,
++		targetDisposition,
++		url: tab.info.url,
++		title: tab.info.title ?? "",
++		viewport: Object.freeze({ ...tab.info.viewport }),
++	});
++}
++
+ async function closeBrowser(
+ 	name: string,
+ 	params: BrowserParams,

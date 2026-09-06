@@ -3,7 +3,7 @@ import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractio
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 
-export const WORKER_PROTOCOL_VERSION = 9;
+export const WORKER_PROTOCOL_VERSION = 10;
 export interface SessionSnapshot {
   revision: number;
   id: string;

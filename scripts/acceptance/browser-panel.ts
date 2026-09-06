@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 const root = resolve(import.meta.dir, "../.."), out = resolve(process.argv[2] ?? `.data/browser-panel/${Date.now()}`);
 const profile = await mkdtemp(join(tmpdir(), "browser-panel-"));
-const sources = ["apps/desktop/src/renderer/BrowserPanel.tsx", "apps/desktop/src/renderer/browser-panel.css", "scripts/acceptance/browser-panel-browser.tsx", "scripts/acceptance/browser-panel.ts", "scripts/acceptance/fixtures/browser-preview.jpg"];
+const sources = ["apps/desktop/src/renderer/BrowserPanel.tsx", "apps/desktop/src/renderer/browser-address.ts", "apps/desktop/src/renderer/Icons.tsx", "apps/desktop/package.json", "bun.lock", "apps/desktop/src/renderer/browser-panel.css", "scripts/acceptance/browser-panel-browser.tsx", "scripts/acceptance/browser-panel.ts", "scripts/acceptance/fixtures/browser-preview.jpg"];
 const hashes = () => Promise.all(sources.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])).then(Object.fromEntries);
 await mkdir(out, { recursive: true });
 try {

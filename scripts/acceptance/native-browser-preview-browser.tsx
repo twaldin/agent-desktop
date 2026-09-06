@@ -83,7 +83,7 @@ window.runNativeBrowserPreviewAcceptance = async () => {
     && lastFrame.name === expected.name && lastFrame.targetId === expected.targetId && lastFrame.url === expected.url && lastFrame.title === expected.title,
   "Frame owner or target identity changed");
   assert(lastFrame.width === 640 && lastFrame.height === 480 && lastFrame.data.length > 100, "Frame did not preserve its decoded JPEG dimensions");
-  assert(document.querySelector<HTMLInputElement>('[aria-label="Page address"]')?.value === expected.url, "Production panel did not show the actual native URL");
+  assert(document.querySelector<HTMLInputElement>('[aria-label="Page address"]')?.value === expected.url.replace(/^https?:\/\//, ""), "Production panel did not show the native address label");
   const initialDigest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", Uint8Array.from(atob(lastFrame.data), character => character.charCodeAt(0))))]
     .map(value => value.toString(16).padStart(2, "0")).join("");
   await window.nativePreviewBridge.capture("initial");
@@ -143,6 +143,30 @@ window.runNativeBrowserPreviewAcceptance = async () => {
     address.dispatchEvent(new Event("input", {bubbles: true})); await sleep(50);
     address.form!.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
     await wait(() => lastFrame?.targetId === createdTarget!.targetId && lastFrame.url.endsWith("/second") && dockSnapshot?.tabs[0]?.title === "Actual native preview", "same native created page navigation and dock title");
+    await wait(() => !document.querySelector<HTMLButtonElement>('[aria-label="Reload page"]')!.disabled, 'created native controls ready');
+    const options = document.querySelector<HTMLDetailsElement>('.browser-options')!;
+    options.querySelector('summary')!.click();
+    const resize = [...options.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Resize page to panel')!;
+    const viewport = document.querySelector('.browser-viewport')!.getBoundingClientRect();
+    resize.click();
+    await wait(() => actions.at(-1)?.type === 'resize' && actions.at(-1)?.receipt.outcome === 'completed' && image()?.naturalWidth === Math.floor(viewport.width) && image()?.naturalHeight === Math.floor(viewport.height), 'native page resized to actual panel viewport');
+    const navigate = async (path: string) => {
+      address.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(address, expected.url.replace('/page', path));
+      address.dispatchEvent(new Event('input', { bubbles: true })); await sleep(50);
+      address.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await wait(() => lastFrame?.url.endsWith(path) && !document.querySelector<HTMLButtonElement>('[aria-label="Reload page"]')!.disabled, `native navigation to ${path}`);
+    };
+    await navigate('/page');
+    const back = document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!, forward = document.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!;
+    assert(!back.disabled && forward.disabled, 'Native navigation history button state is incorrect');
+    back.click();
+    await wait(() => lastFrame?.url.endsWith('/second') && !forward.disabled, 'native Back');
+    forward.click();
+    await wait(() => lastFrame?.url.endsWith('/page') && !back.disabled && forward.disabled, 'native Forward');
+    back.click();
+    await wait(() => lastFrame?.url.endsWith('/second') && !forward.disabled, 'return to created page');
+    checks.push('browser options resize changes the actual native viewport; Back and Forward traverse native history with accurate disabled state');
     await window.nativePreviewBridge.capture("created");
     const persisted = parseDockSnapshot(JSON.parse(JSON.stringify(dockSnapshot)));
     assert(persisted, "Created target dock cannot be persisted");

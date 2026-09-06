@@ -45,6 +45,17 @@ test("real owner-bound worker captures its native OMP tab without changing page 
     const response = await frameEndpoint.route(new Request(`http://host/v1/sessions/${sessionId}/browser-frame?${query}`, { headers: { [BROWSER_METADATA_OWNER_HEADER]: "owner" } }));
     expect(response?.status).toBe(200); const frame = await response!.json() as BrowserFrameSnapshot;
     expect(frame).toMatchObject({ protocolVersion: 1, hostId: "owner", sessionId, workerPid: session.workerPid, name: tab.name, targetId: tab.targetId, mimeType: "image/jpeg", width: 640, height: 480, url: tab.url, title: "Native frame page" }); expect(frame.data.length).toBeGreaterThan(100);
+    expect(frame.context?.navigation).toMatchObject({ canGoForward: false });
+    if (!frame.context?.navigation) throw new Error("Expected native browser history context");
+    const resized = await session.controlBrowser({ requestId: crypto.randomUUID(), controlEpoch: "worker-proof", capturedAt: Date.now(), target,
+      context: frame.context, action: { type: "resize", width: 800, height: 600 } });
+    expect(resized.context).toMatchObject({ width: 800, height: 600, documentId: frame.context.documentId,
+      navigation: { entryId: frame.context.navigation.entryId } });
+    await expect(session.controlBrowser({ requestId: crypto.randomUUID(), controlEpoch: "worker-proof", capturedAt: Date.now(), target,
+      context: frame.context, action: { type: "resize", width: 900, height: 700 } })).rejects.toThrow("changed");
+    const resizedFrame = await session.getBrowserFrame(target); expect(resizedFrame).toMatchObject({ width: 800, height: 600, context: { width: 800, height: 600 } });
+    await session.controlBrowser({ requestId: crypto.randomUUID(), controlEpoch: "worker-proof", capturedAt: Date.now(), target,
+      context: resized.context, action: { type: "resize", width: 640, height: 480 } });
     const inspected = session.startPrompt("/inspect-browser-frame-contract"); expect(await inspected.accepted).toEqual({ kind: "native-command", command: "inspect-browser-frame-contract" }); await inspected.completion;
     const entries = (await readFile(session.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     const states = entries.filter(entry => entry.type === "custom" && entry.customType === "browser-frame-contract-state").map(entry => entry.data);

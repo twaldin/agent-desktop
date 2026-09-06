@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BROWSER_FRAME_PROTOCOL_VERSION,
   validBrowserFrameTarget,
@@ -11,6 +11,7 @@ import {
   type NativeBrowserTabMetadata,
 } from "../../../../packages/shared/src/protocol";
 import { Icon } from "./Icons";
+import { browserAddressLabel, browserExternalAddress, browserNavigationAddress } from "./browser-address";
 import { framePoint } from "./browser-input";
 import "./browser-panel.css";
 
@@ -96,11 +97,18 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
   const frameRef = useRef(frame);
   const [error, setError] = useState<string>();
   const [actionError, setActionError] = useState<string>();
+  const [toolbarError, setToolbarError] = useState<string>();
+  const viewport = useRef<HTMLDivElement>(null);
   const [heldInput, setHeldInput] = useState<BrowserHumanAction[]>([]);
   const [paused, setPaused] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [pending, setPending] = useState(false);
   const [address, setAddress] = useState("");
+  const [addressFocused, setAddressFocused] = useState(false);
+  const addressFocusRef = useRef(false);
+  const addressInput = useRef<HTMLInputElement>(null);
+  const optionsMenu = useRef<HTMLDetailsElement>(null);
+  const blankPageFocused = useRef(false);
   const [queuedText, setQueuedText] = useState(0);
   const selectionRevision = useRef(0);
   const inFlight = useRef(false);
@@ -124,6 +132,8 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     frameRef.current = frame;
     contextRef.current = frame?.context;
   }, [frame]);
+
+  useLayoutEffect(() => { if (addressFocused) addressInput.current?.select(); }, [addressFocused]);
 
   const holdInput = (extra?: BrowserHumanAction) => {
     const waiting = [...(extra ? [extra] : []), ...textQueue.current];
@@ -248,7 +258,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
           );
         setFrame(image);
         metadataCallback.current?.({ ...tab, url: image.url, title: image.title });
-        if (!addressDirty.current) setAddress(image.url);
+        if (!addressDirty.current && !addressFocusRef.current) setAddress(image.url);
         setError(undefined);
       } catch (cause) {
         if (current())
@@ -314,6 +324,15 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     same(frame, selected),
   );
   const controlsReady = frameReady && !pending;
+  const blankPage = frame?.url === "about:blank";
+  useEffect(() => {
+    if (blankPage && controlsReady && !blankPageFocused.current) { blankPageFocused.current = true; addressInput.current?.focus(); }
+  }, [blankPage, controlsReady]);
+  useEffect(() => {
+    const outside = (event: PointerEvent) => { if (optionsMenu.current?.open && event.target instanceof Node && !optionsMenu.current.contains(event.target)) optionsMenu.current.open = false; };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, []);
 
   const control = async (
     action: BrowserHumanAction,
@@ -432,8 +451,11 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
   };
   const submitAddress = (event: React.FormEvent) => {
     event.preventDefault();
-    const url = address.trim();
-    if (url) void control({ type: "navigate", url });
+    if (!controlsReady) return;
+    try {
+      const url = browserNavigationAddress(address);
+      if (url) { setToolbarError(undefined); addressInput.current?.blur(); void control({ type: "navigate", url }); }
+    } catch (cause) { setToolbarError(cause instanceof Error ? cause.message : 'The page address could not be opened.'); }
   };
   const pointer = (event: React.MouseEvent<HTMLImageElement>) => {
     if (!controlsReady || !frame?.context) return;
@@ -515,7 +537,10 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
   };
 
   return (
-    <section className="browser-panel" aria-label="Browser preview">
+    <section className="browser-panel" aria-label="Browser preview" onKeyDown={event => {
+      if (event.key === "Escape" && optionsMenu.current?.open) { optionsMenu.current.open = false; optionsMenu.current.querySelector<HTMLElement>("summary")?.focus(); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "l") { event.preventDefault(); addressInput.current?.focus(); addressInput.current?.select(); }
+    }}>
 
       {!nativeTarget && <div
         className="browser-tabs"
@@ -546,70 +571,90 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
       <div className="browser-controls" aria-label="Browser controls">
         <button
           aria-label="Back"
-          disabled={!controlsReady}
+          title="Back"
+          disabled={!controlsReady || !frame?.context?.navigation?.canGoBack}
           onClick={() => void control({ type: "back" })}
         >
-          <Icon name="chevron" className="browser-back-icon" />
+          <Icon name="browserBack" />
         </button>
         <button
           aria-label="Forward"
-          disabled={!controlsReady}
+          title="Forward"
+          disabled={!controlsReady || !frame?.context?.navigation?.canGoForward}
           onClick={() => void control({ type: "forward" })}
         >
-          <Icon name="chevron" />
+          <Icon name="browserBack" className="browser-forward-icon" />
         </button>
         <button
           aria-label="Reload page"
+          title="Reload page"
           disabled={!controlsReady}
           onClick={() => void control({ type: "reload" })}
         >
-          <Icon name="refresh" />
+          <Icon name="browserReload" />
         </button>
         <form onSubmit={submitAddress}>
           <input
+            ref={addressInput}
             aria-label="Page address"
-            disabled={!controlsReady}
-            value={address}
+            role="combobox"
+            aria-expanded={false}
+            aria-autocomplete="none"
+            spellCheck={false}
+            autoComplete="off"
+            disabled={!selected || !active}
+            value={addressFocused || addressDirty.current ? (address === "about:blank" ? "" : address) : browserAddressLabel(address)}
+            onFocus={event => { addressFocusRef.current = true; setAddressFocused(true); }}
+            onBlur={() => { addressFocusRef.current = false; setAddressFocused(false); if (!addressDirty.current) setAddress(frameRef.current?.url ?? address); }}
+            onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); addressDirty.current = false; setAddress(frameRef.current?.url ?? ""); event.currentTarget.blur(); } }}
             onChange={(event) => {
               addressDirty.current = true;
               setAddress(event.target.value);
             }}
-            placeholder="https://…"
+            placeholder="Search or enter a URL"
           />
           <button
-            aria-label="Open address"
-            disabled={!controlsReady}
-            type="submit"
-          >
-            <Icon name="arrow" />
-          </button>
+            aria-label="Open in external browser"
+            title="Open in this device’s external browser"
+            disabled={!frame || !browserExternalAddress(frame.url) || !bridge.openExternal}
+            type="button"
+            onClick={() => { setToolbarError(undefined); if (frame && bridge.openExternal) void bridge.openExternal(frame.url).catch(cause => setToolbarError(cause instanceof Error ? cause.message : "The external browser could not be opened.")); }}
+          ><Icon name="browserExternal"/></button>
         </form>
-        <div className="browser-preview-actions">
-          <button
-            aria-label="Refresh browser preview"
-            disabled={Boolean(unsupported) || !active || paused || pending}
-            onClick={() => { haltedRef.current = heldInput.length > 0; setActionError(undefined); setRefresh((value) => value + 1); }}
-          >
-            <Icon name="refresh" />
-          </button>
-          <button
-            disabled={Boolean(unsupported) || pending}
-            onClick={() =>
-              setPaused((value) => {
-                if (!value) {
-                  holdInput();
-                }
-                return !value;
-              })
+        <details ref={optionsMenu} className="browser-options" name="browser-options" onBlur={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false;
+        }}>
+          <summary aria-label="Browser options" title="Browser options" onKeyDown={event => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              if (optionsMenu.current) { optionsMenu.current.open = true; const buttons = optionsMenu.current.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'); (event.key === 'ArrowDown' ? buttons[0] : buttons[buttons.length - 1])?.focus(); }
             }
-          >
-            {paused ? "Resume" : "Pause"}
-          </button>
-        </div>
+          }}><Icon name="browserOptions"/></summary>
+          <div className="browser-options-menu" role="menu" aria-label="Browser options" onKeyDown={event => {
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+            const index = items.indexOf(document.activeElement as HTMLButtonElement);
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+            items[next]?.focus();
+          }}>
+            <p>Native browser preview</p>
+            <button role="menuitem" disabled={!controlsReady || !frame?.context?.navigation} onClick={() => {
+              const rect = viewport.current?.getBoundingClientRect();
+              if (!rect || rect.width < 1 || rect.height < 1) return;
+              if (optionsMenu.current) optionsMenu.current.open = false;
+              void control({ type: 'resize', width: Math.min(16384, Math.floor(rect.width)), height: Math.min(16384, Math.floor(rect.height)) });
+            }}>Resize page to panel</button>
+            <button role="menuitem" aria-label="Refresh browser preview" disabled={Boolean(unsupported) || !active || paused || pending}
+              onClick={() => { if (optionsMenu.current) optionsMenu.current.open = false; haltedRef.current = heldInput.length > 0; setActionError(undefined); setRefresh(value => value + 1); }}>Refresh preview</button>
+            <button role="menuitemcheckbox" aria-checked={paused} disabled={Boolean(unsupported) || pending}
+              onClick={() => { if (optionsMenu.current) optionsMenu.current.open = false; setPaused(value => { if (!value) holdInput(); return !value; }); }}>{paused ? "Resume" : "Pause"}</button>
+          </div>
+        </details>
       </div>
-      {Boolean(reason || actionError || error || paused || pending || queuedText) && (
+      {Boolean(reason || actionError || error || toolbarError || paused || pending || queuedText) && (
         <p className="browser-status" role="status">
-          {reason ?? actionError ??
+          {reason ?? actionError ?? toolbarError ??
             (error
               ? `${error}${queuedText ? ` ${queuedText} character${queuedText === 1 ? "" : "s"} remain unsent.` : ""}`
               : pending
@@ -626,8 +671,10 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
       </details>}
       {frame ? (
         <figure>
+          {blankPage && <div className="browser-blank-page"><Icon name="globe"/><strong>Start browsing</strong><span>Enter a URL to open a page</span></div>}
           <div
-            className={`browser-viewport${controlsReady ? " browser-viewport-live" : ""}`}
+            ref={viewport}
+            className={`browser-viewport${controlsReady ? " browser-viewport-live" : ""}${blankPage ? " browser-blank-viewport" : ""}`}
           >
             <img
               src={`data:${frame.mimeType};base64,${frame.data}`}
@@ -655,7 +702,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
               onCompositionEnd={compositionEnd}
             />
           </div>
-          <figcaption>
+          <figcaption className={stale ? "browser-stale" : "browser-preview-caption"}>
             Viewport preview · {frame.title || frame.url}
             {stale ? " · stale preview" : ""}
           </figcaption>

@@ -8,6 +8,7 @@
     "@agent-desktop/shared": "workspace:*",
     "lowlight": "3.3.0",
     "react-markdown": "10.1.0",
-    "remark-gfm": "4.0.1"
+    "remark-gfm": "4.0.1",
+    "tldts": "7.4.9"
   }
 }

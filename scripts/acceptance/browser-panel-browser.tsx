@@ -41,7 +41,9 @@ const caption = () => document.querySelector("figcaption")?.textContent ?? "";
 const image = () => document.querySelector<HTMLImageElement>("img");
 function button(text: string) {
   const found = [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent === text);
-  assert(found, `Missing button ${text}`); found.click();
+  assert(found, `Missing button ${text}`);
+  const menu = found.closest("details"); if (menu && !menu.open) menu.querySelector<HTMLElement>("summary")!.click();
+  found.click();
 }
 Object.assign(window, {
   browserPanelProgress: () => ({ checks, metadataCalls, frameCalls, maximumInFlight, text: document.body.innerText }),
@@ -71,7 +73,7 @@ Object.assign(window, {
     render("host", false); await sleep(100); const hiddenCalls = metadataCalls;
     await sleep(1200); assert(metadataCalls === hiddenCalls, "Hidden dock keeps polling");
     render("other", false); await wait(() => !image(), "owner switch clears old pixels while hidden");
-    fail = false; render("other", true); await wait(() => document.querySelector<HTMLInputElement>('[aria-label="Page address"]')?.value.startsWith("http://other/"), "new owner's frame");
+    fail = false; render("other", true); await wait(() => document.querySelector<HTMLInputElement>('[aria-label="Page address"]')?.value === "http://other", "new owner's frame");
     wrongFrameOwner = true; await wait(() => document.body.innerText.includes("different session or tab"), "wrong response owner rejected");
     checks.push("hidden dock stops polling and owner changes discard old pixels; mismatched owner response rejected");
 
