@@ -2,11 +2,19 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Frozen23 — verified and handed off
+
+Release23 freezes `d019c6632362fb6857af289fe70fda3b13d49861`: integrated new-chat project/owning-host/branch menus, guarded Git checkout/create, and the pending-status browser-fit candidate. The final frozen suite passes582 tests, skips17 and fails0 (24,822 assertions/123 files), with529 tracked source hashes unchanged. Typecheck, native imports, immutable tmux verification and packaging pass;328 renderer files match the frozen build.
+
+The separate Work artifact at `/Users/twaldin/.agent-desktop-release23.zb582k9m` passes336 transferred hashes and deep/strict signature verification. Its exact visible launcher was handed to the external verifier without launching it here or changing previous runs. The setup provides one idle browser session and a separate clean Git project with `main` and an existing feature branch. Local signed startup observed one visible window, stable host locator, actual clean Git status and both branches, and zero prompts; only the local proof processes were stopped. Private provenance: `.data/release23-package/`.
+
+Native23 browser-fit and context-menu checks remain pending. The first-frame transient error, full font/hover/corner/pixel matching, annotation/zoom and remote context-selection acceptance remain open. The earlier untransferred641bd2f build is explicitly superseded and preserved only as private evidence; it lacks the exact-branch-name and late-menu-completion guards.
+
 ## Independent Work22 composer acceptance
 
 The separate signed22 run passes bottom anchoring, the visible256-point popup, pointer-opened model search with native typing, empty/unfocused one-row composer, focus expansion and visible Stop. Native ordinary draft input survived blur; clearing only that fixture draft restored the compact field. Question custom density/detail were accepted while the independent tool remained running. Releasing only the fixture gate produced one ordinary answer bubble, one delivered steer receipt and the final response; the card disappeared. Evidence: external `95-release22/05–12` and `public-question-evidence.json`. The reported36/56-point measurements describe the text field; they are not total composer heights.
 
-Both original fixture models declare reasoning:false, so those runs correctly do not prove the Power slider or Auto. A separate credential-free native reasoning catalog fixture uses the same signed22 package without creating sessions or sending prompts; visible verification remains a separate gate. No hosted-provider or approval proof is claimed.
+Both original fixture models declare reasoning:false, so those runs correctly do not prove the Power slider or Auto. A separate credential-free native reasoning fixture now passes on Work at1440×1000: visible256×98-point popup,230×28-point slider, all six concrete stops through genuine keyboard input, and Auto/Off/native-default choices retained on reopen. An explicit model+High selection persisted to the host draft with empty text and zero sessions. The verifier reset only fixture selections and observed Medium restored. Evidence: external `95-release22/13–26` and `public-reasoning-evidence.json`; local and transfer provenance `.data/release22-power-fixture/`. Native OMP’s label Xhigh remains distinct from Codex Extra High. No app-restart, actual model execution, hosted-provider, credential or approval proof is claimed.
 
 ## Work21 browser fit follow-up
 

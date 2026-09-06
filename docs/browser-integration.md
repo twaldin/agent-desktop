@@ -248,3 +248,12 @@ Evidence remains separated:
 - The selected native patch passes zero-fuzz real-browser checks, independent runtime validation, a fresh external frozen install with exact patched bytes, and the actual WorkerRuntime regression. Evidence: `.data/temp/omp-browser-control/candidate-check-dE5IhQ/run/result.json` and `.data/temp/browser-history-frozen-final-2/result.json`.
 
 These are source/native/component checks. Paired native-window originals and AX snapshots at the reference conditions, full browser menus, site information, annotations, live streaming, browser file flows and installed remote acceptance are still required. The source checkpoint is not installed release 17.
+
+
+## Automatic fit and independent Work checks through release23
+
+Later source enables automatic page-to-panel fitting by default, retaining an explicit Fit option. Each viewer reacts to its own measured layout and keeps the last requested dimensions so another viewer’s viewport update does not create a resize fight. Fit-off preserves the native viewport when the dock changes size. Work21 verifies actual navigation receipts without replay, counter input, native keyboard input and both Fit states. This supersedes the earlier explicit-only toolbar checkpoint above.
+
+A remaining Work21 observation is separate: after typing into a narrow preview, the image retained14/13-point bands until options/blur. The release23 renderer candidate marks fit measurements stale whenever a control starts, then remeasures after pending status clears before permitting auto-fit. Controlled acceptance records392.5→364.5→392.5-point viewport height around a300ms action and no transient resize. Old source also passed this synthetic timing test, so the candidate is not considered a proven fix for the Work observation until independent packaged retesting.
+
+The first-frame503 error is another open observation. The pinned native capture reads context before/after its screenshot and rejects document transitions; unlike post-action observation, capture does not retry recognized transition errors inside that request. The host maps its exception to BROWSER_FRAME_FAILED, and normal renderer polling can recover on the next second. This is consistent with Work21’s observed automatic recovery, but the exact native exception was not captured. A future retry must be bounded, read-only, limited to recognized transition failures, and revalidate the same owner/target on every attempt; persistent failures must stay visible. Release23 does not change this native capture path.
