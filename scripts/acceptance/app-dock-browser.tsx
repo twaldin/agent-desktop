@@ -15,7 +15,7 @@ let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMet
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
 const nativeTerminalListeners = new Set<(event: any) => void>();
-const model = { provider: "controlled", id: "text", name: "Controlled", input: ["text"], contextWindow: 1000, maxTokens: 1000, reasoning: false, authenticated: true, available: true };
+const model = { provider: "controlled", id: "text", name: "Controlled", input: ["text"], contextWindow: 1000, maxTokens: 1000, reasoning: true, thinkingLevels: ["off", "low", "high"], authenticated: true, available: true };
 const session: SessionSummary = { id: sessionId, hostId: owner, projectId, cwd: "/controlled/project", title: "Dock acceptance conversation", sessionFile: "/controlled/session.jsonl", status: "idle", model, archived: false, createdAt: 1, updatedAt: 2 };
 const state: HostState = { protocolVersion: 1, host: { id: owner, name: "Controlled workstation", platform: "darwin", architecture: "arm64" }, projects: [{ id: projectId, hostId: owner, name: "Dock project", path: "/controlled/project", createdAt: 1 }], sessions: [session], models: [model], drafts: [], lastEventSequence: 1 };
 const gitStatus = { revision: "git-revision-1", branch: "feature/dock", head: "abc123", upstream: "origin/feature/dock", ahead: 2, behind: 1, entries: [
@@ -54,7 +54,7 @@ const methods: Partial<DesktopBridge> = {
   getState: async () => structuredClone(state), getHosts: async () => ({ status: "connected", ownNodeId: "controlled", checkedAt: 1, hosts: [] }),
   getPreferences: async () => ({ version: 1, records: [] }), getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "theme", filePath: "/controlled/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {}, getMessages: async () => [], getInteractions: async () => [],
-  getComposerCatalog: async () => catalog, getSessionControls: async () => ({ sessionId, revision: "controls", model, capabilities: { ...model, api: "controlled", thinkingSelectors: [], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
+  getComposerCatalog: async () => catalog, getSessionControls: async () => ({ sessionId, revision: "controls", model, capabilities: { ...model, api: "controlled", thinkingSelectors: ["off", "low", "high"], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
   getNativeTerminalCapabilities: async () => ({ ok: true as const, value: { protocol: "tmux-v1" as const, tmuxVersion: "3.7c" as const, inputEpoch: nativeTerminal.inputEpoch, dimensions: TERMINAL_DIMENSIONS } }),
   nativeTerminalQuery: async query => ({ ok: true as const, value: query.type === "list" ? { type: "list" as const, terminals: [nativeTerminal] } : query.type === "replay" ? { type: "replay" as const, replay: { attachment: nativeAttachment, terminal: nativeTerminal, chunks: query.afterSequence ? [] : [{ sequence: 1, data: nativeOutput }], firstSequence: 1, lastSequence: 1, resetRequired: false } } : { type: "history" as const, history: { terminalId: nativeTerminal.id, serverGeneration: nativeTerminal.serverGeneration, revision: "controlled-history", capturedAt: 1, cols: nativeTerminal.cols, rows: nativeTerminal.rows, live: true, history: nativeOutput, truncated: false } } }),
   nativeTerminalAction: async action => ({ ok: true as const, value: action.type === "attach" || action.type === "heartbeat" ? { terminal: nativeTerminal, attachment: nativeAttachment } : action.type === "reply" ? { accepted: true } : { terminal: nativeTerminal } }),
@@ -88,6 +88,19 @@ Object.assign(window, {
     await wait(() => document.querySelector("#prompt") && windowState.dock, "production App restore");
     assert(route() === expectedRoute && windowState.dock!.tabs.some(tab => tab.id === restoredTab.id), "restored pane changed the selected route");
     checks.push("restored pane identity preserves the selected owner and conversation route");
+    await wait(() => document.querySelector<HTMLButtonElement>(".composer-selection-trigger")?.disabled === false, "composer model catalog");
+    const pickerTrigger = document.querySelector<HTMLButtonElement>(".composer-selection-trigger")!;
+    pickerTrigger.click(); await wait(() => document.querySelector(".composer-selection-menu"), "composer popup");
+    const modelRow = [...document.querySelectorAll<HTMLButtonElement>('.composer-selection-menu [role="menuitem"]')].find(item => item.textContent?.startsWith("Model"))!;
+    const bounds = modelRow.getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    assert(bounds.height > 0 && hit && modelRow.contains(hit), "Production composer clips the Model menu row");
+    modelRow.click(); await wait(() => document.querySelector('.composer-selection-menu input[type="search"]'), "model submenu pointer selection");
+    document.querySelector<HTMLElement>(".composer-selection-menu")!.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape",bubbles:true}));
+    await wait(() => !document.querySelector(".composer-selection-menu"), "picker Escape");
+    assert(document.activeElement === pickerTrigger, "Picker close lost composer trigger focus");
+    checks.push("production composer menu escapes its rounded clip and opens model search with restored Escape focus");
+
 
     const sideToggle = document.querySelector<HTMLButtonElement>('[aria-label="Show side panel"]'); assert(sideToggle, "accessible side panel toggle"); sideToggle.click();
     await wait(() => getComputedStyle(document.querySelector<HTMLElement>(".dock-slot-right")!).display !== "none" && document.querySelector(".dock-slot-right .dock-empty-actions"), "empty side chooser");
