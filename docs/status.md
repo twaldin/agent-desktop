@@ -2,6 +2,10 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source24 — browser capture transition recovery
+
+A deterministic real-browser regression reproduces the rejected frame when one navigation crosses the screenshot boundary. The candidate retries only recognized read-only document-transition failures with the same owner/target and a bounded retry window. Native checks prove one navigation without replay, bounded failure under continued navigation, and release of the capture reservation afterward. Focused frame/control suites pass11 tests/85 assertions; a fresh native-only rerun passes31 assertions. Typecheck passes. Private evidence: `.data/browser-frame-transition24/`. The exact Work21 first-frame cause and installed24 behavior remain unverified; no current Work run was changed.
+
 ## Frozen23 — verified and handed off
 
 Release23 freezes `d019c6632362fb6857af289fe70fda3b13d49861`: integrated new-chat project/owning-host/branch menus, guarded Git checkout/create, and the pending-status browser-fit candidate. The final frozen suite passes582 tests, skips17 and fails0 (24,822 assertions/123 files), with529 tracked source hashes unchanged. Typecheck, native imports, immutable tmux verification and packaging pass;328 renderer files match the frozen build.

@@ -1,5 +1,5 @@
 diff --git a/src/tools/browser.ts b/src/tools/browser.ts
-index b191f31..415087f 100644
+index b191f319f56d3963c1e8df4cc373ea131da3bb7e..415087f5047def6dd63ff9c0c901b65b4bb02abd 100644
 --- a/src/tools/browser.ts
 +++ b/src/tools/browser.ts
 @@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
@@ -188,7 +188,7 @@ index b191f31..415087f 100644
  	name: string,
  	params: BrowserParams,
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5..97b9a4e 100644
+index c6b8dd5f4d2217a615c0058f4129f9d3322456af..0be25024f098435b0da823a6e60437561200830e 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
 @@ -7,7 +7,7 @@ import {
@@ -311,7 +311,7 @@ index c6b8dd5..97b9a4e 100644
  	const tab = tabs.get(name);
  	if (!tab || tab.state === "dead") {
  		const killed = killedTabs.get(name);
-@@ -756,6 +831,287 @@ export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptio
+@@ -756,6 +831,303 @@ export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptio
  	return count;
  }
  
@@ -360,24 +360,40 @@ index c6b8dd5..97b9a4e 100644
 +	}
 +	if (tab.backend === "cmux") throw new ToolError("Viewport capture is not supported for cmux browser tabs");
 +	const pending = (async () => {
-+		let exactTarget: Target | undefined;
-+		for (const candidate of tab.browser.browser.targets()) {
-+			if ((await targetIdForTarget(candidate)) === target.targetId) { exactTarget = candidate; break; }
++		const deadline = Date.now() + 2_000;
++		const verifyOwner = () => {
++			const current = tabs.get(target.name);
++			if (current !== tab || current?.ownerSessionId !== ownerSessionId || current?.targetId !== target.targetId || current?.state !== "alive") {
++				throw new ToolError("The selected owner-bound browser tab changed during capture");
++			}
++		};
++		for (;;) {
++			verifyOwner();
++			let exactTarget: Target | undefined;
++			for (const candidate of tab.browser.browser.targets()) {
++				if ((await targetIdForTarget(candidate)) === target.targetId) { exactTarget = candidate; break; }
++			}
++			if (!exactTarget) throw new ToolError("The selected browser target is no longer attached");
++			const page = await exactTarget.page();
++			if (!page || page.isClosed()) throw new ToolError("The selected browser target is not an open page");
++			try {
++				verifyOwner();
++				const before = await readOwnerTabDocumentContext(page);
++				const data = Buffer.from(await page.screenshot({ type: "jpeg", quality: 80, fullPage: false, captureBeyondViewport: false }));
++				if (data.byteLength === 0 || data.byteLength > 8 * 1024 * 1024) throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
++				const url = page.url(), title = await page.title(), context = await readOwnerTabDocumentContext(page);
++				if (!sameOwnerTabDocumentContext(before, context, false)) throw new BrowserDocumentTransition("The browser document or viewport changed during capture");
++				verifyOwner();
++				if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during capture");
++				return Object.freeze({ name: tab.name, ownerSessionId, targetId: tab.targetId, data, url, title, context });
++			} catch (error) {
++				verifyOwner();
++				if (!isNavigationObservationRace(error) || page.isClosed() || Date.now() >= deadline) throw error;
++				// Discard the raced pixels; only repeat observation of this exact tab.
++				// Keep its capture reservation through retries so input cannot race us.
++				await new Promise<void>(resolve => setTimeout(resolve, 20));
++			}
 +		}
-+		if (!exactTarget) throw new ToolError("The selected browser target is no longer attached");
-+		const page = await exactTarget.page();
-+		if (!page) throw new ToolError("The selected browser target is not a page");
-+		const before = await readOwnerTabDocumentContext(page);
-+		const data = Buffer.from(await page.screenshot({ type: "jpeg", quality: 80, fullPage: false, captureBeyondViewport: false }));
-+		if (data.byteLength === 0 || data.byteLength > 8 * 1024 * 1024) throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
-+		const url = page.url(), title = await page.title(), context = await readOwnerTabDocumentContext(page);
-+		if (!sameOwnerTabDocumentContext(before, context, false)) throw new ToolError("The browser document or viewport changed during capture");
-+		const current = tabs.get(target.name);
-+		if (current !== tab || current.ownerSessionId !== ownerSessionId || current.targetId !== target.targetId || current.state !== "alive") {
-+			throw new ToolError("The selected owner-bound browser tab changed during capture");
-+		}
-+		if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during capture");
-+		return Object.freeze({ name: tab.name, ownerSessionId, targetId: tab.targetId, data, url, title, context });
 +	})();
 +	viewportCaptures.set(key, pending);
 +	void pending.then(() => viewportCaptures.delete(key), () => viewportCaptures.delete(key));

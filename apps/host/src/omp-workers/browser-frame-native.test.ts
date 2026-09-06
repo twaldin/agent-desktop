@@ -17,7 +17,7 @@ async function browserExecutable(): Promise<string> {
   throw new Error("Native browser frame contract requires an existing Chrome for Testing executable");
 }
 
-test("real owner-bound worker captures its native OMP tab without changing page identity or state", async () => {
+test("real owner-bound captures preserve state and recover bounded document transitions without replay", async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-browser-frame-native-")), agentDir = join(root, "agent"), cwd = join(root, "project");
   await Promise.all([agentDir, cwd].map(directory => mkdir(directory, { recursive: true, mode: 0o700 })));
   const extension = fileURLToPath(new URL("./fixtures/browser-frame-extension.ts", import.meta.url));
@@ -28,7 +28,7 @@ test("real owner-bound worker captures its native OMP tab without changing page 
     return new Response(`<!doctype html><meta charset="utf-8"><title>Native frame page</title><style>html,body{margin:0;width:100%;height:100%;background:#13579b;color:white}</style><main>frame proof</main><script>globalThis.browserFrameState={token:'unchanged',count:7}</script>`, { headers: { "Content-Type": "text/html" } });
   } });
   const runtime = new WorkerRuntime({ agentDir, workerPath: fileURLToPath(new URL("./fixtures/local-browser-worker.ts", import.meta.url)), environment: {
-    HOME: root, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, TERM: "dumb", PUPPETEER_EXECUTABLE_PATH: await browserExecutable(), BROWSER_FRAME_TEST_URL: `http://127.0.0.1:${server.port}/page`, PI_BROWSER_CMUX: "0", PI_BROWSER_RELAY: "0",
+    PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, TERM: "dumb", PUPPETEER_EXECUTABLE_PATH: await browserExecutable(), BROWSER_FRAME_TEST_URL: `http://127.0.0.1:${server.port}/page`, PI_BROWSER_CMUX: "0", PI_BROWSER_RELAY: "0",
   } });
   try {
     const session = await runtime.create({ cwd, interactions: true }); const sessionId = session.id;
@@ -61,5 +61,24 @@ test("real owner-bound worker captures its native OMP tab without changing page 
     const states = entries.filter(entry => entry.type === "custom" && entry.customType === "browser-frame-contract-state").map(entry => entry.data);
     expect(states).toHaveLength(2); expect(states[0]).toMatchObject({ phase: "before", url: tab.url, title: "Native frame page", viewport: { width: 640, height: 480, deviceScaleFactor: 1 }, state: { token: "unchanged", count: 7 } }); expect(states[1]).toEqual({ ...states[0], phase: "after" });
     expect(requests.filter(path => path === "/page")).toHaveLength(1); const after = await session.getBrowserMetadata(); expect(after.availability).toBe("running"); if (after.availability === "running") expect(after.tabs).toHaveLength(1);
+    const navigation = session.startPrompt("/navigate-during-frame-contract"); await navigation.accepted; await navigation.completion;
+    const recovered = await session.getBrowserFrame(target);
+    expect(recovered).toMatchObject({ name: tab.name, targetId: tab.targetId, url: `http://127.0.0.1:${server.port}/page2`, width: 640, height: 480 });
+    expect(recovered.context?.documentId).not.toBe(frame.context.documentId);
+    expect(requests.filter(path => path === "/page2")).toHaveLength(1);
+    const transitions = (await readFile(session.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(entry => entry.customType === "browser-frame-contract-navigation");
+    expect(transitions).toHaveLength(1);
+    expect(transitions[0].data).toEqual({ url: recovered.url, targetId: tab.targetId });
+    const final = await session.getBrowserMetadata();
+    expect(final.availability).toBe("running");
+    if (final.availability === "running") { expect(final.tabs).toHaveLength(1); expect(final.tabs[0]?.targetId).toBe(tab.targetId); }
+    const churn = session.startPrompt("/navigate-during-frame-contract repeat"); await churn.accepted; await churn.completion;
+    const started = Date.now();
+    await expect(session.getBrowserFrame(target)).rejects.toThrow("changed during capture");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(requests.filter(path => path === "/page2").length).toBeGreaterThan(2);
+    const stop = session.startPrompt("/stop-frame-transition-contract"); await stop.accepted; await stop.completion;
+    // A bounded failure releases the capture reservation for the next read.
+    expect(await session.getBrowserFrame(target)).toMatchObject({ name: tab.name, targetId: tab.targetId, url: recovered.url });
   } finally { await runtime.dispose(); server.stop(true); await rm(root, { recursive: true, force: true }); }
 }, 60_000);
