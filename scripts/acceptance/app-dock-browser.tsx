@@ -16,6 +16,7 @@ let browserReads = 0, browserCreates = 0;
 const draftWrites: Extract<CommandEnvelope["command"],{type:"draft.put"}>[] = [];
 const branchWrites: CommandEnvelope[] = [];
 let checkoutGate: Promise<void> | undefined;
+let checkoutUnknownOnce = false;
 let browserTab: import("../../packages/shared/src/protocol").NativeBrowserTabMetadata | undefined;
 const menuDismissal = { add: false, move: false };
 const listeners = new Set<(event: DesktopEvent) => void>();
@@ -84,6 +85,7 @@ const methods: Partial<DesktopBridge> = {
       branchWrites.push(structuredClone(envelope));
       if (envelope.command.action.expectedRevision !== gitStatus.revision) throw new Error("Wrong reviewed Git revision");
       await checkoutGate;
+      if (checkoutUnknownOnce) { checkoutUnknownOnce = false; throw new Error("Controlled checkout outcome is unknown"); }
       gitStatus.branch = envelope.command.action.branch; gitStatus.revision += "-next";
       return {ok:true,commandId:envelope.id,value:{type:"git.checkout",status:structuredClone(gitStatus)}};
     }
@@ -185,16 +187,51 @@ Object.assign(window, {
     document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')!.click();
     await wait(()=>button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…"),"branch creation action");
     button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…")!.click();
-    await wait(()=>document.activeElement?.getAttribute("aria-label")==="New branch name","new branch field focus");
-    return {menu:document.querySelector('.composer-context-menu')!.getBoundingClientRect().toJSON()};
+    await wait(()=>document.activeElement?.getAttribute("aria-label")==="Branch name","new branch field focus");
+    const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!, dialogBounds=dialog.getBoundingClientRect();
+    assert(dialog.open && dialog.matches(":modal") && !document.querySelector('.composer-context-menu'),"Branch creation remained an anchored menu instead of a modal dialog");
+    assert(Math.abs(dialogBounds.left+dialogBounds.width/2-innerWidth/2)<=1 && Math.abs(dialogBounds.top+dialogBounds.height/2-innerHeight/2)<=1,"Branch creation dialog is not centered in the viewport");
+    assert(dialogBounds.width>=360 && dialogBounds.width<=420 && dialogBounds.top>=0 && dialogBounds.bottom<=innerHeight,"Branch creation dialog geometry is clipped or outside the native feature-dialog width");
+    assert(document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')!.value==="codex/" && prompt.value==="Keep context draft","Branch modal did not retain its native prefix or the unsent draft");
+    return {fitting:true,dialog:dialogBounds.toJSON(),viewport:{width:innerWidth,height:innerHeight,devicePixelRatio}};
+  },
+  checkBranchModalTrap: async () => {
+    const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!;
+    assert(dialog.open && dialog.contains(document.activeElement),"Keyboard navigation escaped the modal dialog");
+  },
+  checkBranchModalEscape: async () => {
+    await wait(()=>!document.querySelector('.composer-branch-dialog'),"branch modal Escape");
+    assert(document.activeElement===document.querySelector('[aria-label="Switch branch"]'),"Branch modal Escape did not restore the branch trigger");
+    assert(document.querySelector<HTMLTextAreaElement>("#prompt")!.value==="Keep context draft","Branch modal Escape changed the unsent draft");
+  },
+  reopenBranchModal: async () => {
+    document.querySelector<HTMLButtonElement>('[aria-label="Switch branch"]')!.click();
+    await wait(()=>button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…"),"reopened branch creation action");
+    button(document.querySelector('.composer-context-menu'),"Create and checkout new branch…")!.click();
+    await wait(()=>document.activeElement?.getAttribute("aria-label")==="Branch name","reopened branch field focus");
+  },
+  branchModalBackdropPoint: () => {
+    const bounds=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!.getBoundingClientRect();
+    return {x:Math.max(4,Math.floor(bounds.left/2)),y:Math.floor(innerHeight/2)};
+  },
+  checkBranchModalBackdrop: async () => {
+    await wait(()=>!document.querySelector('.composer-branch-dialog'),"branch modal backdrop dismissal");
+    assert(document.activeElement===document.querySelector('[aria-label="Switch branch"]'),"Branch modal backdrop dismissal did not restore the branch trigger");
+    assert(document.querySelector<HTMLTextAreaElement>("#prompt")!.value==="Keep context draft","Branch modal backdrop dismissal changed the unsent draft");
   },
   finishComposerContext: async () => {
     const prompt=document.querySelector<HTMLTextAreaElement>("#prompt")!;
-    const create=button(document.querySelector('.composer-context-menu'),"Create branch")!;
+    const dialog=document.querySelector<HTMLDialogElement>('.composer-branch-dialog')!, create=button(dialog,"Create and checkout")!;
+    const deliveriesBeforeCreate=branchWrites.length; checkoutUnknownOnce=true;
     assert(!create.disabled,"Named new branch remains disabled"); create.click();
-    await wait(()=>!document.querySelector('.composer-context-menu'),"branch creation receipt");
-    assert(gitStatus.branch==="new-context-branch" && branchWrites.length===2,"Creation did not use expected branch command");
-    const command=branchWrites[1]!.command;
+    await wait(()=>button(document.querySelector('.composer-branch-dialog'),"Retry original workspace command"),"uncertain create receipt");
+    assert(branchWrites.length===deliveriesBeforeCreate+1 && document.querySelector<HTMLInputElement>('[aria-label="Branch name"]')?.value==="codex/new-context-branch","Uncertain creation lost its modal input or original delivery");
+    await new Promise(resolve=>setTimeout(resolve,100));
+    assert(branchWrites.length===deliveriesBeforeCreate+1,"Uncertain branch creation replayed without an explicit retry");
+    button(document.querySelector('.composer-branch-dialog'),"Retry original workspace command")!.click();
+    await wait(()=>!document.querySelector('.composer-branch-dialog'),"branch creation receipt");
+    assert(gitStatus.branch==="codex/new-context-branch" && branchWrites.length===deliveriesBeforeCreate+2 && branchWrites.at(-1)!.id===branchWrites.at(-2)!.id && prompt.value==="Keep context draft","Creation retry changed command identity, branch text, or unsent draft");
+    const command=branchWrites.at(-1)!.command;
     assert(command.type==="workspace.mutate" && command.action.type==="git.checkout" && command.action.create===true,"Create action omitted native creation intent");
     document.querySelector<HTMLButtonElement>('[aria-label="Select project"]')!.click();
     await wait(()=>document.querySelector('.composer-context-menu'),"clear project menu");
@@ -209,7 +246,7 @@ Object.assign(window, {
     hostMenu.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
     await wait(()=>!document.querySelector('.composer-context-menu'),"host popup dismissed");
     assert(document.activeElement?.getAttribute("aria-label")==="Select where to run the chat","Context Escape lost focus");
-    checks.push("new-chat context menus search native project catalog, route reviewed branch commands, preserve durable text, clear project and restore host-trigger focus");
+    checks.push("new-chat context menus route reviewed branch commands and the centered create modal traps focus, accepts native text input, restores its trigger and preserves durable draft text");
     return {fitting:true,branchWrites,projectId:null,text:prompt.value,context:document.querySelector('.composer-context')!.getBoundingClientRect().toJSON()};
   },
   checkDisposedComposerContext: async () => {

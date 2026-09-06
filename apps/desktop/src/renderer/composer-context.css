@@ -13,8 +13,16 @@
 .context-search{display:flex;align-items:center;gap:7px;padding:6px 8px;color:var(--secondary)}
 .context-search input{background:transparent;border:0;outline:0;min-width:0;flex:1;color:var(--text);font:inherit}
 .context-options{max-height:290px;overflow:auto}.composer-context-menu p{margin:4px 8px;color:var(--secondary);font-size:12px;overflow-wrap:anywhere}
-.composer-context-menu form{padding:8px}.composer-context-menu form>label{display:grid;gap:6px}.composer-context-menu form input{width:100%;min-width:0;padding:7px 8px;background:var(--hover);border:1px solid var(--border);border-radius:var(--button-radius)}
-.context-form-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}.context-form-actions button{width:auto}
+.composer-branch-dialog{width:min(400px,calc(100vw - 32px));padding:20px 20px 18px;color:var(--text);background:var(--elevated-surface);border:var(--border-width,1px) solid var(--border);border-radius:18px;box-shadow:0 16px 80px #0005;margin:auto;font:inherit}
+.composer-branch-dialog::backdrop{background:#0005;backdrop-filter:blur(2px)}
+.composer-branch-dialog form{display:flex;flex-direction:column;min-width:0}
+.context-dialog-header,.context-branch-label,.context-dialog-actions{display:flex;align-items:center}
+.context-dialog-header{justify-content:space-between;gap:16px;margin-bottom:17px}.context-dialog-header h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.35px}
+.context-dialog-close{display:grid;place-items:center;width:28px;height:28px;margin:-5px -6px -5px 0;padding:0;color:var(--secondary);background:transparent;border:0;border-radius:8px}.context-dialog-close:hover,.context-dialog-close:focus-visible{color:var(--text);background:var(--hover);outline:0}.context-dialog-close .icon{width:16px;height:16px}
+.context-branch-label{justify-content:space-between;margin-bottom:8px;font-size:14px;font-weight:550}.context-branch-label button{padding:0;color:var(--secondary);background:transparent;border:0;font:inherit;font-weight:400}.context-branch-label button:hover,.context-branch-label button:focus-visible{color:var(--text);outline:0}
+.composer-branch-dialog input{width:100%;height:36px;padding:7px 10px;color:var(--text);background:var(--app-surface);border:1px solid var(--border);border-radius:9px;font:inherit}.composer-branch-dialog input:focus{border-color:var(--accent,#2f7cf6);outline:1px solid var(--accent,#2f7cf6)}
+.context-branch-error{margin:8px 0 0;color:var(--danger,#ef6461);font-size:12px}.context-retry{align-self:flex-start;margin-top:8px;padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--hover);color:var(--text);font:inherit;font-size:12px}
+.context-dialog-actions{justify-content:flex-end;gap:8px;margin-top:18px}.context-dialog-actions .primary-button,.context-dialog-actions .secondary-button{min-height:34px;font-size:14px}.context-dialog-actions .primary-button{display:flex;align-items:center;gap:7px}.context-dialog-actions .spinner{width:13px;height:13px}
 @container composer-region (max-width:450px){.composer-context{gap:2px;margin-inline:4px;padding-inline:2px}.composer-context>button{padding-inline:4px}.context-offline{display:none}}
 
 .context-search input:focus-visible{outline:none}
