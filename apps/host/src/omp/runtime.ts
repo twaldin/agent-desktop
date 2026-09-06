@@ -785,7 +785,21 @@ export class OmpRuntime {
                 await imagePrompt?.prepare(session, manager);
                 await skillPrompt?.prepare();
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
-                return dispatchNativePrompt(session, text, imagePrompt?.images, skillPrompt);
+                return dispatchNativePrompt(session, text, imagePrompt?.images, skillPrompt, {
+                  reloadMcp: async () => {
+                    // This callback runs inside the existing native-command admission.
+                    // Also fence side chats, whose lifecycle may otherwise overlap a prompt.
+                    assertSessionActive();
+                    if (interruptsInFlight || controller.signal.aborted || session.queuedMessageCount > 0
+                      || ui?.list().length || btw.get()?.status === "running")
+                      throw new Error("Resolve pending native work before reloading MCP servers.");
+                    const ticket = mcp.read();
+                    const reload = mcp.reload({ epoch: ticket.epoch, expectedRevision: ticket.revision });
+                    mcpMutation = reload;
+                    try { await reload; }
+                    finally { if (mcpMutation === reload) mcpMutation = undefined; }
+                  },
+                });
               }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt);
               void nativeRun.accepted.then(value => { if (value) nativeGoalController.resetSuppression(); receipt.resolve(value); }, receipt.reject);
               const completed = await nativeRun.completion;

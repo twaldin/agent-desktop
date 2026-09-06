@@ -15,7 +15,10 @@ import type { ImageContent } from "@oh-my-pi/pi-ai";
  * handlers once with their native context to observe the actual return/throw.
  * Only reviewed native text handlers are enabled; ownership transitions remain gated.
  */
-export async function dispatchNativePrompt(session: AgentSession, text: string, images?: ImageContent[], skill?: NativeSkillPrompt): Promise<NativePromptDispatchResult> {
+export interface NativeCommandBridges {
+  reloadMcp(): Promise<void>;
+}
+export async function dispatchNativePrompt(session: AgentSession, text: string, images?: ImageContent[], skill?: NativeSkillPrompt, bridges?: NativeCommandBridges): Promise<NativePromptDispatchResult> {
   if (images?.length && text.trimStart().startsWith("/")) throw new Error("Image attachments are not supported on slash commands yet; no command was executed");
   if (skill) { if (images?.length) throw new Error("Images on native skill invocations are not connected yet; the draft was retained."); return { agentInvoked: await skill.dispatch() }; }
   if (!text.startsWith("/") && text.trimStart().startsWith("/")) throw new Error("Native slash commands must begin at the start of the draft. This input was not sent to a model.");
@@ -47,12 +50,14 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
     if (parsed && builtin) {
       const availability = builtinAvailability(builtin.name, parsed.args);
       if (availability.availability !== "executable" || !builtin.handle) throw new Error(`Native /${builtin.name} is not connected to the desktop command dispatcher for this invocation. ${availability.reason ?? ""} This input was not executed or sent to a model.`);
+      const reloadMcp = builtin.name === "mcp" && parsed.args.trim().split(/\s+/,1)[0] === "reload";
+      if (reloadMcp && !bridges) throw new Error("The native MCP runtime reload bridge is unavailable; no command was executed.");
       const chunks: string[] = []; let length = 0;
       try {
         const result = await builtin.handle(parsed, {
           session, sessionManager: session.sessionManager, settings: session.settings, cwd: session.sessionManager.getCwd(),
           output: value => { const remaining = 64 * 1024 - length; if (remaining > 0) { const part = value.slice(0, remaining); chunks.push(part); length += part.length + 1; } },
-          refreshCommands: () => {}, reloadPlugins: async () => { throw new Error("Coordinated native plugin reload is not connected."); },
+          refreshCommands: reloadMcp ? () => bridges!.reloadMcp() : () => {}, reloadPlugins: async () => { throw new Error("Coordinated native plugin reload is not connected."); },
         });
         if (result && "prompt" in result) return { agentInvoked: await session.prompt(result.prompt) };
         const output = chunks.join("\n");

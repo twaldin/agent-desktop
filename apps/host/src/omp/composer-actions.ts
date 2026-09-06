@@ -24,6 +24,12 @@ const supportedBuiltins = new Set(["model", "switch", "fast", "skillful", "compu
 const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
   if (supportedBuiltins.has(name)) return { availability: "executable" };
+  if (name === "mcp") {
+    if (args === undefined) return {availability:"partial",reason:"Native help and live runtime reload are connected. Other subcommands retain their native integration requirements."};
+    const verb=args.trim().split(/\s+/,1)[0];
+    if (!verb || verb === "reload" || verb === "help") return {availability:"executable"};
+    return {availability:"pending",reason:"This MCP operation requires its remaining native manager, configuration or interactive authorization bridge."};
+  }
   if (name === "btw") return { availability: "partial", reason: "Ask a side question using this conversation’s context." };
   if (name === "session") {
     if (args === undefined) return { availability: "partial", reason: "Session info is connected. Deletion and account pin commands require the owning desktop lifecycle/account bridge." };
@@ -33,7 +39,7 @@ export function builtinAvailability(name: string, args?: string): { availability
   if (identityCommands.has(name)) return { availability: "pending", reason: "This command can change native session/file ownership or the owning process. Its desktop ownership transition is not connected." };
   if (name === "usage") return { availability: "pending", reason: "Native usage/reset output and explicit reset-credit confirmation are not connected to this command. Account controls remain available." };
   if (["login", "logout", "security"].includes(name)) return { availability: "pending", reason: "Use the desktop account/permission controls; the native command's interactive policy and durable receipt are not connected." };
-  if (["plugins", "marketplace", "reload-plugins", "mcp", "ssh"].includes(name)) return { availability: "pending", reason: "Native configuration changes require coordinated registry reload and interaction handling before this command can execute." };
+  if (["plugins", "marketplace", "reload-plugins", "ssh"].includes(name)) return { availability: "pending", reason: "Native configuration changes require coordinated registry reload and interaction handling before this command can execute." };
   const spec = lookupBuiltinSlashCommand(name);
   return { availability: "pending", reason: spec?.handle
     ? "This native text handler requires its remaining desktop lifecycle/output integration and acceptance before execution."

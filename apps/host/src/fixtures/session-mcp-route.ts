@@ -7,6 +7,7 @@ import { Database } from "bun:sqlite";
 import type {
 	CommandEnvelope,
 	CommandResult,
+	Draft,
 	NativeSessionMcpResponse,
 	SessionSummary,
 } from "@agent-desktop/shared";
@@ -132,11 +133,45 @@ try {
 		headers: { Authorization: `Bearer ${host.connection.token}` },
 	});
 	assert.equal(rejectedOwner.status, 409);
-	const baselineStarts = await starts(); assert.equal(baselineStarts, 2);
+	assert.equal(await starts(), 2);
+	const draftId = `session:${session.id}`;
+	async function putCommandDraft(text: string, expectedRevision: number): Promise<Draft> {
+		const response = await command({ id: crypto.randomUUID(), command: { type: "draft.put", expectedRevision,
+			draft: { id: draftId, text, projectId: null, model: null } } });
+		assert(response.result.ok); return response.result.value as Draft;
+	}
+	const helpDraft = await putCommandDraft("/mcp", 0);
+	const helpEnvelope: CommandEnvelope = { id: "typed-mcp-help", command: { type: "session.prompt", sessionId: session.id,
+		text: helpDraft.text, draft: { id: draftId, revision: helpDraft.revision } } };
+	const help = await command(helpEnvelope);
+	assert(help.result.ok && help.result.admission?.kind === "native-command");
+	assert.match(help.result.admission.output!, /\/mcp help/);
+	assert.equal(host.store.getDraft(draftId)?.text, "");
+	assert.equal(await starts(), 2);
+	assert.deepEqual((await command(helpEnvelope)).result, help.result);
+
+	const typedDraft = await putCommandDraft("/mcp reload", host.store.getDraft(draftId)!.revision);
+	const typedEnvelope: CommandEnvelope = { id: "typed-mcp-reload", command: { type: "session.prompt", sessionId: session.id,
+		text: typedDraft.text, draft: { id: draftId, revision: typedDraft.revision } } };
+	await writeFile(gate, "hold typed reload");
+	const typedRequest = command(typedEnvelope);
+	for (let index = 0; index < 200 && await starts() === 2; index++) await Bun.sleep(5);
+	assert.equal(await starts(), 3);
+	const newerDraft = await putCommandDraft("Keep this newer unsent text", typedDraft.revision);
+	await rm(gate);
+	const typed = await typedRequest;
+	assert(typed.result.ok && typed.result.admission?.kind === "native-command");
+	assert.equal(typed.result.admission.output, "MCP runtime reload requested.");
+	assert.deepEqual(host.store.getDraft(draftId), newerDraft);
+	assert.deepEqual((await command(typedEnvelope)).result, typed.result);
+	assert.equal(await starts(), 3);
+	assert.deepEqual(host.store.getDraft(draftId), newerDraft);
+	const baselineStarts = await starts();
+	const directTicket = (await mcp(session.id)).body.value!;
 
 	await writeFile(gate, "hold");
 	const reload: CommandEnvelope = { id: "reload-once", command: { type: "session.mcp.reload", sessionId: session.id,
-		epoch: initial.value!.epoch, expectedRevision: initial.value!.revision } };
+		epoch: directTicket.epoch, expectedRevision: directTicket.revision } };
 	const reloadRequest = command(reload);
 	let pendingSeen = false;
 	for (let index = 0; index < 100 && !pendingSeen; index++) {
@@ -177,6 +212,9 @@ try {
 	await host.stop();
 	const beforeRestart = await starts();
 	host = await startHost(options);
+	assert.equal(await starts(), beforeRestart);
+	assert.deepEqual((await command(typedEnvelope)).result, typed.result);
+	assert.deepEqual(host.store.getDraft(draftId), newerDraft);
 	assert.equal(await starts(), beforeRestart);
 	const recovered = await mcp(session.id, lost.id);
 	assert.equal(recovered.status, 200);

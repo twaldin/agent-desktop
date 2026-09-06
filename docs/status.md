@@ -2,6 +2,12 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — native MCP composer help and reload
+
+Bare `/mcp` and `/mcp help` now persist native help output without a model turn. `/mcp reload` refreshes the selected session's existing MCP manager through normal command admission. Extensions/custom commands retain precedence. The host consumes only the submitted draft revision, preserves edits made during reload, returns the same receipt on duplicate delivery, and does not replay a completed reload after restart. The catalog still marks other MCP subcommands unavailable.
+
+The focused regression batch passes **24 tests / 210 assertions across7 files**, including actual native workers, a disposable stdio server, authenticated host dispatch, prompt admission, side-chat/lifecycle checks and transport ownership. Typecheck and production build pass; independent review found no concrete blocker. This is source functionality evidence only: no new packaged/native-window or pixel claim, and no Work fixture, installed service, credential configuration or sealed reference was changed. Private logs and scope are in `.data/mcp-commands-checkpoint/`. Interactive MCP OAuth/reconnect, live resource/prompt details and the wider parity milestone remain open.
+
 ## Source30 — live native MCP state and reload
 
 The selected session now exposes its actual OMP MCP connection state, tool names and measured resource/prompt counts in the settings UI. Explicit Reload servers applies saved configuration through the same native manager and tool registry. It rejects busy sessions, stale manager tickets and overlapping mutations. Status reads never start a worker. Durable command IDs and an owner-scoped receipt read prevent duplicate execution after lost responses or host restarts; unresolved receipts remain visible. Worker protocol18 carries these operations; OMP18.1.10/Bun1.3.14 remain pinned.
