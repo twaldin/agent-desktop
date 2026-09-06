@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandEnvelope, CommandResult, HostEvent, HostState, Project, WorkspaceQueryResult } from "@agent-desktop/shared";
@@ -45,6 +45,12 @@ afterEach(async () => {
 
 function headers(host: Host): HeadersInit {
   return { Authorization: `Bearer ${host.connection.token}`, "Content-Type": "application/json" };
+}
+
+function git(cwd: string, ...args: string[]): string {
+  const result = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
+  if (!result.success) throw new Error(new TextDecoder().decode(result.stderr));
+  return new TextDecoder().decode(result.stdout).trimEnd();
 }
 
 async function command(host: Host, envelope: CommandEnvelope): Promise<CommandResult> {
@@ -230,6 +236,33 @@ describe("isolated host transport", () => {
     const reopened = await start(options);
     expect(await command(reopened, write)).toEqual(first);
     expect(await readFile(join(options.discoveryDirectory, "contract.txt"), "utf8")).toBe("first revision\n");
+  });
+
+  test("branch checkout is blocked while an owning session is active and succeeds after it becomes idle", async () => {
+    const options = await isolatedOptions();
+    git(options.discoveryDirectory, "init", "--initial-branch=main");
+    git(options.discoveryDirectory, "config", "user.name", "Workspace Test");
+    git(options.discoveryDirectory, "config", "user.email", "workspace-tests@example.invalid");
+    await writeFile(join(options.discoveryDirectory, "tracked.txt"), "initial\n");
+    git(options.discoveryDirectory, "add", "tracked.txt"); git(options.discoveryDirectory, "commit", "--message", "Initial");
+    git(options.discoveryDirectory, "branch", "feature");
+    const host = await start(options);
+    const added = await command(host, { id: "checkout-project", command: { type: "project.add", path: options.discoveryDirectory } });
+    const project = added.ok ? added.value as Project : undefined;
+    const statusResponse = await fetch(`${host.connection.origin}/v1/workspace/query`, { method: "POST", headers: headers(host),
+      body: JSON.stringify({ target: { projectId: project!.id }, query: { type: "git.status" } }) });
+    const reviewed = await statusResponse.json() as Extract<WorkspaceQueryResult, { type: "git.status" }>;
+    const now = Date.now();
+    const active = host.store.upsertSession({ id: "active-checkout", hostId: host.connection.hostId, projectId: project!.id,
+      cwd: await realpath(options.discoveryDirectory), title: "Active checkout", status: "running", sessionFile: join(options.dataDirectory, "active.jsonl"),
+      model: null, createdAt: now, updatedAt: now, archived: false });
+    const action = { type: "git.checkout" as const, branch: "feature", expectedRevision: reviewed.status.revision };
+    expect(await command(host, { id: "blocked-checkout", command: { type: "workspace.mutate", target: { projectId: project!.id }, action } }))
+      .toMatchObject({ ok: false, error: { code: "COMMAND_FAILED", message: expect.stringContaining("still working") } });
+    expect(git(options.discoveryDirectory, "branch", "--show-current")).toBe("main");
+    host.store.upsertSession({ ...active, status: "idle", updatedAt: now + 1 });
+    expect(await command(host, { id: "allowed-checkout", command: { type: "workspace.mutate", target: { projectId: project!.id }, action } }))
+      .toMatchObject({ ok: true, value: { type: "git.checkout", status: { branch: "feature" } } });
   });
 
   test("WebSockets require protocol authentication and deliver live and resumed events", async () => {

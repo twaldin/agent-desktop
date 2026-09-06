@@ -67,20 +67,23 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const temporary = join(dataDirectory, `connection.${process.pid}.tmp`);
   try {
   store = new HostStore(dataDirectory);
-  const removingWorktrees = new Set<string>();
+  const mutatingWorkspaces = new Set<string>();
   const within = (parent: string, path: string) => path === parent || path.startsWith(parent + sep);
   const workspaces = new HostWorkspaces(store, dataDirectory, path => {
+    if ([...mutatingWorkspaces].some(current => within(current, path) || within(path, current))) {
+      throw new Error("This workspace is already being changed. Wait for it to finish before trying again.");
+    }
     if (store.listSessions().some(session => within(path, session.cwd) && (session.status === "running" || executions.has(session.id)))) {
-      throw new Error("A session is still working in this worktree. Stop it and wait for its work to finish before removing the worktree.");
+      throw new Error("A session is still working in this workspace. Stop it and wait for its work to finish before changing the workspace.");
     }
     if ([...(terminals?.list() ?? []), ...(nativeTerminals?.list() ?? [])].some(terminal => within(path, terminal.cwd) && terminal.exitedAt === undefined)) {
-      throw new Error("A terminal is still open in this worktree. Close it before removing the worktree.");
+      throw new Error("A terminal is still open in this workspace. Close it before changing the workspace.");
     }
-    removingWorktrees.add(path);
-    return () => { removingWorktrees.delete(path); };
+    mutatingWorkspaces.add(path);
+    return () => { mutatingWorkspaces.delete(path); };
   });
   function assertWorkspaceAvailable(cwd: string): void {
-    if ([...removingWorktrees].some(path => within(path, cwd))) throw new Error("This worktree is being removed. Wait for removal to finish before starting work.");
+    if ([...mutatingWorkspaces].some(path => within(path, cwd))) throw new Error("This workspace is being changed. Wait for it to finish before starting work.");
   }
   // Native postmortem allows 10s for this process's cleanup. Leave time to
   // settle command receipts and remove our locator after a stuck child exits.

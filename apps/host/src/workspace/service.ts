@@ -211,7 +211,7 @@ export class WorkspaceService {
   private async checkIndexRevision(expectedRevision?: string): Promise<{ head: string | null; revision: string }> {
     if (expectedRevision !== undefined && (typeof expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(expectedRevision))) throw new WorkspaceError("INVALID_REVISION", "An exact SHA-256 Git revision is required.");
     const current = await this.indexState();
-    if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new WorkspaceError("GIT_REVISION_CONFLICT", "The Git index or HEAD changed since this review. Refresh before committing or unstaging.");
+    if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new WorkspaceError("GIT_REVISION_CONFLICT", "The Git index or HEAD changed since this review. Refresh before changing Git state.");
     return current;
   }
 
@@ -321,6 +321,52 @@ export class WorkspaceService {
       await this.checkIndexRevision(expectedRevision);
       const result = await this.git(["commit", "--message", message]);
       return { commit: (await this.git(["rev-parse", "HEAD"])).stdout.trim(), summary: result.stdout.trim() };
+    });
+  }
+
+  async checkout(branch: string, expectedRevision: string, create = false): Promise<GitStatus> {
+    if (typeof branch !== "string" || !branch || branch.length > 200 || branch.startsWith("-") || branch.includes("\0")) {
+      throw new WorkspaceError("INVALID_BRANCH", "A valid local branch name is required.");
+    }
+    if (typeof create !== "boolean") throw new WorkspaceError("INVALID_BRANCH", "The branch creation flag must be boolean.");
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      const before = await this.checkIndexRevision(expectedRevision);
+      await this.git(["check-ref-format", "--branch", branch]);
+      const ref = `refs/heads/${branch}`;
+      if (create) {
+        if (before.head === null) throw new WorkspaceError("UNBORN_BRANCH", "Create the repository's first commit before creating another branch.");
+        if ((await this.git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1] })).exitCode === 0) {
+          throw new WorkspaceError("BRANCH_EXISTS", "A local branch with this name already exists.");
+        }
+      } else {
+        if ((await this.git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1] })).exitCode !== 0) {
+          throw new WorkspaceError("BRANCH_NOT_FOUND", "The selected local branch no longer exists. Refresh the branch list.");
+        }
+        if ((await this.git(["symbolic-ref", "--quiet", ref], { validExitCodes: [1] })).exitCode === 0) {
+          throw new WorkspaceError("SYMBOLIC_BRANCH", "Symbolic branch references cannot be checked out.");
+        }
+        const current = await this.readGitStatus();
+        if (current.branch === branch) return current;
+      }
+      try {
+        await this.git(create
+          ? ["switch", "--no-guess", "--no-overwrite-ignore", "--create", branch, before.head!]
+          : ["switch", "--no-guess", "--no-overwrite-ignore", "--", branch]);
+      } catch (error) {
+        const observed = await this.readGitStatus().catch(() => undefined);
+        if (observed?.branch === branch && (!create || observed.head === before.head)) return observed;
+        if (!observed || observed.revision !== before.revision) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "The branch switch did not return a reliable receipt. Inspect the repository before retrying.");
+        }
+        throw error;
+      }
+      try {
+        const result = await this.readGitStatus();
+        if (result.branch !== branch || (create && result.head !== before.head)) throw new Error("Unexpected checked-out branch state");
+        return result;
+      }
+      catch { throw new WorkspaceError("OUTCOME_UNKNOWN", "The branch switched, but its resulting status could not be verified. Inspect the repository before retrying."); }
     });
   }
 

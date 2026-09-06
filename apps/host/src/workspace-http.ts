@@ -51,6 +51,10 @@ export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
       return action.type === "git.unstage" ? { type: action.type, paths, expectedRevision: optionalText(action.expectedRevision) } : { type: action.type, paths };
     }
     case "git.commit": return { type: action.type, message: text(action.message, 1_000_000), expectedRevision: optionalText(action.expectedRevision) };
+    case "git.checkout": {
+      if (typeof action.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.expectedRevision)) throw new Error("The exact Git status revision is required.");
+      return { type: action.type, branch: text(action.branch, 200), expectedRevision: action.expectedRevision, create: optionalBoolean(action.create) };
+    }
     case "worktree.create": {
       const options = object(action.options);
       return { type: action.type, options: { path: text(options.path), branch: optionalText(options.branch), newBranch: optionalText(options.newBranch), startPoint: optionalText(options.startPoint) } };
@@ -61,7 +65,7 @@ export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
 }
 
 export class HostWorkspaces {
-  constructor(private store: HostStore, private dataDirectory: string, private reserveRemoval: (path: string) => () => void) {}
+  constructor(private store: HostStore, private dataDirectory: string, private reserveMutation: (path: string) => () => void) {}
   #resolve(target: WorkspaceTarget): WorkspaceService {
     const session = "sessionId" in target ? this.store.getSession(target.sessionId) : undefined;
     const projectId = "projectId" in target ? target.projectId : session?.projectId;
@@ -89,6 +93,11 @@ export class HostWorkspaces {
       case "git.stage": return { type: action.type, status: await workspace.stage(action.paths) };
       case "git.unstage": return { type: action.type, status: await workspace.unstage(action.paths, action.expectedRevision) };
       case "git.commit": return { type: action.type, ...await workspace.commit(action.message, action.expectedRevision) };
+      case "git.checkout": {
+        const release = this.reserveMutation(workspace.cwd);
+        try { return { type: action.type, status: await workspace.checkout(action.branch, action.expectedRevision, action.create) }; }
+        finally { release(); }
+      }
       case "worktree.create": return { type: action.type, worktree: await workspace.createWorktree(action.options) };
       case "worktree.remove": {
         const root = await realpath(workspace.worktreeRoot!);
@@ -96,7 +105,7 @@ export class HostWorkspaces {
         if (!candidate.startsWith(root + sep)) throw new Error("Only a managed worktree can be removed.");
         const path = await realpath(candidate);
         if (!path.startsWith(root + sep)) throw new Error("Only a managed worktree can be removed.");
-        const release = this.reserveRemoval(path);
+        const release = this.reserveMutation(path);
         try { await workspace.removeWorktree(action.path); return { type: action.type }; }
         finally { release(); }
       }

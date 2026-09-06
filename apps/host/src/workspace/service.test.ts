@@ -137,6 +137,60 @@ describe("owning workspace files", () => {
 });
 
 describe("actual local Git operations", () => {
+  test("branch checkout uses the reviewed status and preserves compatible tracked and untracked edits", async () => {
+    const { cwd, service } = await repository();
+    git(cwd, "branch", "feature");
+    await writeFile(join(cwd, "tracked.txt"), "compatible local edit\n");
+    await writeFile(join(cwd, "untracked.txt"), "untracked local edit\n");
+    const reviewed = await service.gitStatus();
+    const switched = await service.checkout("feature", reviewed.revision);
+    expect(switched).toMatchObject({ branch: "feature", head: reviewed.head });
+    expect(await readFile(join(cwd, "tracked.txt"), "utf8")).toBe("compatible local edit\n");
+    expect(await readFile(join(cwd, "untracked.txt"), "utf8")).toBe("untracked local edit\n");
+
+    git(cwd, "commit", "--allow-empty", "--message", "External HEAD change");
+    await expect(service.checkout("main", reviewed.revision)).rejects.toMatchObject({ code: "GIT_REVISION_CONFLICT" });
+    expect(git(cwd, "branch", "--show-current")).toBe("feature");
+  });
+
+  test("branch checkout refuses destructive, remote, symbolic and option-like targets, while creation starts at reviewed HEAD", async () => {
+    const { cwd, service } = await repository();
+    git(cwd, "checkout", "-b", "conflicting");
+    await writeFile(join(cwd, "tracked.txt"), "committed on target\n");
+    git(cwd, "add", "tracked.txt"); git(cwd, "commit", "--message", "Target content");
+    git(cwd, "checkout", "main");
+    await writeFile(join(cwd, "tracked.txt"), "must survive rejection\n");
+    let reviewed = await service.gitStatus();
+    await expect(service.checkout("conflicting", reviewed.revision)).rejects.toMatchObject({ code: "GIT_FAILED" });
+    expect(git(cwd, "branch", "--show-current")).toBe("main");
+    expect(await readFile(join(cwd, "tracked.txt"), "utf8")).toBe("must survive rejection\n");
+
+    await writeFile(join(cwd, "tracked.txt"), "first line\n");
+    git(cwd, "checkout", "-b", "ignored-target");
+    await writeFile(join(cwd, "ignored.txt"), "target branch content\n");
+    git(cwd, "add", "ignored.txt"); git(cwd, "commit", "--message", "Target tracks ignored path");
+    git(cwd, "checkout", "main");
+    await writeFile(join(cwd, ".gitignore"), "ignored.txt\n");
+    git(cwd, "add", ".gitignore"); git(cwd, "commit", "--message", "Ignore local fixture");
+    await writeFile(join(cwd, "ignored.txt"), "ignored local work must survive\n");
+    reviewed = await service.gitStatus();
+    await expect(service.checkout("ignored-target", reviewed.revision)).rejects.toMatchObject({ code: "GIT_FAILED" });
+    expect(git(cwd, "branch", "--show-current")).toBe("main");
+    expect(await readFile(join(cwd, "ignored.txt"), "utf8")).toBe("ignored local work must survive\n");
+
+    git(cwd, "update-ref", "refs/remotes/origin/topic", git(cwd, "rev-parse", "HEAD"));
+    git(cwd, "symbolic-ref", "refs/heads/alias", "refs/heads/main");
+    reviewed = await service.gitStatus();
+    await expect(service.checkout("origin/topic", reviewed.revision)).rejects.toMatchObject({ code: "BRANCH_NOT_FOUND" });
+    await expect(service.checkout("alias", reviewed.revision)).rejects.toMatchObject({ code: "SYMBOLIC_BRANCH" });
+    await expect(service.checkout("--detach", reviewed.revision)).rejects.toMatchObject({ code: "INVALID_BRANCH" });
+
+    const head = reviewed.head;
+    const created = await service.checkout("new-local", reviewed.revision, true);
+    expect(created).toMatchObject({ branch: "new-local", head });
+    await expect(service.checkout("new-local", created.revision, true)).rejects.toMatchObject({ code: "BRANCH_EXISTS" });
+  });
+
   test("status handles rename paths and unusual names, stage is literal, and commits preserve native identity", async () => {
     const { cwd, service } = await repository();
     const unusual = "file with spaces\nand newline.txt";

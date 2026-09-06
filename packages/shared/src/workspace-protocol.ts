@@ -22,11 +22,13 @@ export type WorkspaceMutation =
   | { type: "git.stage"; paths: string[] }
   | { type: "git.unstage"; paths: string[]; expectedRevision?: string }
   | { type: "git.commit"; message: string; expectedRevision?: string }
+  | { type: "git.checkout"; branch: string; expectedRevision: string; create?: boolean }
   | { type: "worktree.create"; options: CreateWorktreeOptions }
   | { type: "worktree.remove"; path: string };
 export type WorkspaceMutationResult =
   | { type: "file.write"; result: FileWriteResult }
   | { type: "git.stage" | "git.unstage"; status: GitStatus }
   | { type: "git.commit"; commit: string; summary: string }
+  | { type: "git.checkout"; status: GitStatus }
   | { type: "worktree.create"; worktree: GitWorktree }
   | { type: "worktree.remove" };

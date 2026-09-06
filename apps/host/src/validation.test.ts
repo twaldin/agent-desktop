@@ -31,3 +31,17 @@ test("preserves the captured draft revision for prompts and steering", () => {
     expect(parsed.command).toMatchObject({ draft: { id: "d", revision: 3 } });
   }
 });
+
+test("branch checkout requires an exact reviewed status and preserves only its bounded native inputs", () => {
+  const revision = "a".repeat(64);
+  expect(parseCommandEnvelope({ id: "switch", command: { type: "workspace.mutate", target: { projectId: "project" },
+    action: { type: "git.checkout", branch: "feature/local", expectedRevision: revision, create: true } } })).toMatchObject({ command: {
+      target: { projectId: "project" }, action: { type: "git.checkout", branch: "feature/local", expectedRevision: revision, create: true },
+    } });
+  for (const action of [
+    { type: "git.checkout", branch: "feature" },
+    { type: "git.checkout", branch: "feature", expectedRevision: "stale" },
+    { type: "git.checkout", branch: "feature", expectedRevision: revision, create: "yes" },
+    { type: "git.checkout", branch: "", expectedRevision: revision },
+  ]) expect(() => parseCommandEnvelope({ id: "switch", command: { type: "workspace.mutate", target: { projectId: "project" }, action } })).toThrow();
+});
