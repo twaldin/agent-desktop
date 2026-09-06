@@ -188,7 +188,7 @@ index b191f31..415087f 100644
  	name: string,
  	params: BrowserParams,
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5..0036332 100644
+index c6b8dd5..97b9a4e 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
 @@ -7,7 +7,7 @@ import {
@@ -311,7 +311,7 @@ index c6b8dd5..0036332 100644
  	const tab = tabs.get(name);
  	if (!tab || tab.state === "dead") {
  		const killed = killedTabs.get(name);
-@@ -756,6 +831,281 @@ export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptio
+@@ -756,6 +831,287 @@ export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptio
  	return count;
  }
  
@@ -409,6 +409,8 @@ index c6b8dd5..0036332 100644
 +			&& expected.navigation.canGoBack === actual.navigation.canGoBack && expected.navigation.canGoForward === actual.navigation.canGoForward));
 +}
 +
++class BrowserDocumentTransition extends ToolError {}
++
 +interface NavigationHistorySnapshot { currentIndex: number; entries: readonly { id: number }[] }
 +const currentHistoryEntry = (history: NavigationHistorySnapshot) => history.entries[history.currentIndex];
 +async function readOwnerTabDocumentContext(page: Page): Promise<OwnerTabDocumentContext> {
@@ -421,9 +423,12 @@ index c6b8dd5..0036332 100644
 +		const historyAfter = await client.send("Page.getNavigationHistory") as NavigationHistorySnapshot;
 +		const documentId = treeBefore.frameTree?.frame?.loaderId, finalDocumentId = treeAfter.frameTree?.frame?.loaderId;
 +		const entry = currentHistoryEntry(historyAfter), beforeEntry = currentHistoryEntry(historyBefore);
-+		if (!documentId || documentId !== finalDocumentId || documentId.length > 200 || documentId.includes("\0")
-+			|| !entry || !beforeEntry || !Number.isSafeInteger(entry.id) || entry.id < 0 || entry.id !== beforeEntry.id
-+			|| historyBefore.currentIndex !== historyAfter.currentIndex || historyBefore.entries.length !== historyAfter.entries.length
++		if (!documentId || !finalDocumentId || !entry || !beforeEntry
++			|| documentId !== finalDocumentId || entry.id !== beforeEntry.id
++			|| historyBefore.currentIndex !== historyAfter.currentIndex || historyBefore.entries.length !== historyAfter.entries.length) {
++			throw new BrowserDocumentTransition("The selected browser document changed during observation");
++		}
++		if (documentId.length > 200 || documentId.includes("\0") || !Number.isSafeInteger(entry.id) || entry.id < 0
 +			|| !validFinite(viewport.width, 1, 16_384) || !validFinite(viewport.height, 1, 16_384) || viewport.width * viewport.height > 32_000_000
 +			|| !validFinite(viewport.scrollX, -1_000_000_000, 1_000_000_000) || !validFinite(viewport.scrollY, -1_000_000_000, 1_000_000_000)) {
 +			throw new ToolError("The selected browser document has no stable viewport context");
@@ -435,6 +440,7 @@ index c6b8dd5..0036332 100644
 +
 +const POST_ACTION_OBSERVATION_TIMEOUT_MS = 2_000;
 +function isNavigationObservationRace(error: unknown): boolean {
++	if (error instanceof BrowserDocumentTransition) return true;
 +	if (!(error instanceof Error)) return false;
 +	return /Not attached to an active page|Execution context was destroyed|Cannot find context with specified id/.test(error.message);
 +}

@@ -5,10 +5,15 @@
   "commit": "f241301c83726afe75a847e919b89977a54dafbe",
   "baseline": "../browser-metadata/baseline.json",
   "patch": "../../@oh-my-pi%2Fpi-coding-agent@18.1.10.patch",
-  "patchSha256": "5066235ccd59e5097349b96e4a1d848c19d20d07d75828c2da9766d306283799",
+  "patchSha256": "df0bb50a71c514d84c5ad8b59ecb4c9c4dbd12f35ee0b6c02ce94073dc9d7f46",
   "patchedFiles": {
-    "src/tools/browser/tab-supervisor.ts": "5248de639f010c20b741646ab889a6dfcaf8f85a249dc84641f74f454681872a"
+    "src/tools/browser/tab-supervisor.ts": "44801f2ddb8783fe3be2fe80208f597e8a7e16818dee2c194fb8931fff13555f"
   },
   "entry": "src/tools/browser/tab-supervisor.ts",
-  "requiredExports": ["listTabsForOwner", "captureTabViewportForOwner", "performTabHumanActionForOwner", "BrowserActionRejected"]
+  "requiredExports": [
+    "listTabsForOwner",
+    "captureTabViewportForOwner",
+    "performTabHumanActionForOwner",
+    "BrowserActionRejected"
+  ]
 }
