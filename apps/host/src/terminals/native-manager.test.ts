@@ -49,6 +49,31 @@ async function viewer(manager: TmuxTerminalManager, terminalId: string) {
 afterEach(async () => { for (const resource of fixtures.splice(0)) { if (resource.child && resource.child.exitCode === null) { resource.child.kill(); await resource.child.exited; } await resource.manager?.shutdown(); rmSync(resource.directory, { recursive: true, force: true }); } });
 
 describe.skipIf(!bundle)("private bundled tmux integration (actual native programs)", () => {
+  for (const shell of [{ application: "/bin/bash", args: ["--noprofile", "--norc", "-i"] }, ...(existsSync("/bin/zsh") ? [{ application: "/bin/zsh", args: ["-f", "-i"] }, { application: "/bin/zsh", args: ["-f", "-i"], environment: { PROMPT: "fixture " + "long-path/".repeat(27) + " detached at fixture\n❯ " } }] : [])]) test(`completed action output survives a wide, short dock resize without rerunning (${shell.application}${"environment" in shell ? " wrapped prompt" : ""})`, async () => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "agent-native-action-resize-")));
+    const manager = await TmuxTerminalManager.open({ dataDirectory: directory, hostId: crypto.randomUUID(), bundleDirectory: resolve(bundle!),
+      shell, pollIntervalMs: 100 });
+    fixtures.push({ directory, manager });
+    const terminal = await manager.create({ cwd: directory, target: { projectId: crypto.randomUUID() }, cols: 120, rows: 40 }, undefined, { actionKey: "b".repeat(64) });
+    const count = join(directory, "runs");
+    for (const name of ["FIRST", "SECOND"]) {
+      await manager.restartAction(terminal.id, `printf '${name}\\n' >> ${quote(count)}; printf 'COLOR=fixture\\n'; printf 'DONE_%s\\n' '${name}'`);
+      await until(async () => (await manager.history(terminal.id)).screen?.split("\n").includes(`DONE_${name}`) ?? false, `actual ${name} output`);
+    }
+    const before = await manager.history(terminal.id);
+    const attachment = await manager.attach(terminal.id, crypto.randomUUID());
+    await manager.resize(terminal.id, attachment.id, attachment.geometryRevision, 145, 8);
+    // Reattach the real viewer and let shell SIGWINCH/prompt replies settle.
+    const resizedViewer = await viewer(manager, terminal.id);
+    for (let sample = 0; sample < 3; sample++) { await Bun.sleep(200); await resizedViewer.drain(); }
+    await resizedViewer.close();
+    const after = await manager.history(terminal.id);
+    for (const name of ["SECOND"]) {
+      expect([before.history, before.screen].join("\n").split("\n")).toContain(`DONE_${name}`);
+      expect([after.history, after.screen].join("\n").split("\n")).toContain(`DONE_${name}`);
+    }
+    expect(readFileSync(count, "utf8")).toBe("FIRST\nSECOND\n");
+  }, 20_000);
   test("per-terminal setup environments stay private across two panes and manager adoption", async () => {
     const processEnvironment = { terminal:process.env.TERMINAL_VALUE, worktree:process.env.CODEX_WORKTREE_PATH };
     const directory = mkdtempSync(join(tmpdir(), "agent-native-terminal-environment-")), source = join(directory, "source"), one = join(directory, "one"), two = join(directory, "two"), three = join(directory, "three");

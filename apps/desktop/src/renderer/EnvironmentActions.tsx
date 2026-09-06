@@ -28,10 +28,18 @@ export function EnvironmentActions({ workspace, connected, onTerminal, onSetting
   const environmentPending = pendingAction?.type === "environment.select" || pendingAction?.type === "environment.action";
   const selected = state?.environments.find(item => item.configPath === state.selectedConfigPath);
   const primary = state?.actions[0];
-  const mutationsDisabled = !connected || !state?.available || workspace.busy || Boolean(workspace.pending);
+  const ownerConnected = workspace.connected;
+  const mutationsDisabled = !connected || !ownerConnected || !state?.available || workspace.busy || Boolean(workspace.pending);
 
   useEffect(() => workspace.subscribe(redraw), [workspace]);
-  useEffect(() => { if (connected) void workspace.loadEnvironmentActions(); }, [connected, workspace]);
+  // The desktop connection flag can become true before this owner has finished
+  // restoring its workspace state. Querying during that gap records a false
+  // disconnected error and, because the prop does not change again, leaves the
+  // primary action absent until the menu's explicit retry. Wait for the
+  // owner-scoped state connection and retry when restoration completes.
+  useEffect(() => {
+    if (connected && ownerConnected) void workspace.loadEnvironmentActions();
+  }, [connected, ownerConnected, workspace]);
 
   useEffect(() => {
     const receipt = workspace.mutationReceipt;
