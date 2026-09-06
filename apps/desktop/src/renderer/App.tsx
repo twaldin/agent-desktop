@@ -1,3 +1,5 @@
+import { GoalStrip } from "./GoalStrip";
+import { GoalPanel } from "./GoalPanel";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Draft, Project, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { readWindowRestoration, useWindowViewPersistence } from "./window-view-state";
@@ -206,7 +208,7 @@ export function App() {
     },
   };
   const transcript = useTranscript(bridge, selectedId, hostId === "unconnected" ? undefined : hostId, connected, desktop.localHostId);
-  const activity = useSessionActivity(bridge, hostId, selected?.id, connected, environmentOpen && !settingsOpen);
+  const activity = useSessionActivity(bridge, hostId, selected?.id, connected, !settingsOpen, desktop.localHostId);
   useEffect(() => {
     if (!environmentOpen || settingsOpen || !workspace) return;
     const release = retainWorkspace(workspace); workspace.setConnected(connected);
@@ -333,6 +335,7 @@ export function App() {
     input: textarea, readText: () => drafts.get(draftId).draft.text,
     updateText: text => drafts.update(draftId, { text }),
     actions: [
+      { id: "goal", name: "Goal", description: "Set or edit the native goal", icon: "compose", reason: !selected ? "Open a conversation to manage its goal." : undefined, run: () => dock.open("goal") },
       { id: "archive", name: "Archive", description: "Archive the current chat", icon: "archive", reason: !selected ? "Open a conversation to archive it." : !connected ? "Reconnect to archive this conversation." : undefined,
         run: async () => { if (!selected || !connected) throw new Error("The conversation is unavailable."); await command({ type: "session.archive", sessionId: selected.id, archived: true }); await refresh(); } },
       { id: "review", name: "Code review", description: "Review changes in this workspace", icon: "compose", reason: !workspace ? "Choose a project to review its changes." : undefined,
@@ -359,6 +362,11 @@ export function App() {
     const target = targetFromDock(tab.target), owner = `${tab.hostId}:${tab.target}`;
     const record = desktop.catalog.records.get(tab.hostId);
     const online = Boolean(record?.connected);
+    if (tab.kind === "goal") {
+      if (!("sessionId" in target)) return <p>A goal belongs to a conversation.</p>;
+      const goalSession = record?.state?.sessions.find(session => session.id === target.sessionId);
+      return <GoalPanel key={owner} bridge={bridge} hostId={tab.hostId} sessionId={target.sessionId} connected={online} running={goalSession?.status === "running"} archived={Boolean(goalSession?.archived)} active={active} activity={tab.hostId === hostId && target.sessionId === selected?.id ? activity : undefined} localHostId={desktop.localHostId}/>;
+    }
     if(tab.kind === "terminal") return tab.terminalId ? <DockTerminal bridge={bridge} hostId={tab.hostId} target={target} terminalId={tab.terminalId} connected={online}/> : <p>Saved terminal identity is unavailable.</p>;
     if (tab.kind === "browser") return "sessionId" in target ? (tab.browserTarget ? <BrowserPanel bridge={bridge} hostId={tab.hostId} sessionId={target.sessionId} nativeTarget={tab.browserTarget} onMetadata={value => dock.updateBrowserTitle(tab.id, value.title || value.url || tab.title)} active={active}/> : <p>Saved browser tab identity is unavailable. Open existing native browser tabs to select a live target.</p>) : <p>Browser previews require a native session.</p>;
     let data = workspaces.get(owner);
@@ -425,6 +433,7 @@ export function App() {
           {selection.differingDraftModel && <p className="subtle-notice">This draft selects {draft.model!.provider}/{draft.model!.id}; the session currently uses {selection.current!.provider}/{selection.current!.id}.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { model: null, thinkingLevel: undefined })}>Follow current session model and reasoning</button></p>}
           {composer.catalog && !permissionChoice.supported && <p className="subtle-notice">This host does not support saved composer permission choices yet. Update the owning host to enable this control; its native permissions continue to apply.</p>}
           {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
+          {selected && <GoalStrip key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
             <ComposerImages controller={imageComposer} attachments={draft.attachments} media={attachmentMedia} hostId={hostId} connected={connected} capabilities={state?.imageAttachments} disabled={Boolean(selected?.archived)}/>
             {imageIssue && <p className="attachment-notice" role="status">{imageIssue}</p>}

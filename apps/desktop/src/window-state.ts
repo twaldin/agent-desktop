@@ -131,7 +131,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       !/^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) ||
       typeof item.title !== "string" ||
       item.title.length > 1000 ||
-      !["review", "files", "worktrees", "terminal", "browser"].includes(
+      !["review", "files", "worktrees", "terminal", "browser", "goal"].includes(
         String(item.kind),
       ) ||
       (item.terminalId !== undefined && !id(item.terminalId))

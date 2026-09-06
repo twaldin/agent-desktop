@@ -19,6 +19,8 @@
 .transcript-message-notice { color:var(--secondary); }
 .transcript-message-error, .transcript-message-notice { font-size:var(--small-font-size); margin:var(--spacing-sm) 0; }
 .transcript-message-actions { display:flex; gap:var(--spacing-sm); align-items:baseline; flex-wrap:wrap; }
+.transcript-goal-achievement { display:inline-flex; align-items:center; gap:calc(var(--spacing-xs) * var(--spacing-scale)); min-width:0; padding-left:calc(var(--spacing-sm) * var(--spacing-scale)); border-left:var(--border-width) solid var(--border); color:var(--tertiary); font-size:var(--small-font-size); white-space:nowrap; }
+.transcript-goal-achievement svg { width:16px; height:16px; flex:0 0 auto; }
 .transcript-message-metadata { color:var(--tertiary); font-size:var(--small-font-size); margin-top:var(--spacing-sm); }
 .transcript-message-metadata dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:var(--spacing-xs) var(--spacing-md); }
 .transcript-message-metadata dd { margin:0; overflow-wrap:anywhere; }

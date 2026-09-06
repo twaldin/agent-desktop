@@ -23,6 +23,8 @@ import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./wor
 import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
 import { SessionActivityHttp } from "./session-activity-http";
+import { GoalControlHttp } from "./goal-control-http";
+import { GoalContinuationController } from "./goal-continuation";
 import { BrowserMetadataHttp } from "./browser-metadata-http";
 import { BrowserControlHttp } from "./browser-control-http";
 import { BrowserFrameHttp } from "./browser-frame-http";
@@ -53,6 +55,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let nativeTerminals: TmuxTerminalManager | undefined;
   let nativeTerminalsHttp: TmuxTerminalsHttp | undefined;
   let themeAssets: ThemeAssets | undefined;
+  let goalContinuations: GoalContinuationController | undefined;
   let server: ReturnType<typeof Bun.serve<SocketData>> | undefined;
   let publishedConnection = false;
   let tailServer: ReturnType<typeof Bun.serve<SocketData>> | undefined;
@@ -184,8 +187,49 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (!cwd) throw new Error("The composer target is not catalogued on this host.");
     return cwd;
   } });
+  goalContinuations = new GoalContinuationController({
+    session: id => store.getSession(id), ordered, getHandle,
+    executing: id => executions.has(id),
+    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length); },
+    checkpoint: (id, state) => {
+      const current = store.getSession(id);
+      if (current && !stopping && JSON.stringify(current.goalContinuation) !== JSON.stringify(state)) updateSession(id, { goalContinuation: state });
+    },
+    isCurrent: async (id, handle) => !stopping && await handles.get(id)?.catch(() => undefined) === handle,
+    error: (id, error) => { if (!stopping && store.getSession(id)?.status !== 'interrupted') updateSession(id, { status: 'error', error: errorMessage(error) }); },
+    start: (id, handle, goalId) => {
+      const current = store.getSession(id);
+      if (!current || stopping || current.archived || current.status !== 'idle' || executions.has(id)) {
+        const error = new Error('This conversation is no longer ready for goal continuation.'); error.name = 'GoalContinuationRejected'; throw error;
+      }
+      assertWorkspaceAvailable(current.cwd);
+      runtimeErrors.delete(id);
+      updateSession(id, { status: 'running', error: undefined });
+      let run;
+      try { run = handle.startGoalContinuation(goalId); }
+      catch (error) { updateSession(id, { status: 'idle' }); throw error; }
+      const completion = run.completion.then(() => {
+        const error = runtimeErrors.get(id), latest = store.getSession(id);
+        if (latest && !stopping) updateSession(id, { status: latest.status === 'interrupted' ? 'interrupted' : error ? 'error' : 'idle', error });
+      }).catch(error => {
+        if (!stopping && store.getSession(id)?.status !== 'interrupted') updateSession(id, { status: 'error', error: errorMessage(error) });
+      }).finally(() => { if (executions.get(id) === completion) executions.delete(id); goalContinuations?.request(id); });
+      executions.set(id, completion);
+      return run;
+    },
+  });
+  const goalControls = new GoalControlHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), getHandle, ordered,
+    getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; },
+    completed: (id, input, goal) => {
+      goalContinuations!.cancel(id);
+      if (goal?.enabled && goal.status === 'active') {
+        const activates = ['create', 'replace', 'resume'].includes(input.mutation.type);
+        if (activates) updateSession(id, { status: executions.has(id) ? 'running' : 'idle', error: undefined, goalContinuation: { goalId: goal.id } });
+        goalContinuations!.request(id);
+      } else updateSession(id, { goalContinuation: undefined });
+    } });
   const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
-    getActivity: async id => (await getHandle(id)).getSessionActivity() });
+    getActivity: async id => (await getHandle(id)).getSessionActivity(), goalControlTicket: activity => goalControls.ticket(activity) });
   const browserControls = new BrowserControlHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
   const browserMetadata = new BrowserMetadataHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
@@ -255,13 +299,17 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (stopping) return;
     const value = event as { type?: string; message?: { errorMessage?: string } };
     if (value.type === "extension_interaction_requested" || value.type === "extension_interaction_resolved") {
+      if (value.type === "extension_interaction_resolved") goalContinuations?.request(sessionId);
       publish({ type: "interactions", sessionId }); return;
     }
+    if (value.type === 'goal_updated' || value.type === 'agent_end' || value.type === 'tool_execution_end') goalContinuations?.request(sessionId);
     if (value.type === "message_end" && value.message?.errorMessage) runtimeErrors.set(sessionId, value.message.errorMessage);
     publish({ type: "runtime", sessionId, event });
   }
   async function getHandle(sessionId: string): Promise<WorkerSession> {
+    if (stopping) throw new Error('The host is stopping. Reconnect before opening this session.');
     await approvalRecovery.wait(sessionId);
+    if (stopping) throw new Error('The host is stopping. Reconnect before opening this session.');
     let pending = handles.get(sessionId);
     if (!pending) {
       const session = store.getSession(sessionId);
@@ -334,6 +382,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "draft.put": {
         const save = async () => {
           const result = store.putDraft(command.draft, command.expectedRevision);
+          if (result.ok && command.draft.id.startsWith('session:')) goalContinuations?.request(command.draft.id.slice('session:'.length));
           return result.ok ? ok(result.draft) : { ...fail(envelope.id, "DRAFT_CONFLICT", "The draft changed elsewhere. Both versions were preserved."), currentDraft: result.currentDraft } as CommandResult;
         };
         return command.draft.attachments === undefined ? save() : attachments.withPrepared(command.draft.attachments, save);
@@ -356,8 +405,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         catch (error) { await handle.dispose(); handles.delete(handle.id); throw error; }
       }
       case "session.rename": return ok(updateSession(command.sessionId, { title: command.title.trim() || "New conversation" }));
-      case "session.archive": return ok(updateSession(command.sessionId, { archived: command.archived }));
+      case "session.archive": {
+        goalContinuations?.cancel(command.sessionId);
+        const session = updateSession(command.sessionId, { archived: command.archived });
+        if (!command.archived) goalContinuations?.request(command.sessionId);
+        return ok(session);
+      }
       case "session.interrupt": {
+        goalContinuations?.cancel(command.sessionId);
         const handle = await getHandle(command.sessionId);
         await handle.abort();
         return ok(updateSession(command.sessionId, { status: "interrupted", error: undefined }));
@@ -390,6 +445,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const handle = await getHandle(command.sessionId);
         runtimeErrors.delete(command.sessionId);
         assertWorkspaceAvailable(handle.cwd);
+        goalContinuations?.cancel(command.sessionId);
         const nativeTitleBefore = handle.title;
         updateSession(command.sessionId, { status: "running", error: undefined });
         const turn = handle.startPrompt(command.text, { model: command.model, thinkingLevel: command.thinkingLevel, ...(images === undefined ? {} : { images }) });
@@ -401,10 +457,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           });
         }).catch(error => {
           if (!stopping) updateSession(command.sessionId, { status: "error", error: errorMessage(error) });
-        }).finally(() => executions.delete(command.sessionId));
+        }).finally(() => { if (executions.get(command.sessionId) === completion) executions.delete(command.sessionId); goalContinuations?.request(command.sessionId); });
         executions.set(command.sessionId, completion);
         const accepted = await turn.accepted;
         if (!accepted) return fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying.");
+        goalContinuations?.explicitWork(command.sessionId);
         const current = store.getSession(command.sessionId)!;
         if (handle.title && handle.title !== nativeTitleBefore) updateSession(command.sessionId, { title: handle.title });
         else if (accepted.kind === "user-message" && current.title === "New conversation") updateSession(command.sessionId, { title: (command.text.trim().split("\n")[0] || command.attachments?.map(image => image.name).join(", ") || "Image conversation").slice(0, 90) });
@@ -501,6 +558,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const goalControlResponse = await goalControls.route(request, url);
+        if (goalControlResponse) return goalControlResponse;
         const browserMetadataResponse = await browserMetadata.route(request, url);
         if (browserMetadataResponse) return browserMetadataResponse;
         const browserCreateResponse = await browserCreate.route(request, url);
@@ -597,6 +656,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   await chmod(temporary, 0o600);
   await rename(temporary, join(dataDirectory, "connection.json"));
   publishedConnection = true;
+  for (const session of store.listSessions()) if (session.goalContinuation && !session.goalContinuation.blocked && session.status === 'idle' && !session.archived) goalContinuations.request(session.id);
   const discovery = runtime.listModels(options.discoveryDirectory ?? homedir()).then(value => { models = value; }).catch(error => { modelsError = errorMessage(error); })
     .finally(() => { modelsLoading = false; if (!stopping) publishState(); });
 
@@ -604,6 +664,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function stop(): Promise<void> {
     if (stopCall) return stopCall;
     stopping = true;
+    goalContinuations?.stop();
     clearInterval(networkTimer);
     server!.stop(true); tailServer?.stop(true);
     stopCall = (async () => {
@@ -628,6 +689,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   }
   return { connection, store, snapshot, dispatch, stop };
   } catch (error) {
+    goalContinuations?.stop();
     clearInterval(networkTimer);
     server?.stop(true); tailServer?.stop(true);
     try { terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose(); await Promise.allSettled([terminals?.shutdown(), nativeTerminals?.shutdown()]); await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await runtime?.dispose(); }

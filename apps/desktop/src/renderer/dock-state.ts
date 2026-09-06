@@ -1,5 +1,6 @@
 export type DockDestination = "right" | "bottom";
 export type DockTabKind =
+  | "goal"
   | "review"
   | "files"
   | "worktrees"

@@ -25,3 +25,10 @@ test("session activity distinguishes owner mismatch and stale session", async ()
   const stale = await http.route(request()); expect(stale?.status).toBe(409);
   expect(await stale?.json()).toMatchObject({ error: { code: "STALE_TARGET" } }); expect(calls).toBe(0);
 });
+
+test("session activity exposes an optional goal control ticket from the exact native projection", async () => {
+  const ticket = { controlEpoch: "epoch", observedAt: 123, goalFingerprint: "a".repeat(64) };
+  const http = new SessionActivityHttp({ hostId: "owner", sessionExists: () => true, getActivity: async () => activity,
+    goalControlTicket: value => { expect(value).toBe(activity); return ticket; } });
+  expect(await (await http.route(request()))!.json()).toMatchObject({ goalControlTicket: ticket });
+});

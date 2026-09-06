@@ -1,4 +1,4 @@
-import { parseBrowserControlRequest } from "@agent-desktop/shared";
+import { parseBrowserControlRequest, parseGoalMutationRequest } from "@agent-desktop/shared";
 import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
 import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeBrowserTabMetadata } from "@agent-desktop/shared";
@@ -148,7 +148,28 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getComposerActions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerActions(message.args.cwd, { refresh: message.args.refresh }) : await requireSession().getComposerActions()); break;
       case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
-      case "getSessionActivity": respond(true, requireSession().getSessionActivity()); break;
+      case "getSessionActivity": {
+        const active = requireSession();
+        await active.refreshGoalUsage();
+        respond(true, active.getSessionActivity());
+        break;
+      }
+      case "mutateGoal": {
+        respond(true, await requireSession().mutateGoal(parseGoalMutationRequest(message.args.request)));
+        break;
+      }
+      case "getGoalContinuationEligibility": respond(true, requireSession().getGoalContinuationEligibility()); break;
+      case "startGoalContinuation": {
+        if (typeof message.args.expectedGoalId !== "string" || message.args.expectedGoalId.length < 1 || message.args.expectedGoalId.length > 200) {
+          const error = new Error("Invalid native goal continuation identity."); error.name = "GoalContinuationRejected"; throw error;
+        }
+        const run = requireSession().startGoalContinuation(message.args.expectedGoalId);
+        await Promise.all([
+          run.accepted.then(value => respond(true, value, undefined, "accepted"), error => respond(false, undefined, error, "accepted")),
+          run.completion.then(value => respond(true, value, undefined, "completion"), error => respond(false, undefined, error, "completion")),
+        ]);
+        break;
+      }
       case "getBrowserMetadata": {
         const owner = requireSession().id;
         let native: { listTabsForOwner?: (ownerSessionId: string) => unknown };
@@ -228,7 +249,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
     }
   } catch (error) {
-    if (message.operation === "startPrompt") {
+    if (message.operation === "startPrompt" || message.operation === "startGoalContinuation") {
       respond(false, undefined, error, "accepted");
       respond(false, undefined, error, "completion");
     } else respond(false, undefined, error);

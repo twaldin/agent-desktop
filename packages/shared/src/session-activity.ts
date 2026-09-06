@@ -1,6 +1,8 @@
 export const SESSION_ACTIVITY_PROTOCOL_VERSION = 1;
 export const SESSION_ACTIVITY_OWNER_HEADER = "X-Agent-Host-Id";
 
+import type { GoalControlTicket } from "./goal-control";
+
 export type ActivityCapability<T> =
   | { availability: "available"; value: T }
   | { availability: "unavailable" | "unsupported"; reason: string };
@@ -63,4 +65,6 @@ export interface SessionActivitySnapshot extends NativeSessionActivity {
   protocolVersion: typeof SESSION_ACTIVITY_PROTOCOL_VERSION;
   hostId: string;
   sessionId: string;
+  /** Present only when this host supports owner-bound native goal mutations. */
+  goalControlTicket?: GoalControlTicket;
 }

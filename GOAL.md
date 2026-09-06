@@ -25,6 +25,8 @@ Use existing system Tailscale. Discover and connect to app hosts in the UI witho
 
 Both desktop clients can send, steer, stop and answer approvals immediately. The host orders commands, deduplicates retries and resolves each pending interaction once. A client disconnect or closed window must not kill its host's running work.
 
+Detached structured questions must return acceptance immediately and let the agent continue. Keep this a distinct host-owned, resolve-once path across clients; deliver answers through native steer during a turn or follow-up when idle. Preserve OMP's existing blocking asks and explicitly interactive provider/tool approvals. A suggested or preselected option is not an answer. Keep the OMP 18.1.10 pin; research about newer releases does not authorize an upgrade.
+
 Share sidebar organisation, unsent drafts, project/model selections and app preferences. Keep each window's navigation and layout independent. Credentials and host-specific OMP configuration stay on their owning hosts; viewing or editing remote settings does not turn them into globally replicated app preferences.
 
 Offline clients retain cached readable history and editable drafts. Sending requires reconnection; do not automatically submit offline drafts. Preserve conflicting edits rather than silently overwriting them. Show stale/offline/pending states accurately.

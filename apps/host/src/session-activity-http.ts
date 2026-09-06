@@ -1,11 +1,12 @@
-import { SESSION_ACTIVITY_OWNER_HEADER, SESSION_ACTIVITY_PROTOCOL_VERSION, type NativeSessionActivity } from "@agent-desktop/shared";
+import { SESSION_ACTIVITY_OWNER_HEADER, SESSION_ACTIVITY_PROTOCOL_VERSION, type GoalControlTicket, type NativeSessionActivity } from "@agent-desktop/shared";
 
 class SessionActivityError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) { super(message); }
 }
 
 export class SessionActivityHttp {
-  constructor(private options: { hostId: string; getActivity(sessionId: string): Promise<NativeSessionActivity>; sessionExists(sessionId: string): boolean }) {}
+  constructor(private options: { hostId: string; getActivity(sessionId: string): Promise<NativeSessionActivity>; sessionExists(sessionId: string): boolean;
+    goalControlTicket?: (activity: NativeSessionActivity) => GoalControlTicket | undefined }) {}
 
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
     const match = /^\/v1\/sessions\/([^/]+)\/activity$/.exec(url.pathname);
@@ -18,7 +19,9 @@ export class SessionActivityHttp {
       if (!sessionId || sessionId.length > 200 || !this.options.sessionExists(sessionId)) throw new SessionActivityError("The selected session no longer exists on this host.", 409, "STALE_TARGET");
       const activity = await this.options.getActivity(sessionId);
       if (!this.options.sessionExists(sessionId)) throw new SessionActivityError("The selected session changed while activity was loading.", 409, "STALE_TARGET");
-      return Response.json({ protocolVersion: SESSION_ACTIVITY_PROTOCOL_VERSION, hostId: this.options.hostId, sessionId, ...activity }, { headers });
+      const ticket = this.options.goalControlTicket?.(activity);
+      return Response.json({ protocolVersion: SESSION_ACTIVITY_PROTOCOL_VERSION, hostId: this.options.hostId, sessionId, ...activity,
+        ...(ticket ? { goalControlTicket: ticket } : {}) }, { headers });
     } catch (error) {
       return Response.json({ error: { code: error instanceof SessionActivityError ? error.code : "SESSION_ACTIVITY_FAILED",
         message: error instanceof Error ? error.message.slice(0, 4096) : "Native session activity failed." } },

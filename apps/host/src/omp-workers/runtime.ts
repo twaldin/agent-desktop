@@ -1,10 +1,10 @@
-import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery } from "@agent-desktop/shared";
+import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, GoalMutationRequest, NativeGoalActivity } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrowserFrameTarget, BrowserMetadataAvailability, ModelInfo, NativeBrowserFrame, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
-import type { OmpBrowserTabCreateResult, OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
+import type { GoalContinuationEligibility, OmpBrowserTabCreateResult, OmpGoalContinuationRun, OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
 import { copyPreparedImages } from "../omp/images";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
@@ -24,12 +24,15 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "subscribe"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "subscribe"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
+  mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
+  getGoalContinuationEligibility(): Promise<GoalContinuationEligibility>;
+  startGoalContinuation(expectedGoalId: string): OmpGoalContinuationRun;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
   createBrowserTab(name: string): Promise<OmpBrowserTabCreateResult>;
   controlBrowser(request: BrowserControlRequest): Promise<{name: string; targetId: string; context: BrowserDocumentContext; url: string; title: string}>;
@@ -254,6 +257,24 @@ class WorkerClient {
     return { accepted, completion };
   }
 
+  startGoalContinuation(expectedGoalId: string): OmpGoalContinuationRun {
+    if (this.failure) throw new WorkerFailureError(this.failure);
+    if (this.#closing) throw new Error("OMP worker is closing");
+    if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
+    const id = String(++this.#requestId);
+    const accepted = this.#promise<Awaited<OmpGoalContinuationRun["accepted"]>>(`${id}:accepted`, undefined, true);
+    const completion = this.#promise<Awaited<OmpGoalContinuationRun["completion"]>>(`${id}:completion`);
+    try { this.#send({ type: "request", id, operation: "startGoalContinuation", args: { expectedGoalId } }); }
+    catch (error) {
+      for (const phase of ["accepted", "completion"]) {
+        const key = `${id}:${phase}`, pending = this.#pending.get(key);
+        pending?.reject(phase === "accepted" ? new OmpPromptAdmissionError(error) : error);
+        this.#pending.delete(key);
+      }
+    }
+    return { accepted, completion };
+  }
+
   subscribe(listener: WorkerEventListener): () => void {
     this.#events.add(listener);
     return () => { this.#events.delete(listener); };
@@ -369,6 +390,9 @@ export class WorkerRuntime {
       getComposerCompletions: query => client.request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { query } }, 5_000),
       getMessages: () => client.request<TranscriptMessage[]>({ operation: "getMessages" }, 30_000),
       getSessionActivity: () => client.request<NativeSessionActivity>({ operation: "getSessionActivity" }, 15_000),
+      mutateGoal: request => client.request({ operation: "mutateGoal", args: { request } }, 30_000),
+      getGoalContinuationEligibility: () => client.request({ operation: "getGoalContinuationEligibility" }, 15_000),
+      startGoalContinuation: expectedGoalId => client.startGoalContinuation(expectedGoalId),
       getBrowserMetadata: async () => {
         const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };

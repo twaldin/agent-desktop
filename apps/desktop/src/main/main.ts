@@ -1,3 +1,4 @@
+import { requestGoalMutation } from "./goal-control-transport";
 import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBrowserMetadata } from "./browser-metadata-transport";
@@ -244,6 +245,9 @@ ipcMain.handle("host:messages", (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event);
   if (typeof sessionId !== "string" || sessionId.length > 200) throw new Error("Invalid session ID.");
   return request(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`, undefined, hostId);
+});
+ipcMain.handle("host:goal-control", async (event, sessionId: string, request: import("@agent-desktop/shared").GoalMutationRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestGoalMutation(await endpointFor(hostId), sessionId, request);
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);

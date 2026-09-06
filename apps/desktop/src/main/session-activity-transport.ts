@@ -1,4 +1,4 @@
-import { SESSION_ACTIVITY_OWNER_HEADER, SESSION_ACTIVITY_PROTOCOL_VERSION, type SessionActivitySnapshot } from "@agent-desktop/shared";
+import { parseGoalControlTicket, parseNativeGoalActivity, SESSION_ACTIVITY_OWNER_HEADER, SESSION_ACTIVITY_PROTOCOL_VERSION, type SessionActivitySnapshot } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
 
 export async function requestSessionActivity(endpoint: HostEndpoint, sessionId: string): Promise<SessionActivitySnapshot | null> {
@@ -19,5 +19,15 @@ export async function requestSessionActivity(endpoint: HostEndpoint, sessionId: 
   }
   const result = value as Partial<SessionActivitySnapshot>;
   if (result.protocolVersion !== SESSION_ACTIVITY_PROTOCOL_VERSION || result.hostId !== endpoint.hostId || result.sessionId !== sessionId) throw new Error("Session activity does not match the selected owner or protocol.");
+  if (!result.goal || typeof result.goal !== "object") throw new Error("Session activity has an invalid goal capability.");
+  const goalCapability = result.goal as Record<string, unknown>;
+  if (goalCapability.availability === "available") {
+    if (goalCapability.value !== null && goalCapability.value !== undefined) goalCapability.value = parseNativeGoalActivity(goalCapability.value);
+    else if (goalCapability.value === undefined) throw new Error("Session activity has an invalid available goal.");
+  } else if ((goalCapability.availability !== "unavailable" && goalCapability.availability !== "unsupported")
+    || typeof goalCapability.reason !== "string" || !goalCapability.reason.trim() || goalCapability.reason.length > 4_096) {
+    throw new Error("Session activity has an invalid goal capability.");
+  }
+  if (result.goalControlTicket !== undefined) result.goalControlTicket = parseGoalControlTicket(result.goalControlTicket);
   return result as SessionActivitySnapshot;
 }

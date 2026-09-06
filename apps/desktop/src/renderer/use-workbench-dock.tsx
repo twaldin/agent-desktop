@@ -60,7 +60,7 @@ export function useWorkbenchDock(
       hostId: owner,
       target: workspaceKey(workspace) as DockTarget,
       title:
-        kind === "review"
+        kind === "goal" ? "Edit goal" : kind === "review"
           ? "Review"
           : kind === "worktrees"
             ? "Worktrees"

@@ -19,6 +19,7 @@ export * from "./browser";
 export * from "./browser-frame";
 export * from "./browser-control";
 export * from "./browser-create";
+export * from "./goal-control";
 export type * from "./preferences";
 export type * from "./workspace-protocol";
 export type * from "./workspace";
@@ -78,6 +79,8 @@ export interface SessionSummary {
   archived: boolean;
   /** Host-owned native permission override; absent follows native configuration. */
   approvalOverride?: OmpApprovalMode;
+  /** Host scheduler checkpoint. Native OMP remains authoritative for the goal. */
+  goalContinuation?: { goalId: string; blocked?: 'no-tools' | 'unknown' | 'in-flight' };
   error?: string;
 }
 
@@ -123,6 +126,8 @@ export interface TranscriptMessage {
   assistant?: TranscriptAssistantMetadata;
   /** App-owned native command output entry. This is never a model message. */
   commandOutput?: { entryId: string; command: string; output: string };
+  /** Bounded native goal-completed entry attached to its preceding assistant. */
+  goalCompletion?: { entryId: string; objective: string; tokensUsed: number; tokenBudget?: number; timeUsedSeconds: number };
   blocks?: unknown[];
 }
 
@@ -252,6 +257,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   openExternal(url: string): Promise<void>;
   command(envelope: CommandEnvelope, hostId?: string): Promise<CommandResult>;
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
+  mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;
   createBrowserTab?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateReceipt>;

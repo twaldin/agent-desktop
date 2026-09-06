@@ -1,0 +1,88 @@
+import { build } from "vite";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
+
+const root = resolve(import.meta.dir, "../..");
+const out = resolve(process.argv[2] ?? `.data/goal-panel/${Date.now()}`);
+const profile = await mkdtemp(join(tmpdir(), "goal-panel-"));
+const sources = [
+  "apps/desktop/src/renderer/GoalIcons.tsx",
+  "apps/desktop/src/renderer/Transcript.tsx",
+  "apps/desktop/src/renderer/transcript.css",
+  "apps/desktop/src/renderer/GoalPanel.tsx",
+  "apps/desktop/src/renderer/GoalStrip.tsx",
+  "apps/desktop/src/renderer/goal.css",
+  "apps/desktop/src/renderer/use-goal-control.ts",
+  "apps/desktop/src/renderer/use-session-activity.ts",
+  "packages/shared/src/goal-control.ts",
+  "packages/shared/src/session-activity.ts",
+  "scripts/acceptance/goal-panel.ts",
+  "scripts/acceptance/goal-panel-browser.tsx",
+];
+const hashes = async () =>
+  Object.fromEntries(
+    await Promise.all(
+      sources.map(async (path) => [
+        path,
+        createHash("sha256")
+          .update(await readFile(join(root, path)))
+          .digest("hex"),
+      ]),
+    ),
+  );
+await mkdir(out, { recursive: true });
+try {
+  const before = await hashes();
+  await writeFile(
+    join(out, "index.html"),
+    `<meta charset="utf-8"><div id="root"></div><script type="module" src=${JSON.stringify(relative(out, join(import.meta.dir, "goal-panel-browser.tsx")))}></script>`,
+  );
+  await build({
+    configFile: join(root, "apps/desktop/vite.config.ts"),
+    root: out,
+    logLevel: "warn",
+    build: {
+      outDir: join(out, "web"),
+      emptyOutDir: true,
+      rollupOptions: { input: join(out, "index.html") },
+    },
+  });
+  await writeFile(
+    join(out, "main.cjs"),
+    `const{app,BrowserWindow}=require('electron'),fs=require('node:fs'),path=require('node:path');app.setPath('userData',${JSON.stringify(profile)});app.whenReady().then(async()=>{const w=new BrowserWindow({show:false,width:720,height:500,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});try{await w.loadFile(path.join(__dirname,'web/index.html'));const r=await w.webContents.executeJavaScript('goalPanelStart()');r.scenes=[];for(const s of [{name:'wide',width:1200,height:800,zoom:1},{name:'narrow',width:320,height:500,zoom:1},{name:'zoom150',width:900,height:600,zoom:1.5}]){w.setContentSize(s.width,s.height);w.webContents.setZoomFactor(s.zoom);await new Promise(x=>setTimeout(x,100));r.scenes.push({...s,...await w.webContents.executeJavaScript('goalPanelGeometry()')});fs.writeFileSync(path.join(__dirname,s.name+'.png'),(await w.webContents.capturePage()).toPNG());}r.passed&&=r.scenes.every(x=>x.fitting&&x.fixtureSupported);fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(r,null,2));w.destroy();app.exit(r.passed?0:1)}catch(error){const progress=await w.webContents.executeJavaScript('goalPanelProgress()').catch(()=>null);fs.writeFileSync(path.join(__dirname,'failure.png'),(await w.webContents.capturePage()).toPNG());fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify({passed:false,error:String(error),progress},null,2));app.exit(1)}});`,
+  );
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      join(root, "node_modules/electron/cli.js"),
+      join(out, "main.cjs"),
+    ],
+    {
+      stdout: Bun.file(join(out, "electron.log")),
+      stderr: Bun.file(join(out, "electron-errors.log")),
+    },
+  );
+  const timer = setTimeout(() => child.kill("SIGTERM"), 60_000);
+  const code = await child.exited;
+  clearTimeout(timer);
+  const result = await Bun.file(join(out, "result.json")).json();
+  result.sourceAtBuild = before;
+  result.sourceAfter = await hashes();
+  result.sourceHashesStable =
+    JSON.stringify(before) === JSON.stringify(result.sourceAfter);
+  result.passed &&= result.sourceHashesStable;
+  await writeFile(join(out, "result.json"), JSON.stringify(result, null, 2));
+  console.log(
+    JSON.stringify({
+      passed: result.passed,
+      checks: result.checks?.length,
+      captures: result.scenes?.length,
+      result: join(out, "result.json"),
+    }),
+  );
+  if (code || !result.passed) throw new Error("Goal panel acceptance failed.");
+} finally {
+  await rm(profile, { recursive: true, force: true });
+}

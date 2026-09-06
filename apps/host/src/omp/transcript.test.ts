@@ -4,12 +4,44 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { TranscriptMirror } from "./transcript";
+import { TranscriptMirror, projectGoalCompletions } from "./transcript";
+import type { TranscriptMessage } from '@agent-desktop/shared';
 
 // Deterministic production-projection contracts. These fixtures are not live OMP
 // or provider acceptance evidence.
 const native = (messages: unknown[]) => messages.map((message, index) => ({ id: `entry-${index}`, message }));
 function messageEvent(mirror: TranscriptMirror, type: "message_start" | "message_update" | "message_end", message: unknown) { mirror.accept({ type, message } as AgentSessionEvent); }
+
+test('native display:false continuation stays hidden both during events and reopened history', () => {
+  const mirror = new TranscriptMirror();
+  const hidden = { role: 'custom', customType: 'goal-continuation', display: false, timestamp: 1, content: 'Private native continuation prompt' };
+  for (const event of ['message_start', 'message_update', 'message_end'] as const) messageEvent(mirror, event, hidden);
+  expect(mirror.snapshot([], [])).toEqual([]);
+  const shown = { ...hidden, customType: 'visible-notice', display: true, content: 'Visible native notice' };
+  expect(mirror.snapshot([hidden, shown], native([hidden, shown])).map(message => message.text)).toEqual(['Visible native notice']);
+});
+
+test('only a bounded durable completion decorates its actual preceding native assistant', () => {
+  const messages: TranscriptMessage[] = [
+    { id: 'a', nativeId: 'assistant-1', role: 'assistant', text: 'Done' },
+    { id: 'b', nativeId: 'assistant-2', role: 'assistant', text: 'Later unrelated response' },
+  ];
+  const data = { objective: 'Finish the real goal', timeUsedSeconds: 9, tokensUsed: 23, tokenBudget: 200, arbitrary: 'omit' };
+  const branch = [{ id: 'assistant-1', type: 'message', message: { role: 'assistant' } },
+    { id: 'completion-1', type: 'custom', customType: 'goal-completed', data },
+    { id: 'assistant-2', type: 'message', message: { role: 'assistant' } }];
+  projectGoalCompletions(messages, branch);
+  expect(messages[0]!.goalCompletion).toEqual({ entryId: 'completion-1', objective: data.objective, timeUsedSeconds: 9, tokensUsed: 23, tokenBudget: 200 });
+  expect(messages[1]!.goalCompletion).toBeUndefined();
+  for (const bad of [{ ...data, timeUsedSeconds: -1 }, { ...data, tokensUsed: NaN }, { ...data, objective: 7 }]) {
+    const target: TranscriptMessage[] = [{ id: 'a', nativeId: 'assistant-1', role: 'assistant', text: 'Done' }];
+    projectGoalCompletions(target, [branch[0]!, { ...branch[1]!, data: bad }]);
+    expect(target[0]!.goalCompletion).toBeUndefined();
+  }
+  const old: TranscriptMessage[] = [{ id: 'a', nativeId: 'assistant-1', role: 'assistant', text: 'Previous turn' }];
+  projectGoalCompletions(old, [branch[0]!, { id: 'new-user', type: 'message', message: { role: 'user' } }, branch[1]!]);
+  expect(old[0]!.goalCompletion).toBeUndefined();
+});
 
 describe("native event transcript projection contract", () => {
   test("growing content keeps its display ID through durable storage, display copies and mirror restart", () => {

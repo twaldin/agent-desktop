@@ -1,7 +1,8 @@
 import { constants } from "node:fs";
 import { access, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { parseNativeBrowserTabMetadata, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeSessionActivity, type TranscriptMessage } from "@agent-desktop/shared";
+import { goalControlState, parseNativeBrowserTabMetadata, type GoalMutationRequest, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeGoalActivity, type NativeSessionActivity, type TranscriptMessage } from "@agent-desktop/shared";
+import { createHash } from "node:crypto";
 import {
   AgentRegistry, createAgentSession, discoverAuthStorage, getAgentDir,
   ModelRegistry, SessionManager, Settings,
@@ -12,7 +13,7 @@ import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
 import { parseTitleSlotLine } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
 import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
 import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
-import { TranscriptMirror } from "./transcript";
+import { TranscriptMirror, projectGoalCompletions } from "./transcript";
 import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
 import { dispatchNativePrompt } from "./commands";
 import { NativeSkillPrompt } from "./skills";
@@ -28,6 +29,7 @@ import { composerCatalog } from "../omp-settings/composer";
 import type { OmpApprovalMode, OmpComposerCatalog, OmpModelCapabilities, OmpSessionControls, OmpSessionControlMutation } from "@agent-desktop/shared";
 import { approvalMode } from "../approval";
 import { copyPreparedImages, NativeImagePrompt, readNativeImage, type PreparedPromptImage, type OmpRecordedImage } from "./images";
+import { NativeGoalController, type GoalContinuationEligibility, type OmpGoalContinuationRun } from "./goal-controller";
 export type { PreparedPromptImage, OmpRecordedImage } from "./images";
 export type { OmpPromptRun, OmpPromptReceipt } from "./prompt";
 export type { OmpSteerReceipt } from "./steer";
@@ -64,6 +66,10 @@ export interface OmpSession {
   readonly modelFallbackMessage: string | undefined;
   getMessages(): TranscriptMessage[];
   getSessionActivity(): NativeSessionActivity;
+  refreshGoalUsage(): Promise<void>;
+  mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
+  getGoalContinuationEligibility(): GoalContinuationEligibility;
+  startGoalContinuation(expectedGoalId: string): OmpGoalContinuationRun;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
@@ -100,6 +106,25 @@ function goalFromNativeModeData(modeData: Record<string, unknown> | undefined): 
     tokensUsed: value.tokensUsed, timeUsedSeconds: value.timeUsedSeconds, createdAt: value.createdAt, updatedAt: value.updatedAt };
 }
 
+function goalActivity(session: AgentSession): NativeGoalActivity | null {
+  const state = session.getGoalModeState();
+  return state ? { ...state.goal, objective: state.goal.objective.slice(0, 16_384), enabled: state.enabled, mode: state.mode,
+    ...(state.reason ? { reason: state.reason } : {}) } : null;
+}
+
+function goalRejected(message: string): Error {
+  const error = new Error(message);
+  error.name = "GoalMutationRejected";
+  return error;
+}
+
+function goalOutcomeUnknown(error: unknown): Error {
+  const result = new Error(error instanceof Error ? error.message : "Native goal mutation failed.");
+  result.name = error instanceof Error ? error.name : "Error";
+  Object.assign(result, { code: "OUTCOME_UNKNOWN" as const });
+  return result;
+}
+
 /** Apply OMP's cold interactive-session goal reconciliation to a headless SDK session. */
 async function restoreNativeGoalMode(session: AgentSession, manager: SessionManager): Promise<void> {
   const context = manager.buildSessionContext();
@@ -114,7 +139,18 @@ async function restoreNativeGoalMode(session: AgentSession, manager: SessionMana
     manager.appendModeChange("none");
     return;
   }
-  session.setGoalModeState({ enabled: context.mode === "goal", mode: "active", goal });
+  session.setGoalModeState({ enabled: goal.status === "complete" ? false : context.mode === "goal", mode: goal.status === "complete" ? "exiting" : "active", goal,
+    ...(goal.status === "complete" ? { reason: "completed" as const } : {}) });
+  if (goal.status === "complete") {
+    await session.setActiveToolsByName(session.getEnabledToolNames().filter(name => name !== "goal"));
+    await manager.appendEntriesAtomically(() => {
+      manager.appendModeChange("none");
+      manager.appendCustomEntry("goal-completed", { objective: goal.objective, tokensUsed: goal.tokensUsed,
+        tokenBudget: goal.tokenBudget, timeUsedSeconds: goal.timeUsedSeconds });
+    });
+    session.setGoalModeState(undefined);
+    return;
+  }
   const restored = await session.goalRuntime.onThreadResumed();
   if (restored?.goal) {
     const previousTools = session.getEnabledToolNames().filter(name => name !== "goal");
@@ -357,6 +393,7 @@ export class OmpRuntime {
           messages.push({ id: entry.id, nativeId: entry.id, role: "commandOutput", text: "", content: [], blocks: [],
             timestamp: Date.parse(entry.timestamp), lifecycle: "complete", commandOutput: { entryId: entry.id, command: data.command, output: data.output } });
         }
+        projectGoalCompletions(messages, branch);
         return messages.sort((left, right) => (left.nativeId ? order.get(left.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER)
           - (right.nativeId ? order.get(right.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER));
       };
@@ -369,6 +406,7 @@ export class OmpRuntime {
       const listeners = new Set<OmpEventListener>();
       if (options.onEvent) listeners.add(options.onEvent);
       const emitBridge = (event: OmpBridgeEvent) => { for (const listener of listeners) listener(event); };
+      let goalController: NativeGoalController | undefined;
       if (options.interactions) {
         bridge = new OmpInteractionBridge(session.sessionId, emitBridge);
         result.setToolUIContext(bridge, true);
@@ -382,6 +420,7 @@ export class OmpRuntime {
       const ui = bridge;
       let extensionStartup: Promise<void> | undefined;
       const unsubscribe = session.subscribe(event => {
+        goalController?.observe(event);
         mirror.accept(event);
         for (const listener of listeners) listener(event);
       });
@@ -392,12 +431,18 @@ export class OmpRuntime {
       let admissionAbort: AbortController | undefined;
       let interruptsInFlight = 0;
       let accountMutation = false;
+      let goalMutation = false;
+      let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session);
       const controls = new NativeSessionControls(session, options.approvalOverride);
+      const nativeGoalController = goalController = new NativeGoalController(session, manager, () => ({
+        disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation,
+        interruptsInFlight, interactionsPending: (ui?.list().length ?? 0) > 0,
+      }), async () => { await session.setActiveToolsByName(goalPreviousTools); });
       const assertIdle = () => {
         assertSessionActive();
-        if (promptInFlight || accountMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
+        if (promptInFlight || accountMutation || goalMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
       const listAccounts = async () => {
         assertSessionActive();
@@ -421,8 +466,7 @@ export class OmpRuntime {
         },
         getSessionActivity: () => {
           assertSessionActive();
-          const state = session.getGoalModeState();
-          const goal = state ? { ...state.goal, objective: state.goal.objective.slice(0, 16_384), enabled: state.enabled, mode: state.mode, ...(state.reason ? { reason: state.reason } : {}) } : null;
+          const goal = goalActivity(session);
           const nativeJobs = session.getAsyncJobSnapshot({ recentLimit: 20 });
           const job = (value: NonNullable<typeof nativeJobs>["running"][number]) => ({ ...value, id: value.id.slice(0, 200), label: value.label.slice(0, 500), ...(value.agentId ? { agentId: value.agentId.slice(0, 200) } : {}) });
           const jobs = nativeJobs ? { availability: "available" as const, value: {
@@ -438,6 +482,88 @@ export class OmpRuntime {
           }));
           return { goal: { availability: "available", value: goal }, jobs, agents: { availability: "available", value: agents },
             sources: { availability: "unsupported", reason: "OMP 18.1.10 does not expose a stable consumed-source registry for this session." } };
+        },
+        refreshGoalUsage: async () => { assertSessionActive(); await nativeGoalController.refreshUsage(); },
+        getGoalContinuationEligibility: () => nativeGoalController.eligibility(),
+        startGoalContinuation: expectedGoalId => {
+          assertSessionActive();
+          const run = nativeGoalController.begin(expectedGoalId, async prompt => {
+            const controller = new AbortController();
+            admissionAbort = controller;
+            promptInFlight = true; admissionPending = true;
+            try {
+              await auth.revalidateCredentials();
+              assertSessionActive();
+              controller.signal.throwIfAborted();
+              admissionPending = false;
+              return await session.promptCustomMessage({ customType: "goal-continuation", content: prompt,
+                display: false, attribution: "agent" }, { streamingBehavior: "followUp" });
+            } finally { promptInFlight = false; admissionPending = false; if (admissionAbort === controller) admissionAbort = undefined; }
+          });
+          return run;
+        },
+        mutateGoal: async request => {
+          // Pause/drop mirror InteractiveMode: they may settle between native
+          // tool executions without aborting the provider turn. Other goal
+          // changes remain idle-only.
+          const runningSafe = request.mutation.type === "pause" || request.mutation.type === "drop";
+          if (!runningSafe) {
+            try { assertIdle(); } catch { throw goalRejected("The native session is busy. Wait for its current work to finish."); }
+          } else {
+            assertSessionActive();
+            if (admissionPending || accountMutation || goalMutation || interruptsInFlight || session.hasPostPromptWork
+              || nativeGoalController.hasActiveToolExecution() || (ui?.list().length ?? 0) > 0) {
+              throw goalRejected("The native session has an active tool, approval, ask, or admission. Wait for it to settle.");
+            }
+          }
+          if (!session.settings.get("goal.enabled")) throw goalRejected("Goals are disabled in this session's native settings.");
+          const context = manager.buildSessionContext();
+          if (context.mode === "plan" || context.mode === "plan_paused" || session.getVibeModeState()?.enabled) {
+            throw goalRejected("Exit the session's current native mode before changing its goal.");
+          }
+          const current = session.getGoalModeState();
+          if (request.expectedGoal === null) {
+            if (request.mutation.type !== "create" || current?.goal) throw goalRejected("The native goal changed. Refresh before trying again.");
+          } else if (!current?.goal || current.goal.id !== request.expectedGoal.id) {
+            throw goalRejected("The native goal changed. Refresh before trying again.");
+          }
+          const mutation = request.mutation;
+          if (current?.mode === "exiting" || current?.goal.status === "complete") throw goalRejected("A completed native goal is read-only.");
+          if (mutation.type === "create" && current?.goal) throw goalRejected("This session already has a native goal.");
+          if (mutation.type === "replace" && (!current?.enabled || !["active", "budget-limited"].includes(current.goal.status))) throw goalRejected("Only an active native goal can be replaced.");
+          if (mutation.type === "pause" && (!current?.enabled || !["active", "budget-limited"].includes(current.goal.status))) throw goalRejected("This native goal is not active.");
+          if (mutation.type === "resume" && (current?.enabled || current?.goal.status !== "paused")) throw goalRejected("This native goal is not paused.");
+          const activating = mutation.type === "create" || mutation.type === "replace" || mutation.type === "resume";
+          let restorationTools = goalPreviousTools;
+          if (activating) {
+            try { restorationTools = session.getEnabledToolNames().filter(name => name !== "goal"); }
+            catch { throw goalRejected("The native tool presentation is unavailable. Refresh before changing this goal."); }
+          }
+          const fingerprint = createHash("sha256").update(goalControlState(goalActivity(session))).digest("hex");
+          if (fingerprint !== request.goalFingerprint) throw goalRejected("The native goal changed. Refresh before trying again.");
+          goalMutation = true;
+          try {
+            try {
+              if (mutation.type === "create") await session.goalRuntime.createGoal({ objective: mutation.objective, tokenBudget: mutation.tokenBudget });
+              else if (mutation.type === "replace") await session.goalRuntime.replaceGoal({ objective: mutation.objective, tokenBudget: mutation.tokenBudget });
+              else if (mutation.type === "pause") await session.goalRuntime.pauseGoal();
+              else if (mutation.type === "resume") await session.goalRuntime.resumeGoal();
+              else if (mutation.type === "drop") await session.goalRuntime.dropGoal();
+              else if (mutation.type === "setBudget") await session.goalRuntime.onBudgetMutated(mutation.tokenBudget);
+              if (activating) {
+                await session.setActiveToolsByName([...new Set([...restorationTools, "goal"])]);
+                goalPreviousTools = restorationTools;
+              } else if (mutation.type === "pause" || mutation.type === "drop") {
+                await session.setActiveToolsByName(goalPreviousTools);
+                if (mutation.type === "drop") goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
+              }
+              await manager.flush();
+              if (activating) nativeGoalController.resetSuppression();
+              return goalActivity(session);
+            } catch (error) {
+              throw goalOutcomeUnknown(error);
+            }
+          } finally { goalMutation = false; }
         },
         getComposerActions: async () => { assertSessionActive(); return sessionComposerActions(session, result.extensionsResult?.extensions ?? []); },
         getComposerCompletions: async query => { assertSessionActive(); return composerCompletions(sessionComposerActions(session, result.extensionsResult?.extensions ?? []), query, session); },
@@ -476,7 +602,7 @@ export class OmpRuntime {
         },
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
-          if (promptInFlight || accountMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          if (promptInFlight || accountMutation || goalMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
           const images = copyPreparedImages(promptOptions.images);
           const imagePrompt = images?.length ? new NativeImagePrompt(images, text) : undefined;
           promptInFlight = true;
@@ -511,8 +637,10 @@ export class OmpRuntime {
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
                 return dispatchNativePrompt(session, text, imagePrompt?.images, skillPrompt);
               }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt);
-              void nativeRun.accepted.then(receipt.resolve, receipt.reject);
-              return await nativeRun.completion;
+              void nativeRun.accepted.then(value => { if (value) nativeGoalController.resetSuppression(); receipt.resolve(value); }, receipt.reject);
+              const completed = await nativeRun.completion;
+              await nativeGoalController.settleFinalization();
+              return completed;
           })().catch(error => { receipt.reject(error); throw error; }).finally(() => { imagePrompt?.close(); skillPrompt?.close(); });
           void receipt.promise.catch(() => {});
           void completion.catch(() => {});

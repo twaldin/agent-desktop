@@ -9,6 +9,7 @@ interface Pending { key: string; occurrence: number; message: MessageRecord; com
 interface ToolProgress { message: MessageRecord; status: "running" | "completed"; occurrence: number; order: number }
 function record(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
 function messageRecord(value: unknown): MessageRecord | undefined { const object = record(value); return object && typeof object.role === "string" ? object as MessageRecord : undefined; }
+function hidden(message: MessageRecord): boolean { return message.role === 'custom' && message.display === false; }
 function messageKey(message: MessageRecord): string {
   // Tool start/update/result timestamps differ. The native call ID is their identity.
   if (message.role === "toolResult" && typeof message.toolCallId === "string") return JSON.stringify([message.role, message.toolCallId]);
@@ -76,7 +77,7 @@ export class TranscriptMirror {
   #order = 0;
   accept(event: AgentSessionEvent): void {
     if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
-      const message = messageRecord(event.message); if (!message) return;
+      const message = messageRecord(event.message); if (!message || hidden(message)) return;
       const key = messageKey(message);
       let pending = this.#active.get(key);
       if (event.type === "message_start" || !pending) {
@@ -103,7 +104,7 @@ export class TranscriptMirror {
     for (const entry of entries) { const message = messageRecord(entry.message); if (!message) continue; const key = messageKey(message), ids = nativeIds.get(key) ?? []; ids.push(entry.id); nativeIds.set(key, ids); this.#occurrences.set(key, Math.max(this.#occurrences.get(key) ?? 0, ids.length)); }
     const counts = new Map<string, number>(), displayed = new Set<string>(); const result: TranscriptMessage[] = [];
     for (const value of displayMessages) {
-      const message = messageRecord(value); if (!message) continue;
+      const message = messageRecord(value); if (!message || hidden(message)) continue;
       const key = messageKey(message), occurrence = counts.get(key) ?? 0; counts.set(key, occurrence + 1);
       const id = displayId(key, occurrence), nativeId = nativeIds.get(key)?.[occurrence], pending = this.#pending.get(id), progress = this.#tools.get(String(message.toolCallId));
       const tool = progress?.occurrence === occurrence ? progress : undefined;
@@ -122,5 +123,28 @@ export class TranscriptMirror {
     }
     result.push(...rest.sort((a, b) => a.order - b.order).map(item => item.message));
     return result;
+  }
+}
+
+/** Only persisted completion entries establish achievement. Attach to the last
+ * native assistant in that branch, never to a later turn or a pending row. */
+export function projectGoalCompletions(messages: TranscriptMessage[], branch: readonly { id: string; type: string; customType?: string; data?: unknown; message?: unknown }[]): void {
+  const visible = new Map(messages.filter(message => message.nativeId).map(message => [message.nativeId!, message]));
+  let precedingAssistant: string | undefined;
+  for (const entry of branch) {
+    if (entry.type === 'message') {
+      const message = messageRecord(entry.message);
+      if (message?.role === 'assistant') precedingAssistant = entry.id;
+      // A fresh human turn cannot inherit an earlier turn's completion badge.
+      else if (message?.role === 'user') precedingAssistant = undefined;
+    }
+    if (entry.type !== 'custom' || entry.customType !== 'goal-completed' || !precedingAssistant) continue;
+    const target = visible.get(precedingAssistant), data = record(entry.data);
+    if (!target || target.role !== 'assistant' || !data || typeof data.objective !== 'string' || data.objective.length > 16384
+      || !Number.isSafeInteger(data.tokensUsed) || (data.tokensUsed as number) < 0
+      || !Number.isSafeInteger(data.timeUsedSeconds) || (data.timeUsedSeconds as number) < 0
+      || data.tokenBudget !== undefined && (!Number.isSafeInteger(data.tokenBudget) || (data.tokenBudget as number) <= 0)) continue;
+    target.goalCompletion = { entryId: entry.id, objective: data.objective, tokensUsed: data.tokensUsed as number,
+      timeUsedSeconds: data.timeUsedSeconds as number, ...(data.tokenBudget === undefined ? {} : { tokenBudget: data.tokenBudget as number }) };
   }
 }

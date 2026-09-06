@@ -2,6 +2,16 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Current goal batch and independent verification
+
+The frozen browser checkpoint `e727478` is separately packaged and signed as browser18, with its matching host archive. The artifact hashes and packaging checks are in `.data/browser18-package/result.json`; the transfer archive and isolated local-host recipe are beside it. This package excludes the goal work below and has not replaced the installed release17 apps/services.
+
+Source now includes [native goal controls, continuation and achievement presentation](native-goals.md), using worker IPC12 and the unchanged OMP18.1.10 pin. The host owns execution independently of desktop connections, orders admission, waits for drafts/native interactions, and preserves unknown/in-flight/no-tool checkpoints. Native completion entries feed the achievement footer. The editor and compact strip have controlled renderer evidence; full goal composer/draft parity and installed reference comparisons remain open.
+
+The goal source suite passed **545 tests / 24,602 assertions**, 17 skips and zero failures across 113 files, with all 496 recorded source/config files unchanged. The later editor presentation adjustment passed seven controlled renderer groups and three viewport captures separately. Final typecheck and diff checks pass. Evidence and remaining composer/editor persistence gaps are recorded in [native goals](native-goals.md). This batch has not been installed.
+
+Tim's external Work verifier is exercising release17 separately and refreshing reference build8109 into an isolated sibling bundle. The original7868 bundle remains immutable and pinned7982 source stays identified separately. Reported detached-question behavior is accepted-immediately with answers delivered as ordinary user messages while a turn continues; unanswered controls reportedly disappear at turn completion. New captures/report are pending review. Durable detached answer delivery and reconnect handling remain implementation work, alongside the existing native blocking asks and explicitly interactive approvals. No pin upgrade is included.
+
 ## Supplied reference audit and current source work
 
 The supplied private reference bundle is now the default audit input, with the [project comparison workflow](ui-parity-workflow.md). The reproducible private ledger is `.data/parity-audit-2026-09-05/ledger.md` / `ledger.json`; it retains all supplied captures, interaction states, transitions and uncaptured requirements. Source findings and live comparison remain separate, with no visual passes inferred from source coverage. The captured helper build differs from the pinned reference, so comparisons retain both versions.

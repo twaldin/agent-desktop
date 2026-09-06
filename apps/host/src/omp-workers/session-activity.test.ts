@@ -78,3 +78,27 @@ test("malformed native goal mode is cleared instead of reconstructed", async () 
     expect(entries.filter(entry => entry.type === "mode_change").at(-1)?.mode).toBe("none");
   } finally { await runtime.dispose(); await rm(root, { recursive: true, force: true }); }
 }, 30_000);
+
+test("cold reopen finalizes a native completed goal atomically and only once", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "agent-desktop-complete-goal-")));
+  const agentDir = path.join(root, "agent"), cwd = path.join(root, "project"), sessions = path.join(root, "sessions");
+  await Promise.all([agentDir, cwd, sessions].map(directory => mkdir(directory)));
+  const goal = { id: "goal-complete-contract", objective: "Finalize exactly once", status: "complete" as const,
+    tokenBudget: 1000, tokensUsed: 901, timeUsedSeconds: 44, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_044_000 };
+  const manager = SessionManager.create(cwd, sessions);
+  manager.appendModeChange("goal", { goal }); await manager.ensureOnDisk();
+  const sessionFile = manager.getSessionFile()!; await manager.close();
+  const runtime = new WorkerRuntime({ agentDir, workerPath: fileURLToPath(new URL("./fixtures/no-provider-worker.ts", import.meta.url)),
+    environment: { HOME: root, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, TERM: "dumb" } });
+  try {
+    const opened = await runtime.open({ sessionFile });
+    expect((await opened.getSessionActivity()).goal).toEqual({ availability: "available", value: null });
+    await opened.dispose();
+    const first = (await readFile(sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(first.slice(-2).map(entry => [entry.type, entry.mode ?? entry.customType])).toEqual([["mode_change", "none"], ["custom", "goal-completed"]]);
+    expect(first.filter(entry => entry.type === "custom" && entry.customType === "goal-completed")).toHaveLength(1);
+    const reopened = await runtime.open({ sessionFile }); await reopened.dispose();
+    const second = (await readFile(sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(second.filter(entry => entry.type === "custom" && entry.customType === "goal-completed")).toHaveLength(1);
+  } finally { await runtime.dispose(); await rm(root, { recursive: true, force: true }); }
+}, 30_000);
