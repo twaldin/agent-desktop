@@ -50,6 +50,7 @@ import { retainWorkspace } from "./workspace-lease";
 import "./dock-layout.css";
 import { DEFAULT_THEME } from "../../../../packages/shared/src/theme";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace-protocol";
+import { Welcome } from "./Welcome";
 
 export function App() {
   const bridge = window.agentDesktop;
@@ -418,7 +419,7 @@ export function App() {
             <TranscriptMessages messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }}/>
             {running && <div className="working-state" role="status"><span className="working-dot"/>Working…</div>}
           </div>
-        </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <div className="welcome"><div className="welcome-mark"><Icon name="terminal"/></div><h1>What would you like to work on?</h1><p>{project ? project.name : "Choose a project or start a conversation."}</p></div>}
+        </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={() => document.querySelector<HTMLButtonElement>('.composer-context > button[aria-label="Select project"]')?.click()}/>}
         <div className={`composer-region ${selectedId ? "" : "home-composer"}`}>
           {selected && <PendingDetachedQuestions bridge={bridge} hostId={hostId} sessionId={selected.id} localHostId={desktop.localHostId} connected={connected} archived={selected.archived} drafts={drafts} submissions={submissions}/>}
           {(selectedId || pendingSessionId) && state && <>

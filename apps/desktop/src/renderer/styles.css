@@ -251,10 +251,11 @@ button { touch-action: manipulation; }
 .connection-banner button { display: flex; align-items: center; gap: 5px; color: var(--text); padding: 3px 5px; border-radius: 5px; white-space: nowrap; }
 .connection-banner .icon { width: calc(var(--icon-size, 20px) * 0.65); height: calc(var(--icon-size, 20px) * 0.65); }
 .welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-height: 130px; padding: 30px 24px 22px; text-align: center; }
-.welcome-mark { width: 38px; height: 38px; color: var(--secondary); margin-bottom: 15px; }
-.welcome-mark .icon { width: calc(var(--icon-size, 20px) * 1.9); height: calc(var(--icon-size, 20px) * 1.9); stroke-width: 1.15; }
-.welcome h1 { font-size: calc(var(--font-size, 14px) * 1.9285714285714286); font-weight: clamp(100, calc(var(--font-weight, 400) + 100), 1000); letter-spacing: -.8px; margin: 0; line-height: 1.25; }
-.welcome p { font-size: calc(var(--font-size, 14px) * 0.9285714285714286); color: var(--secondary); margin: 9px 0 0; }
+.welcome-mark { width: 47px; height: 47px; color: var(--welcome-mark, color-mix(in srgb, var(--tertiary) 80%, var(--app-surface))); margin-bottom: 20px; }
+.welcome-mark svg { display: block; width: 100%; height: 100%; stroke: currentColor; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+.welcome h1 { font-size: calc(var(--font-size, 14px) * 1.9285714285714286); font-weight: clamp(100, calc(var(--font-weight, 400) + 0), 1000); letter-spacing: -.65px; margin: 0; line-height: 1.25; }
+.welcome h1 button { display: inline; padding: 0 1px; border-radius: 3px; font: inherit; letter-spacing: inherit; text-decoration: underline; text-decoration-style: dotted; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.welcome h1 button:hover { background: transparent; text-decoration-style: solid; }
 .composer-region { width: min(100% - 32px, 768px); margin: 0 auto; flex-shrink: 0; padding: 8px 0 16px; }
 .composer-region.home-composer { margin-bottom: 0; padding-top: 10px; }
 .composer { background: var(--composer-surface); border: 0 solid var(--border); border-radius: 25px; box-shadow: var(--composer-shadow); overflow: hidden; }
