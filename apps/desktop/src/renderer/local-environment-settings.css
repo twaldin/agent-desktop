@@ -57,9 +57,9 @@ button.environment-project-open { cursor: pointer; }
 .local-environment-form-heading h2 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 500; }
 .text-button { padding: 0; border: 0; color: var(--secondary); background: transparent; font: inherit; cursor: pointer; }
 .text-button:hover { color: var(--text); }
-.local-environment-field, .local-environment-action-fields label { display: flex; flex-direction: column; gap: 4px; color: var(--text); font-size: 13px; line-height: 20px; font-weight: 500; }
+.local-environment-field { display: flex; flex-direction: column; gap: 4px; color: var(--text); font-size: 13px; line-height: 20px; font-weight: 500; }
 .local-environment-field { max-width: 288px; margin-bottom: 24px; }
-.local-environment-field input, .local-environment-action-fields input, .local-environment-action-fields select { height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--composer-surface); font: inherit; font-weight: 400; }
+.local-environment-field input, .local-environment-action-fields input { height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--composer-surface); font: inherit; font-weight: 400; }
 .local-environment-script { margin: 24px 0; }
 .local-environment-section-heading h3 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }
 .local-environment-section-heading p { margin: 4px 0 8px; color: var(--secondary); font-size: 13px; line-height: 20px; }
@@ -71,14 +71,24 @@ button.environment-project-open { cursor: pointer; }
 .local-environment-variables code { color: var(--text); }
 .local-environment-variables p { margin: 2px 0 0; }
 .local-environment-actions { margin-top: 32px; }
+.local-environment-actions-description { margin: 4px 0 8px; color: var(--secondary); font-size: 13px; line-height: 20px; }
+.local-environment-action-list { display: flex; flex-direction: column; gap: 12px; }
 .local-environment-script textarea { height: 128px; }
 .local-environment-repair textarea { display: block; width: 100%; padding: 12px; color: var(--text); background: var(--composer-surface); border: 1px solid var(--border); border-radius: 8px; font: 13px/1.5 var(--code-font); resize: vertical; }
 .local-environment-form .secondary-button { min-height: 28px; padding: 3px 10px; border: 0; background: var(--selected); }
 .local-environment-form .primary-button { min-height: 28px; padding: 3px 10px; }
-.local-environment-action { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--selected); }
-.local-environment-action-fields { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; }
-.local-environment-action-fields label:nth-child(n+3) { grid-column: span 1; }
-.local-environment-action-fields textarea { min-height: 64px; }
+.local-environment-action { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--selected); }
+.local-environment-action-fields { display: flex; flex-direction: column; gap: 12px; }
+.local-environment-action-field { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.local-environment-action-field > label, .local-environment-action-label { color: var(--secondary); font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; }
+.local-environment-action-name { display: flex; align-items: center; gap: 8px; }
+.local-environment-action-name input { min-width: 0; flex: 1; }
+.local-environment-action-fields textarea { min-height: 96px; }
+.local-environment-action-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.local-environment-action-platforms { display: flex; gap: 4px; }
+.local-environment-action-platforms button { padding: 2px 9px; border: 0; border-radius: 999px; color: var(--secondary); background: transparent; font: inherit; line-height: 20px; cursor: pointer; }
+.local-environment-action-platforms button:hover, .local-environment-action-platforms button.selected { color: var(--text); background: var(--hover); }
+.local-environment-action-delete { align-self: flex-end; }
 .environment-action-icon-trigger { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 36px; padding: 0; border: 0; border-radius: 8px; color: var(--text); background: var(--composer-surface); cursor: pointer; }
 .environment-action-icon-trigger:hover, .environment-action-icon-trigger.active { background: var(--hover); }
 .environment-action-icon-trigger .environment-action-icon { width: 16px; height: 16px; }
@@ -95,7 +105,7 @@ button.environment-project-open { cursor: pointer; }
 .local-environment-form-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
 .settings-success { color: var(--success, #39a96b); }
 .local-environment-form :is(input, textarea, select, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (max-width: 760px) { .local-environment-layout { flex-direction: column; } .local-environment-projects { flex: 0 0 auto; max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border); } .local-environment-editor { padding: 20px 16px 32px; } .local-environment-action-fields { grid-template-columns: 1fr; } .local-environment-action-fields label:nth-child(n+3) { grid-column: auto; } }
+@media (max-width: 760px) { .local-environment-layout { flex-direction: column; } .local-environment-projects { flex: 0 0 auto; max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border); } .local-environment-editor { padding: 20px 16px 32px; } .local-environment-action-footer { align-items: flex-start; flex-direction: column; } .local-environment-action-delete { align-self: flex-end; } }
 
 .environment-variables-trigger { anchor-name: --environment-variables; }
 .environment-variables-popover { position-anchor: --environment-variables; position: fixed; inset: auto; top: anchor(bottom); right: anchor(right); position-try-fallbacks: flip-block; margin: 4px 0; width: min(320px, calc(100vw - 24px)); padding: 12px; border: var(--border-width, 1px) solid var(--border); border-radius: var(--menu-radius, 12px); color: var(--text); background: var(--menu-surface, var(--elevated-surface)); box-shadow: 0 8px 24px #0002; font-size: 13px; line-height: 20px; }
