@@ -10,6 +10,9 @@ export type ThemeTokenDefinition =
 export const THEME_TOKEN_DEFINITIONS = {
   "--app-surface": { kind: "color" }, "--sidebar-surface": { kind: "color" },
   "--composer-surface": { kind: "color" }, "--elevated-surface": { kind: "color" },
+  "--welcome-mark-color": { kind: "color" },
+  "--welcome-mark-opacity": { kind: "number", minimum: 0, maximum: 1 },
+  "--welcome-mark-hover-opacity": { kind: "number", minimum: 0, maximum: 1 },
   "--user-message-surface": { kind: "color" }, "--user-message-text": { kind: "color" },
   "--header-divider-color": { kind: "color" }, "--sidebar-divider-color": { kind: "color" },
   "--panel-surface": { kind: "color" }, "--menu-surface": { kind: "color" },

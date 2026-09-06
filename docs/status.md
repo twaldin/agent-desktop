@@ -2,6 +2,10 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source27 — welcome color and hover correction
+
+The pinned authenticated default-theme chain resolves the mark to white at30% opacity. Source27 gives the mark its own configurable foreground and idle/hover opacity tokens, preserving the light-theme foreground. Actual pointer hover in controlled production-App Electron uses the source-defined40% opacity. Settled dark captures measure peakRGB93 at rest and116 on hover overRGB24; the old source’s peak88 came from its body-text foreground. Light/custom token controls and the existing16-group App acceptance pass, alongside17 theme/preference tests and typecheck. Private source trace and evidence: `.data/welcome-color26/native-chain.md` and `.data/welcome-color27/`. This is source/controlled-renderer proof, not a registered native comparison; the frozen26 package remains unchanged.
+
 ## Frozen26 — handed off for native worktree verification
 
 Release26 freezes `db1ab6dd324267a8426588663b804cdeed36be1c`: new-chat Local/worktree execution and starting states, centered branch creation, and the Git-settings prefix route. The clean suite passes596 tests, skips17 and fails0 (24,958 assertions/125 files). All535 tracked source hashes remain unchanged, and328 packaged renderer files match. Typecheck, native runtime/import checks, immutable tmux verification, packaging and deep/strict signing pass. The artifact declares schemas1–4; a focused compatibility check confirms older artifacts reject execution drafts without changing state.
