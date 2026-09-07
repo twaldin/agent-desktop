@@ -1,5 +1,9 @@
 # Milestone status
 
+## Rich Markdown fenced code
+
+Closed fences now use the pinned hidden-marker structure, language label, spacing and corners while keeping original Markdown editable. Ten renderer/host checks with10 PNG+AX captures verify two real saves, undo, offline recovery and theme tokens;20 tests/77 assertions, typecheck/build and independent review pass. No matched native fence capture exists, so this is source/renderer evidence rather than pixel certification. See [file editor](workspace-file-editor.md).
+
 ## Skill tab close durability
 
 Skill tabs now save before closing, use the existing discard decision when needed, and release their controllers only after actual dock removal. Unknown receipts stay recoverable; discarded offline edits do not reappear on reopen.34 tests/201 assertions,19 renderer/host checks with22 PNG+AX captures, ordinary-file close regression, typecheck/build and independent review pass. Installed/native-pixel acceptance remains open. See [file editor](workspace-file-editor.md).

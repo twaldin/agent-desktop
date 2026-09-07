@@ -24,7 +24,11 @@
 .markdown-strong { font-weight:600; }.markdown-emphasis { font-style:italic; }.markdown-strike { text-decoration:line-through; }
 .markdown-superscript { vertical-align:super; font-size:.8em; }.markdown-subscript { vertical-align:sub; font-size:.8em; }
 .markdown-inline-code { font-family:var(--code-font,monospace); font-size:var(--chat-code-font-size,13px); background:var(--hover); border-radius:4px; }
-.rich-markdown-content .markdown-code-line { font:var(--chat-code-font-size,13px)/1.6 var(--code-font,monospace); background:var(--hover); padding:0 12px; }
+.rich-markdown-content .markdown-code-line { box-sizing:border-box; font-family:var(--code-font,monospace); font-size:var(--chat-code-font-size,13px); background:var(--markdown-code-background); padding-inline:calc(var(--spacing-md,12px) * var(--spacing-scale,1)); }
+.rich-markdown-content .markdown-code-line span { background:transparent; }
+.rich-markdown-content .markdown-code-line-first { position:relative; border-start-start-radius:calc(var(--markdown-code-radius,8px) * var(--corner-radius-scale,1.25)); border-start-end-radius:calc(var(--markdown-code-radius,8px) * var(--corner-radius-scale,1.25)); padding-inline-end:calc(var(--spacing-xs,4px) * 16 * var(--spacing-scale,1)); }
+.rich-markdown-content .markdown-code-line-first::after { position:absolute; inset-block-start:calc(var(--spacing-sm,8px) * var(--spacing-scale,1)); inset-inline-end:calc(var(--spacing-md,12px) * var(--spacing-scale,1)); color:var(--secondary); content:attr(data-language); font-family:var(--ui-font); font-size:var(--markdown-code-label-size,12px); }
+.rich-markdown-content .markdown-code-line-last { border-end-start-radius:calc(var(--markdown-code-radius,8px) * var(--corner-radius-scale,1.25)); border-end-end-radius:calc(var(--markdown-code-radius,8px) * var(--corner-radius-scale,1.25)); }
 .rich-markdown-content .markdown-quote { border-left:2px solid var(--border); padding-left:12px; color:var(--secondary); }
 .rich-markdown-content .cm-line.markdown-table-row { display:flex; padding:0; }
 .rich-markdown-content .markdown-table-row:not(.markdown-table-header) { border-block-start:1px solid var(--markdown-table-border,var(--border)); }

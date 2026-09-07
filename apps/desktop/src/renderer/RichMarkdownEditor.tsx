@@ -92,7 +92,17 @@ function richDecorations(state: EditorState): { body: DecorationSet; cells: Deco
     if (name === "Subscript") mark(from, to, "markdown-subscript");
     if (name === "InlineCode") mark(from, to, "markdown-inline-code");
     if (name === "Blockquote") lines(from, to, "markdown-quote");
-    if (name === "FencedCode" || name === "CodeBlock") { lines(from, to, "markdown-code-line"); }
+    if (name === "FencedCode" && node.node.getChildren("CodeMark").length===2) {
+      const first=doc.lineAt(from),last=doc.lineAt(to),info=node.node.getChild("CodeInfo");
+      if(last.number>first.number){
+        for(let number=first.number;number<=last.number;number++){
+          const line=doc.line(number),start=number===first.number,end=number===last.number;
+          decorations.push(Decoration.line({class:`markdown-code-line${start?" markdown-code-line-first":""}${end?" markdown-code-line-last":""}`,
+            ...(start&&info?{attributes:{"data-language":doc.sliceString(info.from,info.to)}}:{})}).range(line.from));
+        }
+        hide(first.from,first.to);hide(last.from,last.to);
+      }
+    }
     // Keep table cells in the live Markdown document. Only delimiters disappear;
     // the reference does not replace the table with serialized HTML or a grid editor.
     if (name === "TableHeader" || name === "TableRow")
