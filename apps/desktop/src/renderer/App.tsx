@@ -8,7 +8,7 @@ import { GoalPanel } from "./GoalPanel";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Draft, Project, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { readWindowRestoration, useWindowViewPersistence } from "./window-view-state";
-import type { SettingsPage, WindowNavigation, WorkspaceTab } from "../window-state";
+import { defaultFileTreeView, type SettingsPage, type WindowNavigation, type WorkspaceTab } from "../window-state";
 import { prepareSkillDraft } from "./skill-draft";
 import type { ComposerAction } from "@agent-desktop/shared";
 import { DraftController, hasDraftContent } from "./drafts";
@@ -126,6 +126,7 @@ export function App() {
     return () => cancelAnimationFrame(frame);
   }, [settingsOpen]);
   const [workspaceFileRequest, setWorkspaceFileRequest] = useState<{ owner: string; request: WorkspaceFileRequest }>();
+  const [fileTree, setFileTree] = useState({ ...defaultFileTreeView(), open: windowRestoration.state.fileTreeOpen ?? false });
   const [environmentOpen, setEnvironmentOpen] = useState(windowRestoration.state.environmentOpen ?? false);
   const [sourcePreview, setSourcePreview] = useState<{hostId:string;source:Extract<RecordedSource,{kind:"image"}>}>();
   const [commitRequest, setCommitRequest] = useState<{owner:string;id:string}>();
@@ -250,7 +251,7 @@ export function App() {
   const workspaceOpen = dock.snapshot.state.right.open;
   const terminalOpen = dock.snapshot.state.bottom.open;
   const windowWarning = useWindowViewPersistence({ route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,
-    expandedProjects: [...expandedProjects], settingsOpen, settingsPage, dock: dock.persisted, environmentOpen, pluginDirectoryOpen, pluginDirectoryTab }, windowRestoration);
+    expandedProjects: [...expandedProjects], settingsOpen, settingsPage, dock: dock.persisted, fileTreeOpen: fileTree.open, environmentOpen, pluginDirectoryOpen, pluginDirectoryTab }, windowRestoration);
   const composerTarget = composerTargetKey(workspaceTarget);
   const composer = useMemo(() => new ComposerCatalogState(bridge, hostId, workspaceTarget), [bridge, hostId, composerTarget]);
   useEffect(() => {
@@ -540,7 +541,7 @@ export function App() {
     if(!data) {data = new WorkspaceState(bridge,tab.hostId,target,offlineCache,desktop.localHostId);workspaces.set(owner,data);}
     const ownerSession = "sessionId" in target ? record?.state?.sessions.find(value => value.id === target.sessionId) : undefined;
     const ownerProject = record?.state?.projects.find(value => value.id === ("projectId" in target ? target.projectId : ownerSession?.projectId));
-    return <WorkspacePanel embedded active={active} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} onOpenFile={path => { setWorkspaceFileRequest({ owner, request: { id: crypto.randomUUID(), path } }); dock.openFile(path,tab.hostId,target); }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
+    return <WorkspacePanel embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} onOpenFile={path => { setWorkspaceFileRequest({ owner, request: { id: crypto.randomUUID(), path } }); dock.openFile(path,tab.hostId,target); }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
   }
   return <div className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
     {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={<label className="settings-host-picker"><span>Machine</span><select aria-label="Settings machine" value={state?.host.id ?? route.hostId ?? ""} onChange={event => navigate(null,event.target.value,true)}>{!desktop.hosts.length && <option value={route.hostId ?? ""}>{loading ? "Connecting…" : "Host unavailable"}</option>}{desktop.hosts.map(host => <option key={host.key} value={host.hostId ?? host.key} disabled={!host.hostId}>{host.name}{host.local ? " · This machine" : ""}{host.availability !== "available" ? ` · ${host.availability}` : ""}</option>)}</select></label>}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>

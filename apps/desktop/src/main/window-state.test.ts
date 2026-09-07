@@ -479,3 +479,15 @@ test("workspace file persistence rejects invalid paths and owners", () => {
   expect(parseDockSnapshot(changed({ target: "host" }))).toBeUndefined();
   expect(parseDockSnapshot(changed({ kind: "files" }))).toBeUndefined();
 });
+
+test("file-tree visibility belongs to the window while renderer width is not persisted", () => {
+  const directory = temporary();
+  const primary = new WindowStateStore(directory, "primary"), second = new WindowStateStore(directory, "secondary");
+  expect(primary.saveView({ ...selected(), fileTreeOpen: true })).toEqual({});
+  expect(second.saveView({ ...selected(), fileTreeOpen: false })).toEqual({});
+  expect(new WindowStateStore(directory, "primary").bootstrap().state?.fileTreeOpen).toBe(true);
+  expect(new WindowStateStore(directory, "secondary").bootstrap().state?.fileTreeOpen).toBe(false);
+  const parsed = parseWindowView({ ...selected(), fileTreeOpen: true, fileTreeWidth: 9000 });
+  expect(parsed?.fileTreeOpen).toBe(true); expect(parsed).not.toHaveProperty("fileTreeWidth");
+  expect(parseWindowView({ ...selected(), fileTreeOpen: "true" })?.fileTreeOpen).toBeUndefined();
+});

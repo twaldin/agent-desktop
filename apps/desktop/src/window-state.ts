@@ -7,7 +7,10 @@ export interface WindowNavigation {
 }
 export type SettingsPage = "general" | "accounts" | "omp" | "appearance" | "git" | "environments" | "plugins" | "mcp";
 export type WorkspaceTab = "files" | "changes" | "worktrees";
+export interface FileTreeView { open: boolean; width: number }
+export const defaultFileTreeView = (): FileTreeView => ({ open: false, width: 250 });
 export interface WindowViewState {
+  fileTreeOpen?: boolean;
   route: WindowNavigation;
   dock?: { state: DockState; tabs: DockTab[] };
   environmentOpen?: boolean;
@@ -91,12 +94,14 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
   if (value.pluginDirectoryOpen !== undefined && typeof value.pluginDirectoryOpen !== "boolean") return;
   if (value.pluginDirectoryTab !== undefined && value.pluginDirectoryTab !== "plugins" && value.pluginDirectoryTab !== "skills") return;
   const dock = parseDockSnapshot(value.dock);
+
   return {
     route: {
       sessionId: route.sessionId as string | null,
       ...(route.hostId === undefined ? {} : { hostId: route.hostId as string }),
     },
     ...(dock ? { dock } : {}),
+    ...(typeof value.fileTreeOpen === "boolean" ? { fileTreeOpen: value.fileTreeOpen } : {}),
     ...(typeof value.environmentOpen === "boolean"
       ? { environmentOpen: value.environmentOpen }
       : {}),

@@ -9,8 +9,9 @@ import tailwindcss from "@tailwindcss/vite";
 const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/workspace-file-dock-acceptance-${Date.now()}`);
 const sources = [
-  "apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/window-state.ts",
+  "apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/Icons.tsx", "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/window-state.ts",
   "apps/desktop/src/renderer/WorkspacePanel.tsx", "apps/desktop/src/renderer/WorkspaceFileBreadcrumbs.tsx", "apps/desktop/src/renderer/workspace-file-breadcrumbs.css",
+  "apps/desktop/src/renderer/WorkspaceFileTree.tsx", "apps/desktop/src/renderer/workspace-file-tree.css", "apps/desktop/src/renderer/WorkspaceFileTreePane.tsx", "apps/desktop/src/renderer/workspace-file-tree-pane.css", "apps/desktop/src/renderer/file-tree-layout.ts",
   "apps/desktop/src/renderer/workspace-state.ts", "apps/desktop/src/renderer/workspace-lease.ts", "apps/desktop/src/renderer/PierreSourceEditor.tsx", "apps/desktop/src/renderer/pierre-source-editor.css",
   "apps/desktop/src/renderer/styles.css", "apps/desktop/src/renderer/theme.css", "apps/desktop/src/renderer/dock-panel.css", "apps/desktop/src/renderer/offline-cache.ts",
   "apps/host/src/workspace/service.ts", "apps/host/src/workspace-http.ts", "apps/host/src/server.ts", "packages/shared/src/workspace.ts", "packages/shared/src/workspace-protocol.ts", "packages/shared/src/protocol.ts",
@@ -28,8 +29,9 @@ let proxy: ReturnType<typeof Bun.serve> | undefined, eventsSocket: WebSocket | u
 try {
   for (let i = 0; !(await Bun.file(join(fixture, "ready.json")).exists()); i++) { if (i > 700 || host.exitCode !== null) throw new Error("Native host fixture did not become ready"); await Bun.sleep(50); }
   const ready = JSON.parse(await readFile(join(fixture, "ready.json"), "utf8"));
-  await mkdir(join(ready.project, "empty"), { mode: 0o700 }); await mkdir(join(ready.project, "nested"), { mode: 0o700 });
+  await mkdir(join(ready.project, "empty"), { mode: 0o700 }); await mkdir(join(ready.project, "nested", "deeper"), { recursive: true, mode: 0o700 });
   const nestedText = "export const nested = 'unchanged';\n"; await writeFile(join(ready.project, "nested", "nested.ts"), nestedText, { mode: 0o600 }); ready.files["nested/nested.ts"] = nestedText;
+  const deepText = "export const deeplyNested = 'unchanged';\n"; await writeFile(join(ready.project, "nested", "deeper", "deep.ts"), deepText, { mode: 0o600 }); ready.files["nested/deeper/deep.ts"] = deepText;
   const sourceAtBuild = await hashes(), calls: Array<{ route: string; command?: string; action?: string }> = [], pendingEvents: unknown[] = [];
   eventsSocket = new WebSocket(ready.connection.origin.replace("http:", "ws:") + "/v1/events", ["agent-desktop", ready.connection.token]);
   eventsSocket.addEventListener("message", event => pendingEvents.push({ ...JSON.parse(String(event.data)), hostId: ready.connection.hostId }));
@@ -40,7 +42,7 @@ try {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     const route = pathname.slice(capability.length + 1), input = await request.json() as any;
     if (route === "/test/events") return Response.json(pendingEvents.splice(0), { headers: cors });
-    const fixturePath = (file: unknown) => { if (file !== "first.ts" && file !== "second.ts" && file !== "nested/nested.ts") throw new Error("Unknown fixture file"); return join(ready.project, file); };
+    const fixturePath = (file: unknown) => { if (file !== "first.ts" && file !== "second.ts" && file !== "nested/nested.ts" && file !== "nested/deeper/deep.ts") throw new Error("Unknown fixture file"); return join(ready.project, file); };
     if (route === "/test/file") return Response.json({ text: await readFile(fixturePath(input.file), "utf8") }, { headers: cors });
     if (route === "/test/state") {
       const response = await fetch(ready.connection.origin + "/v1/state", { headers: { Authorization: `Bearer ${ready.connection.token}` } }); const native = await response.json() as any;

@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState } from "react";
-import type { WorkspaceTab } from "../window-state";
+import { defaultFileTreeView, type FileTreeView, type WorkspaceTab } from "../window-state";
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
 import { type WorkspaceFileRequest } from "./transcript-links";
@@ -7,8 +7,9 @@ import { ReviewPanel } from "./ReviewPanel";
 import { retainWorkspace } from "./workspace-lease";
 import { PierreSourceEditor } from "./PierreSourceEditor";
 import { WorkspaceFileBreadcrumbs } from "./WorkspaceFileBreadcrumbs";
+import { WorkspaceFileTreePane } from "./WorkspaceFileTreePane";
 
-export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, onOpenFile, embedded = false, active = true, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; onOpenFile?(path: string): void; embedded?: boolean; active?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
+export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, onOpenFile, fileTree, onFileTreeChange, embedded = false, active = true, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; embedded?: boolean; active?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [localTab, setLocalTab] = useState<WorkspaceTab>("files");
   const tab = selectedTab ?? localTab;
@@ -41,13 +42,15 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
     {data.notice && <p className="workspace-notice" role="status">{data.notice}</p>}
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
     <div id={embedded ? undefined : "workspace-view"} className="workspace-view" role={embedded ? undefined : "tabpanel"} aria-labelledby={embedded ? undefined : `workspace-tab-${tab}`}>
-      {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} onOpenFile={onOpenFile} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
+      {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} onOpenFile={onOpenFile} fileTree={fileTree} onFileTreeChange={onFileTreeChange} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
       {tab === "changes" ? <ReviewPanel commitRequest={commitRequest} data={data} disabled={disabled} onEdit={path => { if (onOpenFile) onOpenFile(path); else { setTab("files"); void data.open(path); } }}/> : tab === "worktrees" ? <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/> : null}
     </div>
   </aside>;
 }
 
-function Files({ data, disabled, fileRequest, filePath, onOpenFile, workspaceName, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; onOpenFile?(path: string): void; workspaceName: string; active: boolean }) {
+function Files({ data, disabled, fileRequest, filePath, onOpenFile, fileTree, onFileTreeChange, workspaceName, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; workspaceName: string; active: boolean }) {
+  const [localTree, setLocalTree] = useState(defaultFileTreeView);
+  const tree = fileTree ?? localTree, changeTree = onFileTreeChange ?? setLocalTree;
   const opened = filePath ?? data.opened;
   const open = (path: string) => { if (onOpenFile) onOpenFile(path); else void data.open(path); };
   const [folder, setFolder] = useState(data.directory);
@@ -71,7 +74,10 @@ function Files({ data, disabled, fileRequest, filePath, onOpenFile, workspaceNam
     <section className="file-editor" aria-label="File editor">
       {!filePath && data.documents.size > 0 && <div className="editor-tabs">{[...data.documents].map(([path, item]) => <button className={path === opened ? "selected" : ""} key={path} title={path} onClick={() => open(path)}>{path.split("/").at(-1)}{item.dirty ? " •" : ""}</button>)}</div>}
       {!opened ? <div className="workspace-empty"><Icon name="compose"/><p>Select a file to read or edit.</p></div> : <>
-        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}<button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button></div>
+        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}{filePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}<button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button></div>
+      </>}
+      <div className="workspace-file-body" hidden={!opened}><div className="workspace-file-main">
+      {opened && <>
         {fileError && <p className="workspace-notice" role="alert">{fileError}</p>}
         {locationNotice?.path === opened && locationNotice?.id === fileRequest?.id && <p className="workspace-notice" role="status">{locationNotice.message}</p>}
         {document?.conflict !== undefined && <div className="file-conflict"><strong>The host file changed.</strong><details><summary>View host version</summary><pre>{document.conflict?.kind === "text" ? document.conflict.text : document.conflict ? `File is ${document.conflict.kind}` : "The file no longer exists."}</pre></details><div><button className="secondary-button" onClick={() => data.resolve(opened!, "remote")}>Use host version</button><button className="primary-button" onClick={() => data.resolve(opened!, "local")}>Keep my edits for next save</button></div></div>}
@@ -93,6 +99,7 @@ function Files({ data, disabled, fileRequest, filePath, onOpenFile, workspaceNam
         )}
       </div>
       {document && <footer className="editor-status">{document.dirty ? "Unsaved edits" : "Host version"}{document.content?.kind === "text" ? ` · UTF-8${document.content.bom ? " with BOM" : ""}` : ""}{!data.connected ? " · Offline cache" : ""}</footer>}
+      </div>{filePath && <WorkspaceFileTreePane data={data} filePath={filePath} active={active} view={tree} onChange={changeTree} onOpenFile={open}/>}</div>
     </section>
   </div>;
 }

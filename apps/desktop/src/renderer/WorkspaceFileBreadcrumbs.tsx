@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icons";
+import { WorkspaceFileTree } from "./WorkspaceFileTree";
 import type { WorkspaceState } from "./workspace-state";
 import "./workspace-file-breadcrumbs.css";
 
@@ -25,46 +26,36 @@ export function WorkspaceFileBreadcrumbs({ data, filePath, workspaceName, active
     measure();
     const observer = new ResizeObserver(measure); observer.observe(anchor);
     const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(false); };
+    const focusOutside = (event: FocusEvent) => { if (!menu.current?.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(false); };
     const dismiss = () => close(false);
-    addEventListener("pointerdown", outside); addEventListener("resize", dismiss);
-    return () => { observer.disconnect(); removeEventListener("pointerdown", outside); removeEventListener("resize", dismiss); };
+    addEventListener("pointerdown", outside); addEventListener("focusin", focusOutside); addEventListener("resize", dismiss);
+    return () => { observer.disconnect(); removeEventListener("pointerdown", outside); removeEventListener("focusin", focusOutside); removeEventListener("resize", dismiss); };
   }, [directory, anchorIndex]);
   useEffect(() => {
     if (directory === undefined || !position) return;
-    menu.current?.focus({ preventScroll: true });
+    (menu.current?.querySelector<HTMLElement>('[role="tree"]') ?? menu.current)?.focus({ preventScroll: true });
   }, [directory, anchorIndex, Boolean(position)]);
   const parts = filePath.split("/"), segments = [
     { label: workspaceName, directory: "." },
     ...parts.map((label, index) => ({ label, directory: parts.slice(0, index === parts.length - 1 ? index : index + 1).join("/") || "." })),
   ];
-  const entries = directory === undefined ? undefined : data.directories.get(directory);
   return <nav className="workspace-file-breadcrumbs" aria-label="File path">
     {segments.map((segment, index) => <span key={index}>
       {index > 0 && <Icon name="chevron"/>}
-      <button type="button" aria-haspopup="menu" aria-expanded={directory !== undefined && anchorIndex === index} data-breadcrumb-index={index}
+      <button type="button" aria-haspopup="dialog" aria-expanded={directory !== undefined && anchorIndex === index} data-breadcrumb-index={index}
         title={index === 0 ? workspaceName : parts.slice(0, index).join("/")}
         onClick={event => {
           if (trigger.current === event.currentTarget && directory !== undefined) { close(); return; }
           trigger.current = event.currentTarget; setAnchorIndex(index); setDirectory(segment.directory); void data.readDirectory(segment.directory);
         }}>{segment.label}</button>
     </span>)}
-    {directory !== undefined && position && active && createPortal(<div ref={menu} style={position} className="workspace-file-picker" role="menu" aria-label="Files in folder" tabIndex={-1}
+    {directory !== undefined && position && active && createPortal(<div ref={menu} style={position} className="workspace-file-picker" role="dialog" aria-label="Files in folder" tabIndex={-1}
       onKeyDown={event => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
-        if (event.key === "Tab") { close(); return; }
-        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-        const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])];
-        if (!items.length) return;
-        event.preventDefault(); const at = items.indexOf(document.activeElement as HTMLButtonElement);
-        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : at < 0 ? event.key === "ArrowUp" ? items.length - 1 : 0 : (at + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
-        items[next]?.focus();
       }}>
-      {data.errors[`files:${directory}`] && <p role="alert">{data.errors[`files:${directory}`]}{data.connected && <button role="menuitem" onClick={() => void data.readDirectory(directory)}>Retry</button>}</p>}
-      {!entries ? !data.errors[`files:${directory}`] && <p>{data.loading.has(`files:${directory}`) ? "Loading folder…" : "This folder is not cached."}</p> : !entries.length ? <p>This folder is empty.</p> : entries.map(entry =>
-        <button key={entry.path} type="button" role="menuitem" disabled={entry.kind === "other" || entry.kind === "symlink" && entry.linkState !== "inside"}
-          onClick={() => { if (entry.kind === "directory") { setDirectory(entry.path); void data.readDirectory(entry.path); } else { close(); onOpenFile(entry.path); } }}>
-          <Icon name={entry.kind === "directory" ? "folder" : "compose"}/><span>{entry.name}</span>{entry.path === filePath && <Icon name="check"/>}
-        </button>)}
+      <WorkspaceFileTree key={anchorIndex} data={data} filePath={filePath} active={active} initialDirectory={directory} showFilter={false}
+        onOpenFile={path => { close(); onOpenFile(path); }}/>
+
     </div>, document.body)}
   </nav>;
 }

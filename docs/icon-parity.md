@@ -66,3 +66,7 @@ The Plugins directory header's Manage caller is `plugins-page-ab74c4c3acdd.js` a
 ## Native skills
 
 Skill rows and the dialog use the pinned Lucide Package asset, including its fourth top-seam path; the previous dollar-sign tile is removed. The source is `package-B3GzAPd2-3bcd1cb89a10.js`, SHA256 `6e0bec16ba34e924f46ce40de24fab59df8cbad9aec639dd64de7e33a2cecc1c`, rendered as a 16-point glyph in the 40-point circular holder. This establishes generic artwork selection. Skill-supplied icons and registered native-window pixels remain unverified.
+
+## Workspace file-tree toggle
+
+The dedicated file header uses the exact pinned7982 `Jts` / export `Fd` 20×20 filled SVG, rendered through the source `icon-sm` size. The labeled Toggle file tree call in `text-file-editor-tab-content.electron-aa6f541f63a8.js` resolves directly to that artwork. This differs from the folder glyph used by Choose file tree root. Static path data was checked against the extracted app-initial source; this proves artwork provenance, not installed pixel parity.
