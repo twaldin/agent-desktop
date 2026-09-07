@@ -1,3 +1,4 @@
+import type { NativeSessionMcpResourceRequest, NativeSessionMcpResourceResult } from "@agent-desktop/shared";
 import { NativeSessionMcp } from "./mcp-session";
 import type { NativeSessionMcpSnapshot, NativeSessionMcpReload, NativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { constants } from "node:fs";
@@ -86,6 +87,7 @@ export interface OmpSession {
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
+  readSessionMcpResource(request: NativeSessionMcpResourceRequest): Promise<NativeSessionMcpResourceResult>;
   getSessionMcp(): NativeSessionMcpSnapshot;
   reloadSessionMcp(request: NativeSessionMcpReload): Promise<NativeSessionMcpSnapshot>;
   reconnectSessionMcp(request: NativeSessionMcpReconnect): Promise<NativeSessionMcpSnapshot>;
@@ -497,6 +499,7 @@ export class OmpRuntime {
       let interruptEpoch = 0;
       let accountMutation = false;
       let goalMutation = false;
+      const mcpReads = new Set<Promise<NativeSessionMcpResourceResult>>();
       let mcpMutation: Promise<NativeSessionMcpSnapshot> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
@@ -627,6 +630,14 @@ export class OmpRuntime {
           if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
             throw new Error("Resolve pending native work before reloading MCP servers.");
           return trackMcpMutation(mcp.reload(request));
+        },
+        readSessionMcpResource: request => {
+          assertSessionActive();
+          if (mcpReads.size >= 8) throw new Error("Wait for pending MCP resource reads.");
+          const run = mcp.readResource(request);
+          mcpReads.add(run);
+          void run.then(() => mcpReads.delete(run), () => mcpReads.delete(run));
+          return run;
         },
         reconnectSessionMcp: request => {
           assertIdle();
@@ -908,6 +919,7 @@ export class OmpRuntime {
             // already in flight still owns both files until it settles.
             await promotionCall?.catch(() => {});
             await mcpMutation?.catch(() => {});
+            await Promise.allSettled([...mcpReads]);
             session.beginDispose();
             try { await session.dispose(); }
             finally {

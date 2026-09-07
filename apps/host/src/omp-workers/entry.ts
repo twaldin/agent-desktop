@@ -1,3 +1,4 @@
+import { parseNativeSessionMcpResourceRequest } from "@agent-desktop/shared";
 import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { parseBrowserControlRequest, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import { serialize } from "node:v8";
@@ -214,6 +215,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         ]);
         break;
       }
+      case "readSessionMcpResource": respond(true, await requireSession().readSessionMcpResource(parseNativeSessionMcpResourceRequest(message.args.request))); break;
       case "getSessionMcp": respond(true, requireSession().getSessionMcp()); break;
       case "reloadSessionMcp": respond(true, await requireSession().reloadSessionMcp(parseNativeSessionMcpReload(message.args.request))); break;
       case "reconnectSessionMcp": respond(true, await requireSession().reconnectSessionMcp(parseNativeSessionMcpReconnect(message.args.request))); break;

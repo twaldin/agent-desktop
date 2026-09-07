@@ -442,6 +442,7 @@ export class WorkerRuntime {
       listQuestions: () => client.request<DetachedQuestionSnapshot[]>({ operation: "listQuestions" }, 15_000),
       resolveQuestion: request => client.request<ResolveDetachedQuestionReceipt>({ operation: "resolveQuestion", args: { request } }, 15_000, "question-resolution"),
       startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
+      readSessionMcpResource: request => client.request({ operation: "readSessionMcpResource", args: { request } }, 35_000),
       getSessionMcp: () => client.request({ operation: "getSessionMcp" }, 15_000),
       reloadSessionMcp: request => client.request({ operation: "reloadSessionMcp", args: { request } }, 120_000),
       reconnectSessionMcp: request => client.request({ operation: "reconnectSessionMcp", args: { request } }, 120_000),

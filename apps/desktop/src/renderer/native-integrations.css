@@ -109,3 +109,18 @@
 .session-mcp .integration-list-heading > button { white-space:nowrap; flex-shrink:0; }
 .session-mcp-counts { align-items:center; }
 @media(max-width:680px) { .session-mcp .integration-list-heading { flex-wrap:wrap; } }
+
+.mcp-resource-dialog { width: min(736px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; }
+.mcp-resource-heading, .mcp-resource-request, .mcp-resource-meta { display: flex; align-items: center; gap: 12px; }
+.mcp-resource-heading { justify-content: space-between; margin-bottom: 20px; }
+.mcp-resource-heading h2 { margin: 0; }
+.mcp-resource-request .text-field { flex: 1; min-width: 0; }
+.mcp-resource-request button { flex-shrink: 0; }
+.mcp-resource-contents { margin-top: 20px; }
+.mcp-resource-contents section + section { margin-top: 20px; }
+.mcp-resource-meta { flex-wrap: wrap; margin-bottom: 8px; }
+.mcp-resource-meta code { overflow-wrap: anywhere; }
+.mcp-resource-meta small { color: var(--secondary); }
+.mcp-resource-contents pre { max-height: 50vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--app-surface); padding: 12px; border-radius: 8px; }
+.mcp-resource-contents img { max-width: 100%; max-height: 50vh; object-fit: contain; }
+@media (max-width: 600px) { .mcp-resource-request { flex-wrap: wrap; } .mcp-resource-request .text-field { flex-basis: 100%; } }

@@ -1,13 +1,13 @@
 import type { NativeSessionMcpServer } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
 
-export function SessionMcpDetails({ server }: { server: NativeSessionMcpServer }) {
+export function SessionMcpDetails({ server, onReadResource }: { server: NativeSessionMcpServer; onReadResource?(uri:string):void }) {
   return <div className="session-mcp-details">
     <details><summary><Icon name="chevron"/>Resources</summary>
       {server.resources == null ? <p className="integration-note">Resource details have not been measured.</p> :
-        <ul>{server.resources.map((resource, index) => <li key={`${resource.uri}:${index}`}><strong>{resource.name}</strong><code>{resource.uri}</code>{resource.description && <p>{resource.description}</p>}{resource.mimeType && <small>{resource.mimeType}</small>}</li>)}</ul>}
+        <ul>{server.resources.map((resource, index) => <li key={`${resource.uri}:${index}`}><strong>{resource.name}</strong><code>{resource.uri}</code>{onReadResource && <button className="secondary-button" type="button" onClick={event=>{event.currentTarget.focus();onReadResource(resource.uri);}}>Open resource</button>}{resource.description && <p>{resource.description}</p>}{resource.mimeType && <small>{resource.mimeType}</small>}</li>)}</ul>}
       {server.resourceTemplates == null ? <p className="integration-note">Resource templates have not been measured.</p> : server.resourceTemplates.length > 0 && <>
-        <h3>Templates</h3><ul>{server.resourceTemplates.map((template, index) => <li key={`${template.uriTemplate}:${index}`}><strong>{template.name}</strong><code>{template.uriTemplate}</code>{template.description && <p>{template.description}</p>}{template.mimeType && <small>{template.mimeType}</small>}</li>)}</ul>
+        <h3>Templates</h3><ul>{server.resourceTemplates.map((template, index) => <li key={`${template.uriTemplate}:${index}`}><strong>{template.name}</strong><code>{template.uriTemplate}</code>{onReadResource && <button className="secondary-button" type="button" onClick={event=>{event.currentTarget.focus();onReadResource(template.uriTemplate);}}>Open template</button>}{template.description && <p>{template.description}</p>}{template.mimeType && <small>{template.mimeType}</small>}</li>)}</ul>
       </>}
       {server.resources?.length === 0 && server.resourceTemplates?.length === 0 && <p className="integration-note">No resources or templates available.</p>}
     </details>

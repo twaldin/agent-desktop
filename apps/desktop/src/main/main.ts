@@ -1,3 +1,4 @@
+import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
 import type { NativePluginMutation, NativeMcpMutation } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
@@ -253,6 +254,9 @@ ipcMain.handle("host:goal-control", async (event, sessionId: string, request: im
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:mcp-resource", async (event, sessionId: string, request: import("@agent-desktop/shared").NativeSessionMcpResourceRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestSessionMcpResource(await endpointFor(hostId), sessionId, request);
 });
 ipcMain.handle("host:session-mcp", async (event, sessionId: string, hostId?: string, commandId?: string) => {
   assertTrustedSender(event); return requestSessionMcp(await endpointFor(hostId), sessionId, commandId);

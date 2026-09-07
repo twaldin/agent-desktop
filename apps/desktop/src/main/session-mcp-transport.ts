@@ -7,7 +7,12 @@ export async function requestSessionMcp(endpoint: HostEndpoint, sessionId: strin
   const response = await fetch(`${endpoint.origin}/v1/sessions/${encodeURIComponent(sessionId)}/mcp${commandId ? `?commandId=${encodeURIComponent(commandId)}` : ""}`, { headers: {
     [SESSION_MCP_OWNER_HEADER]: endpoint.hostId, ...(endpoint.token ? { Authorization: `Bearer ${endpoint.token}` } : {}),
   }, signal: AbortSignal.timeout(20_000), redirect: "error" });
-  if (response.headers.get(SESSION_MCP_OWNER_HEADER) !== endpoint.hostId) { await response.body?.cancel(); throw new HostRequestError("The MCP response belongs to another host.", 409, "OWNER_MISMATCH"); }
+  const value = await readSessionMcpResponse(response, endpoint.hostId);
+  return parseNativeSessionMcpResponse(value, endpoint.hostId, sessionId, commandId);
+}
+
+export async function readSessionMcpResponse(response: Response, hostId: string): Promise<unknown> {
+  if (response.headers.get(SESSION_MCP_OWNER_HEADER) !== hostId) { await response.body?.cancel(); throw new HostRequestError("The MCP response belongs to another host.", 409, "OWNER_MISMATCH"); }
   let value: unknown;
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Missing MCP response.");
@@ -27,5 +32,5 @@ export async function requestSessionMcp(endpoint: HostEndpoint, sessionId: strin
     const detail = value && typeof value === "object" && "error" in value && value.error && typeof value.error === "object" ? value.error as Record<string, unknown> : {};
     throw new HostRequestError(typeof detail.message === "string" ? detail.message : `MCP state failed (${response.status}).`, response.status, typeof detail.code === "string" ? detail.code : undefined);
   }
-  return parseNativeSessionMcpResponse(value, endpoint.hostId, sessionId, commandId);
+  return value;
 }

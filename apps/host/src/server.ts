@@ -1,3 +1,4 @@
+import { SessionMcpResourceHttp } from "./session-mcp-resource-http";
 import { SessionMcpHttp } from "./session-mcp-http";
 import { BtwPromotionService } from "./btw-promotion";
 import { LocalEnvironmentActions } from "./local-environments/actions";
@@ -320,6 +321,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     write: (id, value) => store.writeMetadata(`btw:${id}`, value),
     getHandle,
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; },
+  });
+  const sessionMcpResources = new SessionMcpResourceHttp({ hostId: store.host.id,
+    sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    existing: async id => handles.get(id)?.catch(() => undefined),
   });
   const sessionMcpHttp = new SessionMcpHttp({hostId:store.host.id, sessionExists:id=>!stopping && Boolean(store.getSession(id)),
     existing:async id=>handles.get(id)?.catch(()=>undefined),
@@ -768,6 +773,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const mcpResourceResponse = await sessionMcpResources.route(request, url);
+        if (mcpResourceResponse) return mcpResourceResponse;
         const mcpStateResponse = await sessionMcpHttp.route(request, url);
         if (mcpStateResponse) return mcpStateResponse;
         const btwResponse = await btwHttp.route(request, url);

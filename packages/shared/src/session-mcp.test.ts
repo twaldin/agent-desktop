@@ -60,3 +60,11 @@ test("reconnect tickets preserve exact server identity and reject malformed capa
   expect(parseNativeSessionMcpSnapshot(legacy).canReconnect).toBeUndefined();
   expect(() => parseNativeSessionMcpSnapshot({ ...legacy, canReconnect: "true" })).toThrow();
 });
+
+
+test("resource capability is optional and strictly boolean", () => {
+  expect(parseNativeSessionMcpSnapshot(legacy).canReadResources).toBeUndefined();
+  expect(parseNativeSessionMcpSnapshot({...legacy,canReadResources:true}).canReadResources).toBe(true);
+  expect(parseNativeSessionMcpSnapshot({...legacy,canReadResources:false}).canReadResources).toBe(false);
+  expect(()=>parseNativeSessionMcpSnapshot({...legacy,canReadResources:"true"})).toThrow();
+});

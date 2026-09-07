@@ -13,7 +13,7 @@ import type {
 } from "@agent-desktop/shared";
 import { SESSION_MCP_OWNER_HEADER } from "@agent-desktop/shared";
 
-type RpcRequest = { jsonrpc: "2.0"; id?: string | number; method: string };
+type RpcRequest = { jsonrpc: "2.0"; id?: string | number; method: string; params?: {uri?: string} };
 
 async function runMcpServer(): Promise<never> {
 	const marker = process.env.AGENT_DESKTOP_MCP_ROUTE_MARKER;
@@ -41,6 +41,7 @@ async function runMcpServer(): Promise<never> {
 					while (process.env.AGENT_DESKTOP_MCP_ROUTE_GATE && existsSync(process.env.AGENT_DESKTOP_MCP_ROUTE_GATE)) await Bun.sleep(5);
 					send(message.id, { tools: [{ name: "route_tool", inputSchema: { type: "object" } }] });
 					break;
+				case "resources/read": send(message.id, {contents:[{uri:message.params?.uri, text:"Actual route resource"}]}); break;
 				case "resources/list": send(message.id, { resources: [] }); break;
 				case "resources/templates/list": send(message.id, { resourceTemplates: [] }); break;
 				case "prompts/list": send(message.id, { prompts: [] }); break;
@@ -134,6 +135,14 @@ try {
 	});
 	assert.equal(rejectedOwner.status, 409);
 	assert.equal(await starts(), 2);
+	const resourceUrl = `${host.connection.origin}/v1/sessions/${encodeURIComponent(session.id)}/mcp/resource`;
+	const resourceRequest = {epoch:initial.value!.epoch,expectedRevision:initial.value!.revision,serverName:"route",uri:"fixture://route"};
+	const resourceHeaders = {Authorization:`Bearer ${host.connection.token}`,"Content-Type":"application/json",[SESSION_MCP_OWNER_HEADER]:host.connection.hostId};
+	const resource = await fetch(resourceUrl,{method:"POST",headers:resourceHeaders,body:JSON.stringify(resourceRequest)});
+	assert.equal(resource.status,200);
+	assert.deepEqual(await resource.json(),{protocolVersion:1,hostId:host.connection.hostId,sessionId:session.id,value:{contents:[{uri:"fixture://route",text:"Actual route resource"}]}});
+	assert.equal((await fetch(resourceUrl,{method:"POST",headers:{[SESSION_MCP_OWNER_HEADER]:host.connection.hostId},body:JSON.stringify(resourceRequest)})).status,401);
+	assert.equal(await starts(),2);
 	const draftId = `session:${session.id}`;
 	async function putCommandDraft(text: string, expectedRevision: number): Promise<Draft> {
 		const response = await command({ id: crypto.randomUUID(), command: { type: "draft.put", expectedRevision,

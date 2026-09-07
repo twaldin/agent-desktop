@@ -1,6 +1,6 @@
 export {};
 
-type RpcRequest = { jsonrpc: "2.0"; id?: string | number; method: string; params?: { name?: string; arguments?: Record<string, string> } };
+type RpcRequest = { jsonrpc: "2.0"; id?: string | number; method: string; params?: { name?: string; uri?: string; arguments?: Record<string, string> } };
 
 if (process.env.AGENT_DESKTOP_MCP_TEST_MARKER) {
 	await Bun.write(
@@ -51,6 +51,17 @@ for await (const chunk of Bun.stdin.stream()) {
 				break;
 			case "resources/templates/list":
 				send(message.id, { resourceTemplates: [{ uriTemplate: "fixture://{id}", name: "Fixture template", description: "Select a fixture identifier", mimeType: "text/plain" }] });
+				break;
+			case "resources/read":
+				if (message.params?.uri === "fixture://hang") break;
+				if (message.params?.uri === "fixture://missing") {
+					process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32002, message: "Fixture resource not found" } })}\n`);
+					break;
+				}
+				if (process.env.AGENT_DESKTOP_MCP_TEST_READ_DELAY) await Bun.sleep(Number(process.env.AGENT_DESKTOP_MCP_TEST_READ_DELAY));
+				send(message.id, { contents: message.params?.uri === "fixture://binary"
+					? [{ uri: "fixture://binary", mimeType: "application/octet-stream", blob: "AAEC/w==" }]
+					: [{ uri: message.params?.uri ?? "fixture://missing", mimeType: "text/plain", text: `Fixture contents for ${message.params?.uri ?? "missing"}` }] });
 				break;
 			case "prompts/list":
 				send(message.id, { prompts: [{ name: "fixture_prompt", description: "Fixture prompt", arguments: [{ name: "topic", description: "Subject for this prompt", required: true }] }] });

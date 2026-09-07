@@ -1,3 +1,4 @@
+export * from "./session-mcp-resource";
 export * from "./session-mcp";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from './integrations';
 export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpMutation, NativeMcpServer } from './integrations';
@@ -295,6 +296,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
+  readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;
   getSessionMcp?(sessionId: string, hostId?: string, commandId?: string): Promise<import("./session-mcp").NativeSessionMcpResponse>;
   getBtw?(sessionId: string, hostId?: string): Promise<import('./btw').NativeBtwResponse>;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;

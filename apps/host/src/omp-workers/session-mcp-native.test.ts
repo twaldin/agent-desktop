@@ -27,6 +27,7 @@ test('real worker reload rebinds native MCP tools, fences active turns and retir
     const current=await session.getSessionMcp();
     await expect(session.reloadSessionMcp({epoch:current.epoch,expectedRevision:current.revision})).rejects.toThrow('busy');
     await expect(session.reconnectSessionMcp({epoch:current.epoch,expectedRevision:current.revision,serverName:'fixture'})).rejects.toThrow('busy');
+    expect((await session.readSessionMcpResource({epoch:current.epoch,expectedRevision:current.revision,serverName:'fixture',uri:'fixture://during-turn'})).contents[0]?.text).toBe('Fixture contents for fixture://during-turn');
     await session.abort();await run.completion.catch(()=>false);await rm(path.join(gates,'hold'));
     expect(await session.prompt('/fixture-tool-selection read')).toBe(false);
     const selectedTools = JSON.parse(await readFile(path.join(gates, 'active-tools.json'), 'utf8'));
@@ -150,6 +151,13 @@ test('live MCP inspection reuses cached resources/prompts/notifications and prom
     expect((await readFile(marker, 'utf8')).trim().split('\n')).toHaveLength(1);
     expect((await session.getMessages()).filter(row => row.role === 'user')).toHaveLength(0);
     expect(await Bun.file(path.join(gates, 'provider-started')).exists()).toBe(false);
+    const resourceTicket = await session.getSessionMcp();
+    const readRequest = {epoch:resourceTicket.epoch,expectedRevision:resourceTicket.revision,serverName:'fixture',uri:'fixture://resource'};
+    expect(await session.readSessionMcpResource(readRequest)).toEqual({contents:[{uri:'fixture://resource',mimeType:'text/plain',text:'Fixture contents for fixture://resource'}]});
+    expect(await session.readSessionMcpResource({...readRequest,uri:'fixture://binary'})).toEqual({contents:[{uri:'fixture://binary',mimeType:'application/octet-stream',blob:'AAEC/w=='}]});
+    expect((await session.getSessionMcp()).revision).toBe(resourceTicket.revision);
+    expect((await readFile(marker, 'utf8')).trim().split('\n')).toHaveLength(1);
+    expect((await readFile(requests,'utf8')).trim().split('\n').map(line=>JSON.parse(line)).filter(call=>call.method==='resources/read').map(call=>call.params.uri)).toEqual(['fixture://resource','fixture://binary']);
     const catalog = await session.getComposerActions();
     expect(catalog.commands.find(row => row.name === 'fixture:fixture_prompt')).toMatchObject({ availability: 'executable', source: { kind: 'mcp-prompt' } });
     const run = session.startPrompt('/fixture:fixture_prompt topic=Blue topic="Cobalt detail" ignored', { model: { provider: 'mcp-contract', id: 'controlled' } });

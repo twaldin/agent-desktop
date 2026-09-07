@@ -2,6 +2,12 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — native MCP resource viewer
+
+Live resource/template rows now open a viewer backed by the selected session's actual OMP connection. Explicit Read resource supports exact URIs, inert text, binary download and raster previews; failures do not retry or launch another server. Reads can run during a native turn, serialize with reconnect/reload, and drain during worker disposal. Worker protocol20 and an advertised resource capability protect the new operation. Template expansion widgets, subscriptions, attachment integration and interactive authorization remain open.
+
+The regression batch passes **32 tests / 265 assertions across8 files**; the subsequent controller suite passes11 tests/80 assertions, including a real silent-server30-second timeout followed by successful read and reconnect. Typecheck/build pass. Seventeen final controlled Electron captures verify text, exact four-byte download, missing-resource error, narrow dialog, Escape focus return and no read on page reopen. The run issues exactly three resource reads and zero model messages. A failed keyboard-selection harness attempt and a real dialog focus bug are preserved separately; the latter is fixed. These are source/component checks, not installed/native-window, raster-preview or pixel-parity proof. Private evidence: `.data/mcp-resource-checkpoint/` and `.data/mcp-resource-ui-final-03/result.json`. OMP18.1.10/Bun1.3.14, installed services, preserved Work runs and reference seals remain unchanged.
+
 ## Source30 — native per-server MCP reconnect
 
 Live MCP settings and `/mcp reconnect <name>` now reconnect an exact session-owned server through OMP's actual manager. Reload and reconnect share serialized revision checks and durable receipt recovery; stale or duplicate requests cause no additional launch. Unrelated servers remain connected. Native argument completion respects extension/custom precedence. Worker protocol19 carries the operation, with OMP18.1.10/Bun1.3.14 unchanged.

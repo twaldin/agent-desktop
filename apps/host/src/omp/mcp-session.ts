@@ -8,6 +8,11 @@ import type {
 	NativeSessionMcpServer,
 	NativeSessionMcpSnapshot,
 } from "../../../../packages/shared/src/session-mcp";
+import {
+	parseNativeSessionMcpResourceResult,
+	type NativeSessionMcpResourceRequest,
+	type NativeSessionMcpResourceResult,
+} from "../../../../packages/shared/src/session-mcp-resource";
 
 const UNAVAILABLE = "Native MCP manager is unavailable for this session.";
 const CONNECTION_ERROR = "Native MCP server could not connect.";
@@ -121,7 +126,7 @@ export class NativeSessionMcp {
 			}
 		}
 		const value = this.manager
-			? { available: true, canReconnect: true, servers: collectServers(this.manager, this.#failures) }
+			? { available: true, canReconnect: true, canReadResources: true, servers: collectServers(this.manager, this.#failures) }
 			: { available: false, reason: UNAVAILABLE, servers: [] };
 		if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES) throw new Error("Native MCP catalog exceeds its 2 MiB response limit.");
 		return value;
@@ -213,5 +218,32 @@ export class NativeSessionMcp {
 		});
 		this.#mutationTail = operation.catch(() => undefined);
 		return operation.then(() => this.read());
+	}
+
+	readResource(request: NativeSessionMcpResourceRequest): Promise<NativeSessionMcpResourceResult> {
+		const operation = this.#mutationTail.then(async () => {
+			const before = this.read();
+			if (request.epoch !== before.epoch || request.expectedRevision !== before.revision) {
+				throw new Error("Native MCP state changed before resource read.");
+			}
+			if (!this.manager) throw new Error(UNAVAILABLE);
+			const server = before.servers.find(candidate => candidate.name === request.serverName);
+			if (!server) throw new Error("Native MCP server is not part of this session.");
+			if (server.status !== "connected") throw new Error("Native MCP server is not connected.");
+
+			const abort = new AbortController();
+			const timeout = setTimeout(() => abort.abort(), 30_000);
+			try {
+				const result = await this.manager.readServerResource(request.serverName, request.uri, { signal: abort.signal });
+				if (!result) throw new Error("No native MCP resource result.");
+				return parseNativeSessionMcpResourceResult(result);
+			} catch {
+				throw new Error("Native MCP resource read failed.");
+			} finally {
+				clearTimeout(timeout);
+			}
+		});
+		this.#mutationTail = operation.then(() => undefined, () => undefined);
+		return operation;
 	}
 }

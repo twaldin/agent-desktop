@@ -73,6 +73,15 @@ async function markerLines(path: string): Promise<string[]> {
 	throw new Error("Disposable MCP marker did not appear.");
 }
 
+async function waitForResourceRequest(path: string, uri: string): Promise<void> {
+	for (let index = 0; index < 200; index++) {
+		const rows = (await readFile(path, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+		if (rows.some(row => row.method === "resources/read" && row.params?.uri === uri)) return;
+		await Bun.sleep(5);
+	}
+	throw new Error("Disposable MCP resource request did not appear.");
+}
+
 test("reload uses native discovery filters and publishes only live MCP metadata", async () => {
 	const root = await mkdtemp(join(tmpdir(), "agent-desktop-mcp-session-")); roots.push(root);
 	const options: LoadMCPConfigsOptions[] = [];
@@ -278,3 +287,129 @@ test("failed reconnect is generic, refreshes the post-attempt registry, and keep
 	statuses.set("target", "connected");
 	expect(controller.read().servers.find(server => server.name === "target")?.error).toBeUndefined();
 });
+
+test("resource reads use the exact live server and URI without restart or revision consumption", async () => {
+	const root = await mkdtemp(join(tmpdir(), "agent-desktop-mcp-resource-")); roots.push(root);
+	const marker = join(root, "started.txt");
+	const requests = join(root, "requests.jsonl");
+	const fixture = join(import.meta.dir, "fixtures", "mcp-server.ts");
+	const manager = new MCPManager(root, null, async () => ({
+		configs: { fixture: { type: "stdio", command: process.execPath, args: [fixture], env: {
+			AGENT_DESKTOP_MCP_TEST_MARKER: marker, AGENT_DESKTOP_MCP_TEST_REQUESTS: requests, AGENT_DESKTOP_MCP_TEST_READ_DELAY: "80",
+		} } },
+		sources: { fixture: source(join(root, ".mcp.json")) }, exaApiKeys: [],
+	}));
+	managers.push(manager);
+	const controller = new NativeSessionMcp(session().value, manager);
+	const initial = controller.read();
+	await controller.reload({ epoch: initial.epoch, expectedRevision: initial.revision });
+	const before = await waitForCatalog(controller);
+	const request = { epoch: before.epoch, expectedRevision: before.revision, serverName: "fixture", uri: "fixture://custom value" };
+	expect(await controller.readResource(request)).toEqual({ contents: [{ uri: "fixture://custom value", mimeType: "text/plain", text: "Fixture contents for fixture://custom value" }] });
+	expect(controller.read().revision).toBe(before.revision);
+	expect(await controller.readResource({ ...request, uri: "fixture://binary" })).toEqual({ contents: [{ uri: "fixture://binary", mimeType: "application/octet-stream", blob: "AAEC/w==" }] });
+	expect(await markerLines(marker)).toEqual(["started"]);
+	const raceRead = controller.readResource({ ...request, uri: "fixture://race" });
+	const raceReconnect = controller.reconnect({ epoch: request.epoch, expectedRevision: request.expectedRevision, serverName: request.serverName });
+	await waitForResourceRequest(requests, "fixture://race");
+	expect(await markerLines(marker)).toEqual(["started"]);
+	expect(await raceRead).toEqual({ contents: [{ uri: "fixture://race", mimeType: "text/plain", text: "Fixture contents for fixture://race" }] });
+	await raceReconnect;
+	expect(await markerLines(marker)).toEqual(["started", "started"]);
+	const resourceRequests = (await readFile(requests, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(entry => entry.method === "resources/read");
+	expect(resourceRequests).toEqual([
+		{ method: "resources/read", params: { uri: "fixture://custom value" } },
+		{ method: "resources/read", params: { uri: "fixture://binary" } },
+		{ method: "resources/read", params: { uri: "fixture://race" } },
+	]);
+});
+
+test("resource read preflight and native failures are fail-closed and reveal no native error", async () => {
+	let status: "connected" | "disconnected" = "connected";
+	let reads = 0;
+	let outcome: unknown = { contents: [{ uri: "fixture://one", text: "safe" }] };
+	const manager = {
+		getTools: () => [], getAllServerNames: () => ["fixture"], getConnectionStatus: () => status,
+		getConnection: () => status === "connected" ? { capabilities: { resources: {} } } : undefined,
+		getSource: () => undefined, getNotificationState: () => ({ enabled: false, subscriptions: new Map() }),
+		readServerResource: async () => { reads++; if (outcome instanceof Error) throw outcome; return outcome; },
+	} as unknown as MCPManager;
+	const controller = new NativeSessionMcp(session().value, manager);
+	const before = controller.read();
+	await expect(controller.readResource({ epoch: "stale", expectedRevision: before.revision, serverName: "fixture", uri: "fixture://one" })).rejects.toThrow("changed before resource read");
+	await expect(controller.readResource({ epoch: before.epoch, expectedRevision: before.revision, serverName: "missing", uri: "fixture://one" })).rejects.toThrow("not part of this session");
+	expect(reads).toBe(0);
+
+	status = "disconnected";
+	const disconnected = controller.read();
+	await expect(controller.readResource({ epoch: disconnected.epoch, expectedRevision: disconnected.revision, serverName: "fixture", uri: "fixture://one" })).rejects.toThrow("not connected");
+	expect(reads).toBe(0);
+
+	status = "connected";
+	outcome = new Error("Authorization: private-token-value");
+	const failed = controller.read();
+	await expect(controller.readResource({ epoch: failed.epoch, expectedRevision: failed.revision, serverName: "fixture", uri: "fixture://one" })).rejects.toThrow("Native MCP resource read failed.");
+	outcome = { contents: [{ uri: "fixture://one", text: "x".repeat(2 * 1024 * 1024) }] };
+	const oversized = controller.read();
+	await expect(controller.readResource({ epoch: oversized.epoch, expectedRevision: oversized.revision, serverName: "fixture", uri: "fixture://one" })).rejects.toThrow("Native MCP resource read failed.");
+	expect(reads).toBe(2);
+});
+
+test("resource reads serialize with reconnect without consuming their shared ticket", async () => {
+	let release!: () => void;
+	const gate = new Promise<void>(resolve => { release = resolve; });
+	const calls: string[] = [];
+	const connection = { capabilities: { resources: {} } };
+	const manager = {
+		getTools: () => [], getAllServerNames: () => ["fixture"], getConnectionStatus: () => "connected",
+		getConnection: () => connection, getSource: () => undefined,
+		getNotificationState: () => ({ enabled: false, subscriptions: new Map() }),
+		readServerResource: async () => { calls.push("read"); await gate; return { contents: [{ uri: "fixture://one", text: "one" }] }; },
+		reconnectServer: async () => { calls.push("reconnect"); return connection; },
+	} as unknown as MCPManager;
+	const controller = new NativeSessionMcp(session().value, manager);
+	const before = controller.read();
+	const request = { epoch: before.epoch, expectedRevision: before.revision, serverName: "fixture", uri: "fixture://one" };
+	const read = controller.readResource(request);
+	const reconnect = controller.reconnect(request);
+	await Bun.sleep(0);
+	expect(calls).toEqual(["read"]);
+	release();
+	expect(await read).toEqual({ contents: [{ uri: "fixture://one", text: "one" }] });
+	await reconnect;
+	expect(calls).toEqual(["read", "reconnect"]);
+});
+
+test("a real unanswered stdio resource read times out and releases queued reads and reconnect", async () => {
+	const root = await mkdtemp(join(tmpdir(), "agent-desktop-mcp-resource-timeout-")); roots.push(root);
+	const marker = join(root, "started.txt");
+	const fixture = join(import.meta.dir, "fixtures", "mcp-server.ts");
+	const manager = new MCPManager(root, null, async () => ({
+		configs: { fixture: { type: "stdio", command: process.execPath, args: [fixture], env: { AGENT_DESKTOP_MCP_TEST_MARKER: marker } } },
+		sources: { fixture: source(join(root, ".mcp.json")) }, exaApiKeys: [],
+	}));
+	managers.push(manager);
+	const controller = new NativeSessionMcp(session().value, manager);
+	const initial = controller.read();
+	await controller.reload({ epoch: initial.epoch, expectedRevision: initial.revision });
+	const before = await waitForCatalog(controller);
+	const base = { epoch: before.epoch, expectedRevision: before.revision, serverName: "fixture" };
+	const startedAt = performance.now();
+	const hanging = controller.readResource({ ...base, uri: "fixture://hang" });
+	await expect(hanging).rejects.toThrow("Native MCP resource read failed.");
+	const elapsed = performance.now() - startedAt;
+	expect(elapsed).toBeGreaterThanOrEqual(29_000);
+	expect(elapsed).toBeLessThan(36_000);
+	const afterTimeout = controller.read();
+	const following = controller.readResource({ epoch: afterTimeout.epoch, expectedRevision: afterTimeout.revision, serverName: "fixture", uri: "fixture://after-timeout" });
+	const reconnect = controller.reconnect({ epoch: afterTimeout.epoch, expectedRevision: afterTimeout.revision, serverName: "fixture" });
+	expect(await following).toEqual({ contents: [{ uri: "fixture://after-timeout", mimeType: "text/plain", text: "Fixture contents for fixture://after-timeout" }] });
+	await reconnect;
+	expect(await markerLines(marker)).toEqual(["started", "started"]);
+
+	const current = controller.read();
+	await expect(controller.readResource({ epoch: current.epoch, expectedRevision: current.revision, serverName: "fixture", uri: "fixture://missing" }))
+		.rejects.toThrow("Native MCP resource read failed.");
+	expect(await controller.readResource({ epoch: current.epoch, expectedRevision: current.revision, serverName: "fixture", uri: "fixture://still-alive" }))
+		.toEqual({ contents: [{ uri: "fixture://still-alive", mimeType: "text/plain", text: "Fixture contents for fixture://still-alive" }] });
+}, 40_000);
