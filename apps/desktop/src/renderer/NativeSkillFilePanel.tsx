@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { RichMarkdownEditor } from "./RichMarkdownEditor";
 import { PierreSourceEditor } from "./PierreSourceEditor";
 import type { NativeSkillFileController } from "./native-skill-file-state";
@@ -8,12 +8,19 @@ export function NativeSkillFilePanel({ controller, connected, active, openExtern
   useSyncExternalStore(controller.subscribe,controller.getVersion,controller.getVersion);
   const data=controller.state;
   useEffect(()=>{void controller.load(connected);},[controller,connected]);
+  const modeRequest=useRef<AbortController|null>(null);
+  useEffect(()=>()=>{modeRequest.current?.abort();modeRequest.current=null;},[controller,active]);
+  const switchMode=()=>{
+    if(modeRequest.current)return;
+    const request=new AbortController();modeRequest.current=request;
+    void controller.toggleSource(request.signal).finally(()=>{if(modeRequest.current===request)modeRequest.current=null;});
+  };
   const documentKey=`${data.hostId}:${data.ref.skillId}:${data.ref.sourcePath}`;
   return <section className="native-skill-file-panel" hidden={!active} tabIndex={-1} aria-label="Skill file editor">
     <header><span title={data.ref.sourcePath}>{data.ref.sourcePath.split("/").at(-1)}</span><div className="native-skill-file-actions">
       <span role="status">{!connected?"Offline":data.saving?"Saving…":data.dirty?"Edited":""}</span>
       <button type="button" onClick={()=>void controller.load()} disabled={!connected||data.saving||data.loading}>Refresh</button>
-      <button type="button" aria-pressed={data.source} onClick={()=>controller.toggleSource()}>{data.source?"View preview":"View source"}</button>
+      <button type="button" aria-pressed={data.source} disabled={!data.file||data.loading||data.switchingSource} onClick={switchMode}>{data.source?"View preview":"View source"}</button>
     </div></header>
     {data.error&&<p role="alert" className="inline-error">{data.error}</p>}
     {data.notice&&<p role="status">{data.notice}</p>}

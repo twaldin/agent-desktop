@@ -7,7 +7,7 @@ type Pending = {id:string;command:Write};
 export interface NativeSkillFileState {
   hostId:string; ref:NativeSkillFileRef; file:NativeSkillFileDocument|null;
   text:string; dirty:boolean; saving:boolean; loading:boolean; conflict:boolean; uncertain:boolean;
-  source:boolean; error?:string; notice?:string; recoveredText?:string;
+  source:boolean; switchingSource:boolean; error?:string; notice?:string; recoveredText?:string;
 }
 type Stored = {version:1;file:NativeSkillFileDocument|null;text:string;dirty:boolean;conflict:boolean;pending?:Pending;recoveredText?:string};
 export const sameRef = (a:NativeSkillFileRef,b:NativeSkillFileRef) => JSON.stringify(parseNativeSkillFileRef(a)) === JSON.stringify(parseNativeSkillFileRef(b));
@@ -30,7 +30,7 @@ export class NativeSkillFileController {
   private restored=false;
   private storageError=false;
   constructor(private bridge:DesktopBridge, hostId:string, ref:NativeSkillFileRef, private cache:OfflineCache) {
-    this.state={hostId,ref:parseNativeSkillFileRef(ref),file:null,text:"",dirty:false,saving:false,loading:false,conflict:false,uncertain:false,source:false};
+    this.state={hostId,ref:parseNativeSkillFileRef(ref),file:null,text:"",dirty:false,saving:false,loading:false,conflict:false,uncertain:false,source:false,switchingSource:false};
   }
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn);};};
   getVersion=()=>this.version;
@@ -43,20 +43,38 @@ export class NativeSkillFileController {
     return write.then(()=>{this.storageError=false;},cause=>{this.storageError=true;this.state.error=`Edits could not be stored on this device: ${message(cause)}`;this.emit();throw cause;});
   }
   async flush(){await this.writes;}
+  private async waitForSave(signal?:AbortSignal){
+    signal?.throwIfAborted();
+    if(!this.state.saving)return;
+    await new Promise<void>((resolve,reject)=>{
+      const clean=()=>{off();signal?.removeEventListener("abort",cancel);};
+      const cancel=()=>{clean();reject(signal?.reason);};
+      const off=this.subscribe(()=>{if(!this.state.saving){clean();resolve();}});
+      signal?.addEventListener("abort",cancel,{once:true});
+    });
+    signal?.throwIfAborted();
+  }
+  /** Drain current and newer edits without inventing a retry for an unknown receipt. */
+  async saveUntilClean(signal?:AbortSignal):Promise<boolean>{
+    if(!await this.restore())return false;
+    for(;;){
+      signal?.throwIfAborted();
+      // Even a locally clean buffer can have an older write in flight (Undo).
+      if(this.state.saving){
+        await this.waitForSave(signal);
+        continue;
+      }
+      if(this.state.conflict||this.state.uncertain||this.storageError)return false;
+      if(!this.state.dirty)return true;
+      if(!this.connected||!await this.save())return false;
+    }
+  }
   async prepareWindowClose(signal?:AbortSignal):Promise<boolean>{
     if(!await this.restore())return false;
     signal?.throwIfAborted();
-    while(this.connected&&this.state.dirty){
-      if(this.state.saving)await new Promise<void>((resolve,reject)=>{
-        const clean=()=>{off();signal?.removeEventListener("abort",cancel);};
-        const cancel=()=>{clean();reject(signal?.reason);};
-        const off=this.subscribe(()=>{if(!this.state.saving){clean();resolve();}});
-        signal?.addEventListener("abort",cancel,{once:true});
-      });
-      signal?.throwIfAborted();
-      if(!this.state.dirty)break;
-      if(this.state.conflict||this.state.uncertain||this.storageError||!await this.save())return false;
-    }
+    // Going offline cannot cancel a command already delivered to the host.
+    await this.waitForSave(signal);
+    if(this.connected&&!await this.saveUntilClean(signal))return false;
     signal?.throwIfAborted();await this.persist();signal?.throwIfAborted();return true;
   }
   private async restore():Promise<boolean>{
@@ -118,7 +136,26 @@ export class NativeSkillFileController {
     this.state.text=text;this.state.dirty=text!==this.state.file?.document.text;this.state.notice=undefined;this.state.error=undefined;this.emit();
     void this.persist().then(()=>this.schedule(),()=>{});
   }
-  toggleSource(){this.state.source=!this.state.source;this.emit();}
+  async toggleSource(signal?:AbortSignal):Promise<boolean>{
+    if(this.state.switchingSource||!this.state.file||this.state.loading||signal?.aborted)return false;
+    this.state.switchingSource=true;this.emit();
+    try {
+      for(;;){
+        const saved=await this.saveUntilClean(signal);
+        signal?.throwIfAborted();
+        if(!saved){
+          this.state.error??="Save or resolve this file before switching views.";
+          return false;
+        }
+        // A new edit can arrive between the drain and this continuation.
+        if(this.state.saving||this.state.dirty||this.state.conflict||this.state.uncertain||this.storageError)continue;
+        this.state.source=!this.state.source;return true;
+      }
+    } catch(cause){
+      if(!signal?.aborted)this.state.error=message(cause);
+      return false;
+    } finally {this.state.switchingSource=false;this.emit();}
+  }
   private async accept(result:CommandResult,pending:Pending){
     if(result.commandId!==pending.id)throw new Error("The save receipt belongs to a different command.");
     if(!result.ok){

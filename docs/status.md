@@ -1,5 +1,9 @@
 # Milestone status
 
+## Skill file view switching
+
+Skill source/preview switches now wait for confirmed saves, including edits made during an earlier write. Offline dirty buffers, conflicts and unknown receipts keep the current view; leaving the tab cancels a delayed switch. A related close-after-disconnect race now waits for an already-delivered skill write. Scoped controller/main-gate tests and isolated renderer/host acceptance cover these changes; installed/native-pixel acceptance and persistent skill view selection remain outstanding. See [file editor](workspace-file-editor.md).
+
 ## Editable Markdown tables
 
 Markdown previews now use the pinned live-cell table layout with normal editing/undo, links, source modes and owner-host saving. Seven renderer checks/seven captures verify layout, one real save, offline recovery and narrow/light/custom-token behavior;20 scoped tests/77 assertions, shared skill/image regressions, typecheck and build pass. Screenshot review found and fixed a whole-cell emphasis nesting defect missed by the initial tests. This is source/renderer/host evidence, not installed or matched native-pixel acceptance. See [file editor](workspace-file-editor.md).

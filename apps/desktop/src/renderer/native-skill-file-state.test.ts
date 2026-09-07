@@ -123,3 +123,61 @@ test("canceling a close waiter does not drain edits after an existing skill save
   await Promise.resolve();abort.abort(new Error("keep open"));expect((await rejected).message).toBe("keep open");c.setText("later");complete(success(envelope,"first"));await saving;
   expect(f.calls).toHaveLength(1);expect(c.state.text).toBe("later");expect(c.state.dirty).toBe(true);
 });
+
+test("view switch waits for an existing save and drains newer edits; repeated requests do not toggle twice",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("first");
+  const replies:Array<(result:CommandResult)=>void>=[];
+  f.bridge.command=e=>{f.calls.push(e);return new Promise(r=>replies.push(r));};
+  const save=c.save();await until(()=>replies.length===1);
+  const switching=c.toggleSource();expect(await c.toggleSource()).toBe(false);
+  c.setText("second");expect(c.state.source).toBe(false);expect(c.state.switchingSource).toBe(true);
+  replies[0]!(success(f.calls[0]!,"first"));await save;await until(()=>replies.length===2);
+  expect(c.state.source).toBe(false);replies[1]!(success(f.calls[1]!,"second"));
+  expect(await switching).toBe(true);expect(c.state.source).toBe(true);expect(c.state.dirty).toBe(false);
+  expect(c.state.switchingSource).toBe(false);expect(f.calls).toHaveLength(2);
+});
+test("cancelled mode switch leaves its view and newer edits intact after the original save returns",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("first");
+  let reply!:(result:CommandResult)=>void;
+  f.bridge.command=e=>{f.calls.push(e);return new Promise(r=>reply=r);};
+  const abort=new AbortController(),switching=c.toggleSource(abort.signal);await until(()=>Boolean(reply));
+  c.setText("second");abort.abort();reply(success(f.calls[0]!,"first"));
+  expect(await switching).toBe(false);expect(c.state.source).toBe(false);expect(c.state.text).toBe("second");
+  expect(c.state.dirty).toBe(true);expect(f.calls).toHaveLength(1);expect(c.state.switchingSource).toBe(false);
+});
+test("offline clean view can switch; dirty or conflicting offline view cannot",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setConnected(false);
+  expect(await c.toggleSource()).toBe(true);c.setText("offline draft");await c.flush();
+  expect(await c.toggleSource()).toBe(false);expect(c.state.source).toBe(true);expect(c.state.text).toBe("offline draft");
+  expect(c.state.error).toContain("before switching views");expect(f.calls).toHaveLength(0);
+  f.setRemote("changed externally");await c.load(true);expect(c.state.conflict).toBe(true);
+  expect(await c.toggleSource()).toBe(false);expect(c.state.source).toBe(true);expect(f.calls).toHaveLength(0);
+});
+test("Undo to baseline during a save still waits for receipt and saves the intended baseline",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("first");
+  const replies:Array<(result:CommandResult)=>void>=[];
+  f.bridge.command=e=>{f.calls.push(e);return new Promise(r=>replies.push(r));};
+  const save=c.save();await until(()=>replies.length===1);c.setText("original");expect(c.state.dirty).toBe(false);
+  const switching=c.toggleSource();await Promise.resolve();expect(c.state.source).toBe(false);
+  replies[0]!(success(f.calls[0]!,"first"));await save;await until(()=>replies.length===2);
+  replies[1]!(success(f.calls[1]!,"original"));expect(await switching).toBe(true);
+  expect(c.state.text).toBe("original");expect(c.state.file?.document.text).toBe("original");expect(f.calls).toHaveLength(2);
+});
+test("unconfirmed view-switch save is not retried even if the user undoes to the old baseline",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("first");
+  f.bridge.command=async e=>{f.calls.push(e);throw new Error("lost receipt");};
+  expect(await c.toggleSource()).toBe(false);c.setText("original");
+  expect(await c.toggleSource()).toBe(false);expect(c.state.source).toBe(false);expect(c.state.uncertain).toBe(true);
+  expect(f.calls).toHaveLength(1);expect(JSON.parse(f.values.get(keyFor("h",ref))!).pending.id).toBe(f.calls[0]!.id);
+});
+
+test("close after disconnect waits for a previously dispatched write but retains later offline edits",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("delivered");
+  let reply!:(result:CommandResult)=>void;f.bridge.command=e=>{f.calls.push(e);return new Promise(r=>reply=r);};
+  const save=c.save();await until(()=>Boolean(reply));c.setConnected(false);c.setText("later offline");
+  let closed=false;const close=c.prepareWindowClose().then(value=>{closed=value;return value;});
+  await Promise.resolve();await Promise.resolve();expect(closed).toBe(false);
+  reply(success(f.calls[0]!,"delivered"));await save;expect(await close).toBe(true);
+  expect(c.state.text).toBe("later offline");expect(c.state.dirty).toBe(true);expect(f.calls).toHaveLength(1);
+  const restored=f.controller();await restored.load(false);expect(restored.state.text).toBe("later offline");
+});
