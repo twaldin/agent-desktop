@@ -2,7 +2,7 @@ import {expect,test} from 'bun:test';
 import {readAcquisitionIntents,saveAcquisitionIntent,clearAcquisitionIntent} from './plugin-acquisition-intents';
 function storage(){const map=new Map<string,string>();return{get length(){return map.size;},key:(i:number)=>[...map.keys()][i]??null,getItem:(k:string)=>map.get(k)??null,setItem:(k:string,v:string)=>{map.set(k,v);},removeItem:(k:string)=>{map.delete(k);},clear:()=>map.clear()} satisfies Storage;}
 test('pending acquisition stores only identity/owner metadata and independently retains simultaneous requests',()=>{
- const s=storage(),first={id:crypto.randomUUID(),operation:'marketplace.add' as const,target:{projectId:'project'},source:'private-source',expectedRevision:'private-revision'},second={id:crypto.randomUUID(),operation:'plugin.install' as const};
+ const s=storage(),first={id:crypto.randomUUID(),operation:'marketplace.add' as const,target:{projectId:'project'},source:'private-source',expectedRevision:'private-revision'},second={id:crypto.randomUUID(),operation:'plugin.upgrade' as const};
  saveAcquisitionIntent(s,'one',first);saveAcquisitionIntent(s,'one',second);saveAcquisitionIntent(s,'two',first);
  expect(readAcquisitionIntents(s,'one')).toHaveLength(2);expect(readAcquisitionIntents(s,'two')).toHaveLength(1);
  expect([...Array(s.length)].map((_,i)=>s.getItem(s.key(i)!)).join()).not.toContain('private-');

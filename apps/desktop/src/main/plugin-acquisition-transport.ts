@@ -21,7 +21,7 @@ function string(value: unknown, max = 8192): string {
   return value;
 }
 function operation(value: unknown): NativePluginAcquisition["operation"] {
-  if (!["marketplace.add", "marketplace.update", "marketplace.remove", "plugin.install", "plugin.uninstall"].includes(String(value))) {
+  if (!["marketplace.add", "marketplace.update", "marketplace.remove", "plugin.install", "plugin.upgrade", "plugin.uninstall"].includes(String(value))) {
     throw new Error("Invalid plugin acquisition response.");
   }
   return value as NativePluginAcquisition["operation"];

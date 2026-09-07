@@ -37,7 +37,7 @@ export function parsePluginAcquisition(value: unknown): NativePluginAcquisitionR
     case 'marketplace.add': keys(raw,['operation','source','sourceOptions']);action={operation:raw.operation,source:text(raw.source,8192),...(raw.sourceOptions === undefined ? {} : {sourceOptions:parseMarketplaceSourceOptions(raw.sourceOptions)})};if(action.sourceOptions)assertMarketplaceGitSource(action.source);break;
     case 'marketplace.update': case 'marketplace.remove': keys(raw,['operation','name']);action={operation:raw.operation,name:name(raw.name)};break;
     case 'plugin.install': keys(raw,['operation','name','marketplace','scope']);action={operation:raw.operation,name:name(raw.name),marketplace:name(raw.marketplace),scope:scope(raw.scope)};break;
-    case 'plugin.uninstall': {
+    case 'plugin.upgrade': case 'plugin.uninstall': {
       keys(raw,['operation','pluginId','scope']);const pluginId=text(raw.pluginId,129),parts=pluginId.split('@');
       if(parts.length!==2)throw new Error('Invalid plugin identity.');name(parts[0]);name(parts[1]);
       action={operation:raw.operation,pluginId,scope:scope(raw.scope)};break;
@@ -69,7 +69,7 @@ export class PluginAcquisitionHttp {
       const cwd=await this.options.resolveCwd(target);
       if(this.stopping)return respond({error:'The host is stopping.'},503);
       if(method==='close-request') {
-        if (!['marketplace.add','marketplace.update','marketplace.remove','plugin.install','plugin.uninstall'].includes(String(input.operation))) throw new Error('Invalid operation.');
+        if (!['marketplace.add','marketplace.update','marketplace.remove','plugin.install','plugin.upgrade','plugin.uninstall'].includes(String(input.operation))) throw new Error('Invalid operation.');
         return respond(this.options.operations.closeRequest(cwd,id(input.id),input.operation as NativePluginAcquisition['operation'],target));
       }
       if(method==='catalog')return respond(await this.options.read(cwd));

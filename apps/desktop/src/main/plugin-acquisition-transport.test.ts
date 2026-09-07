@@ -28,7 +28,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   if (url.pathname.endsWith("/catalog")) return Response.json(catalog, { headers: { "Cache-Control": "no-store" } });
   if (url.pathname.endsWith("/operations")) return Response.json([baseReceipt]);
   if (url.pathname.endsWith("/review")) return Response.json({ ...baseReceipt, state: "reviewed", updatedAt: 11 });
-  if (url.pathname.endsWith("/close-request")) return Response.json({ ...baseReceipt, state: "reviewed", updatedAt: 11 });
+  if (url.pathname.endsWith("/close-request")) return Response.json({ ...baseReceipt, operation: (body as any)?.operation ?? baseReceipt.operation, state: "reviewed", updatedAt: 11 });
   return Response.json({...baseReceipt,operation:(body as any)?.request?.action?.operation??baseReceipt.operation}, { status: 202 });
 } });
 const endpoint = (prefix = "ok") => ({ origin: `http://127.0.0.1:${server.port}/${prefix}`, hostId: "host-a", token: "transport-token" });
@@ -51,6 +51,14 @@ describe("plugin acquisition desktop transport", () => {
   test("forwards complete source options without dropping or moving them into the source URL",async()=>{
     const request={id,expectedRevision:'catalog-revision',action:{operation:'marketplace.add' as const,source:'https://fixture.invalid/repo',sourceOptions:{ref:'release/x',sparsePaths:['plugins/a','literal[1].txt']}}};
     expect(await startPluginAcquisition(endpoint(),target,request)).toMatchObject({id,operation:'marketplace.add'});expect(seen.at(-1)?.body).toEqual({target,request});
+  });
+
+  test("preserves the exact scoped upgrade identity in requests and receipts", async () => {
+    const request={id,expectedRevision:'catalog-revision',action:{operation:'plugin.upgrade' as const,pluginId:'sample@local',scope:'project' as const}};
+    expect(await startPluginAcquisition(endpoint(),target,request)).toMatchObject({id,operation:'plugin.upgrade'});
+    expect(seen.at(-1)?.body).toEqual({target,request});
+    expect(await closePluginAcquisitionRequest(endpoint(),target,{id,operation:'plugin.upgrade'})).toMatchObject({id,operation:'plugin.upgrade'});
+    expect(seen.at(-1)?.body).toEqual({target,id,operation:'plugin.upgrade'});
   });
 
   test("reads host-wide operations and reviews or closes only the exact target and identity", async () => {

@@ -232,6 +232,110 @@ describe("NativeMarketplaces", () => {
     });
   });
 
+  test("upgrades one project without changing another project's cache or plugin settings", async () => {
+    const adapterA = await fresh();
+    const adapterB = new NativeMarketplacesClass();
+    let a = await adapterA.read(project);
+    a = await adapterA.mutate(project, a.revision, { operation: "marketplace.add", source: marketplace });
+    a = await adapterA.mutate(project, a.revision, {
+      operation: "plugin.install", name: "sample", marketplace: "fixture-market", scope: "project",
+    });
+    let b = await adapterB.read(projectB);
+    b = await adapterB.mutate(projectB, b.revision, {
+      operation: "plugin.install", name: "sample", marketplace: "fixture-market", scope: "project",
+    });
+    const linkA = path.join(project, ".omp", "plugins", "node_modules", "fixture-sample");
+    const linkB = path.join(projectB, ".omp", "plugins", "node_modules", "fixture-sample");
+    const oldCache = await realpath(linkA);
+    expect(await realpath(linkB)).toBe(oldCache);
+
+    const registryPath = path.join(project, ".omp", "plugins", "installed_plugins.json");
+    const registry = JSON.parse(await readFile(registryPath, "utf8"));
+    registry.plugins["sample@fixture-market"][0].enabled = false;
+    await writeFile(registryPath, json(registry));
+    const lockPath = path.join(project, ".omp", "plugins", "omp-plugins.lock.json");
+    const runtime = JSON.parse(await readFile(lockPath, "utf8"));
+    runtime.plugins["fixture-sample"] = { version: "1.2.3", enabled: false, enabledFeatures: ["fixture-feature"] };
+    runtime.settings["fixture-sample"] = { retained: "project-setting" };
+    await writeFile(lockPath, json(runtime));
+
+    await writeFile(path.join(marketplace, "plugins", "sample", "package.json"), json({
+      name: "fixture-sample", version: "2.0.0", omp: { name: "Fixture sample" },
+    }));
+    await writeFile(path.join(marketplace, "plugins", "sample", "version.txt"), "version two\n");
+    await writeFile(path.join(marketplace, ".omp-plugin", "marketplace.json"), json({
+      name: "fixture-market", owner: { name: "Fixture" }, metadata: { description: "Cached fixture" },
+      plugins: [{ name: "sample", source: "./plugins/sample", description: "Sample plugin", version: "2.0.0" }],
+    }));
+
+    a = await adapterA.read(project);
+    a = await adapterA.mutate(project, a.revision, { operation: "marketplace.update", name: "fixture-market" });
+    a = await adapterA.mutate(project, a.revision, {
+      operation: "plugin.upgrade", pluginId: "sample@fixture-market", scope: "project",
+    });
+    expect(a.installed).toContainEqual({ id: "sample@fixture-market", scope: "project", version: "2.0.0", enabled: false });
+    const newCache = await realpath(linkA);
+    expect(newCache).not.toBe(oldCache);
+    expect(await readFile(path.join(newCache, "version.txt"), "utf8")).toBe("version two\n");
+    expect(await realpath(linkB)).toBe(oldCache);
+    expect(await readFile(path.join(oldCache, "package.json"), "utf8")).toContain('"version": "1.2.3"');
+    expect((await adapterB.read(projectB)).installed).toContainEqual({
+      id: "sample@fixture-market", scope: "project", version: "1.2.3", enabled: true,
+    });
+    const preserved = JSON.parse(await readFile(lockPath, "utf8"));
+    expect(preserved.plugins["fixture-sample"]).toEqual({ version: "2.0.0", enabled: false, enabledFeatures: ["fixture-feature"] });
+    expect(preserved.settings["fixture-sample"]).toEqual({ retained: "project-setting" });
+
+    const stable = await adapterA.read(project);
+    await writeFile(path.join(marketplace, "plugins", "sample", "version.txt"), "changed same version\n");
+    const refreshed = await adapterA.mutate(project, stable.revision, { operation: "marketplace.update", name: "fixture-market" });
+    await expect(adapterA.mutate(project, refreshed.revision, {
+      operation: "plugin.upgrade", pluginId: "sample@fixture-market", scope: "project",
+    })).rejects.toThrow("Native plugin.upgrade operation failed");
+    expect(await realpath(linkA)).toBe(newCache);
+    expect(await readFile(path.join(newCache, "version.txt"), "utf8")).toBe("version two\n");
+    expect(await realpath(linkB)).toBe(oldCache);
+  });
+
+  test("applies native package renames only in the selected scope and refuses an occupied new runtime path", async () => {
+    await writeFile(path.join(marketplace, "plugins", "sample", "package.json"), json({ name: "fixture-sample", version: "1.0.0" }));
+    await rm(path.join(marketplace, "plugins", "sample", "version.txt"), { force: true });
+    await writeFile(path.join(marketplace, ".omp-plugin", "marketplace.json"), json({
+      name: "fixture-market", owner: { name: "Fixture" }, plugins: [{ name: "sample", source: "./plugins/sample", version: "1.0.0" }],
+    }));
+    const adapterA = await fresh(), adapterB = new NativeMarketplacesClass();
+    let a = await adapterA.read(project);
+    a = await adapterA.mutate(project, a.revision, { operation: "marketplace.add", source: marketplace });
+    a = await adapterA.mutate(project, a.revision, { operation: "plugin.install", name: "sample", marketplace: "fixture-market", scope: "project" });
+    let b = await adapterB.read(projectB);
+    b = await adapterB.mutate(projectB, b.revision, { operation: "plugin.install", name: "sample", marketplace: "fixture-market", scope: "project" });
+    const oldA = path.join(project, ".omp", "plugins", "node_modules", "fixture-sample");
+    const oldB = path.join(projectB, ".omp", "plugins", "node_modules", "fixture-sample");
+    const oldCache = await realpath(oldA);
+
+    await writeFile(path.join(marketplace, "plugins", "sample", "package.json"), json({ name: "fixture-renamed", version: "2.0.0" }));
+    await writeFile(path.join(marketplace, ".omp-plugin", "marketplace.json"), json({
+      name: "fixture-market", owner: { name: "Fixture" }, plugins: [{ name: "sample", source: "./plugins/sample", version: "2.0.0" }],
+    }));
+    a = await adapterA.mutate(project, a.revision, { operation: "marketplace.update", name: "fixture-market" });
+    const occupied = path.join(project, ".omp", "plugins", "node_modules", "fixture-renamed");
+    await mkdir(occupied, { recursive: true });
+    await expect(adapterA.mutate(project, a.revision, { operation: "plugin.upgrade", pluginId: "sample@fixture-market", scope: "project" })).rejects.toThrow("Native plugin.upgrade operation failed");
+    expect(await realpath(oldA)).toBe(oldCache);
+    await rm(occupied, { recursive: true });
+
+    a = await adapterA.mutate(project, a.revision, { operation: "plugin.upgrade", pluginId: "sample@fixture-market", scope: "project" });
+    expect(a.installed).toContainEqual({ id: "sample@fixture-market", scope: "project", version: "2.0.0", enabled: true });
+    await expect(realpath(oldA)).rejects.toThrow();
+    expect(await realpath(path.join(project, ".omp", "plugins", "node_modules", "fixture-renamed"))).not.toBe(oldCache);
+    expect(await realpath(oldB)).toBe(oldCache);
+    expect((await adapterB.read(projectB)).installed).toContainEqual({ id: "sample@fixture-market", scope: "project", version: "1.0.0", enabled: true });
+    expect(await readFile(path.join(oldCache, "package.json"), "utf8")).toContain('"name": "fixture-sample"');
+    const runtime = JSON.parse(await readFile(path.join(project, ".omp", "plugins", "omp-plugins.lock.json"), "utf8"));
+    expect(runtime.plugins["fixture-sample"]).toBeUndefined();
+    expect(runtime.plugins["fixture-renamed"]?.version).toBe("2.0.0");
+  });
+
   test("installs an actual object URL source from a disposable local Git repository", async () => {
     const repository = path.join(root, "object-source-repository");
     await rm(repository, { recursive: true, force: true });

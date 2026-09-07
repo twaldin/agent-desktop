@@ -40,6 +40,7 @@ export type NativePluginAcquisition =
   | { operation: 'marketplace.add'; source: string; sourceOptions?: NativeMarketplaceSourceOptions }
   | { operation: 'marketplace.update' | 'marketplace.remove'; name: string }
   | { operation: 'plugin.install'; name: string; marketplace: string; scope: IntegrationScope }
+  | { operation: 'plugin.upgrade'; pluginId: string; scope: IntegrationScope }
   | { operation: 'plugin.uninstall'; pluginId: string; scope: IntegrationScope };
 
 export interface NativePluginAcquisitionRequest {

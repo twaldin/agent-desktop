@@ -349,7 +349,7 @@ export class NativeMarketplaces {
   async #mutate(cwd: string, expectedRevision: string, action: NativePluginAcquisition): Promise<NativeMarketplaceCatalog> {
     const initial = await this.#snapshot(cwd);
     if (initial.catalog.revision !== expectedRevision) throw new Error("Native marketplace state changed; reload before applying this action");
-    if ((action.operation === "plugin.install" || action.operation === "plugin.uninstall") && action.scope === "project" && !initial.context.projectRegistry) {
+    if ((action.operation === "plugin.install" || action.operation === "plugin.upgrade" || action.operation === "plugin.uninstall") && action.scope === "project" && !initial.context.projectRegistry) {
       throw new Error("Project plugin installation is unavailable outside an active project");
     }
     return this.#withLocks(initial.context, () => this.#apply(initial.context.cwd, expectedRevision, action));
@@ -385,7 +385,7 @@ export class NativeMarketplaces {
           await this.#assertRuntimeLink(afterFetch.context, action.scope, packageName, identity, []);
         },
       }));
-    } else if (action.operation === "plugin.uninstall") {
+    } else if (action.operation === "plugin.upgrade" || action.operation === "plugin.uninstall") {
       if (!parsePluginId(action.pluginId)) throw new Error("Marketplace plugin identity is invalid");
       const target = current.catalog.installed.find(row => row.id === action.pluginId && row.scope === action.scope);
       if (!target) throw new Error("Marketplace plugin is not installed in the requested scope");
@@ -400,7 +400,24 @@ export class NativeMarketplaces {
       const parsed = parsePluginId(action.pluginId)!;
       const packageNames = new Set(await Promise.all(owned.map(entry => installedPackageName(entry, parsed.name))));
       for (const packageName of packageNames) await this.#assertRuntimeLink(current.context, action.scope, packageName, action.pluginId, owned.map(entry => entry.installPath));
-      await nativeMutation(action.operation, () => manager.uninstallPlugin(action.pluginId, action.scope, { preserveCache: true }));
+      if (action.operation === "plugin.uninstall") {
+        await nativeMutation(action.operation, () => manager.uninstallPlugin(action.pluginId, action.scope, { preserveCache: true }));
+      } else {
+        if (packageNames.size !== 1) throw new Error("Installed plugin package identity is ambiguous");
+        const listed = current.catalog.marketplaces.find(row => row.name === parsed.marketplace)?.plugins.find(row => row.name === parsed.name);
+        if (!listed || !listed.installable) throw new Error(listed?.unavailabilityReason ?? "Marketplace plugin is unavailable");
+        const ownerPaths = owned.map(entry => entry.installPath);
+        await nativeMutation(action.operation, () => manager.installPlugin(parsed.name, parsed.marketplace, {
+          force: true, scope: action.scope, reuseExistingCache: true, preservePreviousCache: true,
+          validatePackage: async candidate => {
+            const afterFetch = await this.#snapshot(current.context.cwd);
+            if (afterFetch.catalog.revision !== expectedRevision) {
+              throw new Error("Native marketplace state changed while the plugin source was fetched");
+            }
+            await this.#assertRuntimeLink(afterFetch.context, action.scope, candidate, action.pluginId, ownerPaths);
+          },
+        }));
+      }
     } else throw new Error("Unsupported native marketplace action");
     return (await this.#snapshot(cwd)).catalog;
   }

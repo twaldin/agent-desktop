@@ -87,6 +87,7 @@ test('bounded private HTTP requires owned targets, returns admission without wai
 });
 test('acquisition parser rejects unknown/unsafe fields while preserving an explicit source',()=>{
   const input=request();expect(parsePluginAcquisition(input)).toEqual(input);
+  expect(parsePluginAcquisition({...input,action:{operation:'plugin.upgrade',pluginId:'sample@fixture',scope:'project'}})).toEqual({...input,action:{operation:'plugin.upgrade',pluginId:'sample@fixture',scope:'project'}});
   for(const action of [{operation:'marketplace.remove',name:'../escape'},{operation:'plugin.uninstall',pluginId:'x@y@z',scope:'user'},{operation:'plugin.install',name:'x',marketplace:'y',scope:'all'},{operation:'marketplace.add',source:'ok',env:{TOKEN:'secret'}}])expect(()=>parsePluginAcquisition({...input,action})).toThrow();
 });
 
@@ -100,4 +101,13 @@ test('closing an unknown request fences late admission, while an admitted reques
  expect(()=>operations.closeRequest('/other',admitted.id,admitted.action.operation)).toThrow('another request');
  await tick();expect(calls).toBe(1);gate.resolve();await operations.dispose();
  expect(operations.get('/project',admitted.id)?.state).toBe('succeeded');
+});
+
+test('duplicate scoped upgrade receipts never dispatch a second native upgrade',async()=>{
+ const f=await fixture(),gate=Promise.withResolvers<void>();let calls=0;
+ const operations=new PluginAcquisitionOperations(f.records,{read:async()=>catalog,mutate:async(_cwd,_revision,action)=>{expect(action).toEqual({operation:'plugin.upgrade',pluginId:'sample@fixture',scope:'project'});calls++;await gate.promise;return catalog;}});
+ const input:NativePluginAcquisitionRequest={id:crypto.randomUUID(),expectedRevision:catalog.revision,action:{operation:'plugin.upgrade',pluginId:'sample@fixture',scope:'project'}};
+ const first=operations.start('/project',input,{projectId:'p'});expect(first.operation).toBe('plugin.upgrade');
+ expect(operations.start('/project',input,{projectId:'p'})).toEqual(first);await tick();expect(calls).toBe(1);
+ gate.resolve();await operations.dispose();expect(f.records.get('/project',input.id)?.state).toBe('succeeded');expect(calls).toBe(1);
 });

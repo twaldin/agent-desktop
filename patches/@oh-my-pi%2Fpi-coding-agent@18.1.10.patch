@@ -1349,7 +1349,7 @@ diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibilit
  		name: string,
  		marketplace: string,
 -		options?: { force?: boolean; scope?: "user" | "project" },
-+		options?: { force?: boolean; scope?: "user" | "project"; reuseExistingCache?: boolean; validatePackage?: (packageName: string) => Promise<void> },
++		options?: { force?: boolean; scope?: "user" | "project"; reuseExistingCache?: boolean; preservePreviousCache?: boolean; validatePackage?: (packageName: string) => Promise<void> },
  	): Promise<InstalledPluginEntry> {
  		const force = options?.force ?? false;
  		const scope = options?.scope ?? "user";
@@ -1371,6 +1371,11 @@ diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibilit
  		} finally {
  			// Clean up temp clone dirs created by resolvePluginSource; leave user-supplied local dirs alone
  			if (tempCloneRoot) {
+@@ -334,3 +339,3 @@
+ 			for (const entry of existing) {
+-				if (entry.installPath !== cachePath && !referenced.has(entry.installPath)) {
++				if (!options?.preservePreviousCache && entry.installPath !== cachePath && !referenced.has(entry.installPath)) {
+ 					await fs.rm(entry.installPath, { recursive: true, force: true });
 @@ -443,7 +448,7 @@
  	}
  
@@ -1392,11 +1397,12 @@ diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibilit
 diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
 --- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
-@@ -34,11 +34,14 @@
+@@ -34,11 +34,15 @@
      getPluginInfo(name: string, marketplace: string): Promise<MarketplacePluginEntry | null>;
      installPlugin(name: string, marketplace: string, options?: {
          force?: boolean;
 +        reuseExistingCache?: boolean;
++        preservePreviousCache?: boolean;
 +        validatePackage?: (packageName: string) => Promise<void>;
          scope?: "user" | "project";
      }): Promise<InstalledPluginEntry>;

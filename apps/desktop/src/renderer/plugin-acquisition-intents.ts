@@ -6,7 +6,7 @@ export function readAcquisitionIntents(storage:Storage,host:string):AcquisitionI
  for(let i=0;i<storage.length;i++){
   const key=storage.key(i);if(!key?.startsWith(prefix(host)))continue;
   try{const value=JSON.parse(storage.getItem(key)!);
-   if(typeof value.id!=='string'||!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value.id)||key!==prefix(host)+value.id||!['marketplace.add','marketplace.update','marketplace.remove','plugin.install','plugin.uninstall'].includes(value.operation))continue;
+   if(typeof value.id!=='string'||!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value.id)||key!==prefix(host)+value.id||!['marketplace.add','marketplace.update','marketplace.remove','plugin.install','plugin.upgrade','plugin.uninstall'].includes(value.operation))continue;
    const target=value.target;
    if(target!==undefined&&(!target||typeof target!=='object'||Object.keys(target).length!==1||!Object.entries(target).every(([key,id])=>(key==='projectId'||key==='sessionId')&&typeof id==='string'&&id.length>0&&id.length<=200&&!id.includes('\0'))))continue;
    values.push({id:value.id,operation:value.operation,...(target?{target}: {})});

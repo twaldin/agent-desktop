@@ -1,5 +1,12 @@
 # Milestone status
 
+## Scoped native plugin upgrades
+
+Installed marketplace plugins now expose Upgrade and Uninstall in a compact More actions menu. Upgrade follows the selected native scope, preserves stable-name settings/feature choices, supports native package renames and retains old version caches used by other projects. Conflicting paths and changed content under the same version are refused. Reconnect no longer leaves acquisition controls stuck behind an obsolete client request.
+
+Validation:26 focused tests/168 assertions and typecheck pass. Hidden Electron with a real isolated OMP host passes13 checks/25 captures, including keyboard upgrade1.0.0→2.0.0, lost acknowledgement recovery without replay, and closure of a delayed request after reconnect. A fresh frozen install reproduces all14 patched native files. The first UI failure came from an incomplete injected Enter sequence, confirmed against a plain HTML button; failure evidence is retained. Worker protocol is now27; schema7 and runtime pins are unchanged. Installed main/preload, Work/native-window and full pixel parity remain unverified. No Work launch or fixture replay. Evidence: `.data/plugin-upgrade-checkpoint/`, `.data/plugin-upgrade-ui-2/`.
+
+
 
 ## Managed runtime boundary
 
