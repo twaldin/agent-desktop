@@ -5,6 +5,7 @@ import type { DesktopBridge, NativeMarketplaceCatalog, NativePluginCatalog, Nati
 import { assertComposerOwner, targetIdentity } from "./composer-autocomplete";
 import { Icon } from "./Icons";
 import { NativeSkillDialog } from "./NativeSkillDialog";
+import { NativeSwitch } from "./NativeSwitch";
 import { skillToggleState, skillEnabledMutation } from "./skill-settings";
 import "./native-plugin-directory.css";
 
@@ -135,6 +136,7 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
     const failures = responses.filter(result => result.status === "rejected") as PromiseRejectedResult[];
     setError(failures.length ? failures.map(result => errorText(result.reason)).filter((value, index, all) => all.indexOf(value) === index).join(" ") : null);
     setLoading(false);
+    return next;
   }, [bridge, hostId, owner, target]);
 
   useEffect(() => {
@@ -149,7 +151,9 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
       setQuery("");
       setError(null);
     }
-    if (connected) void load(false);
+    // Changes can arrive while this owner is hidden or disconnected. Reconcile
+    // native skill availability as well as settings before enabling actions.
+    if (connected) void load(true);
     else {
       loadEpoch.current++;
       detailEpoch.current++;
@@ -188,12 +192,12 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
     });
   };
   useEffect(() => {
-    if (!ownedSkill?.revision || !skillCatalog || ownedSkill.revision === skillCatalog.revision) return;
+    if (saving || !ownedSkill?.revision || !skillCatalog || ownedSkill.revision === skillCatalog.revision) return;
     detailEpoch.current++;
     setSkill(null);
     setError("The skill catalog changed. Open the skill again to read its current file.");
     restoreSkillFocus();
-  }, [skillCatalog?.revision, ownedSkill?.revision]);
+  }, [skillCatalog?.revision, ownedSkill?.revision, saving]);
   const installed = catalogs.plugins?.plugins ?? [];
   const marketplaceRows = useMemo(() => (catalogs.marketplaces?.marketplaces ?? []).flatMap(marketplace => marketplace.plugins.map(plugin => ({ marketplace, plugin }))), [catalogs.marketplaces]);
   const normalizedQuery = (search ?? query).trim().toLocaleLowerCase();
@@ -201,10 +205,8 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
   const visibleSkills = (skillCatalog?.skills ?? []).filter(item => !normalizedQuery || `${item.name} ${item.description} ${item.source.label}`.toLocaleLowerCase().includes(normalizedQuery));
   const installedIds = useMemo(() => new Set(catalogs.marketplaces?.installed.map(item => item.id) ?? []), [catalogs.marketplaces]);
 
-  const openSkill = async (action: ComposerAction) => {
+  const openSkill = async (action: ComposerAction, catalog = skillCatalog, inventory = Boolean(catalogs.inventory)) => {
     skillOpener.current = action.id;
-    const catalog = skillCatalog;
-    const inventory = Boolean(catalogs.inventory);
     const read = bridge.getSkillDetail;
     setSkill({ inventory, owner, revision: catalog?.revision, action, loading: true });
     if (!catalog || !read) { setSkill({ inventory, owner, revision: catalog?.revision, action, loading: false, error: "Update the owning host to read this skill." }); return; }
@@ -221,22 +223,33 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
       if (mounted.current && ticket === detailEpoch.current && ownerRef.current === owner) setSkill({ inventory, owner, revision: catalog?.revision, action, loading: false, error: errorText(cause) });
     }
   };
-  const changeSetting = async (mutation: OmpSettingsMutation) => {
+  const changeSetting = async (mutation: OmpSettingsMutation, preserveOpen?: SkillState) => {
     if (!connected || savingRef.current || !catalogs.inventory || !catalogs.settings) return;
-    const ticket=++writeEpoch.current;
+    const ticket=++writeEpoch.current, detailTicket=detailEpoch.current;
     loadEpoch.current++;setLoading(false);savingRef.current=true;setSaving(true);setError(null);setSaveNotice(null);
     const own=owner;
     try {
       await bridge.setSetting(mutation,target,hostId);
       if(!mounted.current || ownerRef.current!==own || writeEpoch.current!==ticket)return;
       setSaveNotice("Saved. New sessions use this configuration; loaded sessions keep their current skills.");
-      await load(true);
+      const fresh = await load(true);
+      if (!mounted.current || ownerRef.current !== own || writeEpoch.current !== ticket || detailEpoch.current !== detailTicket || !preserveOpen) return;
+      const catalog = fresh?.inventory ?? fresh?.composer;
+      if (!catalog) return;
+      const action = catalog.skills.find(item => item.id === preserveOpen.action.id && item.source.path === preserveOpen.action.source.path);
+      if (action) await openSkill(action, catalog, Boolean(fresh?.inventory));
+      else {
+        detailEpoch.current++;
+        setSkill(null);
+        setError("The skill is no longer in this catalog. Refresh to inspect the current skills.");
+        restoreSkillFocus();
+      }
     } catch(cause) {
       if(mounted.current && ownerRef.current===own && writeEpoch.current===ticket) {setError(`Could not confirm the skill setting. Refresh before another change. ${errorText(cause)}`);setCatalogState(current=>({...current,value:{...current.value,settings:null}}));}
     } finally {if(mounted.current && ownerRef.current===own && writeEpoch.current===ticket){savingRef.current=false;setSaving(false);}}
   };
-  const toggle = (action: ComposerAction, enabled: boolean) => {
-    try { if(catalogs.settings) void changeSetting(skillEnabledMutation(catalogs.settings,action.name,enabled,scope)); }
+  const toggle = (action: ComposerAction, enabled: boolean, preserveOpen = false) => {
+    try { if(catalogs.settings) void changeSetting(skillEnabledMutation(catalogs.settings,action.name,enabled,scope), preserveOpen ? ownedSkill ?? undefined : undefined); }
     catch(cause){setError(errorText(cause));}
   };
   const toggleView = (action: ComposerAction) => {
@@ -254,6 +267,8 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
     if (next !== tab) onTabChange?.(next);
     setTab(next);
   };
+
+  const dialogToggle = ownedSkill ? toggleView(ownedSkill.action) : null;
 
   return <section ref={root} tabIndex={-1} onPointerDown={()=>{focusRestored.current=true;}} onKeyDown={()=>{focusRestored.current=true;}} className={`native-plugin-directory ${embeddedSkills ? "plugin-settings-skills" : ""}`} aria-label={embeddedSkills ? "Native skills" : "Native plugin directory"}>
     {!embeddedSkills && <header className="plugin-directory-toolbar">
@@ -284,9 +299,14 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
             {visibleMarketplace.length ? <div className="plugin-directory-grid">{visibleMarketplace.map(({ marketplace, plugin }) => { const id = `${plugin.name}@${marketplace.name}`; const installedPlugin = installedIds.has(id); return <button key={id} aria-label={`Browse ${plugin.name} in ${marketplace.name}`} className="plugin-directory-row" onClick={() => onMarketplace(marketplace.name)}><span className="plugin-tile" aria-hidden="true">{plugin.name.trim().slice(0, 1).toLocaleUpperCase() || "P"}</span><span><strong>{plugin.name}</strong><small>{plugin.description ?? plugin.version ?? "Native marketplace plugin"}</small><em>{marketplace.name} · {installedPlugin ? "Installed" : plugin.installable ? "Available" : plugin.unavailabilityReason ?? "Unavailable"}</em></span></button>; })}</div> : !loading && <p className="integration-placeholder">{marketplaceStatus === "unavailable" ? "Marketplace catalog unavailable." : normalizedQuery ? "No configured marketplace plugins match this search." : marketplaceStatus === "available" ? "No configured marketplace plugins available." : "Loading marketplace plugins…"}</p>}
           </section>
         </> : <section className="plugin-skills" aria-label={embeddedSkills ? "Workspace skills" : undefined} aria-labelledby={embeddedSkills ? undefined : "plugin-skills-heading"}>{!embeddedSkills && <div className="plugin-section-heading"><h2 id="plugin-skills-heading">Workspace skills</h2><small>{skillStatus === "available" ? `${visibleSkills.length} skills` : skillStatus === "unavailable" ? "Unavailable" : "Loading"}</small></div>}
-          {visibleSkills.length ? <div className="plugin-directory-grid">{visibleSkills.map(action => {const view=toggleView(action);return <div key={action.id} className="skill-managed-row"><button data-skill-id={action.id} className="plugin-directory-row" title={action.reason??sourceLabel(action)} onClick={() => void openSkill(action)}><span className="plugin-tile skill" aria-hidden="true"><Icon name="skill"/></span><span><strong>{action.name}{action.availability==="disabled"&&<em className="skill-disabled-badge">Disabled</em>}</strong><small>{action.description}</small></span><em className="skill-source-label" title={sourceLabel(action)}>{action.source.label}</em></button>{catalogs.inventory&&<button role="switch" className="skill-enabled-switch" aria-label={`Enable ${action.name}`} aria-checked={view ? !view.scopedDisabled : false} title={view?.warning??`Enable in ${scope==="global"?"user":"project"} configuration. Changes apply to new sessions.`} disabled={!connected||loading||saving||!view} onClick={()=>toggle(action,Boolean(view?.scopedDisabled))}><span/></button>}</div>;})}</div> : !loading && <p className="integration-placeholder">{skillStatus === "unavailable" ? "Skill catalog unavailable." : normalizedQuery ? "No skills match this search." : skillStatus === "available" ? "No native skills are available for this workspace." : "Loading skills…"}</p>}
+          {visibleSkills.length ? <div className="plugin-directory-grid">{visibleSkills.map(action => {const view=toggleView(action);return <div key={action.id} className="skill-managed-row"><button data-skill-id={action.id} className="plugin-directory-row" title={action.reason??sourceLabel(action)} onClick={() => void openSkill(action)}><span className="plugin-tile skill" aria-hidden="true"><Icon name="skill"/></span><span><strong>{action.name}{action.availability==="disabled"&&<em className="skill-disabled-badge">Disabled</em>}</strong><small>{action.description}</small></span><em className="skill-source-label" title={sourceLabel(action)}>{action.source.label}</em></button>{catalogs.inventory&&<NativeSwitch className="skill-enabled-switch" label={`Enable ${action.name}`} checked={view ? !view.scopedDisabled : false} title={view?.warning??`Enable in ${scope==="global"?"user":"project"} configuration. Changes apply to new sessions.`} disabled={!connected||loading||saving||!view} onChange={enabled=>toggle(action,enabled)}/>}</div>;})}</div> : !loading && <p className="integration-placeholder">{skillStatus === "unavailable" ? "Skill catalog unavailable." : normalizedQuery ? "No skills match this search." : skillStatus === "available" ? "No native skills are available for this workspace." : "Loading skills…"}</p>}
         </section>}
     </main>
-    {ownedSkill && <NativeSkillDialog key={`${owner}:${ownedSkill.action.id}`} action={ownedSkill.action} content={ownedSkill.content} loading={ownedSkill.loading} error={ownedSkill.error} onTry={onTrySkill ? ()=>onTrySkill(ownedSkill.action) : undefined} onClose={closeSkill} onDisposed={restoreSkillFocus} openExternal={url=>bridge.openExternal(url)}/>}
+    {ownedSkill && <NativeSkillDialog key={`${owner}:${ownedSkill.action.id}`} action={ownedSkill.action} content={ownedSkill.content} loading={ownedSkill.loading} error={ownedSkill.error ?? error ?? undefined} notice={saveNotice ?? undefined} tryDisabled={!connected || loading || saving || Boolean(catalogs.inventory && !catalogs.settings)} enablement={catalogs.inventory ? {
+      checked: dialogToggle ? !dialogToggle.scopedDisabled : false,
+      disabled: !connected || loading || saving || ownedSkill.loading || !dialogToggle,
+      title: dialogToggle?.warning ?? `Enable in ${scope === "global" ? "user" : "project"} configuration. Changes apply to new sessions.`,
+      onChange: enabled => toggle(ownedSkill.action, enabled, true),
+    } : undefined} onTry={onTrySkill ? ()=>onTrySkill(ownedSkill.action) : undefined} onClose={closeSkill} onDisposed={restoreSkillFocus} openExternal={url=>bridge.openExternal(url)}/>}
   </section>;
 }

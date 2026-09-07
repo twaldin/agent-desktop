@@ -60,14 +60,7 @@
 .installed-plugin-label strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--font-size,14px); font-weight:500; line-height:1.5; }
 .installed-plugin-label small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--secondary); font-size:var(--font-size-small,12px); line-height:1.625; }
 .installed-plugin-row[data-enabled=false] .installed-plugin-label strong { color:var(--secondary); }
-.plugin-enabled-switch { display:block; flex:none; width:32px; height:20px; padding:2px; border:0; border-radius:999px; background:var(--switch-off); cursor:pointer; transition:background-color 150ms cubic-bezier(0,0,.2,1); }
-.plugin-enabled-switch > span { display:block; width:16px; height:16px; border-radius:50%; border:1px solid var(--switch-thumb); background:var(--switch-thumb); box-shadow:0 1px 2px -1px #00000014; transform:translateX(0); transition:transform 150ms cubic-bezier(0,0,.2,1); }
-.plugin-enabled-switch:enabled:hover { background:var(--switch-off); }
-.plugin-enabled-switch[aria-checked=true], .plugin-enabled-switch[aria-checked=true]:enabled:hover { background:var(--switch-on); }
-.plugin-enabled-switch[aria-checked=true] > span { transform:translateX(12px); }
-.plugin-enabled-switch:disabled { opacity:.6; cursor:not-allowed; }
 .installed-plugin-row :is(button):focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
-@media(prefers-reduced-motion:reduce) { .plugin-enabled-switch, .plugin-enabled-switch > span { transition:none; } }
 .integration-detail,.mcp-layout { padding:0; overflow:visible; display:block; }
 .integration-back { display:flex; gap:6px; align-items:center; background:transparent; border:0; color:var(--secondary); font:inherit; padding:6px 8px; margin:0 0 24px; cursor:pointer; }
 .integration-back .icon { width:16px; height:16px; }
