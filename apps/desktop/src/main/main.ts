@@ -15,7 +15,9 @@ import { requestBrowserControl } from "./browser-control-transport";
 import { requestBrowserCreate } from "./browser-create-transport";
 import type { BrowserControlRequest, BrowserCreateRequest, BrowserFrameTarget } from "@agent-desktop/shared";
 import type { ComposerCompletionQuery, NativeSkillFileRef } from "@agent-desktop/shared";
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
+import { NotificationDelivery, type NotificationTarget } from "./notification-delivery";
+import { parsePreferencesSnapshot, type NotificationPreferences } from "../../../../packages/shared/src/preferences";
+import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
 import { nativeTerminalResult, requestHost, type HostEndpoint } from "./host-transport";
@@ -50,6 +52,44 @@ type HostStream = { endpoint: HostEndpoint; sequence: number; socket?: WebSocket
 const streams = new Map<string, HostStream>();
 const remoteHosts = new Map<string, HostEndpoint>();
 let shuttingDown = false;
+let notificationPrefs: NotificationPreferences | undefined;
+let notificationPreferencesLoaded = false;
+let notificationQueue = Promise.resolve();
+const notificationReady = new Set<number>();
+let pendingNotificationNavigation: {id:string;target:NotificationTarget} | undefined;
+const notificationDelivery = new NotificationDelivery(join(app.getPath("userData"), "notification-delivery-v1.json"), {
+  preferences: () => notificationPrefs,
+  focused: () => [...windows].some(window => !window.isDestroyed() && window.isFocused()),
+  supported: () => Notification.isSupported(),
+  show: (notice, options) => {
+    const notification = new Notification({ title: notice.title, body: notice.body, silent: options.silent });
+    notification.on("click", options.onClick); notification.on("failed", options.onFailed); notification.on("close", options.onClosed);
+    notification.show(); return notification;
+  },
+  navigate: target => { void openNotificationTarget(target); },
+  statusChanged: () => { for (const window of windows) if (!window.isDestroyed()) window.webContents.send("desktop:notification-status"); },
+});
+async function refreshNotificationPreferences() {
+  const snapshot = parsePreferencesSnapshot(await request("/v1/preferences"));
+  const record = snapshot.records.find(record => record.key === "general.notifications");
+  notificationPrefs = record && !record.deleted ? record.value as NotificationPreferences : undefined;
+  notificationPreferencesLoaded = true;
+  notificationDelivery.preferenceStatus();
+  notificationDelivery.preferencesChanged();
+}
+async function openNotificationTarget(target: NotificationTarget) {
+  pendingNotificationNavigation = {id:crypto.randomUUID(),target};
+  try {
+    let window = [...windows].find(window => !window.isDestroyed());
+    if (!window) { await createWindow(); window = [...windows].find(window => !window.isDestroyed()); }
+    if (!window) return;
+    if (window.isMinimized()) window.restore(); window.show(); window.focus();
+    if (notificationReady.has(window.webContents.id) && pendingNotificationNavigation) {
+      window.webContents.send("desktop:notification-navigate", pendingNotificationNavigation);
+    }
+  } catch { /* Retain the target for the next successfully opened window. */ }
+}
+
 
 function readConnection(): LocalConnection | null {
   try {
@@ -146,12 +186,13 @@ function connectEvents(endpoint: HostEndpoint): void {
   if (shuttingDown) return;
   let stream = streams.get(endpoint.hostId);
   if (stream?.socket && stream.socket.readyState <= 1 && stream.endpoint.origin === endpoint.origin && stream.endpoint.token === endpoint.token) return;
-  if (!stream) { stream = { endpoint, sequence: 0 }; streams.set(endpoint.hostId, stream); }
+  if (!stream) { stream = { endpoint, sequence: notificationDelivery.cursor(endpoint.hostId) }; streams.set(endpoint.hostId, stream); }
   stream.endpoint = endpoint;
   clearTimeout(stream.timer);
   stream.socket?.close();
   const current = stream;
-  const url = `${endpoint.origin.replace(/^http/, "ws")}/v1/events?after=${current.sequence}`;
+  notificationDelivery.begin(endpoint.hostId);
+  const url = `${endpoint.origin.replace(/^http/, "ws")}/v1/events?after=${Math.min(current.sequence, notificationDelivery.cursor(endpoint.hostId))}`;
   const next = new WebSocket(url, endpoint.token ? ["agent-desktop", endpoint.token] : ["agent-desktop"]);
   current.socket = next;
   const emitConnection = (connected: boolean, error?: string) => broadcast({ hostId: endpoint.hostId,
@@ -172,6 +213,21 @@ function connectEvents(endpoint: HostEndpoint): void {
       if (event.type === "state" && event.state.host.id !== endpoint.hostId) { disconnectReason = "The remote host identity changed."; next.close(1008, disconnectReason); return; }
       current.sequence = Math.max(current.sequence, event.sequence);
       broadcast({ ...event, hostId: endpoint.hostId });
+      if (event.type !== "notification" && event.type !== "state" && event.type !== "preferences") return;
+      notificationQueue = notificationQueue.then(async () => {
+        if (current.socket !== next || shuttingDown) return;
+        let refresh = !notificationPreferencesLoaded || event.type === "preferences" && endpoint.hostId === connection?.hostId;
+        while (refresh && current.socket === next && next.readyState === WebSocket.OPEN && !shuttingDown) {
+          try { await refreshNotificationPreferences(); refresh = false; }
+          catch {
+            notificationDelivery.preferenceStatus("Notification preferences could not be refreshed. Delivery is waiting for the local host.");
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
+        }
+        if (refresh || current.socket !== next || shuttingDown) return;
+        if (event.type === "notification") notificationDelivery.event(endpoint.hostId, event.sequence, event.notification);
+        else if (event.type === "state") notificationDelivery.snapshot(endpoint.hostId, event.sequence, event.state.notifications, event.replayComplete === true);
+      }).catch(() => { notificationPreferencesLoaded = false; });
     } catch { disconnectReason = "Invalid host event."; next.close(1002, disconnectReason); }
   });
   next.addEventListener("error", () => next.close());
@@ -218,6 +274,15 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMa
   }
 }
 
+ipcMain.handle("desktop:notification-status", event => { assertTrustedSender(event); return notificationDelivery.status(); });
+ipcMain.handle("desktop:notification-ready", event => {
+  assertTrustedSender(event); notificationReady.add(event.sender.id);
+  if (pendingNotificationNavigation) event.sender.send("desktop:notification-navigate", pendingNotificationNavigation);
+});
+ipcMain.on("desktop:notification-ack", (event, id: string) => {
+  assertTrustedSender(event); if (id === pendingNotificationNavigation?.id) pendingNotificationNavigation = undefined;
+});
+ipcMain.on("desktop:notification-unready", event => { assertTrustedSender(event); notificationReady.delete(event.sender.id); });
 ipcMain.handle("host:state", async (event, hostId?: string) => {
   assertTrustedSender(event);
   const state = await request("/v1/state", undefined, hostId) as HostState;
@@ -524,8 +589,9 @@ async function createWindow(): Promise<void> {
   if (geometry.maximized && !process.env.AGENT_DESKTOP_CAPTURE) window.maximize();
   trackWindowGeometry(window, localState, status => { if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-state:status", status); });
   window.webContents.on("preload-error", (_event, _path, error) => console.error("Desktop preload failed:", error.message));
-  window.webContents.on("render-process-gone", (_event, details) => console.error("Desktop renderer exited:", details.reason));
-  window.on("closed", () => { windows.delete(window); windowStates.delete(windowContentsId); });
+  window.webContents.on("did-start-loading", () => notificationReady.delete(windowContentsId));
+  window.webContents.on("render-process-gone", (_event, details) => { notificationReady.delete(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
+  window.on("closed", () => { windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", event => event.preventDefault());
   const development = process.env.AGENT_DESKTOP_RENDERER_URL;
@@ -546,4 +612,4 @@ app.on("second-instance", () => {
 });
 app.on("activate", () => { if (windows.size === 0) void createWindow(); });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => { shuttingDown = true; for (const stream of streams.values()) { clearTimeout(stream.timer); stream.socket?.close(); } });
+app.on("before-quit", () => { shuttingDown = true; notificationDelivery.dispose(); for (const stream of streams.values()) { clearTimeout(stream.timer); stream.socket?.close(); } });

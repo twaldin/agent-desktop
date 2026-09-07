@@ -30,7 +30,7 @@ import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
 import { createNativeAccountSelectionBridge } from "../omp-accounts/session-selection";
 import type { SessionAccountList } from "../omp-accounts/types";
-import { OmpInteractionBridge, type OmpBridgeEvent, type OmpInteraction, type OmpInteractionResponse } from "./interactions";
+import { nativeApprovalInteractionClassification, OmpInteractionBridge, type OmpBridgeEvent, type OmpInteraction, type OmpInteractionResponse } from "./interactions";
 import { initializeDesktopExtensions } from "./extensions";
 import { modelCapabilities, NativeSessionControls } from "../omp-settings/models";
 import { composerCatalog } from "../omp-settings/composer";
@@ -418,6 +418,10 @@ export class OmpRuntime {
       const model = options.model ? this.#findModel(context.registry, options.model, context.settings) : undefined;
       const agentRegistry = new AgentRegistry();
       const detachedQuestions = new NativeDetachedQuestions(manager);
+      // Pinned SDK ordering appends caller inline extensions after discovered
+      // extensions and awaits approval handlers in order. This last relevant
+      // handler therefore marks only after user hooks have finished asking.
+      const approvalClassification = nativeApprovalInteractionClassification(() => bridge);
       if (reservation !== undefined) await detachedQuestions.repairOnReopen();
       const result = await createAgentSession({
         cwd: options.cwd, agentDir: this.#agentDir,
@@ -427,7 +431,7 @@ export class OmpRuntime {
         // Tools cannot run until create finishes and installs the bridge below.
         hasUI: false, interactivePrompts: options.interactions === true,
         deferUsageReserveConfirmation: true,
-        extensions: [detachedQuestions.extension],
+        extensions: [detachedQuestions.extension, approvalClassification],
       });
       native = result.session;
       this.#assertActive();
@@ -485,7 +489,7 @@ export class OmpRuntime {
         bridge = new OmpInteractionBridge(session.sessionId, emitBridge);
         result.setToolUIContext(bridge, true);
         const ui = bridge;
-        session.setUsageFallbackConfirmer((confirmation, signal) => ui.confirm(
+        session.setUsageFallbackConfirmer((confirmation, signal) => ui.permissionConfirm(
           "Coding-plan reserve reached",
           `${confirmation.from} has ${confirmation.remainingPercent === undefined ? "reached its configured reserve" : `${confirmation.remainingPercent.toFixed(1)}% remaining`}. Switch to ${confirmation.to}?`,
           { signal },

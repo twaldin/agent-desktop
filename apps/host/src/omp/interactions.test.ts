@@ -2,6 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { OmpInteractionBridge, UnsupportedOmpUIError, type OmpBridgeEvent } from "./interactions";
 
 describe("native ExtensionUIContext callback contracts (no provider)", () => {
+  test("permission markers apply once and can be cancelled before another question", () => {
+    const ui = new OmpInteractionBridge("contract-session", () => {});
+    const clear = ui.markNextInteractionAsPermission();
+    const permission = ui.select("Native approval", ["Approve", "Deny"]);
+    expect(ui.list()[0]?.notificationKind).toBe("permission");
+    clear(); ui.respond(ui.list()[0]!.id, { value: "Deny" }); void permission;
+    const unused = ui.markNextInteractionAsPermission(); unused();
+    const generic = ui.confirm("Generic confirm", "This is still a question");
+    expect(ui.list()[0]?.notificationKind).toBeUndefined();
+    ui.respond(ui.list()[0]!.id, { value: false }); void generic;
+  });
+
   test("real answers are type checked, one-use and absent from events", async () => {
     const events: OmpBridgeEvent[] = [];
     const ui = new OmpInteractionBridge("contract-session", event => events.push(event));

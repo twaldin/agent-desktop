@@ -56,6 +56,7 @@ import { ThemeAssets } from "./theme-assets";
 import { approvalMode, hasApprovalIntent } from "./approval";
 import { OmpSettingsError } from "./omp-settings";
 import { ApprovalRecovery } from "./approval-recovery";
+import { NotificationEvents } from "./notification-events";
 
 type SocketData = { after: number; remoteAddress?: string };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -162,6 +163,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let modelsRefresh: Promise<void> | undefined;
   let refreshRequested = false;
   let preferencePeers: Parameters<PreferencesSync["sync"]>[0] = [];
+  const notificationEvents = new NotificationEvents({ eventsAfter: (sequence, limit) => store.eventsAfter(sequence, limit),
+    emit: event => publish(event), session: id => store.getSession(id) });
+  notificationEvents.settleStaleInteractions();
   themeAssets = new ThemeAssets(dataDirectory);
   const attachments = new ImageAttachmentsHttp({ dataDirectory, hostId: store.host.id,
     getNativeImage: async (sessionId, nativeEntryId, blockIndex) => (await getHandle(sessionId)).getImage(nativeEntryId, blockIndex) });
@@ -268,13 +272,19 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       let run;
       try { run = handle.startGoalContinuation(goalId); }
       catch (error) { updateSession(id, { status: 'idle' }); throw error; }
+      let notificationOutcome: 'completed' | 'failed' | 'stopped' = 'failed';
       const completion = run.completion.then(() => {
         const error = runtimeErrors.get(id), latest = store.getSession(id);
+        notificationOutcome = latest?.status === 'interrupted' ? 'stopped' : error ? 'failed' : 'completed';
         if (latest && !stopping) updateSession(id, { status: latest.status === 'interrupted' ? 'interrupted' : error ? 'error' : 'idle', error });
       }).catch(error => {
+        notificationOutcome = store.getSession(id)?.status === 'interrupted' ? 'stopped' : 'failed';
         if (!stopping && store.getSession(id)?.status !== 'interrupted') updateSession(id, { status: 'error', error: errorMessage(error) });
       }).finally(() => { if (executions.get(id) === completion) executions.delete(id); goalContinuations?.request(id); });
       executions.set(id, completion);
+      void run.accepted.then(receipt => completion.then(() => {
+        if (!stopping) notificationEvents.completion(id, `completion:${id}:goal:${goalId}:entry:${receipt.entryId}`, notificationOutcome);
+      })).catch(() => {});
       return run;
     },
   });
@@ -424,7 +434,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
       drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
-      lastEventSequence: store.lastEventSequence };
+      lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput): void {
     if (stopping) return;
@@ -447,12 +457,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (stopping) return;
     const value = event as { type?: string; message?: { errorMessage?: string } };
     if (value.type === "extension_interaction_requested" || value.type === "extension_interaction_resolved") {
+      if (value.type === "extension_interaction_requested") notificationEvents.interactionRequested((value as import('@agent-desktop/shared').OmpBridgeEvent & { type: 'extension_interaction_requested' }).interaction);
+      else notificationEvents.interactionResolved(sessionId, (value as import('@agent-desktop/shared').OmpBridgeEvent & { type: 'extension_interaction_resolved' }).id);
       if (value.type === "extension_interaction_resolved") goalContinuations?.request(sessionId);
       if (value.type === "extension_interaction_resolved") questionDeliveries?.request(sessionId);
       publish({ type: "interactions", sessionId }); return;
     }
     if (value.type === 'goal_updated' || value.type === 'agent_end' || value.type === 'tool_execution_end') goalContinuations?.request(sessionId);
     if (value.type === 'agent_end' || value.type === 'tool_execution_end') questionDeliveries?.request(sessionId);
+    if (value.type === 'agent_end' || value.type === 'tool_execution_end') refreshDetachedNotifications(sessionId);
     if (value.type === "message_end" && value.message?.errorMessage) runtimeErrors.set(sessionId, value.message.errorMessage);
     publish({ type: "runtime", sessionId, event });
   }
@@ -478,6 +491,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
             store.upsertSession({ ...current, model });
             publishState();
           }
+          notificationEvents.reconcileDetached(sessionId, await handle.listQuestions());
           return handle;
         } catch (error) {
           await handle.dispose();
@@ -488,6 +502,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       pending.catch(() => { if (handles.get(sessionId) === pending) handles.delete(sessionId); });
     }
     return pending;
+  }
+  function refreshDetachedNotifications(sessionId: string): void {
+    const pending = handles.get(sessionId);
+    if (!pending) return;
+    void pending.then(async handle => {
+      const questions = await handle.listQuestions();
+      if (!stopping && await handles.get(sessionId)?.catch(() => undefined) === handle) notificationEvents.reconcileDetached(sessionId, questions);
+    }).catch(() => {});
   }
   async function applySessionApproval(sessionId: string, mode: OmpApprovalMode | undefined, expectedRevision?: string): Promise<OmpSessionControls> {
     const handle = await getHandle(sessionId);
@@ -684,6 +706,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         let receipt;
         try { receipt = await handle.resolveQuestion({ questionId: command.questionId, questionEntryId: command.questionEntryId, commandId: envelope.id, answers: command.answers }); }
         finally { questionDeliveries?.request(command.sessionId); }
+        notificationEvents.reconcileDetached(command.sessionId, await handle.listQuestions());
         publish({ type: 'interactions', sessionId: command.sessionId });
         return ok({ type: command.type, receipt });
       }
@@ -719,18 +742,24 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const nativeTitleBefore = handle.title;
         updateSession(command.sessionId, { status: "running", error: undefined });
         const turn = handle.startPrompt(command.text, { model: command.model, thinkingLevel: command.thinkingLevel, ...(images === undefined ? {} : { images }) });
-        const completion = turn.completion.then(() => {
+        let notificationOutcome: 'completed' | 'failed' | 'stopped' = 'failed';
+        const completion = turn.completion.then(agentInvoked => {
           const error = runtimeErrors.get(command.sessionId);
           const current = store.getSession(command.sessionId);
+          notificationOutcome = current?.status === 'interrupted' ? 'stopped' : error || !agentInvoked ? 'failed' : 'completed';
           if (current && !stopping) updateSession(command.sessionId, {
             model: handle.model, status: error ? "error" : current.status === "interrupted" ? "interrupted" : "idle", error,
           });
         }).catch(error => {
+          notificationOutcome = store.getSession(command.sessionId)?.status === 'interrupted' ? 'stopped' : 'failed';
           if (!stopping) updateSession(command.sessionId, { status: "error", error: errorMessage(error) });
         }).finally(() => { if (executions.get(command.sessionId) === completion) executions.delete(command.sessionId); questionDeliveries?.request(command.sessionId); goalContinuations?.request(command.sessionId); });
         executions.set(command.sessionId, completion);
         const accepted = await turn.accepted;
         if (!accepted) return fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying.");
+        if (accepted.kind !== 'native-command') void completion.then(() => {
+          if (!stopping) notificationEvents.completion(command.sessionId, `completion:${command.sessionId}:command:${envelope.id}`, notificationOutcome);
+        }).catch(() => {});
         goalContinuations?.explicitWork(command.sessionId);
         questionDeliveries?.request(command.sessionId);
         const current = store.getSession(command.sessionId)!;
@@ -890,6 +919,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
               for (const question of questions) if (question.acceptance && !commands.has(question.acceptance.commandId)) changed = store.reconcileQuestionAcceptance(id, question) || changed;
               if (changed) publishState();
             }
+            notificationEvents.reconcileDetached(id, questions);
             return questions;
           })();
           return Response.json({ protocolVersion: 1, hostId: store.host.id, sessionId: id, questions }, { headers });
@@ -936,7 +966,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           }
         }
         peers.add(peer);
-        peer.send(JSON.stringify({ sequence: store.lastEventSequence, type: "state", state: snapshot() } satisfies HostEvent));
+        peer.send(JSON.stringify({ sequence: store.lastEventSequence, type: "state", state: snapshot(), replayComplete: true } satisfies HostEvent));
       },
       message() {},
       close(peer) { peers.delete(peer); },
@@ -973,6 +1003,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     void refreshNetwork();
     networkTimer = setInterval(() => { void refreshNetwork(); }, 15_000);
   }
+  // Reopen only sessions with a previously durable unanswered question. The
+  // native journal confirms whether each notice is still open before clients
+  // can observe it in the startup snapshot.
+  await Promise.allSettled(notificationEvents.recoverySessionIds().map(async id => {
+    const session = store.getSession(id);
+    if (!session || session.archived) notificationEvents.reconcileDetached(id, []);
+    else await getHandle(id);
+  }));
   const connection: LocalConnection = { origin: `http://127.0.0.1:${server.port}`, token, pid: process.pid, hostId: store.host.id, protocolVersion: 1 };
   await Bun.write(temporary, JSON.stringify(connection));
   await chmod(temporary, 0o600);

@@ -70,6 +70,8 @@ test("authenticated host goal control drives zero-client native continuation, dr
     if (!setup.ok) throw new Error(`Initial native prompt failed: ${setup.error.code}: ${setup.error.message}`);
     await f.wait(() => f.started(1), "initial controlled turn"); await f.release(1);
     await f.wait(() => f.host.store.getSession(session.id)?.status === "idle", "initial turn settlement");
+    await f.wait(() => f.host.store.eventsAfter(0, 1000).some(event => event.type === "notification" && event.notification.id.startsWith(`completion:${session.id}:command:`)), "prompt completion notification");
+    expect(f.host.snapshot().notifications).toEqual([]);
 
     const draftId = `session:${session.id}`;
     expect((await f.command({ type: "draft.put", draft: { id: draftId, text: "Unsent operator work", projectId: null, model }, expectedRevision: 0 })).ok).toBe(true);
@@ -80,6 +82,7 @@ test("authenticated host goal control drives zero-client native continuation, dr
     await f.wait(() => f.started(2), "automatic continuation without websocket clients");
     expect(f.host.store.getSession(session.id)?.status).toBe("running");
     await f.release(2); await f.wait(() => f.host.store.getSession(session.id)?.status === "idle", "continuation settlement");
+    await f.wait(() => f.host.store.eventsAfter(0, 1000).some(event => event.type === "notification" && event.notification.id.startsWith(`completion:${session.id}:goal:${created.goal!.id}:entry:`)), "goal continuation notification");
     await f.wait(() => f.host.store.getSession(session.id)?.goalContinuation?.blocked === "no-tools", "no-tool checkpoint");
     await Bun.sleep(1_050); expect(await f.started(3)).toBe(false);
     const entries = (await readFile(session.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
@@ -92,6 +95,8 @@ test("authenticated host goal control drives zero-client native continuation, dr
       body: JSON.stringify({ id: crypto.randomUUID(), command: { type: "session.prompt", sessionId: session.id, text: "/bridge-contract" } }) });
     const interactions = async () => (await (await f.request(`/v1/sessions/${session.id}/interactions`)).json()) as Array<{ id: string }>;
     await f.wait(async () => (await interactions()).length === 1, "native pending ask");
+    await f.wait(() => f.host.snapshot().notifications?.some(notification => notification.kind === "question") === true, "generic native question notification");
+    expect(f.host.snapshot().notifications?.some(notification => notification.kind === "permission")).toBe(false);
     await Bun.sleep(1_050);
     expect(await interactions()).toHaveLength(1);
     expect(await f.started(3)).toBe(false);
@@ -102,6 +107,7 @@ test("authenticated host goal control drives zero-client native continuation, dr
         body: JSON.stringify({ interactionId: current.id, response: { value } }) })).status).toBe(200);
     }
     expect((await (await askingResponse).json() as CommandResult).ok).toBe(true);
+    await f.wait(() => f.host.snapshot().notifications?.length === 0, "resolved native question notifications");
 
     const running = await f.command({ type: "session.prompt", sessionId: session.id, text: "Pause without aborting this native turn" });
     expect(running.ok).toBe(true); await f.wait(() => f.started(3), "running turn for pause");

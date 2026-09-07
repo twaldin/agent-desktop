@@ -1,5 +1,11 @@
 # Milestone status
 
+## OMP-backed desktop notifications
+
+Real OMP prompt/goal completion and native question/permission events now feed a main-process notification delivery service. General settings expose Never / Only when unfocused / Always and separate question/permission switches. Shared legacy settings remain readable. Replay barriers, durable IDs, pending-question retention and acknowledged owner/session navigation address reconnect and renderer-reload races. Alerts never answer an interaction.
+
+The targeted batch passes55 tests/387 assertions; actual native goal/session execution passes through the repository runner. Hidden Electron plus an authenticated isolated host verifies four settings writes and four captures, including keyboard selection and reload persistence, with zero sessions or OS alert calls. Typecheck/build pass. Actual installed macOS notification presentation/clicks, physical cross-device delivery and matched pixel acceptance remain open. See [notification contracts and limits](notifications.md). Private evidence: `.data/ui-acceptance/notification-settings-2026-09-07-r4/` and `.data/notification-native-trace-2026-09-07/`.
+
 ## Rich skill file editor
 
 Skill files now use a source-preserving CodeMirror rich editor and the pinned Pierre source editor. Valid simple frontmatter appears in a Metadata card; rich-mode Select all and boundary deletion cannot erase it. Source mode edits the full original. Typing, task checkboxes, undo/redo and mode changes feed the existing native host autosave and recovery path. External updates use a minimal text change to preserve unaffected rich undo history. Unsupported YAML stays visible, and raw HTML never executes.

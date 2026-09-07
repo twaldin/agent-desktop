@@ -4,6 +4,8 @@ export interface OmpInteraction {
   id: string;
   sessionId: string;
   method: InteractionMethod;
+  /** Set only when a native approval hook explicitly owns this interaction. */
+  notificationKind?: "question" | "permission";
   title: string;
   message?: string;
   options?: Array<{ label: string; description?: string }>;

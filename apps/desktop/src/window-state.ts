@@ -5,7 +5,7 @@ export interface WindowNavigation {
   hostId?: string;
   sessionId: string | null;
 }
-export type SettingsPage = "accounts" | "omp" | "appearance" | "git" | "environments" | "plugins" | "mcp";
+export type SettingsPage = "general" | "accounts" | "omp" | "appearance" | "git" | "environments" | "plugins" | "mcp";
 export type WorkspaceTab = "files" | "changes" | "worktrees";
 export interface WindowViewState {
   route: WindowNavigation;
@@ -40,7 +40,7 @@ export const defaultWindowView = (): WindowViewState => ({
   showArchived: false,
   expandedProjects: [],
   settingsOpen: false,
-  settingsPage: "accounts",
+  settingsPage: "general",
 });
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -70,7 +70,7 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     if (typeof value[key] !== "boolean") return;
   if (
     !["files", "changes", "worktrees"].includes(String(value.workspaceTab)) ||
-    !["accounts", "omp", "appearance", "git", "environments", "plugins", "mcp"].includes(String(value.settingsPage))
+    !["general", "accounts", "omp", "appearance", "git", "environments", "plugins", "mcp"].includes(String(value.settingsPage))
   )
     return;
   if (

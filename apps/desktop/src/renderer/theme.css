@@ -1,5 +1,6 @@
 :root {
   --dialog-surface: var(--elevated-surface); --dialog-input-surface: var(--elevated-surface); --dialog-opacity: .9; --dialog-blur: 24px; --dialog-backdrop-color: #00000022;
+  --settings-card-surface: color-mix(in srgb,var(--app-surface) 95%,var(--text));
   --panel-surface: var(--app-surface); --menu-surface: var(--elevated-surface); --editor-surface: var(--app-surface);
   --terminal-surface: var(--app-surface); --accent-text: var(--app-surface); --focus-ring: var(--accent);
   --switch-on:#3a83f7; --switch-off:#393939; --switch-thumb:#fff;

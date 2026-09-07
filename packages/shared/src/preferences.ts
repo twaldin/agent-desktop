@@ -20,6 +20,7 @@ export const THEME_TOKEN_DEFINITIONS = {
   "--welcome-mark-hover-opacity": { kind: "number", minimum: 0, maximum: 1 },
   "--user-message-surface": { kind: "color" }, "--user-message-text": { kind: "color" },
   "--header-divider-color": { kind: "color" }, "--sidebar-divider-color": { kind: "color" },
+  "--settings-card-surface": { kind: "color" },
   "--panel-surface": { kind: "color" }, "--menu-surface": { kind: "color" },
   "--editor-surface": { kind: "color" }, "--terminal-surface": { kind: "color" },
   "--text": { kind: "color" }, "--secondary": { kind: "color" }, "--tertiary": { kind: "color" },
@@ -92,13 +93,27 @@ export type ThemeBackground =
   | { kind: "asset"; sha256: string; fit: "cover" | "contain" | "tile"; opacity: number; blur: number };
 export interface SidebarSectionPreference { name: string; position: number }
 export interface SidebarEntityPreference { hostId: string; sectionId: string | "pinned" | null; position: number }
+export type CompletionNotificationPolicy = "never" | "unfocused" | "always";
+export interface NotificationPreferences {
+  turnComplete: boolean;
+  approvalRequired: boolean;
+  sound: boolean;
+  completionPolicy?: CompletionNotificationPolicy;
+  questionRequired?: boolean;
+}
+/** Read old records without changing their serialized, revision-owned value. */
+export function notificationPreferences(value?: NotificationPreferences): Required<NotificationPreferences> {
+  const completionPolicy = value?.completionPolicy ?? (value?.turnComplete === false ? "never" : "unfocused");
+  return { turnComplete: completionPolicy !== "never", completionPolicy,
+    approvalRequired: value?.approvalRequired ?? true, questionRequired: value?.questionRequired ?? true, sound: value?.sound ?? false };
+}
 export interface PreferenceValues {
   "git.branchPrefix": string;
   "theme.material": "none" | "sidebar" | "under-window" | "hud";
   "theme.mode": "system" | "light" | "dark";
   "theme.tokens": ThemeTokens;
   "theme.background": ThemeBackground;
-  "general.notifications": { turnComplete: boolean; approvalRequired: boolean; sound: boolean };
+  "general.notifications": NotificationPreferences;
   "general.reduceMotion": boolean;
   "general.sendBehavior": "enter" | "mod-enter";
   [key: `sidebar.section.${string}`]: SidebarSectionPreference;
@@ -225,8 +240,13 @@ function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[P
   if (key === "general.reduceMotion") return bool(value);
   if (key === "general.sendBehavior") return enumeration(value, ["enter", "mod-enter"] as const);
   if (key === "general.notifications") {
-    const item = object(value, ["turnComplete", "approvalRequired", "sound"]);
-    return { turnComplete: bool(item.turnComplete), approvalRequired: bool(item.approvalRequired), sound: bool(item.sound) };
+    const item = object(value, ["turnComplete", "approvalRequired", "sound", "completionPolicy", "questionRequired"]);
+    const policy = item.completionPolicy === undefined ? undefined : enumeration(item.completionPolicy, ["never", "unfocused", "always"] as const);
+    const turnComplete = bool(item.turnComplete);
+    if (policy !== undefined && turnComplete !== (policy !== "never")) return invalid("Completion notification settings disagree.");
+    return { turnComplete, approvalRequired: bool(item.approvalRequired), sound: bool(item.sound),
+      ...(policy === undefined ? {} : {completionPolicy:policy}),
+      ...(item.questionRequired === undefined ? {} : {questionRequired:bool(item.questionRequired)}) };
   }
   if (key.startsWith("sidebar.section.")) {
     const item = object(value, ["name", "position"]);

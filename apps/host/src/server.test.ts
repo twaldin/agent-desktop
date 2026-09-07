@@ -280,6 +280,7 @@ describe("isolated host transport", () => {
     const connected = await eventMatching(socket, event => event.type === "state");
     expect(socket.protocol).toBe("agent-desktop");
     expect(connected.type === "state" && connected.state.host.id).toBe(host.connection.hostId);
+    expect(connected.type === "state" && connected.replayComplete).toBe(true);
     const live = eventMatching(socket, event => event.type === "state" && event.state.drafts.some(draft => draft.id === initialDraft.id));
     await command(host, { id: "stream-draft", command: { type: "draft.put", draft: initialDraft, expectedRevision: 0 } });
     const delivered = await live;
@@ -287,6 +288,10 @@ describe("isolated host transport", () => {
     socket.close();
     const resumed = connect(host, connected.sequence);
     expect(await eventMatching(resumed, event => event.sequence === delivered.sequence)).toEqual(delivered);
+    resumed.close();
+    const barrierSocket = connect(host, delivered.sequence);
+    const barrier = await eventMatching(barrierSocket, event => event.type === "state" && event.replayComplete === true);
+    expect(barrier.sequence).toBeGreaterThanOrEqual(delivered.sequence);
   });
 
   test("a second host cannot recover or modify the first host's running session", async () => {

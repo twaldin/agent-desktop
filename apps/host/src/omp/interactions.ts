@@ -1,4 +1,4 @@
-import type { ExtensionUIContext, ExtensionUIDialogOptions, ExtensionUISelectItem } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import type { ExtensionFactory, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionUISelectItem } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 
 import type { OmpInteraction, OmpInteractionResponse, InteractionEndReason, OmpBridgeEvent } from "@agent-desktop/shared";
 export type { InteractionMethod, InteractionAction, OmpInteraction, OmpInteractionResponse, InteractionEndReason, OmpBridgeEvent } from "@agent-desktop/shared";
@@ -8,6 +8,21 @@ export class UnsupportedOmpUIError extends Error {
     super(`Native OMP UI surface '${surface}' is not supported by the desktop interaction bridge`);
     this.name = "UnsupportedOmpUIError";
   }
+}
+
+/** Correlates the native approval hook with exactly one immediately following UI request. */
+export function nativeApprovalInteractionClassification(getBridge: () => OmpInteractionBridge | undefined): ExtensionFactory {
+  const markers = new Map<string, () => void>();
+  return pi => {
+    pi.on("tool_approval_requested", event => {
+      markers.get(event.toolCallId)?.();
+      const bridge = getBridge();
+      if (bridge) markers.set(event.toolCallId, bridge.markNextInteractionAsPermission());
+    });
+    pi.on("tool_approval_resolved", event => {
+      markers.get(event.toolCallId)?.(); markers.delete(event.toolCallId);
+    });
+  };
 }
 
 interface Pending {
@@ -21,10 +36,27 @@ interface Pending {
 export class OmpInteractionBridge implements ExtensionUIContext {
   readonly timeoutStartsOnPresentation = false;
   #pending = new Map<string, Pending>();
+  #permissionMarkers: symbol[] = [];
   #disposed = false;
   constructor(readonly sessionId: string, private emit: (event: OmpBridgeEvent) => void) {}
 
   list(): OmpInteraction[] { return structuredClone([...this.#pending.values()].map(item => item.request)); }
+
+  /** Scope the immediately following native UI request to an explicit approval hook. */
+  markNextInteractionAsPermission(): () => void {
+    const marker = Symbol("native-approval");
+    this.#permissionMarkers.push(marker);
+    return () => {
+      const index = this.#permissionMarkers.indexOf(marker);
+      if (index !== -1) this.#permissionMarkers.splice(index, 1);
+    };
+  }
+
+  permissionConfirm(title: string, message: string, options?: ExtensionUIDialogOptions): Promise<boolean> {
+    const clear = this.markNextInteractionAsPermission();
+    try { return this.confirm(title, message, options); }
+    finally { clear(); }
+  }
 
   #request(fields: Omit<OmpInteraction, "id" | "sessionId" | "createdAt" | "actions">, options?: ExtensionUIDialogOptions): Promise<string | boolean | undefined> {
     if (this.#disposed) return Promise.reject(new Error("OMP interaction bridge is disposed"));
@@ -35,6 +67,7 @@ export class OmpInteractionBridge implements ExtensionUIContext {
     }
     const request: OmpInteraction = {
       ...fields, id: crypto.randomUUID(), sessionId: this.sessionId, createdAt: Date.now(), actions: [],
+      ...(this.#permissionMarkers.shift() ? { notificationKind: "permission" as const } : {}),
       ...(options?.initialIndex === undefined ? {} : { initialIndex: options.initialIndex }),
       ...(options?.outline === undefined ? {} : { outline: options.outline }),
       ...(options?.helpText === undefined ? {} : { helpText: options.helpText }),

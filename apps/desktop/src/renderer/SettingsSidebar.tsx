@@ -8,6 +8,7 @@ export type { SettingsPage } from "../window-state";
 type SettingsItem = { id: SettingsPage; label: string; group: "Personal" | "Integrations" | "Coding"; icon: "shield" | "sliders" | "branch" | "laptop" | "folder"; description: string };
 
 const settingsItems: SettingsItem[] = [
+  { id: "general", label: "General", group: "Personal", icon: "sliders", description: "Notifications and interaction" },
   { id: "accounts", label: "Accounts", group: "Personal", icon: "shield", description: "Provider accounts and sign-in" },
   { id: "appearance", label: "Appearance", group: "Personal", icon: "sliders", description: "Theme and window appearance" },
   { id: "omp", label: "OMP", group: "Coding", icon: "laptop", description: "Native OMP configuration" },

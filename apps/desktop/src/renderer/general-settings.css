@@ -1,0 +1,21 @@
+.general-settings-scroll { overflow: auto; min-height: 0; padding: 8px 32px 40px; }
+.general-settings-group { max-width: 768px; margin: 0 auto 30px; }
+.general-settings-group > h2 { font-size: var(--font-size); font-weight: 500; margin: 0 0 12px; }
+.general-settings-card { border: var(--border-width,1px) solid var(--border); border-radius: calc(var(--radius-large,12px) * 1.3333333); background:var(--settings-card-surface); overflow: visible; }
+.general-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 12px 16px; min-height: 60px; }
+.general-settings-row + .general-settings-row { border-top: var(--divider-width,1px) solid var(--border); }
+.general-settings-row > div:first-child { min-width: 0; }
+.general-settings-row h3 { font-size: var(--font-size); font-weight: 400; line-height:20px; margin: 0; }
+.general-settings-row p { font-size: calc(var(--font-size) * .8571428571); color: var(--secondary); margin: 0; line-height: 16px; }
+.general-settings-row > select { max-width: 210px; }
+.general-settings-row .native-enabled-switch { flex-shrink: 0; }
+.general-notification-trigger { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-shrink:0; max-width:240px; border:var(--border-width,1px) solid var(--border); border-radius:var(--button-radius,8px); padding:6px 10px; background:var(--app-surface); font-size:var(--small-font-size,12px); }
+.general-notification-trigger:hover { background:var(--hover); }
+.general-notification-trigger .icon { width:14px;height:14px; transform:rotate(90deg); }
+.general-notification-menu { position:fixed; z-index:500; border:var(--border-width,1px) solid var(--border); border-radius:var(--menu-radius,14px); background:var(--menu-surface); padding:5px; box-shadow:0 8px 24px #0004; }
+.general-notification-menu button { display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;min-height:32px;padding:6px 8px;border-radius:var(--button-radius,8px);font-size:var(--small-font-size,12px); }
+.general-notification-menu button:hover,.general-notification-menu button:focus { background:var(--hover);outline:none; }
+.general-notification-advanced { margin-top:14px;color:var(--secondary);font-size:var(--small-font-size,12px); }
+.general-notification-advanced > p { line-height:1.5; }
+.general-notification-advanced .general-settings-row { padding:12px 0; }
+@media(max-width:900px){.general-settings-scroll{padding:8px 16px 24px}.general-settings-row{padding:14px;gap:12px;flex-wrap:wrap}.general-notification-trigger{max-width:100%}}

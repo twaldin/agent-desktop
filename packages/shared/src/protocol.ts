@@ -1,6 +1,7 @@
 export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";
+export * from "./notifications";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from './integrations';
 import type { NativeMarketplaceCatalog, NativePluginAcquisition, NativePluginAcquisitionReceipt, NativePluginAcquisitionRequest } from './plugin-acquisition';
 export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation, NativeMcpServer } from './integrations';
@@ -27,6 +28,7 @@ import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities,
 import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions, ComposerSkillDetail, NativeSkillFileDocument, NativeSkillFileRef, NativeSkillFileRevealResult, NativeSkillFileWriteResult, NativeSkillInventory } from "./composer-actions";
 import type { SessionActivitySnapshot } from "./session-activity";
 import type { BrowserMetadataSnapshot, BrowserFrameTarget, BrowserFrameSnapshot } from "./browser";
+import type { HostNotification } from "./notifications";
 export * from "./attachments";
 export * from "./composer-actions";
 export * from "./session-activity";
@@ -161,6 +163,8 @@ export interface HostState {
   drafts: Draft[];
   models: ModelInfo[];
   lastEventSequence: number;
+  /** Current native questions and permissions, after live-source reconciliation. */
+  notifications?: HostNotification[];
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
   newChatExecution?: { commandVersion: 4; worktrees: true };
@@ -215,10 +219,11 @@ export type CommandResult =
   | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
 
 export type HostEvent =
-  | { sequence: number; type: "state"; state: HostState }
+  | { sequence: number; type: "state"; state: HostState; /** Direct websocket replay barrier; absent on durable state events. */ replayComplete?: true }
   | { sequence: number; type: "runtime"; sessionId: string; event: unknown }
   | { sequence: number; type: "accounts" }
   | { sequence: number; type: "interactions"; sessionId: string }
+  | { sequence: number; type: "notification"; notification: HostNotification }
   | { sequence: number; type: "workspace"; target: WorkspaceTarget }
   | { sequence: number; type: "preferences" }
   | { sequence: number; type: "settings"; target?: WorkspaceTarget; sessionId?: string; scope?: "global" | "project" }
@@ -257,6 +262,9 @@ export type AccountAction =
 export interface AccountActionResult { login?: LoginSnapshot; accounts?: AccountInfo[]; selection?: SessionAccountList }
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge> {
+  getNotificationStatus?(): Promise<{supported:boolean; error?:string}>;
+  subscribeNotificationStatus?(listener:()=>void):()=>void;
+  subscribeNotificationNavigation?(listener:(target:{hostId:string;sessionId:string})=>void):()=>void;
   getComposerActions?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<ComposerActionsCatalog | null>;
   getSkillInventory?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<NativeSkillInventory | null>;
   getSkillDetail?(target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string, inventory?: boolean): Promise<ComposerSkillDetail>;
