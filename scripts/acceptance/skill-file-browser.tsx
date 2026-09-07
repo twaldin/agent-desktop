@@ -30,6 +30,8 @@ addEventListener("keydown",event=>keyboardEvents.push({key:event.key,role:(event
 addEventListener("error", event => runtimeErrors.push(`${event.message}\n${event.error?.stack ?? ""}`));
 addEventListener("unhandledrejection", event => runtimeErrors.push(String(event.reason?.stack ?? event.reason)));
 const bridge = {
+  acquireSkillImage: window.agentDesktop.acquireSkillImage,
+  releaseWorkspaceImage: window.agentDesktop.releaseWorkspaceImage,
   openExternal: async () => { throw new Error("External open is unavailable in this renderer fixture."); },
   command: (envelope, owner) => request("/v5/commands", { ...envelope, owner }),
   getPlugins: (value, owner) => request("/v1/integrations/plugins/read", { target: value, owner }),

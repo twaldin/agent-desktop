@@ -1,14 +1,14 @@
-import { parseNativeSkillFileRef, parseNativeSkillFileDocument, type NativeSkillFileRef, type NativeSkillFileDocument } from "@agent-desktop/shared";
+import { parseNativeSkillFileRef, parseNativeSkillFileDocument, type NativeSkillFileRef, type NativeSkillFileDocument, type WorkspaceQueryResult } from "@agent-desktop/shared";
 import { COMPOSER_OWNER_HEADER, parseNativeSkillInventory, type ComposerActionsCatalog, type ComposerCompletionQuery, type ComposerCompletions, type ComposerSkillDetail, type NativeSkillInventory, type WorkspaceTarget } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
 
-async function query(endpoint: HostEndpoint, path: string, body: unknown): Promise<unknown> {
+async function query(endpoint: HostEndpoint, path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
   if (!endpoint.hostId) throw new Error("Select the owning host before querying native composer actions.");
   const input = JSON.stringify(body);
   if (Buffer.byteLength(input) > 16 * 1024) throw new Error("Composer query exceeds 16 KiB.");
   const response = await fetch(`${endpoint.origin}${path}`, { method: "POST", headers: {
     "Content-Type": "application/json", [COMPOSER_OWNER_HEADER]: endpoint.hostId, ...(endpoint.token ? { Authorization: `Bearer ${endpoint.token}` } : {}),
-  }, body: input, signal: AbortSignal.timeout(20_000), redirect: "error" });
+  }, body: input, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000), redirect: "error" });
   if (response.ok && response.headers.get(COMPOSER_OWNER_HEADER) !== endpoint.hostId) { await response.body?.cancel(); throw new HostRequestError("Composer response belongs to a different host. Refresh hosts before retrying.", 409, "OWNER_MISMATCH"); }
   const reader = response.body?.getReader(); if (!reader) throw new Error("Composer response body is missing.");
   const chunks: Uint8Array[] = []; let length = 0;
@@ -17,6 +17,7 @@ async function query(endpoint: HostEndpoint, path: string, body: unknown): Promi
   finally { reader.releaseLock(); }
   const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   if (!response.ok) throw new HostRequestError(typeof value?.error === "string" ? value.error : value?.error?.message ?? `Composer request failed (${response.status}).`, response.status, value?.error?.code ?? value?.code);
+  if (path === "/v1/composer/skill-file-image") return value; // Stream validates metadata/chunk identity before exposing bytes.
   if (path === "/v1/composer/skill-file") {
     const file = parseNativeSkillFileDocument(value);
     const ref = parseNativeSkillFileRef((body as {ref:unknown}).ref);
@@ -50,4 +51,20 @@ export async function requestSkillDetail(endpoint: HostEndpoint, target: Workspa
 
 export async function requestSkillFile(endpoint: HostEndpoint, ref: NativeSkillFileRef): Promise<NativeSkillFileDocument> {
   return await query(endpoint, "/v1/composer/skill-file", {ref:parseNativeSkillFileRef(ref)}) as NativeSkillFileDocument;
+}
+
+// Serialize this desktop's skill-image reads per host so a document with many
+// images cannot exhaust the host's separate image budget. Revoked queued work
+// checks its signal before dispatch; control/file queries never enter this queue.
+const skillImageReads = new Map<string, Promise<unknown>>();
+export async function requestSkillImage(endpoint: HostEndpoint, ref: NativeSkillFileRef, path: string, chunk?: {revision:string;offset:number}, signal?: AbortSignal): Promise<WorkspaceQueryResult> {
+  const owner = `${endpoint.origin}:${endpoint.hostId}`, previous = skillImageReads.get(owner) ?? Promise.resolve();
+  const resource = parseNativeSkillFileRef(ref);
+  const pending = previous.catch(()=>{}).then(async()=>{
+    signal?.throwIfAborted();
+    return await query(endpoint, "/v1/composer/skill-file-image", {ref:resource,path,...chunk}, signal) as WorkspaceQueryResult;
+  });
+  skillImageReads.set(owner,pending);
+  try { return await pending; }
+  finally { if(skillImageReads.get(owner)===pending)skillImageReads.delete(owner); }
 }

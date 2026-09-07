@@ -222,3 +222,15 @@ test("disposal during pre-dispatch persistence prevents the queued host command"
   expect(f.calls).toHaveLength(0);expect(await c.toggleSource()).toBe(false);
   const restored=f.controller();await restored.load(false);expect(restored.state.text).toBe("not sent");expect(restored.state.dirty).toBe(true);expect(restored.state.uncertain).toBe(false);
 });
+
+test("skill image leases retain native owner and release a late acquisition after close",async()=>{
+  const f=setup(),c=f.controller(),seen:unknown[]=[],released:string[]=[];
+  let complete!:(value:{url:string;id:string})=>void;
+  f.bridge.acquireSkillImage=(resource,path,host)=>{seen.push({resource,path,host});return new Promise(resolve=>complete=resolve);};
+  f.bridge.releaseWorkspaceImage=async id=>{released.push(id);};
+  await expect(c.acquireImage("assets/picture.svg")).rejects.toThrow("Reconnect");
+  c.setConnected(true);const generation=c.imageGeneration;c.setConnected(true);expect(c.imageGeneration).toBe(generation);
+  const pending=c.acquireImage("assets/picture.svg").catch(error=>error);c.dispose();complete({id:"lease",url:"agent-workspace-image://image/lease"});
+  expect(await pending).toBeInstanceOf(Error);expect(released).toEqual(["lease"]);
+  expect(seen).toEqual([{resource:ref,path:"assets/picture.svg",host:"h"}]);expect(f.calls).toHaveLength(0);
+});

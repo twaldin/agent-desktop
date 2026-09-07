@@ -12,8 +12,10 @@ await Promise.all([
 ]);
 Bun.spawnSync(["git", "init", "-q", project]);
 await writeFile(join(agent, "config.yml"), "extensions: []\n");
-const initialText = `---\nname: skill-file-acceptance\ndescription: A disposable user skill for native file acceptance\n---\n# Skill file acceptance\n\nINITIAL_NATIVE_SKILL_BYTES\n`;
+const initialText = `---\nname: skill-file-acceptance\ndescription: A disposable user skill for native file acceptance\n---\n# Skill file acceptance\n\nINITIAL_NATIVE_SKILL_BYTES\n\n![Skill illustration](assets/diagram.svg "Owning skill image")\n![Missing image](assets/missing.svg)\n`;
 await writeFile(skillPath, initialText, { mode: 0o600 });
+await mkdir(join(root,".agents","skills","skill-file-acceptance","assets"),{recursive:true});
+await writeFile(join(root,".agents","skills","skill-file-acceptance","assets","diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="100"><rect width="320" height="100" rx="12" fill="#245579"/><text x="20" y="56" fill="white" font-size="20">Native skill illustration</text></svg>');
 
 const { startHost } = await import("../../apps/host/src/server");
 const host = await startHost({

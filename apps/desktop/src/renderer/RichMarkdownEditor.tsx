@@ -226,7 +226,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
       return true;
     };
     const editor = new EditorView({ parent: container.current!, state: EditorState.create({ doc: initial, selection: {anchor:markdownMetadata(initial)?.end??0}, extensions: [
-      protectMetadata, imageResolver.of(href => latest.current.resolveImage?.(href) ?? null),
+      protectMetadata, imageResolver.of(href => latest.current.active === false ? null : latest.current.resolveImage?.(href) ?? null),
       focused, markdown({ extensions: [...GFM, Superscript, Subscript, Emoji], completeHTMLTags: false }),
       history(), drawSelection(), highlightSpecialChars(), highlightSelectionMatches(),
       writable.current.of([EditorState.readOnly.of(Boolean(latest.current.readOnly)), EditorView.editable.of(!latest.current.readOnly)]),
@@ -267,7 +267,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     if (editor.state.doc.toString() !== value) editor.dispatch({ changes: markdownTextChange(editor.state.doc.toString(),value), annotations: [Transaction.addToHistory.of(false),externalText.of(true)] });
   }, [props.value]);
   useEffect(() => { view.current?.dispatch({ effects: writable.current.reconfigure([EditorState.readOnly.of(Boolean(props.readOnly)), EditorView.editable.of(!props.readOnly)]) }); }, [props.readOnly]);
-  useEffect(() => { view.current?.dispatch({}); }, [props.imageGeneration]);
+  useEffect(() => { view.current?.dispatch({}); }, [props.imageGeneration, props.active]);
   useEffect(() => { if (props.active !== false) view.current?.requestMeasure(); }, [props.active]);
   useEffect(() => {
     const editor = view.current, request = props.revealRequest;

@@ -29,12 +29,13 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
   } finally { clearTimeout(timeout); reader.releaseLock(); }
 }
 export class ComposerActionsHttp {
-  #inFlight = 0;
+  #composerInFlight = 0;
+  #imageInFlight = 0;
   constructor(private options: {
     hostId: string; resolveCwd(target?: WorkspaceTarget): string;
     getHandle(sessionId: string): Promise<Pick<WorkerSession, "getComposerActions" | "getComposerCompletions" | "cwd">>;
     runtime: Pick<WorkerRuntime, "getComposerActions" | "getComposerCompletions" | "getSkillInventory">;
-    skillFiles?: Pick<SkillFiles, "read">;
+    skillFiles?: Pick<SkillFiles, "read" | "image">;
   }) {}
   private async readSkill(path: string): Promise<{ content: string; verify(): Promise<void> }> {
     if (!path || !path.startsWith("/") || path.includes("\0")) throw new ComposerRequestError("Native skill content is unavailable.", 404, "SKILL_UNAVAILABLE");
@@ -90,18 +91,39 @@ export class ComposerActionsHttp {
     return { protocolVersion: 1, hostId: this.options.hostId, ...(target ? { target } : {}), cwd, revision: first.revision, skillId: input.skillId, content: read.content };
   }
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
-    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-inventory", "/v1/composer/skill-detail", "/v1/composer/skill-file"].includes(url.pathname)) return undefined;
+    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-inventory", "/v1/composer/skill-detail", "/v1/composer/skill-file", "/v1/composer/skill-file-image"].includes(url.pathname)) return undefined;
     const headers = { "Cache-Control": "no-store", [COMPOSER_OWNER_HEADER]: this.options.hostId };
-    let admitted = false;
+    let admission: "composer" | "image" | undefined;
     try {
       if (request.headers.get(COMPOSER_OWNER_HEADER) !== this.options.hostId) throw new ComposerRequestError("The selected composer owner no longer matches this endpoint. Refresh hosts before retrying.", 409, "OWNER_MISMATCH");
       if (request.method !== "POST") throw new ComposerRequestError("Use POST for composer queries.", 405);
-      if (this.#inFlight >= 4) throw new ComposerRequestError("This host has four active composer queries. Try again after they finish.", 429, "COMPOSER_BUSY");
-      this.#inFlight++; admitted = true;
+      const skillImage = url.pathname.endsWith("/skill-file-image");
+      if (skillImage) {
+        if (this.#imageInFlight >= 4) throw new ComposerRequestError("This host has four active skill image reads. Try again after they finish.", 429, "COMPOSER_BUSY");
+        this.#imageInFlight++; admission = "image";
+      } else {
+        if (this.#composerInFlight >= 4) throw new ComposerRequestError("This host has four active composer queries. Try again after they finish.", 429, "COMPOSER_BUSY");
+        this.#composerInFlight++; admission = "composer";
+      }
       const input = await readBody(request), completions = url.pathname.endsWith("/completions");
       const inventoryQuery = url.pathname.endsWith("/skill-inventory");
       const skillDetail = url.pathname.endsWith("/skill-detail");
       const skillFile = url.pathname.endsWith("/skill-file");
+      if (skillImage) {
+        keys(input, ["ref", "path", "revision", "offset"]);
+        if (!this.options.skillFiles) throw new ComposerRequestError("Native skill file editing is unavailable on this host.", 501, "SKILL_FILE_UNAVAILABLE");
+        let ref;
+        try { ref = parseNativeSkillFileRef(input.ref); }
+        catch { throw new ComposerRequestError("Invalid native skill file reference."); }
+        if (typeof input.path !== "string" || !input.path || input.path.length > 16_384
+          || /[\\\x00-\x1f\x7f-\x9f]/.test(input.path) || input.path.startsWith("/") || input.path.split("/").some(part => !part || part === "." || part === "..")
+          || (input.revision === undefined) !== (input.offset === undefined)
+          || input.revision !== undefined && (typeof input.revision !== "string" || !/^[a-f0-9]{64}$/.test(input.revision) || !Number.isSafeInteger(input.offset) || Number(input.offset) < 0)) {
+          throw new ComposerRequestError("Invalid native skill image request.");
+        }
+        const result = await this.options.skillFiles.image(ref, input.path, input.revision as string | undefined, input.offset as number | undefined);
+        return Response.json(result, { headers });
+      }
       if (skillFile) {
         keys(input, ["ref"]);
         if (!this.options.skillFiles) throw new ComposerRequestError("Native skill file editing is unavailable on this host.", 501, "SKILL_FILE_UNAVAILABLE");
@@ -151,6 +173,9 @@ export class ComposerActionsHttp {
       return Response.json({ ...result, hostId: this.options.hostId, ...(target ? { target } : {}) }, { headers });
     } catch (error) {
       return Response.json({ error: { message: error instanceof Error ? error.message.slice(0, 4096) : "Native composer query failed.", code: error instanceof ComposerRequestError || error instanceof SkillFileError ? error.code : "COMPOSER_QUERY_FAILED" } }, { status: error instanceof ComposerRequestError || error instanceof SkillFileError ? error.status : 500, headers });
-    } finally { if (admitted) this.#inFlight--; }
+    } finally {
+      if (admission === "composer") this.#composerInFlight--;
+      else if (admission === "image") this.#imageInFlight--;
+    }
   }
 }

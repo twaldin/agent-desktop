@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { COMPOSER_OWNER_HEADER } from "@agent-desktop/shared";
-import { requestComposerActions, requestSkillDetail, requestSkillInventory, requestSkillFile } from "./composer-actions-transport";
+import { requestComposerActions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillImage } from "./composer-actions-transport";
 import { HostRequestError } from "./host-transport";
 
 const seen: Array<{ path: string; owner: string | null; authorization: string | null }> = [];
@@ -76,4 +76,24 @@ test("editable skill file transport checks host and exact native resource indepe
   await expect(requestSkillFile(endpoint("file"),{...ref,sourcePath:"relative.md"})).rejects.toThrow("invalid");
   const global = await requestSkillFile(endpoint("file"),{skillId:ref.skillId,sourcePath:ref.sourcePath,inventory:true});
   expect(global.ref.target).toBeUndefined();
+});
+
+test("skill image reads serialize per host and skip a revoked queued grant",async()=>{
+  let active=0,maximum=0,release!:()=>void;const paths:string[]=[];
+  const gate=new Promise<void>(resolve=>release=resolve);
+  const imageServer=Bun.serve({hostname:"127.0.0.1",port:0,async fetch(request){
+    const input=await request.json() as {path:string};paths.push(input.path);active++;maximum=Math.max(maximum,active);
+    if(input.path==="one.svg")await gate;
+    active--;return Response.json({type:"file.copy-info",path:input.path,absolutePath:"/skills/"+input.path,size:0,revision:"a".repeat(64)},{headers:{[COMPOSER_OWNER_HEADER]:"owner"}});
+  }});
+  try{
+    const endpoint={origin:`http://127.0.0.1:${imageServer.port}`,hostId:"owner"},ref={skillId:"one",sourcePath:"/skills/SKILL.md",inventory:true};
+    const first=requestSkillImage(endpoint,ref,"one.svg");
+    const abort=new AbortController(),second=requestSkillImage(endpoint,ref,"two.svg",undefined,abort.signal).catch(error=>error);
+    const third=requestSkillImage(endpoint,ref,"three.svg");abort.abort(new Error("grant revoked"));
+    for(let i=0;i<100&&!paths.length;i++)await Bun.sleep(5);
+    await Bun.sleep(20);expect(paths).toEqual(["one.svg"]);
+    release();await first;expect(await second).toBeInstanceOf(Error);await third;
+    expect(paths).toEqual(["one.svg","three.svg"]);expect(maximum).toBe(1);
+  }finally{release();imageServer.stop(true);}
 });

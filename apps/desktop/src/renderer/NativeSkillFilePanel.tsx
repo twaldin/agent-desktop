@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { markdownImagePath } from "./markdown-images";
 import { RichMarkdownEditor } from "./RichMarkdownEditor";
 import { PierreSourceEditor } from "./PierreSourceEditor";
 import type { NativeSkillFileController } from "./native-skill-file-state";
@@ -32,6 +33,8 @@ export function NativeSkillFilePanel({ controller, connected, active, fileMode, 
     {data.recoveredText!==undefined&&<button onClick={()=>controller.restorePreviousEdits()}>Restore previous edits</button>}
     {data.loading&&!data.file?<p role="status">Loading skill file…</p>:data.file&&<>
       <RichMarkdownEditor documentKey={documentKey} value={data.text} label="Skill file Markdown" active={active&&!source}
+        imageGeneration={controller.imageGeneration}
+        resolveImage={href=>{const parent=data.ref.sourcePath.slice(0,data.ref.sourcePath.lastIndexOf("/"))||"/";const path=markdownImagePath(href,data.ref.sourcePath.split("/").at(-1)!,parent);return path===null?null:{key:`${documentKey}:${controller.imageGeneration}:${path}`,load:()=>controller.acquireImage(path)};}}
         onChange={text=>controller.setText(text)} onSave={()=>void controller.save()} openExternal={openExternal}/>
       <PierreSourceEditor documentKey={documentKey} name="SKILL.md" value={data.text} label="Skill file source" active={active&&source}
         onChange={text=>controller.setText(text)} onSave={()=>void controller.save()}/>

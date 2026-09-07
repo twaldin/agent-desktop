@@ -37,6 +37,7 @@ const bridge: DesktopBridge = {
     if (!result.ok) throw new Error(result.error);
     return result.value;
   },
+  acquireSkillImage: (ref, path, hostId) => ipcRenderer.invoke("desktop:skill-image-acquire", ref, path, hostId),
   acquireWorkspaceImage: (target, path, hostId) => ipcRenderer.invoke("desktop:workspace-image-acquire", target, path, hostId),
   releaseWorkspaceImage: id => ipcRenderer.invoke("desktop:workspace-image-release", id),
   subscribeWindowClose: listener => {

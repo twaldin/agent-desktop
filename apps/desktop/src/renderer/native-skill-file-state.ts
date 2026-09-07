@@ -19,6 +19,7 @@ const message = (cause:unknown) => cause instanceof Error ? cause.message : "The
  * with the original receipt ID. Editor text is independent of each sent snapshot. */
 export class NativeSkillFileController {
   readonly state:NativeSkillFileState;
+  imageGeneration=0;
   private timer?:ReturnType<typeof setTimeout>;
   private epoch=0;
   private version=0;
@@ -42,6 +43,14 @@ export class NativeSkillFileController {
     const write=this.writes.catch(()=>{}).then(()=>this.cache.write(keyFor(this.state.hostId,this.state.ref),value));
     this.writes=write;
     return write.then(()=>{this.storageError=false;},cause=>{this.storageError=true;this.state.error=`Edits could not be stored on this device: ${message(cause)}`;this.emit();throw cause;});
+  }
+  async acquireImage(path:string){
+    if(this.disposed||!this.connected)throw new Error("Reconnect to load this skill image.");
+    if(!this.bridge.acquireSkillImage||!this.bridge.releaseWorkspaceImage)throw new Error("Skill image loading is unavailable in this desktop.");
+    const release=this.bridge.releaseWorkspaceImage.bind(this.bridge);
+    const lease=await this.bridge.acquireSkillImage(this.state.ref,path,this.state.hostId);
+    if(this.disposed||!this.connected){await release(lease.id);throw new Error("The skill image owner is no longer active.");}
+    return {url:lease.url,release:()=>release(lease.id)};
   }
   async flush(){await this.writes;}
   private async waitForSave(signal?:AbortSignal){
@@ -104,7 +113,7 @@ export class NativeSkillFileController {
   }
   setConnected(connected:boolean){
     if(this.disposed)return;
-    if(this.connected!==connected){this.connected=connected;if(!connected){this.epoch++;this.state.loading=false;clearTimeout(this.timer);}else this.schedule();this.emit();}
+    if(this.connected!==connected){if(connected)this.imageGeneration++;this.connected=connected;if(!connected){this.epoch++;this.state.loading=false;clearTimeout(this.timer);}else this.schedule();this.emit();}
   }
   async load(connected=this.connected){
     if(this.disposed)return;

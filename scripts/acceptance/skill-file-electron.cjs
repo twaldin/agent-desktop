@@ -1,8 +1,25 @@
-const { app, BrowserWindow } = require("electron"), fs = require("node:fs"), path = require("node:path");
+const { app, BrowserWindow, ipcMain, protocol } = require("electron"), fs = require("node:fs"), path = require("node:path");
 const output = process.argv[2], launch = JSON.parse(fs.readFileSync(path.join(output, "launch.json"), "utf8"));
 app.setPath("userData", launch.profile); app.commandLine.appendSwitch("disable-renderer-backgrounding");
+protocol.registerSchemesAsPrivileged([{scheme:"agent-workspace-image",privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
+const {WorkspaceImageGrants}=require(path.join(output,"workspace-image.cjs"));
+const {requestSkillImage}=require(path.join(output,"composer-actions-transport.cjs"));
+const imageGrants=new WorkspaceImageGrants(), imageQueries=[];
+ipcMain.on("desktop:window-state:read",event=>{event.returnValue=null;});
+ipcMain.handle("desktop:skill-image-acquire",(event,ref,imagePath,hostId)=>{
+ if(hostId!==launch.hostId||JSON.stringify(ref)!==JSON.stringify(launch.ref))throw Error("Wrong fixture skill owner");
+ return imageGrants.acquireSkill({senderId:event.sender.id,ref,path:imagePath,hostId,source:signal=>({local:false,query:query=>{
+   imageQueries.push({type:query.type,path:query.path});
+   return requestSkillImage(launch.connection,ref,query.path,query.type==="file.copy-chunk"?{revision:query.revision,offset:query.offset}:undefined,signal);
+ }})});
+});
+ipcMain.handle("desktop:workspace-image-release",(event,id)=>imageGrants.release(id,event.sender.id));
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ width: 1440, height: 1000, show: false, useContentSize: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  protocol.handle("agent-workspace-image",request=>imageGrants.response(request.url,request.signal));
+  const win = new BrowserWindow({ width: 1440, height: 1000, show: false, useContentSize: true, webPreferences: { preload:path.join(output,"preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  const contentsId=win.webContents.id;
+  win.webContents.on('did-start-navigation',(_event,_url,inPlace,mainFrame)=>{if(mainFrame&&!inPlace)imageGrants.releaseSender(contentsId);});
+  win.webContents.on('destroyed',()=>imageGrants.releaseSender(contentsId));
   const consoleMessages = [], rendererGone = [];
   win.webContents.on("console-message", (...args) => consoleMessages.push(args.slice(1).map(value => typeof value === "object" ? JSON.stringify(value) : String(value)).join(" | ")));
   win.webContents.on("render-process-gone", (_event, details) => rendererGone.push(details));
@@ -37,6 +54,17 @@ app.whenReady().then(async () => {
     step = "open-dock"; await click('[role="menuitem"]', "Open"); await wait(`document.querySelector('.native-skill-file-panel')&&document.body.innerText.includes('INITIAL_NATIVE_SKILL_BYTES')`);
     if (!(await js(`window.state().dockTabs.includes('SKILL.md')`))) throw new Error("Production dock did not own the skill file tab");
     await capture("02-skill-file-preview"); checks.push("Menu Open routes the real discovered user skill through useWorkbenchDock, DockPanel and NativeSkillFilePanel");
+    step="skill-images";await js("document.querySelector('.native-skill-file-panel > header button').focus()");
+    await wait(`document.querySelector('img[alt="Skill illustration"]')?.dataset.imageState==='loaded'&&document.querySelector('img[alt="Missing image"]')?.dataset.imageState==='error'`);
+    const imageProof=await js(`(()=>{const n=document.querySelector('img[alt="Skill illustration"]');return {src:n.src,width:n.naturalWidth,height:n.naturalHeight,title:n.title};})()`);
+    if(imageProof.width!==320||imageProof.height!==100||imageProof.title!=='Owning skill image'||!imageProof.src.startsWith('agent-workspace-image://image/')||imageProof.src.includes(launch.ref.sourcePath))throw Error('Native skill image proof differs: '+JSON.stringify(imageProof));
+    await capture('02b-skill-images');checks.push('The actual OMP-discovered skill outside the project loads its own 320x100 SVG through production preload, image grants and authenticated native host reads; missing image uses browser alt/error presentation');
+    if((await js("window.request('/test/file',{})")).text!==launch.initialText)throw Error('Image loading edited the skill');
+    const firstImageUrl=imageProof.src;await js('window.connection(false)');await wait(`document.body.innerText.includes('Offline')`);
+    if(!(await js(`document.querySelector('img[alt="Skill illustration"]')?.dataset.imageState==='loaded'`)))throw Error('Mounted image was lost on disconnect');
+    await js('window.connection(true)');await wait(`document.querySelector('img[alt="Skill illustration"]')?.dataset.imageState==='loaded'&&document.querySelector('img[alt="Skill illustration"]').src!==${JSON.stringify(firstImageUrl)}`);
+    if((await imageGrants.response(firstImageUrl)).status!==404)throw Error('Prior image grant retained after reconnect');
+    await capture('02c-skill-image-reconnected');checks.push('A mounted image remains decoded on disconnect; reconnect replaces the old revoked grant and reloads from the same owning skill without a write');
     step = "rich-edit";
     await wait(`window.editor('[aria-label="Skill file Markdown"]')`);
     if (!(await js(`document.querySelector('[aria-label="Metadata"]')?.textContent.includes('skill-file-acceptance')&&!document.querySelector('.cm-content')?.textContent.includes('description:')`))) throw new Error("Metadata is not separate from the editable body");
@@ -178,6 +206,6 @@ app.whenReady().then(async () => {
     if (writeCount !== 9) throw new Error(`Expected exactly nine renderer writes, received ${writeCount}`);
     checks.push("Exactly nine renderer writes occurred: rich text, task checkbox, rename, explicit conflict resolution, frontmatter repair, two held-switch snapshots, one withheld receipt and a confirmed close save; the single external fixture write bypassed the command route");
     if((await js('window.state().runtimeErrors')).length||rendererGone.length)throw new Error('Renderer runtime errors were observed');
-    fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, captures, checks, hidden: true, rendererRuntimeHarness: true, nativeOsPixelParity: false, consoleMessages, rendererGone }, null, 2)); app.exit(0);
+    fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, captures, checks, imageQueries, hidden: true, rendererRuntimeHarness: true, nativeOsPixelParity: false, consoleMessages, rendererGone }, null, 2)); app.exit(0);
   } catch (error) { fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG()); fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: false, step, error: String(error), captures, checks, state: await js("window.state()").catch(() => null), consoleMessages, rendererGone }, null, 2)); app.exit(1); }
 });

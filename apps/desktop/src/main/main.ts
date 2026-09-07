@@ -5,7 +5,7 @@ import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondS
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
 import type { NativePluginAcquisition, NativePluginAcquisitionRequest } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
-import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile } from "./composer-actions-transport";
+import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillImage } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBtw } from "./btw-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
@@ -596,6 +596,17 @@ ipcMain.handle("desktop:workspace-image-acquire", async (event, target: Workspac
   if (endpoint.hostId !== hostId) throw new Error("The selected image host changed. Reconnect before loading it.");
   return workspaceImages.acquire({ senderId, target, path, hostId,
     source: signal => workspaceCopySource(endpoint, target, endpoint.hostId === connection?.hostId, signal) });
+});
+ipcMain.handle("desktop:skill-image-acquire", async (event, ref: NativeSkillFileRef, path: string, hostId: string) => {
+  assertTrustedSender(event);
+  const sender = event.sender, senderId = sender.id, epoch = workspaceImageEpochs.get(senderId) ?? 0;
+  const endpoint = await endpointFor(hostId);
+  if (sender.isDestroyed() || (workspaceImageEpochs.get(senderId) ?? 0) !== epoch) throw new Error("The viewing page changed before its skill image was ready.");
+  if (endpoint.hostId !== hostId) throw new Error("The selected skill image host changed. Reconnect before loading it.");
+  return workspaceImages.acquireSkill({senderId, ref, path, hostId, source: signal => ({local:false, query: query => {
+    if (query.type !== "file.copy-info" && query.type !== "file.copy-chunk") throw new Error("Unsupported skill image query.");
+    return requestSkillImage(endpoint, ref, query.path, query.type === "file.copy-chunk" ? {revision:query.revision,offset:query.offset} : undefined, signal);
+  }})});
 });
 ipcMain.handle("desktop:workspace-image-release", (event, id: string) => {
   assertTrustedSender(event);

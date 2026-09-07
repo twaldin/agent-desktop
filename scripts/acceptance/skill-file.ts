@@ -10,6 +10,7 @@ import tailwindcss from "@tailwindcss/vite";
 const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/skill-file-acceptance-${Date.now()}`);
 const sources = [
+  "apps/desktop/src/main/workspace-image.ts", "apps/desktop/src/main/composer-actions-transport.ts", "apps/desktop/src/main/preload.ts", "apps/desktop/src/main/main.ts", "apps/desktop/src/renderer/markdown-images.ts", "apps/desktop/src/renderer/MarkdownImageWidget.ts",
   "apps/desktop/src/renderer/RichMarkdownEditor.tsx", "apps/desktop/src/renderer/rich-markdown-editor.css",
   "apps/desktop/src/renderer/PierreSourceEditor.tsx", "apps/desktop/src/renderer/pierre-source-editor.css", "apps/desktop/src/renderer/markdown-file-model.ts",
   "apps/desktop/package.json", "bun.lock",
@@ -98,7 +99,8 @@ try {
   await build({ configFile: false, root: output, plugins: [react(), tailwindcss()], base: "./", build: { outDir: join(output, "web"), rollupOptions: { input: join(output, "index.html") } } });
   const initialSkillSha256 = createHash("sha256").update(await readFile(ready.skillPath)).digest("hex");
   await writeFile(join(output, "launch.json"), JSON.stringify({ endpoint: `http://127.0.0.1:${proxy.port}/${capability}`, target: ready.target, hostId: ready.connection.hostId,
-    ref: ready.ref, initialText: ready.initialText, profile: join(fixture, "electron-profile") }), { mode: 0o600 });
+    connection: ready.connection, ref: ready.ref, initialText: ready.initialText, profile: join(fixture, "electron-profile") }), { mode: 0o600 });
+  const modules=await Bun.build({entrypoints:[join(repo,"apps/desktop/src/main/workspace-image.ts"),join(repo,"apps/desktop/src/main/composer-actions-transport.ts"),join(repo,"apps/desktop/src/main/preload.ts")],external:["electron"],outdir:output,target:"node",format:"cjs",naming:"[name].cjs"});if(!modules.success)throw new Error("Skill image main modules did not build");
   const electron = Bun.spawn([String((await import("electron")).default), join(import.meta.dir, "skill-file-electron.cjs"), output], { stdout: Bun.file(join(output, "electron.log")), stderr: Bun.file(join(output, "electron-errors.log")) });
   const timer = setTimeout(() => electron.kill("SIGTERM"), 120_000), code = await electron.exited; clearTimeout(timer);
   const result = JSON.parse(await readFile(join(output, "result.json"), "utf8"));
@@ -117,7 +119,7 @@ try {
   result.sourceAtBuild = sourceAtBuild;
   result.sourceAfterRun = await hashes();
   result.sourceHashesStable = JSON.stringify(result.sourceAtBuild) === JSON.stringify(result.sourceAfterRun);
-  result.scope = "Production renderer/runtime acceptance in hidden Electron against an authenticated isolated host and native OMP user-skill discovery. It verifies actual file reads and writes, debounce, offline cache, read-detected external revision conflict, and an explicit resolution write against the refreshed revision. Stale-write CAS is covered by the backend unit suite. Native OS reveal, installed-main/preload routing and pixel parity are outside this harness.";
+  result.scope = "Production renderer/runtime acceptance in hidden Electron against an authenticated isolated host and native OMP user-skill discovery. It verifies actual file reads and writes, debounce, offline cache, read-detected external revision conflict, and an explicit resolution write against the refreshed revision. Stale-write CAS is covered by the backend unit suite. Skill images exercise actual preload and production main image/transport modules through fixture IPC wiring. Native OS reveal, installed main-handler routing and pixel parity are outside this harness.";
   result.passed &&= code === 0 && result.sessionCount === 0 && result.draftPersisted && result.skillOutsideProject && revealAttempts === 0 && result.sourceHashesStable;
   await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2));
   if (!result.passed) throw new Error(`Skill file acceptance failed; inspect ${join(output, "result.json")}`);

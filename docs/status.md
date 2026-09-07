@@ -1,5 +1,9 @@
 # Milestone status
 
+## Native skill inline images
+
+Skill previews now load images from the native skill directory on its owning host through the shared Electron image stream. A real reconnect test exposed image reads starving file queries; separate host budgets, serialized image reads and inactive-preview cleanup fix that sequence.21 renderer/host checks with24 captures,57 tests/312 assertions, ordinary-image regression, typecheck/build and independent review pass. Installed/native-pixel proof and durable offline image caching remain open. See [file editor](workspace-file-editor.md).
+
 ## Rich Markdown fenced code
 
 Closed fences now use the pinned hidden-marker structure, language label, spacing and corners while keeping original Markdown editable. Ten renderer/host checks with10 PNG+AX captures verify two real saves, undo, offline recovery and theme tokens;20 tests/77 assertions, typecheck/build and independent review pass. No matched native fence capture exists, so this is source/renderer evidence rather than pixel certification. See [file editor](workspace-file-editor.md).

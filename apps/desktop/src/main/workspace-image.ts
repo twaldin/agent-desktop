@@ -1,5 +1,5 @@
 import { extname, isAbsolute } from "node:path";
-import type { WorkspaceQueryResult, WorkspaceTarget } from "@agent-desktop/shared";
+import { parseNativeSkillFileRef, type NativeSkillFileRef, type WorkspaceQueryResult, type WorkspaceTarget } from "@agent-desktop/shared";
 import type { WorkspaceCopySource } from "./workspace-save-copy";
 
 const CHUNK_BYTES = 1024 * 1024;
@@ -15,6 +15,8 @@ type Grant = { senderId: number; path: string; mime: string; source(signal: Abor
 function validateOwner(target: WorkspaceTarget, path: string, hostId: string): void {
   if (!target || typeof target !== "object" || Object.keys(target).length !== 1 || !("projectId" in target || "sessionId" in target)
     || typeof Object.values(target)[0] !== "string" || !Object.values(target)[0] || Object.values(target)[0].length > 200) throw new Error("Select one workspace image owner.");
+}
+function validatePath(path: string, hostId: string): void {
   if (typeof hostId !== "string" || !hostId || hostId.length > 200) throw new Error("Select the workspace image host.");
   if (typeof path !== "string" || !path || path.length > 16_384 || path.includes("\0") || path.includes("\\") || isAbsolute(path) || path.split("/").includes("..")) throw new Error("Select a relative image path in the owning workspace.");
 }
@@ -37,6 +39,16 @@ export class WorkspaceImageGrants {
 
   acquire(input: { senderId: number; target: WorkspaceTarget; path: string; hostId: string; source(signal: AbortSignal): WorkspaceCopySource }): {url: string; id: string} {
     validateOwner(input.target, input.path, input.hostId);
+    return this.create(input);
+  }
+
+  acquireSkill(input: { senderId: number; ref: NativeSkillFileRef; path: string; hostId: string; source(signal: AbortSignal): WorkspaceCopySource }): {url: string; id: string} {
+    parseNativeSkillFileRef(input.ref);
+    return this.create(input);
+  }
+
+  private create(input: { senderId: number; path: string; hostId: string; source(signal: AbortSignal): WorkspaceCopySource }): {url: string; id: string} {
+    validatePath(input.path, input.hostId);
     const mime = MIME.get(extname(input.path).toLowerCase()) ?? "application/octet-stream";
     const id = crypto.randomUUID();
     this.grants.set(id, { senderId: input.senderId, path: input.path, mime, source: input.source, active: new Set() });

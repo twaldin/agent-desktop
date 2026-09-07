@@ -3,9 +3,9 @@ import { access, lstat, realpath, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { dirname, basename } from "node:path";
 import { promisify } from "node:util";
-import type { ComposerActionsCatalog, NativeSkillFileDocument, NativeSkillFileRef, NativeSkillFileWriteResult, NativeSkillInventory, TextDocument, WorkspaceTarget } from "@agent-desktop/shared";
+import type { ComposerActionsCatalog, NativeSkillFileDocument, NativeSkillFileRef, NativeSkillFileWriteResult, NativeSkillInventory, TextDocument, WorkspaceQueryResult, WorkspaceTarget } from "@agent-desktop/shared";
 import type { WorkerRuntime } from "./omp-workers";
-import { WorkspaceService } from "./workspace";
+import { WorkspaceError, WorkspaceService } from "./workspace";
 
 const execute = promisify(execFile);
 
@@ -126,6 +126,41 @@ export class SkillFiles {
     const binding = await this.bind(ref), document = await this.text(binding);
     const catalog = await this.rebind(binding, true);
     return this.file(binding, document, catalog.revision);
+  }
+
+  /** Read an image referenced by an opened skill, rooted at its canonical parent. */
+  async image(ref: NativeSkillFileRef, path: string, revision?: string, offset?: number): Promise<Extract<WorkspaceQueryResult, { type: "file.copy-info" | "file.copy-chunk" }>> {
+    if (typeof path !== "string" || !path || path.length > 16_384 || /[\\\x00-\x1f\x7f-\x9f]/.test(path)
+      || path.startsWith("/") || path.split("/").some(part => !part || part === "." || part === "..")) {
+      throw new SkillFileError("A relative image path within the opened skill directory is required.", 400, "INVALID_SKILL_FILE_IMAGE");
+    }
+    if ((revision === undefined) !== (offset === undefined)
+      || revision !== undefined && (!/^[a-f0-9]{64}$/.test(revision) || !Number.isSafeInteger(offset) || offset! < 0)) {
+      throw new SkillFileError("An exact image revision and non-negative byte offset are required.", 400, "INVALID_SKILL_FILE_IMAGE");
+    }
+    const binding = await this.bind(ref);
+    await this.rebind(binding, true);
+    try {
+      if (revision === undefined) {
+        const result = await binding.workspace.copyInfo(path);
+        await this.rebind(binding, true);
+        return { type: "file.copy-info", path, ...result };
+      }
+      const result = await binding.workspace.copyChunk(path, revision, offset!);
+      await this.rebind(binding, true);
+      return { type: "file.copy-chunk", path, ...result };
+    } catch (cause) {
+      if (cause instanceof SkillFileError) throw cause;
+      if (cause instanceof WorkspaceError) {
+        if (["FILE_COPY_CHANGED", "PATH_CHANGED"].includes(cause.code))
+          throw new SkillFileError("The skill image changed while it was read. Refresh before retrying.", 409, "SKILL_FILE_CHANGED");
+        if (["OUTSIDE_WORKSPACE", "INVALID_COPY_REQUEST", "INVALID_COPY_OFFSET"].includes(cause.code))
+          throw new SkillFileError("A relative image path within the opened skill directory is required.", 400, "INVALID_SKILL_FILE_IMAGE");
+        if (cause.code === "NOT_REGULAR_FILE")
+          throw new SkillFileError("The skill image is unavailable.", 404, "SKILL_FILE_IMAGE_UNAVAILABLE");
+      }
+      throw new SkillFileError("The skill image is unavailable.", 404, "SKILL_FILE_IMAGE_UNAVAILABLE");
+    }
   }
 
   async write(ref: NativeSkillFileRef, input: { expectedRevision: string; text: string; bom?: boolean }): Promise<NativeSkillFileWriteResult> {

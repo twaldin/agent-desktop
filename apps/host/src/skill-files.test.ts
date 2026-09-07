@@ -120,3 +120,38 @@ describe("owner-bound native skill files", () => {
     expect(await readFile(join(moved, "SKILL.md"), "utf8")).toBe("\uFEFForiginal\n");
   });
 });
+
+
+test("copies skill-relative image bytes in revision-fenced chunks", async () => {
+  const f = await fixture(), directory = join(f.root, "global-skills", "review", "images");
+  const bytes = Buffer.concat([Buffer.alloc(1024 * 1024, 7), Buffer.from([1, 2, 3, 4])]);
+  await mkdir(directory); await writeFile(join(directory, "sample.bin"), bytes);
+  const info = await f.service.image(f.ref, "images/sample.bin");
+  expect(info).toMatchObject({ type: "file.copy-info", path: "images/sample.bin", absolutePath: await realpath(join(directory, "sample.bin")), size: bytes.length });
+  if (info.type !== "file.copy-info") throw new Error("expected image copy info");
+  const copied: Buffer[] = [];
+  for (let offset = 0; offset < info.size;) {
+    const chunk = await f.service.image(f.ref, info.path, info.revision, offset);
+    expect(chunk).toMatchObject({ type: "file.copy-chunk", path: info.path, revision: info.revision, offset, size: info.size });
+    if (chunk.type !== "file.copy-chunk") throw new Error("expected image copy chunk");
+    const data = Buffer.from(chunk.dataBase64, "base64"); copied.push(data); offset += data.length;
+  }
+  expect(Buffer.concat(copied)).toEqual(bytes);
+});
+
+test("skill image reads reject missing, escaped, and stale catalog identities", async () => {
+  const f = await fixture(), parent = join(f.root, "global-skills", "review"), outside = join(f.root, "outside.bin");
+  await writeFile(outside, "outside"); await symlink(outside, join(parent, "outside-link.bin"));
+  await expect(f.service.image(f.ref, "missing.png")).rejects.toMatchObject({ code: "SKILL_FILE_IMAGE_UNAVAILABLE", status: 404 });
+  for (const path of ["../outside.bin", "/outside.bin", "images//sample.png", "images\\sample.png"])
+    await expect(f.service.image(f.ref, path)).rejects.toMatchObject({ code: "INVALID_SKILL_FILE_IMAGE", status: 400 });
+  await expect(f.service.image(f.ref, "outside-link.bin")).rejects.toMatchObject({ code: "INVALID_SKILL_FILE_IMAGE", status: 400 });
+
+  await writeFile(join(parent, "inside.bin"), "inside");
+  let calls = 0; const original = f.runtime.getSkillInventory;
+  f.runtime.getSkillInventory = async () => {
+    if (++calls === 3) f.setCatalogPath(join(f.root, "replacement.md"));
+    return await original();
+  };
+  await expect(f.service.image(f.ref, "inside.bin")).rejects.toMatchObject({ code: "SKILL_FILE_CHANGED", status: 409 });
+});

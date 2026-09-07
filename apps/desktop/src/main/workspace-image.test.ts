@@ -93,3 +93,15 @@ describe("sender-scoped workspace image streams", () => {
     expect(queried).toBe(true); expect(grants.release(aborted.id, 4)).toBe(true);
   });
 });
+
+test("skill grants use the same revocable stream without a fabricated project owner", async () => {
+  const grants=new WorkspaceImageGrants(), fixture=source(Buffer.from("owned skill bytes"));
+  const input={senderId:9,ref:{skillId:"skill:one",sourcePath:"/native/skills/one/SKILL.md",inventory:true},path:"assets/diagram.svg",hostId:"host",source:fixture.create};
+  const grant=grants.acquireSkill(input);
+  expect(grant.url).not.toContain("native");
+  expect(await (await grants.response(grant.url)).text()).toBe("owned skill bytes");
+  expect(grants.release(grant.id,8)).toBe(false);
+  grants.releaseSender(9);expect((await grants.response(grant.url)).status).toBe(404);
+  expect(()=>grants.acquireSkill({...input,path:"../outside.svg"})).toThrow();
+  expect(()=>grants.acquireSkill({...input,ref:{...input.ref,sourcePath:"relative/SKILL.md"}})).toThrow();
+});
