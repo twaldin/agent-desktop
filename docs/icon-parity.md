@@ -57,3 +57,8 @@ The project card uses the pinned settings caller's notebook glyph (`zp` export, 
 ## Source30 MCP repeater remove
 
 The MCP form removes entries with the actual filled20-point artwork selected by the pinned repeater, rendered in its12-point icon slot. The binding trace is `plugins-page-ab74c4c3acdd.js` `Ia` → primary export `GC` → definition `kL` at character offset1,374,563. The single complete path replaces the unrelated close glyph. Private source hashes and the corrected trace are in `.data/mcp-form-checkpoint/trash-icon.json`; the similarly named Lucide chunk is not the icon used by this control. This establishes artwork selection from source, not native-window pixel parity.
+
+
+## Native skills
+
+Skill rows and the dialog use the pinned Lucide Package asset, including its fourth top-seam path; the previous dollar-sign tile is removed. The source is `package-B3GzAPd2-3bcd1cb89a10.js`, SHA256 `6e0bec16ba34e924f46ce40de24fab59df8cbad9aec639dd64de7e33a2cecc1c`, rendered as a 16-point glyph in the 40-point circular holder. This establishes generic artwork selection. Skill-supplied icons and registered native-window pixels remain unverified.

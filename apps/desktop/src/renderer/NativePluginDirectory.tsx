@@ -3,6 +3,7 @@ import type { ComposerAction, ComposerActionsCatalog } from "../../../../package
 import type { DesktopBridge, NativeMarketplaceCatalog, NativePluginCatalog, WorkspaceTarget } from "@agent-desktop/shared";
 import { assertComposerOwner, targetIdentity } from "./composer-autocomplete";
 import { Icon } from "./Icons";
+import { NativeSkillDialog } from "./NativeSkillDialog";
 import "./native-plugin-directory.css";
 
 export interface NativePluginDirectoryProps {
@@ -13,9 +14,13 @@ export interface NativePluginDirectoryProps {
   target?: WorkspaceTarget;
   initialTab?: "plugins" | "skills";
   restoreFocusLabel?: string;
+  embeddedSkills?: boolean;
+  search?: string;
+  refreshKey?: number;
   onTabChange?(tab: "plugins" | "skills"): void;
   onManage(pluginId?: string): void;
   onMarketplace(name?: string): void;
+  onTrySkill?(action: ComposerAction): void;
   onClose(): void;
 }
 
@@ -30,7 +35,7 @@ function sourceLabel(action: ComposerAction): string {
   return action.source.path ? `${action.source.label} · ${action.source.path}` : action.source.label;
 }
 
-export function NativePluginDirectory({ bridge, hostId, hostName, connected, target: inputTarget, initialTab = "plugins", onTabChange, restoreFocusLabel, onManage, onMarketplace, onClose }: NativePluginDirectoryProps) {
+export function NativePluginDirectory({ bridge, hostId, hostName, connected, target: inputTarget, initialTab = "plugins", onTabChange, restoreFocusLabel, embeddedSkills = false, search, refreshKey, onTrySkill, onManage, onMarketplace, onClose }: NativePluginDirectoryProps) {
   const targetKey = targetIdentity(inputTarget);
   // App snapshots can recreate an equivalent target without changing its owner.
   const target = useMemo(() => inputTarget, [targetKey]);
@@ -48,7 +53,6 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [skill, setSkill] = useState<SkillState | null>(null);
-  const [copyState, setCopyState] = useState<{ kind: "copied" | "error"; message: string } | null>(null);
 
   const load = useCallback(async (refresh: boolean) => {
     const ticket = ++loadEpoch.current;
@@ -91,7 +95,6 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
       detailEpoch.current++;
       setCatalogState({ owner, value: emptyCatalogs(), status: emptyStatus() });
       setSkill(null);
-      setCopyState(null);
       setQuery("");
       setError(null);
     }
@@ -103,7 +106,7 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
       setSkill(current => current?.owner === owner && current.loading ? { ...current, loading: false, error: `${hostName} is offline.` } : current);
     }
     return () => { loadEpoch.current++; detailEpoch.current++; };
-  }, [connected, hostName, load, owner]);
+  }, [connected, hostName, load, owner, refreshKey]);
   useEffect(() => () => { mounted.current = false; loadEpoch.current++; detailEpoch.current++; }, []);
 
   useEffect(() => {
@@ -121,16 +124,24 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
   const marketplaceStatus = catalogs.marketplaces ? "available" : connected ? statuses.marketplaces : "unavailable";
   const skillStatus = catalogs.composer ? "available" : connected ? statuses.composer : "unavailable";
   const ownedSkill = skill?.owner === owner ? skill : null;
+  const restoreSkillFocus = () => {
+    const ticket = detailEpoch.current, id = skillOpener.current;
+    requestAnimationFrame(() => {
+      if (!mounted.current || ownerRef.current !== owner || detailEpoch.current !== ticket) return;
+      const opener = [...(root.current?.querySelectorAll<HTMLButtonElement>("button[data-skill-id]") ?? [])].find(item => item.dataset.skillId === id);
+      (opener ?? root.current)?.focus();
+    });
+  };
   useEffect(() => {
     if (!ownedSkill?.revision || !catalogs.composer || ownedSkill.revision === catalogs.composer.revision) return;
     detailEpoch.current++;
     setSkill(null);
-    setCopyState(null);
     setError("The skill catalog changed. Open the skill again to read its current file.");
+    restoreSkillFocus();
   }, [catalogs.composer?.revision, ownedSkill?.revision]);
   const installed = catalogs.plugins?.plugins ?? [];
   const marketplaceRows = useMemo(() => (catalogs.marketplaces?.marketplaces ?? []).flatMap(marketplace => marketplace.plugins.map(plugin => ({ marketplace, plugin }))), [catalogs.marketplaces]);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const normalizedQuery = (search ?? query).trim().toLocaleLowerCase();
   const visibleMarketplace = marketplaceRows.filter(({ marketplace, plugin }) => !normalizedQuery || `${plugin.name} ${plugin.description ?? ""} ${marketplace.name}`.toLocaleLowerCase().includes(normalizedQuery));
   const visibleSkills = (catalogs.composer?.skills ?? []).filter(item => !normalizedQuery || `${item.name} ${item.description} ${item.source.label}`.toLocaleLowerCase().includes(normalizedQuery));
   const installedIds = useMemo(() => new Set(catalogs.marketplaces?.installed.map(item => item.id) ?? []), [catalogs.marketplaces]);
@@ -139,7 +150,6 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
     skillOpener.current = action.id;
     const catalog = catalogs.composer;
     const read = bridge.getSkillDetail;
-    setCopyState(null);
     setSkill({ owner, revision: catalog?.revision, action, loading: true });
     if (!catalog || !read) { setSkill({ owner, revision: catalog?.revision, action, loading: false, error: "Update the owning host to read this skill." }); return; }
     const ticket = ++detailEpoch.current;
@@ -158,43 +168,31 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
   const closeSkill = () => {
     detailEpoch.current++;
     setSkill(null);
-    setCopyState(null);
-    requestAnimationFrame(() => [...(root.current?.querySelectorAll<HTMLButtonElement>("button[data-skill-id]") ?? [])].find(item=>item.dataset.skillId===skillOpener.current)?.focus());
+    restoreSkillFocus();
   };
   const changeTab = (next: "plugins" | "skills") => {
     detailEpoch.current++;
     setSkill(null);
-    setCopyState(null);
     if (next !== tab) onTabChange?.(next);
     setTab(next);
   };
 
-  return <section ref={root} onPointerDown={()=>{focusRestored.current=true;}} onKeyDown={()=>{focusRestored.current=true;}} className="native-plugin-directory" aria-label="Native plugin directory">
-    <header className="plugin-directory-toolbar">
+  return <section ref={root} tabIndex={-1} onPointerDown={()=>{focusRestored.current=true;}} onKeyDown={()=>{focusRestored.current=true;}} className={`native-plugin-directory ${embeddedSkills ? "plugin-settings-skills" : ""}`} aria-label={embeddedSkills ? "Native skills" : "Native plugin directory"}>
+    {!embeddedSkills && <header className="plugin-directory-toolbar">
       <div role="tablist" aria-label="Plugin directory sections">
         <button role="tab" aria-selected={tab === "plugins"} onClick={() => changeTab("plugins")}>Plugins</button>
         <button role="tab" aria-selected={tab === "skills"} onClick={() => changeTab("skills")}>Skills</button>
       </div>
       <div className="plugin-directory-actions">
-        <button className="icon-button" aria-label="Refresh plugin directory" title="Refresh" disabled={!connected || loading} onClick={() => { detailEpoch.current++; setSkill(null); setCopyState(null); void load(true); }}><Icon name="refresh" /></button>
+        <button className="icon-button" aria-label="Refresh plugin directory" title="Refresh" disabled={!connected || loading} onClick={() => { detailEpoch.current++; setSkill(null); void load(true); }}><Icon name="refresh" /></button>
         <button className="secondary-button" aria-label="Manage plugins" disabled={!connected} onClick={() => onManage()}>Manage</button>
         <button className="primary-button" aria-label="Add marketplace" disabled={!connected} onClick={() => onMarketplace()}>Add marketplace</button>
         <button className="icon-button" aria-label="Close plugin directory" title="Close" onClick={onClose}><Icon name="close" /></button>
       </div>
-    </header>
+    </header>}
     <main className="plugin-directory-content">
-      {ownedSkill ? <article className="plugin-skill-detail">
-        <button className="plugin-directory-back" onClick={closeSkill}><Icon name="browserBack" /> Skills</button>
-        <div className="plugin-directory-title"><div><h1>{ownedSkill.action.name}</h1><p>{ownedSkill.action.description}</p></div><span className={`plugin-availability ${ownedSkill.action.availability}`}>{ownedSkill.action.availability}</span></div>
-        <dl><div><dt>Source</dt><dd>{sourceLabel(ownedSkill.action)}</dd></div><div><dt>Invocation</dt><dd><code>{ownedSkill.action.insertText}</code><button className="secondary-button" onClick={() => { const ticket = detailEpoch.current; void (async () => { try { if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable."); await navigator.clipboard.writeText(ownedSkill.action.insertText); if (mounted.current && ticket === detailEpoch.current) setCopyState({ kind: "copied", message: "Invocation copied." }); } catch { if (mounted.current && ticket === detailEpoch.current) setCopyState({ kind: "error", message: "The invocation could not be copied." }); } })(); }}>Copy invocation</button></dd></div></dl>
-        {copyState?.kind === "copied" && <p role="status" className="plugin-copy-status">{copyState.message}</p>}
-        {copyState?.kind === "error" && <p role="alert" className="inline-error">{copyState.message}</p>}
-        {ownedSkill.loading && <p role="status">Loading skill…</p>}
-        {ownedSkill.error && <p role="alert" className="inline-error">{ownedSkill.error}</p>}
-        {ownedSkill.content !== undefined && <pre aria-label={`${ownedSkill.action.name} skill contents`}>{ownedSkill.content}</pre>}
-      </article> : <>
-        <div className="plugin-directory-title"><div><h1>{tab === "plugins" ? "Plugins" : "Skills"}</h1><p>{tab === "plugins" ? "Extend native OMP with installed and marketplace plugins." : "Inspect skills available to this workspace."}</p></div><span>{hostName}</span></div>
-        <label className="plugin-directory-search"><Icon name="search" /><span className="sr-only">Search {tab}</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${tab}`} /></label>
+        {!embeddedSkills && <><div className="plugin-directory-title"><div><h1>{tab === "plugins" ? "Plugins" : "Skills"}</h1><p>{tab === "plugins" ? "Extend native OMP with installed and marketplace plugins." : "Inspect skills available to this workspace."}</p></div><span>{hostName}</span></div>
+        <label className="plugin-directory-search"><Icon name="search" /><span className="sr-only">Search {tab}</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${tab}`} /></label></>}
         {!connected && <p role="status" className="plugin-directory-offline">{catalogs.plugins || catalogs.marketplaces || catalogs.composer ? `Offline · showing cached data from ${hostName}` : `${hostName} is offline.`}</p>}
         {loading && <p role="status">Loading {tab}…</p>}
         {catalogState.owner === owner && error && <p role="alert" className="inline-error">{error}</p>}
@@ -205,10 +203,10 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
           <section className="plugin-marketplace" aria-labelledby="plugin-marketplace-heading"><div className="plugin-section-heading"><h2 id="plugin-marketplace-heading">Marketplace plugins</h2><small>{marketplaceStatus === "available" ? `${visibleMarketplace.length} configured` : marketplaceStatus === "unavailable" ? "Unavailable" : "Loading"}</small></div>
             {visibleMarketplace.length ? <div className="plugin-directory-grid">{visibleMarketplace.map(({ marketplace, plugin }) => { const id = `${plugin.name}@${marketplace.name}`; const installedPlugin = installedIds.has(id); return <button key={id} aria-label={`Browse ${plugin.name} in ${marketplace.name}`} className="plugin-directory-row" onClick={() => onMarketplace(marketplace.name)}><span className="plugin-tile" aria-hidden="true">{plugin.name.trim().slice(0, 1).toLocaleUpperCase() || "P"}</span><span><strong>{plugin.name}</strong><small>{plugin.description ?? plugin.version ?? "Native marketplace plugin"}</small><em>{marketplace.name} · {installedPlugin ? "Installed" : plugin.installable ? "Available" : plugin.unavailabilityReason ?? "Unavailable"}</em></span></button>; })}</div> : !loading && <p className="integration-placeholder">{marketplaceStatus === "unavailable" ? "Marketplace catalog unavailable." : normalizedQuery ? "No configured marketplace plugins match this search." : marketplaceStatus === "available" ? "No configured marketplace plugins available." : "Loading marketplace plugins…"}</p>}
           </section>
-        </> : <section className="plugin-skills" aria-labelledby="plugin-skills-heading"><div className="plugin-section-heading"><h2 id="plugin-skills-heading">Workspace skills</h2><small>{skillStatus === "available" ? `${visibleSkills.length} available` : skillStatus === "unavailable" ? "Unavailable" : "Loading"}</small></div>
-          {visibleSkills.length ? <div className="plugin-directory-grid">{visibleSkills.map(action => <button key={action.id} data-skill-id={action.id} className="plugin-directory-row" onClick={() => void openSkill(action)}><span className="plugin-tile skill" aria-hidden="true">$</span><span><strong>{action.name}</strong><small>{action.description}</small><em title={sourceLabel(action)}>{action.source.label} · {action.availability}</em></span></button>)}</div> : !loading && <p className="integration-placeholder">{skillStatus === "unavailable" ? "Skill catalog unavailable." : normalizedQuery ? "No skills match this search." : skillStatus === "available" ? "No native skills are available for this workspace." : "Loading skills…"}</p>}
+        </> : <section className="plugin-skills" aria-label={embeddedSkills ? "Workspace skills" : undefined} aria-labelledby={embeddedSkills ? undefined : "plugin-skills-heading"}>{!embeddedSkills && <div className="plugin-section-heading"><h2 id="plugin-skills-heading">Workspace skills</h2><small>{skillStatus === "available" ? `${visibleSkills.length} available` : skillStatus === "unavailable" ? "Unavailable" : "Loading"}</small></div>}
+          {visibleSkills.length ? <div className="plugin-directory-grid">{visibleSkills.map(action => <button key={action.id} data-skill-id={action.id} className="plugin-directory-row" onClick={() => void openSkill(action)}><span className="plugin-tile skill" aria-hidden="true"><Icon name="skill"/></span><span><strong>{action.name}</strong><small>{action.description}</small><em title={sourceLabel(action)}>{action.source.label} · {action.availability}</em></span></button>)}</div> : !loading && <p className="integration-placeholder">{skillStatus === "unavailable" ? "Skill catalog unavailable." : normalizedQuery ? "No skills match this search." : skillStatus === "available" ? "No native skills are available for this workspace." : "Loading skills…"}</p>}
         </section>}
-      </>}
     </main>
+    {ownedSkill && <NativeSkillDialog key={`${owner}:${ownedSkill.action.id}`} action={ownedSkill.action} content={ownedSkill.content} loading={ownedSkill.loading} error={ownedSkill.error} onTry={onTrySkill ? ()=>onTrySkill(ownedSkill.action) : undefined} onClose={closeSkill} openExternal={url=>bridge.openExternal(url)}/>}
   </section>;
 }

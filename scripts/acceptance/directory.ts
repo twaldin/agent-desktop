@@ -23,7 +23,8 @@ try{
   if(route==='/test/release'){release?.();release=undefined;return Response.json({ok:true},{headers:cors});}
   if(route==='/test/fail'){fail=input.value;return Response.json({ok:true},{headers:cors});}
   if(route==='/test/state')return Response.json({held,calls},{headers:cors});
-  if(!/^\/v1\/(composer\/(actions|skill-detail)|integrations\/(acquisition\/(catalog|operations)|plugins\/read|mcp\/read))$/.test(route))return new Response(null,{status:403});
+  if(route==='/v5/commands'&&input.command?.type!=='draft.put')return new Response(null,{status:403});
+  if(route!=='/v5/commands'&&!/^\/v1\/(composer\/(actions|skill-detail)|integrations\/(acquisition\/(catalog|operations)|plugins\/read|mcp\/read))$/.test(route))return new Response(null,{status:403});
   calls.push(route);
   if(holdRoute===route){holdRoute=undefined;held=true;await new Promise<void>(resolve=>{release=resolve;});}
   if(fail)return Response.json({error:{message:'Controlled directory read outage'}},{status:503,headers:cors});
@@ -32,10 +33,10 @@ try{
  }});
  await writeFile(join(output,'index.html'),`<html><body><div id="root"></div><script type="module" src="${join(import.meta.dir,'directory-browser.tsx')}"></script></body></html>`);
  await build({configFile:false,root:output,plugins:[react(),tailwindcss()],base:'./',build:{outDir:join(output,'web'),rollupOptions:{input:join(output,'index.html')}}});
- await writeFile(join(output,'launch.json'),JSON.stringify({endpoint:`http://127.0.0.1:${proxy.port}/${capability}`,target:ready.target,secondTarget:ready.secondTarget,hostId:ready.connection.hostId,profile:join(root,'electron-profile')}));
+ await writeFile(join(output,'launch.json'),JSON.stringify({endpoint:`http://127.0.0.1:${proxy.port}/${capability}`,draft:ready.draft,target:ready.target,secondTarget:ready.secondTarget,hostId:ready.connection.hostId,profile:join(root,'electron-profile')}));
  const electron=Bun.spawn([process.execPath,join(repo,'node_modules/electron/cli.js'),join(import.meta.dir,'directory-electron.cjs'),output],{stdout:Bun.file(join(output,'electron.log')),stderr:Bun.file(join(output,'electron-errors.log'))});
  const code=await electron.exited,result=await Bun.file(join(output,'result.json')).json();
  const response=await fetch(ready.connection.origin+'/v1/integrations/acquisition/operations',{method:'POST',headers:{Authorization:`Bearer ${ready.connection.token}`,'Content-Type':'application/json'},body:'{}'});
- result.receipts=await response.json();result.calls=calls;result.scope='Production directory/management components in hidden Electron, capability HTTP bridge to real isolated authenticated host/native OMP discovery. Two native acquisition mutations seed fixtures; directory actions are read-only. Native OS-window/main routing and full pixel parity unverified.';
+ result.receipts=await response.json();result.calls=calls;const stateResponse=await fetch(ready.connection.origin+'/v1/state',{headers:{Authorization:`Bearer ${ready.connection.token}`}});if(!stateResponse.ok)throw new Error('Final state read failed');const finalState=await stateResponse.json() as any;result.finalDrafts=finalState.drafts;result.sessionCount=finalState.sessions.length;const finalDraft=finalState.drafts.find((draft:any)=>draft.id==='new-conversation');result.draftPersisted=finalDraft?.text==='/skill:directory-skill EXISTING_UNSENT_SKILL_DRAFT'&&finalDraft?.projectId===ready.target.projectId&&finalDraft?.model===null&&finalDraft?.revision===2;result.passed&&=result.sessionCount===0&&result.draftPersisted;result.scope='Production directory/management components in hidden Electron, capability HTTP bridge to real isolated authenticated host/native OMP discovery. Two native acquisition mutations and an initial draft seed fixtures. Directory reads remain read-only; Try sends only a draft.put through the real DraftController, with zero sessions verified afterward. Native OS-window/main routing and full pixel parity unverified.';
  result.passed&&=code===0&&result.receipts.length===2;await writeFile(join(output,'result.json'),JSON.stringify(result,null,2));if(!result.passed)throw new Error('Directory acceptance failed');console.log(JSON.stringify({passed:true,output}));
-}finally{proxy?.stop(true);host.send({stop:true});await host.exited;await rm(root,{recursive:true,force:true});await rm(join(output,'launch.json'),{force:true});}
+}finally{proxy?.stop(true);if(host.exitCode===null){try{host.send({stop:true});}catch{}}await host.exited;await rm(root,{recursive:true,force:true});await rm(join(output,'launch.json'),{force:true});}

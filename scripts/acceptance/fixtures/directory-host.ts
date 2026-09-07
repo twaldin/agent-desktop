@@ -5,7 +5,7 @@ const root=process.argv[2]!,project=join(root,'project'),agent=join(root,'agent'
 await Promise.all([mkdir(join(project,'.omp','skills','directory-skill'),{recursive:true}),mkdir(agent,{recursive:true}),mkdir(join(market,'.omp-plugin'),{recursive:true}),mkdir(join(market,'sample'),{recursive:true})]);
 Bun.spawnSync(['git','init','-q',project]);
 await writeFile(join(agent,'config.yml'),'extensions: []\n');
-await writeFile(join(project,'.omp','skills','directory-skill','SKILL.md'),'---\nname: directory-skill\ndescription: Read the fixture checklist before changing files\n---\n# Directory skill\n\nDIRECTORY_SKILL_CONTENT from the actual owning project.\n');
+await writeFile(join(project,'.omp','skills','directory-skill','SKILL.md'),'---\nname: directory-skill\ndescription: Read the fixture checklist before changing files\n---\n# Directory skill\n\nDIRECTORY_SKILL_CONTENT from the actual owning project.\n'+Array.from({length:24},(_,i)=>`\n## Checklist item ${i+1}\n\nRead the current workspace before applying item ${i+1}.\n`).join('')+'\nDOCUMENT_END_MARKER\n');
 await writeFile(join(market,'sample','package.json'),JSON.stringify({name:'directory-sample',version:'1.0.0',omp:{name:'Directory sample',description:'Installed native package for browsing'}}));
 await writeFile(join(market,'.omp-plugin','marketplace.json'),JSON.stringify({name:'directory-market',owner:{name:'Fixture'},plugins:[{name:'sample',description:'Native marketplace sample',version:'1.0.0',source:'./sample'}]}));
 const host=await startHost({dataDirectory:join(root,'data'),agentDirectory:agent,discoveryDirectory:project,tailscale:false});
@@ -18,5 +18,6 @@ for(const action of [{operation:'marketplace.add',source:market},{operation:'plu
  await request('/v1/integrations/acquisition/start',{target,request:{id,expectedRevision:catalog.revision,action}});
  for(let i=0;;i++){const rows=await request('/v1/integrations/acquisition/operations',{});const row=rows.find((x:any)=>x.id===id);if(row.state==='succeeded')break;if(row.state!=='running'||i>400)throw new Error('Native fixture mutation did not settle');await Bun.sleep(25);}
 }
-await writeFile(join(root,'ready.json'),JSON.stringify({connection:host.connection,target,secondTarget}));
+const draftResult=await request('/v5/commands',{id:'directory-draft',commandVersion:5,command:{type:'draft.put',draft:{id:'new-conversation',text:'EXISTING_UNSENT_SKILL_DRAFT',projectId:target.projectId,model:null},expectedRevision:0}});if(!draftResult.ok)throw new Error('Draft fixture creation failed');
+await writeFile(join(root,'ready.json'),JSON.stringify({connection:host.connection,target,secondTarget,draft:draftResult.value}));
 process.on('message',()=>void host.stop().then(()=>process.exit(0)));
