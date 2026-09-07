@@ -1,5 +1,13 @@
 # Milestone status
 
+## Home source30 native Plugins/Skills follow-up
+
+The separate packaged `4dd81e0` candidate now has bounded native Home evidence: 25 original window PNGs and 22 complete native accessibility/screenshot pairs at 1440×1000. One native plugin upgrade, setting save/restore, skill disable/restore, Try now draft preparation, cancellation and navigation passed. The final draft retains its original text and selections at revision4; zero sessions or prompts were created. Skill settings are restored, but native serialization removed the config file's trailing newline. Auth guards remain local/zero; native loopback model discovery was active, so network isolation is not claimed.
+
+The captures identify remaining mismatches in Plugins settings rows/toggles, skill detail/file actions, directory filters and marketplace form density. Font/DPR/zoom matching and pixel registration remain unmeasured. Private originals, state receipts and the per-reference gap report are in `.data/source30-native-fixture/run-source30-p0ffp4r8/`. Work fixtures and sealed reference bundles remain untouched.
+
+Separately, current source replaces the directory's text Manage control with the pinned settings glyph and adds an anchored Add menu. Production-component Electron input checks pass at 1440 and720 points for focus, Escape/Tab, outside/resize/scroll dismissal, owner/disconnect changes and single action dispatch. These checks caught and verified a resize-handler fix. Typecheck and production build pass. This source fix has no frozen native/pixel acceptance yet; evidence is `.data/directory-add-menu-proof-final/`.
+
 ## Source30 packaged candidate
 
 A separate uninstalled macOS candidate freezes production `4dd81e0` at `out/source30-4dd81e0/desktop/Agent Desktop.app`, with its host archive alongside. It includes the current plugin/skill surfaces and resumed-session model fixes, using owned Bun 1.3.14/OMP 18.1.10, worker 29 and schema 7.

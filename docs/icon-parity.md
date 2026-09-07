@@ -58,6 +58,10 @@ The project card uses the pinned settings caller's notebook glyph (`zp` export, 
 
 The MCP form removes entries with the actual filled20-point artwork selected by the pinned repeater, rendered in its12-point icon slot. The binding trace is `plugins-page-ab74c4c3acdd.js` `Ia` → primary export `GC` → definition `kL` at character offset1,374,563. The single complete path replaces the unrelated close glyph. Private source hashes and the corrected trace are in `.data/mcp-form-checkpoint/trash-icon.json`; the similarly named Lucide chunk is not the icon used by this control. This establishes artwork selection from source, not native-window pixel parity.
 
+## Source30 Plugins directory Manage
+
+The Plugins directory header's Manage caller is `plugins-page-ab74c4c3acdd.js` at the `onManage` toolbar branch: it renders the compact ghost toolbar button with accessible label `Manage` and the imported settings glyph `Ei`. The import resolves `Ei` to `qst` from `app-initial-86767c3d23e5.js`; the app-initial export maps `qst` to `o5r`, whose exact filled 20×20 SVG body begins at character offset 4,886,779. `renderer/Icons.tsx` uses that body for the `settings` entry. This is source-backed artwork selection, not a native-window pixel-parity claim.
+
 
 ## Native skills
 

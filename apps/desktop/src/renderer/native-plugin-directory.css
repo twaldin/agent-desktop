@@ -5,6 +5,11 @@
 .plugin-directory-toolbar [role=tab][aria-selected=true] { color:var(--text); background:var(--hover); }
 .plugin-directory-toolbar .icon-button { width:30px; height:30px; }
 .plugin-directory-toolbar .icon { width:16px; height:16px; }
+.plugin-directory-add-trigger { display:flex; align-items:center; gap:6px; min-height:28px; padding:4px 10px; }
+.plugin-directory-add-trigger .icon { width:14px; height:14px; transform:rotate(90deg); }
+.plugin-directory-add-menu { position:fixed; z-index:100; min-width:210px; padding:6px; background:var(--dialog-surface, var(--elevated-surface)); border:1px solid var(--border); border-radius:var(--radius-large,12px); corner-shape:superellipse(var(--corner-exponent,1.25)); box-shadow:0 8px 24px #0003; }
+.plugin-directory-add-menu button { display:block; width:100%; min-height:32px; padding:6px 10px; border:0; border-radius:var(--radius-medium,10px); background:transparent; color:var(--text); text-align:left; font:inherit; cursor:pointer; }
+.plugin-directory-add-menu button:hover, .plugin-directory-add-menu button:focus-visible { background:var(--hover); outline:none; }
 .plugin-directory-content { width:100%; max-width:736px; min-height:0; flex:1; margin:0 auto; padding:18px 0 64px; overflow:auto; }
 .plugin-directory-title { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; }
 .plugin-directory-title h1 { margin:0; font-size:28px; line-height:36px; font-weight:500; letter-spacing:-.02em; }

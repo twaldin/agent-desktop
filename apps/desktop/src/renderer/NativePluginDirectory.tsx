@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComposerAction, ComposerActionsCatalog } from "../../../../packages/shared/src/composer-actions";
 import type { DesktopBridge, NativeMarketplaceCatalog, NativePluginCatalog, NativeSkillInventory, OmpSettingsSnapshot, OmpSettingsMutation, SettingsScope, WorkspaceTarget } from "@agent-desktop/shared";
 import { assertComposerOwner, targetIdentity } from "./composer-autocomplete";
@@ -34,6 +35,42 @@ const errorText = (error: unknown): string => error instanceof Error ? error.mes
 
 function sourceLabel(action: ComposerAction): string {
   return action.source.path ? `${action.source.label} · ${action.source.path}` : action.source.label;
+}
+
+function DirectoryAddMenu({ connected, ownerKey, onMarketplace }: { connected: boolean; ownerKey: string; onMarketplace(): void }) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const menu = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+
+  useEffect(() => { setOpen(false); }, [connected, ownerKey]);
+  useLayoutEffect(() => {
+    if (!open || !trigger.current || !menu.current) return;
+    const rect = trigger.current.getBoundingClientRect();
+    const menuRect = menu.current.getBoundingClientRect();
+    setPosition({ left: Math.max(8, Math.min(rect.right - menuRect.width, innerWidth - menuRect.width - 8)), top: rect.bottom + 6 + menuRect.height <= innerHeight - 8 ? rect.bottom + 6 : Math.max(8, rect.top - menuRect.height - 6) });
+    menu.current.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    const closeOutside = (event: PointerEvent) => {
+      if (!trigger.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    const dismissOnMove = (event: Event) => { if (!(event.target instanceof Node) || !menu.current?.contains(event.target)) { setOpen(false); requestAnimationFrame(() => trigger.current?.focus()); } };
+    window.addEventListener("resize", dismissOnMove);
+    document.addEventListener("scroll", dismissOnMove, true);
+    return () => { document.removeEventListener("pointerdown", closeOutside); window.removeEventListener("resize", dismissOnMove); document.removeEventListener("scroll", dismissOnMove, true); };
+  }, [open]);
+  const chooseMarketplace = () => { setOpen(false); onMarketplace(); };
+  const popup = open && typeof document !== "undefined" ? createPortal(<div ref={menu} role="menu" aria-label="Add integration" className="plugin-directory-add-menu" style={{ top: position.top, left: position.left }} onKeyDown={event => {
+    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")];
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); return; }
+    if (event.key === "Tab") { event.preventDefault(); setOpen(false); trigger.current?.focus(); return; }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); buttons[(index + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus(); }
+  }}><button role="menuitem" onClick={chooseMarketplace}>Add a marketplace</button></div>, document.body) : null;
+  return <>
+    <button ref={trigger} className="primary-button plugin-directory-add-trigger" aria-haspopup="menu" aria-expanded={open} disabled={!connected} onClick={() => setOpen(current => !current)}>Add <Icon name="chevron" /></button>
+    {popup}
+  </>;
 }
 
 export function NativePluginDirectory({ bridge, hostId, hostName, connected, target: inputTarget, initialTab = "plugins", onTabChange, restoreFocusLabel, embeddedSkills = false, search, refreshKey, onTrySkill, onManage, onMarketplace, onClose }: NativePluginDirectoryProps) {
@@ -226,8 +263,8 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
       </div>
       <div className="plugin-directory-actions">
         <button className="icon-button" aria-label="Refresh plugin directory" title="Refresh" disabled={!connected || loading || saving} onClick={() => { detailEpoch.current++; setSkill(null); void load(true); }}><Icon name="refresh" /></button>
-        <button className="secondary-button" aria-label="Manage plugins" disabled={!connected} onClick={() => onManage()}>Manage</button>
-        <button className="primary-button" aria-label="Add marketplace" disabled={!connected} onClick={() => onMarketplace()}>Add marketplace</button>
+        <button className="icon-button" aria-label="Manage" title="Manage" disabled={!connected} onClick={() => onManage()}><Icon name="settings" /></button>
+        <DirectoryAddMenu connected={connected} ownerKey={owner} onMarketplace={() => onMarketplace()} />
         <button className="icon-button" aria-label="Close plugin directory" title="Close" onClick={onClose}><Icon name="close" /></button>
       </div>
     </header>}
@@ -240,7 +277,7 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
         {tab === "skills" && <details className="skill-configuration"><summary>Skill settings · {scope==="global"?"User":"This project"}</summary><label>Apply changes to <select aria-label="Skill settings scope" value={scope} disabled={saving} onChange={event=>setScope(event.target.value as SettingsScope)}><option value="global">User on {hostName}</option>{target&&<option value="project">This project</option>}</select></label>{catalogs.inventory&&catalogs.settings ? <><p>Project lists replace user lists. Changes apply to new sessions.</p>{(["skills.enabled","skills.enableSkillCommands"] as const).map(path=>{const entry=catalogs.settings!.entries.find(item=>item.path===path);return <label key={path}><input type="checkbox" checked={entry?.[scope]===undefined ? scope==="global" ? true : entry?.effective===true : entry[scope]===true} disabled={!connected||saving||loading||typeof entry?.effective!=="boolean"} onChange={event=>void changeSetting({expectedRevision:catalogs.settings!.revision,scope,path,operation:"set",value:event.target.checked})}/>{path==="skills.enabled"?"Enable skills":"Enable skill commands"}</label>;})}</> : <p>Refresh or update the owning host to manage native skill settings.</p>}</details>}
         {saveNotice&&tab==="skills"&&<p role="status" className="skill-save-notice">{saveNotice}</p>}
         {tab === "plugins" ? <>
-          <section className="plugin-installed" aria-labelledby="plugin-installed-heading"><div className="plugin-section-heading"><h2 id="plugin-installed-heading">Installed</h2><button className="icon-button" aria-label="Manage installed plugins" disabled={!connected} onClick={() => onManage()}><Icon name="sliders" /></button></div>
+            <section className="plugin-installed" aria-labelledby="plugin-installed-heading"><div className="plugin-section-heading"><h2 id="plugin-installed-heading">Installed</h2><button className="icon-button" aria-label="Manage installed plugins" disabled={!connected} onClick={() => onManage()}><Icon name="settings" /></button></div>
             {installed.length ? <div className="plugin-chip-list">{installed.map(plugin => <button key={`${plugin.id}:${plugin.scope}`} className="plugin-chip" title={`${plugin.title} · ${plugin.scope}`} aria-label={`Manage ${plugin.title}`} onClick={() => onManage(plugin.id)}><span aria-hidden="true">{plugin.title.trim().slice(0, 1).toLocaleUpperCase() || "P"}</span></button>)}</div> : !loading && <p className="integration-placeholder">{pluginStatus === "unavailable" ? "Installed plugin catalog unavailable." : pluginStatus === "available" ? "No native plugins installed." : "Loading installed plugins…"}</p>}
           </section>
           <section className="plugin-marketplace" aria-labelledby="plugin-marketplace-heading"><div className="plugin-section-heading"><h2 id="plugin-marketplace-heading">Marketplace plugins</h2><small>{marketplaceStatus === "available" ? `${visibleMarketplace.length} configured` : marketplaceStatus === "unavailable" ? "Unavailable" : "Loading"}</small></div>
