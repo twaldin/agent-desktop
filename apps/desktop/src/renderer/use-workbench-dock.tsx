@@ -115,7 +115,7 @@ export function useWorkbenchDock(
   });
   const setUnread = (id: string, unread: boolean) => setSnapshot(previous => previous.tabs.some(tab => tab.id === id && Boolean(tab.unread) !== unread) ? { ...previous, tabs: previous.tabs.map(tab => tab.id === id ? { ...tab, unread } : tab) } : previous);
   const setFileMode = (id: string, fileMode: "markdown" | "source") => setSnapshot(previous => ({ ...previous,
-    tabs: previous.tabs.map(tab => tab.id === id && tab.kind === "file" ? { ...tab, fileMode } : tab) }));
+    tabs: previous.tabs.map(tab => tab.id === id && (tab.kind === "file" || tab.kind === "skill-file") ? { ...tab, fileMode } : tab) }));
   const bindBrowser = (
     browserTarget: BrowserFrameTarget,
     title: string,

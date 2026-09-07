@@ -1,3 +1,4 @@
+import { WindowStateStore } from "../../apps/desktop/src/main/window-state";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +17,7 @@ const sources = [
   "apps/desktop/src/renderer/native-skill-dialog.css",
   "apps/desktop/src/renderer/native-skill-file-state.ts", "apps/desktop/src/renderer/NativeSkillFilePanel.tsx",
   "apps/desktop/src/renderer/native-skill-file-panel.css", "apps/desktop/src/renderer/use-workbench-dock.tsx",
+  "apps/desktop/src/main/window-state.ts",
   "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/window-state.ts",
   "apps/desktop/src/renderer/styles.css", "apps/desktop/src/renderer/theme.css",
   "apps/host/src/skill-files.ts", "apps/host/src/composer-actions-http.ts", "apps/host/src/omp/composer-actions.ts",
@@ -53,6 +55,12 @@ try {
     if (!path.startsWith(`/${capability}/`)) return new Response(null, { status: 404 });
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     const route = path.slice(capability.length + 1), input = await request.json() as any;
+    if(route === "/test/window-view"){
+      const store=new WindowStateStore(join(fixture,"window-state"),"skill-fixture");
+      if(input.action==="save")store.saveView(input.view);
+      else if(input.action!=="read")return new Response(null,{status:400,headers:cors});
+      return Response.json(store.bootstrap().state??null,{headers:cors});
+    }
     if (route === "/test/events") return Response.json(pendingEvents.splice(0), { headers: cors });
     if (route === "/test/file") return Response.json({ text: await readFile(ready.skillPath, "utf8"), sha256: createHash("sha256").update(await readFile(ready.skillPath)).digest("hex") }, { headers: cors });
     if (route === "/test/external-write") { if (typeof input.text !== "string" || input.text.length > 1024 * 1024) return new Response(null, { status: 400 }); await writeFile(ready.skillPath, input.text, { mode: 0o600 }); return Response.json({ written: true }, { headers: cors }); }

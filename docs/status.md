@@ -1,8 +1,12 @@
 # Milestone status
 
+## Skill tab view persistence
+
+Skill tabs now restore their source/preview selection using the existing per-window dock state, including offline edits after a renderer reload.41 scoped tests/261 assertions and16 renderer/host checks with15 PNG+AX captures pass; typecheck/build and independent mode-state review pass. Existing closed skill controllers still need explicit close-time durability/disposal handling. Installed/native-pixel acceptance remains open. See [file editor](workspace-file-editor.md).
+
 ## Skill file view switching
 
-Skill source/preview switches now wait for confirmed saves, including edits made during an earlier write. Offline dirty buffers, conflicts and unknown receipts keep the current view; leaving the tab cancels a delayed switch. A related close-after-disconnect race now waits for an already-delivered skill write. Scoped controller/main-gate tests and isolated renderer/host acceptance cover these changes; installed/native-pixel acceptance and persistent skill view selection remain outstanding. See [file editor](workspace-file-editor.md).
+Skill source/preview switches now wait for confirmed saves, including edits made during an earlier write. Offline dirty buffers, conflicts and unknown receipts keep the current view; leaving the tab cancels a delayed switch. A related close-after-disconnect race now waits for an already-delivered skill write. Scoped controller/main-gate tests and isolated renderer/host acceptance cover these changes; installed/native-pixel acceptance remains outstanding. See [file editor](workspace-file-editor.md).
 
 ## Editable Markdown tables
 

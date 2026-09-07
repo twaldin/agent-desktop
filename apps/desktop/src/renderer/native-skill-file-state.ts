@@ -29,8 +29,8 @@ export class NativeSkillFileController {
   private restoreTask?:Promise<boolean>;
   private restored=false;
   private storageError=false;
-  constructor(private bridge:DesktopBridge, hostId:string, ref:NativeSkillFileRef, private cache:OfflineCache) {
-    this.state={hostId,ref:parseNativeSkillFileRef(ref),file:null,text:"",dirty:false,saving:false,loading:false,conflict:false,uncertain:false,source:false,switchingSource:false};
+  constructor(private bridge:DesktopBridge, hostId:string, ref:NativeSkillFileRef, private cache:OfflineCache, initialMode:"markdown"|"source"="markdown") {
+    this.state={hostId,ref:parseNativeSkillFileRef(ref),file:null,text:"",dirty:false,saving:false,loading:false,conflict:false,uncertain:false,source:initialMode==="source",switchingSource:false};
   }
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn);};};
   getVersion=()=>this.version;
@@ -136,7 +136,7 @@ export class NativeSkillFileController {
     this.state.text=text;this.state.dirty=text!==this.state.file?.document.text;this.state.notice=undefined;this.state.error=undefined;this.emit();
     void this.persist().then(()=>this.schedule(),()=>{});
   }
-  async toggleSource(signal?:AbortSignal):Promise<boolean>{
+  async toggleSource(signal?:AbortSignal, nextSource=!this.state.source):Promise<boolean>{
     if(this.state.switchingSource||!this.state.file||this.state.loading||signal?.aborted)return false;
     this.state.switchingSource=true;this.emit();
     try {
@@ -149,7 +149,7 @@ export class NativeSkillFileController {
         }
         // A new edit can arrive between the drain and this continuation.
         if(this.state.saving||this.state.dirty||this.state.conflict||this.state.uncertain||this.storageError)continue;
-        this.state.source=!this.state.source;return true;
+        this.state.source=nextSource;return true;
       }
     } catch(cause){
       if(!signal?.aborted)this.state.error=message(cause);

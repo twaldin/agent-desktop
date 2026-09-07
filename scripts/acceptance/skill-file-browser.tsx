@@ -7,7 +7,7 @@ import { NativeSkillFilePanel } from "../../apps/desktop/src/renderer/NativeSkil
 import { offlineCache } from "../../apps/desktop/src/renderer/offline-cache";
 import { useWorkbenchDock } from "../../apps/desktop/src/renderer/use-workbench-dock";
 import { DockPanel } from "../../apps/desktop/src/renderer/DockPanel";
-import { defaultWindowView } from "../../apps/desktop/src/window-state";
+import { defaultWindowView, type WindowViewState } from "../../apps/desktop/src/window-state";
 import "../../apps/desktop/src/renderer/styles.css";
 import "../../apps/desktop/src/renderer/theme.css";
 
@@ -42,18 +42,27 @@ const bridge = {
   subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
 } satisfies Partial<DesktopBridge> as DesktopBridge;
 
+let restoredView:WindowViewState|null=null;
+let windowWrites:Promise<unknown>=Promise.resolve();
+let dockProjection:()=>unknown=()=>null;
+let flushFiles:()=>Promise<void>=async()=>{};
 let setConnection: (value: boolean) => void;
 let recreateControllers: () => void;
 let controllerProjection: () => unknown[] = () => [];
 function Fixture() {
-  const [connected, setConnected] = useState(true);
+  const [connected, setConnected] = useState(sessionStorage.getItem("skill-fixture-offline")!=="true");
   const [generation, setGeneration] = useState(0);
   const [error, setError] = useState("");
   setConnection = setConnected;
   recreateControllers = () => setGeneration(value => value + 1);
-  const initial = useMemo(() => ({ ...defaultWindowView(), dock: undefined }), []);
+  const initial = useMemo(() => restoredView??defaultWindowView(), []);
   const dock = useWorkbenchDock(bridge, initial, hostId, target, connected, setError);
+  dockProjection=()=>dock.snapshot;
+  useEffect(()=>{
+    if(dock.persisted){const view={...defaultWindowView(),dock:dock.persisted};windowWrites=windowWrites.then(()=>request("/test/window-view",{action:"save",view}));}
+  },[dock.persisted]);
   const controllers = useMemo(() => new Map<string, NativeSkillFileController>(), [generation]);
+  flushFiles=async()=>{await Promise.all([...controllers.values()].map(controller=>controller.flush()));};
   controllerProjection = () => [...controllers.entries()].map(([id, controller]) => ({ id, ...controller.state, file: controller.state.file ? {
     revision: controller.state.file.document.revision, text: controller.state.file.document.text,
   } : null, pending: Boolean((controller as any).pending) }));
@@ -61,8 +70,8 @@ function Fixture() {
   const renderTab = (tab: any, active: boolean) => {
     if (tab.kind !== "skill-file" || !tab.skillFile) return null;
     let controller = controllers.get(tab.id);
-    if (!controller) { controller = new NativeSkillFileController(bridge, tab.hostId, tab.skillFile, offlineCache); controllers.set(tab.id, controller); }
-    return <NativeSkillFilePanel controller={controller} connected={connected} active={active}/>;
+    if (!controller) { controller = new NativeSkillFileController(bridge, tab.hostId, tab.skillFile, offlineCache,tab.fileMode); controllers.set(tab.id, controller); }
+    return <NativeSkillFilePanel controller={controller} fileMode={tab.fileMode??"markdown"} onFileModeChange={mode=>dock.setFileMode(tab.id,mode)} connected={connected} active={active}/>;
   };
   return <main className="app-shell skill-file-fixture">
     <section className="skill-file-directory"><NativePluginDirectory bridge={bridge} hostId={hostId} hostName="Disposable native host" connected={connected}
@@ -73,14 +82,16 @@ function Fixture() {
   </main>;
 }
 document.documentElement.dataset.theme = "dark";
-createRoot(document.getElementById("root")!).render(<Fixture/>);
+void request("/test/window-view",{action:"read"}).then(view=>{restoredView=view;createRoot(document.getElementById("root")!).render(<Fixture/>);});
 Object.assign(window, {
   request,
   editor(selector:string) { return document.querySelector<HTMLElement>(selector) ?? [...document.querySelectorAll("diffs-container")].map(node=>node.shadowRoot?.querySelector<HTMLElement>(selector)).find(Boolean); },
-  connection: (value: boolean) => setConnection(value),
+  connection: (value: boolean) => {sessionStorage.setItem("skill-fixture-offline",String(!value));setConnection(value);},
+  flushWindow:()=>windowWrites,
+  flushFiles:()=>flushFiles(),
   recreateControllers: () => recreateControllers(),
   target(selector: string, label?: string) { const item = [...document.querySelectorAll<HTMLElement>(selector)].filter(node => node.getClientRects().length).find(node => label === undefined || node.textContent?.trim() === label); if (!item) throw new Error(`Missing ${selector} ${label ?? ""}`); item.scrollIntoView({ block: "center" }); const box = item.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; },
-  state() { return { body: document.body.innerText, width: innerWidth, height: innerHeight, dpr: devicePixelRatio,
+  state() { return { dock:dockProjection(), body: document.body.innerText, width: innerWidth, height: innerHeight, dpr: devicePixelRatio,
     menuGeometry: (() => {
       const node = document.querySelector<HTMLElement>('.skill-dialog-menu');
       if (!node) return null;

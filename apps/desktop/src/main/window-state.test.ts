@@ -505,3 +505,19 @@ test("Markdown mode persists with the exact owning file tab and ignores invalid 
   expect(parseDockSnapshot({ state, tabs: [{ ...source, fileMode: "html" }] })?.tabs[0]).toEqual({ ...descriptor, id: source.id });
   expect(dockTabId(source)).toBe(dockTabId(markdown));
 });
+
+test("skill source mode survives disk restoration per window without sharing file contents", () => {
+  const directory=temporary();
+  for(const target of [undefined,{projectId:"p"},{sessionId:"s"}]){
+    const descriptor={kind:"skill-file" as const,hostId:"work",target:(!target?"host":"projectId" in target?"project:p":"session:s") as "host"|"project:p"|"session:s",title:"SKILL.md",skillFile:{skillId:"skill:sample",sourcePath:"/native/SKILL.md",inventory:true,...(target?{target}:{})}};
+    const tab={...descriptor,id:dockTabId(descriptor),fileMode:"source" as const};
+    const state=insertDockTab(createDockState(),tab,"right");
+    new WindowStateStore(directory,"source-window").saveView({...selected(),dock:{state,tabs:[tab]}});
+    new WindowStateStore(directory,"preview-window").saveView({...selected(),dock:{state,tabs:[{...tab,fileMode:"markdown"}]}});
+    expect(new WindowStateStore(directory,"source-window").bootstrap().state?.dock?.tabs[0]).toEqual(tab);
+    expect(new WindowStateStore(directory,"preview-window").bootstrap().state?.dock?.tabs[0]?.fileMode).toBe("markdown");
+    expect(parseDockSnapshot({state,tabs:[{...tab,fileMode:"invalid"}]})?.tabs[0]).not.toHaveProperty("fileMode");
+    expect(parseDockSnapshot({state,tabs:[{...tab,fileMode:undefined}]})?.tabs[0]).not.toHaveProperty("fileMode");
+    const preview={...tab,fileMode:"markdown" as const};expect(dockTabId(preview)).toBe(tab.id);
+  }
+});

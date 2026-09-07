@@ -178,7 +178,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       ...(item.unread === true ? { unread: true } : {}),
       ...(skillFile ? {skillFile} : {}),
       ...(filePath === undefined ? {} : { filePath }),
-      ...(filePath !== undefined && (item.fileMode === "markdown" || item.fileMode === "source") ? { fileMode: item.fileMode } : {}),
+      ...((filePath !== undefined || skillFile !== undefined) && (item.fileMode === "markdown" || item.fileMode === "source") ? { fileMode: item.fileMode } : {}),
       hostId: item.hostId,
       target: item.target as DockTab["target"],
       kind: item.kind as DockTab["kind"],

@@ -522,8 +522,8 @@ export function App() {
     if (tab.kind === "skill-file") {
       if (!tab.skillFile) return <p>The saved skill file identity is unavailable.</p>;
       let controller = skillFiles.get(tab.id);
-      if (!controller) { controller = new NativeSkillFileController(bridge,tab.hostId,tab.skillFile,offlineCache); skillFiles.set(tab.id,controller); }
-      return <NativeSkillFilePanel controller={controller} connected={Boolean(desktop.catalog.records.get(tab.hostId)?.connected)} active={active} openExternal={url=>bridge.openExternal(url)}/>;
+      if (!controller) { controller = new NativeSkillFileController(bridge,tab.hostId,tab.skillFile,offlineCache,tab.fileMode); skillFiles.set(tab.id,controller); }
+      return <NativeSkillFilePanel controller={controller} fileMode={tab.fileMode??"markdown"} onFileModeChange={mode=>dock.setFileMode(tab.id,mode)} connected={Boolean(desktop.catalog.records.get(tab.hostId)?.connected)} active={active} openExternal={url=>bridge.openExternal(url)}/>;
     }
     if (tab.target === "host") return <p>This panel requires a project or session.</p>;
     const target = targetFromDock(tab.target), owner = `${tab.hostId}:${tab.target}`;
