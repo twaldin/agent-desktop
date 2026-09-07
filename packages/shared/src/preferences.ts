@@ -24,6 +24,7 @@ export const THEME_TOKEN_DEFINITIONS = {
   "--editor-surface": { kind: "color" }, "--terminal-surface": { kind: "color" },
   "--text": { kind: "color" }, "--secondary": { kind: "color" }, "--tertiary": { kind: "color" },
   "--border": { kind: "color" }, "--hover": { kind: "color" }, "--selected": { kind: "color" },
+  "--switch-on": { kind: "color" }, "--switch-off": { kind: "color" }, "--switch-thumb": { kind: "color" },
   "--accent": { kind: "color" }, "--accent-text": { kind: "color" }, "--focus-ring": { kind: "color" },
   "--danger": { kind: "color" }, "--error-surface": { kind: "color" },
   "--success": { kind: "color" }, "--warning": { kind: "color" }, "--selection-surface": { kind: "color" },

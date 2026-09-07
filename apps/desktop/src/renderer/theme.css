@@ -2,6 +2,7 @@
   --dialog-surface: var(--elevated-surface); --dialog-input-surface: var(--elevated-surface); --dialog-opacity: .9; --dialog-blur: 24px; --dialog-backdrop-color: #00000022;
   --panel-surface: var(--app-surface); --menu-surface: var(--elevated-surface); --editor-surface: var(--app-surface);
   --terminal-surface: var(--app-surface); --accent-text: var(--app-surface); --focus-ring: var(--accent);
+  --switch-on:#3a83f7; --switch-off:#393939; --switch-thumb:#fff;
   --success: #37976a; --warning: #a77722; --selection-surface: color-mix(in srgb, var(--accent) 25%, transparent);
   --code-surface: var(--sidebar-surface); --code-text: var(--text);
   --diff-added-surface: color-mix(in srgb, #37976a 12%, transparent); --diff-removed-surface: color-mix(in srgb, var(--danger) 10%, transparent);

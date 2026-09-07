@@ -1,5 +1,11 @@
 # Milestone status
 
+## Plugins settings rows
+
+Installed plugins now appear as full-width borderless rows with native descriptions and direct enable switches. The switch uses the existing revisioned OMP mutation, prevents duplicate clicks while pending, and remains disabled offline or when native configuration is read-only. Opening details and returning restores focus to the same row. Switch colors are exposed through the theme registry.
+
+Eight focused hidden Electron checks pass with six captures at 1440 and720 points, using actual isolated OMP workers: three UI mutations plus one explicitly direct native restoration write, initial/final enabled state, pending response handling and controlled renderer-owner fencing. The first run caught a generic hover rule replacing switch colors; the second verifies the scoped fix. Thirty-two integration/theme/preference tests, typecheck, build and independent source review pass. This is renderer/native-worker evidence, not packaged native-window, cross-host or matched pixel acceptance. Generic artwork, exact surrounding layout and light-theme/reference hover comparisons remain open. Pins, worker29/schema7 and existing installed fixtures are unchanged. Private evidence: `.data/ui-acceptance/native-plugin-rows-2026-09-07-r2/` and `.data/plugin-rows-reference/`.
+
 ## Home source30 native Plugins/Skills follow-up
 
 The separate packaged `4dd81e0` candidate now has bounded native Home evidence: 25 original window PNGs and 22 complete native accessibility/screenshot pairs at 1440×1000. One native plugin upgrade, setting save/restore, skill disable/restore, Try now draft preparation, cancellation and navigation passed. The final draft retains its original text and selections at revision4; zero sessions or prompts were created. Skill settings are restored, but native serialization removed the config file's trailing newline. Auth guards remain local/zero; native loopback model discovery was active, so network isolation is not claimed.
