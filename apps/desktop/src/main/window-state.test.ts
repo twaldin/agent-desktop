@@ -521,3 +521,19 @@ test("skill source mode survives disk restoration per window without sharing fil
     const preview={...tab,fileMode:"markdown" as const};expect(dockTabId(preview)).toBe(tab.id);
   }
 });
+
+test("file scroll fallback is bounded, mode-specific, owner-bound and window-local", () => {
+  const descriptor = { kind: "skill-file" as const, hostId: "remote", target: "host" as const, title: "SKILL.md",
+    skillFile: { skillId: "skill", sourcePath: "/skills/example/SKILL.md", inventory: true } };
+  const tab = { ...descriptor, id: dockTabId(descriptor), fileScroll: { markdown: 412.5, source: 918 } };
+  const dock = { tabs: [tab], state: insertDockTab(createDockState(), tab, "right") };
+  const root = temporary(), store = new WindowStateStore(root, "one");
+  expect(store.saveView({ ...defaultWindowView(), dock })).toEqual({});
+  expect(new WindowStateStore(root, "one").bootstrap().state?.dock?.tabs[0]?.fileScroll).toEqual(tab.fileScroll);
+  expect(new WindowStateStore(root, "two").bootstrap().state?.dock).toBeUndefined();
+  for (const top of [-1, NaN, Infinity, 100_000_001, "400", null]) {
+    expect(parseDockSnapshot({ ...dock, tabs: [{ ...tab, fileScroll: { markdown: top } }] })).toBeUndefined();
+  }
+  expect(parseDockSnapshot({ ...dock, tabs: [{ ...tab, fileScroll: { source: 0, content: "PRIVATE RAW", effect: {} } }] })?.tabs[0]?.fileScroll).toEqual({ source: 0 });
+  expect(parseDockSnapshot({ ...dock, tabs: [{ ...tab, hostId: "other" }] })).toBeUndefined();
+});

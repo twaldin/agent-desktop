@@ -21,6 +21,7 @@ export interface DockTab {
   skillFile?: NativeSkillFileRef;
   filePath?: string;
   fileMode?: "markdown" | "source";
+  fileScroll?: { markdown?: number; source?: number };
   terminalId?: string;
   browserTarget?: BrowserFrameTarget;
 }

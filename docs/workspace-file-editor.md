@@ -225,4 +225,13 @@ Skill tabs now reuse the ordinary Markdown content-area copy control in both pre
 
 The full skill regression at `.data/ui-acceptance/skill-markdown-copy-2026-09-07-r1/result.json` passes23 checks/27 PNG+AX captures, including actual system clipboard write/readback from preview and offline source, injected rejection and real retry. Prior clipboard formats were restored after verifying they remained fixture-owned. Copy adds no host call; the existing nine skill-editor writes, zero sessions and original revision1 draft are retained. Typecheck/build and independent Terra review pass. Private scope/comparison: `.data/skill-markdown-copy-2026-09-07/`.
 
-The source audit confirms skill Open routes into the generic Markdown file editor. This does not establish a matched native skill-copy pixel comparison. The labeled owner-host Open control, durable per-mode scroll snapshots and selection-to-chat remain open; a file tree or breadcrumb is not inferred from the route's null working directory.
+The source audit confirms skill Open routes into the generic Markdown file editor. This does not establish a matched native skill-copy pixel comparison. The labeled owner-host Open control, per-mode scroll restoration and selection-to-chat remained open at that checkpoint; a file tree or breadcrumb is not inferred from the route's null working directory.
+
+
+## Skill editor scroll restoration
+
+Skill tabs preserve independent preview/source numeric scroll positions through mode changes and renderer reload using existing window-local dock storage. Hidden editors do not publish zero positions. Initial restoration waits for visible content; user input takes control. Scroll updates are coalesced, and tab/page lifecycle boundaries flush pending positions. Validation accepts only bounded finite numbers; raw document bytes and CodeMirror objects do not enter window JSON.
+
+The pinned rendered Markdown snapshot is a raw in-memory CodeMirror effect, reused only when content matches. Its durable route does not serialize it. Our co-mounted editors keep live state; numeric disk restoration is an additional recovery path. Semantic anchor restoration across reflow is not certified by this change.
+
+Isolated evidence: `.data/ui-acceptance/skill-scroll-2026-09-07-r1/result.json` passes24 checks/31 PNG+AX captures. Actual wheel input produces distinct positions; full renderer reload restores source, then preview restores independently without hidden-mode overwrite or added file writes. The full previous suite retains nine real skill writes, zero sessions, the original revision1 draft, clipboard restoration and stable source hashes.32 tests/173 assertions, typecheck/build and independent Terra review pass. Private scope/source trace/comparison: `.data/skill-scroll-2026-09-07/`. Installed full-App routing, physical Work input, immediate close timing and matched native pixels remain unverified.

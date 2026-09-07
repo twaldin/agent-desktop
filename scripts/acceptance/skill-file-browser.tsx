@@ -76,7 +76,7 @@ function Fixture() {
     if (tab.kind !== "skill-file" || !tab.skillFile) return null;
     let controller = controllers.get(tab.id);
     if (!controller) { controller = new NativeSkillFileController(bridge, tab.hostId, tab.skillFile, offlineCache,tab.fileMode); controllers.set(tab.id, controller); }
-    return <NativeSkillFilePanel controller={controller} fileMode={tab.fileMode??"markdown"} onFileModeChange={mode=>dock.setFileMode(tab.id,mode)} connected={connected} active={active}/>;
+    return <NativeSkillFilePanel controller={controller} fileMode={tab.fileMode??"markdown"} onFileModeChange={mode=>dock.setFileMode(tab.id,mode)} fileScroll={tab.fileScroll} onFileScrollChange={(mode,top)=>dock.setFileScroll(tab.id,mode,top)} connected={connected} active={active}/>;
   };
   return <main className="app-shell skill-file-fixture">
     <section className="skill-file-directory"><NativePluginDirectory bridge={bridge} hostId={hostId} hostName="Disposable native host" connected={connected}

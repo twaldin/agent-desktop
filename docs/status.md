@@ -1,5 +1,9 @@
 # Milestone status
 
+## Skill editor scroll restoration
+
+Preview and source keep independent window-local positions across real renderer reload.24 renderer/host checks with31 captures,32 tests/173 assertions, typecheck/build and independent review pass; prior skill editing, images, copying and close behavior remain covered. Raw CodeMirror snapshots are runtime-only in the reference, so only numeric fallback enters window storage. Installed/native-pixel and reflow-anchor equivalence remain open. See [file editor](workspace-file-editor.md).
+
 ## Skill Copy Markdown
 
 Skill preview/source now share the reference content-area copy control.23 renderer/host checks with27 captures include real clipboard readback, offline unsaved text, failure/retry and confirmed clipboard restoration; copying adds no host operation. Typecheck/build and independent review pass. Installed/native-pixel acceptance and the remaining skill-file controls stay open. See [file editor](workspace-file-editor.md).

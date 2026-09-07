@@ -116,6 +116,12 @@ export function useWorkbenchDock(
   const setUnread = (id: string, unread: boolean) => setSnapshot(previous => previous.tabs.some(tab => tab.id === id && Boolean(tab.unread) !== unread) ? { ...previous, tabs: previous.tabs.map(tab => tab.id === id ? { ...tab, unread } : tab) } : previous);
   const setFileMode = (id: string, fileMode: "markdown" | "source") => setSnapshot(previous => ({ ...previous,
     tabs: previous.tabs.map(tab => tab.id === id && (tab.kind === "file" || tab.kind === "skill-file") ? { ...tab, fileMode } : tab) }));
+  const setFileScroll = (id: string, mode: "markdown" | "source", top: number) => setSnapshot(previous => {
+    if (!Number.isFinite(top) || top < 0 || top > 100_000_000) return previous;
+    const tab = previous.tabs.find(tab => tab.id === id && (tab.kind === "file" || tab.kind === "skill-file"));
+    if (!tab || tab.fileScroll?.[mode] === top) return previous;
+    return { ...previous, tabs: previous.tabs.map(item => item === tab ? { ...item, fileScroll: { ...item.fileScroll, [mode]: top } } : item) };
+  });
   const bindBrowser = (
     browserTarget: BrowserFrameTarget,
     title: string,
@@ -416,7 +422,7 @@ export function useWorkbenchDock(
     updateBrowserTitle,
     updateTitle,
     setUnread,
-    setFileMode,
+    setFileMode, setFileScroll,
     workspaceTab,
   };
 }

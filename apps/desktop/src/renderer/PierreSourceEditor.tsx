@@ -1,3 +1,4 @@
+import { useEditorScroll } from "./use-editor-scroll";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { File } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/edit";
@@ -14,6 +15,7 @@ pre { --diffs-bg:var(--editor-surface,var(--app-surface)); --diffs-bg-buffer:var
 export interface PierreSourceEditorProps {
   documentKey: string; name: string; value: string; onChange(text: string): void;
   onSave(): void; label: string; readOnly?: boolean; active?: boolean;
+  initialScrollTop?: number; onScrollChange?(top: number): void;
   revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
 }
@@ -128,6 +130,7 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
     value.file.setThemeType(themeType); value.file.rerender(); value.label();
   }, [themeType]);
   useEffect(() => { if (props.active !== false) { instance.current?.file.rerender(); instance.current?.label(); instance.current?.reveal(); } }, [props.active, props.revealRequest]);
+  useEditorScroll(container, props);
   return <div ref={frame} className="pierre-source-editor-frame" hidden={props.active === false} data-app-shortcuts="off">
     <div ref={container} className="pierre-source-editor" hidden={props.active === false} data-read-only={Boolean(props.readOnly)}/>
     <GoToLine frame={frame} active={props.active !== false && !props.readOnly} value={props.value}

@@ -163,6 +163,17 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       if (!isWorkspaceFilePath(item.filePath)) return;
       filePath = item.filePath;
     } else if (item.filePath !== undefined) return;
+    let fileScroll: DockTab["fileScroll"];
+    if (item.fileScroll !== undefined) {
+      if ((!filePath && !skillFile) || !record(item.fileScroll)) return;
+      fileScroll = {};
+      for (const mode of ["markdown", "source"] as const) {
+        const top = item.fileScroll[mode];
+        if (top === undefined) continue;
+        if (typeof top !== "number" || !Number.isFinite(top) || top < 0 || top > 100_000_000) return;
+        fileScroll[mode] = top;
+      }
+    }
     const browserTarget = item.browserTarget;
     const validBrowserTarget =
       browserTarget &&
@@ -177,6 +188,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       title: item.title,
       ...(item.unread === true ? { unread: true } : {}),
       ...(skillFile ? {skillFile} : {}),
+      ...(fileScroll ? {fileScroll} : {}),
       ...(filePath === undefined ? {} : { filePath }),
       ...((filePath !== undefined || skillFile !== undefined) && (item.fileMode === "markdown" || item.fileMode === "source") ? { fileMode: item.fileMode } : {}),
       hostId: item.hostId,

@@ -10,6 +10,7 @@ import tailwindcss from "@tailwindcss/vite";
 const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/skill-file-acceptance-${Date.now()}`);
 const sources = [
+  "apps/desktop/src/renderer/use-editor-scroll.ts",
   "apps/desktop/src/renderer/MarkdownCopyButton.tsx",
   "apps/desktop/src/main/workspace-image.ts", "apps/desktop/src/main/composer-actions-transport.ts", "apps/desktop/src/main/preload.ts", "apps/desktop/src/main/main.ts", "apps/desktop/src/renderer/markdown-images.ts", "apps/desktop/src/renderer/MarkdownImageWidget.ts",
   "apps/desktop/src/renderer/RichMarkdownEditor.tsx", "apps/desktop/src/renderer/rich-markdown-editor.css",

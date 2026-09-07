@@ -1,3 +1,4 @@
+import { useEditorScroll } from "./use-editor-scroll";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Annotation, Compartment, Facet, Prec, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
 import { Decoration, EditorView, keymap, placeholder, highlightSpecialChars, drawSelection, type DecorationSet, WidgetType } from "@codemirror/view";
@@ -163,6 +164,7 @@ export interface RichMarkdownEditorProps {
   openLink?(href: string): Promise<void> | void;
   resolveImage?: MarkdownImageResolver;
   imageGeneration?: number;
+  initialScrollTop?: number; onScrollChange?(top: number): void;
   revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
 }
@@ -280,6 +282,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     }
     editor.focus(); props.onReveal?.(request.id);
   }, [props.active, props.documentKey, props.revealRequest, props.value]);
+  useEditorScroll(scroll, props);
   return <div ref={frame} className="rich-markdown-file" hidden={props.active === false}>
     <GoToLine appearance="codemirror" key={props.documentKey} frame={frame} active={props.active !== false && !props.readOnly} value={props.value} onOpen={openLine} onPreview={line => navigateLine(line, false)} onCommit={line => navigateLine(line, true)} onClose={closeLine}/>
     <div ref={scroll} className="rich-markdown-scroll">
