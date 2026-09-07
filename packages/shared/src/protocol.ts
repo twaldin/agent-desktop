@@ -177,6 +177,7 @@ export type HostCommand =
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
   | { type: "skill.file.write"; ref: NativeSkillFileRef; expectedRevision: string; text: string; bom?: boolean }
   | { type: "skill.file.reveal"; ref: NativeSkillFileRef }
+  | { type: "skill.file.open"; ref: NativeSkillFileRef; targetId: string }
   | { type: "project.add"; path: string; name?: string }
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
@@ -215,7 +216,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
   | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -270,6 +271,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getComposerActions?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<ComposerActionsCatalog | null>;
   getSkillInventory?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<NativeSkillInventory | null>;
   getSkillDetail?(target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string, inventory?: boolean): Promise<ComposerSkillDetail>;
+  getSkillFileOpenOptions?(ref: NativeSkillFileRef, hostId?: string): Promise<import("./composer-actions").NativeSkillFileOpenOptions>;
   getSkillFile?(ref: NativeSkillFileRef, hostId?: string): Promise<NativeSkillFileDocument>;
   getComposerCompletions?(query: ComposerCompletionQuery, hostId?: string): Promise<ComposerCompletions>;
   inspectImageAttachment?(data: Uint8Array): Promise<UploadedImageMetadata>;
@@ -285,6 +287,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getInteractions(sessionId: string, hostId?: string): Promise<OmpInteraction[]>;
   getDetachedQuestions?(sessionId: string, hostId?: string): Promise<import('./detached-questions').DetachedQuestionsSnapshot | null>;
   workspaceQuery(target: WorkspaceTarget, query: WorkspaceQuery, hostId?: string): Promise<WorkspaceQueryResult>;
+  saveSkillFileCopy?(ref: NativeSkillFileRef, hostId: string): Promise<{path:string|null}>;
   saveWorkspaceCopy?(target: WorkspaceTarget, path: string, hostId: string): Promise<{path: string | null}>;
   acquireSkillImage?(ref: NativeSkillFileRef, path: string, hostId: string): Promise<{url: string; id: string}>;
   acquireWorkspaceImage?(target: WorkspaceTarget, path: string, hostId: string): Promise<{url: string; id: string}>;

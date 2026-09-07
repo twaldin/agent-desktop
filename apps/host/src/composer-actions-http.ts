@@ -35,7 +35,7 @@ export class ComposerActionsHttp {
     hostId: string; resolveCwd(target?: WorkspaceTarget): string;
     getHandle(sessionId: string): Promise<Pick<WorkerSession, "getComposerActions" | "getComposerCompletions" | "cwd">>;
     runtime: Pick<WorkerRuntime, "getComposerActions" | "getComposerCompletions" | "getSkillInventory">;
-    skillFiles?: Pick<SkillFiles, "read" | "image">;
+    skillFiles?: Pick<SkillFiles, "read" | "image"> & Partial<Pick<SkillFiles, "openOptions" | "copy">>;
   }) {}
   private async readSkill(path: string): Promise<{ content: string; verify(): Promise<void> }> {
     if (!path || !path.startsWith("/") || path.includes("\0")) throw new ComposerRequestError("Native skill content is unavailable.", 404, "SKILL_UNAVAILABLE");
@@ -91,7 +91,7 @@ export class ComposerActionsHttp {
     return { protocolVersion: 1, hostId: this.options.hostId, ...(target ? { target } : {}), cwd, revision: first.revision, skillId: input.skillId, content: read.content };
   }
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
-    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-inventory", "/v1/composer/skill-detail", "/v1/composer/skill-file", "/v1/composer/skill-file-image"].includes(url.pathname)) return undefined;
+    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-inventory", "/v1/composer/skill-detail", "/v1/composer/skill-file", "/v1/composer/skill-file-image", "/v1/composer/skill-file-open-options", "/v1/composer/skill-file-copy"].includes(url.pathname)) return undefined;
     const headers = { "Cache-Control": "no-store", [COMPOSER_OWNER_HEADER]: this.options.hostId };
     let admission: "composer" | "image" | undefined;
     try {
@@ -123,6 +123,21 @@ export class ComposerActionsHttp {
         }
         const result = await this.options.skillFiles.image(ref, input.path, input.revision as string | undefined, input.offset as number | undefined);
         return Response.json(result, { headers });
+      }
+      if (url.pathname.endsWith("/skill-file-copy")) {
+        keys(input, ["ref", "revision", "offset"]);
+        if (!this.options.skillFiles?.copy) throw new ComposerRequestError("Native skill Save as is unavailable on this host.", 501, "SKILL_FILE_COPY_UNAVAILABLE");
+        let ref;
+        try { ref = parseNativeSkillFileRef(input.ref); } catch { throw new ComposerRequestError("Invalid native skill file reference."); }
+        if ((input.revision === undefined) !== (input.offset === undefined) || input.revision !== undefined && (typeof input.revision !== "string" || !/^[a-f0-9]{64}$/.test(input.revision) || !Number.isSafeInteger(input.offset) || Number(input.offset)<0)) throw new ComposerRequestError("Invalid skill copy offset/revision.");
+        return Response.json(await this.options.skillFiles.copy(ref, input.revision as string | undefined, input.offset as number | undefined), { headers });
+      }
+      if (url.pathname.endsWith("/skill-file-open-options")) {
+        keys(input, ["ref"]);
+        if (!this.options.skillFiles?.openOptions) throw new ComposerRequestError("Native skill file Open is unavailable on this host.", 501, "SKILL_FILE_OPEN_UNAVAILABLE");
+        let ref;
+        try { ref = parseNativeSkillFileRef(input.ref); } catch { throw new ComposerRequestError("Invalid native skill file reference."); }
+        return Response.json(await this.options.skillFiles.openOptions(ref), { headers });
       }
       if (skillFile) {
         keys(input, ["ref"]);

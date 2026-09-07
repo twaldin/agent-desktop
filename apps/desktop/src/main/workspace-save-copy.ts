@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access, chmod, link, lstat, open, readlink, realpath, rename, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { parseNativeSkillFileRef, type NativeSkillFileRef } from "@agent-desktop/shared";
 import type { WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
 
@@ -85,12 +86,16 @@ async function destinationPath(path: string, followedLinks = 0): Promise<string>
 }
 
 /** Native dialog first. No renderer destination path, forced editor save, or workspace mutation. */
-export async function saveWorkspaceCopy(input: {target: WorkspaceTarget; path: string; hostId: string}, runtime: {
+export async function saveWorkspaceCopy(input: ({target: WorkspaceTarget} | {skill: NativeSkillFileRef}) & {path: string; hostId: string}, runtime: {
   choose(defaultName: string): Promise<string | null>;
   source(): Promise<WorkspaceCopySource>;
   signal?: AbortSignal;
 }): Promise<{path: string | null}> {
-  validateInput(input.target, input.path, input.hostId);
+  if ("target" in input) validateInput(input.target, input.path, input.hostId);
+  else {
+    const ref = parseNativeSkillFileRef(input.skill);
+    if (input.path !== basename(ref.sourcePath) || typeof input.hostId !== "string" || !input.hostId || input.hostId.length > 200) throw new Error("Select the exact owning skill file.");
+  }
   runtime.signal?.throwIfAborted();
   const selected = await runtime.choose(workspaceCopyDefaultName(input.path));
   if (selected === null) return {path: null};

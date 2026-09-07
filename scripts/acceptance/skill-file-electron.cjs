@@ -3,7 +3,20 @@ const output = process.argv[2], launch = JSON.parse(fs.readFileSync(path.join(ou
 app.setPath("userData", launch.profile); app.commandLine.appendSwitch("disable-renderer-backgrounding");
 protocol.registerSchemesAsPrivileged([{scheme:"agent-workspace-image",privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
 const {WorkspaceImageGrants}=require(path.join(output,"workspace-image.cjs"));
-const {requestSkillImage}=require(path.join(output,"composer-actions-transport.cjs"));
+const {requestSkillImage,requestSkillFileOpenOptions,requestSkillFileCopy}=require(path.join(output,"composer-actions-transport.cjs"));
+const {saveWorkspaceCopy,workspaceCopyOutcome}=require(path.join(output,"workspace-save-copy.cjs"));
+let chosenCopyName,copyQueryCount=0;
+ipcMain.handle("host:skill-file-open-options",(_event,ref,hostId)=>{
+ if(hostId!==launch.hostId||JSON.stringify(ref)!==JSON.stringify(launch.ref))throw Error("Wrong fixture skill owner");
+ return requestSkillFileOpenOptions(launch.connection,ref);
+});
+ipcMain.handle("desktop:skill-save-copy",(_event,ref,hostId)=>workspaceCopyOutcome(async()=>{
+ if(hostId!==launch.hostId||JSON.stringify(ref)!==JSON.stringify(launch.ref))throw Error("Wrong fixture skill owner");
+ return saveWorkspaceCopy({skill:ref,path:ref.sourcePath.split('/').at(-1),hostId},{
+  choose:async name=>{chosenCopyName=name;return launch.copyDestination;},
+  source:async()=>({local:false,query:async query=>{copyQueryCount++;return requestSkillFileCopy(launch.connection,ref,query.type==='file.copy-chunk'?{revision:query.revision,offset:query.offset}:undefined);}}),
+ });
+}));
 const imageGrants=new WorkspaceImageGrants(), imageQueries=[];
 ipcMain.on("desktop:window-state:read",event=>{event.returnValue=null;});
 ipcMain.handle("desktop:skill-image-acquire",(event,ref,imagePath,hostId)=>{
@@ -104,6 +117,37 @@ app.whenReady().then(async () => {
     if((await js("window.request('/test/file',{})")).text!==launch.initialText)throw Error('Scroll changed skill bytes');
     checks.push('Real wheel input stores independent preview/source scroll in disk WindowStateStore; actual renderer reload restores active source, subsequent preview restores its different position, inactive source does not overwrite it; no file write');
     await wheel('.rich-markdown-scroll',100000);await wait('document.querySelector(".rich-markdown-scroll").scrollTop===0');
+    step="skill-host-open";
+    const writesBeforeOpen=(await js("window.request('/test/state',{})")).calls.filter(value=>value.command==='skill.file.write').length;
+    await click('[aria-label="Open options"]');await wait(`document.querySelector('.workspace-file-open-menu')&&[...document.querySelectorAll('.workspace-file-open-menu [role="menuitem"]')].some(node=>node.textContent==='VS Code')`);
+    await capture('02i-skill-open-options');await key('Escape');
+    if(!(await js(`document.activeElement?.getAttribute('aria-label')==='Open options'`)))throw Error('Skill Open Escape lost trigger focus');
+    await click('[aria-label="Open options"]');await click('.workspace-file-open-menu [role="menuitem"]','VS Code');
+    await wait(`window.request('/test/state',{}).then(value=>value.calls.some(call=>call.command==='skill.file.open'))`);
+    await wait(`!document.querySelector('.workspace-file-open-primary').disabled`);
+    const nativeOpen=await js("window.request('/test/open-receipt',{})");
+    if(nativeOpen.executable!=='/usr/bin/open'||nativeOpen.args[0]!=='-a'||nativeOpen.args[1]!=='/Applications/Visual Studio Code.app'||nativeOpen.args[2]!==launch.ref.sourcePath||nativeOpen.cwd!==launch.ref.sourcePath.slice(0,launch.ref.sourcePath.lastIndexOf('/')))throw Error('Skill owner launch adapter received wrong argv: '+JSON.stringify(nativeOpen));
+    await capture('02j-skill-open-confirmed');
+    await click('[aria-label="Open options"]');await click('.workspace-file-open-menu [role="menuitem"]','Save as…');
+    await wait(`!document.querySelector('.workspace-file-open-primary').disabled`);
+    if(chosenCopyName!=='SKILL.md'||copyQueryCount!==3||fs.readFileSync(launch.copyDestination,'utf8')!==launch.initialText)throw Error('Skill Save as did not copy exact owner bytes via shared engine');
+    await capture('02k-skill-save-copy');
+    const openState=await js("window.request('/test/state',{})");
+    if(openState.calls.filter(value=>value.command==='skill.file.open').length!==1||openState.calls.filter(value=>value.command==='skill.file.write').length!==writesBeforeOpen)throw Error('Skill menu caused extra opens/writes');
+    checks.push('Shared skill Open menu uses real preload/owner-fenced options and one durable native host command; bounded launch adapter receives exact owner argv/cwd (no GUI launched). Escape restores trigger. Save as copies exact host bytes through shared copy engine and real IPC, with fixture destination chooser (native dialog not exercised); neither forces a file save');
+    step="unknown-open-receipt";
+    await js("window.request('/test/open-control',{action:'drop'})");
+    await click('.workspace-file-open-primary');await wait(`document.querySelector('.native-skill-file-panel')?.textContent.includes('Check Open receipt')`);
+    await js("window.request('/test/open-control',{action:'unavailable'})");
+    await click('[aria-label="Open options"]');await wait(`document.querySelector('.workspace-file-open-menu')?.textContent.includes('No supported external file application')`);
+    await capture('02l-open-target-removed');await key('Escape');
+    await click('button','Check Open receipt');await wait(`!document.querySelector('.native-skill-file-panel')?.textContent.includes('Check Open receipt')`);
+    const recoveredOpen=await js("window.request('/test/open-receipt',{})");
+    if(recoveredOpen.count!==2)throw Error('Receipt check replayed the launcher');
+    if((await js("window.request('/test/state',{})")).calls.filter(value=>value.command==='skill.file.open').length!==3)throw Error('Unexpected Open command count');
+    await capture('02m-open-original-receipt-confirmed');
+    await js("window.request('/test/open-control',{action:'available'})");
+    checks.push('A second actual host launch with withheld response remains recoverable even after the controlled app catalog becomes empty: explicit Check Open receipt returns original durable result, three command deliveries/two launch-adapter calls, no replay');
     step = "rich-edit";
     await wait(`window.editor('[aria-label="Skill file Markdown"]')`);
     if (!(await js(`document.querySelector('[aria-label="Metadata"]')?.textContent.includes('skill-file-acceptance')&&!document.querySelector('.cm-content')?.textContent.includes('description:')`))) throw new Error("Metadata is not separate from the editable body");

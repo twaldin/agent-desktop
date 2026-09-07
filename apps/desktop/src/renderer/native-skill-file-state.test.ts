@@ -234,3 +234,35 @@ test("skill image leases retain native owner and release a late acquisition afte
   expect(await pending).toBeInstanceOf(Error);expect(released).toEqual(["lease"]);
   expect(seen).toEqual([{resource:ref,path:"assets/picture.svg",host:"h"}]);expect(f.calls).toHaveLength(0);
 });
+
+
+test("skill Open persists before launch, retains unknown receipt across reload and prevents a different application",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);
+  f.bridge.command=async e=>{f.calls.push(e);expect(JSON.parse(f.values.get(keyFor("h",ref))!).pendingOpen.id).toBe(e.id);throw Error("lost launch receipt");};
+  await expect(c.openFile("vscode")).rejects.toThrow("original receipt");
+  expect(f.calls).toHaveLength(1);await c.flush();c.dispose();
+  const restored=f.controller();await restored.load(true);
+  await expect(restored.openFile("fileManager")).rejects.toThrow("same application");expect(f.calls).toHaveLength(1);
+  f.bridge.command=async e=>{f.calls.push(e);return {ok:true,commandId:e.id,value:{type:"skill.file.open",targetId:"vscode"}};};
+  expect(await restored.openFile("vscode")).toBe(true);expect(f.calls[1]).toEqual(f.calls[0]);
+  expect(JSON.parse(f.values.get(keyFor("h",ref))!).pendingOpen).toBeUndefined();expect(restored.state.text).toBe("original");
+});
+
+test("skill Open stops before delivery on storage/disconnect and retains ID when acknowledged cleanup fails",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);f.setFailure(true);
+  await expect(c.openFile("vscode")).rejects.toThrow("disk full");expect(f.calls).toHaveLength(0);
+  f.setFailure(false);c.setConnected(false);await expect(c.openFile("vscode")).rejects.toThrow("Reconnect");expect(f.calls).toHaveLength(0);
+  c.setConnected(true);
+  f.bridge.command=async e=>{f.calls.push(e);f.setFailure(true);return {ok:true,commandId:e.id,value:{type:"skill.file.open",targetId:"vscode"}};};
+  await expect(c.openFile("vscode")).rejects.toThrow("disk full");f.setFailure(false);
+  f.bridge.command=async e=>{f.calls.push(e);return {ok:true,commandId:e.id,value:{type:"skill.file.open",targetId:"vscode"}};};
+  await c.openFile("vscode");expect(f.calls[1]).toEqual(f.calls[0]);
+});
+
+test("skill Save as retains the exact owner and does not force a dirty buffer save",async()=>{
+  const f=setup(),c=f.controller(),copies:unknown[]=[];await c.load(true);c.setText("unsaved local buffer");
+  f.bridge.saveSkillFileCopy=async(resource,host)=>{copies.push({resource,host});return {path:"/chosen/copy.md"};};
+  expect(c.canSaveCopy).toBe(true);expect(await c.saveCopy()).toEqual({path:"/chosen/copy.md"});
+  expect(copies).toEqual([{resource:ref,host:"h"}]);expect(f.calls).toHaveLength(0);expect(c.state.text).toBe("unsaved local buffer");
+  c.setConnected(false);await expect(c.saveCopy()).rejects.toThrow("Reconnect");expect(copies).toHaveLength(1);
+});

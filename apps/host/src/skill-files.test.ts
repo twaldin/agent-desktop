@@ -10,7 +10,7 @@ const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const revision = (value: string) => createHash("sha256").update(value).digest("hex");
 
-async function fixture() {
+async function fixture(fileOpenRuntime?: import("./workspace-open").WorkspaceFileOpenRuntime) {
   const root = await mkdtemp(join(tmpdir(), "agent-desktop-skill-file-")); roots.push(root);
   const project = join(root, "project"), globalSkills = join(root, "global-skills"), sourcePath = join(globalSkills, "review", "SKILL.md");
   await mkdir(project); await mkdir(join(globalSkills, "review"), { recursive: true });
@@ -25,7 +25,7 @@ async function fixture() {
     getComposerActions: async () => { catalogCalls++; return catalog(); } };
   const revealed: string[] = [];
   let authorization: SkillFileAuthorization | undefined;
-  const createService = () => new SkillFiles({ hostId: "host-a", resolveCwd: target => {
+  const createService = () => new SkillFiles({ hostId: "host-a", fileOpenRuntime, resolveCwd: target => {
     if (!target || !("projectId" in target) || target.projectId !== "project") throw new Error("stale owner"); return project;
   }, runtime: runtime as never, reveal: async path => { revealed.push(path); }, authorizations: { get: () => authorization, put: (_ref, value) => { authorization = value; } } });
   const service = createService();
@@ -154,4 +154,31 @@ test("skill image reads reject missing, escaped, and stale catalog identities", 
     return await original();
   };
   await expect(f.service.image(f.ref, "inside.bin")).rejects.toMatchObject({ code: "SKILL_FILE_CHANGED", status: 409 });
+});
+
+
+test("skill Open resolves installed apps on the skill host and rebinds after discovery",async()=>{
+  const launches:unknown[][]=[];
+  let duringDiscovery:(()=>Promise<void>)|undefined;
+  const runtime:import("./workspace-open").WorkspaceFileOpenRuntime={platform:"darwin",environment:{},homeDirectory:"/none",available:async path=>{if(duringDiscovery){const hook=duringDiscovery;duringDiscovery=undefined;await hook();}return path==="/usr/bin/open"||path==="/Applications/Visual Studio Code.app";},launch:async(...args)=>{launches.push(args);}};
+  const f=await fixture(runtime);
+  expect(await f.service.openOptions(f.ref)).toMatchObject({hostId:"host-a",ref:f.ref,options:{path:f.sourcePath,preferredTargetId:"fileManager"}});
+  await f.service.open(f.ref,"vscode");
+  expect(launches).toEqual([["/usr/bin/open",["-a","/Applications/Visual Studio Code.app",await realpath(f.sourcePath)],await realpath(join(f.sourcePath,".."))]]);
+  await expect(f.service.open(f.ref,"caller-shell-command")).rejects.toMatchObject({code:"OPEN_TARGET_UNAVAILABLE"});
+  const moved=f.sourcePath+".old";
+  duringDiscovery=async()=>{await rename(join(f.sourcePath,".."),join(f.sourcePath,"..")+".old");await mkdir(join(f.sourcePath,".."));await writeFile(f.sourcePath,"replacement");};
+  await expect(f.service.open(f.ref,"vscode")).rejects.toMatchObject({code:"SKILL_FILE_CHANGED"});
+  expect(launches).toHaveLength(1);
+});
+
+test("native skill copying preserves raw bytes and rejects changes between chunks",async()=>{
+  const f=await fixture(),info=await f.service.copy(f.ref);
+  expect(info).toMatchObject({type:"file.copy-info",path:"SKILL.md"});
+  const chunk=await f.service.copy(f.ref,info.revision,0);
+  expect(chunk.type).toBe("file.copy-chunk");
+  if(chunk.type!=="file.copy-chunk")throw Error("missing chunk");
+  expect(Buffer.from(chunk.dataBase64,"base64")).toEqual(await readFile(f.sourcePath));
+  await writeFile(f.sourcePath,"changed");
+  await expect(f.service.copy(f.ref,info.revision,0)).rejects.toThrow();
 });

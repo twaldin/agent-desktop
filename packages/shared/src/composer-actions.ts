@@ -220,3 +220,8 @@ export function skillInsertionIssue(before: string, after = ""): string | undefi
   if (/(?:^|\s)\/skill:[^\s]+/.test(before)) return "Native OMP invokes the first skill token. Remove the earlier invocation before selecting another skill.";
   return undefined;
 }
+
+export interface NativeSkillFileOpenOptions {
+  protocolVersion: 1; hostId: string; ref: NativeSkillFileRef;
+  options: Extract<import("./protocol").WorkspaceQueryResult, { type: "file.open-options" }>;
+}

@@ -5,10 +5,10 @@
 .native-skill-file-panel > p, .native-skill-file-panel > div[role="alert"] { flex:none; margin:0; padding:8px 12px; font-size:12px; }
 .native-skill-file-actions { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 .native-skill-file-actions > span { color:var(--secondary); }
-.native-skill-file-panel button:not(.markdown-copy-button) { min-height:28px; padding:4px 8px; border:0; border-radius:calc(6px * var(--corner-radius-scale,1.25)); background:transparent; color:var(--secondary); font:inherit; cursor:pointer; }
-.native-skill-file-panel button:not(.markdown-copy-button):hover { background:var(--hover); color:var(--text); }
-.native-skill-file-panel button:not(.markdown-copy-button):disabled { opacity:.45; cursor:default; }
-.native-skill-file-panel button:not(.markdown-copy-button):focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.native-skill-file-panel button:not(.markdown-copy-button,.workspace-file-open-primary,.workspace-file-open-options) { min-height:28px; padding:4px 8px; border:0; border-radius:calc(6px * var(--corner-radius-scale,1.25)); background:transparent; color:var(--secondary); font:inherit; cursor:pointer; }
+.native-skill-file-panel button:not(.markdown-copy-button,.workspace-file-open-primary,.workspace-file-open-options):hover { background:var(--hover); color:var(--text); }
+.native-skill-file-panel button:not(.markdown-copy-button,.workspace-file-open-primary,.workspace-file-open-options):disabled { opacity:.45; cursor:default; }
+.native-skill-file-panel button:not(.markdown-copy-button,.workspace-file-open-primary,.workspace-file-open-options):focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 .native-skill-file-body > .pierre-source-editor-frame { flex:1; min-height:0; }
 
 .native-skill-file-body { position:relative; display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; }

@@ -7,6 +7,8 @@ import type { ComposerActionsCatalog, NativeSkillFileDocument, NativeSkillFileRe
 import type { WorkerRuntime } from "./omp-workers";
 import { WorkspaceError, WorkspaceService } from "./workspace";
 
+import { WorkspaceFileOpen, type WorkspaceFileOpenRuntime } from "./workspace-open";
+
 const execute = promisify(execFile);
 
 export class SkillFileError extends Error {
@@ -33,6 +35,7 @@ export class SkillFiles {
     hostId: string;
     resolveCwd(target?: WorkspaceTarget): string;
     runtime: Pick<WorkerRuntime, "getComposerActions" | "getSkillInventory">;
+    fileOpenRuntime?: WorkspaceFileOpenRuntime;
     reveal?: (canonicalPath: string) => Promise<void>;
     authorizations?: { get(ref: NativeSkillFileRef): SkillFileAuthorization | undefined; put(ref: NativeSkillFileRef, value: SkillFileAuthorization): void };
   }) {}
@@ -174,6 +177,33 @@ export class SkillFiles {
     } catch {
       throw Object.assign(new Error("The skill file write was dispatched but its final state could not be confirmed. Inspect the current file or retry this exact command receipt."), { code: "OUTCOME_UNKNOWN" });
     }
+  }
+
+  async copy(ref: NativeSkillFileRef, revision?: string, offset?: number) {
+    const binding = await this.bind(ref);
+    await this.rebind(binding, true);
+    const path = basename(ref.sourcePath);
+    const result = revision === undefined
+      ? { type: "file.copy-info" as const, path, ...await binding.workspace.copyInfo(binding.relativePath) }
+      : { type: "file.copy-chunk" as const, path, ...await binding.workspace.copyChunk(binding.relativePath, revision, offset!) };
+    await this.rebind(binding, true);
+    return result;
+  }
+
+  async openOptions(ref: NativeSkillFileRef) {
+    const binding = await this.bind(ref);
+    const options = await new WorkspaceFileOpen(this.options.fileOpenRuntime).options(ref.sourcePath);
+    await this.rebind(binding, true);
+    return { protocolVersion: 1 as const, hostId: this.options.hostId, ref: binding.ref, options };
+  }
+
+  async open(ref: NativeSkillFileRef, targetId: string) {
+    const binding = await this.bind(ref);
+    const result = await new WorkspaceFileOpen(this.options.fileOpenRuntime).open(binding.parent.path, targetId, async () => {
+      await this.rebind(binding, true);
+      return binding.workspace.externalFilePath(binding.relativePath);
+    });
+    return { type: "skill.file.open" as const, targetId: result.targetId };
   }
 
   async reveal(ref: NativeSkillFileRef): Promise<void> {

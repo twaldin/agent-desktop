@@ -1,4 +1,6 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { WorkspaceFileOpen } from "./WorkspaceFileOpen";
+import type { WorkspaceQuery, WorkspaceQueryResult, WorkspaceMutation } from "@agent-desktop/shared";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { MarkdownCopyButton } from "./MarkdownCopyButton";
 import { markdownImagePath } from "./markdown-images";
 import { RichMarkdownEditor } from "./RichMarkdownEditor";
@@ -9,6 +11,11 @@ import "./native-skill-file-panel.css";
 export function NativeSkillFilePanel({ controller, connected, active, fileMode, onFileModeChange, fileScroll, onFileScrollChange, openExternal }: {controller:NativeSkillFileController;connected:boolean;active:boolean;fileMode?:"markdown"|"source";onFileModeChange?(mode:"markdown"|"source"):void;fileScroll?:{markdown?:number;source?:number};onFileScrollChange?(mode:"markdown"|"source",top:number):void;openExternal?(url:string):Promise<void>}) {
   useSyncExternalStore(controller.subscribe,controller.getVersion,controller.getVersion);
   const data=controller.state;
+  const openAccess=useMemo(()=>({connected,canSaveCopy:controller.canSaveCopy,cacheWarning:undefined,errors:{},
+    query:async(query:WorkspaceQuery):Promise<WorkspaceQueryResult>=>{if(query.type!=="file.open-options"||query.path!==controller.state.ref.sourcePath)throw new Error("Select this skill file.");return controller.getOpenOptions();},
+    mutate:async(action:WorkspaceMutation)=>{if(action.type!=="file.open"||action.path!==controller.state.ref.sourcePath)throw new Error("Select this skill file.");return controller.openFile(action.targetId);},
+    saveCopy:()=>controller.saveCopy(),
+  }),[controller,connected]);
   const source=fileMode===undefined?data.source:fileMode==="source";
   useEffect(()=>{void controller.load(connected);},[controller,connected]);
   const modeRequest=useRef<AbortController|null>(null);
@@ -26,7 +33,9 @@ export function NativeSkillFilePanel({ controller, connected, active, fileMode, 
       <span role="status">{!connected?"Offline":data.saving?"Saving…":data.dirty?"Edited":""}</span>
       <button type="button" onClick={()=>void controller.load()} disabled={!connected||data.saving||data.loading}>Refresh</button>
       <button type="button" aria-pressed={source} disabled={!data.file||data.loading||data.switchingSource} onClick={switchMode}>{source?"View preview":"View source"}</button>
+      <WorkspaceFileOpen data={openAccess} path={data.ref.sourcePath} active={active} disabled={!data.file||data.loading}/>
     </div></header>
+    {data.openError&&controller.pendingOpenTarget&&<div role="alert"><p>{data.openError}</p><button disabled={!connected||data.opening} onClick={()=>void controller.retryOpen().catch(()=>{})}>Check Open receipt</button></div>}
     {data.error&&<p role="alert" className="inline-error">{data.error}</p>}
     {data.notice&&<p role="status">{data.notice}</p>}
     {data.conflict&&<div role="alert"><p>The file changed on its host. Your edits are preserved.</p><button onClick={()=>controller.resolveConflict("use-file")}>Use file</button><button onClick={()=>controller.resolveConflict("keep-changes")}>Keep my changes</button></div>}

@@ -1,5 +1,9 @@
 # Milestone status
 
+## Native skill Open and Save as
+
+Skill tabs now reuse the ordinary editor’s host-owned Open menu and native Save as path.26 renderer/host checks with36 captures and81 tests/406 assertions cover durable launch receipts, missing-app receipt recovery, ownership checks and byte-exact copies while preserving edits; typecheck/build and independent review pass. GUI launch/dialog boundaries use controlled fixtures, so installed/native-pixel acceptance remains open. See [file editor](workspace-file-editor.md).
+
 ## Skill editor scroll restoration
 
 Preview and source keep independent window-local positions across real renderer reload.24 renderer/host checks with31 captures,32 tests/173 assertions, typecheck/build and independent review pass; prior skill editing, images, copying and close behavior remain covered. Raw CodeMirror snapshots are runtime-only in the reference, so only numeric fallback enters window storage. Installed/native-pixel and reflow-anchor equivalence remain open. See [file editor](workspace-file-editor.md).

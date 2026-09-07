@@ -173,3 +173,12 @@ test("invalid renderer owner/path inputs never show a dialog", async () => {
   }
   expect(dialogs).toBe(0);
 });
+
+
+test("skill Save as shares byte-exact copy without a fabricated workspace identity",async()=>{
+  const f=await fixture();const skill={skillId:"skill",sourcePath:f.file,inventory:true};
+  const input={skill,path:"source.bin",hostId:"owner"};
+  expect(await saveWorkspaceCopy(input,{choose:async()=>f.destination,source:async()=>f.source})).toEqual({path:f.destination});
+  expect(await readFile(f.destination)).toEqual(f.bytes);
+  await expect(saveWorkspaceCopy({...input,path:"other.bin"},{choose:async()=>{throw Error("must not choose");},source:async()=>f.source})).rejects.toThrow("exact owning skill");
+});

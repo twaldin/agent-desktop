@@ -10,6 +10,7 @@ import tailwindcss from "@tailwindcss/vite";
 const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/skill-file-acceptance-${Date.now()}`);
 const sources = [
+  "apps/desktop/src/renderer/WorkspaceFileOpen.tsx", "apps/desktop/src/renderer/workspace-file-open.css", "apps/desktop/src/main/workspace-save-copy.ts", "apps/host/src/workspace-open.ts",
   "apps/desktop/src/renderer/use-editor-scroll.ts",
   "apps/desktop/src/renderer/MarkdownCopyButton.tsx",
   "apps/desktop/src/main/workspace-image.ts", "apps/desktop/src/main/composer-actions-transport.ts", "apps/desktop/src/main/preload.ts", "apps/desktop/src/main/main.ts", "apps/desktop/src/renderer/markdown-images.ts", "apps/desktop/src/renderer/MarkdownImageWidget.ts",
@@ -50,6 +51,7 @@ try {
   eventsSocket.addEventListener("message", event => { const value = JSON.parse(String(event.data)); nativeEvents.push(value); pendingEvents.push({ ...value, hostId: ready.connection.hostId }); });
   await new Promise<void>((resolve, reject) => { eventsSocket!.addEventListener("open", () => resolve(), { once: true }); eventsSocket!.addEventListener("error", () => reject(new Error("Native event stream unavailable")), { once: true }); });
   let revealAttempts = 0;
+  let dropNextOpen=false;
   let holdNextWrite=false, dropNextReceipt=false, releaseWrite:(()=>void)|undefined;
 
   const capability = crypto.randomUUID(), cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type" };
@@ -65,6 +67,14 @@ try {
       return Response.json(store.bootstrap().state??null,{headers:cors});
     }
     if (route === "/test/events") return Response.json(pendingEvents.splice(0), { headers: cors });
+    if(route==="/test/open-control"){
+      if(input.action==="drop")dropNextOpen=true;
+      else if(input.action==="unavailable")await writeFile(join(fixture,"open-apps-unavailable"),"");
+      else if(input.action==="available")await rm(join(fixture,"open-apps-unavailable"),{force:true});
+      else return new Response(null,{status:400,headers:cors});
+      return Response.json({ok:true},{headers:cors});
+    }
+    if (route === "/test/open-receipt") return Response.json(JSON.parse(await readFile(join(fixture,"open-receipt.json"),"utf8")),{headers:cors});
     if (route === "/test/file") return Response.json({ text: await readFile(ready.skillPath, "utf8"), sha256: createHash("sha256").update(await readFile(ready.skillPath)).digest("hex") }, { headers: cors });
     if (route === "/test/external-write") { if (typeof input.text !== "string" || input.text.length > 1024 * 1024) return new Response(null, { status: 400 }); await writeFile(ready.skillPath, input.text, { mode: 0o600 }); return Response.json({ written: true }, { headers: cors }); }
     if (route === "/test/save-gate") {
@@ -78,31 +88,32 @@ try {
     if (route === "/v5/commands") {
       const type = input.command?.type;
       if (type === "skill.file.reveal") { revealAttempts++; return Response.json({ error: { message: "OS reveal is blocked in this fixture" } }, { status: 403, headers: cors }); }
-      if (type !== "skill.file.write") return new Response(null, { status: 403, headers: cors });
+      if (type !== "skill.file.write" && type !== "skill.file.open") return new Response(null, { status: 403, headers: cors });
       if (input.owner !== ready.connection.hostId) return new Response(null, { status: 403, headers: cors });
       delete input.owner;
     }
-    const allowed = /^\/v1\/(integrations\/(plugins\/read|acquisition\/catalog)|settings\/read|composer\/(actions|skill-inventory|skill-detail|skill-file))$/;
+    const allowed = /^\/v1\/(integrations\/(plugins\/read|acquisition\/catalog)|settings\/read|composer\/(actions|skill-inventory|skill-detail|skill-file|skill-file-open-options))$/;
     if (route !== "/v5/commands" && !allowed.test(route)) return new Response(null, { status: 403, headers: cors });
     if (input.owner !== undefined && input.owner !== ready.connection.hostId) return new Response(null, { status: 403, headers: cors });
     delete input.owner;
     calls.push({ route, command: route === "/v5/commands" ? input.command?.type : undefined });
     const isWrite=route==="/v5/commands"&&input.command?.type==="skill.file.write";
     if(isWrite&&holdNextWrite){holdNextWrite=false;await new Promise<void>(resolve=>{releaseWrite=resolve;});}
+    const dropOpen=input.command?.type==="skill.file.open"&&dropNextOpen;if(dropOpen)dropNextOpen=false;
     const drop=isWrite&&dropNextReceipt;if(drop)dropNextReceipt=false;
     const response = await fetch(ready.connection.origin + route, { method: "POST", headers: {
       Authorization: `Bearer ${ready.connection.token}`, "Content-Type": "application/json", "X-Agent-Host-Id": ready.connection.hostId,
     }, body: JSON.stringify(input) });
     const bytes=await response.arrayBuffer();
-    if(drop)return Response.json({error:{message:"Fixture withheld the actual host write receipt"}},{status:503,headers:cors});
+    if(drop||dropOpen)return Response.json({error:{message:"Fixture withheld the actual host write receipt"}},{status:503,headers:cors});
     return new Response(bytes, { status: response.status, headers: { ...cors, "Content-Type": "application/json" } });
   }});
   await writeFile(join(output, "index.html"), `<!doctype html><meta charset="utf-8"><style>.skill-file-fixture{display:flex!important;height:100vh}.skill-file-directory{width:55%;min-width:480px}.dock-panel-right{flex:1;position:relative!important}</style><div id="root"></div><script type="module" src="${relative(output, join(import.meta.dir, "skill-file-browser.tsx"))}"></script>`);
   await build({ configFile: false, root: output, plugins: [react(), tailwindcss()], base: "./", build: { outDir: join(output, "web"), rollupOptions: { input: join(output, "index.html") } } });
   const initialSkillSha256 = createHash("sha256").update(await readFile(ready.skillPath)).digest("hex");
   await writeFile(join(output, "launch.json"), JSON.stringify({ endpoint: `http://127.0.0.1:${proxy.port}/${capability}`, target: ready.target, hostId: ready.connection.hostId,
-    connection: ready.connection, ref: ready.ref, initialText: ready.initialText, profile: join(fixture, "electron-profile") }), { mode: 0o600 });
-  const modules=await Bun.build({entrypoints:[join(repo,"apps/desktop/src/main/workspace-image.ts"),join(repo,"apps/desktop/src/main/composer-actions-transport.ts"),join(repo,"apps/desktop/src/main/preload.ts")],external:["electron"],outdir:output,target:"node",format:"cjs",naming:"[name].cjs"});if(!modules.success)throw new Error("Skill image main modules did not build");
+    connection: ready.connection, ref: ready.ref, initialText: ready.initialText, copyDestination:join(fixture,"skill-copy.md"),profile: join(fixture, "electron-profile") }), { mode: 0o600 });
+  const modules=await Bun.build({entrypoints:[join(repo,"apps/desktop/src/main/workspace-save-copy.ts"),join(repo,"apps/desktop/src/main/workspace-image.ts"),join(repo,"apps/desktop/src/main/composer-actions-transport.ts"),join(repo,"apps/desktop/src/main/preload.ts")],external:["electron"],outdir:output,target:"node",format:"cjs",naming:"[name].cjs"});if(!modules.success)throw new Error("Skill image main modules did not build");
   const electron = Bun.spawn([String((await import("electron")).default), join(import.meta.dir, "skill-file-electron.cjs"), output], { stdout: Bun.file(join(output, "electron.log")), stderr: Bun.file(join(output, "electron-errors.log")) });
   const timer = setTimeout(() => electron.kill("SIGTERM"), 120_000), code = await electron.exited; clearTimeout(timer);
   const result = JSON.parse(await readFile(join(output, "result.json"), "utf8"));

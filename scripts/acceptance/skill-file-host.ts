@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
 
 const root = process.argv[2]!;
@@ -18,8 +18,13 @@ await mkdir(join(root,".agents","skills","skill-file-acceptance","assets"),{recu
 await writeFile(join(root,".agents","skills","skill-file-acceptance","assets","diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="100"><rect width="320" height="100" rx="12" fill="#245579"/><text x="20" y="56" fill="white" font-size="20">Native skill illustration</text></svg>');
 
 const { startHost } = await import("../../apps/host/src/server");
+let openCount=0;
 const host = await startHost({
   dataDirectory: join(root, "data"), agentDirectory: agent, discoveryDirectory: project,
+  workspaceFileOpen: {platform:"darwin",environment:{},homeDirectory:root,
+    available:async path=>{try{await access(join(root,"open-apps-unavailable"));return false;}catch{return path==="/usr/bin/open"||path==="/Applications/Visual Studio Code.app";}},
+    launch:async(executable,args,cwd)=>{await writeFile(join(root,"open-receipt.json"),JSON.stringify({executable,args,cwd,count:++openCount}));},
+  },
   workerPath: join(import.meta.dir, "../../apps/host/src/omp-workers/fixtures/no-provider-worker.ts"), tailscale: false, port: 0,
 });
 const request = async (route: string, body: unknown) => {

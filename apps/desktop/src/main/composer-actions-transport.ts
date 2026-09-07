@@ -17,6 +17,8 @@ async function query(endpoint: HostEndpoint, path: string, body: unknown, signal
   finally { reader.releaseLock(); }
   const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   if (!response.ok) throw new HostRequestError(typeof value?.error === "string" ? value.error : value?.error?.message ?? `Composer request failed (${response.status}).`, response.status, value?.error?.code ?? value?.code);
+  if (path === "/v1/composer/skill-file-open-options") return value; // Validated by requestSkillFileOpenOptions.
+  if (path === "/v1/composer/skill-file-copy") return value; // Shared save-copy validates each metadata/chunk response.
   if (path === "/v1/composer/skill-file-image") return value; // Stream validates metadata/chunk identity before exposing bytes.
   if (path === "/v1/composer/skill-file") {
     const file = parseNativeSkillFileDocument(value);
@@ -67,4 +69,20 @@ export async function requestSkillImage(endpoint: HostEndpoint, ref: NativeSkill
   skillImageReads.set(owner,pending);
   try { return await pending; }
   finally { if(skillImageReads.get(owner)===pending)skillImageReads.delete(owner); }
+}
+
+export async function requestSkillFileOpenOptions(endpoint: HostEndpoint, ref: NativeSkillFileRef): Promise<import("@agent-desktop/shared").NativeSkillFileOpenOptions> {
+  const resource = parseNativeSkillFileRef(ref);
+  const value = await query(endpoint, "/v1/composer/skill-file-open-options", {ref:resource}) as import("@agent-desktop/shared").NativeSkillFileOpenOptions;
+  if (value?.protocolVersion !== 1 || value.hostId !== endpoint.hostId || JSON.stringify(parseNativeSkillFileRef(value.ref)) !== JSON.stringify(resource)
+    || value.options?.type !== "file.open-options" || value.options.path !== resource.sourcePath || !Array.isArray(value.options.targets) || value.options.targets.length > 100
+    || value.options.targets.some(target => !target || typeof target.id !== "string" || !target.id || target.id.length > 200 || typeof target.label !== "string" || target.label.length > 200 || !["editor","terminal","file-manager"].includes(target.kind))
+    || new Set(value.options.targets.map(target=>target.id)).size !== value.options.targets.length
+    || value.options.preferredTargetId !== undefined && !value.options.targets.some(target=>target.id===value.options.preferredTargetId)
+    || value.options.availabilityReason !== undefined && (typeof value.options.availabilityReason !== "string" || value.options.availabilityReason.length > 4096)) throw new Error("Native skill Open options belong to a different owner/file or are invalid.");
+  return value;
+}
+
+export async function requestSkillFileCopy(endpoint: HostEndpoint, ref: NativeSkillFileRef, chunk?: {revision:string;offset:number}, signal?: AbortSignal): Promise<WorkspaceQueryResult> {
+  return await query(endpoint, "/v1/composer/skill-file-copy", {ref:parseNativeSkillFileRef(ref),...chunk}, signal) as WorkspaceQueryResult;
 }

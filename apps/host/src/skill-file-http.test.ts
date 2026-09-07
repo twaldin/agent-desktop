@@ -68,3 +68,15 @@ test("four active skill image reads leave a composer skill-file read admitted", 
   release();
   for (const image of await Promise.all(images)) expect(image?.status).toBe(200);
 });
+
+
+test("skill Open/copy routes reject wrong owner, extra paths and malformed chunks before dispatch",async()=>{
+ const calls:string[]=[];
+ const http=new ComposerActionsHttp({hostId:"owner",resolveCwd:()=>"/owned",getHandle:async()=>{throw Error("unexpected session");},runtime,
+  skillFiles:{read:async()=>file,image:async()=>{throw Error("unexpected image");},openOptions:async resource=>{calls.push("options");return {protocolVersion:1,hostId:"owner",ref:resource,options:{type:"file.open-options",path:resource.sourcePath,targets:[]}};},copy:async()=>{calls.push("copy");return {type:"file.copy-info",path:"SKILL.md",absolutePath:ref.sourcePath,size:4,revision:"a".repeat(64)};}},
+ });
+ const send=(suffix:string,body:unknown,owner="owner")=>http.route(new Request("http://host/v1/composer/skill-file-"+suffix,{method:"POST",headers:{[COMPOSER_OWNER_HEADER]:owner},body:JSON.stringify(body)}));
+ expect((await send("open-options",{ref},"other"))?.status).toBe(409);
+ for(const [route,body] of [["open-options",{ref,path:"/other"}],["copy",{ref,path:"other.md"}],["copy",{ref,revision:"a".repeat(64)}],["copy",{ref,revision:"a".repeat(64),offset:-1}]] as const)expect((await send(route,body))?.status).toBe(400);
+ expect(calls).toEqual([]);expect((await send("open-options",{ref}))?.status).toBe(200);expect((await send("copy",{ref}))?.status).toBe(200);expect(calls).toEqual(["options","copy"]);
+});

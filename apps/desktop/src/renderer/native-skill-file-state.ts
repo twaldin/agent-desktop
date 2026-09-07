@@ -3,13 +3,14 @@ import type { OfflineCache } from "./offline-cache";
 export type { NativeSkillFileDocument, NativeSkillFileRef };
 
 type Write = Extract<CommandEnvelope["command"], {type:"skill.file.write"}>;
+type PendingOpen = {id:string;targetId:string};
 type Pending = {id:string;command:Write};
 export interface NativeSkillFileState {
   hostId:string; ref:NativeSkillFileRef; file:NativeSkillFileDocument|null;
   text:string; dirty:boolean; saving:boolean; loading:boolean; conflict:boolean; uncertain:boolean;
-  source:boolean; switchingSource:boolean; error?:string; notice?:string; recoveredText?:string;
+  source:boolean; switchingSource:boolean; opening?:boolean; openError?:string; error?:string; notice?:string; recoveredText?:string;
 }
-type Stored = {version:1;file:NativeSkillFileDocument|null;text:string;dirty:boolean;conflict:boolean;pending?:Pending;recoveredText?:string};
+type Stored = {version:1;file:NativeSkillFileDocument|null;text:string;dirty:boolean;conflict:boolean;pending?:Pending;pendingOpen?:PendingOpen;recoveredText?:string};
 export const sameRef = (a:NativeSkillFileRef,b:NativeSkillFileRef) => JSON.stringify(parseNativeSkillFileRef(a)) === JSON.stringify(parseNativeSkillFileRef(b));
 export const keyFor = (host:string,ref:NativeSkillFileRef) => `agent-desktop:skill-file:v1:${host}:${JSON.stringify(parseNativeSkillFileRef(ref))}`;
 const message = (cause:unknown) => cause instanceof Error ? cause.message : "The owning host could not complete this action.";
@@ -27,6 +28,8 @@ export class NativeSkillFileController {
   private writes:Promise<void>=Promise.resolve();
   private connected=false;
   private pending?:Pending;
+  private pendingOpen?:PendingOpen;
+  private opening=false;
   private restoreTask?:Promise<boolean>;
   private restored=false;
   private storageError=false;
@@ -39,10 +42,48 @@ export class NativeSkillFileController {
   private emit(){this.version++;for(const fn of this.listeners)fn();}
   private owned(value:unknown){const file=parseNativeSkillFileDocument(value);if(file.hostId!==this.state.hostId||!sameRef(file.ref,this.state.ref))throw new Error("Skill file response belongs to a different owner or file.");return file;}
   private persist():Promise<void>{
-    const value=JSON.stringify({version:1,file:this.state.file,text:this.state.text,dirty:this.state.dirty,conflict:this.state.conflict,pending:this.pending,recoveredText:this.state.recoveredText} satisfies Stored);
+    const value=JSON.stringify({version:1,file:this.state.file,text:this.state.text,dirty:this.state.dirty,conflict:this.state.conflict,pending:this.pending,pendingOpen:this.pendingOpen,recoveredText:this.state.recoveredText} satisfies Stored);
     const write=this.writes.catch(()=>{}).then(()=>this.cache.write(keyFor(this.state.hostId,this.state.ref),value));
     this.writes=write;
     return write.then(()=>{this.storageError=false;},cause=>{this.storageError=true;this.state.error=`Edits could not be stored on this device: ${message(cause)}`;this.emit();throw cause;});
+  }
+  get canSaveCopy(){return Boolean(this.bridge.saveSkillFileCopy);}
+  async saveCopy(){
+    if(this.disposed||!this.connected||!this.bridge.saveSkillFileCopy)throw new Error("Reconnect with a desktop that supports native skill Save as.");
+    return this.bridge.saveSkillFileCopy(this.state.ref,this.state.hostId);
+  }
+  async getOpenOptions() {
+    if(this.disposed||!this.connected)throw new Error("Reconnect to see applications on this skill’s host.");
+    if(!this.bridge.getSkillFileOpenOptions)throw new Error("Native skill Open is unavailable in this desktop.");
+    const result=await this.bridge.getSkillFileOpenOptions(this.state.ref,this.state.hostId);
+    if(result.hostId!==this.state.hostId||!sameRef(result.ref,this.state.ref)||result.options.path!==this.state.ref.sourcePath)throw new Error("Skill Open options belong to a different owner or file.");
+    return result.options;
+  }
+  get pendingOpenTarget(){return this.pendingOpen?.targetId;}
+  async retryOpen(){if(this.pendingOpen)await this.openFile(this.pendingOpen.targetId);}
+  async openFile(targetId:string):Promise<boolean> {
+    if(this.opening)return false;
+    this.opening=true;this.state.opening=true;this.state.openError=undefined;this.emit();
+    let dispatched=false;
+    try {
+      if(this.disposed||!this.connected||!await this.restore())throw new Error("Reconnect to open this skill on its host.");
+      if(this.pendingOpen&&this.pendingOpen.targetId!==targetId)throw new Error("An earlier Open needs confirmation. Select that same application to check its original receipt before opening another.");
+      const pending=this.pendingOpen??{id:crypto.randomUUID(),targetId};this.pendingOpen=pending;
+      await this.persist();
+      if(this.disposed||!this.connected)throw new Error("The skill owner is no longer connected. Its Open receipt was retained.");
+      dispatched=true;
+      const result=await this.bridge.command({id:pending.id,command:{type:"skill.file.open",ref:this.state.ref,targetId:pending.targetId}},this.state.hostId);
+      if(result.commandId!==pending.id)throw new Error("The host returned a different Open receipt.");
+      if(!result.ok){
+        if(result.error.code!=="OUTCOME_UNKNOWN"){this.pendingOpen=undefined;try{await this.persist();}catch(cause){this.pendingOpen=pending;throw cause;}}
+        throw new Error(result.error.message);
+      }
+      if(!result.value||!("type" in result.value)||result.value.type!=="skill.file.open"||result.value.targetId!==pending.targetId)throw new Error("The host did not confirm the selected Open application.");
+      this.pendingOpen=undefined;try{await this.persist();}catch(cause){this.pendingOpen=pending;throw cause;}return true;
+    } catch(cause) {
+      this.state.openError=`${dispatched&&this.pendingOpen?"Open needs confirmation. Selecting the same application checks the original receipt. ":""}${message(cause)}`;
+      throw new Error(this.state.openError);
+    } finally {this.opening=false;this.state.opening=false;this.emit();}
   }
   async acquireImage(path:string){
     if(this.disposed||!this.connected)throw new Error("Reconnect to load this skill image.");
@@ -102,6 +143,11 @@ export class NativeSkillFileController {
             const p=saved.pending;
             if(typeof p.id!=="string"||!p.id||p.command?.type!=="skill.file.write"||!sameRef(p.command.ref,this.state.ref)||typeof p.command.text!=="string"||p.command.text.length>1024*1024||typeof p.command.expectedRevision!=="string"||!/^[a-f0-9]{64}$/.test(p.command.expectedRevision)||typeof p.command.bom!=="boolean")throw new Error("Saved skill write identity is invalid; it has been retained for recovery.");
             this.pending=p;
+          }
+          if(saved.pendingOpen){
+            const open=saved.pendingOpen;
+            if(typeof open.id!=="string"||!open.id||open.id.length>200||typeof open.targetId!=="string"||!open.targetId||open.targetId.length>200)throw new Error("Saved skill Open identity is invalid; it has been retained for recovery.");
+            this.pendingOpen={id:open.id,targetId:open.targetId};this.state.openError="An earlier Open has an unresolved receipt.";
           }
           this.state.file=file;this.state.text=saved.text;this.state.dirty=saved.dirty;this.state.conflict=saved.conflict;this.state.uncertain=Boolean(this.pending);
           if(typeof saved.recoveredText==="string")this.state.recoveredText=saved.recoveredText;

@@ -9,7 +9,7 @@ type OpenOptions = Extract<WorkspaceQueryResult, { type: "file.open-options" }>;
 
 /** The viewing client never substitutes its own applications or filesystem for the owner. */
 export function WorkspaceFileOpen({ data, path, active, disabled }: {
-  data: WorkspaceState; path: string; active: boolean; disabled: boolean;
+  data: Pick<WorkspaceState, "connected" | "query" | "mutate" | "canSaveCopy" | "saveCopy" | "cacheWarning" | "errors">; path: string; active: boolean; disabled: boolean;
 }) {
   const [options, setOptions] = useState<OpenOptions>();
   const [loading, setLoading] = useState(false), [error, setError] = useState<string>();

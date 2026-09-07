@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { COMPOSER_OWNER_HEADER } from "@agent-desktop/shared";
-import { requestComposerActions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillImage } from "./composer-actions-transport";
+import { requestComposerActions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillFileOpenOptions, requestSkillImage } from "./composer-actions-transport";
 import { HostRequestError } from "./host-transport";
 
 const seen: Array<{ path: string; owner: string | null; authorization: string | null }> = [];
@@ -12,6 +12,16 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   if (path === "/coded-404/v1/composer/actions") return Response.json({ error: { code: "COMPOSER_UNAVAILABLE", message: "Composer disabled" } }, { status: 404 });
   if (path === "/auth/v1/composer/actions") return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (path === "/wrong-owner/v1/composer/actions") return Response.json({ protocolVersion: 1, hostId: "other", cwd: "/tmp", revision: "a".repeat(64), commands: [], skills: [], diagnostics: [] }, { headers: { [COMPOSER_OWNER_HEADER]: "other" } });
+  if(path.endsWith("/v1/composer/skill-file-open-options")){
+    const body=await request.json() as any;
+    const value={protocolVersion:1,hostId:"owner",ref:body.ref,options:{type:"file.open-options",path:body.ref.sourcePath,targets:[{id:"vscode",label:"VS Code",kind:"editor"}],preferredTargetId:"vscode"}};
+    if(path.startsWith("/wrong-open-file/"))value.options.path="/other/SKILL.md";
+    if(path.startsWith("/wrong-open-host/"))value.hostId="other";
+    if(path.startsWith("/duplicate-open/"))value.options.targets.push({...value.options.targets[0]!});
+    if(path.startsWith("/invalid-open-kind/"))value.options.targets[0]!.kind="shell-command";
+    if(path.startsWith("/missing-open-preferred/"))value.options.preferredTargetId="missing";
+    return Response.json(value,{headers:{[COMPOSER_OWNER_HEADER]:"owner"}});
+  }
   if (path.endsWith("/v1/composer/skill-file")) {
     const body = await request.json() as {ref:Record<string,unknown>};
     const ref = {...body.ref};
@@ -96,4 +106,14 @@ test("skill image reads serialize per host and skip a revoked queued grant",asyn
     release();await first;expect(await second).toBeInstanceOf(Error);await third;
     expect(paths).toEqual(["one.svg","three.svg"]);expect(maximum).toBe(1);
   }finally{release();imageServer.stop(true);}
+});
+
+
+test("skill Open response validates exact owner/ref/path and bounded typed application catalog",async()=>{
+ const ref={skillId:"demo",sourcePath:"/skills/demo/SKILL.md",inventory:true};
+ const endpoint={origin:server.url.origin,hostId:"owner",token:"fixture"};
+ expect(await requestSkillFileOpenOptions(endpoint,ref)).toMatchObject({hostId:"owner",ref,options:{preferredTargetId:"vscode"}});
+ for(const prefix of ["wrong-open-file","wrong-open-host","duplicate-open","invalid-open-kind","missing-open-preferred"]){
+  await expect(requestSkillFileOpenOptions({...endpoint,origin:server.url.origin+"/"+prefix},ref)).rejects.toThrow();
+ }
 });

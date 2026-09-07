@@ -32,6 +32,11 @@ const bridge: DesktopBridge = {
   getInteractions: (sessionId, hostId) => ipcRenderer.invoke("host:interactions", sessionId, hostId),
   getDetachedQuestions: (sessionId, hostId) => ipcRenderer.invoke('host:detached-questions', sessionId, hostId),
   workspaceQuery: (target, query, hostId) => ipcRenderer.invoke("host:workspace-query", target, query, hostId),
+  saveSkillFileCopy: async (ref, hostId) => {
+    const outcome = await ipcRenderer.invoke("desktop:skill-save-copy", ref, hostId);
+    if (!outcome.ok) throw new Error(outcome.error);
+    return outcome.value;
+  },
   saveWorkspaceCopy: async (target, path, hostId) => {
     const result: import("./workspace-save-copy").WorkspaceCopyOutcome = await ipcRenderer.invoke("desktop:workspace-save-copy", target, path, hostId);
     if (!result.ok) throw new Error(result.error);
@@ -94,6 +99,7 @@ const bridge: DesktopBridge = {
   getComposerActions: (target, refresh, hostId) => ipcRenderer.invoke("host:composer-actions", target, refresh, hostId),
   getSkillInventory: (target, refresh, hostId) => ipcRenderer.invoke("host:skill-inventory", target, refresh, hostId),
   getComposerCompletions: (query, hostId) => ipcRenderer.invoke("host:composer-completions", query, hostId),
+  getSkillFileOpenOptions: (ref, hostId) => ipcRenderer.invoke("host:skill-file-open-options", ref, hostId),
   getSkillFile: (ref, hostId) => ipcRenderer.invoke("host:skill-file", ref, hostId),
   getSkillDetail: (target, skillId, catalogRevision, hostId, inventory) => ipcRenderer.invoke("host:skill-detail", target, skillId, catalogRevision, hostId, inventory),
   getComposerCatalog: (target, refresh, hostId) => ipcRenderer.invoke("host:composer-catalog", target, refresh, hostId),

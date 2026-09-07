@@ -246,7 +246,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return cwd;
   };
   const skillAuthorizationKey = (ref: import("@agent-desktop/shared").NativeSkillFileRef) => `skill-file.v1:${createHash("sha256").update(JSON.stringify(ref)).digest("hex")}`;
-  const skillFiles = new SkillFiles({ hostId: store.host.id, runtime, resolveCwd: resolveComposerCwd, reveal: options.skillFileReveal,
+  const skillFiles = new SkillFiles({ hostId: store.host.id, runtime, resolveCwd: resolveComposerCwd, reveal: options.skillFileReveal, fileOpenRuntime: options.workspaceFileOpen,
     authorizations: {
       get: ref => store.readMetadata<SkillFileAuthorization>(skillAuthorizationKey(ref)),
       put: (ref, value) => store.writeMetadata(skillAuthorizationKey(ref), value),
@@ -571,6 +571,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const value = await skillFiles.write(command.ref, command);
         return ok(value);
       }
+      case "skill.file.open": return ok(await skillFiles.open(command.ref, command.targetId));
       case "skill.file.reveal": {
         await skillFiles.reveal(command.ref);
         return ok({ type: "skill.file.reveal" });
@@ -788,7 +789,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (claim.kind === "pending") return commands.get(envelope.id)
       ?? fail(envelope.id, "OUTCOME_UNKNOWN", "The original command has no confirmed durable receipt. Inspect its outcome before issuing a new command.");
     const command = envelope.command;
-    const key = command.type === "workspace.mutate" ? `workspace:${JSON.stringify(command.target)}` : command.type === "skill.file.write" || command.type === "skill.file.reveal" ? `skill-file:${command.ref.sourcePath}` : "sessionId" in command ? command.sessionId : "$catalog";
+    const key = command.type === "workspace.mutate" ? `workspace:${JSON.stringify(command.target)}` : command.type === "skill.file.write" || command.type === "skill.file.reveal" || command.type === "skill.file.open" ? `skill-file:${command.ref.sourcePath}` : "sessionId" in command ? command.sessionId : "$catalog";
     const interrupt = command.type === "session.interrupt" || command.type === "session.environment.cancel";
     const previous = interrupt ? undefined : sessionTails.get(key);
     const pending = (previous ?? Promise.resolve()).catch(() => {}).then(async () => {

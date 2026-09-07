@@ -1,3 +1,4 @@
+import { parseNativeSkillFileRef } from "@agent-desktop/shared";
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { closePluginAcquisitionRequest, requestMarketplaceCatalog, requestPluginAcquisitionOperations, reviewPluginAcquisition, startPluginAcquisition } from "./plugin-acquisition-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
@@ -5,7 +6,7 @@ import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondS
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
 import type { NativePluginAcquisition, NativePluginAcquisitionRequest } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
-import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillImage } from "./composer-actions-transport";
+import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillFileOpenOptions, requestSkillFileCopy, requestSkillImage } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBtw } from "./btw-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
@@ -522,6 +523,9 @@ ipcMain.handle("host:composer-completions", async (event, query: ComposerComplet
 ipcMain.handle("host:skill-detail", async (event, target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string, inventory?: boolean) => {
   assertTrustedSender(event); return requestSkillDetail(await endpointFor(hostId), target, skillId, catalogRevision, inventory);
 });
+ipcMain.handle("host:skill-file-open-options", async (event, ref: NativeSkillFileRef, hostId?: string) => {
+  assertTrustedSender(event); return requestSkillFileOpenOptions(await endpointFor(hostId), ref);
+});
 ipcMain.handle("host:skill-file", async (event, ref: NativeSkillFileRef, hostId?: string) => {
   assertTrustedSender(event); return requestSkillFile(await endpointFor(hostId), ref);
 });
@@ -566,6 +570,28 @@ ipcMain.handle("host:workspace-query", (event, target: WorkspaceTarget, query: W
   assertTrustedSender(event); return request("/v1/workspace/query", { target, query }, hostId);
 });
 const workspaceCopies = new Set<number>();
+ipcMain.handle("desktop:skill-save-copy", async (event, input: NativeSkillFileRef, hostId: string) => workspaceCopyOutcome(async () => {
+  assertTrustedSender(event);
+  const ref = parseNativeSkillFileRef(input), sender = event.sender, id = sender.id;
+  if (workspaceCopies.has(id)) throw new Error("A Save as operation is already open in this window.");
+  workspaceCopies.add(id);
+  const abort = new AbortController(), destroyed = () => abort.abort(new Error("The viewing window closed before its copy finished."));
+  sender.once("destroyed", destroyed);
+  try {
+    return await saveWorkspaceCopy({skill:ref,path:ref.sourcePath.split("/").at(-1)!,hostId}, {
+      signal: abort.signal,
+      choose: async defaultPath => { const result = await dialog.showSaveDialog({defaultPath}); return result.canceled ? null : result.filePath ?? null; },
+      source: async () => {
+        const endpoint = await endpointFor(hostId);
+        if(endpoint.hostId!==hostId)throw new Error("The selected skill host changed. Reconnect before copying.");
+        return {local:endpoint.hostId===connection?.hostId,query:async query=>{
+          if(query.type!=="file.copy-info"&&query.type!=="file.copy-chunk")throw new Error("Invalid skill copy query.");
+          return requestSkillFileCopy(endpoint,ref,query.type==="file.copy-chunk"?{revision:query.revision,offset:query.offset}:undefined,abort.signal);
+        }};
+      },
+    });
+  } finally {sender.removeListener("destroyed",destroyed);workspaceCopies.delete(id);}
+}));
 ipcMain.handle("desktop:workspace-save-copy", async (event, target: WorkspaceTarget, path: string, hostId: string) => workspaceCopyOutcome(async () => {
   assertTrustedSender(event);
   const sender = event.sender, id = sender.id;

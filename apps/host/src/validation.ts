@@ -57,6 +57,10 @@ function parseCommandBody(value: unknown): CommandEnvelope {
         || input.bom !== undefined && typeof input.bom !== "boolean") throw new Error("Invalid native skill file write.");
       return { id, command: { type, ref: parseNativeSkillFileRef(input.ref), expectedRevision: input.expectedRevision, text: input.text, ...(input.bom === undefined ? {} : { bom: input.bom }) } };
     }
+    case "skill.file.open": {
+      if (Object.keys(input).some(key => !["type", "ref", "targetId"].includes(key))) throw new Error("Invalid native skill file open.");
+      return { id, command: { type, ref: parseNativeSkillFileRef(input.ref), targetId: text(input.targetId, "application target", 200) } };
+    }
     case "skill.file.reveal": {
       if (Object.keys(input).some(key => !["type", "ref"].includes(key))) throw new Error("Invalid native skill file reveal.");
       return { id, command: { type, ref: parseNativeSkillFileRef(input.ref) } };
