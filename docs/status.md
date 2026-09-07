@@ -1,5 +1,13 @@
 # Milestone status
 
+## Native skill file editing
+
+Skill details now offer Open, host-owned Reveal and Copy Markdown in the reference menu order. Open creates an editable file tab with Markdown preview, source view and three-second autosave. File authorization survives frontmatter changes that remove the skill from discovery. Offline edits, external changes, oversized drafts and unconfirmed saves retain recoverable text and command receipts. Native refresh now clears OMP’s capability filesystem cache, so discovery observes edited metadata. The compact popup follows pinned sizing and distinguishes pointer-open focus from keyboard navigation.
+
+The final real-host hidden Electron run passes ten checks/eight captures, including three UI saves, offline reopening, conflict resolution, temporary frontmatter disable and re-enabling through the existing tab. Its draft remains unchanged, with zero sessions or Reveal actions. The directory regression passes21 checks/26 captures, and the compact-header/switch regression confirms the nested controls remain visible at720×500. Eighty-three focused native/runtime/desktop tests pass19,620 assertions; typecheck and production build pass. Native worker tests run from their host package because repository-root Bun1.3.14 currently fails their IPC initialization. Earlier fixture failures and corrected native-provider assumptions remain recorded.
+
+Inline rich Markdown editing, Uninstall, actual OS Reveal, installed main/preload navigation and matched pixel parity remain open. Pins, installed apps, Work runs and sealed references remain unchanged. Private evidence: `.data/ui-acceptance/native-skill-file-2026-09-07-r5/`, `.data/ui-acceptance/native-skill-directory-file-regression-2026-09-07-r2/` and `.data/skill-file-checkpoint-2026-09-07/`.
+
 ## Skill detail enable switch
 
 The Skills dialog now exposes the same native enable switch as the list, before More and Close. A successful revisioned OMP write keeps the dialog open and reloads its current document and availability. Pending or unconfirmed writes disable both the switch and Try now; closing during a write cannot reopen the dialog. Reopening a project or reconnecting refreshes native availability so a stale Disabled badge cannot disagree with saved settings. Plugins and Skills share the source-traced, theme-configurable switch styling. The integrations component also consumes its initial Add request once, so child remounts cannot replay it; full App navigation already clears that request.

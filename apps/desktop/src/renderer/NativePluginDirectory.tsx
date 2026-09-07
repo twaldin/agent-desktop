@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComposerAction, ComposerActionsCatalog } from "../../../../packages/shared/src/composer-actions";
-import type { DesktopBridge, NativeMarketplaceCatalog, NativePluginCatalog, NativeSkillInventory, OmpSettingsSnapshot, OmpSettingsMutation, SettingsScope, WorkspaceTarget } from "@agent-desktop/shared";
+import type { NativeSkillFileRef, NativeSkillFileDocument, DesktopBridge, NativeMarketplaceCatalog, NativePluginCatalog, NativeSkillInventory, OmpSettingsSnapshot, OmpSettingsMutation, SettingsScope, WorkspaceTarget } from "@agent-desktop/shared";
 import { assertComposerOwner, targetIdentity } from "./composer-autocomplete";
 import { Icon } from "./Icons";
 import { NativeSkillDialog } from "./NativeSkillDialog";
@@ -24,12 +24,13 @@ export interface NativePluginDirectoryProps {
   onManage(pluginId?: string): void;
   onMarketplace(name?: string): void;
   onTrySkill?(action: ComposerAction): void;
+  onOpenSkillFile?(ref: NativeSkillFileRef, hostId: string): void;
   onClose(): void;
 }
 
 type Catalogs = { plugins: NativePluginCatalog | null; marketplaces: NativeMarketplaceCatalog | null; composer: ComposerActionsCatalog | null; inventory: NativeSkillInventory | null; settings: OmpSettingsSnapshot | null };
 type CatalogStatus = { plugins: "unknown" | "available" | "unavailable"; marketplaces: "unknown" | "available" | "unavailable"; composer: "unknown" | "available" | "unavailable" };
-type SkillState = { inventory?: boolean; owner: string; revision?: string; action: ComposerAction; loading: boolean; content?: string; error?: string };
+type SkillState = { inventory?: boolean; owner: string; revision?: string; action: ComposerAction; loading: boolean; content?: string; file?: NativeSkillFileDocument; error?: string };
 const emptyCatalogs = (): Catalogs => ({ plugins: null, marketplaces: null, composer: null, inventory: null, settings: null });
 const emptyStatus = (): CatalogStatus => ({ plugins: "unknown", marketplaces: "unknown", composer: "unknown" });
 const errorText = (error: unknown): string => error instanceof Error ? error.message : "The owning host could not load this directory.";
@@ -74,7 +75,7 @@ function DirectoryAddMenu({ connected, ownerKey, onMarketplace }: { connected: b
   </>;
 }
 
-export function NativePluginDirectory({ bridge, hostId, hostName, connected, target: inputTarget, initialTab = "plugins", onTabChange, restoreFocusLabel, embeddedSkills = false, search, refreshKey, onTrySkill, onManage, onMarketplace, onClose }: NativePluginDirectoryProps) {
+export function NativePluginDirectory({ bridge, hostId, hostName, connected, target: inputTarget, initialTab = "plugins", onTabChange, restoreFocusLabel, embeddedSkills = false, search, refreshKey, onTrySkill, onOpenSkillFile, onManage, onMarketplace, onClose }: NativePluginDirectoryProps) {
   const targetKey = targetIdentity(inputTarget);
   // App snapshots can recreate an equivalent target without changing its owner.
   const target = useMemo(() => inputTarget, [targetKey]);
@@ -219,6 +220,13 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
         throw new Error("The skill response belongs to a different host, workspace, or catalog revision.");
       }
       setSkill({ inventory, owner, revision: catalog?.revision, action, loading: false, content: value.content });
+      // Older hosts still support read/copy; only a confirmed native resource
+      // enables file-manager actions. File identities never route to this client.
+      if (bridge.getSkillFile && action.source.path) {
+        const file = await bridge.getSkillFile({skillId:action.id, sourcePath:action.source.path, inventory, ...(target?{target}:{})},hostId).catch(()=>undefined);
+        if (file && mounted.current && ticket === detailEpoch.current && ownerRef.current === owner)
+          setSkill(previous=>previous?.action.id===action.id ? {...previous,file,content:file.document.text} : previous);
+      }
     } catch (cause) {
       if (mounted.current && ticket === detailEpoch.current && ownerRef.current === owner) setSkill({ inventory, owner, revision: catalog?.revision, action, loading: false, error: errorText(cause) });
     }
@@ -302,7 +310,19 @@ export function NativePluginDirectory({ bridge, hostId, hostName, connected, tar
           {visibleSkills.length ? <div className="plugin-directory-grid">{visibleSkills.map(action => {const view=toggleView(action);return <div key={action.id} className="skill-managed-row"><button data-skill-id={action.id} className="plugin-directory-row" title={action.reason??sourceLabel(action)} onClick={() => void openSkill(action)}><span className="plugin-tile skill" aria-hidden="true"><Icon name="skill"/></span><span><strong>{action.name}{action.availability==="disabled"&&<em className="skill-disabled-badge">Disabled</em>}</strong><small>{action.description}</small></span><em className="skill-source-label" title={sourceLabel(action)}>{action.source.label}</em></button>{catalogs.inventory&&<NativeSwitch className="skill-enabled-switch" label={`Enable ${action.name}`} checked={view ? !view.scopedDisabled : false} title={view?.warning??`Enable in ${scope==="global"?"user":"project"} configuration. Changes apply to new sessions.`} disabled={!connected||loading||saving||!view} onChange={enabled=>toggle(action,enabled)}/>}</div>;})}</div> : !loading && <p className="integration-placeholder">{skillStatus === "unavailable" ? "Skill catalog unavailable." : normalizedQuery ? "No skills match this search." : skillStatus === "available" ? "No native skills are available for this workspace." : "Loading skills…"}</p>}
         </section>}
     </main>
-    {ownedSkill && <NativeSkillDialog key={`${owner}:${ownedSkill.action.id}`} action={ownedSkill.action} content={ownedSkill.content} loading={ownedSkill.loading} error={ownedSkill.error ?? error ?? undefined} notice={saveNotice ?? undefined} tryDisabled={!connected || loading || saving || Boolean(catalogs.inventory && !catalogs.settings)} enablement={catalogs.inventory ? {
+    {ownedSkill && <NativeSkillDialog key={`${owner}:${ownedSkill.action.id}`} action={ownedSkill.action} fileActions={{
+      disabled: !connected || loading || saving || ownedSkill.loading || !ownedSkill.file || !onOpenSkillFile,
+      onOpen: () => { if (ownedSkill.file && onOpenSkillFile) { closeSkill(); onOpenSkillFile(ownedSkill.file.ref,hostId); } },
+      revealLabel: ownedSkill.file?.reveal.label ?? "Reveal in file manager",
+      revealDisabled: !connected || loading || saving || ownedSkill.loading || !ownedSkill.file?.reveal.available,
+      revealReason: ownedSkill.file?.reveal.reason,
+      onReveal: async () => {
+        if (!ownedSkill.file || !connected) throw new Error("Reconnect to the owning host to reveal this skill.");
+        const result=await bridge.command({id:crypto.randomUUID(),command:{type:"skill.file.reveal",ref:ownedSkill.file.ref}},hostId);
+        if (!result.ok) throw new Error(result.error.message);
+        if (!result.value || !("type" in result.value) || result.value.type!=="skill.file.reveal") throw new Error("The file manager action was not confirmed. Inspect the owning host before trying again.");
+      },
+    }} content={ownedSkill.content} loading={ownedSkill.loading} error={ownedSkill.error ?? error ?? undefined} notice={saveNotice ?? undefined} tryDisabled={!connected || loading || saving || Boolean(catalogs.inventory && !catalogs.settings)} enablement={catalogs.inventory ? {
       checked: dialogToggle ? !dialogToggle.scopedDisabled : false,
       disabled: !connected || loading || saving || ownedSkill.loading || !dialogToggle,
       title: dialogToggle?.warning ?? `Enable in ${scope === "global" ? "user" : "project"} configuration. Changes apply to new sessions.`,

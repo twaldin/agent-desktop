@@ -1,3 +1,4 @@
+import { parseNativeSkillFileRef, parseNativeSkillFileDocument, type NativeSkillFileRef, type NativeSkillFileDocument } from "@agent-desktop/shared";
 import { COMPOSER_OWNER_HEADER, parseNativeSkillInventory, type ComposerActionsCatalog, type ComposerCompletionQuery, type ComposerCompletions, type ComposerSkillDetail, type NativeSkillInventory, type WorkspaceTarget } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
 
@@ -16,6 +17,12 @@ async function query(endpoint: HostEndpoint, path: string, body: unknown): Promi
   finally { reader.releaseLock(); }
   const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   if (!response.ok) throw new HostRequestError(typeof value?.error === "string" ? value.error : value?.error?.message ?? `Composer request failed (${response.status}).`, response.status, value?.error?.code ?? value?.code);
+  if (path === "/v1/composer/skill-file") {
+    const file = parseNativeSkillFileDocument(value);
+    const ref = parseNativeSkillFileRef((body as {ref:unknown}).ref);
+    if (file.hostId !== endpoint.hostId || JSON.stringify(file.ref) !== JSON.stringify(ref)) throw new Error("Native skill file response belongs to a different owner or file.");
+    return file;
+  }
   const target = (body as { target?: WorkspaceTarget }).target;
   if (value?.hostId !== endpoint.hostId || value?.protocolVersion !== 1 || typeof value.cwd !== "string" || !/^[a-f0-9]{64}$/.test(value.revision)
     || JSON.stringify(value.target) !== JSON.stringify(target)) throw new Error("Composer response does not match the selected host/workspace or protocol.");
@@ -39,4 +46,8 @@ export async function requestSkillDetail(endpoint: HostEndpoint, target: Workspa
   const value = await query(endpoint, "/v1/composer/skill-detail", { target, skillId, catalogRevision, ...(inventory ? { inventory: true } : {}) }) as ComposerSkillDetail;
   if (value.skillId !== skillId || value.revision !== catalogRevision || typeof value.content !== "string" || Buffer.byteLength(value.content, "utf8") > 1024 * 1024) throw new Error("Native skill detail response is invalid.");
   return value;
+}
+
+export async function requestSkillFile(endpoint: HostEndpoint, ref: NativeSkillFileRef): Promise<NativeSkillFileDocument> {
+  return await query(endpoint, "/v1/composer/skill-file", {ref:parseNativeSkillFileRef(ref)}) as NativeSkillFileDocument;
 }

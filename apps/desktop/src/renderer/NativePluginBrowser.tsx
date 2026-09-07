@@ -22,6 +22,6 @@ export function NativePluginBrowser(props:NativePluginDirectoryProps) {
     setSelection({owner,id});
    }}/>
   </div>
-  {selected&&<NativeIntegrations key={`${owner}:${selected.id}`} standalone initialPluginId={selected.id} bridge={props.bridge} hostId={props.hostId} hostName={props.hostName} connected={props.connected} target={props.target} page="plugins" onClose={closeDetail}/>}
+  {selected&&<NativeIntegrations key={`${owner}:${selected.id}`} standalone onOpenSkillFile={props.onOpenSkillFile} initialPluginId={selected.id} bridge={props.bridge} hostId={props.hostId} hostName={props.hostName} connected={props.connected} target={props.target} page="plugins" onClose={closeDetail}/>}
  </div>;
 }

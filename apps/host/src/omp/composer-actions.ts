@@ -79,7 +79,8 @@ function finish(cwd: string, commands: ComposerAction[], skills: ComposerAction[
 }
 
 function skillRows(skills: AgentSession["skills"], enabled: boolean): ComposerAction[] {
-  return skills.map(skill => ({ id: `skill:${hash([skill.name, skill.filePath])}`, name: skill.name,
+  // File identity survives edits to frontmatter; catalog revisions still track names and availability.
+  return skills.map(skill => ({ id: `skill:${hash(skill.filePath)}`, name: skill.name,
     description: bounded(skill.description), insertText: `/skill:${skill.name} `,
     source: { kind: "skill", label: bounded(skill.source), path: skill.filePath },
     availability: enabled ? "executable" : "disabled", reason: enabled ? undefined : "Native skills.enableSkillCommands is disabled for this scope.", argumentCompletions: false }));

@@ -5,7 +5,7 @@ import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondS
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
 import type { NativePluginAcquisition, NativePluginAcquisitionRequest } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
-import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory } from "./composer-actions-transport";
+import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBtw } from "./btw-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
@@ -14,7 +14,7 @@ import { requestBrowserFrame } from "./browser-frame-transport";
 import { requestBrowserControl } from "./browser-control-transport";
 import { requestBrowserCreate } from "./browser-create-transport";
 import type { BrowserControlRequest, BrowserCreateRequest, BrowserFrameTarget } from "@agent-desktop/shared";
-import type { ComposerCompletionQuery } from "@agent-desktop/shared";
+import type { ComposerCompletionQuery, NativeSkillFileRef } from "@agent-desktop/shared";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
@@ -430,6 +430,9 @@ ipcMain.handle("host:composer-completions", async (event, query: ComposerComplet
 });
 ipcMain.handle("host:skill-detail", async (event, target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string, inventory?: boolean) => {
   assertTrustedSender(event); return requestSkillDetail(await endpointFor(hostId), target, skillId, catalogRevision, inventory);
+});
+ipcMain.handle("host:skill-file", async (event, ref: NativeSkillFileRef, hostId?: string) => {
+  assertTrustedSender(event); return requestSkillFile(await endpointFor(hostId), ref);
 });
 ipcMain.handle("host:composer-catalog", async (event, target?: WorkspaceTarget, refresh?: boolean, hostId?: string) => {
   assertTrustedSender(event); return requestComposerCatalog(await endpointFor(hostId), target, refresh);

@@ -1,3 +1,4 @@
+import type {NativeSkillFileRef} from "@agent-desktop/shared";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ComposerAction, DesktopBridge, NativeMcpCatalog, NativeMcpDetail, NativeMcpMutation, NativePlugin, NativePluginCatalog, NativePluginMutation, WorkspaceTarget } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
@@ -29,6 +30,7 @@ export interface NativeIntegrationsProps {
   target?: WorkspaceTarget;
   page: "plugins" | "mcp";
   onTrySkill?(action: ComposerAction): void;
+  onOpenSkillFile?(ref:NativeSkillFileRef,hostId:string):void;
   onClose(): void;
   onBrowse?(tab?:"plugins"|"skills"): void;
   initialPluginId?: string;
@@ -38,7 +40,7 @@ export interface NativeIntegrationsProps {
   sessionIdle?: boolean;
 }
 
-export function NativeIntegrations({ bridge, hostId, hostName, connected, target, page, onClose, onPageChange, onBrowse, onTrySkill, initialPluginId, initialMarketplace, standalone=false, sessionIdle = false }: NativeIntegrationsProps) {
+export function NativeIntegrations({ bridge, hostId, hostName, connected, target, page, onClose, onPageChange, onBrowse, onTrySkill, onOpenSkillFile, initialPluginId, initialMarketplace, standalone=false, sessionIdle = false }: NativeIntegrationsProps) {
   const [skills,setSkills]=useState(false),[skillsRefresh,setSkillsRefresh]=useState(0);
   const [actionsRoot,setActionsRoot]=useState<HTMLDivElement|null>(null);
   const [marketplaces,setMarketplaces]=useState(Boolean(initialMarketplace)),[addMcp,setAddMcp]=useState(false);
@@ -92,7 +94,7 @@ export function NativeIntegrations({ bridge, hostId, hostName, connected, target
     </>}
     {!connected && <div className="connection-banner" role="status">This machine is disconnected. Changes require reconnection.</div>}
     {error && <div className="inline-error settings-error" role="alert">{error}</div>}
-    {page === "plugins" ? <PluginAcquisition showHistoricalResult={!standalone} key={`${hostId}:${targetKey}`} bridge={bridge} hostId={hostId} target={target} connected={connected} visible={marketplaces} initialMarketplace={initialMarketplace?.name} initialAdd={initialMarketplaceAdd} query={query} actionsRoot={actionsRoot} onMcp={()=>{setAddMcp(true);onPageChange?.("mcp");}} onInstalledChanged={()=>void reload()}>{controls=>skills ? <NativePluginDirectory key={`${hostId}:${targetKey}`} embeddedSkills onTrySkill={onTrySkill} initialTab="skills" search={query} refreshKey={skillsRefresh} bridge={bridge} hostId={hostId} hostName={hostName} target={target} connected={connected} onManage={()=>setSkills(false)} onMarketplace={()=>{setSkills(false);setMarketplaces(true);}} onClose={()=>setSkills(false)}/> : <PluginPage catalog={plugins ? {...plugins, plugins:plugins.plugins.filter(p => `${p.name} ${p.title} ${p.description ?? ""}`.toLowerCase().includes(query.toLowerCase()))} : null} selected={plugin} standalone={standalone} loading={loading} installedActions={controls.installedActions} connected={connected} saving={saving||controls.blocked} setSaving={setSaving} setCatalog={setPlugins} setError={setError} bridge={bridge} target={target} hostId={hostId} onSelect={standalone?()=>onClose():setSelected}/>}</PluginAcquisition> : liveMcp && target && "sessionId" in target ? <SessionMcp bridge={bridge} hostId={hostId} sessionId={target.sessionId} target={target} connected={connected} idle={sessionIdle} mutationPending={saving} query={query} onBack={() => setLiveMcp(false)}/> : <McpPage initialAdd={addMcp} key={`${hostId}:${targetKey}`} catalog={mcp ? {...mcp, servers:mcp.servers.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))} : null} connected={connected} saving={saving} setSaving={setSaving} setCatalog={setMcp} setError={setError} bridge={bridge} target={target} hostId={hostId} onLive={() => setLiveMcp(true)}/>}
+    {page === "plugins" ? <PluginAcquisition showHistoricalResult={!standalone} key={`${hostId}:${targetKey}`} bridge={bridge} hostId={hostId} target={target} connected={connected} visible={marketplaces} initialMarketplace={initialMarketplace?.name} initialAdd={initialMarketplaceAdd} query={query} actionsRoot={actionsRoot} onMcp={()=>{setAddMcp(true);onPageChange?.("mcp");}} onInstalledChanged={()=>void reload()}>{controls=>skills ? <NativePluginDirectory key={`${hostId}:${targetKey}`} embeddedSkills onTrySkill={onTrySkill} onOpenSkillFile={onOpenSkillFile} initialTab="skills" search={query} refreshKey={skillsRefresh} bridge={bridge} hostId={hostId} hostName={hostName} target={target} connected={connected} onManage={()=>setSkills(false)} onMarketplace={()=>{setSkills(false);setMarketplaces(true);}} onClose={()=>setSkills(false)}/> : <PluginPage catalog={plugins ? {...plugins, plugins:plugins.plugins.filter(p => `${p.name} ${p.title} ${p.description ?? ""}`.toLowerCase().includes(query.toLowerCase()))} : null} selected={plugin} standalone={standalone} loading={loading} installedActions={controls.installedActions} connected={connected} saving={saving||controls.blocked} setSaving={setSaving} setCatalog={setPlugins} setError={setError} bridge={bridge} target={target} hostId={hostId} onSelect={standalone?()=>onClose():setSelected}/>}</PluginAcquisition> : liveMcp && target && "sessionId" in target ? <SessionMcp bridge={bridge} hostId={hostId} sessionId={target.sessionId} target={target} connected={connected} idle={sessionIdle} mutationPending={saving} query={query} onBack={() => setLiveMcp(false)}/> : <McpPage initialAdd={addMcp} key={`${hostId}:${targetKey}`} catalog={mcp ? {...mcp, servers:mcp.servers.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))} : null} connected={connected} saving={saving} setSaving={setSaving} setCatalog={setMcp} setError={setError} bridge={bridge} target={target} hostId={hostId} onLive={() => setLiveMcp(true)}/>}
     </div>
   </section>;
 }

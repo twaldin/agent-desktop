@@ -1,4 +1,4 @@
-import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
+import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativeSkillFileRef } from "@agent-desktop/shared";
 import { isAbsolute } from "node:path";
 import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
@@ -50,6 +50,17 @@ function parseCommandBody(value: unknown): CommandEnvelope {
   const attachments = Object.hasOwn(input, "attachments") ? parseImageAttachments(input.attachments) : undefined;
   const promptText = () => attachments?.length && input.text === "" ? "" : text(input.text, "prompt", attachments?.length ? 500_000 : 4_000_000);
   switch (type) {
+    case "skill.file.write": {
+      if (Object.keys(input).some(key => !["type", "ref", "expectedRevision", "text", "bom"].includes(key))
+        || typeof input.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedRevision)
+        || typeof input.text !== "string" || new TextEncoder().encode(input.text).byteLength > 1024 * 1024
+        || input.bom !== undefined && typeof input.bom !== "boolean") throw new Error("Invalid native skill file write.");
+      return { id, command: { type, ref: parseNativeSkillFileRef(input.ref), expectedRevision: input.expectedRevision, text: input.text, ...(input.bom === undefined ? {} : { bom: input.bom }) } };
+    }
+    case "skill.file.reveal": {
+      if (Object.keys(input).some(key => !["type", "ref"].includes(key))) throw new Error("Invalid native skill file reveal.");
+      return { id, command: { type, ref: parseNativeSkillFileRef(input.ref) } };
+    }
     case "session.environment.cancel": return { id, command: { type, preparationId: text(input.preparationId, "preparation ID"), projectId: text(input.projectId, "project ID"), runRevision: revision(input.runRevision) } };
     case "session.environment.resume": return { id, command: { type, preparationId: text(input.preparationId, 'preparation ID'), expectedRevision: revision(input.expectedRevision) } };
     case "preferences.put": return { id, command: { type, change: parsePreferenceChange(input.change) } };

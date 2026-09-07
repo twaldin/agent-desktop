@@ -24,7 +24,7 @@ import type { TerminalBridge, NativeTerminalBridge } from "./terminals";
 import type { OmpApprovalMode, OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot } from "./settings";
 import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingOptions, OmpSettingsCatalog, OmpSettingsMutation, OmpSettingsSnapshot } from "./settings";
 import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities, UploadedImageMetadata, RecordedImageBytes } from "./attachments";
-import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions, ComposerSkillDetail, NativeSkillInventory } from "./composer-actions";
+import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions, ComposerSkillDetail, NativeSkillFileDocument, NativeSkillFileRef, NativeSkillFileRevealResult, NativeSkillFileWriteResult, NativeSkillInventory } from "./composer-actions";
 import type { SessionActivitySnapshot } from "./session-activity";
 import type { BrowserMetadataSnapshot, BrowserFrameTarget, BrowserFrameSnapshot } from "./browser";
 export * from "./attachments";
@@ -171,6 +171,8 @@ export interface HostState {
 export type HostCommand =
   | { type: "preferences.put"; change: PreferenceChange }
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
+  | { type: "skill.file.write"; ref: NativeSkillFileRef; expectedRevision: string; text: string; bom?: boolean }
+  | { type: "skill.file.reveal"; ref: NativeSkillFileRef }
   | { type: "project.add"; path: string; name?: string }
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
@@ -209,7 +211,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
   | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -258,6 +260,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getComposerActions?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<ComposerActionsCatalog | null>;
   getSkillInventory?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<NativeSkillInventory | null>;
   getSkillDetail?(target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string, inventory?: boolean): Promise<ComposerSkillDetail>;
+  getSkillFile?(ref: NativeSkillFileRef, hostId?: string): Promise<NativeSkillFileDocument>;
   getComposerCompletions?(query: ComposerCompletionQuery, hostId?: string): Promise<ComposerCompletions>;
   inspectImageAttachment?(data: Uint8Array): Promise<UploadedImageMetadata>;
   getImageAttachmentCapabilities?(hostId: string): Promise<ImageAttachmentCapabilities | null>;

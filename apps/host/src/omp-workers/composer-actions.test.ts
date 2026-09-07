@@ -138,3 +138,29 @@ test("skill flush failure retains honest uncertain receipt and insertion gate ma
     }
   } finally { await f.close(); }
 }, 30_000);
+
+test("native skill identity follows its file through refreshed metadata, invalidity and repair", async () => {
+  const f = await fixture();
+  try {
+    const before = await f.runtime.getSkillInventory(f.cwd, { refresh: true });
+    const original = before.skills.find(skill => skill.name === "compose-skill")!;
+    expect(original).toBeDefined();
+    const contents = await readFile(original.source.path!, "utf8");
+    await writeFile(original.source.path!, contents.replace("description: Controlled native skill", "description: Refreshed native skill metadata"));
+    const changed = await f.runtime.getSkillInventory(f.cwd, { refresh: true });
+    expect(changed.skills.find(skill => skill.name === "compose-skill")).toMatchObject({
+      id: original.id, description: "Refreshed native skill metadata", source: { path: original.source.path },
+    });
+    expect(changed.revision).not.toBe(before.revision);
+
+    await writeFile(original.source.path!, "---\nname: compose-skill\n---\nMissing required description\n");
+    const invalid = await f.runtime.getSkillInventory(f.cwd, { refresh: true });
+    expect(invalid.skills.find(skill => skill.source.path === original.source.path)).toBeUndefined();
+
+    await writeFile(original.source.path!, contents);
+    const repaired = await f.runtime.getSkillInventory(f.cwd, { refresh: true });
+    expect(repaired.skills.find(skill => skill.name === "compose-skill")).toMatchObject({
+      id: original.id, description: "Controlled native skill", source: { path: original.source.path },
+    });
+  } finally { await f.close(); }
+});

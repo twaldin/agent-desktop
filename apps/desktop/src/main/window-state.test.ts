@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import type { BrowserWindow } from "electron";
-import { createDockState, resizeDock } from "../renderer/dock-state";
+import { createDockState, resizeDock, dockTabId, insertDockTab } from "../renderer/dock-state";
 import {
   defaultWindowView,
   parseDockSnapshot,
@@ -435,4 +435,19 @@ test("side-chat layout survives restart with its offline session owner and unrea
   expect(new WindowStateStore(directory, "primary").bootstrap().state?.dock).toEqual(dock);
   const invalid = { ...tab, target: "project:saved-session", id: "offline-machine:project:saved-session:side-chat" };
   expect(parseDockSnapshot({ tabs: [invalid], state: { ...dock.state, right: { tabIds: [invalid.id], activeTabId: invalid.id, open: true } } })).toBeUndefined();
+});
+
+test("skill file dock restoration preserves host-native scope and rejects conflicting identities", () => {
+  const skillFile = {skillId:"skill:sample",sourcePath:"/outside-project/SKILL.md",inventory:true};
+  const descriptor = {kind:"skill-file" as const,hostId:"work",target:"host" as const,title:"SKILL.md",skillFile};
+  const tab = {...descriptor,id:dockTabId(descriptor)};
+  const snapshot = {state:insertDockTab(createDockState(),tab,"right"),tabs:[tab]};
+  expect(parseDockSnapshot(snapshot)).toEqual(snapshot);
+  const changed=(patch:Record<string,unknown>)=>({...snapshot,tabs:[{...tab,...patch}]});
+  expect(parseDockSnapshot(changed({skillFile:undefined}))).toBeUndefined();
+  expect(parseDockSnapshot(changed({kind:"files"}))).toBeUndefined();
+  expect(parseDockSnapshot(changed({target:"project:p"}))).toBeUndefined();
+  expect(parseDockSnapshot(changed({skillFile:{...skillFile,target:{projectId:"p"}}}))).toBeUndefined();
+  expect(parseDockSnapshot(changed({skillFile:{...skillFile,sourcePath:"/another/SKILL.md"}}))).toBeUndefined();
+  expect(parseDockSnapshot(changed({skillFile:{...skillFile,content:"must not persist in window state"}}))).toBeUndefined();
 });

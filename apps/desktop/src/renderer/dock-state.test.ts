@@ -32,3 +32,11 @@ test("browser target IDs are owner-qualified and do not collide by name", () => 
   expect(one).not.toBe(two);
   expect(one).toContain("target=");
 });
+
+test("native skill files remain distinct across hosts, files and discovery scope", () => {
+  const descriptor = {hostId:"home",target:"host" as const,kind:"skill-file" as const,skillFile:{skillId:"skill:one",sourcePath:"/native/SKILL.md",inventory:true}};
+  const first = dockTabId(descriptor);
+  expect(dockTabId({...descriptor,hostId:"work"})).not.toBe(first);
+  expect(dockTabId({...descriptor,skillFile:{...descriptor.skillFile,sourcePath:"/other/SKILL.md"}})).not.toBe(first);
+  expect(dockTabId({...descriptor,target:"project:p",skillFile:{...descriptor.skillFile,target:{projectId:"p"}}})).not.toBe(first);
+});

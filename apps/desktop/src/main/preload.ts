@@ -59,6 +59,7 @@ const bridge: DesktopBridge = {
   getComposerActions: (target, refresh, hostId) => ipcRenderer.invoke("host:composer-actions", target, refresh, hostId),
   getSkillInventory: (target, refresh, hostId) => ipcRenderer.invoke("host:skill-inventory", target, refresh, hostId),
   getComposerCompletions: (query, hostId) => ipcRenderer.invoke("host:composer-completions", query, hostId),
+  getSkillFile: (ref, hostId) => ipcRenderer.invoke("host:skill-file", ref, hostId),
   getSkillDetail: (target, skillId, catalogRevision, hostId, inventory) => ipcRenderer.invoke("host:skill-detail", target, skillId, catalogRevision, hostId, inventory),
   getComposerCatalog: (target, refresh, hostId) => ipcRenderer.invoke("host:composer-catalog", target, refresh, hostId),
   getModelDefinitions: hostId => ipcRenderer.invoke("host:model-definitions", hostId),

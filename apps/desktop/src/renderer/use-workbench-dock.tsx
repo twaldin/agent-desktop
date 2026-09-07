@@ -1,3 +1,4 @@
+import type { NativeSkillFileRef } from "@agent-desktop/shared";
 import { useEffect, useRef, useState } from "react";
 import type {
   BrowserFrameTarget,
@@ -19,7 +20,7 @@ import { nativeTerminalClient } from "./native-terminal-bridge";
 import { workspaceKey } from "./workspace-state";
 
 export type DockSnapshot = NonNullable<WindowViewState["dock"]>;
-export function targetFromDock(target: DockTarget): WorkspaceTarget {
+export function targetFromDock(target: Exclude<DockTarget, "host">): WorkspaceTarget {
   return target.startsWith("session:")
     ? { sessionId: target.slice(8) }
     : { projectId: target.slice(8) };
@@ -49,7 +50,7 @@ export function useWorkbenchDock(
     }));
   };
   function open(
-    kind: Exclude<DockTab["kind"], "terminal">,
+    kind: Exclude<DockTab["kind"], "terminal" | "skill-file">,
     destination: DockDestination = "right",
     owner = hostId,
     workspace = target,
@@ -69,6 +70,13 @@ export function useWorkbenchDock(
               : "Files",
     };
     add({ ...descriptor, id: dockTabId(descriptor) }, destination);
+  }
+
+  function openSkillFile(ref: NativeSkillFileRef, owner: string) {
+    const descriptor: Omit<DockTab, "id"> = {kind:"skill-file", hostId:owner,
+      target:ref.target ? workspaceKey(ref.target) as DockTarget : "host",
+      skillFile:ref, title:ref.sourcePath.split("/").at(-1) || "SKILL.md"};
+    add({...descriptor,id:dockTabId(descriptor)}, "right");
   }
 
   // Native titles/URLs can exceed the durable presentation-label limit.
@@ -377,6 +385,7 @@ export function useWorkbenchDock(
     change,
     toggle,
     open,
+    openSkillFile,
     terminal,
     bindTerminal,
     browser,

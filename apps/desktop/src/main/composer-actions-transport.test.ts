@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { COMPOSER_OWNER_HEADER } from "@agent-desktop/shared";
-import { requestComposerActions, requestSkillDetail, requestSkillInventory } from "./composer-actions-transport";
+import { requestComposerActions, requestSkillDetail, requestSkillInventory, requestSkillFile } from "./composer-actions-transport";
 import { HostRequestError } from "./host-transport";
 
 const seen: Array<{ path: string; owner: string | null; authorization: string | null }> = [];
@@ -12,6 +12,15 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   if (path === "/coded-404/v1/composer/actions") return Response.json({ error: { code: "COMPOSER_UNAVAILABLE", message: "Composer disabled" } }, { status: 404 });
   if (path === "/auth/v1/composer/actions") return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (path === "/wrong-owner/v1/composer/actions") return Response.json({ protocolVersion: 1, hostId: "other", cwd: "/tmp", revision: "a".repeat(64), commands: [], skills: [], diagnostics: [] }, { headers: { [COMPOSER_OWNER_HEADER]: "other" } });
+  if (path.endsWith("/v1/composer/skill-file")) {
+    const body = await request.json() as {ref:Record<string,unknown>};
+    const ref = {...body.ref};
+    if (path.startsWith("/wrong-file/")) ref.sourcePath = "/different/SKILL.md";
+    if (path.startsWith("/wrong-target/")) ref.target = {projectId:"other"};
+    return Response.json({protocolVersion:1,hostId:path.startsWith("/wrong-file-owner/")?"other":"owner",ref,catalogRevision:"a".repeat(64),
+      document:{kind:"text",text:"# skill",revision:"b".repeat(64),path:"SKILL.md",size:7,mode:420,modifiedAt:123,bom:false,encoding:"utf8"},
+      reveal:{label:"Reveal in Finder",available:true}}, {headers:{[COMPOSER_OWNER_HEADER]:"owner"}});
+  }
   if (path === "/detail/v1/composer/skill-detail") {
     const body = await request.json() as { target?: { projectId: string } };
     return Response.json({ protocolVersion: 1, hostId: "owner", target: body.target, cwd: "/tmp", revision: "a".repeat(64), skillId: "skill:one", content: "# skill" }, { headers: { [COMPOSER_OWNER_HEADER]: "owner" } });
@@ -56,4 +65,15 @@ test("skill detail transport preserves owner, target and bounded content", async
 test("skill detail transport rejects stale revision and wrong skill identity", async () => {
   await expect(requestSkillDetail(endpoint("bad-detail-revision"), undefined, "skill:one", "a".repeat(64))).rejects.toThrow("invalid");
   await expect(requestSkillDetail(endpoint("bad-detail-id"), undefined, "skill:one", "a".repeat(64))).rejects.toThrow("invalid");
+});
+
+test("editable skill file transport checks host and exact native resource independently of workspace files", async () => {
+  const ref = {inventory:true,sourcePath:"/outside-project/SKILL.md",skillId:"skill:one",target:{projectId:"project"}};
+  const result = await requestSkillFile(endpoint("file"),ref);
+  expect(result.ref).toEqual(ref);
+  expect(seen.at(-1)).toEqual({path:"/file/v1/composer/skill-file",owner:"owner",authorization:"Bearer transport-secret"});
+  for (const prefix of ["wrong-file","wrong-target","wrong-file-owner"]) await expect(requestSkillFile(endpoint(prefix),ref)).rejects.toThrow("different owner");
+  await expect(requestSkillFile(endpoint("file"),{...ref,sourcePath:"relative.md"})).rejects.toThrow("invalid");
+  const global = await requestSkillFile(endpoint("file"),{skillId:ref.skillId,sourcePath:ref.sourcePath,inventory:true});
+  expect(global.ref.target).toBeUndefined();
 });

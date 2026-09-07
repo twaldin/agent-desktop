@@ -19,6 +19,7 @@ import { initThemeSync } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
 import { parseTitleSlotLine } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
 import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
+import { reset as resetCapabilityCache } from "@oh-my-pi/pi-coding-agent/discovery";
 import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
 import { TranscriptMirror, projectGoalCompletions } from "./transcript";
 import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
@@ -284,6 +285,7 @@ export class OmpRuntime {
       this.#assertActive();
       let context = this.#discovery.get(contextKey);
       if (!context || refresh) {
+        if (refresh) resetCapabilityCache();
         const replacement = await this.#context(resolved, loadExtensions);
         try {
           if (refresh) {

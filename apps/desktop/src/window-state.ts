@@ -1,3 +1,4 @@
+import { parseNativeSkillFileRef } from "@agent-desktop/shared";
 import { dockTabId, type DockState, type DockTab } from "./renderer/dock-state";
 /** Device/profile-local presentation only. Never sent to a host or shared preferences. */
 export interface WindowNavigation {
@@ -135,15 +136,23 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       !record(item) ||
       !id(item.hostId) ||
       typeof item.target !== "string" ||
-      !/^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) ||
+      !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target)) ||
       typeof item.title !== "string" ||
       item.title.length > 1000 ||
-      !["review", "files", "worktrees", "terminal", "browser", "goal", "side-chat"].includes(
+      !["review", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file"].includes(
         String(item.kind),
       ) ||
       (item.terminalId !== undefined && !id(item.terminalId))
     )
       return;
+    let skillFile;
+    if (item.skillFile !== undefined) {
+      try { skillFile = parseNativeSkillFileRef(item.skillFile); } catch { return; }
+      const target = skillFile.target;
+      const expected = !target ? "host" : "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}`;
+      if (item.target !== expected) return;
+    }
+    if ((item.kind === "skill-file") !== Boolean(skillFile) || (item.target === "host" && item.kind !== "skill-file")) return;
     const browserTarget = item.browserTarget;
     const validBrowserTarget =
       browserTarget &&
@@ -157,6 +166,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       id: String(item.id),
       title: item.title,
       ...(item.unread === true ? { unread: true } : {}),
+      ...(skillFile ? {skillFile} : {}),
       hostId: item.hostId,
       target: item.target as DockTab["target"],
       kind: item.kind as DockTab["kind"],

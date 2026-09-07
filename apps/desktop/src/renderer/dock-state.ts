@@ -1,13 +1,15 @@
+import type { NativeSkillFileRef } from "@agent-desktop/shared";
 export type DockDestination = "right" | "bottom";
 export type DockTabKind =
   | "side-chat"
   | "goal"
   | "review"
+  | "skill-file"
   | "files"
   | "worktrees"
   | "terminal"
   | "browser";
-export type DockTarget = `session:${string}` | `project:${string}`;
+export type DockTarget = `session:${string}` | `project:${string}` | "host";
 export interface DockTab {
   id: string;
   title: string;
@@ -15,6 +17,7 @@ export interface DockTab {
   kind: DockTabKind;
   hostId: string;
   target: DockTarget;
+  skillFile?: NativeSkillFileRef;
   terminalId?: string;
   browserTarget?: BrowserFrameTarget;
 }
@@ -56,10 +59,11 @@ const clone = (state: DockState): DockState => ({
 export const dockTabId = (
   tab: Pick<
     DockTab,
-    "hostId" | "target" | "kind" | "terminalId" | "browserTarget"
+    "hostId" | "target" | "kind" | "terminalId" | "browserTarget" | "skillFile"
   >,
 ) => {
   const base = `${tab.hostId}:${tab.target}:${tab.kind}`;
+  if (tab.kind === "skill-file" && tab.skillFile) return `${base}:${encodeURIComponent(tab.skillFile.skillId)}:${encodeURIComponent(tab.skillFile.sourcePath)}:${tab.skillFile.inventory ? "inventory" : "composer"}`;
   if (tab.kind === "browser" && tab.browserTarget)
     return `${base}:target=${encodeURIComponent(`${tab.browserTarget.workerPid}\0${tab.browserTarget.name}\0${tab.browserTarget.targetId}`)}`;
   return `${base}${tab.terminalId ? `:${tab.terminalId}` : ""}`;

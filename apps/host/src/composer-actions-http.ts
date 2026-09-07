@@ -1,9 +1,10 @@
-import { COMPOSER_OWNER_HEADER, type ComposerCompletionQuery, type WorkspaceTarget } from "@agent-desktop/shared";
+import { COMPOSER_OWNER_HEADER, parseNativeSkillFileRef, type ComposerCompletionQuery, type WorkspaceTarget } from "@agent-desktop/shared";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import type { ComposerActionsCatalog, ComposerSkillDetail, NativeSkillInventory } from "@agent-desktop/shared";
 import type { WorkerRuntime, WorkerSession } from "./omp-workers";
 import { parseWorkspaceTarget } from "./workspace-http";
+import { SkillFileError, type SkillFiles } from "./skill-files";
 
 class ComposerRequestError extends Error {
   constructor(message: string, readonly status = 400, readonly code = "INVALID_COMPOSER_QUERY") { super(message); }
@@ -33,6 +34,7 @@ export class ComposerActionsHttp {
     hostId: string; resolveCwd(target?: WorkspaceTarget): string;
     getHandle(sessionId: string): Promise<Pick<WorkerSession, "getComposerActions" | "getComposerCompletions" | "cwd">>;
     runtime: Pick<WorkerRuntime, "getComposerActions" | "getComposerCompletions" | "getSkillInventory">;
+    skillFiles?: Pick<SkillFiles, "read">;
   }) {}
   private async readSkill(path: string): Promise<{ content: string; verify(): Promise<void> }> {
     if (!path || !path.startsWith("/") || path.includes("\0")) throw new ComposerRequestError("Native skill content is unavailable.", 404, "SKILL_UNAVAILABLE");
@@ -88,7 +90,7 @@ export class ComposerActionsHttp {
     return { protocolVersion: 1, hostId: this.options.hostId, ...(target ? { target } : {}), cwd, revision: first.revision, skillId: input.skillId, content: read.content };
   }
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
-    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-inventory", "/v1/composer/skill-detail"].includes(url.pathname)) return undefined;
+    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-inventory", "/v1/composer/skill-detail", "/v1/composer/skill-file"].includes(url.pathname)) return undefined;
     const headers = { "Cache-Control": "no-store", [COMPOSER_OWNER_HEADER]: this.options.hostId };
     let admitted = false;
     try {
@@ -99,6 +101,17 @@ export class ComposerActionsHttp {
       const input = await readBody(request), completions = url.pathname.endsWith("/completions");
       const inventoryQuery = url.pathname.endsWith("/skill-inventory");
       const skillDetail = url.pathname.endsWith("/skill-detail");
+      const skillFile = url.pathname.endsWith("/skill-file");
+      if (skillFile) {
+        keys(input, ["ref"]);
+        if (!this.options.skillFiles) throw new ComposerRequestError("Native skill file editing is unavailable on this host.", 501, "SKILL_FILE_UNAVAILABLE");
+        let ref;
+        try { ref = parseNativeSkillFileRef(input.ref); }
+        catch { throw new ComposerRequestError("Invalid native skill file reference."); }
+        const result = await this.options.skillFiles.read(ref);
+        if (Buffer.byteLength(JSON.stringify(result), "utf8") > 2 * 1024 * 1024) throw new ComposerRequestError("Native skill file exceeds 2 MiB.", 413, "SKILL_TOO_LARGE");
+        return Response.json(result, { headers });
+      }
       keys(input, skillDetail ? ["target", "skillId", "catalogRevision", "inventory"] : completions ? ["target", "kind", "query", "commandName", "catalogRevision", "limit"] : ["target", "refresh"]);
       if (skillDetail && input.inventory !== undefined && typeof input.inventory !== "boolean") throw new ComposerRequestError("Invalid native skill inventory selector.");
       let target: WorkspaceTarget | undefined;
@@ -137,7 +150,7 @@ export class ComposerActionsHttp {
       if (resolve() !== cwd || result.cwd !== cwd) throw new ComposerRequestError("The selected workspace changed during completion. Refresh its catalog.", 409, "STALE_TARGET");
       return Response.json({ ...result, hostId: this.options.hostId, ...(target ? { target } : {}) }, { headers });
     } catch (error) {
-      return Response.json({ error: { message: error instanceof Error ? error.message.slice(0, 4096) : "Native composer query failed.", code: error instanceof ComposerRequestError ? error.code : "COMPOSER_QUERY_FAILED" } }, { status: error instanceof ComposerRequestError ? error.status : 500, headers });
+      return Response.json({ error: { message: error instanceof Error ? error.message.slice(0, 4096) : "Native composer query failed.", code: error instanceof ComposerRequestError || error instanceof SkillFileError ? error.code : "COMPOSER_QUERY_FAILED" } }, { status: error instanceof ComposerRequestError || error instanceof SkillFileError ? error.status : 500, headers });
     } finally { if (admitted) this.#inFlight--; }
   }
 }

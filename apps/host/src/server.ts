@@ -34,6 +34,7 @@ import { parseInteractionAnswer } from "./interaction-http";
 import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./workspace-http";
 import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
+import { SkillFiles, type SkillFileAuthorization } from "./skill-files";
 import { hasNativeBtwComposerWinner } from "./omp/composer-actions";
 import { nativeBtwQuestion } from "@agent-desktop/shared";
 import { SessionActivityHttp } from "./session-activity-http";
@@ -59,7 +60,7 @@ import { ApprovalRecovery } from "./approval-recovery";
 type SocketData = { after: number; remoteAddress?: string };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string } = {}) {
+export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string; skillFileReveal?: (canonicalPath: string) => Promise<void> } = {}) {
   const dataDirectory = options.dataDirectory ?? getDataDirectory();
   const lease = acquireHostLease(dataDirectory);
   const environmentAbort = new AbortController();
@@ -233,12 +234,19 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     release: id => ordered(id, async () => (await getHandle(id)).releaseAccountForReselection()),
     changed: refresh => { publish({ type: "accounts" }); if (refresh) refreshModels(); },
   });
-  const composerActions = new ComposerActionsHttp({ hostId: store.host.id, runtime, getHandle, resolveCwd: target => {
+  const resolveComposerCwd = (target?: import("@agent-desktop/shared").WorkspaceTarget) => {
     if (!target) return options.discoveryDirectory ?? homedir();
     const cwd = "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
     if (!cwd) throw new Error("The composer target is not catalogued on this host.");
     return cwd;
-  } });
+  };
+  const skillAuthorizationKey = (ref: import("@agent-desktop/shared").NativeSkillFileRef) => `skill-file.v1:${createHash("sha256").update(JSON.stringify(ref)).digest("hex")}`;
+  const skillFiles = new SkillFiles({ hostId: store.host.id, runtime, resolveCwd: resolveComposerCwd, reveal: options.skillFileReveal,
+    authorizations: {
+      get: ref => store.readMetadata<SkillFileAuthorization>(skillAuthorizationKey(ref)),
+      put: (ref, value) => store.writeMetadata(skillAuthorizationKey(ref), value),
+    } });
+  const composerActions = new ComposerActionsHttp({ hostId: store.host.id, runtime, getHandle, resolveCwd: resolveComposerCwd, skillFiles });
   goalContinuations = new GoalContinuationController({
     session: id => store.getSession(id), ordered, getHandle,
     executing: id => executions.has(id),
@@ -536,6 +544,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const ok = (value?: Extract<CommandResult, { ok: true }>["value"], admission?: Extract<CommandResult, { ok: true }>["admission"]): CommandResult =>
       ({ ok: true, commandId: envelope.id, value, ...(admission ? { admission } : {}) });
     switch (command.type) {
+      case "skill.file.write": {
+        const value = await skillFiles.write(command.ref, command);
+        return ok(value);
+      }
+      case "skill.file.reveal": {
+        await skillFiles.reveal(command.ref);
+        return ok({ type: "skill.file.reveal" });
+      }
       case "session.environment.cancel": {
         const record = store.environmentPreparations.get(command.preparationId);
         const project = store.getProject(command.projectId);
@@ -735,14 +751,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const workspaceAction = envelope.command.type === "workspace.mutate" ? envelope.command.action : undefined;
     // Action references contain no script bodies. Retain their version gate and owner
     // so an older artifact cannot adopt a terminal with newer restart semantics.
-    const journalCommand = workspaceAction && workspaceAction.type !== "environment.action" && workspaceAction.type !== "environment.select" ? undefined : envelope.command;
+    const journalCommand = envelope.command.type === "skill.file.write" ? undefined : workspaceAction && workspaceAction.type !== "environment.action" && workspaceAction.type !== "environment.select" ? undefined : envelope.command;
     const claim = store.claimCommand(envelope.id, hash, journalCommand);
     if (claim.kind === "conflict") return fail(envelope.id, "COMMAND_ID_REUSED", "This command ID belongs to a different request.");
     if (claim.kind === "done") return claim.record.result!;
     if (claim.kind === "pending") return commands.get(envelope.id)
       ?? fail(envelope.id, "OUTCOME_UNKNOWN", "The original command has no confirmed durable receipt. Inspect its outcome before issuing a new command.");
     const command = envelope.command;
-    const key = command.type === "workspace.mutate" ? `workspace:${JSON.stringify(command.target)}` : "sessionId" in command ? command.sessionId : "$catalog";
+    const key = command.type === "workspace.mutate" ? `workspace:${JSON.stringify(command.target)}` : command.type === "skill.file.write" || command.type === "skill.file.reveal" ? `skill-file:${command.ref.sourcePath}` : "sessionId" in command ? command.sessionId : "$catalog";
     const interrupt = command.type === "session.interrupt" || command.type === "session.environment.cancel";
     const previous = interrupt ? undefined : sessionTails.get(key);
     const pending = (previous ?? Promise.resolve()).catch(() => {}).then(async () => {
