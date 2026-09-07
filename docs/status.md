@@ -1,5 +1,11 @@
 # Milestone status
 
+## Ordinary Markdown file modes
+
+Dedicated Markdown file tabs now open an editable preview and expose View source / View preview. Switching waits for the existing host save receipt; offline or unresolved edits keep their current view and buffer. The mode persists with the owning file tab in window state. Both editors share the same document, preserving raw Markdown/frontmatter and checkbox writes.
+
+Five hidden-Electron checks/five captures pass with three actual host writes, zero sessions and unchanged draft. Source and skill regressions also pass 7 and 13 checks. The 47 scoped tests/248 assertions, typecheck and build pass; window-state coverage verifies mode persistence across store recreation. Remaining rich-file actions, links, diagrams, scroll/undo and native pixel gates stay explicit in [file editor](workspace-file-editor.md); this checkpoint does not claim full Markdown or installed parity.
+
 ## File editor Go to line
 
 The active file panel now exposes Command-L/Control-L with Codex's compact popup, live centered preview, negative line numbers, clamped bounds and explicit validation. Enter commits a line-start cursor; Escape/Close restores the opening selection and scroll, while clicking away retains the preview. Reopening clears the input. Find and other panels retain their own shortcut ownership.

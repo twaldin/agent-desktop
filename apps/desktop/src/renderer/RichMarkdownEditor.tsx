@@ -7,7 +7,7 @@ import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM, Superscript, Subscript, Emoji } from "@lezer/markdown";
 import { applyMarkdownChanges, markdownMetadata, markdownTextChange, normalizeMarkdown, protectMarkdownPrefix } from "./markdown-file-model";
-import { resolveTranscriptLink } from "./transcript-links";
+import { fileLocation, resolveTranscriptLink } from "./transcript-links";
 import "./rich-markdown-editor.css";
 
 const focusChanged = StateEffect.define<boolean>();
@@ -124,6 +124,8 @@ const decorations = StateField.define<DecorationSet>({ create: richDecorations, 
 export interface RichMarkdownEditorProps {
   documentKey: string; value: string; label: string; onChange(text: string): void; onSave(): void;
   readOnly?: boolean; active?: boolean; openExternal?(url: string): Promise<void>;
+  revealRequest?: { id: string; line?: number; column?: number };
+  onReveal?(id: string, error?: string): void;
 }
 /** Formatting is a view over Markdown, never an HTML-to-Markdown round trip. */
 export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
@@ -131,10 +133,11 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
   latest.current = props;
   const raw = useRef(props.value), baseline = useRef(props.value), writable = useRef(new Compartment());
   const alive = useRef(false);
+  const appliedReveal = useRef<string | undefined>(undefined);
   const [expanded, setExpanded] = useState(false), [linkError, setLinkError] = useState<string>();
   const metadata = useMemo(() => markdownMetadata(normalizeMarkdown(props.value)), [props.value]);
   useEffect(() => {
-    alive.current = true; setLinkError(undefined); setExpanded(false);
+    alive.current = true; appliedReveal.current = undefined; setLinkError(undefined); setExpanded(false);
     raw.current = baseline.current = latest.current.value;
     const initial=normalizeMarkdown(raw.current);
     const editor = new EditorView({ parent: container.current!, state: EditorState.create({ doc: initial, selection: {anchor:markdownMetadata(initial)?.end??0}, extensions: [
@@ -181,6 +184,17 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
   }, [props.value]);
   useEffect(() => { view.current?.dispatch({ effects: writable.current.reconfigure([EditorState.readOnly.of(Boolean(props.readOnly)), EditorView.editable.of(!props.readOnly)]) }); }, [props.readOnly]);
   useEffect(() => { if (props.active !== false) view.current?.requestMeasure(); }, [props.active]);
+  useEffect(() => {
+    const editor = view.current, request = props.revealRequest;
+    if (!editor || props.active === false || !request || appliedReveal.current === request.id) return;
+    appliedReveal.current = request.id;
+    if (request.line !== undefined) {
+      const location = fileLocation(editor.state.doc.toString(), request.line, request.column);
+      if ("error" in location) { props.onReveal?.(request.id, location.error); return; }
+      editor.dispatch({ selection: { anchor: location.start, head: location.end }, effects: EditorView.scrollIntoView(location.start, { y: "center" }) });
+    }
+    editor.focus(); props.onReveal?.(request.id);
+  }, [props.active, props.documentKey, props.revealRequest, props.value]);
   return <div className="rich-markdown-file" hidden={props.active === false}>
     {metadata && <section className="markdown-file-metadata" aria-label="Metadata"><h3>Metadata</h3><dl>
       {(expanded ? metadata.entries : metadata.entries.slice(0, 8)).map(entry => <div key={entry.key}><dt>{entry.key}</dt><dd>{Array.isArray(entry.value)

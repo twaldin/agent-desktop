@@ -490,3 +490,8 @@ button { touch-action: manipulation; }
 .settings-host-picker { display: flex; flex-direction: column; gap: 4px; color: var(--secondary); font-size: 12px; }
 .settings-host-picker select { width: 100%; min-width: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 5px; color: var(--text); }
 .settings-unavailable { padding: 0 24px; color: var(--secondary); }
+
+.workspace-markdown-mode { flex:none; height:28px; padding:0 8px; border:0; border-radius:6px; background:transparent; font:14px/20px var(--ui-font); color:var(--text); }
+.workspace-markdown-mode:hover { background:var(--hover); }
+.workspace-markdown-mode:disabled { opacity:.5; cursor:default; }
+.workspace-file-main > .rich-markdown-file { padding:8px 16px 24px; }

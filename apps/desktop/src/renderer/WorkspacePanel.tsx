@@ -1,16 +1,17 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { defaultFileTreeView, type FileTreeView, type WorkspaceTab } from "../window-state";
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
 import { type WorkspaceFileRequest } from "./transcript-links";
 import { ReviewPanel } from "./ReviewPanel";
 import { retainWorkspace } from "./workspace-lease";
+import { RichMarkdownEditor } from "./RichMarkdownEditor";
 import { PierreSourceEditor } from "./PierreSourceEditor";
 import { WorkspaceFileBreadcrumbs } from "./WorkspaceFileBreadcrumbs";
 import { WorkspaceFileTreePane } from "./WorkspaceFileTreePane";
 import { WorkspaceFileOpen } from "./WorkspaceFileOpen";
 
-export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, onOpenFile, fileTree, onFileTreeChange, embedded = false, active = true, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; embedded?: boolean; active?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
+export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, fileTree, onFileTreeChange, embedded = false, active = true, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; embedded?: boolean; active?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [localTab, setLocalTab] = useState<WorkspaceTab>("files");
   const tab = selectedTab ?? localTab;
@@ -43,16 +44,37 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
     {data.notice && !(filePath && data.mutationReceipt?.value.type === "file.write") && <p className="workspace-notice" role="status">{data.notice}</p>}
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
     <div id={embedded ? undefined : "workspace-view"} className="workspace-view" role={embedded ? undefined : "tabpanel"} aria-labelledby={embedded ? undefined : `workspace-tab-${tab}`}>
-      {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} onOpenFile={onOpenFile} fileTree={fileTree} onFileTreeChange={onFileTreeChange} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
+      {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} fileMode={fileMode} onFileModeChange={onFileModeChange} onOpenFile={onOpenFile} fileTree={fileTree} onFileTreeChange={onFileTreeChange} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
       {tab === "changes" ? <ReviewPanel commitRequest={commitRequest} data={data} disabled={disabled} onEdit={path => { if (onOpenFile) onOpenFile(path); else { setTab("files"); void data.open(path); } }}/> : tab === "worktrees" ? <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/> : null}
     </div>
   </aside>;
 }
 
-function Files({ data, disabled, fileRequest, filePath, onOpenFile, fileTree, onFileTreeChange, workspaceName, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; workspaceName: string; active: boolean }) {
+function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, fileTree, onFileTreeChange, workspaceName, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; workspaceName: string; active: boolean }) {
   const [localTree, setLocalTree] = useState(defaultFileTreeView);
   const tree = fileTree ?? localTree, changeTree = onFileTreeChange ?? setLocalTree;
   const opened = filePath ?? data.opened;
+  const [localMode, setLocalMode] = useState<"markdown" | "source">("markdown");
+  const markdownFile = Boolean(filePath && /\.(?:md|markdown|mdx)$/i.test(filePath));
+  const mode = markdownFile ? fileMode ?? localMode : "source";
+  const modeOwner = useRef({ data, filePath, mode, active }); modeOwner.current = { data, filePath, mode, active };
+  const [switchingMode, setSwitchingMode] = useState(false), [modeError, setModeError] = useState<string>();
+  const modeGeneration = useRef(0);
+  useEffect(() => { modeGeneration.current++; setSwitchingMode(false); setModeError(undefined); setLocalMode("markdown"); return () => { modeGeneration.current++; }; }, [data, filePath]);
+  const switchMode = async () => {
+    if (!filePath || switchingMode) return;
+    const generation = ++modeGeneration.current, owner = modeOwner.current;
+    setSwitchingMode(true); setModeError(undefined);
+    try {
+      const saved = await data.saveUntilClean(filePath);
+      if (modeGeneration.current !== generation || modeOwner.current.data !== owner.data || modeOwner.current.filePath !== owner.filePath || modeOwner.current.mode !== owner.mode) return;
+      if (!saved) { setModeError("Save or resolve this file before switching views. Your edits are retained."); return; }
+      const next = mode === "markdown" ? "source" : "markdown";
+      setLocalMode(next); onFileModeChange?.(next);
+    } catch (error) { if (modeGeneration.current === generation) setModeError(error instanceof Error ? error.message : "Could not save this file."); }
+    finally { if (modeGeneration.current === generation) setSwitchingMode(false); }
+  };
+
   const open = (path: string) => { if (onOpenFile) onOpenFile(path); else void data.open(path); };
   const [folder, setFolder] = useState(data.directory);
   const [newPath, setNewPath] = useState("");
@@ -75,21 +97,23 @@ function Files({ data, disabled, fileRequest, filePath, onOpenFile, fileTree, on
     <section className="file-editor" aria-label="File editor">
       {!filePath && data.documents.size > 0 && <div className="editor-tabs">{[...data.documents].map(([path, item]) => <button className={path === opened ? "selected" : ""} key={path} title={path} onClick={() => open(path)}>{path.split("/").at(-1)}{item.dirty ? " •" : ""}</button>)}</div>}
       {!opened ? <div className="workspace-empty"><Icon name="compose"/><p>Select a file to read or edit.</p></div> : <>
-        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}{filePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}{filePath && <WorkspaceFileOpen key={`${data.cacheKey}:${filePath}`} data={data} path={filePath} active={active} disabled={disabled}/>}{!filePath && <button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button>}</div>
+        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}{markdownFile && <button type="button" className="workspace-markdown-mode" disabled={switchingMode || !document || !editable} onClick={() => void switchMode()}>{mode === "markdown" ? "View source" : "View preview"}</button>}{filePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}{filePath && <WorkspaceFileOpen key={`${data.cacheKey}:${filePath}`} data={data} path={filePath} active={active} disabled={disabled}/>}{!filePath && <button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button>}</div>
       </>}
       <div className="workspace-file-body" hidden={!opened}><div className="workspace-file-main">
       {opened && <>
-        {fileError && <p className="workspace-notice" role="alert">{fileError}</p>}
+        {fileError && <p className="workspace-notice" role="alert">{fileError}</p>}{modeError && <p className="workspace-notice" role="alert">{modeError}</p>}
         {locationNotice?.path === opened && locationNotice?.id === fileRequest?.id && <p className="workspace-notice" role="status">{locationNotice.message}</p>}
         {document?.conflict !== undefined && <div className="file-conflict"><strong>The host file changed.</strong><details><summary>View host version</summary><pre>{document.conflict?.kind === "text" ? document.conflict.text : document.conflict ? `File is ${document.conflict.kind}` : "The file no longer exists."}</pre></details><div><button className="secondary-button" onClick={() => data.resolve(opened!, "remote")}>Use host version</button><button className="primary-button" onClick={() => data.resolve(opened!, "local")}>Keep my edits for next save</button></div></div>}
         {document?.recoveredText !== undefined && <details className="editor-recovery"><summary>Previous local buffer retained</summary><pre>{document.recoveredText}</pre><button onClick={() => data.edit(opened!, document.recoveredText!, true)}>Restore this text into editor</button></details>}
         {!document ? <p className="workspace-notice">{data.loading.has(`file:${opened}`) ? "Loading file…" : "No file content is cached."}</p> : editable ? null : <div className="workspace-empty"><p>{document.content?.kind === "binary" ? "This is a binary file. Text editing is unavailable." : document.content?.kind === "too-large" ? `This file is ${size(document.content.size)}; the host text editor limit is ${size(document.content.maximumBytes)}.` : document.content?.kind === "unsupported-encoding" ? `${document.content.encoding} editing is not supported. The original file is unchanged.` : "No text to display."}</p></div>}
       </>}
       {/* Keep each open file's native history and selection while another tab is visible. */}
-      <div className="workspace-source-editors" hidden={!editable}>
+      {markdownFile && document && editable && <RichMarkdownEditor documentKey={`${data.cacheKey}:${filePath}:markdown`} value={document.text} label={`Edit Markdown ${filePath}`} active={active && mode === "markdown"} revealRequest={revealRequest} onReveal={(id, error) => setLocationNotice(error ? { id, path: filePath!, message: error } : undefined)}
+        onChange={text => data.edit(filePath!, text, true)} onSave={() => { if (!disabled) void data.saveFile(filePath!); }}/>}
+      <div className="workspace-source-editors" hidden={!editable || mode === "markdown"}>
         {[...data.documents].filter(([path, item]) => (!filePath || path === filePath) && (!item.content || item.content.kind === "text")).map(([path, item]) =>
           <PierreSourceEditor key={path} documentKey={`${data.cacheKey}:${path}`} name={path} value={item.text}
-            label={`Edit ${path}`} active={active && opened === path}
+            label={`Edit ${path}`} active={active && opened === path && mode === "source"}
             onChange={text => data.edit(path, text, true)} onSave={() => { if (!disabled) void data.saveFile(path); }}
             revealRequest={opened === path ? revealRequest : undefined}
             onReveal={(id, error) => {

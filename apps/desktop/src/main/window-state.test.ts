@@ -491,3 +491,17 @@ test("file-tree visibility belongs to the window while renderer width is not per
   expect(parsed?.fileTreeOpen).toBe(true); expect(parsed).not.toHaveProperty("fileTreeWidth");
   expect(parseWindowView({ ...selected(), fileTreeOpen: "true" })?.fileTreeOpen).toBeUndefined();
 });
+
+test("Markdown mode persists with the exact owning file tab and ignores invalid presentation values", () => {
+  const descriptor = { kind: "file" as const, hostId: "owner", target: "project:p" as const, title: "README.md", filePath: "README.md" };
+  const source = { ...descriptor, id: dockTabId(descriptor), fileMode: "source" as const };
+  const markdown = { ...source, fileMode: "markdown" as const };
+  const state = insertDockTab(createDockState(), source, "right");
+  const directory = temporary(), store = new WindowStateStore(directory, "primary");
+  for (const tab of [source, markdown]) {
+    store.saveView({ ...selected(), dock: { state, tabs: [tab] } });
+    expect(new WindowStateStore(directory, "primary").bootstrap().state?.dock?.tabs[0]).toEqual(tab);
+  }
+  expect(parseDockSnapshot({ state, tabs: [{ ...source, fileMode: "html" }] })?.tabs[0]).toEqual({ ...descriptor, id: source.id });
+  expect(dockTabId(source)).toBe(dockTabId(markdown));
+});
