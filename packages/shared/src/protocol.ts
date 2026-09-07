@@ -141,6 +141,15 @@ export interface TranscriptAssistantMetadata {
   durationMs?: number; completedAt?: number;
   usage?: Partial<Record<"input" | "output" | "cacheRead" | "cacheWrite" | "totalTokens", number>> & { cost?: Partial<Record<"input" | "output" | "cacheRead" | "cacheWrite" | "total", number>> };
 }
+/** Native auto-read context. Image indexes refer to the native files array. */
+export interface TranscriptFileReference {
+  path: string;
+  content: string;
+  lineCount?: number;
+  byteSize?: number;
+  skippedReason?: "tooLarge" | "binary";
+  image?: { blockIndex: number; mimeType: string; bytes?: number; sha256?: string; error?: string };
+}
 export interface TranscriptMessage {
   /** Stable display identity; native entry identity remains separate. */
   id: string;
@@ -156,6 +165,8 @@ export interface TranscriptMessage {
   commandOutput?: { entryId: string; command: string; output: string };
   /** Captured context, linked only by explicit persisted native metadata. */
   selectedText?: { contextEntryId: string; submissionId: string; attachments: SelectedTextAttachment[]; bindingEntryId?: string };
+  /** Files actually recorded by OMP auto-read, never inferred from prompt text. */
+  fileReferences?: readonly TranscriptFileReference[];
   /** Bounded native goal-completed entry attached to its preceding assistant. */
   goalCompletion?: { entryId: string; objective: string; tokensUsed: number; tokenBudget?: number; timeUsedSeconds: number };
   blocks?: unknown[];

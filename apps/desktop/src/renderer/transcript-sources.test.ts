@@ -1,5 +1,18 @@
 import { expect, test } from "bun:test";
 import { transcriptSources } from "./transcript-sources";
+
+test("native auto-read sources retain original image indexes and exclude skipped reads", () => {
+  const result = transcriptSources([{ id: "file-context", nativeId: "native-file-context", role: "fileMention", text: "", fileReferences: [
+    { path: "notes #1.txt", content: "actual snapshot" },
+    { path: "large.bin", content: "skipped", skippedReason: "tooLarge" },
+    { path: "screen.png", content: "", image: { blockIndex: 2, mimeType: "image/png", bytes: 4, sha256: "a".repeat(64) } },
+    { path: "missing.png", content: "", image: { blockIndex: 3, mimeType: "image/png", error: "Unavailable" } },
+  ] }], "session");
+  expect(result).toEqual([
+    { id: "file:notes #1.txt", kind: "file", path: "notes #1.txt", label: "notes #1.txt" },
+    { id: "image:native-file-context:2", kind: "image", label: "screen.png", image: { kind: "transcript", sessionId: "session", nativeEntryId: "native-file-context", blockIndex: 2, mimeType: "image/png", bytes: 4, sha256: "a".repeat(64) } },
+  ]);
+});
 import type { TranscriptMessage } from "../../../../packages/shared/src/protocol";
 
 test("source provenance requires a completed successful read or durable image block", () => {

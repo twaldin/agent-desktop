@@ -1,5 +1,11 @@
 # Milestone status
 
+## Native auto-read file context
+
+OMP `fileMention` records now retain their consumed text, literal paths, skipped-read reasons and image identities in the transcript. Each reference can expand its recorded snapshot; file actions use the session workspace, and image retrieval reads the original native file index rather than reopening the source path. Sources includes recorded auto-reads while excluding skipped reads and unavailable images. Pending events and reopened history keep stable identities and copied metadata without embedding image bytes.
+
+The actual pinned generator, journal and worker pass text/empty/directory/binary/image retrieval and reopen checks with zero model calls.36 focused/regression tests pass420 assertions; four renderer checks/three PNG+Chromium-AX pairs, typecheck and build pass. Evidence and scope are described in [file editor](workspace-file-editor.md). This is a separate native-context presentation, not a guessed attachment to a preceding user message. User-bubble association, filetype icons, the full reference context menu/modified-click behavior and installed/pixel acceptance remain open. No Work installation, fixture or sealed-evidence change was made.
+
 ## Selected-text history
 
 Sent selections now appear above their exact native user message as a read-only grouped chip, using the same icon and hover preview as the draft. An excerpt-only prompt has no empty text bubble. Native metadata binds the original context entry to the observed user entry and must flush before admission. Valid but unlinked contexts remain visible with an explicit unlinked status; conflicting metadata never causes a guessed association. Worker protocol31 rejects older workers; OMP18.1.10 remains pinned.

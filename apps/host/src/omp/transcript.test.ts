@@ -44,6 +44,20 @@ test('only a bounded durable completion decorates its actual preceding native as
 });
 
 describe("native event transcript projection contract", () => {
+  test("file references keep immutable image metadata from live events through native reopen", () => {
+    const mirror = new TranscriptMirror();
+    const message = { role: "fileMention", timestamp: 90, files: [{ path: "a.png", content: "Recorded caption", image: { type: "image", mimeType: "image/png", data: Buffer.from("image bytes").toString("base64") } }] };
+    messageEvent(mirror, "message_start", message);
+    const first = mirror.snapshot([], [])[0]!;
+    expect(first.fileReferences?.[0]).toMatchObject({ path: "a.png", content: "Recorded caption", image: { blockIndex: 0, bytes: 11, sha256: expect.any(String) } });
+    expect(JSON.stringify(first)).not.toContain(message.files[0]!.image.data);
+    message.files[0]!.content = "Finished caption";
+    expect(first.fileReferences?.[0]?.content).toBe("Recorded caption");
+    messageEvent(mirror, "message_end", message);
+    const saved = mirror.snapshot([structuredClone(message)], [{ id: "native-file-context", message }])[0]!;
+    expect(saved).toMatchObject({ id: first.id, nativeId: "native-file-context", fileReferences: [{ content: "Finished caption" }] });
+    expect(new TranscriptMirror().snapshot([message], [{ id: "native-file-context", message }])[0]!.fileReferences).toEqual(saved.fileReferences);
+  });
   test("growing content keeps its display ID through durable storage, display copies and mirror restart", () => {
     const mirror = new TranscriptMirror();
     const message = { role: "assistant", timestamp: 100, content: [{ type: "text", text: "First" }] };

@@ -40,3 +40,12 @@
 .transcript-selected-context-status { font-size:12px; color:var(--muted); }
 
 .user-message.has-selected-text { flex-direction:column; align-items:flex-end; gap:8px; }
+
+.transcript-file-mentions { display:flex; flex-direction:column; gap:4px; margin:12px 0 24px; }
+.transcript-file-snapshot-heading { display:flex; align-items:baseline; gap:4px; flex-wrap:wrap; }
+.transcript-file-snapshot-toggle { display:inline-flex; align-self:center; border:0; background:transparent; color:var(--muted); padding:2px; cursor:pointer; }
+.transcript-file-snapshot-toggle .icon { width:16px; height:16px; }
+.transcript-file-snapshot-toggle:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
+.transcript-file-read-status { font-size:12px; color:var(--muted); }
+.transcript-file-snapshot-body { margin:8px 0 8px 24px; max-width:100%; overflow:auto; }
+.transcript-file-snapshot-body .transcript-output-text { max-height:20rem; overflow:auto; white-space:pre; }

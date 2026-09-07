@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import { projectFileMentions } from "./file-mentions";
 import type { TranscriptAssistantMetadata, TranscriptBlock, TranscriptMessage } from "@agent-desktop/shared";
 import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent";
 import { readNativeImage } from "./images";
 
 type MessageRecord = Record<string, unknown> & { role: string };
 export interface NativeTranscriptEntry { id: string; message: unknown }
-interface Pending { key: string; occurrence: number; message: MessageRecord; complete: boolean; order: number }
+interface Pending { key: string; occurrence: number; message: MessageRecord; complete: boolean; order: number; fileReferences?: TranscriptMessage["fileReferences"] }
 interface ToolProgress { message: MessageRecord; status: "running" | "completed"; occurrence: number; order: number }
 function record(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
 function messageRecord(value: unknown): MessageRecord | undefined { const object = record(value); return object && typeof object.role === "string" ? object as MessageRecord : undefined; }
@@ -56,9 +57,10 @@ function assistant(message: MessageRecord): TranscriptAssistantMetadata {
   const usage = record(message.usage); if (usage) { value.usage = numeric(usage, ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]); const cost = record(usage.cost); if (cost) value.usage.cost = numeric(cost, ["input", "output", "cacheRead", "cacheWrite", "total"]); }
   return value;
 }
-function project(message: MessageRecord, id: string, nativeId?: string, lifecycle?: TranscriptMessage["lifecycle"], progress?: ToolProgress): TranscriptMessage {
+function project(message: MessageRecord, id: string, nativeId?: string, lifecycle?: TranscriptMessage["lifecycle"], progress?: ToolProgress, fileReferences?: TranscriptMessage["fileReferences"]): TranscriptMessage {
   const blocks = content(message);
   const value: TranscriptMessage = { id, role: message.role, text: blocks.filter(block => block.type === "text").map(block => block.text).join("\n"), content: blocks, blocks, ...(nativeId ? { nativeId } : {}), ...(lifecycle ? { lifecycle } : {}), ...(finite(message.timestamp) ? { timestamp: message.timestamp } : {}) };
+  if (message.role === "fileMention") value.fileReferences = fileReferences ?? projectFileMentions(message);
   if (message.role === "assistant") value.assistant = assistant(message);
   if (message.role === "toolResult" && typeof message.toolCallId === "string") {
     value.tool = { callId: message.toolCallId, ...(typeof message.toolName === "string" ? { name: message.toolName } : {}), ...(typeof message.isError === "boolean" ? { isError: message.isError } : typeof progress?.message.isError === "boolean" ? { isError: progress.message.isError } : {}), ...(lifecycle === "complete" ? { status: "completed" } : progress ? { status: progress.status } : {}) };
@@ -87,6 +89,7 @@ export class TranscriptMirror {
         pending = { key, occurrence, message, complete: false, order: this.#tools.get(String(message.toolCallId))?.order ?? this.#order++ };
         this.#active.set(key, pending);
       }
+      pending.fileReferences = message.role === "fileMention" ? projectFileMentions(message) : undefined;
       pending.message = pendingMessage(message); pending.complete = event.type === "message_end";
       this.#pending.set(displayId(key, pending.occurrence), pending);
     }
@@ -116,7 +119,7 @@ export class TranscriptMirror {
         if (tool) this.#tools.delete(String(message.toolCallId));
       }
     }
-    const rest = [...this.#pending].filter(([id]) => !displayed.has(id)).map(([id, pending]) => ({ order: pending.order, message: project(pending.message, id, undefined, pending.complete ? "complete" : "streaming", this.#tools.get(String(pending.message.toolCallId))) }));
+    const rest = [...this.#pending].filter(([id]) => !displayed.has(id)).map(([id, pending]) => ({ order: pending.order, message: project(pending.message, id, undefined, pending.complete ? "complete" : "streaming", this.#tools.get(String(pending.message.toolCallId)), pending.fileReferences) }));
     for (const [callId, tool] of this.#tools) {
       const id = displayId(messageKey(tool.message), tool.occurrence); if (displayed.has(id) || rest.some(item => item.message.id === id)) continue;
       rest.push({ order: tool.order, message: project(tool.message, id, undefined, tool.status === "completed" ? "complete" : undefined, tool) });

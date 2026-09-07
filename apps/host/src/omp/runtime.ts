@@ -1,4 +1,5 @@
 import { projectSelectedText } from "./selected-text-history";
+import { lookupFileMentionImage } from "./file-mentions";
 import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativeSessionMcpResourceRequest, NativeSessionMcpResourceResult } from "@agent-desktop/shared";
 import { NativeSessionMcp } from "./mcp-session";
@@ -792,6 +793,11 @@ export class OmpRuntime {
           assertSessionActive();
           if (typeof nativeEntryId !== "string" || nativeEntryId.length > 200 || !Number.isSafeInteger(blockIndex) || blockIndex < 0) throw new Error("Invalid native image identity");
           const entry = manager.getEntry(nativeEntryId);
+          if (entry?.type === "message" && entry.message.role === "fileMention") {
+            const image = lookupFileMentionImage(entry.message, blockIndex);
+            if (!image) throw new Error("Native referenced image is unavailable");
+            return image;
+          }
           if (entry?.type !== "message" || !("content" in entry.message) || !Array.isArray(entry.message.content)) throw new Error("Native image entry is unavailable");
           return readNativeImage(entry.message.content[blockIndex]);
         },

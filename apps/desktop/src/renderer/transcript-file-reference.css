@@ -1,0 +1,41 @@
+.transcript-file-reference {
+  appearance:none;
+  display:inline;
+  max-width:100%;
+  padding:0;
+  border:0;
+  border-radius:2px;
+  background:transparent;
+  color:var(--accent);
+  cursor:pointer;
+  font:inherit;
+  font-weight:500;
+  line-height:inherit;
+  overflow-wrap:anywhere;
+  text-align:start;
+  text-decoration:none;
+}
+
+.transcript-file-reference:not(.unavailable):hover {
+  text-decoration:underline dashed;
+  text-decoration-thickness:.5px;
+  text-underline-offset:2px;
+}
+
+.transcript-file-reference:focus-visible {
+  outline:2px solid var(--focus-ring);
+  outline-offset:2px;
+}
+
+.transcript-file-reference.unavailable {
+  cursor:default;
+  text-decoration:underline dotted;
+  text-underline-offset:2px;
+}
+
+.transcript-file-reference-error {
+  display:block;
+  margin-block:var(--markdown-space);
+  color:var(--danger);
+  font-size:var(--small-font-size);
+}

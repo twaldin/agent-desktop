@@ -1,4 +1,5 @@
 import { ComposerSelectedText } from "./ComposerSelectedText";
+import { TranscriptFileMentions } from "./TranscriptFileMentions";
 import { createContext, useContext, useId, useMemo, useState, type ReactNode } from "react";
 import type { TranscriptBlock, TranscriptMessage } from "../../../../packages/shared/src/protocol";
 import { Icon } from "./Icons";
@@ -22,7 +23,9 @@ export function TranscriptMessages({ messages, contextKey, connected, linkAction
 }
 export function TranscriptItem({ message, connected, disclosures, calls, linkedCall }: { message: TranscriptMessage; connected: boolean; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; linkedCall?: ToolLink }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const images = useContext(ImageContext);
   const blocks = messageBlocks(message);
+  if (message.role === "fileMention" && message.fileReferences) return <TranscriptFileMentions message={message} images={images} connected={connected}/>;
   const renderBlock = (block: TranscriptBlock, index: number) => <Block key={index} block={block} blockKey={`${message.id}:block:${index}`} nativeEntryId={message.nativeId} disclosures={disclosures} calls={calls} connected={connected} toolOutput={message.role === "toolResult" || message.role === "tool"}/>;
   if (message.role === "toolResult" || message.role === "tool") {
     const outcome = toolOutcome(message, connected), name = message.tool?.name ?? linkedCall?.call.name ?? "Tool";
