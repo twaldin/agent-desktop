@@ -10,6 +10,7 @@ import tailwindcss from "@tailwindcss/vite";
 const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/skill-file-acceptance-${Date.now()}`);
 const sources = [
+  "apps/desktop/src/renderer/MarkdownCopyButton.tsx",
   "apps/desktop/src/main/workspace-image.ts", "apps/desktop/src/main/composer-actions-transport.ts", "apps/desktop/src/main/preload.ts", "apps/desktop/src/main/main.ts", "apps/desktop/src/renderer/markdown-images.ts", "apps/desktop/src/renderer/MarkdownImageWidget.ts",
   "apps/desktop/src/renderer/RichMarkdownEditor.tsx", "apps/desktop/src/renderer/rich-markdown-editor.css",
   "apps/desktop/src/renderer/PierreSourceEditor.tsx", "apps/desktop/src/renderer/pierre-source-editor.css", "apps/desktop/src/renderer/markdown-file-model.ts",
@@ -119,7 +120,7 @@ try {
   result.sourceAtBuild = sourceAtBuild;
   result.sourceAfterRun = await hashes();
   result.sourceHashesStable = JSON.stringify(result.sourceAtBuild) === JSON.stringify(result.sourceAfterRun);
-  result.scope = "Production renderer/runtime acceptance in hidden Electron against an authenticated isolated host and native OMP user-skill discovery. It verifies actual file reads and writes, debounce, offline cache, read-detected external revision conflict, and an explicit resolution write against the refreshed revision. Stale-write CAS is covered by the backend unit suite. Skill images exercise actual preload and production main image/transport modules through fixture IPC wiring. Native OS reveal, installed main-handler routing and pixel parity are outside this harness.";
+  result.scope = "Production renderer/runtime acceptance in hidden Electron against an authenticated isolated host and native OMP user-skill discovery. It verifies actual file reads and writes, debounce, offline cache, read-detected external revision conflict, and an explicit resolution write against the refreshed revision. Stale-write CAS is covered by the backend unit suite. Copy Markdown exercises real system clipboard write/readback and restores prior formats if still fixture-owned. Skill images exercise actual preload and production main image/transport modules through fixture IPC wiring. Native OS reveal, installed main-handler routing and pixel parity are outside this harness.";
   result.passed &&= code === 0 && result.sessionCount === 0 && result.draftPersisted && result.skillOutsideProject && revealAttempts === 0 && result.sourceHashesStable;
   await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2));
   if (!result.passed) throw new Error(`Skill file acceptance failed; inspect ${join(output, "result.json")}`);

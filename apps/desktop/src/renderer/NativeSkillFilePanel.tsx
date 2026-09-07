@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { MarkdownCopyButton } from "./MarkdownCopyButton";
 import { markdownImagePath } from "./markdown-images";
 import { RichMarkdownEditor } from "./RichMarkdownEditor";
 import { PierreSourceEditor } from "./PierreSourceEditor";
@@ -31,13 +32,14 @@ export function NativeSkillFilePanel({ controller, connected, active, fileMode, 
     {data.conflict&&<div role="alert"><p>The file changed on its host. Your edits are preserved.</p><button onClick={()=>controller.resolveConflict("use-file")}>Use file</button><button onClick={()=>controller.resolveConflict("keep-changes")}>Keep my changes</button></div>}
     {data.uncertain&&<div role="alert"><p>The previous save is not confirmed.</p><button disabled={!connected||data.saving||data.loading} onClick={()=>void controller.inspectUnknown()}>Inspect file</button><button disabled={!connected||data.saving||data.loading} onClick={()=>void controller.retryUnknown()}>Check same save</button></div>}
     {data.recoveredText!==undefined&&<button onClick={()=>controller.restorePreviousEdits()}>Restore previous edits</button>}
-    {data.loading&&!data.file?<p role="status">Loading skill file…</p>:data.file&&<>
+    {data.loading&&!data.file?<p role="status">Loading skill file…</p>:data.file&&<div className="native-skill-file-body">
+      <div className="workspace-markdown-actions"><MarkdownCopyButton key={documentKey} text={data.text}/></div>
       <RichMarkdownEditor documentKey={documentKey} value={data.text} label="Skill file Markdown" active={active&&!source}
         imageGeneration={controller.imageGeneration}
         resolveImage={href=>{const parent=data.ref.sourcePath.slice(0,data.ref.sourcePath.lastIndexOf("/"))||"/";const path=markdownImagePath(href,data.ref.sourcePath.split("/").at(-1)!,parent);return path===null?null:{key:`${documentKey}:${controller.imageGeneration}:${path}`,load:()=>controller.acquireImage(path)};}}
         onChange={text=>controller.setText(text)} onSave={()=>void controller.save()} openExternal={openExternal}/>
       <PierreSourceEditor documentKey={documentKey} name="SKILL.md" value={data.text} label="Skill file source" active={active&&source}
         onChange={text=>controller.setText(text)} onSave={()=>void controller.save()}/>
-    </>}
+    </div>}
   </section>;
 }

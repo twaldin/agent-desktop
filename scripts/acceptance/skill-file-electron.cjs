@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, protocol } = require("electron"), fs = require("node:fs"), path = require("node:path");
+const { app, BrowserWindow, ipcMain, protocol, clipboard, ClipboardItem } = require("electron"), fs = require("node:fs"), path = require("node:path");
 const output = process.argv[2], launch = JSON.parse(fs.readFileSync(path.join(output, "launch.json"), "utf8"));
 app.setPath("userData", launch.profile); app.commandLine.appendSwitch("disable-renderer-backgrounding");
 protocol.registerSchemesAsPrivileged([{scheme:"agent-workspace-image",privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
@@ -17,6 +17,9 @@ ipcMain.handle("desktop:workspace-image-release",(event,id)=>imageGrants.release
 app.whenReady().then(async () => {
   protocol.handle("agent-workspace-image",request=>imageGrants.response(request.url,request.signal));
   const win = new BrowserWindow({ width: 1440, height: 1000, show: false, useContentSize: true, webPreferences: { preload:path.join(output,"preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  const previousClipboard=await Promise.all((await clipboard.read()).map(async item=>new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type=>[type,await item.getType(type)]))))));
+  let lastCopied,clipboardRestored=false;
+  const restoreClipboard=async()=>{if(lastCopied!==undefined&&(await clipboard.readText())===lastCopied){if(previousClipboard.length)await clipboard.write(previousClipboard);else clipboard.clear();clipboardRestored=true;lastCopied=undefined;}};
   const contentsId=win.webContents.id;
   win.webContents.on('did-start-navigation',(_event,_url,inPlace,mainFrame)=>{if(mainFrame&&!inPlace)imageGrants.releaseSender(contentsId);});
   win.webContents.on('destroyed',()=>imageGrants.releaseSender(contentsId));
@@ -31,6 +34,7 @@ app.whenReady().then(async () => {
   const chord = async (keyCode, modifiers) => { for(const type of ["keyDown","keyUp"]) win.webContents.sendInputEvent({type,keyCode,modifiers}); await sleep(50); };
   const replace = async (selector, value) => { const selected = await js(`(()=>{const node=window.editor(${JSON.stringify(selector)}); if(!node) return false; node.focus(); return node.getRootNode().activeElement===node;})()`); if (!selected) throw new Error("Editor focus failed: " + selector); await chord("a",["meta"]); await win.webContents.insertText(value); await sleep(100); };
   const capture = async name => { await sleep(100); const image = await win.webContents.capturePage(); fs.writeFileSync(path.join(output, `${name}.png`), image.toPNG()); fs.writeFileSync(path.join(output, `${name}.ax.json`), JSON.stringify(await win.webContents.debugger.sendCommand("Accessibility.getFullAXTree"))); captures.push({ name, raster: image.getSize(), frame: win.getBounds(), zoom: win.webContents.getZoomFactor(), state: await js("window.state()") }); };
+  const copyAndCheck=async expected=>{await click('.markdown-copy-button');await wait('document.querySelector(".markdown-copy-button").getAttribute("aria-label")==="Copied"');if((await clipboard.readText())!==expected)throw Error('Native clipboard did not contain exact skill Markdown');lastCopied=expected;};
   let step = "load";
   try {
     win.webContents.debugger.attach("1.3");
@@ -65,6 +69,13 @@ app.whenReady().then(async () => {
     await js('window.connection(true)');await wait(`document.querySelector('img[alt="Skill illustration"]')?.dataset.imageState==='loaded'&&document.querySelector('img[alt="Skill illustration"]').src!==${JSON.stringify(firstImageUrl)}`);
     if((await imageGrants.response(firstImageUrl)).status!==404)throw Error('Prior image grant retained after reconnect');
     await capture('02c-skill-image-reconnected');checks.push('A mounted image remains decoded on disconnect; reconnect replaces the old revoked grant and reloads from the same owning skill without a write');
+    step="copy-skill-preview";const callsBeforeCopy=(await js("window.request('/test/state',{})")).calls.length;
+    await copyAndCheck(launch.initialText);await capture('02d-skill-copy-preview');
+    const copyGeometry=await js(`(()=>{const button=document.querySelector('.markdown-copy-button'),container=document.querySelector('.native-skill-file-body');return {button:button.getBoundingClientRect().toJSON(),container:container.getBoundingClientRect().toJSON()};})()`);
+    if(copyGeometry.button.width!==26||copyGeometry.button.height!==26||Math.abs(copyGeometry.button.top-copyGeometry.container.top-8)>.5||Math.abs(copyGeometry.container.right-copyGeometry.button.right-16)>.5)throw Error('Skill copy control geometry differs: '+JSON.stringify(copyGeometry));
+    await wait('document.querySelector(".markdown-copy-button").getAttribute("aria-label")==="Copy Markdown"');
+    if((await js("window.request('/test/state',{})")).calls.length!==callsBeforeCopy)throw Error('Clean skill copy issued a host query or write');
+    checks.push('Skill preview Copy Markdown uses the shared26px control at8px top/16px right, copies exact raw source/frontmatter to the system clipboard without host calls, and resets copied feedback');
     step = "rich-edit";
     await wait(`window.editor('[aria-label="Skill file Markdown"]')`);
     if (!(await js(`document.querySelector('[aria-label="Metadata"]')?.textContent.includes('skill-file-acceptance')&&!document.querySelector('.cm-content')?.textContent.includes('description:')`))) throw new Error("Metadata is not separate from the editable body");
@@ -117,6 +128,13 @@ app.whenReady().then(async () => {
     await wait(`document.body.innerText.includes('before switching views')&&window.state().controllers.every(value=>value.source)`);
     if ((await js(`window.request('/test/file',{})`)).text.includes("OFFLINE_LOCAL_EDIT_WITH_DISABLED_FRONTMATTER")) throw new Error("Offline edit reached host bytes");
     await capture("04-offline-cache-reopened"); checks.push("A full renderer reload restored source mode from the actual WindowStateStore file and edited bytes from IndexedDB without a host write; an offline mode-change request remains blocked");
+    step="copy-skill-offline";const beforeOfflineCopy=(await js("window.request('/test/state',{})")).calls.length;
+    await copyAndCheck(local);await capture('04b-skill-copy-offline');await wait('document.querySelector(".markdown-copy-button").getAttribute("aria-label")==="Copy Markdown"');
+    await js('window.originalClipboardWrite=navigator.clipboard.writeText.bind(navigator.clipboard);navigator.clipboard.writeText=()=>Promise.reject(new Error("Fixture clipboard denied"));undefined');
+    await click('.markdown-copy-button');await wait('document.querySelector(".markdown-copy-button").getAttribute("aria-label")==="Copy failed · retry"');await capture('04c-skill-copy-failed');
+    await js('navigator.clipboard.writeText=window.originalClipboardWrite;undefined');await copyAndCheck(local);
+    if((await js("window.request('/test/state',{})")).calls.length!==beforeOfflineCopy)throw Error('Offline skill copy issued a host query or write');
+    checks.push('Offline source copy includes the exact unsaved buffer after reload; injected clipboard denial exposes retry, and retry writes to the real clipboard without reading or saving the host');
     step = "conflict"; const external = first + "\nEXTERNAL_FIXTURE_EDIT\n"; await js(`window.request('/test/external-write',{text:${JSON.stringify(external)}})`);
     await js("window.connection(true)"); await wait(`document.querySelector('.native-skill-file-panel [role="alert"]')?.textContent.includes('Your edits are preserved')`);
     const conflict = await js(`({source:window.state().source,file:null})`); conflict.file = await js(`window.request('/test/file',{})`);
@@ -206,6 +224,7 @@ app.whenReady().then(async () => {
     if (writeCount !== 9) throw new Error(`Expected exactly nine renderer writes, received ${writeCount}`);
     checks.push("Exactly nine renderer writes occurred: rich text, task checkbox, rename, explicit conflict resolution, frontmatter repair, two held-switch snapshots, one withheld receipt and a confirmed close save; the single external fixture write bypassed the command route");
     if((await js('window.state().runtimeErrors')).length||rendererGone.length)throw new Error('Renderer runtime errors were observed');
-    fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, captures, checks, imageQueries, hidden: true, rendererRuntimeHarness: true, nativeOsPixelParity: false, consoleMessages, rendererGone }, null, 2)); app.exit(0);
-  } catch (error) { fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG()); fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: false, step, error: String(error), captures, checks, state: await js("window.state()").catch(() => null), consoleMessages, rendererGone }, null, 2)); app.exit(1); }
+    await restoreClipboard();if(!clipboardRestored)throw Error("Clipboard restoration was not confirmed");
+    fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, clipboardRestored, captures, checks, imageQueries, hidden: true, rendererRuntimeHarness: true, nativeOsPixelParity: false, consoleMessages, rendererGone }, null, 2)); app.exit(0);
+  } catch (error) { await restoreClipboard();fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG()); fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: false, clipboardRestored, step, error: String(error), captures, checks, state: await js("window.state()").catch(() => null), consoleMessages, rendererGone }, null, 2)); app.exit(1); }
 });

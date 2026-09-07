@@ -1,5 +1,9 @@
 # Milestone status
 
+## Skill Copy Markdown
+
+Skill preview/source now share the reference content-area copy control.23 renderer/host checks with27 captures include real clipboard readback, offline unsaved text, failure/retry and confirmed clipboard restoration; copying adds no host operation. Typecheck/build and independent review pass. Installed/native-pixel acceptance and the remaining skill-file controls stay open. See [file editor](workspace-file-editor.md).
+
 ## Native skill inline images
 
 Skill previews now load images from the native skill directory on its owning host through the shared Electron image stream. A real reconnect test exposed image reads starving file queries; separate host budgets, serialized image reads and inactive-preview cleanup fix that sequence.21 renderer/host checks with24 captures,57 tests/312 assertions, ordinary-image regression, typecheck/build and independent review pass. Installed/native-pixel proof and durable offline image caching remain open. See [file editor](workspace-file-editor.md).

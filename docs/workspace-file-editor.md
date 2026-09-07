@@ -217,3 +217,12 @@ The first complete image run exposed a production admission issue: image request
 Final isolated evidence: `.data/ui-acceptance/skill-markdown-images-2026-09-07-r3/result.json` passes21 checks/24 PNG+AX captures with24 image queries, nine existing skill-editor writes, zero sessions and the unchanged revision1 draft. It exercises actual preload, production image/grant/transport modules and authenticated native-host reads, including a skill outside the project, SVG decode, missing-file presentation, disconnect/reconnect and the full prior editor regression. Ordinary Markdown images pass7 checks/4 captures.57 tests/312 assertions, typecheck/build and independent Terra review pass.
 
 Private scope, comparisons and failed attempts: `.data/skill-markdown-images-2026-09-07/`. The fixture supplies main IPC wiring; installed main/App routing, physical Work input and matched native image pixels remain unverified. Existing Work runs and sealed reference bundles are unchanged.
+
+
+## Skill Copy Markdown
+
+Skill tabs now reuse the ordinary Markdown content-area copy control in both preview and source. It copies the active raw buffer, including hidden frontmatter and unsaved offline edits, without reading or saving the host. The content wrapper preserves editor scrolling and the shared26px button geometry; panel-wide toolbar styles exclude this control. Success/reset and failure/retry use the existing implementation.
+
+The full skill regression at `.data/ui-acceptance/skill-markdown-copy-2026-09-07-r1/result.json` passes23 checks/27 PNG+AX captures, including actual system clipboard write/readback from preview and offline source, injected rejection and real retry. Prior clipboard formats were restored after verifying they remained fixture-owned. Copy adds no host call; the existing nine skill-editor writes, zero sessions and original revision1 draft are retained. Typecheck/build and independent Terra review pass. Private scope/comparison: `.data/skill-markdown-copy-2026-09-07/`.
+
+The source audit confirms skill Open routes into the generic Markdown file editor. This does not establish a matched native skill-copy pixel comparison. The labeled owner-host Open control, durable per-mode scroll snapshots and selection-to-chat remain open; a file tree or breadcrumb is not inferred from the route's null working directory.
