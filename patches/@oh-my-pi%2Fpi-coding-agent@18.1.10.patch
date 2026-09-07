@@ -615,3 +615,271 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..0be25024f098435b0da823a6e6043756
  /** Test-only accessor for the module-global tabs map. */
  export function getTabsMapForTest(): ReadonlyMap<string, TabSession> {
  	return tabs;
+--- a/src/mcp/errors.ts
++++ b/src/mcp/errors.ts
+@@ -29,6 +29,12 @@
+ 	data?: string;
+ 	traceId?: string;
+ 	cause?: unknown;
++	authHints?: MCPTransportAuthHints;
++}
++
++export interface MCPTransportAuthHints {
++	wwwAuthenticate?: string;
++	mcpAuthServer?: string;
+ }
+ 
+ const MAX_MESSAGE_CHARS = 1_000;
+@@ -37,6 +43,8 @@
+ const MAX_DATA_STRING_CHARS = 256;
+ const MAX_DATA_DEPTH = 5;
+ const MAX_DATA_ENTRIES = 30;
++const MAX_AUTH_HINT_CHARS = 8_192;
++const transportAuthHints = new WeakMap<Error, MCPTransportAuthHints>();
+ const FETCH_VERBOSE_ADVICE =
+ 	/\s*For more information, pass `verbose: true` in the second argument to fetch\(\)\.?\s*$/i;
+ // Substring match, not exact: compound names (`client_secret`, `clientSecret`,
+@@ -75,7 +83,31 @@
+ 		this.code = options.code;
+ 		this.data = options.data;
+ 		this.traceId = options.traceId;
+-	}
++		const authHints = boundedAuthHints(options.authHints);
++		if (authHints) transportAuthHints.set(this, authHints);
++	}
++}
++
++function boundedAuthHint(value: string | undefined): string | undefined {
++	return value && value.length <= MAX_AUTH_HINT_CHARS && !value.includes("\0") ? value : undefined;
++}
++
++function boundedAuthHints(value: MCPTransportAuthHints | undefined): MCPTransportAuthHints | undefined {
++	if (!value) return undefined;
++	const wwwAuthenticate = boundedAuthHint(value.wwwAuthenticate);
++	const mcpAuthServer = boundedAuthHint(value.mcpAuthServer);
++	return wwwAuthenticate || mcpAuthServer ? { wwwAuthenticate, mcpAuthServer } : undefined;
++}
++
++/** Read private authentication challenge headers without adding them to diagnostics or serialization. */
++export function getMcpTransportAuthHints(error: unknown): MCPTransportAuthHints | undefined {
++	let current = error;
++	for (let depth = 0; depth < 8 && current instanceof Error; depth++) {
++		const hints = transportAuthHints.get(current);
++		if (hints) return { ...hints };
++		current = current.cause;
++	}
++	return undefined;
+ }
+ 
+ function errorCode(error: unknown): string | number | undefined {
+--- a/src/mcp/transports/http.ts
++++ b/src/mcp/transports/http.ts
+@@ -486,6 +486,10 @@
+ 					retryable: response.status === 404 || response.status === 502 || response.status === 503,
+ 					code: response.status,
+ 					traceId,
++					authHints: {
++						wwwAuthenticate: wwwAuthenticate ?? undefined,
++						mcpAuthServer: mcpAuthServer ?? undefined,
++					},
+ 				});
+ 			}
+ 
+@@ -793,6 +797,10 @@
+ 					retryable: response.status === 404 || response.status === 502 || response.status === 503,
+ 					code: response.status,
+ 					traceId,
++					authHints: {
++						wwwAuthenticate: response.headers.get("WWW-Authenticate") ?? undefined,
++						mcpAuthServer: response.headers.get("Mcp-Auth-Server") ?? undefined,
++					},
+ 				});
+ 			}
+ 
+--- a/src/mcp/transports/sse.ts
++++ b/src/mcp/transports/sse.ts
+@@ -10,6 +10,7 @@
+ 	MCPTransport,
+ } from "../../mcp/types";
+ import { toJsonRpcError } from "../../mcp/types";
++import { MCPTransportError } from "../errors";
+ import { RequestIdAllocator } from "../request-id";
+ import { createMCPTimeout, getNeverAbortSignal, resolveMCPTimeoutMs } from "../timeout";
+ import { type MCPFetchInit, mcpFetch } from "./header-policy";
+@@ -25,6 +26,21 @@
+ 	reject: (reason?: unknown) => void;
+ 	operation: MCPTimeoutOperation;
+ 	abortHandler?: () => void;
++}
++
++function httpStatusError(response: Response, text: string): MCPTransportError {
++	return new MCPTransportError({
++		transport: "http",
++		stage: "receive",
++		failure: "http_status",
++		message: `HTTP ${response.status}: ${text}`,
++		retryable: response.status === 404 || response.status === 502 || response.status === 503,
++		code: response.status,
++		authHints: {
++			wwwAuthenticate: response.headers.get("WWW-Authenticate") ?? undefined,
++			mcpAuthServer: response.headers.get("Mcp-Auth-Server") ?? undefined,
++		},
++	});
+ }
+ 
+ /** Identifies a legacy SSE transport whose endpoint handshake timed out. */
+@@ -73,13 +89,16 @@
+ 		return this.#config.url;
+ 	}
+ 
+-	async connect(): Promise<void> {
++	async connect(signal?: AbortSignal): Promise<void> {
+ 		if (this.#connected) return;
+ 		if (this.#sseConnection) return;
+ 
+ 		const connection = new AbortController();
+ 		const timeout = resolveMCPTimeoutMs(this.#config.timeout);
+-		const operation = createMCPTimeout(timeout, connection.signal);
++		const operation = createMCPTimeout(
++			timeout,
++			signal ? AbortSignal.any([connection.signal, signal]) : connection.signal,
++		);
+ 		const endpointReady = Promise.withResolvers<void>();
+ 		this.#sseConnection = connection;
+ 
+@@ -92,7 +111,7 @@
+ 
+ 			if (!response.ok) {
+ 				const text = await response.text();
+-				throw new Error(`HTTP ${response.status}: ${text}`);
++				throw httpStatusError(response, text);
+ 			}
+ 			if (!response.body) {
+ 				throw new Error("Legacy SSE response did not include a body");
+@@ -250,7 +269,7 @@
+ 			const response = await this.#postJson(body, operation.signal);
+ 			if (!response.ok) {
+ 				const text = await response.text();
+-				throw new Error(`HTTP ${response.status}: ${text}`);
++				throw httpStatusError(response, text);
+ 			}
+ 			await response.body?.cancel();
+ 			return (await deferred.promise) as T;
+@@ -284,7 +303,7 @@
+ 			operation.clear();
+ 			if (!response.ok) {
+ 				const text = await response.text();
+-				throw new Error(`HTTP ${response.status}: ${text}`);
++				throw httpStatusError(response, text);
+ 			}
+ 			await response.body?.cancel();
+ 		} catch (error) {
+@@ -373,8 +392,8 @@
+ }
+ 
+ /** Create and connect a legacy HTTP+SSE transport. */
+-export async function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport> {
++export async function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport> {
+ 	const transport = new LegacySseTransport(config);
+-	await transport.connect();
++	await transport.connect(signal);
+ 	return transport;
+ }
+--- a/src/mcp/manager.ts
++++ b/src/mcp/manager.ts
+@@ -773,7 +773,8 @@
+ 					if (!value) continue;
+ 					const { connection, serverTools } = value;
+ 					connectedServers.add(name);
+-					const reconnect = () => this.reconnectServer(name);
++					const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) =>
++						this.reconnectServer(name, options);
+ 					this.#replaceServerTools(name, MCPTool.fromTools(connection, serverTools, reconnect));
+ 				} else if (task.tracked.status === "rejected") {
+ 					const message =
+@@ -784,7 +785,8 @@
+ 					const cached = cachedTools.get(name);
+ 					if (cached) {
+ 						const source = this.#sources.get(name);
+-						const reconnect = () => this.reconnectServer(name);
++						const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) =>
++							this.reconnectServer(name, options);
+ 						this.#replaceServerTools(
+ 							name,
+ 							DeferredMCPTool.fromTools(name, cached, () => this.waitForConnection(name), source, reconnect),
+@@ -1355,7 +1357,7 @@
+ 
+ 		// Reload tools
+ 		const serverTools = await listTools(connection);
+-		const reconnect = () => this.reconnectServer(name);
++		const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) => this.reconnectServer(name, options);
+ 		const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
+ 		void this.toolCache?.set(name, connection.config, serverTools);
+ 
+--- a/src/mcp/client.ts
++++ b/src/mcp/client.ts
+@@ -70,7 +70,7 @@
+ /**
+  * Create a transport for the given server config.
+  */
+-async function createTransport(config: MCPServerConfig): Promise<MCPTransport> {
++async function createTransport(config: MCPServerConfig, signal?: AbortSignal): Promise<MCPTransport> {
+ 	const serverType = config.type ?? "stdio";
+ 
+ 	switch (serverType) {
+@@ -79,7 +79,7 @@
+ 		case "http":
+ 			return createHttpTransport(config as MCPHttpServerConfig);
+ 		case "sse":
+-			return createSseTransport(config as MCPSseServerConfig);
++			return createSseTransport(config as MCPSseServerConfig, signal);
+ 		default:
+ 			throw new Error(`Unknown server type: ${serverType}`);
+ 	}
+@@ -161,7 +161,7 @@
+ 	let transport: MCPTransport | undefined;
+ 
+ 	const connect = async (): Promise<MCPServerConnection> => {
+-		transport = await createTransport(config);
++		transport = await createTransport(config, options?.signal);
+ 		if (options?.onNotification) {
+ 			transport.onNotification = options.onNotification;
+ 		}
+--- a/dist/types/mcp/errors.d.ts
++++ b/dist/types/mcp/errors.d.ts
+@@ -15,6 +15,11 @@
+     data?: string;
+     traceId?: string;
+     cause?: unknown;
++    authHints?: MCPTransportAuthHints;
++}
++export interface MCPTransportAuthHints {
++    wwwAuthenticate?: string;
++    mcpAuthServer?: string;
+ }
+ export declare class MCPTransportError extends Error {
+     /** Transport implementation handling the failed operation. */
+@@ -33,6 +38,8 @@
+     readonly traceId: string | undefined;
+     constructor(options: MCPTransportErrorOptions);
+ }
++/** Read private authentication challenge headers without adding them to diagnostics or serialization. */
++export declare function getMcpTransportAuthHints(error: unknown): MCPTransportAuthHints | undefined;
+ /** Extract a safe request or trace identifier from MCP HTTP response headers. */
+ export declare function mcpTraceIdFromHeaders(headers: Headers): string | undefined;
+ /** Preserve a server-provided JSON-RPC error without exposing credential-shaped data. */
+--- a/dist/types/mcp/transports/sse.d.ts
++++ b/dist/types/mcp/transports/sse.d.ts
+@@ -15,10 +15,10 @@
+     constructor(config: MCPSseServerConfig);
+     get connected(): boolean;
+     get url(): string;
+-    connect(): Promise<void>;
++    connect(signal?: AbortSignal): Promise<void>;
+     request<T = unknown>(method: string, params?: Record<string, unknown>, options?: MCPRequestOptions): Promise<T>;
+     notify(method: string, params?: Record<string, unknown>): Promise<void>;
+     close(): Promise<void>;
+ }
+ /** Create and connect a legacy HTTP+SSE transport. */
+-export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
++export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;

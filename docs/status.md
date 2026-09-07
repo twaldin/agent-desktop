@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — native MCP authorization foundation
+
+Private adapters now use OMP's actual HTTP/SSE discovery, client selection, OAuth callback/PKCE/state/DCR engine and native credential store. Real local tests complete a protected tool's challenge, authorization, reconnect and single retry through both initial and refreshed native registrations. Cancellation preserves old credentials and closes callback listeners, including discovery/token phases; a completed storage write remains authoritative over late cancellation. Native SSE initialization also honors caller cancellation when its own timeouts are disabled.
+
+The explicit18.1.10 patch carries private authentication hints outside redacted diagnostics, fixes three discarded challenge callbacks and forwards SSE cancellation. Its existing browser patch prefix is byte-identical, package pins and lockfile remain unchanged, and frozen dependency installation succeeds. The broader focused batch passes **50 tests / 362 assertions across8 files**, with typecheck and production build passing. The first broader run exposed a resource test taking its next revision before native reconnect enrichment settled; the test now waits for the real catalog, without weakening production revision checks. Failure logs are retained. No full-suite rerun or new installed/native-window/pixel acceptance is claimed.
+
+Production session ownership, configuration CAS/write-back, Stop/disposal, cross-client interaction resolution and the authorization UI remain pending; `/mcp reauth` stays unavailable. Local issuer evidence does not prove external-provider consent or broker refresh. The [authorization contract](mcp-authorization.md) records the remaining work. Private scope, logs and hashes: `.data/mcp-oauth-foundation-checkpoint/`. All1,737 sealed reference records and four manifest hashes match; installed services, preserved Work runs and personal auth configuration remain unchanged.
+
 ## Source30 — native MCP resource viewer
 
 Live resource/template rows now open a viewer backed by the selected session's actual OMP connection. Explicit Read resource supports exact URIs, inert text, binary download and raster previews; failures do not retry or launch another server. Reads can run during a native turn, serialize with reconnect/reload, and drain during worker disposal. Worker protocol20 and an advertised resource capability protect the new operation. Template expansion widgets, subscriptions, attachment integration and interactive authorization remain open.

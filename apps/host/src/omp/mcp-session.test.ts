@@ -407,7 +407,10 @@ test("a real unanswered stdio resource read times out and releases queued reads 
 	await reconnect;
 	expect(await markerLines(marker)).toEqual(["started", "started"]);
 
-	const current = controller.read();
+	// Reconnect returns before native resource/prompt enrichment completes.
+	// Wait for this fixture's measured catalog before taking the next ticket;
+	// a stale revision must still be rejected by the production controller.
+	const current = await waitForCatalog(controller);
 	await expect(controller.readResource({ epoch: current.epoch, expectedRevision: current.revision, serverName: "fixture", uri: "fixture://missing" }))
 		.rejects.toThrow("Native MCP resource read failed.");
 	expect(await controller.readResource({ epoch: current.epoch, expectedRevision: current.revision, serverName: "fixture", uri: "fixture://still-alive" }))
