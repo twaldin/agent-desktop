@@ -22,6 +22,12 @@ The entry uses `pi-coding-agent/src/cli.ts`. Published `dist/cli.js` embeds an o
 
 Composer and session controls use native non-persistent model/thinking changes. They persist conversation history and host session metadata, so reopening that conversation restores its choices. They do not update global/project `modelRoles` or `defaultThinkingLevel`; those remain deliberate NativeSettings writes. A native lifecycle regression selects another model/effort, reopens it, verifies a fresh session still uses project defaults, and checks both config files byte-for-byte. There is no invented `modelRoleStorage=session` value.
 
+## Python and selected-account CLI commands
+
+The launch environment is not a promise that every native tool inherits every variable. Pinned OMP's Python runtime applies its own allowlist: it retains `PI_` variables but excludes `GH_TOKEN` and `OMP_TICKET_*`. A CLI invoked inside Python can therefore use its machine-local default account instead of the launch-selected account. Use native Bash for authenticated CLI and ticket-control commands, and verify the selected identity there. Preserve the Python filter; do not copy credentials into the kernel to hide this distinction.
+
+The coordinating managed-runtime task reproduced this with a fresh owned Python kernel and direct CLI under the same selected launch environment: the identities differed and Python lacked both selected GitHub and ticket variables, while the managed profile variable remained correct. This is coordinator-reported runtime evidence, corroborated by the pinned `eval/py/runtime.ts` source; this app task did not repeat an authenticated identity call or inspect credentials. No stale-kernel reuse is needed to explain that result. Runtime code and managed artifacts remain unchanged.
+
 ## Evidence limits
 
 The initial isolated checks cover CLI version, patched SDK loading, helper command resolution, worker discovery and native model lifecycle without provider calls. They do not prove interactive terminal behavior, live managed reviews, installed desktop/main behavior or cross-platform deployment. Existing personal accounts/configuration and previously frozen runs remain untouched.
