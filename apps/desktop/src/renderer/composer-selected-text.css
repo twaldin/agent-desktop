@@ -1,0 +1,80 @@
+.composer-selected-text {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  color: var(--text, var(--vscode-foreground));
+}
+
+.composer-selected-text-chip,
+.composer-selected-text-remove {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.composer-selected-text-chip {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.composer-selected-text-chip:focus-visible,
+.composer-selected-text-remove:focus-visible {
+  outline: 1px solid var(--focus-border, currentColor);
+  outline-offset: 2px;
+}
+
+.composer-selected-text-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.composer-selected-text-remove {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.composer-selected-text-remove:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+.composer-selected-text-remove .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.composer-selected-text-preview {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  width: fit-content;
+  max-width: min(20rem, calc(100vw - 16px));
+  max-height: 14rem;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  padding: 4px 8px;
+  border: var(--border-width, 1px) solid var(--border);
+  border-radius: var(--menu-radius, 8px);
+  color: var(--text, var(--vscode-foreground));
+  background: var(--menu-surface, var(--elevated-surface));
+  box-shadow: 0 8px 24px #0002;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: start;
+}
+
+.composer-selected-text-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}

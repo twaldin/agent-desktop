@@ -13,6 +13,9 @@ import { MarkdownImageWidget } from "./MarkdownImageWidget";
 import { parseMarkdownImages, type MarkdownImageResolver } from "./markdown-images";
 import { GoToLine } from "./GoToLine";
 import "./rich-markdown-editor.css";
+import { EditorSelectionToolbar } from "./EditorSelectionToolbar";
+import { rawOffsetAt } from "./editor-selection";
+import { fileTextSelection, type FileTextSelection } from "@agent-desktop/shared";
 
 const imageResolver = Facet.define<MarkdownImageResolver, MarkdownImageResolver | undefined>({ combine: values => values.at(-1) });
 const focusChanged = StateEffect.define<boolean>();
@@ -167,6 +170,7 @@ export interface RichMarkdownEditorProps {
   initialScrollTop?: number; onScrollChange?(top: number): void;
   revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
+  onAddToChat?(selection: FileTextSelection): void;
 }
 /** Formatting is a view over Markdown, never an HTML-to-Markdown round trip. */
 export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
@@ -206,6 +210,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
   const alive = useRef(false);
   const appliedReveal = useRef<string | undefined>(undefined);
   const [expanded, setExpanded] = useState(false), [linkError, setLinkError] = useState<string>();
+  const [selectionAction, setSelectionAction] = useState<{ owner: string; document: string; from: number; to: number; rect: DOMRect; selection: FileTextSelection }>();
   const metadata = useMemo(() => markdownMetadata(normalizeMarkdown(props.value)), [props.value]);
   useEffect(() => {
     alive.current = true; appliedReveal.current = undefined; setLinkError(undefined); setExpanded(false);
@@ -232,7 +237,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
       focused, markdown({ extensions: [...GFM, Superscript, Subscript, Emoji], completeHTMLTags: false }),
       history(), drawSelection(), highlightSpecialChars(), highlightSelectionMatches(),
       writable.current.of([EditorState.readOnly.of(Boolean(latest.current.readOnly)), EditorView.editable.of(!latest.current.readOnly)]),
-      EditorView.contentAttributes.of({ "aria-label": props.label, "aria-multiline": "true", spellcheck: "false" }),
+      EditorView.contentAttributes.of({ "aria-label": props.label, "aria-multiline": "true", spellcheck: "false", tabindex: "0" }),
       keymap.of([{ key: "Mod-s", run: () => { if (!latest.current.readOnly) latest.current.onSave(); return true; } },
         {key:"Mod-a",run:editor=>{const from=markdownMetadata(editor.state.doc.toString())?.end??0;editor.dispatch({selection:{anchor:from,head:editor.state.doc.length},userEvent:"select"});return true;}},
         ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
@@ -282,6 +287,34 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     }
     editor.focus(); props.onReveal?.(request.id);
   }, [props.active, props.documentKey, props.revealRequest, props.value]);
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor || !props.onAddToChat) return;
+    let frameId = 0;
+    const update = () => {
+      const range = editor.state.selection.main;
+      if (latest.current.active === false || range.empty || !editor.hasFocus) { setSelectionAction(undefined); return; }
+      const dom = window.getSelection();
+      if (!dom || dom.rangeCount === 0 || !dom.toString()) { setSelectionAction(undefined); return; }
+      const rect = dom.getRangeAt(0).getBoundingClientRect();
+      if (!rect.width && !rect.height) { setSelectionAction(undefined); return; }
+      const rawValue = raw.current;
+      const linePoint = (offset: number) => { const line = editor.state.doc.lineAt(offset); return { line: line.number - 1, character: offset - line.from }; };
+      const selection = fileTextSelection(rawValue, rawOffsetAt(rawValue, linePoint(range.from)), rawOffsetAt(rawValue, linePoint(range.to)));
+      setSelectionAction(selection ? { owner: props.documentKey, document: rawValue, from: range.from, to: range.to, rect, selection } : undefined);
+    };
+    const onSelection = () => { cancelAnimationFrame(frameId); frameId = requestAnimationFrame(update); };
+    const onScroll = () => setSelectionAction(undefined);
+    const onPointerDown = (event: PointerEvent) => { const target = event.target as Node; if (!editor.dom.contains(target) && !(target instanceof Element && target.closest("[data-editor-selection-toolbar]"))) setSelectionAction(undefined); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectionAction(undefined); };
+    document.addEventListener("selectionchange", onSelection);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    editor.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
+    scroll.current?.addEventListener("scroll", onScroll, { passive: true });
+    update();
+    return () => { cancelAnimationFrame(frameId); document.removeEventListener("selectionchange", onSelection); document.removeEventListener("pointerdown", onPointerDown, true); document.removeEventListener("keydown", onKeyDown, true); editor.scrollDOM.removeEventListener("scroll", onScroll); scroll.current?.removeEventListener("scroll", onScroll); };
+  }, [props.documentKey, props.onAddToChat, props.readOnly]);
   useEditorScroll(scroll, props);
   return <div ref={frame} className="rich-markdown-file" hidden={props.active === false}>
     <GoToLine appearance="codemirror" key={props.documentKey} frame={frame} active={props.active !== false && !props.readOnly} value={props.value} onOpen={openLine} onPreview={line => navigateLine(line, false)} onCommit={line => navigateLine(line, true)} onClose={closeLine}/>
@@ -292,6 +325,11 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     </dl>{metadata.entries.length > 8 && <button onClick={() => setExpanded(value => !value)}>{expanded ? "Show less" : "Show more"}</button>}</section>}
     {linkError && <p role="alert">{linkError}</p>}
     <div ref={container} className="rich-markdown-content"/>
+    {selectionAction && props.onAddToChat && <EditorSelectionToolbar anchor={selectionAction.rect} selection={selectionAction.selection} onAddToChat={selection => {
+      const editor = view.current, range = editor?.state.selection.main;
+      if (props.active === false || !editor || !range || range.empty || selectionAction.owner !== props.documentKey || selectionAction.document !== raw.current || range.from !== selectionAction.from || range.to !== selectionAction.to || editor.state.doc.toString() !== normalizeMarkdown(raw.current)) return;
+      props.onAddToChat?.(selection); setSelectionAction(undefined);
+    }}/>}
     </div>
   </div>;
 }

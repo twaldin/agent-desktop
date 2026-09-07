@@ -1,0 +1,4 @@
+.editor-selection-toolbar { position:fixed; z-index:20; transform:translateX(-50%); display:flex; width:max-content; max-width:calc(100vw - 16px); overflow:hidden; border:1px solid color-mix(in srgb,var(--border) 70%,transparent); border-radius:8px; background:color-mix(in srgb,var(--menu-surface,var(--elevated-surface)) 90%,transparent); box-shadow:0 8px 18px rgb(0 0 0 / .18); backdrop-filter:blur(8px); color:var(--text); font:14px/20px var(--ui-font); }
+.editor-selection-toolbar button { display:flex; align-items:center; gap:5px; border:0; border-radius:0; min-height:28px; padding:0 10px; color:inherit; background:transparent; cursor:pointer; font:inherit; white-space:nowrap; }
+.editor-selection-toolbar button:hover,.editor-selection-toolbar button:focus-visible { background:var(--hover); outline:none; }
+.editor-selection-toolbar svg { width:14px; height:14px; }

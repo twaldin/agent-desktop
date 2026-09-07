@@ -6,6 +6,9 @@ import { REVIEW_SHADOW_CSS, REVIEW_THEMES } from "./review-theme";
 import { fileLocation } from "./transcript-links";
 import { GoToLine } from "./GoToLine";
 import "./pierre-source-editor.css";
+import { EditorSelectionToolbar } from "./EditorSelectionToolbar";
+import { rawOffsetAt } from "./editor-selection";
+import { fileTextSelection, type FileTextSelection } from "@agent-desktop/shared";
 
 const SOURCE_SHADOW_CSS = `${REVIEW_SHADOW_CSS}
 :host { --diffs-line-height:calc(var(--code-font-size,12px) * var(--code-line-height,1.8)); }
@@ -18,6 +21,7 @@ export interface PierreSourceEditorProps {
   initialScrollTop?: number; onScrollChange?(top: number): void;
   revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
+  onAddToChat?(selection: FileTextSelection): void;
 }
 
 /** Pierre owns its document and history. Parent echoes must never reinitialize it. */
@@ -27,6 +31,7 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
   const instance = useRef<{ file: File; editor: Editor<undefined>; sync(): void; label(): void; reveal(): void;
     openLine(): boolean; goToLine(line: number, focus: boolean): void; closeLine(cancel: boolean, focus: boolean): void } | null>(null);
   const themeType = usePierreTheme();
+  const [selectionAction, setSelectionAction] = useState<{ owner: string; document: string; start: unknown; end: unknown; rect: DOMRect; selection: FileTextSelection }>();
   useLayoutEffect(() => {
     const element = container.current!;
     let alive = true, synchronizing = false, attached = false, readVersion = 0;
@@ -131,11 +136,34 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
   }, [themeType]);
   useEffect(() => { if (props.active !== false) { instance.current?.file.rerender(); instance.current?.label(); instance.current?.reveal(); } }, [props.active, props.revealRequest]);
   useEditorScroll(container, props);
+  useEffect(() => {
+    if (!props.onAddToChat || props.readOnly) return;
+    let frameId = 0;
+    const update = () => {
+      const input = container.current?.querySelector("diffs-container")?.shadowRoot?.querySelector<HTMLElement>('[contenteditable="true"]');
+      const shadow = container.current?.querySelector("diffs-container")?.shadowRoot;
+      const native = (shadow as (ShadowRoot & { getSelection?: () => Selection }) | null)?.getSelection?.() ?? window.getSelection();
+      const state = instance.current?.editor.getState(), picked = state?.selections?.[0];
+      if (!input || !native || native.rangeCount === 0 || native.isCollapsed || !input.contains(native.anchorNode) || !input.contains(native.focusNode) || !picked || picked.start.line !== picked.end.line && picked.start.line > picked.end.line) { setSelectionAction(undefined); return; }
+      const range = native.getRangeAt(0), raw = instance.current?.editor.getText() ?? props.value;
+      const selection = fileTextSelection(raw, rawOffsetAt(raw, picked.start), rawOffsetAt(raw, picked.end)), rect = range.getBoundingClientRect();
+      setSelectionAction(selection && (rect.width || rect.height) ? { owner: props.documentKey, document: raw, start: picked.start, end: picked.end, rect, selection } : undefined);
+    };
+    const onSelection = () => { cancelAnimationFrame(frameId); frameId = requestAnimationFrame(update); };
+    const onScroll = () => setSelectionAction(undefined);
+    const onPointerDown = (event: PointerEvent) => { const target = event.target as Node; if (!container.current?.contains(target) && !(target instanceof Element && target.closest("[data-editor-selection-toolbar]"))) setSelectionAction(undefined); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectionAction(undefined); };
+    document.addEventListener("selectionchange", onSelection);
+    document.addEventListener("pointerdown", onPointerDown, true); document.addEventListener("keydown", onKeyDown, true);
+    container.current?.addEventListener("scroll", onScroll, { passive: true });
+    return () => { cancelAnimationFrame(frameId); document.removeEventListener("selectionchange", onSelection); document.removeEventListener("pointerdown", onPointerDown, true); document.removeEventListener("keydown", onKeyDown, true); container.current?.removeEventListener("scroll", onScroll); };
+  }, [props.documentKey, props.onAddToChat, props.readOnly]);
   return <div ref={frame} className="pierre-source-editor-frame" hidden={props.active === false} data-app-shortcuts="off">
     <div ref={container} className="pierre-source-editor" hidden={props.active === false} data-read-only={Boolean(props.readOnly)}/>
     <GoToLine frame={frame} active={props.active !== false && !props.readOnly} value={props.value}
       onOpen={() => instance.current?.openLine() ?? false} onPreview={line => instance.current?.goToLine(line, false)}
       onCommit={line => instance.current?.goToLine(line, true)} onClose={(cancel, focus) => instance.current?.closeLine(cancel, focus)}/>
+    {selectionAction && props.onAddToChat && <EditorSelectionToolbar anchor={selectionAction.rect} selection={selectionAction.selection} onAddToChat={selection => { const current = instance.current?.editor.getText(), state = instance.current?.editor.getState(), picked = state?.selections?.[0]; if (props.active === false || selectionAction.owner !== props.documentKey || selectionAction.document !== current || !current || !picked || JSON.stringify(picked.start) !== JSON.stringify(selectionAction.start) || JSON.stringify(picked.end) !== JSON.stringify(selectionAction.end)) return; const fresh = fileTextSelection(current, rawOffsetAt(current, picked.start), rawOffsetAt(current, picked.end)); if (!fresh || fresh.text !== selection.text || JSON.stringify(fresh.range) !== JSON.stringify(selection.range)) return; props.onAddToChat?.(selection); setSelectionAction(undefined); }}/>}
   </div>;
 }
 

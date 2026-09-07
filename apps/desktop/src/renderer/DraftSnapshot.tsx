@@ -14,7 +14,8 @@ export function DraftSnapshot({ draft, hostName, projects, media, hostId, connec
       <dt>Work in</dt><dd>{draft.execution?.type === "worktree" ? "New local worktree" : "Local"}</dd>
       {draft.environment !== undefined && <><dt>Environment</dt><dd>{draft.environment ? `${draft.environment.configPath} · ${draft.environment.revision.slice(0, 12)}` : "No environment"}</dd></>}
       {draft.execution?.type === "worktree" && <><dt>Starting state</dt><dd>{draft.execution.startingState.type === "working-tree" ? "Local file state" : draft.execution.startingState.branchName}</dd></>}
-    </dl><pre>{draft.text || (draft.attachments?.length ? "(No authored text)" : "(Empty draft)")}</pre>
+    </dl><pre>{draft.text || ((draft.attachments?.length || draft.selectedTextAttachments?.length) ? "(No authored text)" : "(Empty draft)")}</pre>
+    {draft.selectedTextAttachments?.length ? <div className="draft-snapshot-attachments"><strong>Selected text</strong><ol>{draft.selectedTextAttachments.map(item => <li key={item.id}><span>{item.source.path} · {item.source.hostId}</span><pre>{item.text}</pre></li>)}</ol></div> : null}
     {draft.attachments !== undefined && <div className="draft-snapshot-attachments"><strong>Images</strong>{draft.attachments.length ? <ol>{draft.attachments.map(attachment => <li key={attachment.id}>{media && hostId && <ImagePreview media={media} source={{ kind: "attachment", attachment }} hostId={hostId} connected={connected} label={attachment.name}/>}<span>{attachment.name}</span> · {formatImageBytes(attachment.bytes)}<small> · {hostName}</small></li>)}</ol> : <p>No images</p>}</div>}
   </div>;
 }

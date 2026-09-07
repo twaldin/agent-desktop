@@ -1,3 +1,6 @@
+import { ComposerSelectedText } from "./ComposerSelectedText";
+import { appendSelectedText, selectedTextSendIssue } from "./selected-text-composer";
+import type { FileTextSelection } from "@agent-desktop/shared";
 import { NativeSkillFileController } from "./native-skill-file-state";
 import { NativeSkillFilePanel } from "./NativeSkillFilePanel";
 import type { NativeSkillFileRef } from "@agent-desktop/shared";
@@ -307,6 +310,7 @@ export function App() {
   }, [drafts, draftId, selectedId, environmentAvailable, draft.execution?.type, draft.environment, Boolean(pendingSubmission), view.conflict]);
   const pendingSessionId = pendingSubmission?.sessionId;
   const knownPendingSession = state?.sessions.find(session => session.id === pendingSessionId);
+  const selectedTextIssue = selectedTextSendIssue(draft, running, state?.selectedText);
   const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls);
   const imagesStaging = imageComposer.staging.length > 0;
   const worktreesAvailable = state?.newChatExecution?.commandVersion === 4 && state.newChatExecution.worktrees === true;
@@ -325,7 +329,7 @@ export function App() {
     : executionBranch === workspace.status.branch || workspace.branches.some(branch => !branch.remote && !branch.symbolicTarget && branch.name === executionBranch)));
   const environmentReady = Boolean(selectedId || draft.execution?.type !== 'worktree' || (draft.environment === undefined ? !environmentAvailable : environmentAvailable && (draft.environment === null
     || environmentCatalog?.restored && !environmentCatalog.loading && !environmentCatalog.error && environmentCatalog.items.some(item => item.type === 'environment' && item.configPath === draft.environment?.configPath && item.revision === draft.environment?.revision))));
-  const canSend = connected && Boolean(state) && !busy && !missingSession && !pendingSubmission?.preparation && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !imagesStaging && executionReady && environmentReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
+  const canSend = connected && Boolean(state) && !busy && !missingSession && !pendingSubmission?.preparation && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !selectedTextIssue && !imagesStaging && executionReady && environmentReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
 
   const navigate = useCallback((id: string | null, owner = route.hostId ?? state?.host.id ?? desktop.localHostId, keepSettings = false) => {
     settingsOriginLabel.current = null; setRoute({ sessionId: id, hostId: owner }); if(!keepSettings)setPluginDirectoryOpen(false);setIntegrationSelection(undefined); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false); setAppMenuOpen(false);
@@ -522,12 +526,21 @@ export function App() {
     dock.openSkillFile(ref,owner);
     if(!settingsOpen)requestAnimationFrame(()=>document.querySelector<HTMLElement>('.dock-panel-right .native-skill-file-panel')?.focus());
   }
+  function addSelection(sourceHostId: string, sourcePath: string, selection: FileTextSelection) {
+    if (selectedRef.current !== routeKey || selected?.archived || missingSession || state?.selectedText?.commandVersion !== 6) return;
+    try {
+      const current = drafts.get(draftId).draft;
+      drafts.update(draftId, { selectedTextAttachments: appendSelectedText(current, { hostId: sourceHostId, path: sourcePath }, selection) });
+      requestAnimationFrame(() => { if (selectedRef.current === routeKey) textarea.current?.focus(); });
+    } catch (error) { setActionError(errorMessage(error)); }
+  }
+  const canAddSelection = !selected?.archived && !missingSession && state?.selectedText?.commandVersion === 6;
   function renderDockTab(tab:DockTab, active = true) {
     if (tab.kind === "skill-file") {
       if (!tab.skillFile) return <p>The saved skill file identity is unavailable.</p>;
       let controller = skillFiles.get(tab.id);
       if (!controller) { controller = new NativeSkillFileController(bridge,tab.hostId,tab.skillFile,offlineCache,tab.fileMode); skillFiles.set(tab.id,controller); }
-      return <NativeSkillFilePanel controller={controller} fileMode={tab.fileMode??"markdown"} onFileModeChange={mode=>dock.setFileMode(tab.id,mode)} fileScroll={tab.fileScroll} onFileScrollChange={(mode,top)=>dock.setFileScroll(tab.id,mode,top)} connected={Boolean(desktop.catalog.records.get(tab.hostId)?.connected)} active={active} openExternal={url=>bridge.openExternal(url)}/>;
+      return <NativeSkillFilePanel onAddToChat={canAddSelection ? (path, selection) => addSelection(tab.hostId, path, selection) : undefined} controller={controller} fileMode={tab.fileMode??"markdown"} onFileModeChange={mode=>dock.setFileMode(tab.id,mode)} fileScroll={tab.fileScroll} onFileScrollChange={(mode,top)=>dock.setFileScroll(tab.id,mode,top)} connected={Boolean(desktop.catalog.records.get(tab.hostId)?.connected)} active={active} openExternal={url=>bridge.openExternal(url)}/>;
     }
     if (tab.target === "host") return <p>This panel requires a project or session.</p>;
     const target = targetFromDock(tab.target), owner = `${tab.hostId}:${tab.target}`;
@@ -548,7 +561,7 @@ export function App() {
     if(!data) {data = new WorkspaceState(bridge,tab.hostId,target,offlineCache,desktop.localHostId);workspaces.set(owner,data);}
     const ownerSession = "sessionId" in target ? record?.state?.sessions.find(value => value.id === target.sessionId) : undefined;
     const ownerProject = record?.state?.projects.find(value => value.id === ("projectId" in target ? target.projectId : ownerSession?.projectId));
-    return <WorkspacePanel embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location) => { setWorkspaceFileRequest({ owner, request: { ...location, id: crypto.randomUUID(), path } }); dock.openFile(path,tab.hostId,target); }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
+    return <WorkspacePanel onAddToChat={canAddSelection && (ownerSession?.cwd ?? ownerProject?.path) ? (relativePath, selection) => addSelection(tab.hostId, `${(ownerSession?.cwd ?? ownerProject?.path ?? "").replace(/\/$/, "")}/${relativePath}`, selection) : undefined} embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location) => { setWorkspaceFileRequest({ owner, request: { ...location, id: crypto.randomUUID(), path } }); dock.openFile(path,tab.hostId,target); }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
   }
   const shell = useRef<HTMLDivElement>(null);
   const closeStatus = useWindowClose(bridge, shell, async signal => {
@@ -639,6 +652,8 @@ export function App() {
             onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}
             onCheckout={async (branch,create) => { if (!workspace?.status || !connected) return; await workspace.mutate({type:"git.checkout",branch,expectedRevision:workspace.status.revision,...(create ? {create:true} : {})}); }}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
+            <ComposerSelectedText attachments={draft.selectedTextAttachments} disabled={Boolean(selected?.archived)} onRemove={ids => { const remove = new Set(ids); drafts.update(draftId, { selectedTextAttachments: (drafts.get(draftId).draft.selectedTextAttachments ?? []).filter(item => !remove.has(item.id)) }); }} onFocusComposer={() => textarea.current?.focus()}/>
+            {selectedTextIssue && <p className="attachment-notice" role="status">{selectedTextIssue}</p>}
             <ComposerImages controller={imageComposer} attachments={draft.attachments} media={attachmentMedia} hostId={hostId} connected={connected} capabilities={state?.imageAttachments} disabled={Boolean(selected?.archived)}/>
             {imageIssue && <p className="attachment-notice" role="status">{imageIssue}</p>}
             {imagesStaging && <p className="attachment-notice" role="status">Finish adding or remove the pending images before sending.</p>}
