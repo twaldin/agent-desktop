@@ -1,12 +1,20 @@
 # Milestone status
 
+## Rich skill file editor
+
+Skill files now use a source-preserving CodeMirror rich editor and the pinned Pierre source editor. Valid simple frontmatter appears in a Metadata card; rich-mode Select all and boundary deletion cannot erase it. Source mode edits the full original. Typing, task checkboxes, undo/redo and mode changes feed the existing native host autosave and recovery path. External updates use a minimal text change to preserve unaffected rich undo history. Unsupported YAML stays visible, and raw HTML never executes.
+
+The final isolated native-host/hidden-Electron run passes13 checks with10 captures and exactly five UI writes. It covers metadata protection, rich input, source undo across a mode round trip, offline restoration, explicit conflict recovery and native skill exclusion/re-discovery. The shared draft remains unchanged; no sessions, provider prompts or Reveal actions occur. Twenty-five focused tests pass105 assertions; typecheck and production build pass. Review caught hidden-prefix deletion and whole-document undo invalidation; earlier failed captures remain retained. Evidence: `.data/ui-acceptance/native-rich-skill-editor-2026-09-07-r8/` and `.data/markdown-editor-reference-2026-09-07/`.
+
+This is a partial editor implementation, not full visual parity. Rich tables, image/Mermaid widgets, restart history, save-before-mode-switch behavior, general Files-panel integration and matched native pixel acceptance remain open. New CodeMirror/Lezer dependencies are exact maintained pins; the unrecoverable Codex dependency versions are not claimed. OMP18.1.10, Bun1.3.14, Pierre1.3.5, installed apps, Work fixtures and sealed bundles are unchanged.
+
 ## Native skill file editing
 
 Skill details now offer Open, host-owned Reveal and Copy Markdown in the reference menu order. Open creates an editable file tab with Markdown preview, source view and three-second autosave. File authorization survives frontmatter changes that remove the skill from discovery. Offline edits, external changes, oversized drafts and unconfirmed saves retain recoverable text and command receipts. Native refresh now clears OMP’s capability filesystem cache, so discovery observes edited metadata. The compact popup follows pinned sizing and distinguishes pointer-open focus from keyboard navigation.
 
 The final real-host hidden Electron run passes ten checks/eight captures, including three UI saves, offline reopening, conflict resolution, temporary frontmatter disable and re-enabling through the existing tab. Its draft remains unchanged, with zero sessions or Reveal actions. The directory regression passes21 checks/26 captures, and the compact-header/switch regression confirms the nested controls remain visible at720×500. Eighty-three focused native/runtime/desktop tests pass19,620 assertions; typecheck and production build pass. Native worker tests run from their host package because repository-root Bun1.3.14 currently fails their IPC initialization. Earlier fixture failures and corrected native-provider assumptions remain recorded.
 
-Inline rich Markdown editing, Uninstall, actual OS Reveal, installed main/preload navigation and matched pixel parity remain open. Pins, installed apps, Work runs and sealed references remain unchanged. Private evidence: `.data/ui-acceptance/native-skill-file-2026-09-07-r5/`, `.data/ui-acceptance/native-skill-directory-file-regression-2026-09-07-r2/` and `.data/skill-file-checkpoint-2026-09-07/`.
+The newer rich-editor checkpoint above extends this initial file implementation. Uninstall, actual OS Reveal, installed main/preload navigation and matched pixel parity remain open. Private evidence: `.data/ui-acceptance/native-skill-file-2026-09-07-r5/`, `.data/ui-acceptance/native-skill-directory-file-regression-2026-09-07-r2/` and `.data/skill-file-checkpoint-2026-09-07/`.
 
 ## Skill detail enable switch
 

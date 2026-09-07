@@ -76,6 +76,7 @@ document.documentElement.dataset.theme = "dark";
 createRoot(document.getElementById("root")!).render(<Fixture/>);
 Object.assign(window, {
   request,
+  editor(selector:string) { return document.querySelector<HTMLElement>(selector) ?? [...document.querySelectorAll("diffs-container")].map(node=>node.shadowRoot?.querySelector<HTMLElement>(selector)).find(Boolean); },
   connection: (value: boolean) => setConnection(value),
   recreateControllers: () => recreateControllers(),
   target(selector: string, label?: string) { const item = [...document.querySelectorAll<HTMLElement>(selector)].filter(node => node.getClientRects().length).find(node => label === undefined || node.textContent?.trim() === label); if (!item) throw new Error(`Missing ${selector} ${label ?? ""}`); item.scrollIntoView({ block: "center" }); const box = item.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; },
@@ -94,7 +95,11 @@ Object.assign(window, {
         }) };
     })(),
     menu: [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map(node => ({ text: node.textContent?.trim(), disabled: (node as HTMLButtonElement).disabled, icons: node.querySelectorAll("svg,img").length })),
-    source: (document.querySelector('[aria-label="Skill file source"]') as HTMLTextAreaElement | null)?.value,
+    source: (controllerProjection()[0] as any)?.text,
+    richText: document.querySelector(".cm-content")?.textContent,
+    richLines: [...document.querySelectorAll<HTMLElement>(".cm-line")].map(node=>({text:node.textContent,className:node.className,font:getComputedStyle(node).font,bounds:node.getBoundingClientRect().toJSON()})),
+    sourceInputs: [...document.querySelectorAll("diffs-container")].flatMap(node=>[...(node.shadowRoot?.querySelectorAll<HTMLElement>("[contenteditable]") ?? [])].map(input=>({text:input.textContent,label:input.getAttribute("aria-label"),font:getComputedStyle(input).font,bounds:input.getBoundingClientRect().toJSON()}))),
+    sourceDom: [...document.querySelectorAll("diffs-container")].map(node=>node.shadowRoot?.textContent),
     dockTabs: [...document.querySelectorAll<HTMLElement>("[data-dock-tab-id]")].map(node => node.textContent?.trim()),
     controllers: controllerProjection(),
     runtimeErrors: [...runtimeErrors], keyboardEvents:[...keyboardEvents],

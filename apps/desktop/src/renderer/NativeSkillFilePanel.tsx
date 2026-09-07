@@ -1,14 +1,15 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { MarkdownText } from "./MarkdownText";
+import { RichMarkdownEditor } from "./RichMarkdownEditor";
+import { PierreSourceEditor } from "./PierreSourceEditor";
 import type { NativeSkillFileController } from "./native-skill-file-state";
 import "./native-skill-file-panel.css";
 
-export function NativeSkillFilePanel({ controller, connected, active }: {controller:NativeSkillFileController;connected:boolean;active:boolean}) {
+export function NativeSkillFilePanel({ controller, connected, active, openExternal }: {controller:NativeSkillFileController;connected:boolean;active:boolean;openExternal?(url:string):Promise<void>}) {
   useSyncExternalStore(controller.subscribe,controller.getVersion,controller.getVersion);
   const data=controller.state;
   useEffect(()=>{void controller.load(connected);},[controller,connected]);
-  if(!active)return null;
-  return <section className="native-skill-file-panel" tabIndex={-1} aria-label="Skill file editor">
+  const documentKey=`${data.hostId}:${data.ref.skillId}:${data.ref.sourcePath}`;
+  return <section className="native-skill-file-panel" hidden={!active} tabIndex={-1} aria-label="Skill file editor">
     <header><span title={data.ref.sourcePath}>{data.ref.sourcePath.split("/").at(-1)}</span><div className="native-skill-file-actions">
       <span role="status">{!connected?"Offline":data.saving?"Saving…":data.dirty?"Edited":""}</span>
       <button type="button" onClick={()=>void controller.load()} disabled={!connected||data.saving||data.loading}>Refresh</button>
@@ -19,6 +20,11 @@ export function NativeSkillFilePanel({ controller, connected, active }: {control
     {data.conflict&&<div role="alert"><p>The file changed on its host. Your edits are preserved.</p><button onClick={()=>controller.resolveConflict("use-file")}>Use file</button><button onClick={()=>controller.resolveConflict("keep-changes")}>Keep my changes</button></div>}
     {data.uncertain&&<div role="alert"><p>The previous save is not confirmed.</p><button disabled={!connected||data.saving||data.loading} onClick={()=>void controller.inspectUnknown()}>Inspect file</button><button disabled={!connected||data.saving||data.loading} onClick={()=>void controller.retryUnknown()}>Check same save</button></div>}
     {data.recoveredText!==undefined&&<button onClick={()=>controller.restorePreviousEdits()}>Restore previous edits</button>}
-    {data.loading&&!data.file?<p role="status">Loading skill file…</p>:data.source?<textarea aria-label="Skill file source" value={data.text} disabled={!data.file} spellCheck={false} onChange={event=>controller.setText(event.target.value)} onKeyDown={event=>{if((event.metaKey||event.ctrlKey)&&event.key==="s"){event.preventDefault();void controller.save();}}}/>:<div className="native-skill-file-rendered"><MarkdownText text={data.text} blockKey={`skill-file:${data.ref.skillId}`}/></div>}
+    {data.loading&&!data.file?<p role="status">Loading skill file…</p>:data.file&&<>
+      <RichMarkdownEditor documentKey={documentKey} value={data.text} label="Skill file Markdown" active={active&&!data.source}
+        onChange={text=>controller.setText(text)} onSave={()=>void controller.save()} openExternal={openExternal}/>
+      <PierreSourceEditor documentKey={documentKey} name="SKILL.md" value={data.text} label="Skill file source" active={active&&data.source}
+        onChange={text=>controller.setText(text)} onSave={()=>void controller.save()}/>
+    </>}
   </section>;
 }

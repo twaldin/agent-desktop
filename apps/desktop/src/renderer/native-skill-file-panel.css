@@ -1,4 +1,5 @@
 .native-skill-file-panel { display:flex; width:100%; height:100%; min-width:0; min-height:0; flex-direction:column; color:var(--text); background:var(--app-surface); outline:none; }
+.native-skill-file-panel[hidden] { display:none; }
 .native-skill-file-panel > header { display:flex; flex:none; align-items:center; justify-content:space-between; min-height:40px; gap:12px; padding:6px 12px; border-bottom:1px solid var(--border); font-size:12px; }
 .native-skill-file-panel > header > span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .native-skill-file-panel > p, .native-skill-file-panel > div[role="alert"] { flex:none; margin:0; padding:8px 12px; font-size:12px; }
@@ -8,5 +9,4 @@
 .native-skill-file-panel button:hover { background:var(--hover); color:var(--text); }
 .native-skill-file-panel button:disabled { opacity:.45; cursor:default; }
 .native-skill-file-panel button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-.native-skill-file-panel textarea { flex:1; min-height:0; width:100%; resize:none; box-sizing:border-box; padding:16px; border:0; border-radius:0; outline:none; background:var(--app-surface); color:var(--text); font:13px/1.6 var(--code-font); tab-size:2; }
-.native-skill-file-rendered { flex:1; min-height:0; overflow:auto; padding:24px; }
+.native-skill-file-panel > .pierre-source-editor { flex:1; min-height:0; }

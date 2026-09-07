@@ -6,6 +6,13 @@
   "main": "dist/main.cjs",
   "dependencies": {
     "@agent-desktop/shared": "workspace:*",
+    "@codemirror/commands": "6.11.0",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.4",
+    "@codemirror/view": "6.43.11",
+    "@lezer/markdown": "1.7.2",
     "lowlight": "3.3.0",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",

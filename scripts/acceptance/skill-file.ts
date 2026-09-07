@@ -9,6 +9,9 @@ import tailwindcss from "@tailwindcss/vite";
 const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/skill-file-acceptance-${Date.now()}`);
 const sources = [
+  "apps/desktop/src/renderer/RichMarkdownEditor.tsx", "apps/desktop/src/renderer/rich-markdown-editor.css",
+  "apps/desktop/src/renderer/PierreSourceEditor.tsx", "apps/desktop/src/renderer/pierre-source-editor.css", "apps/desktop/src/renderer/markdown-file-model.ts",
+  "apps/desktop/package.json", "bun.lock",
   "apps/desktop/src/renderer/NativePluginDirectory.tsx", "apps/desktop/src/renderer/NativeSkillDialog.tsx",
   "apps/desktop/src/renderer/native-skill-dialog.css",
   "apps/desktop/src/renderer/native-skill-file-state.ts", "apps/desktop/src/renderer/NativeSkillFilePanel.tsx",
