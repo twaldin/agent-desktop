@@ -1,3 +1,4 @@
+import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply } from "@agent-desktop/shared";
 import type { NativeSessionMcpResourceRequest, NativeSessionMcpResourceResult } from "@agent-desktop/shared";
 import { NativeSessionMcp } from "./mcp-session";
 import type { NativeSessionMcpSnapshot, NativeSessionMcpReload, NativeSessionMcpReconnect } from "@agent-desktop/shared";
@@ -89,6 +90,10 @@ export interface OmpSession {
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
   readSessionMcpResource(request: NativeSessionMcpResourceRequest): Promise<NativeSessionMcpResourceResult>;
   getSessionMcp(): NativeSessionMcpSnapshot;
+  startSessionMcpAuthorization(request: NativeSessionMcpReconnect): NativeMcpAuthorizationSnapshot;
+  getSessionMcpAuthorization(): NativeMcpAuthorizationSnapshot | null;
+  respondSessionMcpAuthorization(request: NativeMcpAuthorizationReply): NativeMcpAuthorizationSnapshot;
+  cancelSessionMcpAuthorization(authorizationId: string): NativeMcpAuthorizationSnapshot;
   reloadSessionMcp(request: NativeSessionMcpReload): Promise<NativeSessionMcpSnapshot>;
   reconnectSessionMcp(request: NativeSessionMcpReconnect): Promise<NativeSessionMcpSnapshot>;
   getBtw(): NativeBtwSnapshot | null;
@@ -500,7 +505,7 @@ export class OmpRuntime {
       let accountMutation = false;
       let goalMutation = false;
       const mcpReads = new Set<Promise<NativeSessionMcpResourceResult>>();
-      let mcpMutation: Promise<NativeSessionMcpSnapshot> | undefined;
+      let mcpMutation: Promise<unknown> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
       const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
@@ -514,7 +519,7 @@ export class OmpRuntime {
         assertSessionActive();
         if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
-      const trackMcpMutation = (run: Promise<NativeSessionMcpSnapshot>) => {
+      const trackMcpMutation = <T>(run: Promise<T>) => {
         mcpMutation = run;
         const clear = () => { if (mcpMutation === run) mcpMutation = undefined; };
         void run.then(clear, clear);
@@ -532,7 +537,7 @@ export class OmpRuntime {
         get model() { return session.model ? { provider: session.model.provider, id: session.model.id } : null; },
         get thinkingLevel() { return session.configuredThinkingLevel(); },
         get isStreaming() { return session.isStreaming; },
-        get hasPostPromptWork() { return session.hasPostPromptWork; },
+        get hasPostPromptWork() { return session.hasPostPromptWork || Boolean(mcp.getAuthorization()?.pending); },
         get title() { return session.sessionName ?? manager.getHeader()?.title; },
         get createdAt() { return Date.parse(manager.getHeader()!.timestamp); },
         modelFallbackMessage: result.modelFallbackMessage,
@@ -625,6 +630,29 @@ export class OmpRuntime {
           return detachedQuestions.startDelivery(questionId, preflight, dispatch);
         },
         getSessionMcp: () => { assertSessionActive(); return mcp.read(); },
+        startSessionMcpAuthorization: request => {
+          assertIdle();
+          if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
+            throw new Error("Resolve pending native work before authorizing an MCP server.");
+          const operation = mcp.startAuthorization(request, { cwd: manager.getCwd(), authStorage: auth, assertOwner: assertSessionActive });
+          trackMcpMutation(operation.completion);
+          return operation.snapshot();
+        },
+        getSessionMcpAuthorization: () => { assertSessionActive(); return mcp.getAuthorization()?.snapshot() ?? null; },
+        respondSessionMcpAuthorization: request => {
+          assertSessionActive();
+          const operation = mcp.getAuthorization();
+          if (!operation || operation.id !== request.authorizationId) throw new Error("MCP authorization owner changed.");
+          operation.respond(request.requestId, request.response);
+          return operation.snapshot();
+        },
+        cancelSessionMcpAuthorization: authorizationId => {
+          assertSessionActive();
+          const operation = mcp.getAuthorization();
+          if (!operation || operation.id !== authorizationId) throw new Error("MCP authorization owner changed.");
+          operation.cancel();
+          return operation.snapshot();
+        },
         reloadSessionMcp: request => {
           assertIdle();
           if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
@@ -854,11 +882,11 @@ export class OmpRuntime {
           return steering.submit(text);
         },
         abort: async () => {
-          assertSessionActive(); admissionAbort?.abort(); ui?.cancelAll("aborted");
+          assertSessionActive(); admissionAbort?.abort(); ui?.cancelAll("aborted"); mcp.cancelAuthorization();
           interruptEpoch++;
           interruptsInFlight++;
           steering.cancelQueued("Interrupted before this steer left the native queue");
-          try { await session.abort(); }
+          try { await Promise.all([session.abort(), mcp.getAuthorization()?.completion]); }
           finally {
             try { await steering.settleCancelled("Interrupted after native delivery; durable steer admission could not be verified"); }
             finally { interruptsInFlight--; }
@@ -909,6 +937,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
+          const mcpDisposal = mcp.dispose();
           btw.dispose();
           detachedQuestions.dispose();
           admissionAbort?.abort();
@@ -918,6 +947,7 @@ export class OmpRuntime {
             // Resolving/cancelling UI above releases native branch hooks. A branch
             // already in flight still owns both files until it settles.
             await promotionCall?.catch(() => {});
+            await mcpDisposal;
             await mcpMutation?.catch(() => {});
             await Promise.allSettled([...mcpReads]);
             session.beginDispose();

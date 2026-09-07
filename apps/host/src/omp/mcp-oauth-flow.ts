@@ -14,6 +14,9 @@ export interface NativeMcpOAuthInput {
   config: MCPOAuthConfig;
   authStorage: AuthStorage;
   callbacks: OAuthLoginCallbacks;
+  /** Recheck the owning session/configuration immediately before storage. */
+  beforeStore?: () => Promise<void>;
+  onStoreStart?: () => void;
 }
 
 export interface NativeMcpOAuthResult {
@@ -53,6 +56,9 @@ export async function runNativeMcpOAuth(input: NativeMcpOAuthInput): Promise<Nat
 
     // Once the storage write starts, its actual result is authoritative. A late
     // abort cannot safely reinterpret a successfully replaced credential.
+    await input.beforeStore?.();
+    signal.throwIfAborted();
+    input.onStoreStart?.();
     await input.authStorage.set(credentialId, stored);
     return {
       credentialId,

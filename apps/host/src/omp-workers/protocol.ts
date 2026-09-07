@@ -6,7 +6,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 20;
+export const WORKER_PROTOCOL_VERSION = 21;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -46,6 +46,10 @@ export type WorkerOperation =
   | { operation: "resolveQuestion"; args: { request: ResolveDetachedQuestionRequest } }
   | { operation: "startQuestionDelivery"; args: { questionId: string } }
   | { operation: "readSessionMcpResource"; args: { request: import("@agent-desktop/shared").NativeSessionMcpResourceRequest } }
+  | { operation: "startSessionMcpAuthorization"; args: { request: import("@agent-desktop/shared").NativeSessionMcpReconnect } }
+  | { operation: "getSessionMcpAuthorization" }
+  | { operation: "respondSessionMcpAuthorization"; args: { request: import("@agent-desktop/shared").NativeMcpAuthorizationReply } }
+  | { operation: "cancelSessionMcpAuthorization"; args: { authorizationId: string } }
   | { operation: "getSessionMcp" }
   | { operation: "reloadSessionMcp"; args: { request: import("@agent-desktop/shared").NativeSessionMcpReload } }
   | { operation: "reconnectSessionMcp"; args: { request: import("@agent-desktop/shared").NativeSessionMcpReconnect } }

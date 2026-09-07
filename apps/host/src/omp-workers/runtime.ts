@@ -1,3 +1,4 @@
+import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeSessionMcpReconnect } from "@agent-desktop/shared";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
@@ -29,7 +30,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -41,6 +42,10 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
+  startSessionMcpAuthorization(request: NativeSessionMcpReconnect): Promise<NativeMcpAuthorizationSnapshot>;
+  getSessionMcpAuthorization(): Promise<NativeMcpAuthorizationSnapshot | null>;
+  respondSessionMcpAuthorization(request: NativeMcpAuthorizationReply): Promise<NativeMcpAuthorizationSnapshot>;
+  cancelSessionMcpAuthorization(authorizationId: string): Promise<NativeMcpAuthorizationSnapshot>;
   getSessionMcp(): Promise<import("@agent-desktop/shared").NativeSessionMcpSnapshot>;
   getBtw(): Promise<NativeBtwSnapshot | null>;
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
@@ -444,6 +449,10 @@ export class WorkerRuntime {
       startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
       readSessionMcpResource: request => client.request({ operation: "readSessionMcpResource", args: { request } }, 35_000),
       getSessionMcp: () => client.request({ operation: "getSessionMcp" }, 15_000),
+      startSessionMcpAuthorization: request => client.request({ operation: "startSessionMcpAuthorization", args: { request } }),
+      getSessionMcpAuthorization: () => client.request({ operation: "getSessionMcpAuthorization" }),
+      respondSessionMcpAuthorization: request => client.request({ operation: "respondSessionMcpAuthorization", args: { request } }),
+      cancelSessionMcpAuthorization: authorizationId => client.request({ operation: "cancelSessionMcpAuthorization", args: { authorizationId } }),
       reloadSessionMcp: request => client.request({ operation: "reloadSessionMcp", args: { request } }, 120_000),
       reconnectSessionMcp: request => client.request({ operation: "reconnectSessionMcp", args: { request } }, 120_000),
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),

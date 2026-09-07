@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability/fs";
+import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { NativeMcpAuthorization, type NativeMcpAuthorizationSnapshot } from "./mcp-oauth-session";
 import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import type {
 	NativeSessionMcpReload,
@@ -113,6 +115,8 @@ export class NativeSessionMcp {
 	#fingerprint = "";
 	#failures = new Set<string>();
 	#mutationTail: Promise<void> = Promise.resolve();
+	#authorization?: NativeMcpAuthorization;
+	#disposed = false;
 
 	constructor(
 		private readonly session: AgentSession,
@@ -148,38 +152,44 @@ export class NativeSessionMcp {
 		return { epoch: this.#epoch, revision: this.#revision, ...value };
 	}
 
+	async #reload(): Promise<void> {
+		if (!this.manager) throw new Error(UNAVAILABLE);
+		try {
+			await this.manager.disconnectAll();
+			this.#failures.clear();
+			this.session.setMCPPromptCommands([]);
+			clearFsCache();
+			const result = await this.manager.discoverAndConnect({
+				enableProjectConfig: this.session.settings.get("mcp.enableProjectConfig") ?? true,
+				filterExa: true,
+				filterBrowser: this.session.getEvalPreludes().some(definition => definition.name === "browser"),
+				extensionRoots: this.session.effectiveExtensionRoots,
+			});
+			this.#failures = new Set(result.errors.keys());
+			await this.session.refreshMCPTools(this.manager.getTools());
+		} catch {
+			// A partial rediscovery must not leave native tools active in either
+			// manager or session. Neither cleanup failure nor the original native
+			// error crosses this metadata-only boundary.
+			await this.manager.disconnectAll().catch(() => undefined);
+			try { this.session.setMCPPromptCommands([]); } catch { /* Preserve the generic failure. */ }
+			await this.session.refreshMCPTools([]).catch(() => undefined);
+			this.#failures.clear();
+			this.#consumeRevision();
+			throw new Error("Native MCP reload failed.");
+		}
+	}
+
 	reload(request: NativeSessionMcpReload): Promise<NativeSessionMcpSnapshot> {
 		const operation = this.#mutationTail.then(async () => {
+			if (this.#disposed) throw new Error("Native MCP session was disposed.");
 			const before = this.read();
 			if (request.epoch !== before.epoch || request.expectedRevision !== before.revision) {
 				throw new Error("Native MCP state changed before reload.");
 			}
 			if (!this.manager) throw new Error(UNAVAILABLE);
 
-			try {
-				await this.manager.disconnectAll();
-				this.#failures.clear();
-				this.session.setMCPPromptCommands([]);
-				clearFsCache();
-				const result = await this.manager.discoverAndConnect({
-					enableProjectConfig: this.session.settings.get("mcp.enableProjectConfig") ?? true,
-					filterExa: true,
-					filterBrowser: this.session.getEvalPreludes().some(definition => definition.name === "browser"),
-					extensionRoots: this.session.effectiveExtensionRoots,
-				});
-				this.#failures = new Set(result.errors.keys());
-				await this.session.refreshMCPTools(this.manager.getTools());
-			} catch {
-				// A partial rediscovery must not leave native tools active in either
-				// manager or session. Neither cleanup failure nor the original native
-				// error crosses this metadata-only boundary.
-				await this.manager.disconnectAll().catch(() => undefined);
-				try { this.session.setMCPPromptCommands([]); } catch { /* Preserve the generic failure. */ }
-				await this.session.refreshMCPTools([]).catch(() => undefined);
-				this.#failures.clear();
-				this.#consumeRevision();
-				throw new Error("Native MCP reload failed.");
-			}
+			await this.#reload();
 			// Reload itself is observable even when the resulting catalog is byte
 			// identical. Consuming the ticket prevents a duplicate native launch.
 			this.#consumeRevision();
@@ -190,6 +200,7 @@ export class NativeSessionMcp {
 
 	reconnect(request: NativeSessionMcpReconnect): Promise<NativeSessionMcpSnapshot> {
 		const operation = this.#mutationTail.then(async () => {
+			if (this.#disposed) throw new Error("Native MCP session was disposed.");
 			const before = this.read();
 			if (request.epoch !== before.epoch || request.expectedRevision !== before.revision) {
 				throw new Error("Native MCP state changed before reconnect.");
@@ -220,8 +231,57 @@ export class NativeSessionMcp {
 		return operation.then(() => this.read());
 	}
 
+	/** The caller owns session-level admission; this queue additionally fences
+	 * direct MCP reads/reloads and duplicate authorization across clients. */
+	startAuthorization(request: NativeSessionMcpReconnect, options: {
+		cwd: string;
+		authStorage: AuthStorage;
+		assertOwner(): void;
+		notify?(snapshot: NativeMcpAuthorizationSnapshot): void;
+	}): NativeMcpAuthorization {
+		if (this.#disposed) throw new Error("Native MCP session was disposed.");
+		if (!this.manager) throw new Error(UNAVAILABLE);
+		if (this.#authorization?.pending) throw new Error("Native MCP authorization is already pending.");
+		const ready = this.#mutationTail.then(() => {
+			options.assertOwner();
+			if (this.#disposed) throw new Error("Native MCP session was disposed.");
+			const before = this.read();
+			if (request.epoch !== before.epoch || request.expectedRevision !== before.revision) {
+				throw new Error("Native MCP state changed before authorization.");
+			}
+			if (!before.servers.some(server => server.name === request.serverName)) throw new Error("Native MCP server is not part of this session.");
+			this.#consumeRevision();
+		});
+		const operation = new NativeMcpAuthorization({
+			...options, manager: this.manager, serverName: request.serverName, ready,
+			assertOwner: () => {
+				if (this.#disposed) throw new Error("Native MCP session was disposed.");
+				options.assertOwner();
+			},
+			reload: async () => {
+				try {
+					await this.#reload();
+					await this.manager!.waitForConnection(request.serverName);
+					await this.session.refreshMCPTools(this.manager!.getTools());
+				} finally { this.#consumeRevision(); }
+			},
+		});
+		this.#authorization = operation;
+		this.#mutationTail = operation.completion.then(() => undefined);
+		return operation;
+	}
+
+	getAuthorization(): NativeMcpAuthorization | undefined { return this.#authorization; }
+	cancelAuthorization(): void { this.#authorization?.cancel(); }
+	async dispose(): Promise<void> {
+		this.#disposed = true;
+		this.cancelAuthorization();
+		await this.#mutationTail;
+	}
+
 	readResource(request: NativeSessionMcpResourceRequest): Promise<NativeSessionMcpResourceResult> {
 		const operation = this.#mutationTail.then(async () => {
+			if (this.#disposed) throw new Error("Native MCP session was disposed.");
 			const before = this.read();
 			if (request.epoch !== before.epoch || request.expectedRevision !== before.revision) {
 				throw new Error("Native MCP state changed before resource read.");

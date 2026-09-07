@@ -1,3 +1,4 @@
+export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from './integrations';

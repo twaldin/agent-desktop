@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — session-owned MCP authorization lifecycle
+
+Explicit MCP OAuth now has a real session/worker lifecycle: start, inspect, answer and cancel in worker protocol21. It reserves the native MCP mutation queue, rejects competing session mutations, cancels and drains on Stop/disposal, and fences exact authorization/request identities. Reopening a worker cannot answer its predecessor's callback. Raw responses stay out of native transcripts.
+
+The native configuration owner is captured before discovery and checked again before credential storage and locked file commit. Definition-only configurations retain exact bytes; existing auth pointers update through the native atomic writer. Duplicate identical-byte commits, config races and cancellation during lock contention are covered. Snapshots separately report confirmed/unknown credential writes, configuration persistence and actual reconnection. Late cancellation and lost storage acknowledgement cannot become a false fully-connected or unchanged-credential claim. Superseded legacy grant collection remains open.
+
+The focused regression batch passes **86 tests / 19,694 assertions across11 files**, including real worker permissions/lifecycle, loopback OAuth/MCP, Stop/disposal, wrong identities and admission fences. Typecheck and production build pass. No full-suite rerun, hosted provider/broker-refresh, authenticated host-route, desktop UI, packaged/native-window or pixel credit is claimed. `/mcp reauth` remains unavailable until the consent surface is connected. Private logs, source hashes and exact scope: `.data/mcp-oauth-lifecycle-checkpoint/`. All1,737 sealed reference records and all four manifest hashes still match. Installed services, preserved Work runs and OMP18.1.10/Bun1.3.14 pins are unchanged.
+
 ## Source30 — native MCP authorization foundation
 
 Private adapters now use OMP's actual HTTP/SSE discovery, client selection, OAuth callback/PKCE/state/DCR engine and native credential store. Real local tests complete a protected tool's challenge, authorization, reconnect and single retry through both initial and refreshed native registrations. Cancellation preserves old credentials and closes callback listeners, including discovery/token phases; a completed storage write remains authoritative over late cancellation. Native SSE initialization also honors caller cancellation when its own timeouts are disabled.

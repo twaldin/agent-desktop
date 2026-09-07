@@ -16,7 +16,7 @@ async function eventually<T>(read: () => T | Promise<T>, predicate: (value: T) =
   }
 }
 
-for (const version of [2, 3, 19]) test(`an IPC${version} worker is rejected before permission/image-bearing initialization`, async () => {
+for (const version of [2, 3, 19, 20]) test(`an IPC${version} worker is rejected before permission/image-bearing initialization`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "agent-worker-old-protocol-"));
   const workerPath = join(directory, "worker.ts"), pidFile = join(directory, "pid"), initFile = join(directory, "init");
   await writeFile(workerPath, `import {writeFileSync} from 'node:fs';
