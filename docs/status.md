@@ -1,5 +1,9 @@
 # Milestone status
 
+## Markdown Go to line
+
+Markdown preview now supports the app’s Go to line shortcut, including Find dismissal, live centered preview, commit, cancellation and restoration of selection/scroll. Its separate CodeMirror appearance uses the pinned340px rounded card,96px input and24px close control rather than Pierre’s smaller pill. Seven hidden-Electron checks/four captures pass with zero mutations or sessions; source/skill regressions, seven scoped tests/52 assertions, typecheck and build pass. This is a source/renderer checkpoint, not installed or native pixel certification; see [file editor](workspace-file-editor.md).
+
 ## Markdown file links
 
 Markdown preview links now open files relative to the current document on its owning host, preserve line/column/range requests, and reuse existing file tabs. Pointer and Enter activation work; unsupported or missing targets expose errors. Offline navigation can reveal cached files while preserving unsaved Markdown. The same checks exposed and fixed normal pointer tab activation being intercepted by the dock drag container.

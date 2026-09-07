@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
 import { Decoration, EditorView, keymap, placeholder, highlightSpecialChars, drawSelection, type DecorationSet, WidgetType } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
+import { searchKeymap, highlightSelectionMatches, closeSearchPanel } from "@codemirror/search";
 import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM, Superscript, Subscript, Emoji } from "@lezer/markdown";
 import { applyMarkdownChanges, markdownMetadata, markdownTextChange, normalizeMarkdown, protectMarkdownPrefix } from "./markdown-file-model";
 import { fileLocation, resolveTranscriptLink } from "./transcript-links";
+import { GoToLine } from "./GoToLine";
 import "./rich-markdown-editor.css";
 
 const focusChanged = StateEffect.define<boolean>();
@@ -131,8 +132,38 @@ export interface RichMarkdownEditorProps {
 }
 /** Formatting is a view over Markdown, never an HTML-to-Markdown round trip. */
 export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
-  const container = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null), latest = useRef(props);
+  const frame = useRef<HTMLDivElement>(null), scroll = useRef<HTMLDivElement>(null), container = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null), latest = useRef(props);
   latest.current = props;
+  const linePreview = useRef<{ owner: string; text: string; selection: EditorSelection; top: number; left: number; innerTop: number; previewed: boolean } | undefined>(undefined);
+  const lineGeneration = useRef(0);
+  const openLine = () => {
+    const editor = view.current, element = scroll.current;
+    if (!editor || !element || latest.current.active === false || latest.current.readOnly) return false;
+    closeSearchPanel(editor); lineGeneration.current++;
+    linePreview.current = { owner: latest.current.documentKey, text: editor.state.doc.toString(), selection: editor.state.selection, top: element.scrollTop, left: element.scrollLeft, innerTop: editor.scrollDOM.scrollTop, previewed: false };
+    return true;
+  };
+  const navigateLine = (line: number, focus: boolean) => {
+    const editor = view.current;
+    if (!editor || latest.current.active === false) return;
+    lineGeneration.current++;
+    if (focus) linePreview.current = undefined;
+    else if (linePreview.current) linePreview.current.previewed = true;
+    const position = editor.state.doc.line(Math.max(1, Math.min(line, editor.state.doc.lines))).from;
+    editor.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: "center" }) });
+    if (focus) editor.focus();
+  };
+  const closeLine = (cancel: boolean, focus: boolean) => {
+    const editor = view.current, element = scroll.current, snapshot = linePreview.current, generation = ++lineGeneration.current;
+    linePreview.current = undefined;
+    if (!editor || !element) return;
+    if (cancel && snapshot?.previewed && snapshot.owner === latest.current.documentKey && snapshot.text === editor.state.doc.toString()) {
+      editor.dispatch({ selection: snapshot.selection });
+      const restore = () => { if (generation !== lineGeneration.current || view.current !== editor) return; element.scrollTop = snapshot.top; element.scrollLeft = snapshot.left; editor.scrollDOM.scrollTop = snapshot.innerTop; };
+      restore(); editor.requestMeasure({ read: () => null, write: restore });
+    }
+    if (focus && latest.current.active !== false) editor.focus();
+  };
   const raw = useRef(props.value), baseline = useRef(props.value), writable = useRef(new Compartment());
   const alive = useRef(false);
   const appliedReveal = useRef<string | undefined>(undefined);
@@ -212,12 +243,15 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     }
     editor.focus(); props.onReveal?.(request.id);
   }, [props.active, props.documentKey, props.revealRequest, props.value]);
-  return <div className="rich-markdown-file" hidden={props.active === false}>
+  return <div ref={frame} className="rich-markdown-file" hidden={props.active === false}>
+    <GoToLine appearance="codemirror" key={props.documentKey} frame={frame} active={props.active !== false && !props.readOnly} value={props.value} onOpen={openLine} onPreview={line => navigateLine(line, false)} onCommit={line => navigateLine(line, true)} onClose={closeLine}/>
+    <div ref={scroll} className="rich-markdown-scroll">
     {metadata && <section className="markdown-file-metadata" aria-label="Metadata"><h3>Metadata</h3><dl>
       {(expanded ? metadata.entries : metadata.entries.slice(0, 8)).map(entry => <div key={entry.key}><dt>{entry.key}</dt><dd>{Array.isArray(entry.value)
         ? entry.value.map((value, index) => <span className="markdown-metadata-pill" key={index}>{value}</span>) : entry.value}</dd></div>)}
     </dl>{metadata.entries.length > 8 && <button onClick={() => setExpanded(value => !value)}>{expanded ? "Show less" : "Show more"}</button>}</section>}
     {linkError && <p role="alert">{linkError}</p>}
     <div ref={container} className="rich-markdown-content"/>
+    </div>
   </div>;
 }

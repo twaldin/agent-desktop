@@ -494,7 +494,7 @@ button { touch-action: manipulation; }
 .workspace-markdown-mode { flex:none; height:28px; padding:0 8px; border:0; border-radius:6px; background:transparent; font:14px/20px var(--ui-font); color:var(--text); }
 .workspace-markdown-mode:hover { background:var(--hover); }
 .workspace-markdown-mode:disabled { opacity:.5; cursor:default; }
-.workspace-file-main > .rich-markdown-file { padding:8px 16px 24px; }
+.workspace-file-main > .rich-markdown-file > .rich-markdown-scroll { padding:8px 16px 24px; }
 
 .workspace-markdown-main { position: relative; }
 .workspace-markdown-actions { position: absolute; z-index: 10; top: 8px; right: 16px; }

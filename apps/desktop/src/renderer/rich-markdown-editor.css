@@ -1,4 +1,5 @@
-.rich-markdown-file { flex:1; min-height:0; overflow:auto; padding:24px; color:var(--text); font:var(--chat-font-size,14px)/1.6 var(--chat-font,var(--ui-font)); }
+.rich-markdown-file { position:relative; flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; color:var(--text); font:var(--chat-font-size,14px)/1.6 var(--chat-font,var(--ui-font)); }
+.rich-markdown-scroll { flex:1; min-height:0; overflow:auto; padding:24px; }
 .rich-markdown-file[hidden] { display:none; }
 .rich-markdown-content .cm-editor { background:transparent; color:var(--text); }
 .rich-markdown-content .cm-editor.cm-focused { outline:none; }
@@ -30,3 +31,18 @@
 .markdown-bullet { display:inline-block; min-width:1ch; }
 .markdown-task-checkbox { accent-color:var(--accent); margin:0 4px 0 0; vertical-align:middle; }
 .markdown-edit-link { color:var(--link,var(--accent)); cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+
+/* The app's CodeMirror navigation card shares behavior, not Pierre's pill skin. */
+.source-go-to-line-position.codemirror-go-to-line-position { position:sticky; inset:auto; top:12px; margin-bottom:-44px; padding-inline-end:12px; flex:none; }
+.source-go-to-line.codemirror-go-to-line { display:grid; width:340px; max-width:70vw; grid-template-columns:minmax(0,1fr) auto auto; overflow:hidden; border-radius:20px; border:.5px solid var(--border); background:var(--sidebar-surface); box-shadow:0 8px 16px -4px rgb(0 0 0 / .12); font:var(--font-size,14px)/24px var(--ui-font); }
+.source-go-to-line.codemirror-go-to-line .source-go-to-line-row { display:contents; }
+.source-go-to-line.codemirror-go-to-line .source-go-to-line-field { grid-column:1; grid-row:1; width:auto; height:44px; gap:8px; padding-inline-start:16px; }
+.codemirror-go-to-line-label { flex-shrink:0; color:var(--secondary); }
+.source-go-to-line.codemirror-go-to-line input { width:96px; height:24px; flex:none; max-width:100%; padding:0; background:transparent; color:var(--text); border:0; border-radius:0; font:inherit; outline:none; }
+.source-go-to-line.codemirror-go-to-line input:focus-visible { outline:none; }
+.source-go-to-line.codemirror-go-to-line .source-go-to-line-range { grid-column:2; grid-row:1; display:flex; align-items:center; height:44px; min-width:0; padding:0 8px; color:var(--secondary); font:inherit; }
+.codemirror-go-to-line-close-region { grid-column:3; grid-row:1; display:flex; align-items:center; height:44px; padding-inline-end:16px; }
+.codemirror-go-to-line-close-region > span { width:1px; height:16px; margin:0 8px; background:var(--border); }
+.source-go-to-line.codemirror-go-to-line .source-go-to-line-close { position:static; transform:none; width:24px; height:24px; margin:-2px; border-radius:6px; background:transparent; color:var(--secondary); }
+.source-go-to-line.codemirror-go-to-line .source-go-to-line-close:hover { background:var(--hover); color:var(--text); }
+.source-go-to-line.codemirror-go-to-line .source-go-to-line-close svg { width:16px; height:16px; }
