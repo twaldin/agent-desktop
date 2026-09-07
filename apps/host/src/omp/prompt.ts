@@ -30,16 +30,19 @@ export function beginNativePrompt(
   settlePersistence: () => Promise<void>,
   imageAdmission?: { matches(message: unknown): boolean; receipt(): ImageAdmission[]; readonly dispatched: boolean },
   skillAdmission?: { matchesEntry(entry: Parameters<NonNullable<SessionManager["onEntryAppended"]>>[0]): boolean; readonly name: string; readonly dispatched: boolean },
+  selectedTextAdmission?: { readonly attempted: boolean; matches(message: unknown): boolean },
 ): OmpPromptRun {
   const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
   let entryObserved = false;
   let commandHandled = false;
-  const admissionFailure = (error: unknown) => imageAdmission?.dispatched || skillAdmission?.dispatched || commandHandled ? new OmpPromptAdmissionError(error) : error;
+  const admissionFailure = (error: unknown) => imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted || commandHandled ? new OmpPromptAdmissionError(error) : error;
   const previousEntryListener = manager.onEntryAppended;
   const entryListener: NonNullable<typeof manager.onEntryAppended> = entry => {
     previousEntryListener?.(entry);
     const skillEntry = skillAdmission?.matchesEntry(entry);
-    if (entryObserved || (skillAdmission ? !skillEntry : entry.type !== "message" || entry.message.role !== "user" || (imageAdmission && !imageAdmission.matches(entry.message)))) return;
+    if (entryObserved || (skillAdmission ? !skillEntry : entry.type !== "message" || entry.message.role !== "user"
+      || (imageAdmission && !imageAdmission.matches(entry.message))
+      || (selectedTextAdmission && !selectedTextAdmission.matches(entry.message)))) return;
     entryObserved = true;
     // message_end precedes persistence. onEntryAppended follows native append;
     // flush additionally checks asynchronous writes and latched disk failures.
@@ -58,7 +61,7 @@ export function beginNativePrompt(
       // a message event. Check the manager's disk tail before acknowledging them.
       await manager.flush();
       if (!entryObserved) {
-        if (imageAdmission?.dispatched || skillAdmission?.dispatched) receipt.reject(new OmpPromptAdmissionError());
+        if (imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted) receipt.reject(new OmpPromptAdmissionError());
         else receipt.resolve(result.handledCommand ? { kind: "native-command", command: result.handledCommand,
           ...(result.commandEntryId ? { entryId: result.commandEntryId } : {}), ...(result.output ? { output: result.output } : {}) } : null);
       }

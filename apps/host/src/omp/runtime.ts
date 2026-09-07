@@ -25,6 +25,7 @@ import { TranscriptMirror, projectGoalCompletions } from "./transcript";
 import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
 import { dispatchNativePrompt } from "./commands";
 import { NativeSkillPrompt } from "./skills";
+import { copyNativeSelectedTextInput, NativeSelectedTextPrompt, type NativeSelectedTextInput } from "./selected-text";
 import { discoverComposerActions, discoverSkillInventory, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions, type NativeSkillInventoryCatalog } from "./composer-actions";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
@@ -64,7 +65,7 @@ export interface OmpSessionOptions {
   interactions?: boolean;
 }
 export interface OmpOpenOptions { sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
-export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[] }
+export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput }
 export interface OmpBrowserTabCreateResult {
   tab: NativeBrowserTabMetadata;
   targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
@@ -823,6 +824,16 @@ export class OmpRuntime {
           assertSessionActive();
           if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
           const images = copyPreparedImages(promptOptions.images);
+          // Detach the renderer/worker payload before native setup can await.
+          // A selected context is persisted separately, so its ordinary user
+          // text must itself fit OMP's durable-string bound.
+          const selectedTextInput = copyNativeSelectedTextInput(promptOptions.selectedText);
+          if (selectedTextInput?.attachments.length && text.length > 500_000)
+            throw new Error("Prompt text exceeds the native durable-history limit when selected text is attached.");
+          const selectedText = NativeSelectedTextPrompt.fromInput(session, selectedTextInput);
+          // A slash handler may finish locally, rewrite the input, or record a
+          // special native message. Never append selected context before it.
+          if (selectedText && text.trimStart().startsWith("/")) throw new Error("Selected text attachments are only supported for ordinary prompts; slash commands and skills were not executed.");
           const imagePrompt = images?.length ? new NativeImagePrompt(images, text) : undefined;
           promptInFlight = true;
           admissionPending = true;
@@ -840,7 +851,10 @@ export class OmpRuntime {
               }
               assertSessionActive();
               if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
+              // Extension startup can add skills, so resolve them only after it
+              // has completed, but before admission attribution is installed.
               skillPrompt = NativeSkillPrompt.fromText(session, text);
+              if (selectedText && skillPrompt) throw new Error("Selected text attachments are not supported on native skill prompts; no input was executed.");
               if (skillPrompt && imagePrompt) throw new Error("Images on native skill invocations are not connected yet; the draft was retained.");
               // Startup extension messages are not receipts for the submitted draft.
               const nativeRun = beginNativePrompt(manager, async () => {
@@ -854,6 +868,10 @@ export class OmpRuntime {
                 await imagePrompt?.prepare(session, manager);
                 await skillPrompt?.prepare();
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
+                selectedText?.prepare(session, text, { allowImages: imagePrompt !== undefined });
+                await selectedText?.append();
+                assertSessionActive();
+                if (controller.signal.aborted) throw new Error("OMP prompt aborted after selected-text context append");
                 return dispatchNativePrompt(session, text, imagePrompt?.images, skillPrompt, {
                   inspectMcp: () => { assertSessionActive(); return mcp.read(); },
                   reloadMcp: async () => {
@@ -891,12 +909,12 @@ export class OmpRuntime {
                     return trackMcpMutation(mcp.reconnect({ epoch: ticket.epoch, expectedRevision: ticket.revision, serverName }));
                   },
                 });
-              }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt);
+              }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt, selectedText);
               void nativeRun.accepted.then(value => { if (value) nativeGoalController.resetSuppression(); receipt.resolve(value); }, receipt.reject);
               const completed = await nativeRun.completion;
               await nativeGoalController.settleFinalization();
               return completed;
-          })().catch(error => { receipt.reject(error); throw error; }).finally(() => { imagePrompt?.close(); skillPrompt?.close(); });
+          })().catch(error => { receipt.reject(error); throw error; }).finally(() => { selectedText?.close(); imagePrompt?.close(); skillPrompt?.close(); });
           void receipt.promise.catch(() => {});
           void completion.catch(() => {});
           const run = { accepted: receipt.promise, completion };

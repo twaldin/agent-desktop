@@ -1,5 +1,9 @@
 # Milestone status
 
+## Selected-text native foundation
+
+Captured excerpts now have a validated immutable representation and a pinned-OMP admission path. The native journal must contain exactly the selected context before the attributable ordinary user prompt is accepted; failures retain an uncertain outcome. Existing image/skill receipt handling remains intact, and worker protocol30 rejects older consumers. The real isolated local-provider fixture covers model context, persistence, reopen and excerpt-only prompts.42 focused tests/318 assertions, typecheck and build pass; private evidence is in `.data/selected-text-native-2026-09-07/`. This is a backend foundation: public drafts/commands, editor and composer UI, native reference/steer composition and installed acceptance remain open. See [file editor](workspace-file-editor.md).
+
 ## Current-source packaged checkpoint
 
 Source `dc20e7f` is packaged separately as `source31-dc20e7f`, signed and uninstalled. Bundled Bun1.3.14/OMP18.1.10 pass hostile/empty-PATH SDK and native discovery-worker checks; the actual packaged host passes12 isolated skill discovery/read/copy/image/Open-options checks with zero sessions or prompts. All174 host hashes,328 emitted desktop files and1,025 internal symlinks verify; the30,529-entry artifact remains unchanged after probing.

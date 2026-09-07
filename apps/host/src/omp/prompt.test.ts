@@ -84,6 +84,22 @@ describe("native prompt admission contract", () => {
     } finally { await manager.close(); }
   });
 
+  test("selected-text admission skips an interleaved user append and requires its captured native object", async () => {
+    const manager = await nativeManager();
+    const selectedMessage = { role: "user" as const, content: "Selected-text authored prompt", timestamp: 2 };
+    let ownId: string | undefined, unrelatedId: string | undefined;
+    try {
+      const run = beginNativePrompt(manager, async () => {
+        unrelatedId = manager.appendMessage({ role: "user", content: "Extension interleaved user append", timestamp: 1 });
+        ownId = manager.appendMessage(selectedMessage);
+        return { agentInvoked: true };
+      }, async () => {}, undefined, undefined, { attempted: true, matches: message => message === selectedMessage });
+      expect(await run.accepted).toEqual({ kind: "user-message", entryId: ownId! });
+      expect(ownId).not.toBe(unrelatedId);
+      expect(await run.completion).toBe(true);
+    } finally { await manager.close(); }
+  });
+
   test("a flush failure never becomes an acceptance receipt", async () => {
     const manager = await nativeManager();
     const storage = {

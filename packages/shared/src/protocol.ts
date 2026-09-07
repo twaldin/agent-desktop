@@ -1,3 +1,4 @@
+export * from "./selected-text";
 export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";

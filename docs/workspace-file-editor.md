@@ -2,6 +2,14 @@
 
 The Files panel uses the pinned Pierre editor over the existing host-owned workspace service. `WorkspaceState` remains the authority for file content, revisions, dirty buffers, recoverable conflicts and mutation receipts. The renderer does not write through a second editor-specific backend.
 
+## Selected-text native admission foundation
+
+Editor selection-to-chat is still not exposed. The shared/native foundation now preserves independently identified raw excerpts, remote source provenance and one-based UTF-16 ranges without reading the named file. Identical file excerpts remain separate ordered selections. A 400,000-character aggregate serialized snapshot bound is an app transport limit, not an upstream capability claim.
+
+An idle ordinary prompt can carry this snapshot through worker protocol30 into pinned OMP18.1.10. The adapter writes one attributed native custom context record, verifies its exact content and metadata, flushes it, then invokes the ordinary prompt with its authored text. Only that prompt's actual native user-message object can produce acceptance; a custom entry or unrelated extension message cannot consume a draft. Missing/altered/duplicate context, disk failure and errors after an append attempt remain outcome-unknown. Native submission identity is checked both before startup and at append. Older workers are rejected rather than silently dropping context.
+
+The real isolated WorkerRuntime/local-provider check exercises native context conversion, persistence, reopen and an excerpt-only empty authored prompt. Manager fault-injection tests separately cover admission failure boundaries. This is source/native-core evidence, not HTTP, desktop, installed or pixel acceptance. Public draft storage/conflict preservation, versioned host commands using the original submission ID, composer grouping/preview/removal, editor selection actions, transcript projection and remote/offline end-to-end checks remain open. Selected-context composition with skills, slash commands, steering and native prompt rewrites/references still needs integration; these are not complete feature surfaces.
+
 ## Editing and navigation
 
 Each dedicated file tab is identified by host, workspace and relative path. Opening the same file again activates that tab in its existing dock; different paths and owners remain separate. Transcript links, Review file actions and directory choices use this route. The descriptor survives window-state restoration.
