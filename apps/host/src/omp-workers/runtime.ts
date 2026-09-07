@@ -2,7 +2,7 @@ import type { NativeMarketplaceCatalog, NativePluginAcquisition } from "../../..
 import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
-import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
+import type { NativeComposerCatalog, NativeComposerCompletions, NativeSkillInventoryCatalog } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -569,6 +569,9 @@ export class WorkerRuntime {
 
   async getComposerActions(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeComposerCatalog> {
     return (await this.#discoveryClient()).request<NativeComposerCatalog>({ operation: "getComposerActions", args: { cwd, refresh: options.refresh } }, 15_000);
+  }
+  async getSkillInventory(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeSkillInventoryCatalog> {
+    return (await this.#discoveryClient()).request<NativeSkillInventoryCatalog>({ operation: "getSkillInventory", args: { cwd, refresh: options.refresh } }, 15_000);
   }
   async getComposerCompletions(cwd: string, query: ComposerCompletionQuery): Promise<NativeComposerCompletions> {
     return (await this.#discoveryClient()).request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { cwd, query } }, 5_000);

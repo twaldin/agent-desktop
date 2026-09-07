@@ -1,7 +1,7 @@
 import { COMPOSER_OWNER_HEADER, type ComposerCompletionQuery, type WorkspaceTarget } from "@agent-desktop/shared";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
-import type { ComposerActionsCatalog, ComposerSkillDetail } from "@agent-desktop/shared";
+import type { ComposerActionsCatalog, ComposerSkillDetail, NativeSkillInventory } from "@agent-desktop/shared";
 import type { WorkerRuntime, WorkerSession } from "./omp-workers";
 import { parseWorkspaceTarget } from "./workspace-http";
 
@@ -32,7 +32,7 @@ export class ComposerActionsHttp {
   constructor(private options: {
     hostId: string; resolveCwd(target?: WorkspaceTarget): string;
     getHandle(sessionId: string): Promise<Pick<WorkerSession, "getComposerActions" | "getComposerCompletions" | "cwd">>;
-    runtime: Pick<WorkerRuntime, "getComposerActions" | "getComposerCompletions">;
+    runtime: Pick<WorkerRuntime, "getComposerActions" | "getComposerCompletions" | "getSkillInventory">;
   }) {}
   private async readSkill(path: string): Promise<{ content: string; verify(): Promise<void> }> {
     if (!path || !path.startsWith("/") || path.includes("\0")) throw new ComposerRequestError("Native skill content is unavailable.", 404, "SKILL_UNAVAILABLE");
@@ -71,7 +71,10 @@ export class ComposerActionsHttp {
   }
   private async skillDetail(input: Record<string, unknown>, target: WorkspaceTarget | undefined, cwd: string, handle: Pick<WorkerSession, "getComposerActions" | "cwd"> | undefined): Promise<ComposerSkillDetail> {
     if (typeof input.skillId !== "string" || !input.skillId || input.skillId.length > 512 || /[\0\r\n]/.test(input.skillId) || typeof input.catalogRevision !== "string" || !/^[a-f0-9]{64}$/.test(input.catalogRevision)) throw new ComposerRequestError("Invalid native skill request.");
-    const get = async () => handle ? handle.getComposerActions() : this.options.runtime.getComposerActions(cwd);
+    if (input.inventory !== undefined && typeof input.inventory !== "boolean") throw new ComposerRequestError("Invalid native skill inventory selector.");
+    const inventory = input.inventory === true;
+    const get = async (): Promise<Pick<ComposerActionsCatalog | NativeSkillInventory, "cwd" | "revision" | "skills">> => inventory
+      ? this.options.runtime.getSkillInventory(cwd) : handle ? handle.getComposerActions() : this.options.runtime.getComposerActions(cwd);
     const first = await get();
     if (first.cwd !== cwd || first.revision !== input.catalogRevision) throw new ComposerRequestError("The native composer catalog changed. Refresh before opening this skill.", 409, "COMPOSER_CATALOG_CHANGED");
     const skill = first.skills.find(item => item.id === input.skillId);
@@ -85,7 +88,7 @@ export class ComposerActionsHttp {
     return { protocolVersion: 1, hostId: this.options.hostId, ...(target ? { target } : {}), cwd, revision: first.revision, skillId: input.skillId, content: read.content };
   }
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
-    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-detail"].includes(url.pathname)) return undefined;
+    if (!["/v1/composer/actions", "/v1/composer/completions", "/v1/composer/skill-inventory", "/v1/composer/skill-detail"].includes(url.pathname)) return undefined;
     const headers = { "Cache-Control": "no-store", [COMPOSER_OWNER_HEADER]: this.options.hostId };
     let admitted = false;
     try {
@@ -94,14 +97,17 @@ export class ComposerActionsHttp {
       if (this.#inFlight >= 4) throw new ComposerRequestError("This host has four active composer queries. Try again after they finish.", 429, "COMPOSER_BUSY");
       this.#inFlight++; admitted = true;
       const input = await readBody(request), completions = url.pathname.endsWith("/completions");
+      const inventoryQuery = url.pathname.endsWith("/skill-inventory");
       const skillDetail = url.pathname.endsWith("/skill-detail");
-      keys(input, skillDetail ? ["target", "skillId", "catalogRevision"] : completions ? ["target", "kind", "query", "commandName", "catalogRevision", "limit"] : ["target", "refresh"]);
+      keys(input, skillDetail ? ["target", "skillId", "catalogRevision", "inventory"] : completions ? ["target", "kind", "query", "commandName", "catalogRevision", "limit"] : ["target", "refresh"]);
+      if (skillDetail && input.inventory !== undefined && typeof input.inventory !== "boolean") throw new ComposerRequestError("Invalid native skill inventory selector.");
       let target: WorkspaceTarget | undefined;
       try { target = input.target === undefined ? undefined : parseWorkspaceTarget(input.target); }
       catch { throw new ComposerRequestError("Select a catalogued project or session on this host."); }
       const resolve = () => { try { return this.options.resolveCwd(target); } catch { throw new ComposerRequestError("The selected composer owner no longer exists on this host.", 409, "STALE_TARGET"); } };
       const cwd = resolve();
-      const handle = target && "sessionId" in target ? await this.options.getHandle(target.sessionId) : undefined;
+      const inventoryDetail = skillDetail && input.inventory === true;
+      const handle = target && "sessionId" in target && !inventoryQuery && !inventoryDetail ? await this.options.getHandle(target.sessionId) : undefined;
       if (handle && handle.cwd !== cwd) throw new ComposerRequestError("The selected native workspace changed. Refresh its catalog.", 409, "STALE_TARGET");
       if (skillDetail) {
         const detail = await this.skillDetail(input, target, cwd, handle);
@@ -110,7 +116,10 @@ export class ComposerActionsHttp {
         return Response.json(detail, { headers });
       }
       let result;
-      if (completions) {
+      if (inventoryQuery) {
+        if (input.refresh !== undefined && typeof input.refresh !== "boolean") throw new ComposerRequestError("Invalid native skill inventory refresh flag.");
+        result = await this.options.runtime.getSkillInventory(cwd, { refresh: input.refresh as boolean | undefined });
+      } else if (completions) {
         if (!["file", "reference", "command-argument"].includes(String(input.kind)) || typeof input.query !== "string" || input.query.length > 2048 || /[\0\r\n]/.test(input.query)
           || input.catalogRevision !== undefined && (typeof input.catalogRevision !== "string" || !/^[a-f0-9]{64}$/.test(input.catalogRevision))
           || input.commandName !== undefined && (typeof input.commandName !== "string" || !input.commandName || input.commandName.length > 200 || /[\s\0]/.test(input.commandName))

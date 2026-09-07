@@ -12,10 +12,11 @@ import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import { getInternalUrlSuggestions } from "@oh-my-pi/pi-coding-agent/modes/internal-url-autocomplete";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls";
 import { CombinedAutocompleteProvider, type AutocompleteItem } from "@oh-my-pi/pi-tui";
-import type { ComposerAction, ComposerActionsCatalog, ComposerAvailability, ComposerCompletionQuery, ComposerCompletions } from "@agent-desktop/shared";
+import type { ComposerAction, ComposerActionsCatalog, ComposerAvailability, ComposerCompletionQuery, ComposerCompletions, NativeSkillInventory } from "@agent-desktop/shared";
 
 export type NativeComposerCatalog = Omit<ComposerActionsCatalog, "hostId" | "target">;
 export type NativeComposerCompletions = Omit<ComposerCompletions, "hostId" | "target">;
+export type NativeSkillInventoryCatalog = Omit<NativeSkillInventory, "hostId" | "target">;
 const MAX_CATALOG_ENTRIES = 2048;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const bounded = (value: unknown, limit = 4096) => typeof value === "string" ? value.slice(0, limit) : "";
@@ -82,6 +83,32 @@ function skillRows(skills: AgentSession["skills"], enabled: boolean): ComposerAc
     description: bounded(skill.description), insertText: `/skill:${skill.name} `,
     source: { kind: "skill", label: bounded(skill.source), path: skill.filePath },
     availability: enabled ? "executable" : "disabled", reason: enabled ? undefined : "Native skills.enableSkillCommands is disabled for this scope.", argumentCompletions: false }));
+}
+
+/** Inventory discovery deliberately overrides only the master and per-name
+ * skill gates. Provider/plugin/root selection remains exactly as configured. */
+export async function discoverSkillInventory(cwd: string, settings: Settings): Promise<NativeSkillInventoryCatalog> {
+  return withActiveSettings(settings, async () => {
+    const configuredDisabled = settings.get("disabledExtensions");
+    const disabledNames = new Set(configuredDisabled.filter(value => value.startsWith("skill:")).map(value => value.slice(6)));
+    const extensionRoots = { explicit: [], mode: "merge" as const, configured: settings.get("extensions"), configuredLevel: settings.extensionsSourceLevel() };
+    const result = await loadSkills({ cwd, ...settings.getGroup("skills"), enabled: true,
+      disabledExtensions: configuredDisabled.filter(value => !value.startsWith("skill:")), extensionRoots });
+    const enabled = settings.get("skills.enabled"), commandsEnabled = settings.get("skills.enableSkillCommands");
+    const skills = result.skills.map(skill => {
+      const disabledByName = disabledNames.has(skill.name);
+      const executable = enabled && commandsEnabled && !disabledByName;
+      const reason = !enabled ? "Native skills.enabled is disabled for this scope."
+        : disabledByName ? "This native skill is disabled by name for this scope."
+        : !commandsEnabled ? "Native skills.enableSkillCommands is disabled for this scope." : undefined;
+      return { ...skillRows([skill], executable)[0]!, disabledByName, ...(reason ? { reason } : {}) };
+    });
+    if (skills.length > MAX_CATALOG_ENTRIES) throw new Error(`Native skill inventory exceeds ${MAX_CATALOG_ENTRIES} entries. Narrow the configured native skill roots.`);
+    const base = { protocolVersion: 1 as const, cwd, skills, enabled, commandsEnabled,
+      diagnostics: result.warnings.map(warning => bounded(`${warning.skillPath}: ${warning.message}`)) };
+    if (Buffer.byteLength(JSON.stringify(base)) > 2 * 1024 * 1024) throw new Error("Native skill inventory exceeds its 2 MiB response limit.");
+    return { ...base, revision: hash(base) };
+  });
 }
 
 /** Read-only discovery: native path scanners and markdown loaders only. Executable

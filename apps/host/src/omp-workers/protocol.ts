@@ -7,7 +7,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 25;
+export const WORKER_PROTOCOL_VERSION = 26;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -33,6 +33,7 @@ export type WorkerOperation =
   | { operation: "listModelCapabilities"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerCatalog"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerActions"; args: { cwd?: string; refresh?: boolean } }
+  | { operation: "getSkillInventory"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerCompletions"; args: { cwd?: string; query: ComposerCompletionQuery } }
   | { operation: "getMarketplaceCatalog"; args: { cwd: string } }
   | { operation: "acquirePlugin"; args: { cwd: string; expectedRevision: string; action: NativePluginAcquisition } }

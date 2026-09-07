@@ -11,9 +11,9 @@ export function skillDocument(content: string): string {
   return text.replace(/^---\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[\t ]*(?:\r?\n|$)/, "");
 }
 
-export function NativeSkillDialog({ action, content, loading, error, onClose, openExternal, onTry }: {
+export function NativeSkillDialog({ action, content, loading, error, onClose, openExternal, onTry, onDisposed }: {
   action: ComposerAction; content?: string; loading: boolean; error?: string;
-  onClose(): void; onTry?(): void; openExternal?(url: string): Promise<void>;
+  onClose(): void; onDisposed?(): void; onTry?(): void; openExternal?(url: string): Promise<void>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null), more = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
   const titleId = useId(), descriptionId = useId();
@@ -24,7 +24,7 @@ export function NativeSkillDialog({ action, content, loading, error, onClose, op
     active.current = true;
     const element = dialog.current!; element.showModal();
     element.querySelector<HTMLButtonElement>('[aria-label="Close skill dialog"]')?.focus();
-    return () => { active.current = false; if (element.open) element.close(); };
+    return () => { active.current = false; if (element.open) element.close(); onDisposed?.(); };
   }, []);
   useEffect(() => {
     if (!menuOpen) return;
@@ -65,7 +65,7 @@ export function NativeSkillDialog({ action, content, loading, error, onClose, op
           <button role="menuitem" onClick={() => void copy(action.insertText, "Invocation")}>Copy invocation</button>
         </div>}
       </div>
-      <h2 id={titleId}>{action.name} <span>Skill</span></h2>
+      <h2 id={titleId}>{action.name} <span>Skill</span>{action.availability==="disabled"&&<em className="skill-disabled-badge">Disabled</em>}</h2>
       <p id={descriptionId}>{action.description}</p>
     </header>
     {notice && <p role={notice.error ? "alert" : "status"} className={notice.error ? "inline-error" : "skill-dialog-notice"}>{notice.text}</p>}

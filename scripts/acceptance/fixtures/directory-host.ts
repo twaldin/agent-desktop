@@ -4,7 +4,7 @@ import {startHost} from '../../../apps/host/src/server';
 const root=process.argv[2]!,project=join(root,'project'),agent=join(root,'agent'),market=join(root,'market');
 await Promise.all([mkdir(join(project,'.omp','skills','directory-skill'),{recursive:true}),mkdir(agent,{recursive:true}),mkdir(join(market,'.omp-plugin'),{recursive:true}),mkdir(join(market,'sample'),{recursive:true})]);
 Bun.spawnSync(['git','init','-q',project]);
-await writeFile(join(agent,'config.yml'),'extensions: []\n');
+await writeFile(join(agent,'config.yml'),'extensions: []\ndisabledExtensions:\n  - skill:unrelated\n');
 await writeFile(join(project,'.omp','skills','directory-skill','SKILL.md'),'---\nname: directory-skill\ndescription: Read the fixture checklist before changing files\n---\n# Directory skill\n\nDIRECTORY_SKILL_CONTENT from the actual owning project.\n'+Array.from({length:24},(_,i)=>`\n## Checklist item ${i+1}\n\nRead the current workspace before applying item ${i+1}.\n`).join('')+'\nDOCUMENT_END_MARKER\n');
 await writeFile(join(market,'sample','package.json'),JSON.stringify({name:'directory-sample',version:'1.0.0',omp:{name:'Directory sample',description:'Installed native package for browsing'}}));
 await writeFile(join(market,'.omp-plugin','marketplace.json'),JSON.stringify({name:'directory-market',owner:{name:'Fixture'},plugins:[{name:'sample',description:'Native marketplace sample',version:'1.0.0',source:'./sample'}]}));

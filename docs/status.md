@@ -1,6 +1,14 @@
 # Milestone status
 
 
+## Native skill inventory and scoped controls
+
+Skills settings now retain disabled skills for inspection and expose native user/project enable controls, the master skill setting, and skill commands. Inventory respects configured source roots, include/ignore rules and plugin gates; the normal executable catalog remains native. Writes use revision checks, preserve unrelated disables and require a refresh after failure. Other clients' settings events refresh the current owner and dismiss stale documents with focus restored after the dialog closes.
+
+Validation: 34 focused tests / 161 assertions, typecheck, production build and independent source review pass. Hidden Electron against an isolated authenticated native OMP host passes 20 checks with 26 captures, including eight actual project settings writes and one rejected proxy attempt. The final draft is revision2 with its original text preserved and zero sessions; user settings bytes are unchanged. All 1,737 sealed payload hashes and four manifest hashes match. An earlier direct test invocation had five worker-start failures; the owned repository runner passed all selected tests. An earlier UI run exposed a dialog-close focus race; the final run passes after fixing cleanup ordering. These failed artifacts remain recorded.
+
+Worker protocol26; host schema7 and OMP18.1.10/Bun1.3.14 pins unchanged. This is component and real local-host/worker evidence, not installed main/preload, native-window or full pixel acceptance. Existing sessions still require native reload/restart to adopt discovery settings. Authored-skill edit/uninstall, reference Open/Reveal, imagery and exact styling remain open. No Work launch, installation or fixture replay. Private evidence: `.data/skill-management-checkpoint/` and `.data/skill-management-ui-5/`.
+
 ## Skill document dialog and draft preparation
 
 Skills now stay inside Plugins settings and open a 600×720 modal with the pinned Package glyph, rendered Markdown, source view and keyboard focus handling. Try now prefixes the actual native skill invocation into an unsent host draft, preserving its content and model selections. Project changes use the existing remembered Local/worktree mode rather than carrying another project's execution state. It creates no session and sends no prompt. MCP-to-Skills navigation now retains the selected tab.

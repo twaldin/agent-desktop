@@ -191,6 +191,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         respond(true, await runtime.getComposerCatalog(message.args.cwd, { refresh: message.args.refresh }));
         break;
       case "getComposerActions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerActions(message.args.cwd, { refresh: message.args.refresh }) : await requireSession().getComposerActions()); break;
+      case "getSkillInventory": if (!runtime || session) throw new Error("Native skill inventory requires an initialized discovery worker."); respond(true, await runtime.getSkillInventory(message.args.cwd, { refresh: message.args.refresh })); break;
       case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
       case "getSessionActivity": {

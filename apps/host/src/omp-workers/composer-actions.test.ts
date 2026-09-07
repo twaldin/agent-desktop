@@ -41,6 +41,25 @@ test("native read-only catalog lists the complete builtin registry without execu
   } finally { await f.close(); }
 }, 30_000);
 
+test("native skill inventory includes master and name-disabled skills without changing the normal catalog", async () => {
+  const f = await fixture();
+  try {
+    const extension = fileURLToPath(new URL("./fixtures/composer-provider.ts", import.meta.url));
+    await writeFile(path.join(f.agentDir, "config.yml"), `extensions:\n  - ${JSON.stringify(extension)}\ndisabledExtensions:\n  - skill:compose-skill\nskills:\n  enabled: false\n  enableSkillCommands: false\n`);
+    const inventory = await f.runtime.getSkillInventory(f.cwd, { refresh: true });
+    expect(inventory).toMatchObject({ enabled: false, commandsEnabled: false, skills: [{ name: "compose-skill", disabledByName: true, availability: "disabled" }] });
+    expect(inventory.skills[0]?.reason).toContain("skills.enabled");
+    const ordinary = await f.runtime.getComposerActions(f.cwd, { refresh: true });
+    expect(ordinary.skills).toEqual([]);
+    for (const filter of ['ignoredSkills: [compose-skill]', 'includeSkills: [different-name]', 'enablePiProject: false']) {
+      await writeFile(path.join(f.agentDir, "config.yml"), `extensions: []\nskills:\n  enabled: false\n  ${filter}\n`);
+      expect((await f.runtime.getSkillInventory(f.cwd, { refresh: true })).skills).toEqual([]);
+    }
+    expect(await Bun.file(path.join(f.gates, "factory-ran")).exists()).toBe(false);
+    expect(await Array.fromAsync(new Bun.Glob("**/*.jsonl").scan({ cwd: f.root }))).toHaveLength(0);
+  } finally { await f.close(); }
+}, 30_000);
+
 test("actual native loaded callbacks, collisions, builtin output, unsupported commands and post-effect uncertainty", async () => {
   const f = await fixture();
   try {

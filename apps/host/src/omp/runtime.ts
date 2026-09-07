@@ -24,7 +24,7 @@ import { TranscriptMirror, projectGoalCompletions } from "./transcript";
 import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
 import { dispatchNativePrompt } from "./commands";
 import { NativeSkillPrompt } from "./skills";
-import { discoverComposerActions, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions } from "./composer-actions";
+import { discoverComposerActions, discoverSkillInventory, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions, type NativeSkillInventoryCatalog } from "./composer-actions";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
 import { createNativeAccountSelectionBridge } from "../omp-accounts/session-selection";
@@ -334,6 +334,9 @@ export class OmpRuntime {
 
   getComposerActions(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeComposerCatalog> {
     return this.#withDiscovery(cwd, options.refresh, context => discoverComposerActions(cwd, this.#agentDir, context.settings), false);
+  }
+  getSkillInventory(cwd: string = process.cwd(), options: { refresh?: boolean } = {}): Promise<NativeSkillInventoryCatalog> {
+    return this.#withDiscovery(cwd, options.refresh, context => discoverSkillInventory(cwd, context.settings), false);
   }
   getComposerCompletions(cwd: string, query: ComposerCompletionQuery): Promise<NativeComposerCompletions> {
     return this.#withDiscovery(cwd, false, async context => composerCompletions(await discoverComposerActions(cwd, this.#agentDir, context.settings), query), false);

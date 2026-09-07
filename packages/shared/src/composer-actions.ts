@@ -35,6 +35,19 @@ export interface ComposerActionsCatalog {
   referenceSchemes?: string[];
   diagnostics: string[];
 }
+export interface NativeSkillInventory {
+  protocolVersion: typeof COMPOSER_ACTIONS_PROTOCOL_VERSION;
+  hostId: string;
+  target?: WorkspaceTarget;
+  cwd: string;
+  revision: string;
+  skills: Array<ComposerAction & { disabledByName: boolean }>;
+  /** Effective master discovery setting. Inventory discovery itself remains read-only. */
+  enabled: boolean;
+  /** Effective registration of discovered skills as /skill:name commands. */
+  commandsEnabled: boolean;
+  diagnostics: string[];
+}
 export interface ComposerSkillDetail {
   protocolVersion: typeof COMPOSER_ACTIONS_PROTOCOL_VERSION;
   hostId: string;
@@ -69,6 +82,72 @@ export interface ComposerCompletions {
   items: ComposerCompletion[];
   truncated: boolean;
   diagnostics: string[];
+}
+
+const inventoryRecord = (value: unknown, message: string): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(message);
+  return value as Record<string, unknown>;
+};
+const inventoryText = (value: unknown, limit: number, message: string): string => {
+  if (typeof value !== "string" || value.length > limit || value.includes("\0")) throw new Error(message);
+  return value;
+};
+function parseInventoryTarget(value: unknown): WorkspaceTarget | undefined {
+  if (value === undefined) return undefined;
+  const target = inventoryRecord(value, "Native skill inventory target is invalid.");
+  const keys = Object.keys(target);
+  if (keys.length !== 1) throw new Error("Native skill inventory target is invalid.");
+  if (keys[0] === "projectId") { const projectId = inventoryText(target.projectId, 200, "Native skill inventory target is invalid."); if (!projectId) throw new Error("Native skill inventory target is invalid."); return { projectId }; }
+  if (keys[0] === "sessionId") { const sessionId = inventoryText(target.sessionId, 200, "Native skill inventory target is invalid."); if (!sessionId) throw new Error("Native skill inventory target is invalid."); return { sessionId }; }
+  throw new Error("Native skill inventory target is invalid.");
+}
+function parseInventorySkill(value: unknown): ComposerAction & { disabledByName: boolean } {
+  const row = inventoryRecord(value, "Native skill inventory row is invalid.");
+  const source = inventoryRecord(row.source, "Native skill inventory source is invalid.");
+  if (source.kind !== "skill" || typeof row.disabledByName !== "boolean" || typeof row.argumentCompletions !== "boolean") throw new Error("Native skill inventory row is invalid.");
+  const availability = row.availability;
+  if (!["executable", "partial", "pending", "disabled", "shadowed"].includes(String(availability))) throw new Error("Native skill inventory row is invalid.");
+  const parsed: ComposerAction & { disabledByName: boolean } = {
+    id: inventoryText(row.id, 512, "Native skill inventory row is invalid."),
+    name: inventoryText(row.name, 512, "Native skill inventory row is invalid."),
+    description: inventoryText(row.description, 4096, "Native skill inventory row is invalid."),
+    insertText: inventoryText(row.insertText, 2048, "Native skill inventory row is invalid."),
+    source: {
+      kind: "skill",
+      label: inventoryText(source.label, 4096, "Native skill inventory source is invalid."),
+      ...(source.path === undefined ? {} : { path: inventoryText(source.path, 32_768, "Native skill inventory source is invalid.") }),
+    },
+    availability: availability as ComposerAvailability,
+    argumentCompletions: row.argumentCompletions,
+    disabledByName: row.disabledByName,
+  };
+  if (!parsed.id || !parsed.name || !parsed.insertText || !parsed.source.label || !parsed.source.path) throw new Error("Native skill inventory row is invalid.");
+  if (row.reason !== undefined) parsed.reason = inventoryText(row.reason, 4096, "Native skill inventory row is invalid.");
+  return parsed;
+}
+
+/** Validate and copy the read-only inventory projection before renderer use. */
+export function parseNativeSkillInventory(value: unknown): NativeSkillInventory {
+  const input = inventoryRecord(value, "Native skill inventory response is invalid.");
+  if (input.protocolVersion !== COMPOSER_ACTIONS_PROTOCOL_VERSION || typeof input.enabled !== "boolean" || typeof input.commandsEnabled !== "boolean"
+    || typeof input.hostId !== "string" || !input.hostId || input.hostId.length > 200
+    || typeof input.revision !== "string" || !/^[a-f0-9]{64}$/.test(input.revision)
+    || !Array.isArray(input.skills) || input.skills.length > 2048 || !Array.isArray(input.diagnostics) || input.diagnostics.length > 2048) {
+    throw new Error("Native skill inventory response is invalid.");
+  }
+  const result: NativeSkillInventory = {
+    protocolVersion: COMPOSER_ACTIONS_PROTOCOL_VERSION,
+    hostId: input.hostId,
+    ...(input.target === undefined ? {} : { target: parseInventoryTarget(input.target) }),
+    cwd: inventoryText(input.cwd, 32_768, "Native skill inventory response is invalid."),
+    revision: input.revision,
+    skills: input.skills.map(parseInventorySkill),
+    enabled: input.enabled,
+    commandsEnabled: input.commandsEnabled,
+    diagnostics: input.diagnostics.map(value => inventoryText(value, 4096, "Native skill inventory diagnostic is invalid.")),
+  };
+  if (!result.cwd || new TextEncoder().encode(JSON.stringify(result)).byteLength > 2 * 1024 * 1024) throw new Error("Native skill inventory response is invalid.");
+  return result;
 }
 
 /** The native skill parser excludes leading non-skill commands and local execution.
