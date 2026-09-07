@@ -14,7 +14,7 @@ pre { --diffs-bg:var(--editor-surface,var(--app-surface)); --diffs-bg-buffer:var
 export interface PierreSourceEditorProps {
   documentKey: string; name: string; value: string; onChange(text: string): void;
   onSave(): void; label: string; readOnly?: boolean; active?: boolean;
-  revealRequest?: { id: string; line?: number; column?: number };
+  revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
 }
 
@@ -67,11 +67,12 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
       appliedReveal = request.id;
       editor.focus({ preventScroll: true });
       if (request.line !== undefined) {
-        const location = fileLocation(editor.getText(), request.line, request.column);
+        const location = fileLocation(editor.getText(), request.line, request.column, request.endLine);
         if ("error" in location) { current.current.onReveal?.(request.id, location.error); return; }
-        const row = editor.getText().split(/\r\n|\r|\n/)[request.line - 1]!;
+        const lastLine = request.endLine ?? request.line;
+        const row = editor.getText().split(/\r\n|\r|\n/)[lastLine - 1]!;
         const start = { line: request.line - 1, character: request.column === undefined ? 0 : request.column - 1 };
-        editor.setSelections([{ start, end: request.column === undefined ? { ...start, character: row.length } : start, direction: "forward" }]);
+        editor.setSelections([{ start, end: request.column === undefined || request.endLine !== undefined ? { line: lastLine - 1, character: row.length } : start, direction: "forward" }]);
       }
       current.current.onReveal?.(request.id);
     };

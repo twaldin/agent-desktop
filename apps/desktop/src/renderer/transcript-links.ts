@@ -1,4 +1,4 @@
-export interface WorkspaceFileLink { path: string; line?: number; column?: number }
+export interface WorkspaceFileLink { path: string; line?: number; column?: number; endLine?: number }
 export interface WorkspaceFileRequest extends WorkspaceFileLink { id: string }
 export interface TranscriptLinkActions {
   /** POSIX cwd of this session on its owning host, never the viewing machine. */
@@ -52,9 +52,10 @@ export function resolveTranscriptLink(href: string, cwd?: string): TranscriptLin
   return { kind: "file", file: { path: resolved.slice(root === "/" ? 1 : root.length + 1), ...(line !== undefined ? { line } : {}), ...(column !== undefined ? { column } : {}) } };
 }
 /** Source selection offsets; line and optional UTF-16 column are one based. */
-export function fileLocation(text: string, line: number, column?: number): { start: number; end: number } | { error: string } {
+export function fileLocation(text: string, line: number, column?: number, endLine?: number): { start: number; end: number } | { error: string } {
   const lines = text.split(/\r\n|\r|\n/);
   if (!Number.isSafeInteger(line) || line < 1 || line > lines.length) return { error: `Line ${line} is unavailable; this buffer has ${lines.length} lines.` };
+  if (endLine !== undefined && (!Number.isSafeInteger(endLine) || endLine < line || endLine > lines.length)) return { error: `End line ${endLine} is unavailable in this buffer.` };
   const row = lines[line - 1]!;
   let start = 0, currentLine = 1;
   for (const newline of text.matchAll(/\r\n|\r|\n/g)) {
@@ -63,7 +64,9 @@ export function fileLocation(text: string, line: number, column?: number): { sta
   }
   if (column !== undefined) {
     if (!Number.isSafeInteger(column) || column < 1 || column > row.length + 1) return { error: `Column ${column} is unavailable on line ${line}.` };
-    return { start: start + column - 1, end: start + column - 1 };
+    if (endLine === undefined) return { start: start + column - 1, end: start + column - 1 };
   }
-  return { start, end: start + row.length };
+  const lastLine = endLine ?? line;
+  const end = lastLine === line ? start + row.length : (fileLocation(text, lastLine) as { start: number; end: number }).end;
+  return { start: start + (column === undefined ? 0 : column - 1), end };
 }

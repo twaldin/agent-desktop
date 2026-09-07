@@ -2,9 +2,10 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { defaultFileTreeView, type FileTreeView, type WorkspaceTab } from "../window-state";
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
-import { type WorkspaceFileRequest } from "./transcript-links";
+import { type WorkspaceFileRequest, type WorkspaceFileLink } from "./transcript-links";
 import { ReviewPanel } from "./ReviewPanel";
 import { retainWorkspace } from "./workspace-lease";
+import { resolveMarkdownLink } from "./markdown-links";
 import { MarkdownCopyButton } from "./MarkdownCopyButton";
 import { RichMarkdownEditor } from "./RichMarkdownEditor";
 import { PierreSourceEditor } from "./PierreSourceEditor";
@@ -12,7 +13,7 @@ import { WorkspaceFileBreadcrumbs } from "./WorkspaceFileBreadcrumbs";
 import { WorkspaceFileTreePane } from "./WorkspaceFileTreePane";
 import { WorkspaceFileOpen } from "./WorkspaceFileOpen";
 
-export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, fileTree, onFileTreeChange, embedded = false, active = true, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; embedded?: boolean; active?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
+export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, openExternal, fileTree, onFileTreeChange, embedded = false, active = true, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string, location?: Omit<WorkspaceFileLink, "path">): void; openExternal?(url: string): Promise<void>; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; embedded?: boolean; active?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [localTab, setLocalTab] = useState<WorkspaceTab>("files");
   const tab = selectedTab ?? localTab;
@@ -45,13 +46,13 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
     {data.notice && !(filePath && data.mutationReceipt?.value.type === "file.write") && <p className="workspace-notice" role="status">{data.notice}</p>}
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
     <div id={embedded ? undefined : "workspace-view"} className="workspace-view" role={embedded ? undefined : "tabpanel"} aria-labelledby={embedded ? undefined : `workspace-tab-${tab}`}>
-      {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} fileMode={fileMode} onFileModeChange={onFileModeChange} onOpenFile={onOpenFile} fileTree={fileTree} onFileTreeChange={onFileTreeChange} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
+      {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} fileMode={fileMode} onFileModeChange={onFileModeChange} onOpenFile={onOpenFile} openExternal={openExternal} workspacePath={path} fileTree={fileTree} onFileTreeChange={onFileTreeChange} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
       {tab === "changes" ? <ReviewPanel commitRequest={commitRequest} data={data} disabled={disabled} onEdit={path => { if (onOpenFile) onOpenFile(path); else { setTab("files"); void data.open(path); } }}/> : tab === "worktrees" ? <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/> : null}
     </div>
   </aside>;
 }
 
-function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, fileTree, onFileTreeChange, workspaceName, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string): void; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; workspaceName: string; active: boolean }) {
+function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, openExternal, fileTree, onFileTreeChange, workspaceName, workspacePath, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string, location?: Omit<WorkspaceFileLink, "path">): void; openExternal?(url: string): Promise<void>; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; workspaceName: string; workspacePath: string; active: boolean }) {
   const [localTree, setLocalTree] = useState(defaultFileTreeView);
   const tree = fileTree ?? localTree, changeTree = onFileTreeChange ?? setLocalTree;
   const opened = filePath ?? data.opened;
@@ -87,7 +88,7 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
   useEffect(() => { setFolder(data.directory); }, [data.directory]);
   const fileError = opened && data.errors[`file:${opened}`];
   const readingLinkedFile = Boolean(opened && data.loading.has(`file:${opened}`));
-  const revealRequest = active && data.restored && !readingLinkedFile && !fileError && opened === fileRequest?.path ? fileRequest : undefined;
+  const revealRequest = active && data.restored && !readingLinkedFile && (!fileError || !data.connected && editable) && opened === fileRequest?.path ? fileRequest : undefined;
   return <div className="files-view" hidden={!active}>
     {!filePath && <section className="file-browser" aria-label="Workspace directory">
       <form className="workspace-path-form" onSubmit={event => { event.preventDefault(); void data.list(folder || "."); }}><label className="sr-only" htmlFor="workspace-directory">Directory relative to workspace</label><input id="workspace-directory" value={folder} onChange={event => setFolder(event.target.value)} autoComplete="off"/><button disabled={!data.connected}>Go</button><button type="button" title="New file" aria-label="New file" className="icon-button small" disabled={!data.restored} onClick={() => setAdding(value => !value)}><Icon name="plus"/></button></form>
@@ -111,7 +112,14 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
       {markdownFile && document && editable && <div className="workspace-markdown-actions"><MarkdownCopyButton key={`${data.cacheKey}:${filePath}`} text={document.text}/></div>}
       {/* Keep each open file's native history and selection while another tab is visible. */}
       {markdownFile && document && editable && <RichMarkdownEditor documentKey={`${data.cacheKey}:${filePath}:markdown`} value={document.text} label={`Edit Markdown ${filePath}`} active={active && mode === "markdown"} revealRequest={revealRequest} onReveal={(id, error) => setLocationNotice(error ? { id, path: filePath!, message: error } : undefined)}
-        onChange={text => data.edit(filePath!, text, true)} onSave={() => { if (!disabled) void data.saveFile(filePath!); }}/>}
+        openLink={async href => {
+          const link = resolveMarkdownLink(href, filePath!, workspacePath);
+          if (link.kind === "unavailable") throw new Error(link.reason);
+          if (link.kind === "external") { if (!openExternal) throw new Error("The browser opener is unavailable."); await openExternal(link.url); return; }
+          if (link.kind === "fragment") throw new Error("This document anchor is unavailable.");
+          if (!onOpenFile) throw new Error("The owning workspace file opener is unavailable.");
+          const { path, ...location } = link.file; onOpenFile(path, location);
+        }} onChange={text => data.edit(filePath!, text, true)} onSave={() => { if (!disabled) void data.saveFile(filePath!); }}/>}
       <div className="workspace-source-editors" hidden={!editable || mode === "markdown"}>
         {[...data.documents].filter(([path, item]) => (!filePath || path === filePath) && (!item.content || item.content.kind === "text")).map(([path, item]) =>
           <PierreSourceEditor key={path} documentKey={`${data.cacheKey}:${path}`} name={path} value={item.text}

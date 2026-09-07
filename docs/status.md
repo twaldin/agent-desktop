@@ -1,8 +1,14 @@
 # Milestone status
 
+## Markdown file links
+
+Markdown preview links now open files relative to the current document on its owning host, preserve line/column/range requests, and reuse existing file tabs. Pointer and Enter activation work; unsupported or missing targets expose errors. Offline navigation can reveal cached files while preserving unsaved Markdown. The same checks exposed and fixed normal pointer tab activation being intercepted by the dock drag container.
+
+Eight hidden-Electron checks/six captures pass against a disposable authenticated host: 23 reads, zero commands/sessions, unchanged host bytes and revision1 draft. Fourteen scoped tests/67 assertions, dock regression, typecheck and build pass. External URL dispatch uses an injected opener in this check; installed OS-browser behavior and matched native pixels remain unverified. See [file editor](workspace-file-editor.md). Existing installations and sealed Work evidence are unchanged.
+
 ## Markdown copy action
 
-Both Markdown views now copy the active raw buffer, including unsaved offline edits, through the system clipboard without a host write or forced save. The reference icon/placement and two-second Copied feedback are implemented; failed copying exposes retry. Nine renderer checks/eight captures, actual clipboard readback/restoration, typecheck and build pass. General file links, rich diagrams and native pixel comparison remain open; see [file editor](workspace-file-editor.md). This is a source checkpoint, with existing installations and Work fixtures unchanged.
+Both Markdown views now copy the active raw buffer, including unsaved offline edits, through the system clipboard without a host write or forced save. The reference icon/placement and two-second Copied feedback are implemented; failed copying exposes retry. Nine renderer checks/eight captures, actual clipboard readback/restoration, typecheck and build pass. Rich diagrams and native pixel comparison remain open; see [file editor](workspace-file-editor.md). This is a source checkpoint, with existing installations and Work fixtures unchanged.
 
 ## Ordinary Markdown file modes
 

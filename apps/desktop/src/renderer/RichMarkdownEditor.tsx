@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
+import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
 import { Decoration, EditorView, keymap, placeholder, highlightSpecialChars, drawSelection, type DecorationSet, WidgetType } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
@@ -103,14 +103,15 @@ function richDecorations(state: EditorState): DecorationSet {
       decorations.push(Decoration.replace({ widget: new Bullet() }).range(from, to));
     if (name === "TaskMarker" && !selected(from, to))
       decorations.push(Decoration.replace({ widget: new TaskCheckbox(doc.sliceString(from + 1, from + 2).toLowerCase() === "x", from + 1, state.readOnly) }).range(from, to));
-    if (name === "Link") {
+    if (name === "Link" || name === "Autolink") {
       const urlNode = node.node.getChild("URL"), marks = node.node.getChildren("LinkMark");
-      if (urlNode && marks.length === 4) {
+      if (urlNode && !selected(from, to)) {
         const href = doc.sliceString(urlNode.from, urlNode.to).replace(/^<|>$/g, "");
-        const target = resolveTranscriptLink(href);
-        if (target.kind === "external" && !selected(from, to)) {
-          mark(marks[0]!.to, marks[1]!.from, "markdown-edit-link", { "data-markdown-href": target.url });
-          hide(from, marks[0]!.to); hide(marks[1]!.from, to); return false;
+        const labelFrom = name === "Autolink" ? urlNode.from : marks[0]?.to;
+        const labelTo = name === "Autolink" ? urlNode.to : marks[1]?.from;
+        if (labelFrom !== undefined && labelTo !== undefined && (name === "Autolink" || marks.length === 4)) {
+          mark(labelFrom, labelTo, "markdown-edit-link", { "data-markdown-href": href, role: "link", tabindex: "0" });
+          hide(from, labelFrom); hide(labelTo, to); return false;
         }
       }
     }
@@ -124,7 +125,8 @@ const decorations = StateField.define<DecorationSet>({ create: richDecorations, 
 export interface RichMarkdownEditorProps {
   documentKey: string; value: string; label: string; onChange(text: string): void; onSave(): void;
   readOnly?: boolean; active?: boolean; openExternal?(url: string): Promise<void>;
-  revealRequest?: { id: string; line?: number; column?: number };
+  openLink?(href: string): Promise<void> | void;
+  revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
 }
 /** Formatting is a view over Markdown, never an HTML-to-Markdown round trip. */
@@ -140,6 +142,22 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     alive.current = true; appliedReveal.current = undefined; setLinkError(undefined); setExpanded(false);
     raw.current = baseline.current = latest.current.value;
     const initial=normalizeMarkdown(raw.current);
+    const followLink = (event: MouseEvent | KeyboardEvent) => {
+      const link = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-markdown-href]") : null;
+      if (!link || latest.current.active === false) return false;
+      event.preventDefault(); setLinkError(undefined);
+      const identity = latest.current.documentKey, href = link.dataset.markdownHref!, openLink = latest.current.openLink, openExternal = latest.current.openExternal;
+      void Promise.resolve().then(() => {
+        if (openLink) return openLink(href);
+        const target = resolveTranscriptLink(href);
+        if (target.kind !== "external") throw new Error(target.kind === "unavailable" ? target.reason : "This editor cannot open workspace links.");
+        if (!openExternal) throw new Error("The browser opener is unavailable.");
+        return openExternal(target.url);
+      }).catch(error => {
+        if (alive.current && latest.current.documentKey === identity) setLinkError(error instanceof Error ? error.message : "Could not open link");
+      });
+      return true;
+    };
     const editor = new EditorView({ parent: container.current!, state: EditorState.create({ doc: initial, selection: {anchor:markdownMetadata(initial)?.end??0}, extensions: [
       protectMetadata,
       focused, markdown({ extensions: [...GFM, Superscript, Subscript, Emoji], completeHTMLTags: false }),
@@ -150,19 +168,18 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
         {key:"Mod-a",run:editor=>{const from=markdownMetadata(editor.state.doc.toString())?.end??0;editor.dispatch({selection:{anchor:from,head:editor.state.doc.length},userEvent:"select"});return true;}},
         ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       placeholder("Write in Markdown…"), EditorView.lineWrapping, decorations,
+      Prec.high(EditorView.domEventHandlers({ keydown: event => event.key === "Enter" ? followLink(event) : false })),
       EditorView.domEventHandlers({
         focus: (_event, editor) => { editor.dispatch({ effects: focusChanged.of(true) }); },
         blur: (_event, editor) => { editor.dispatch({ effects: focusChanged.of(false) }); },
-        mousedown: (event) => {
-          const link = (event.target as HTMLElement).closest<HTMLElement>("[data-markdown-href]");
-          if (!link || event.button !== 0 || !latest.current.openExternal) return false;
-          event.preventDefault(); setLinkError(undefined);
-          const identity=latest.current.documentKey;
-          void latest.current.openExternal(link.dataset.markdownHref!).catch(error => {
-            if(alive.current&&latest.current.documentKey===identity)setLinkError(error instanceof Error ? error.message : "Could not open link");
-          });
-          return true;
+        mousedown: event => {
+          if (event.button !== 0 || event.detail > 1) return false;
+          const link = event.target instanceof HTMLElement ? event.target.closest("[data-markdown-href]") : null;
+          if (!link) return false;
+          event.preventDefault(); return true;
         },
+        click: event => event.button === 0 && event.detail === 1 ? followLink(event) : false,
+
       }),
       EditorView.updateListener.of(update => {
         if (!update.docChanged || update.transactions.every(transaction => transaction.annotation(Transaction.addToHistory) === false)) return;
@@ -189,7 +206,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     if (!editor || props.active === false || !request || appliedReveal.current === request.id) return;
     appliedReveal.current = request.id;
     if (request.line !== undefined) {
-      const location = fileLocation(editor.state.doc.toString(), request.line, request.column);
+      const location = fileLocation(editor.state.doc.toString(), request.line, request.column, request.endLine);
       if ("error" in location) { props.onReveal?.(request.id, location.error); return; }
       editor.dispatch({ selection: { anchor: location.start, head: location.end }, effects: EditorView.scrollIntoView(location.start, { y: "center" }) });
     }

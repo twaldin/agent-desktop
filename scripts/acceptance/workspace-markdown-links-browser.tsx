@@ -1,0 +1,28 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import type { DesktopBridge, DesktopEvent, WorkspaceTarget } from "@agent-desktop/shared";
+import { WorkspacePanel } from "../../apps/desktop/src/renderer/WorkspacePanel";
+import { WorkspaceState } from "../../apps/desktop/src/renderer/workspace-state";
+import { DockPanel } from "../../apps/desktop/src/renderer/DockPanel";
+import { useWorkbenchDock } from "../../apps/desktop/src/renderer/use-workbench-dock";
+import { defaultWindowView } from "../../apps/desktop/src/window-state";
+import { offlineCache } from "../../apps/desktop/src/renderer/offline-cache";
+import type { WorkspaceFileRequest, WorkspaceFileLink } from "../../apps/desktop/src/renderer/transcript-links";
+import "../../apps/desktop/src/renderer/styles.css";
+import "../../apps/desktop/src/renderer/theme.css";
+import "../../apps/desktop/src/renderer/dock-panel.css";
+
+const params = new URLSearchParams(location.search), endpoint = params.get("endpoint")!, target = JSON.parse(params.get("target")!) as WorkspaceTarget, hostId = params.get("hostId")!, project = params.get("project")!;
+const request = async (route:string,body:unknown) => {const response=await fetch(endpoint+route,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(typeof value.error === "string" ? value.error : value.error?.message ?? `Request failed (${response.status})`);return value as any;};
+const listeners=new Set<(event:DesktopEvent)=>void>(), errors:string[]=[], external:string[]=[], opened:WorkspaceFileLink[]=[];
+setInterval(()=>void request('/test/events',{}).then(events=>{for(const event of events)for(const listener of listeners)listener(event)}).catch(()=>{}),100);
+addEventListener('error',event=>errors.push(event.message));addEventListener('unhandledrejection',event=>errors.push(String(event.reason)));
+const bridge={workspaceQuery:(owner,query,selectedHost)=>request('/v1/workspace/query',{target:owner,query,owner:selectedHost}),command:(envelope,selectedHost)=>request('/v1/commands',{...envelope,owner:selectedHost}),subscribe:listener=>{listeners.add(listener);return()=>listeners.delete(listener)}} as Pick<DesktopBridge,"workspaceQuery"|"command"|"subscribe">;
+let current:WorkspaceState,dock:ReturnType<typeof useWorkbenchDock>,setConnection:(value:boolean)=>void;
+function Fixture(){const[connected,setConnected]=useState(true);setConnection=setConnected;const[fileRequest,setFileRequest]=useState<WorkspaceFileRequest>();const data=useMemo(()=>new WorkspaceState(bridge,hostId,target,offlineCache,hostId),[]);current=data;useEffect(()=>()=>data.stop(),[data]);dock=useWorkbenchDock(bridge as DesktopBridge,defaultWindowView(),hostId,target,connected,e=>errors.push(e));
+ const open=(path:string,location?:Omit<WorkspaceFileLink,"path">)=>{opened.push({path,...location});setFileRequest({path,...location,id:crypto.randomUUID()});dock.openFile(path,hostId,target)};
+ return <main className="workspace-markdown-links-fixture"><button onClick={()=>open('docs/guide.md')}>Open guide</button><button className="fixture-focus">Fixture focus</button><DockPanel destination="right" state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={{width:innerWidth,height:innerHeight}} onChange={dock.change} renderTab={(tab,active)=><WorkspacePanel embedded active={active} data={data} connected={connected} filePath={tab.filePath} fileRequest={fileRequest?.path===tab.filePath?fileRequest:undefined} fileMode={tab.fileMode} onFileModeChange={mode=>dock.setFileMode(tab.id,mode)} onOpenFile={open} openExternal={async url=>{external.push(url)}} name="Links fixture" path={project} onClose={()=>{}} onOpenProject={async()=>{}}/>}/></main>;
+}
+document.documentElement.dataset.theme='dark';createRoot(document.getElementById('root')!).render(<Fixture/>);
+const visible=(selector:string)=>[...document.querySelectorAll<HTMLElement>(selector)].filter(n=>n.getClientRects().length);
+Object.assign(window,{request,connection:(value:boolean)=>setConnection(value),state:()=>({ready:current?.restored,connected:current?.connected,documents:current?Object.fromEntries(current.documents):{},tabs:dock?.snapshot.tabs,opened,external,errors,focused:document.activeElement?.getAttribute('aria-label'),links:visible('[data-markdown-href]').map(n=>({text:n.textContent,href:n.dataset.markdownHref})),viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio,zoom:visualViewport?.scale},font:getComputedStyle(document.body).font}),target:(selector:string,text?:string)=>{const node=visible(selector).find(n=>text===undefined||n.textContent?.trim()===text||n.getAttribute('aria-label')===text);if(!node)throw Error('Missing target '+selector+' '+text);const r=node.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}},editor:()=>visible('diffs-container').flatMap(n=>[...(n.shadowRoot?.querySelectorAll<HTMLElement>('[contenteditable="true"]')??[])]).find(n=>n.getClientRects().length)});
