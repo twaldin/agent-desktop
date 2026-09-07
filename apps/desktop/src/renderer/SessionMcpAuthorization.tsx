@@ -50,3 +50,20 @@ export function SessionMcpAuthorization({ state, connected }: { state: McpAuthor
     </section>}
   </>;
 }
+
+/** The callback must remain reachable while a native slash command is waiting,
+ * without requiring the user to leave the conversation and find settings. */
+export function PendingMcpAuthorization({bridge,hostId,sessionId,connected}: {bridge:DesktopBridge;hostId:string;sessionId:string;connected:boolean}) {
+  const state = useMcpAuthorization(bridge,hostId,sessionId,connected);
+  const [dismissed,setDismissed] = useState<string|null>(null);
+  const value=state.value;
+  const [observed,setObserved] = useState<string|null>(null);
+  const active=value?.status==='running'||value?.status==='cancelling';
+  useEffect(()=>{if(active&&value)setObserved(value.authorizationId);},[active,value?.authorizationId]);
+  if (!value || dismissed===value.authorizationId || !active&&observed!==value.authorizationId) return null;
+  return <div className="pending-mcp-authorization" aria-label="MCP sign-in request">
+    {!connected && <p className="connection-banner" role="status">Reconnect to this session’s host to continue sign-in.</p>}
+    <SessionMcpAuthorization key={value.authorizationId} state={state} connected={connected}/>
+    {!active && <button type="button" className="secondary-button" onClick={()=>setDismissed(value.authorizationId)}>Dismiss sign-in result</button>}
+  </div>;
+}

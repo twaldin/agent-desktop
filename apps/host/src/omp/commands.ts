@@ -8,7 +8,7 @@ import { OmpPromptAdmissionError, type NativePromptDispatchResult } from "./prom
 import { builtinAvailability } from "./composer-actions";
 import type { NativeSkillPrompt } from "./skills";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import type { NativeSessionMcpSnapshot } from "@agent-desktop/shared";
+import type { NativeMcpAuthorizationSnapshot, NativeSessionMcpSnapshot } from "@agent-desktop/shared";
 import { formatMcpInspection, type McpInspection } from "./mcp-output";
 
 /** Pinned 18.1.10 public native handlers/contexts. AgentSession.prompt catches
@@ -21,6 +21,18 @@ export interface NativeCommandBridges {
   reloadMcp(): Promise<void>;
   inspectMcp(): NativeSessionMcpSnapshot;
   reconnectMcp(serverName: string): Promise<NativeSessionMcpSnapshot>;
+  authorizeMcp(serverName: string): Promise<NativeMcpAuthorizationSnapshot>;
+}
+
+function formatMcpAuthorization(serverName: string, snapshot: NativeMcpAuthorizationSnapshot): string {
+  const success = snapshot.status === "succeeded" && snapshot.reconnected;
+  const heading = success ? `Reauthorized "${serverName}"`
+    : snapshot.status === "cancelled" ? `Reauthorization cancelled for "${serverName}"`
+    : `Reauthorization incomplete for "${serverName}"`;
+  const credentials = snapshot.credentialWrite === "stored" ? "stored"
+    : snapshot.credentialWrite === "unknown" ? "outcome unknown" : "unchanged";
+  const configuration = snapshot.configuration === "not-needed" ? "not needed" : snapshot.configuration;
+  return [heading, `Status: ${snapshot.status}`, `Credentials: ${credentials}`, `Configuration: ${configuration}`, `Server: ${snapshot.reconnected ? "connected" : "not connected"}`].join("\n");
 }
 export async function dispatchNativePrompt(session: AgentSession, text: string, images?: ImageContent[], skill?: NativeSkillPrompt, bridges?: NativeCommandBridges): Promise<NativePromptDispatchResult> {
   if (images?.length && text.trimStart().startsWith("/")) throw new Error("Image attachments are not supported on slash commands yet; no command was executed");
@@ -53,8 +65,9 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
     const builtin = parsed && lookupBuiltinSlashCommand(parsed.name);
     if (parsed && builtin) {
       const availability = builtinAvailability(builtin.name, parsed.args);
-      if (availability.availability !== "executable" || !builtin.handle) throw new Error(`Native /${builtin.name} is not connected to the desktop command dispatcher for this invocation. ${availability.reason ?? ""} This input was not executed or sent to a model.`);
       const verb = parsed.args.trim().split(/\s+/, 1)[0]?.toLowerCase();
+      const desktopMcpAuthorization = builtin.name === "mcp" && verb === "reauth";
+      if (availability.availability !== "executable" || !builtin.handle && !desktopMcpAuthorization) throw new Error(`Native /${builtin.name} is not connected to the desktop command dispatcher for this invocation. ${availability.reason ?? ""} This input was not executed or sent to a model.`);
       if (builtin.name === "mcp" && verb === "reconnect") {
         if (!bridges) throw new Error("The native MCP reconnect bridge is unavailable; no command was executed.");
         const serverName = parsed.args.trim().split(/\s+/)[1];
@@ -78,6 +91,24 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
           return { agentInvoked: false, handledCommand: "mcp", commandEntryId, output };
         } catch (error) { throw new OmpPromptAdmissionError(error); }
       }
+      if (desktopMcpAuthorization) {
+        // The pinned TUI tokenizes the trimmed command and uses exactly its third
+        // token as the server name. Extra tokens are ignored by that controller.
+        const serverName = parsed.args.trim().split(/\s+/)[1];
+        if (!serverName) throw new Error("Server name required. Usage: /mcp reauth <name>");
+        if (!bridges) throw new Error("The native MCP authorization bridge is unavailable; no command was executed.");
+        const before = bridges.inspectMcp();
+        if (!before.servers.some(server => server.name === serverName && server.canAuthorize)) {
+          throw new Error("The requested server is not available for OAuth authorization in this native session.");
+        }
+        try {
+          const snapshot = await bridges.authorizeMcp(serverName);
+          const output = formatMcpAuthorization(serverName, snapshot);
+          const commandEntryId = session.sessionManager.appendCustomEntry("agent-desktop.command-output", { command: "mcp", output });
+          return { agentInvoked: false, handledCommand: "mcp", commandEntryId, output };
+        } catch (error) { throw new OmpPromptAdmissionError(error); }
+      }
+      if (!builtin.handle) throw new Error(`Native /${builtin.name} has no connected command handler; no command was executed.`);
       const reloadMcp = builtin.name === "mcp" && verb === "reload";
       if (reloadMcp && !bridges) throw new Error("The native MCP runtime reload bridge is unavailable; no command was executed.");
       const chunks: string[] = []; let length = 0;

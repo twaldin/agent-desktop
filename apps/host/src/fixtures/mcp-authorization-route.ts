@@ -44,17 +44,47 @@ function responseBody(value:NativeMcpAuthorizationResponse){const current=value.
 try {
   const created=await command({id:"create",command:{type:"session.create",projectId:null,cwd,model:{provider:"mcp-contract",id:"controlled"}}});assert(created.ok);
   const session=created.value as SessionSummary;
-  if (process.argv[3] === "--ui") {
-    await writeFile(path.join(root,"ui-ready.json"),JSON.stringify({endpoint:host.connection,sessionId:session.id,issuer:origin}));
+  if (process.argv[3] === "--ui" || process.argv[3] === "--ui-slash") {
+    const slash = process.argv[3] === "--ui-slash";
+    const slashRun = slash ? command({id:"ui-slash-reauth",command:{type:"session.prompt",sessionId:session.id,text:"/mcp reauth fixture"}}) : undefined;
+    await writeFile(path.join(root,"ui-ready.json"),JSON.stringify({endpoint:host.connection,sessionId:session.id,issuer:origin,slash}));
     const deadline=Date.now()+90_000;
     while (!await Bun.file(path.join(root,"ui-done")).exists()) { if(Date.now()>deadline)throw new Error("UI acceptance timed out");await Bun.sleep(50); }
+    if (slashRun) { const receipt=await slashRun;assert(receipt.ok);assert.equal(receipt.admission?.kind,"native-command"); }
     const final=await state(session.id);
     assert.equal(final.value?.status,"succeeded");assert.equal(tokens,1);
     assert.equal((await readFile(session.sessionFile,"utf8")).includes("route-private-code"),false);
     const db=new Database(path.join(root,"data","state.sqlite"));
     const rows=db.query("SELECT * FROM commands").all();db.close();
     for(const secret of ["route-private-code","route-private-access","route-private-refresh","/authorize?"])assert(!JSON.stringify(rows).includes(secret));
-    await writeFile(path.join(root,"ui-proof.json"),JSON.stringify({tokens,initializes,commands:rows.length,status:final.value?.status,reconnected:final.value?.reconnected,privateJournal:true}));
+    const entries=(await readFile(session.sessionFile,"utf8")).trim().split("\n").map(line=>JSON.parse(line));
+    const nativeUserMessages=entries.filter(entry=>entry.type==="message"&&entry.message?.role==="user").length;
+    const nativeAssistantMessages=entries.filter(entry=>entry.type==="message"&&entry.message?.role==="assistant").length;
+    assert.equal(nativeUserMessages,0);assert.equal(nativeAssistantMessages,0);
+    await writeFile(path.join(root,"ui-proof.json"),JSON.stringify({tokens,initializes,commands:rows.length,slash,nativeUserMessages,nativeAssistantMessages,status:final.value?.status,reconnected:final.value?.reconnected,privateJournal:true}));
+  } else if (process.argv[3] === "--slash") {
+    const envelope:CommandEnvelope={id:"slash-reauth",command:{type:"session.prompt",sessionId:session.id,text:"/mcp reauth fixture"}};
+    const sent=command(envelope),duplicate=command(envelope);
+    const pending=await wait(session.id,x=>Boolean(x.value?.login.auth&&x.value.login.prompts.length));
+    assert.equal(tokens,0);
+    const callback=await fetch(`${host.connection.origin}/v1/sessions/${session.id}/mcp/authorization/respond`,{method:"POST",headers:headers(),body:JSON.stringify(responseBody(pending))});
+    assert.equal(callback.status,200);
+    const result=await sent;assert(result.ok);assert.equal(result.admission?.kind,"native-command");
+    assert.deepEqual(await duplicate,result);assert.equal(tokens,1);
+    assert.equal((await state(session.id)).value?.reconnected,true);
+    const log=await readFile(session.sessionFile,"utf8");
+    assert(log.includes('Reauthorized'));
+    for(const privateValue of ["route-private-code","route-private-access","route-private-refresh","/authorize?"])assert(!log.includes(privateValue));
+    assert.deepEqual(await command(envelope),result);assert.equal(tokens,1);
+    const cancelled=command({id:"slash-cancel",command:{type:"session.prompt",sessionId:session.id,text:"/mcp reauth fixture"}});
+    const next=await wait(session.id,x=>x.value?.authorizationId!==pending.value?.authorizationId&&Boolean(x.value?.login.auth&&x.value.login.prompts.length));
+    assert(next.value?.status==="running");
+    assert((await command({id:"slash-stop",command:{type:"session.interrupt",sessionId:session.id}})).ok);
+    const cancellation=await cancelled;assert(cancellation.ok);assert.equal(cancellation.admission?.kind,"native-command");
+    assert.equal((await state(session.id)).value?.status,"cancelled");assert.equal(tokens,1);
+    const db=new Database(path.join(root,"data","state.sqlite"));const journal=JSON.stringify(db.query("SELECT * FROM commands").all());db.close();
+    for(const secret of ["route-private-code","route-private-access","route-private-refresh","/authorize?"])assert(!journal.includes(secret));
+    await writeFile(path.join(root,"slash-authorization.passed"),"native slash reauth, receipt dedupe and Stop passed\n");
   } else {
   const beforeTranscript=await readFile(session.sessionFile,"utf8");
   const before=await ticket(session.id);

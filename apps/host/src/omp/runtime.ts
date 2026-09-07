@@ -845,6 +845,22 @@ export class OmpRuntime {
                     const ticket = mcp.read();
                     await trackMcpMutation(mcp.reload({ epoch: ticket.epoch, expectedRevision: ticket.revision }));
                   },
+                  authorizeMcp: async serverName => {
+                    // The slash command already owns prompt admission. Reserve
+                    // MCP work without trying to reacquire the idle prompt gate.
+                    assertSessionActive();
+                    if (interruptsInFlight || controller.signal.aborted || session.queuedMessageCount > 0
+                      || ui?.list().length || btw.get()?.status === "running")
+                      throw new Error("Resolve pending native work before authorizing an MCP server.");
+                    const ticket = mcp.read();
+                    const operation = mcp.startAuthorization({epoch:ticket.epoch,expectedRevision:ticket.revision,serverName}, {
+                      cwd:manager.getCwd(),authStorage:auth,assertOwner:assertSessionActive,
+                    });
+                    const cancel = () => operation.cancel();
+                    controller.signal.addEventListener("abort",cancel,{once:true});
+                    try { return await trackMcpMutation(operation.completion); }
+                    finally { controller.signal.removeEventListener("abort",cancel); }
+                  },
                   reconnectMcp: async serverName => {
                     assertSessionActive();
                     if (interruptsInFlight || controller.signal.aborted || session.queuedMessageCount > 0

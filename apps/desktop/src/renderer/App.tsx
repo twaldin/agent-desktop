@@ -1,3 +1,4 @@
+import { PendingMcpAuthorization } from "./SessionMcpAuthorization";
 import { EnvironmentActions } from "./EnvironmentActions";
 import { GoalStrip } from "./GoalStrip";
 import { GoalPanel } from "./GoalPanel";
@@ -548,6 +549,7 @@ export function App() {
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={anchor => composerContext.current?.openProjects(anchor)}/>}
         <div className={`composer-region ${selectedId ? "" : "home-composer"}`}>
+          {selected && !selected.archived && <PendingMcpAuthorization key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} connected={connected}/>}
           {selected && <PendingDetachedQuestions bridge={bridge} hostId={hostId} sessionId={selected.id} localHostId={desktop.localHostId} connected={connected} archived={selected.archived} drafts={drafts} submissions={submissions}/>}
           {(selectedId || pendingSessionId) && state && <>
             {!selectedId && <p className="subtle-notice">Requests for {knownPendingSession?.title ?? "the session being started"} on {state.host.name}.</p>}

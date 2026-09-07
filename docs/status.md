@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — native reauth command and conversation consent
+
+`/mcp reauth <name>` now runs the real authorization controller under native prompt admission, preserving extension/custom precedence. Its command output records terminal success, cancellation or partial outcomes without callback material or model messages. The conversation exposes pending sign-in directly, allows explicit browser/callback/cancel actions, and does not reopen historical completed cards. Stop cancels the callback; duplicate submissions share their original receipt.
+
+The targeted regression passes **24 tests /227 assertions across7 files**, plus typecheck and production build. Real authenticated host evidence covers one OAuth exchange, duplicate admission and Stop before another exchange. Four final controlled Electron captures exercise the conversation consent form, narrow layout, completion and page reopen; native transcript inspection shows zero user/assistant message entries. Submission in this component fixture is host-initiated, so full-composer Send, installed/native-window and external-provider consent remain unverified. The initial regression mismatch was an outdated executable-subcommand list and is retained in the private log.
+
+Automatic tool-triggered auth remains open: the native manager expects a private updated config, then performs its own reconnect/single retry; the explicit command's full reload cannot be reused unchanged inside that callback. Pins and worker protocol22 remain unchanged. Private scope/evidence: `.data/mcp-reauth-checkpoint/` and `.data/mcp-reauth-conversation-ui-3/`. All reference seals and preserved Work runs remain untouched; no new native handoff.
+
 ## Source30 — desktop MCP authorization and private receipt recovery
 
 Live MCP settings now offers Authenticate for enabled HTTP/SSE servers through the session's actual OMP authorization controller. Durable commands preserve only the start identity; separate authenticated owner-fenced routes carry private callback answers and cancellation. Read-only recovery correlates the original operation after a lost acknowledgement, never starts a replacement worker, and cannot replay a callback. The desktop reuses native account callback controls, opens the issuer URL explicitly, and distinguishes saved credentials from actual reconnection. Worker protocol22 retains OMP18.1.10/Bun1.3.14.
