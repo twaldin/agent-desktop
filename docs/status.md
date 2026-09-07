@@ -1,5 +1,9 @@
 # Milestone status
 
+## Markdown copy action
+
+Both Markdown views now copy the active raw buffer, including unsaved offline edits, through the system clipboard without a host write or forced save. The reference icon/placement and two-second Copied feedback are implemented; failed copying exposes retry. Nine renderer checks/eight captures, actual clipboard readback/restoration, typecheck and build pass. General file links, rich diagrams and native pixel comparison remain open; see [file editor](workspace-file-editor.md). This is a source checkpoint, with existing installations and Work fixtures unchanged.
+
 ## Ordinary Markdown file modes
 
 Dedicated Markdown file tabs now open an editable preview and expose View source / View preview. Switching waits for the existing host save receipt; offline or unresolved edits keep their current view and buffer. The mode persists with the owning file tab in window state. Both editors share the same document, preserving raw Markdown/frontmatter and checkbox writes.

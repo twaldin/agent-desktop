@@ -495,3 +495,9 @@ button { touch-action: manipulation; }
 .workspace-markdown-mode:hover { background:var(--hover); }
 .workspace-markdown-mode:disabled { opacity:.5; cursor:default; }
 .workspace-file-main > .rich-markdown-file { padding:8px 16px 24px; }
+
+.workspace-markdown-main { position: relative; }
+.workspace-markdown-actions { position: absolute; z-index: 10; top: 8px; right: 16px; }
+.markdown-copy-button { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 4px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
+.markdown-copy-button:hover { background: var(--hover); color: var(--text); }
+.markdown-copy-button svg { width: 18px; height: 18px; }

@@ -5,6 +5,7 @@ import { Icon } from "./Icons";
 import { type WorkspaceFileRequest } from "./transcript-links";
 import { ReviewPanel } from "./ReviewPanel";
 import { retainWorkspace } from "./workspace-lease";
+import { MarkdownCopyButton } from "./MarkdownCopyButton";
 import { RichMarkdownEditor } from "./RichMarkdownEditor";
 import { PierreSourceEditor } from "./PierreSourceEditor";
 import { WorkspaceFileBreadcrumbs } from "./WorkspaceFileBreadcrumbs";
@@ -99,7 +100,7 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
       {!opened ? <div className="workspace-empty"><Icon name="compose"/><p>Select a file to read or edit.</p></div> : <>
         <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}{markdownFile && <button type="button" className="workspace-markdown-mode" disabled={switchingMode || !document || !editable} onClick={() => void switchMode()}>{mode === "markdown" ? "View source" : "View preview"}</button>}{filePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}{filePath && <WorkspaceFileOpen key={`${data.cacheKey}:${filePath}`} data={data} path={filePath} active={active} disabled={disabled}/>}{!filePath && <button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button>}</div>
       </>}
-      <div className="workspace-file-body" hidden={!opened}><div className="workspace-file-main">
+      <div className="workspace-file-body" hidden={!opened}><div className={`workspace-file-main ${markdownFile ? "workspace-markdown-main" : ""}`}>
       {opened && <>
         {fileError && <p className="workspace-notice" role="alert">{fileError}</p>}{modeError && <p className="workspace-notice" role="alert">{modeError}</p>}
         {locationNotice?.path === opened && locationNotice?.id === fileRequest?.id && <p className="workspace-notice" role="status">{locationNotice.message}</p>}
@@ -107,6 +108,7 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
         {document?.recoveredText !== undefined && <details className="editor-recovery"><summary>Previous local buffer retained</summary><pre>{document.recoveredText}</pre><button onClick={() => data.edit(opened!, document.recoveredText!, true)}>Restore this text into editor</button></details>}
         {!document ? <p className="workspace-notice">{data.loading.has(`file:${opened}`) ? "Loading file…" : "No file content is cached."}</p> : editable ? null : <div className="workspace-empty"><p>{document.content?.kind === "binary" ? "This is a binary file. Text editing is unavailable." : document.content?.kind === "too-large" ? `This file is ${size(document.content.size)}; the host text editor limit is ${size(document.content.maximumBytes)}.` : document.content?.kind === "unsupported-encoding" ? `${document.content.encoding} editing is not supported. The original file is unchanged.` : "No text to display."}</p></div>}
       </>}
+      {markdownFile && document && editable && <div className="workspace-markdown-actions"><MarkdownCopyButton key={`${data.cacheKey}:${filePath}`} text={document.text}/></div>}
       {/* Keep each open file's native history and selection while another tab is visible. */}
       {markdownFile && document && editable && <RichMarkdownEditor documentKey={`${data.cacheKey}:${filePath}:markdown`} value={document.text} label={`Edit Markdown ${filePath}`} active={active && mode === "markdown"} revealRequest={revealRequest} onReveal={(id, error) => setLocationNotice(error ? { id, path: filePath!, message: error } : undefined)}
         onChange={text => data.edit(filePath!, text, true)} onSave={() => { if (!disabled) void data.saveFile(filePath!); }}/>}
