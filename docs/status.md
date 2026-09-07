@@ -1,6 +1,12 @@
 # Milestone status
 
 
+## Managed runtime boundary
+
+An opt-in native dotenv patch now separates managed profile configuration from ambient HOME/project files. The owned CLI builder uses Bun1.3.14, frozen OMP18.1.10 source with patches, explicit agent-directory selection, and an owned helper executable. Ordinary interactive/app configuration remains unchanged. Workers receive their selected directory before imports. See [managed runtime contract](managed-omp-runtime.md).
+
+Native lifecycle checks pass20 tests, including model/effort reopen and byte-identical global/project defaults. Two focused isolation tests pass12 assertions. An actual separately built macOS CLI starts under hostile/empty PATH without opening four test dotenv FIFOs; the actual native helper resolver invokes the same owned CLI and preserves HOME/ticket identity. Missing owned SDK and missing explicit profile are rejected. These are uninstalled CLI/SDK/worker checks without provider calls, not desktop/native-pixel or Linux acceptance. The coordinating task owns managed-profile deployment and pilot verification.
+
 ## Native skill inventory and scoped controls
 
 Skills settings now retain disabled skills for inspection and expose native user/project enable controls, the master skill setting, and skill commands. Inventory respects configured source roots, include/ignore rules and plugin gates; the normal executable catalog remains native. Writes use revision checks, preserve unrelated disables and require a refresh after failure. Other clients' settings events refresh the current owner and dismiss stale documents with focus restored after the dialog closes.

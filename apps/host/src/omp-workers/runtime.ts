@@ -114,8 +114,9 @@ class WorkerClient {
     }, options.startupTimeoutMs ?? 30_000);
     try {
       this.#process = Bun.spawn({
-        cmd: [executable, workerPath],
-        ...(environment ? { env: environment } : {}),
+        cmd: [executable, ...((environment ?? process.env).PI_DISABLE_DOTENV === "1" ? ["--no-env-file"] : []), workerPath],
+        // Establish the selected native profile before transitive SDK imports run.
+        env: { ...(environment ?? process.env), ...(options.agentDir ? { PI_CODING_AGENT_DIR: options.agentDir } : {}) },
         stdin: "ignore", stdout: "ignore", stderr: "ignore",
         serialization: "advanced",
         ipc: (message: unknown) => this.#receive(message),

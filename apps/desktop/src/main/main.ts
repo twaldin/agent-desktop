@@ -85,7 +85,7 @@ async function startOrFindHost(): Promise<LocalConnection> {
     homeDirectory: homedir(), environment: { AGENT_DESKTOP_BUN: process.env.AGENT_DESKTOP_BUN,
       AGENT_DESKTOP_PROJECT_ROOT: process.env.AGENT_DESKTOP_PROJECT_ROOT } });
   const output = openSync(join(dataDirectory, "host.log"), "a", 0o600);
-  const child = spawn(bun, [entry], {
+  const child = spawn(bun, [...(process.env.PI_DISABLE_DOTENV === "1" ? ["--no-env-file"] : []), entry], {
     detached: true, stdio: ["ignore", output, output],
     env: { ...process.env, AGENT_DESKTOP_DATA_DIR: dataDirectory },
   });

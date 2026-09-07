@@ -59,6 +59,7 @@
     "electron",
   ],
   "patchedDependencies": {
+    "@oh-my-pi/pi-utils@18.1.10": "patches/@oh-my-pi%2Fpi-utils@18.1.10.patch",
     "@oh-my-pi/pi-coding-agent@18.1.10": "patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch",
   },
   "overrides": {

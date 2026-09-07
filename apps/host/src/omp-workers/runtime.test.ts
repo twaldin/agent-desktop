@@ -95,6 +95,41 @@ describe("actual Bun worker lifecycle without provider calls", () => {
     await writeFile(path.join(cwd, ".omp", "config.yml"), project + "enabledModels: [no-such-provider/no-such-model]\n");
     expect((await runtime.getComposerCatalog(cwd, { refresh: true })).default).toEqual({ model: null, source: "unavailable", approvalMode: "yolo" });
   }, 60_000);
+  test("session model and thinking choices survive reopen without changing global or project roles", async () => {
+    const { runtime, directory, cwd, agentDir } = await isolatedRuntime();
+    await seedAuth(directory, agentDir, "key");
+    const initial = await runtime.getComposerCatalog(cwd, { refresh: true });
+    const candidates = initial.models.filter(model => model.provider === "openai" && model.available && model.thinkingLevels?.includes("high") && model.thinkingLevels.includes("low"));
+    expect(candidates.length).toBeGreaterThan(1);
+    const [globalModel, projectModel] = candidates;
+    const global = `extensions: []\nmodelRoles:\n  default: [openai/${globalModel!.id}:high]\n`;
+    const project = `modelRoles:\n  default: [openai/${projectModel!.id}:low]\n`;
+    await writeFile(path.join(agentDir, "config.yml"), global);
+    await mkdir(path.join(cwd, ".omp"));
+    await writeFile(path.join(cwd, ".omp", "config.yml"), project);
+    const globalBefore = await readFile(path.join(agentDir, "config.yml"), "utf8");
+    const projectBefore = await readFile(path.join(cwd, ".omp", "config.yml"), "utf8");
+
+    const session = await runtime.create({ cwd });
+    await session.setModel({ provider: globalModel!.provider, id: globalModel!.id });
+    let controls = await session.getControls();
+    controls = await session.mutateControls({ expectedRevision: controls.revision, operation: "thinking", level: "low" });
+    expect(controls.model).toEqual({ provider: globalModel!.provider, id: globalModel!.id });
+    expect(controls.thinkingLevel).toBe("low");
+    expect(await readFile(path.join(agentDir, "config.yml"), "utf8")).toBe(globalBefore);
+    expect(await readFile(path.join(cwd, ".omp", "config.yml"), "utf8")).toBe(projectBefore);
+
+    const nativeFile = session.sessionFile;
+    await session.dispose();
+    const reopened = await runtime.open({ sessionFile: nativeFile });
+    expect((await reopened.getControls()).model).toEqual({ provider: globalModel!.provider, id: globalModel!.id });
+    expect((await reopened.getControls()).thinkingLevel).toBe("low");
+    const fresh = await runtime.create({ cwd });
+    expect(fresh.model).toEqual({ provider: projectModel!.provider, id: projectModel!.id });
+    expect(fresh.thinkingLevel).toBe("low");
+    expect(await readFile(path.join(agentDir, "config.yml"), "utf8")).toBe(globalBefore);
+    expect(await readFile(path.join(cwd, ".omp", "config.yml"), "utf8")).toBe(projectBefore);
+  }, 60_000);
   test("host-owned permission intent applies on native creation, mutation and resume without writing native settings", async () => {
     const { runtime, cwd, agentDir } = await isolatedRuntime();
     const config = "extensions: []\ntools:\n  approvalMode: write\n";
