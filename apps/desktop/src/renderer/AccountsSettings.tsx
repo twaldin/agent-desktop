@@ -122,7 +122,7 @@ function LoginCard({ login, provider, hostName, remote, writable, act, openExter
     {running && <div className="login-cancel"><button className="secondary-button" disabled={!writable || login.cancellationRequested || login.status === "cancelling"} onClick={() => void act({ type: "login.cancel", loginId: login.loginId })}>{login.cancellationRequested ? "Cancellation requested" : "Cancel sign-in"}</button></div>}
   </section>;
 }
-function LoginPromptForm({ prompt, disabled, respond }: { prompt: LoginPrompt; disabled: boolean; respond(value: string): Promise<unknown> }) {
+export function LoginPromptForm({ prompt, disabled, respond }: { prompt: LoginPrompt; disabled: boolean; respond(value: string): Promise<unknown> }) {
   const [value, setValue] = useState("");
   return <form className="secret-form" onSubmit={event => { event.preventDefault(); if (disabled || !prompt.allowEmpty && !value) return; const response = value; setValue(""); void respond(response); }}><label className="field-label" htmlFor={`login-${prompt.requestId}`}>{prompt.message}</label><input id={`login-${prompt.requestId}`} className="text-field" type="password" value={value} onChange={event => setValue(event.target.value)} placeholder={prompt.placeholder} disabled={disabled} autoComplete="off" autoCapitalize="none" spellCheck={false} data-1p-ignore data-lpignore="true" autoFocus/><button className="primary-button" type="submit" disabled={disabled || !prompt.allowEmpty && !value}>Continue</button></form>;
 }

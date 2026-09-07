@@ -107,6 +107,7 @@ test("reload uses native discovery filters and publishes only live MCP metadata"
 		name: "fixture",
 		status: "connected",
 		source: "Disposable fixture (project)",
+		canAuthorize: false,
 		tools: ["mcp__fixture_tool"],
 		resourceCount: 1,
 		promptCount: 1,
@@ -173,6 +174,7 @@ test("unavailable and native connection failures reveal no configuration error d
 		name: "broken",
 		status: "disconnected",
 		source: "Disposable fixture (project)",
+		canAuthorize: false,
 		tools: [],
 		resourceCount: null,
 		promptCount: null,
@@ -218,11 +220,33 @@ test("connected unsupported catalogs are measured empty while identities stay ex
 		getNotificationState: () => ({ enabled: true, subscriptions: new Map() }),
 	} as unknown as MCPManager;
 	const snapshot = new NativeSessionMcp(session().value, manager).read();
-	expect(snapshot.servers).toEqual([{
-		name: " server ", status: "connected", source: "Native MCP", tools: [" tool "],
+		expect(snapshot.servers).toEqual([{
+		name: " server ", status: "connected", source: "Native MCP", canAuthorize: false, tools: [" tool "],
 		resourceCount: 0, promptCount: 0, resources: [], resourceTemplates: [], prompts: [],
 		notifications: { enabled: true, toolsListChanged: true, resourcesListChanged: false, promptsListChanged: false, resourceSubscribe: false, subscriptions: [] },
 	}]);
+});
+
+test("authorization capability follows only the native enabled HTTP/SSE config", () => {
+	const configs = new Map<string, unknown>([
+		["http", { type: "http", url: "https://example.test/mcp" }],
+		["sse", { type: "sse", url: "https://example.test/events" }],
+		["stdio", { type: "stdio", command: "fixture" }],
+		["disabled", { type: "http", url: "https://example.test/disabled", enabled: false }],
+	]);
+	const manager = {
+		getTools: () => [],
+		getAllServerNames: () => [...configs.keys()],
+		getConnectionStatus: () => "disconnected",
+		getConnection: () => undefined,
+		getServerConfig: (name: string) => configs.get(name),
+		getSource: () => undefined,
+		getNotificationState: () => ({ enabled: false, subscriptions: new Map() }),
+	} as unknown as MCPManager;
+	const servers = new NativeSessionMcp(session().value, manager).read().servers;
+	expect(new Map(servers.map(server => [server.name, server.canAuthorize]))).toEqual(new Map([
+		["disabled", false], ["http", true], ["sse", true], ["stdio", false],
+	]));
 });
 
 test("manual reconnect restarts only its exact native server and consumes one serialized ticket", async () => {

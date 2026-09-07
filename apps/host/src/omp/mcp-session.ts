@@ -50,6 +50,10 @@ function collectServers(manager: MCPManager, failures: ReadonlySet<string>): Nat
 		.sort((left, right) => left.localeCompare(right))
 		.map(name => {
 			const status = manager.getConnectionStatus(name);
+			// Older manager instances used by compatible hosts may not expose the
+			// preserved config accessor; absence means authorization is unavailable.
+			const config = typeof manager.getServerConfig === "function" ? manager.getServerConfig(name) : undefined;
+			const canAuthorize = config?.enabled !== false && (config?.type === "http" || config?.type === "sse");
 			const connection = status === "connected" ? manager.getConnection(name) : undefined;
 			const resourceSupport = connection?.capabilities.resources !== undefined;
 			const promptSupport = connection?.capabilities.prompts !== undefined;
@@ -78,6 +82,7 @@ function collectServers(manager: MCPManager, failures: ReadonlySet<string>): Nat
 				name: identity(name, 1024, "server name"),
 				status,
 				source: sourceLabel(manager, name),
+				canAuthorize,
 				tools: limited(tools
 					.filter(tool => tool.mcpServerName === name)
 					.map(tool => identity(tool.name, 1024, "tool name")), "tools", 16_384)
@@ -234,6 +239,7 @@ export class NativeSessionMcp {
 	/** The caller owns session-level admission; this queue additionally fences
 	 * direct MCP reads/reloads and duplicate authorization across clients. */
 	startAuthorization(request: NativeSessionMcpReconnect, options: {
+		commandId?: string;
 		cwd: string;
 		authStorage: AuthStorage;
 		assertOwner(): void;

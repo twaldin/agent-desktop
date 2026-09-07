@@ -92,6 +92,10 @@ function parseCommandBody(value: unknown): CommandEnvelope {
       return { id, command: { type, sessionId, question,
         ...(draft ? { draft } : {}), ...(input.nativeCommand === "btw" ? { nativeCommand: "btw" as const } : {}) } };
     }
+    case "session.mcp.authorize": {
+      if (!/^[a-zA-Z0-9_-]{1,200}$/.test(id) || Object.keys(input).some(key => !["type","hostId","sessionId","epoch","expectedRevision","serverName"].includes(key))) throw new Error("Invalid MCP authorization start.");
+      return { id, command: { type, hostId: text(input.hostId, "host ID", 200), sessionId: text(input.sessionId, "session ID", 200), ...parseNativeSessionMcpReconnect({epoch:input.epoch,expectedRevision:input.expectedRevision,serverName:input.serverName}) } };
+    }
     case "session.mcp.reload": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), ...parseNativeSessionMcpReload({epoch:input.epoch,expectedRevision:input.expectedRevision}) } };
     case "session.mcp.reconnect": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), ...parseNativeSessionMcpReconnect({epoch:input.epoch,expectedRevision:input.expectedRevision,serverName:input.serverName}) } };
     case "session.btw.promote":

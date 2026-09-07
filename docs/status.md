@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — desktop MCP authorization and private receipt recovery
+
+Live MCP settings now offers Authenticate for enabled HTTP/SSE servers through the session's actual OMP authorization controller. Durable commands preserve only the start identity; separate authenticated owner-fenced routes carry private callback answers and cancellation. Read-only recovery correlates the original operation after a lost acknowledgement, never starts a replacement worker, and cannot replay a callback. The desktop reuses native account callback controls, opens the issuer URL explicitly, and distinguishes saved credentials from actual reconnection. Worker protocol22 retains OMP18.1.10/Bun1.3.14.
+
+The full regression suite passes **928 tests / 27,152 assertions across182 files**, with29 skips and no failures. The focused batch passes77 tests/375 assertions; the final controller suite passes10 tests/29 assertions. Typecheck and production build pass. Five final hidden Electron captures exercise actual authenticated host/native OAuth through the production transports and a fixture IPC adapter: one start, one callback, one token exchange, native reconnect,390px layout and reopen without replay. Actual host tests additionally cover simultaneous duplicate answers, failed durable receipt storage and restart recovery. The first component run exposed a host-only loopback launch URL; the action now opens the issuer URL. This is local-issuer source/component evidence, not hosted-provider, full installed IPC, native-window or pixel-parity acceptance.
+
+Native `/mcp reauth`, automatic tool-challenge consent/lifetime, broker refresh and matched external-provider/native UI verification remain open. Private scope, logs and source hashes: `.data/mcp-authorization-desktop-checkpoint/`; final component evidence: `.data/mcp-authorization-ui-source30-3/`. All1,737 sealed reference records and four manifest hashes match. Installed services, personal auth configuration and preserved Work runs remain unchanged; no new native handoff was requested.
+
 ## Source30 — session-owned MCP authorization lifecycle
 
 Explicit MCP OAuth now has a real session/worker lifecycle: start, inspect, answer and cancel in worker protocol21. It reserves the native MCP mutation queue, rejects competing session mutations, cancels and drains on Stop/disposal, and fences exact authorization/request identities. Reopening a worker cannot answer its predecessor's callback. Raw responses stay out of native transcripts.

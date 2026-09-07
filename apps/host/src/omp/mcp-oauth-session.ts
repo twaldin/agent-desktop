@@ -27,6 +27,7 @@ export class NativeMcpAuthorization {
 
   constructor(private readonly input: {
     cwd: string;
+    commandId?: string;
     serverName: string;
     manager: MCPManager;
     authStorage: AuthStorage;
@@ -122,7 +123,7 @@ export class NativeMcpAuthorization {
   get pending(): boolean { return !this.#terminal; }
   snapshot(): NativeMcpAuthorizationSnapshot {
     return {
-      authorizationId: this.id, serverName: this.input.serverName,
+      authorizationId: this.id, serverName: this.input.serverName, ...(this.input.commandId ? {commandId:this.input.commandId} : {}),
       status: this.#status, phase: this.#phase, credentialsStored: this.#credentialsStored,
       credentialWrite: this.#credentialWrite,
       configuration: this.#configuration, reconnected: this.#reconnected,

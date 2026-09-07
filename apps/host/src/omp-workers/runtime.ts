@@ -1,4 +1,4 @@
-import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeSessionMcpReconnect } from "@agent-desktop/shared";
+import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
@@ -42,7 +42,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
-  startSessionMcpAuthorization(request: NativeSessionMcpReconnect): Promise<NativeMcpAuthorizationSnapshot>;
+  startSessionMcpAuthorization(request: NativeMcpAuthorizationStart): Promise<NativeMcpAuthorizationSnapshot>;
   getSessionMcpAuthorization(): Promise<NativeMcpAuthorizationSnapshot | null>;
   respondSessionMcpAuthorization(request: NativeMcpAuthorizationReply): Promise<NativeMcpAuthorizationSnapshot>;
   cancelSessionMcpAuthorization(authorizationId: string): Promise<NativeMcpAuthorizationSnapshot>;
@@ -75,7 +75,7 @@ interface Pending {
   resolve(value: unknown): void;
   reject(error: unknown): void;
   timeout?: ReturnType<typeof setTimeout>;
-  uncertainTransport?: "prompt-admission" | "question-resolution";
+  uncertainTransport?: "prompt-admission" | "question-resolution" | "mcp-authorization";
 }
 
 class WorkerClient {
@@ -156,6 +156,7 @@ class WorkerClient {
   }
 
   #transportFailure(pending: Pending | undefined, error: unknown): unknown {
+    if (pending?.uncertainTransport === "mcp-authorization") return Object.assign(new Error("MCP authorization delivery is unknown. Inspect its current state before acting again."), {code:"OUTCOME_UNKNOWN"});
     if (pending?.uncertainTransport === "prompt-admission") return new OmpPromptAdmissionError(error);
     if (pending?.uncertainTransport === "question-resolution") return new DetachedQuestionOutcomeUnknown(error);
     return error;
@@ -449,10 +450,10 @@ export class WorkerRuntime {
       startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
       readSessionMcpResource: request => client.request({ operation: "readSessionMcpResource", args: { request } }, 35_000),
       getSessionMcp: () => client.request({ operation: "getSessionMcp" }, 15_000),
-      startSessionMcpAuthorization: request => client.request({ operation: "startSessionMcpAuthorization", args: { request } }),
-      getSessionMcpAuthorization: () => client.request({ operation: "getSessionMcpAuthorization" }),
-      respondSessionMcpAuthorization: request => client.request({ operation: "respondSessionMcpAuthorization", args: { request } }),
-      cancelSessionMcpAuthorization: authorizationId => client.request({ operation: "cancelSessionMcpAuthorization", args: { authorizationId } }),
+      startSessionMcpAuthorization: request => client.request({ operation: "startSessionMcpAuthorization", args: { request } }, 15_000, "mcp-authorization"),
+      getSessionMcpAuthorization: () => client.request({ operation: "getSessionMcpAuthorization" }, 15_000),
+      respondSessionMcpAuthorization: request => client.request({ operation: "respondSessionMcpAuthorization", args: { request } }, 15_000, "mcp-authorization"),
+      cancelSessionMcpAuthorization: authorizationId => client.request({ operation: "cancelSessionMcpAuthorization", args: { authorizationId } }, 15_000, "mcp-authorization"),
       reloadSessionMcp: request => client.request({ operation: "reloadSessionMcp", args: { request } }, 120_000),
       reconnectSessionMcp: request => client.request({ operation: "reconnectSessionMcp", args: { request } }, 120_000),
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),

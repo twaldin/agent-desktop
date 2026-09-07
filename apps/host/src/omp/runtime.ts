@@ -1,4 +1,4 @@
-import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply } from "@agent-desktop/shared";
+import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativeSessionMcpResourceRequest, NativeSessionMcpResourceResult } from "@agent-desktop/shared";
 import { NativeSessionMcp } from "./mcp-session";
 import type { NativeSessionMcpSnapshot, NativeSessionMcpReload, NativeSessionMcpReconnect } from "@agent-desktop/shared";
@@ -90,7 +90,7 @@ export interface OmpSession {
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
   readSessionMcpResource(request: NativeSessionMcpResourceRequest): Promise<NativeSessionMcpResourceResult>;
   getSessionMcp(): NativeSessionMcpSnapshot;
-  startSessionMcpAuthorization(request: NativeSessionMcpReconnect): NativeMcpAuthorizationSnapshot;
+  startSessionMcpAuthorization(request: NativeMcpAuthorizationStart): NativeMcpAuthorizationSnapshot;
   getSessionMcpAuthorization(): NativeMcpAuthorizationSnapshot | null;
   respondSessionMcpAuthorization(request: NativeMcpAuthorizationReply): NativeMcpAuthorizationSnapshot;
   cancelSessionMcpAuthorization(authorizationId: string): NativeMcpAuthorizationSnapshot;
@@ -634,7 +634,7 @@ export class OmpRuntime {
           assertIdle();
           if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
             throw new Error("Resolve pending native work before authorizing an MCP server.");
-          const operation = mcp.startAuthorization(request, { cwd: manager.getCwd(), authStorage: auth, assertOwner: assertSessionActive });
+          const operation = mcp.startAuthorization(request, { commandId: request.commandId, cwd: manager.getCwd(), authStorage: auth, assertOwner: assertSessionActive });
           trackMcpMutation(operation.completion);
           return operation.snapshot();
         },

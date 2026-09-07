@@ -1,5 +1,6 @@
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
+import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondSessionMcpAuthorization } from "./session-mcp-authorization-transport";
 import type { NativePluginMutation, NativeMcpMutation } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
 import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
@@ -260,6 +261,19 @@ ipcMain.handle("host:mcp-resource", async (event, sessionId: string, request: im
 });
 ipcMain.handle("host:session-mcp", async (event, sessionId: string, hostId?: string, commandId?: string) => {
   assertTrustedSender(event); return requestSessionMcp(await endpointFor(hostId), sessionId, commandId);
+});
+function requireMcpAuthorizationOwner(hostId: string): string {
+  if (typeof hostId !== "string" || !hostId.length || hostId.length > 200 || /[\0-\x1f\x7f]/.test(hostId)) throw new Error("Choose the MCP authorization owning host.");
+  return hostId;
+}
+ipcMain.handle("host:session-mcp-authorization", async (event, sessionId: string, hostId: string, commandId?: string) => {
+  assertTrustedSender(event); return requestSessionMcpAuthorization(await endpointFor(requireMcpAuthorizationOwner(hostId)), sessionId, commandId);
+});
+ipcMain.handle("host:session-mcp-authorization-respond", async (event, sessionId: string, reply: import("@agent-desktop/shared").NativeMcpAuthorizationReply, hostId: string) => {
+  assertTrustedSender(event); return respondSessionMcpAuthorization(await endpointFor(requireMcpAuthorizationOwner(hostId)), sessionId, reply);
+});
+ipcMain.handle("host:session-mcp-authorization-cancel", async (event, sessionId: string, authorizationId: string, hostId: string) => {
+  assertTrustedSender(event); return cancelSessionMcpAuthorization(await endpointFor(requireMcpAuthorizationOwner(hostId)), sessionId, authorizationId);
 });
 ipcMain.handle("host:btw", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestBtw(await endpointFor(hostId), sessionId);

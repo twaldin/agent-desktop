@@ -1,3 +1,4 @@
+import { SessionMcpAuthorizationHttp } from "./session-mcp-authorization-http";
 import { SessionMcpResourceHttp } from "./session-mcp-resource-http";
 import { SessionMcpHttp } from "./session-mcp-http";
 import { BtwPromotionService } from "./btw-promotion";
@@ -322,6 +323,19 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     getHandle,
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; },
   });
+  const sessionMcpAuthorization = new SessionMcpAuthorizationHttp({ hostId: store.host.id,
+    sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    existing: async id => handles.get(id)?.catch(() => undefined),
+    receipt: (sessionId, commandId) => {
+      const entry = store.getCommand(commandId);
+      if (!entry || entry.command?.type !== "session.mcp.authorize" || entry.command.sessionId !== sessionId || entry.command.hostId !== store.host.id) return {commandId,state:"absent"};
+      if (entry.state === "pending") return {commandId,state:commands.has(commandId)?"pending":"unknown"};
+      const result = entry.result;
+      const value = result?.ok ? result.value : undefined;
+      if (value && "type" in value && value.type === "session.mcp.authorization") return {commandId,state:"succeeded",authorizationId:value.authorizationId};
+      return {commandId,state:result && !result.ok && result.error.code !== "OUTCOME_UNKNOWN" ? "failed" : "unknown"};
+    },
+  });
   const sessionMcpResources = new SessionMcpResourceHttp({ hostId: store.host.id,
     sessionExists: id => !stopping && Boolean(store.getSession(id)),
     existing: async id => handles.get(id)?.catch(() => undefined),
@@ -524,6 +538,18 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const snapshot = await btw.start(command.sessionId, { runId: envelope.id, question: command.question }, checkedHandle);
         return ok({ type: "session.btw", snapshot });
       }
+      case "session.mcp.authorize": {
+        if (command.hostId !== store.host.id) return fail(envelope.id,"OWNER_MISMATCH","The selected authorization belongs to another host.");
+        if (!store.getSession(command.sessionId)) return fail(envelope.id,"STALE_TARGET","The selected session no longer exists.");
+        if (executions.has(command.sessionId)) return fail(envelope.id,"SESSION_BUSY","Wait for the native turn before authorizing an MCP server.");
+        const handle = await handles.get(command.sessionId)?.catch(() => undefined);
+        if (!handle) return fail(envelope.id,"MCP_NOT_LOADED","This session has no loaded native runtime. No authorization started a worker.");
+        const snapshot = await handle.startSessionMcpAuthorization({commandId:envelope.id,epoch:command.epoch,expectedRevision:command.expectedRevision,serverName:command.serverName});
+        if (snapshot.commandId !== envelope.id) return fail(envelope.id,"OUTCOME_UNKNOWN","The worker did not confirm this authorization identity. Inspect its current state before starting another.");
+        // Persist the start receipt only. Live callback URLs/prompts/answers
+        // belong exclusively to the private authorization route.
+        return ok({type:"session.mcp.authorization",authorizationId:snapshot.authorizationId});
+      }
       case "session.mcp.reload":
       case "session.mcp.reconnect": {
         if (!store.getSession(command.sessionId)) return fail(envelope.id,"STALE_TARGET","The selected session no longer exists.");
@@ -688,7 +714,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (claim.kind === "conflict") return fail(envelope.id, "COMMAND_ID_REUSED", "This command ID belongs to a different request.");
     if (claim.kind === "done") return claim.record.result!;
     if (claim.kind === "pending") return commands.get(envelope.id)
-      ?? fail(envelope.id, "OUTCOME_UNKNOWN", "This command was pending when the service stopped. Inspect its outcome before issuing a new command.");
+      ?? fail(envelope.id, "OUTCOME_UNKNOWN", "The original command has no confirmed durable receipt. Inspect its outcome before issuing a new command.");
     const command = envelope.command;
     const key = command.type === "workspace.mutate" ? `workspace:${JSON.stringify(command.target)}` : "sessionId" in command ? command.sessionId : "$catalog";
     const interrupt = command.type === "session.interrupt" || command.type === "session.environment.cancel";
@@ -773,6 +799,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
+        if (mcpAuthorizationResponse) return mcpAuthorizationResponse;
         const mcpResourceResponse = await sessionMcpResources.route(request, url);
         if (mcpResourceResponse) return mcpResourceResponse;
         const mcpStateResponse = await sessionMcpHttp.route(request, url);

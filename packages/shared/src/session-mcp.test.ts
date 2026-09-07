@@ -68,3 +68,20 @@ test("resource capability is optional and strictly boolean", () => {
   expect(parseNativeSessionMcpSnapshot({...legacy,canReadResources:false}).canReadResources).toBe(false);
   expect(()=>parseNativeSessionMcpSnapshot({...legacy,canReadResources:"true"})).toThrow();
 });
+
+test("authorization capability is optional for old hosts and strictly boolean when present", () => {
+	const legacyServer = parseNativeSessionMcpSnapshot(legacy).servers[0]!;
+	expect(legacyServer.canAuthorize).toBeUndefined();
+	expect(parseNativeSessionMcpSnapshot({
+		...legacy,
+		servers: [{ ...legacy.servers[0], canAuthorize: true }],
+	}).servers[0]?.canAuthorize).toBe(true);
+	expect(parseNativeSessionMcpSnapshot({
+		...legacy,
+		servers: [{ ...legacy.servers[0], canAuthorize: false }],
+	}).servers[0]?.canAuthorize).toBe(false);
+	expect(() => parseNativeSessionMcpSnapshot({
+		...legacy,
+		servers: [{ ...legacy.servers[0], canAuthorize: "true" }],
+	})).toThrow("authorization capability");
+});

@@ -1,4 +1,4 @@
-import { parseNativeMcpAuthorizationId, parseNativeMcpAuthorizationReply } from "@agent-desktop/shared";
+import { parseNativeMcpAuthorizationId, parseNativeMcpAuthorizationReply, parseNativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import { parseNativeSessionMcpResourceRequest } from "@agent-desktop/shared";
 import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { parseBrowserControlRequest, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
@@ -217,7 +217,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
       }
       case "readSessionMcpResource": respond(true, await requireSession().readSessionMcpResource(parseNativeSessionMcpResourceRequest(message.args.request))); break;
-      case "startSessionMcpAuthorization": respond(true, requireSession().startSessionMcpAuthorization(parseNativeSessionMcpReconnect(message.args.request))); break;
+      case "startSessionMcpAuthorization": respond(true, requireSession().startSessionMcpAuthorization(parseNativeMcpAuthorizationStart(message.args.request))); break;
       case "getSessionMcpAuthorization": respond(true, requireSession().getSessionMcpAuthorization()); break;
       case "respondSessionMcpAuthorization": respond(true, requireSession().respondSessionMcpAuthorization(parseNativeMcpAuthorizationReply(message.args.request))); break;
       case "cancelSessionMcpAuthorization": respond(true, requireSession().cancelSessionMcpAuthorization(parseNativeMcpAuthorizationId(message.args.authorizationId))); break;
