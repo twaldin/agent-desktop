@@ -89,6 +89,9 @@ describe("NativePlugins", () => {
     expect(projectAlpha.canToggle).toBe(false);
     expect(projectAlpha.canSetSettings).toBe(false);
     expect(userAlpha.shadowed).toBe(true);
+    expect(projectAlpha).not.toHaveProperty("acquisition");
+    expect(userAlpha).not.toHaveProperty("acquisition");
+    expect(projectOnly).not.toHaveProperty("acquisition");
     expect(projectOnly.enabled).toBe(false);
     expect(projectOnly).toBeTruthy(); // lock-only entries are retained, not omitted like manager.list().
     const endpoint = userAlpha.settings.find(setting => setting.key === "endpoint")!;
@@ -145,7 +148,12 @@ describe("NativePlugins", () => {
     await writeFile(projectLockPath, json(projectLock));
     const plugins = new NativePluginsClass();
     const before = await plugins.read(project);
-    expect(before.plugins.filter(plugin => plugin.kind === "marketplace").map(plugin => [plugin.scope, plugin.shadowed])).toEqual([["project", undefined], ["user", true]]);
+    expect(before.plugins.filter(plugin => plugin.kind === "marketplace").map(plugin => ({
+      scope: plugin.scope, shadowed: plugin.shadowed, acquisition: plugin.acquisition,
+    }))).toEqual([
+      { scope: "project", shadowed: undefined, acquisition: { pluginId: "market@local", scope: "project" } },
+      { scope: "user", shadowed: true, acquisition: { pluginId: "market@local", scope: "user" } },
+    ]);
     expect(before.plugins.some(plugin => plugin.id === "package:project:market-runtime")).toBe(false);
     const after = await plugins.mutate(project, { expectedRevision: before.revision, pluginId: "marketplace:project:market@local", operation: "enabled", enabled: false });
     expect(after.plugins.find(plugin => plugin.id === "marketplace:project:market@local")!.enabled).toBe(false);

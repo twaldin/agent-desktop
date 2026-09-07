@@ -220,13 +220,15 @@ function pluginSettings(plugin: InstalledPlugin, raw: Record<string, unknown>, p
   });
 }
 function row(id: string, scope: "user" | "project", kind: "package" | "marketplace", plugin: InstalledPlugin,
-  rawSettings: Record<string, unknown>, projectSettings: Record<string, unknown>, capabilities: { toggle: boolean; features: boolean; settings: boolean; reason?: string }, shadowed = false): Row {
+  rawSettings: Record<string, unknown>, projectSettings: Record<string, unknown>, capabilities: { toggle: boolean; features: boolean; settings: boolean; reason?: string }, shadowed = false,
+  acquisition?: NonNullable<NativePlugin["acquisition"]>): Row {
   const definitions = plugin.manifest.features ?? {};
   const enabledSet = plugin.enabledFeatures === null ? null : new Set(plugin.enabledFeatures);
   return { nativeName: plugin.name, manifest: plugin.manifest, public: {
     id, name: plugin.name, title: plugin.manifest.name ?? plugin.name,
     ...(plugin.manifest.description ? { description: plugin.manifest.description } : {}),
     version: plugin.version, scope, kind, enabled: plugin.enabled, ...(shadowed ? { shadowed: true } : {}),
+    ...(acquisition ? { acquisition } : {}),
     canToggle: capabilities.toggle, canSetFeatures: capabilities.features, canSetSettings: capabilities.settings,
     ...(capabilities.reason ? { configurationReason: capabilities.reason } : {}),
     features: Object.entries(definitions).sort(([a], [b]) => a.localeCompare(b)).map(([name, feature]) => ({
@@ -319,7 +321,8 @@ export class NativePlugins {
       rows.push(row(`marketplace:${summary.scope}:${summary.id}`, summary.scope, "marketplace", plugin,
         scopedRuntime.settings[plugin.name] ?? {}, project.settings?.[plugin.name] ?? {},
         { toggle: true, features: !projectScoped, settings: !projectScoped,
-          ...(projectScoped ? { reason: READ_ONLY_PROJECT } : {}) }, summary.shadowedBy === "project"));
+          ...(projectScoped ? { reason: READ_ONLY_PROJECT } : {}) }, summary.shadowedBy === "project",
+        { pluginId: summary.id, scope: summary.scope }));
       files.push(path.join(entry.installPath, "package.json"));
     }
     rows.sort((a, b) => a.public.title.localeCompare(b.public.title) || a.public.id.localeCompare(b.public.id));
@@ -371,8 +374,8 @@ export class NativePlugins {
     const project = target.public.scope === "project";
     if (mutation.operation === "enabled" && target.public.canToggle) {
       if (target.public.kind === "marketplace") {
-        const nativeId = target.public.id.slice(`marketplace:${target.public.scope}:`.length);
-        await this.#marketplace(current.context).setPluginEnabled(nativeId, mutation.enabled, target.public.scope);
+        if (!target.public.acquisition) throw new Error("Marketplace plugin acquisition identity is unavailable");
+        await this.#marketplace(current.context).setPluginEnabled(target.public.acquisition.pluginId, mutation.enabled, target.public.acquisition.scope);
       } else await new PluginManager(cwd).setEnabled(target.nativeName, mutation.enabled);
     } else if (mutation.operation === "features" && target.public.canSetFeatures) {
       const names = new Set(Object.keys(target.manifest.features ?? {}));

@@ -1,4 +1,4 @@
-import type {NativePluginAcquisition, WorkspaceTarget} from '@agent-desktop/shared';
+import type {NativePluginAcquisition, NativePluginAcquisitionReceipt, WorkspaceTarget} from '@agent-desktop/shared';
 export interface AcquisitionIntent {id:string;operation:NativePluginAcquisition['operation'];target?:WorkspaceTarget}
 const prefix=(host:string)=>`agent-desktop.plugin-acquisition.${encodeURIComponent(host)}.`;
 export function readAcquisitionIntents(storage:Storage,host:string):AcquisitionIntent[]{
@@ -18,3 +18,6 @@ export function saveAcquisitionIntent(storage:Storage,host:string,intent:Acquisi
  storage.setItem(prefix(host)+intent.id,JSON.stringify({id:intent.id,operation:intent.operation,...(intent.target?{target:intent.target}:{})}));
 }
 export function clearAcquisitionIntent(storage:Storage,host:string,id:string):void{storage.removeItem(prefix(host)+id);}
+export function latestLocalAcquisitionResult(receipts:NativePluginAcquisitionReceipt[],ids:ReadonlySet<string>,target?:WorkspaceTarget):NativePluginAcquisitionReceipt|undefined{
+ return receipts.find(row=>ids.has(row.id)&&JSON.stringify(row.target)===JSON.stringify(target));
+}

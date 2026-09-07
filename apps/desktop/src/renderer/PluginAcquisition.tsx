@@ -1,17 +1,18 @@
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {createPortal} from 'react-dom';
-import type {DesktopBridge,NativeMarketplaceCatalog,NativePluginAcquisition,NativePluginAcquisitionReceipt,WorkspaceTarget} from '@agent-desktop/shared';
+import type {DesktopBridge,NativeMarketplaceCatalog,NativePlugin,NativePluginAcquisition,NativePluginAcquisitionReceipt,WorkspaceTarget} from '@agent-desktop/shared';
 import {Icon} from './Icons';
 import {InstalledPluginActions} from './InstalledPluginActions';
 import {assertMarketplaceGitSource,parseMarketplaceSourceOptions} from '../../../../packages/shared/src/plugin-acquisition';
-import {clearAcquisitionIntent,readAcquisitionIntents,saveAcquisitionIntent,type AcquisitionIntent} from './plugin-acquisition-intents';
+import {clearAcquisitionIntent,latestLocalAcquisitionResult,readAcquisitionIntents,saveAcquisitionIntent,type AcquisitionIntent} from './plugin-acquisition-intents';
 import './plugin-acquisition.css';
 
-type Props={initialMarketplace?:string;initialAdd?:boolean;bridge:DesktopBridge;hostId:string;target?:WorkspaceTarget;connected:boolean;visible:boolean;query:string;actionsRoot:HTMLElement|null;onMcp():void;onInstalledChanged():void;children:ReactNode};
+type Props={showHistoricalResult?:boolean;initialMarketplace?:string;initialAdd?:boolean;bridge:DesktopBridge;hostId:string;target?:WorkspaceTarget;connected:boolean;visible:boolean;query:string;actionsRoot:HTMLElement|null;onMcp():void;onInstalledChanged():void;children:ReactNode|((controls:{blocked:boolean;installedActions(plugin:NativePlugin,disabled?:boolean):ReactNode})=>ReactNode)};
 const label=(op:NativePluginAcquisition['operation'])=>({'marketplace.add':'Add marketplace','marketplace.update':'Upgrade marketplace','marketplace.remove':'Remove marketplace','plugin.install':'Install plugin','plugin.upgrade':'Upgrade plugin','plugin.uninstall':'Uninstall plugin'}[op]);
 const owner=(target?:WorkspaceTarget)=>target?('projectId'in target?target.projectId:target.sessionId):'Host defaults';
-export function PluginAcquisition({initialMarketplace,initialAdd=false,bridge,hostId,target,connected,visible,query,actionsRoot,onMcp,onInstalledChanged,children}:Props){
+export function PluginAcquisition({showHistoricalResult=true,initialMarketplace,initialAdd=false,bridge,hostId,target,connected,visible,query,actionsRoot,onMcp,onInstalledChanged,children}:Props){
  const [catalog,setCatalog]=useState<NativeMarketplaceCatalog|null>(null),[receipts,setReceipts]=useState<NativePluginAcquisitionReceipt[]>([]),[intents,setIntents]=useState<AcquisitionIntent[]>(()=>readAcquisitionIntents(localStorage,hostId));
+ const localResults=useRef(new Set(intents.map(intent=>intent.id)));
  const [loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null),[menu,setMenu]=useState(false),[adding,setAdding]=useState(initialAdd),[source,setSource]=useState('');
  const [gitRef,setGitRef]=useState(''),[sparsePaths,setSparsePaths]=useState(''),[sourceHelp,setSourceHelp]=useState(false);
  const formValues=useRef({source,gitRef,sparsePaths});formValues.current={source,gitRef,sparsePaths};
@@ -72,7 +73,7 @@ export function PluginAcquisition({initialMarketplace,initialAdd=false,bridge,ho
   const ticket=epoch.current;const id=crypto.randomUUID();const submittedForm=formValues.current;
   try{saveAcquisitionIntent(localStorage,hostId,{id,operation:action.operation,target});}
   catch{setError('This window cannot save the request identity. Nothing was sent.');return;}
-  setIntents(readAcquisitionIntents(localStorage,hostId));setLoading(true);busyRef.current=true;setError(null);
+  localResults.current.add(id);setIntents(readAcquisitionIntents(localStorage,hostId));setLoading(true);busyRef.current=true;setError(null);
   try{
    const receipt=await bridge.startPluginAcquisition(target,{id,expectedRevision:catalog.revision,action},hostId);
    if(!mounted.current||ticket!==epoch.current)return;
@@ -82,7 +83,7 @@ export function PluginAcquisition({initialMarketplace,initialAdd=false,bridge,ho
   finally{if(mounted.current&&ticket===epoch.current){busyRef.current=false;setLoading(false);void refresh();}}
  };
  useEffect(()=>{if(!connected)setLoading(false);},[connected]);
- const latest=receipts[0];
+ const latest=showHistoricalResult?receipts[0]:latestLocalAcquisitionResult(receipts,localResults.current,target);
  const observed=useRef<string>('');
  useEffect(()=>{const value=receipts.filter(x=>x.state==='succeeded').map(x=>x.id).join();if(value!==observed.current){observed.current=value;onInstalledChanged();}},[receipts]);
  const inspect=async(receipt:NativePluginAcquisitionReceipt,button:HTMLElement)=>{
@@ -104,6 +105,13 @@ export function PluginAcquisition({initialMarketplace,initialAdd=false,bridge,ho
  };
  const market=catalog?.marketplaces.find(x=>x.name===selected);
  const askRemove=(action:NativePluginAcquisition,button:HTMLElement)=>{opener.current=button;setConfirmation(action);};
+ const installedActions=(plugin:NativePlugin,disabled=false):ReactNode=>{
+  const identity=plugin.acquisition;if(!identity||!catalog)return null;
+  const installed=catalog.installed.find(row=>row.id===identity.pluginId&&row.scope===identity.scope);if(!installed)return null;
+  const item=catalog.marketplaces.flatMap(market=>market.plugins.map(item=>({item,id:`${item.name}@${market.name}`}))).find(row=>row.id===identity.pluginId)?.item;
+  return <InstalledPluginActions key={`${hostId}:${targetKey}:${installed.id}:${installed.scope}`} name={plugin.title||plugin.name} revision={catalog.revision} disabled={blocked||disabled} canUpgrade={Boolean(item?.installable)} onAction={(action,button)=>{opener.current=button;if(action==='uninstall')askRemove({operation:'plugin.uninstall',pluginId:installed.id,scope:installed.scope},button);else void start({operation:'plugin.upgrade',pluginId:installed.id,scope:installed.scope});}}/>;
+ };
+
  return <>
  {actionsRoot&&createPortal(<div className="acquisition-actions"><button ref={addRef} className="primary-button" aria-haspopup="menu" aria-expanded={menu} disabled={!connected} onClick={()=>setMenu(!menu)}>Add <Icon name="chevron"/></button>{menu&&<div ref={menuRef} role="menu" aria-label="Add integration" className="acquisition-menu" onKeyDown={event=>{
   const buttons=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')],index=buttons.indexOf(document.activeElement as HTMLButtonElement);
@@ -116,7 +124,7 @@ export function PluginAcquisition({initialMarketplace,initialAdd=false,bridge,ho
  {unknown.map(intent=><div className="acquisition-receipt" key={intent.id}><div><strong>{label(intent.operation)}</strong><small>No host receipt yet. Closing only prevents a request that has not started.</small></div><button className="secondary-button" disabled={!connected||loading} onClick={()=>void closeUnknown(intent)}>Close pending request</button></div>)}
  <button className="native-reset" disabled={!connected} onClick={()=>{setError(null);void refresh();}}>Refresh status</button></section>}
  {latest&&!active.length&&!unknown.length&&<p role="status" className="acquisition-result">{label(latest.operation)} · {latest.state==='succeeded'?'Completed':latest.message??'Reviewed'}</p>}
- {!visible?children:<div className="marketplace-list" aria-label="Marketplaces"><div className="marketplace-refresh"><button className="icon-button" aria-label="Refresh marketplaces" title="Refresh marketplaces" disabled={!connected} onClick={()=>{setError(null);void refresh(true);}}><Icon name="refresh"/></button></div>
+ {!visible?(typeof children==='function'?children({blocked,installedActions}):children):<div className="marketplace-list" aria-label="Marketplaces"><div className="marketplace-refresh"><button className="icon-button" aria-label="Refresh marketplaces" title="Refresh marketplaces" disabled={!connected} onClick={()=>{setError(null);void refresh(true);}}><Icon name="refresh"/></button></div>
  {selected&&<button className="integration-back" onClick={()=>setSelected(null)}><Icon name="browserBack"/> Marketplaces</button>}
  {!catalog&&<p role="status">{connected?'Loading marketplaces…':'Marketplace catalog unavailable offline.'}</p>}
  {catalog&&!selected&&!catalog.marketplaces.length&&<p className="integration-placeholder">No marketplaces added.</p>}

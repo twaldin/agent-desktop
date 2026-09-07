@@ -19,3 +19,13 @@
 .plugin-native-configuration > summary::-webkit-details-marker { display:none; }
 .plugin-native-configuration > summary .icon { width:16px; height:16px; color:var(--secondary); }
 .plugin-native-configuration[open] > summary .icon { transform:rotate(90deg); }
+
+.plugin-detail-header-actions { display:flex; flex:none; align-items:center; gap:12px; }
+.native-plugin-browser { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; }
+.native-integrations.standalone-plugin-detail { padding:0; }
+.standalone-plugin-detail .integration-content { max-width:784px; padding:20px 24px 48px; }
+.plugin-detail-toolbar { display:flex; flex:none; align-items:center; gap:12px; min-height:46px; padding:0 24px; }
+.plugin-detail-toolbar button { flex:none; border:0; padding:0; background:transparent; color:var(--secondary); font:inherit; cursor:pointer; }
+.plugin-detail-toolbar button:hover { color:var(--text); }
+.plugin-detail-toolbar .icon { width:16px; height:16px; flex:none; color:var(--secondary); }
+.plugin-detail-toolbar span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }

@@ -1,8 +1,14 @@
 # Milestone status
 
+## Standalone native plugin detail
+
+Installed plugin chips now open a standalone breadcrumb/detail with the ordinary sidebar, preserving directory search/tab/focus. Native marketplace Upgrade/Uninstall use exact host-projected scope/identity. Same-owner offline details remain readable; owner changes fence pending reads. Recovered completion labels are target-scoped while unresolved acquisition barriers stay host-wide.
+
+Validation:8 hidden Electron checks/10 captures against a real isolated OMP host, one actual upgrade and one uninstall, unchanged draft revision1, zero sessions. Existing directory/Skills regression also passes.28 focused tests/141 assertions, typecheck, build and independent review pass. An earlier stale PNG is excluded and retained. Worker protocol28; schema7 and pins unchanged. Authored metadata/artwork, Uninstall color and full installed/native pixel parity remain open. No Work launch or fixture replay. Evidence: `.data/plugin-standalone-checkpoint/`, `.data/plugin-standalone-ui-3/`.
+
 ## Installed-plugin summary
 
-The existing plugin detail now has a compact native enable action and Information rows, with OMP features/settings under Configuration. Final measured content width is736px and button height28px. Three hidden Electron checks/five captures verify four actual native writes; three renderer tests/eight assertions, typecheck, build and source review pass. Standalone routing, detail-local More actions, additional metadata/artwork and native pixel parity remain open. No installed app changed. Evidence: `.data/plugin-detail-checkpoint/`, `.data/plugin-detail-ui-3/`.
+The existing plugin detail now has a compact native enable action and Information rows, with OMP features/settings under Configuration. Final measured content width is736px and button height28px. Three hidden Electron checks/five captures verify four actual native writes; three renderer tests/eight assertions, typecheck, build and source review pass. Standalone routing and detail-local More actions are addressed in the newer checkpoint above; additional metadata/artwork and native pixel parity remain open. No installed app changed. Evidence: `.data/plugin-detail-checkpoint/`, `.data/plugin-detail-ui-3/`.
 
 ## Scoped native plugin upgrades
 

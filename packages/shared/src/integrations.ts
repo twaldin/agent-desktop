@@ -8,6 +8,8 @@ export interface PluginSetting {
 export interface NativePlugin {
   id: string; name: string; title: string; description?: string; version: string;
   scope: IntegrationScope; kind: 'package' | 'marketplace'; enabled: boolean; shadowed?: boolean;
+  /** Host-validated native acquisition identity. Present only for marketplace installs. */
+  acquisition?: { pluginId: string; scope: IntegrationScope };
   canToggle: boolean; canSetFeatures: boolean; canSetSettings: boolean; configurationReason?: string;
   features: Array<{ name: string; description?: string; enabled: boolean; default: boolean }>;
   enabledFeatures: string[] | null; settings: PluginSetting[];
