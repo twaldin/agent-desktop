@@ -39,7 +39,12 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
     case "environment.preparation": return { type: query.type, preparationId: text(query.preparationId, 200) };
     case "environment.read": return { type: query.type, configPath: text(query.configPath) };
     case "files.list": return { type: query.type, path: optionalText(query.path) };
-    case "file.stat": case "file.read": case "file.open-options": return { type: query.type, path: text(query.path) };
+    case "file.stat": case "file.read": case "file.open-options": case "file.copy-info": return { type: query.type, path: text(query.path) };
+    case "file.copy-chunk": {
+      if (typeof query.revision !== "string" || !/^[a-f0-9]{64}$/.test(query.revision)
+        || !Number.isSafeInteger(query.offset) || (query.offset as number) < 0) throw new Error("Invalid file copy revision or offset.");
+      return { type: query.type, path: text(query.path), revision: query.revision, offset: query.offset as number };
+    }
     case "environment.actions": case "environments.list": case "git.status": case "git.branches": case "git.worktrees": return { type: query.type };
     case "git.diff": {
       if (query.context !== undefined && (!Number.isSafeInteger(query.context) || (query.context as number) < 0 || (query.context as number) > 1000)) throw new Error("Invalid diff context.");
@@ -152,6 +157,8 @@ export class HostWorkspaces {
         await workspace.externalFilePath(query.path);
         return this.fileOpen.options(query.path);
       }
+      case "file.copy-info": return { type: query.type, path: query.path, ...await workspace.copyInfo(query.path) };
+      case "file.copy-chunk": return { type: query.type, path: query.path, ...await workspace.copyChunk(query.path, query.revision, query.offset) };
       case "git.status": return { type: query.type, status: await workspace.gitStatus() };
       case "git.branches": return { type: query.type, branches: await workspace.branches() };
       case "git.diff": return { type: query.type, diff: await workspace.diff(query) };

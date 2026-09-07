@@ -73,6 +73,15 @@ export function WorkspaceFileOpen({ data, path, active, disabled }: {
       if (mounted.current) setLaunching(false);
     }
   };
+  const saveCopy = async () => {
+    if (launchPending.current || !active || !data.connected || !data.canSaveCopy) return;
+    launchPending.current = true; setLaunching(true); setError(undefined); close();
+    const ownEpoch = epoch.current;
+    try { await data.saveCopy(path); }
+    catch (cause) {
+      if (mounted.current && epoch.current === ownEpoch) setError(`Could not save a copy. ${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally { launchPending.current = false; if (mounted.current) setLaunching(false); }
+  };
   useLayoutEffect(() => {
     if (!opened || !trigger.current) return;
     const anchor = trigger.current;
@@ -133,6 +142,9 @@ export function WorkspaceFileOpen({ data, path, active, disabled }: {
         <button type="button" role="menuitem" disabled={blocked} onClick={() => void open("fileManager")}><span>Open in folder</span></button>
       </>}
       {data.connected && options && !options.targets.length && <p role="status">{options.availabilityReason ?? "No supported applications are available on this host."}</p>}
+      <button type="button" role="menuitem" disabled={!data.connected || launching || !data.canSaveCopy}
+        title={!data.canSaveCopy ? "Save as is unavailable in this desktop build" : !data.connected ? "Reconnect to copy this file" : undefined}
+        onClick={() => void saveCopy()}><span>Save as…</span></button>
     </div>, document.body)}
   </div>;
 }

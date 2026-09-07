@@ -26,6 +26,7 @@ import { requestComposerCatalog } from "./composer-transport";
 import { requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { verifyKnownHost } from "./host-recovery";
 import { resolveHostLaunch } from "./host-launch";
+import { saveWorkspaceCopy, workspaceCopySource, workspaceCopyOutcome } from "./workspace-save-copy";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
@@ -539,6 +540,29 @@ ipcMain.handle("host:interactions", (event, sessionId: string, hostId?: string) 
 ipcMain.handle("host:workspace-query", (event, target: WorkspaceTarget, query: WorkspaceQuery, hostId?: string) => {
   assertTrustedSender(event); return request("/v1/workspace/query", { target, query }, hostId);
 });
+const workspaceCopies = new Set<number>();
+ipcMain.handle("desktop:workspace-save-copy", async (event, target: WorkspaceTarget, path: string, hostId: string) => workspaceCopyOutcome(async () => {
+  assertTrustedSender(event);
+  const sender = event.sender, id = sender.id;
+  if (workspaceCopies.has(id)) throw new Error("A Save as operation is already open in this window.");
+  workspaceCopies.add(id);
+  const abort = new AbortController(), destroyed = () => abort.abort(new Error("The viewing window closed before its copy finished."));
+  sender.once("destroyed", destroyed);
+  try {
+    return await saveWorkspaceCopy({target, path, hostId}, {
+      signal: abort.signal,
+      choose: async defaultPath => {
+        const result = await dialog.showSaveDialog({defaultPath});
+        return result.canceled ? null : result.filePath ?? null;
+      },
+      source: async () => {
+        const endpoint = await endpointFor(hostId);
+        if (endpoint.hostId !== hostId) throw new Error("The selected file host changed. Reconnect before copying.");
+        return workspaceCopySource(endpoint, target, endpoint.hostId === connection?.hostId, abort.signal);
+      },
+    });
+  } finally { sender.removeListener("destroyed", destroyed); workspaceCopies.delete(id); }
+}));
 ipcMain.handle("host:interaction-response", (event, sessionId: string, interactionId: string, response: OmpInteractionResponse, hostId?: string) => {
   assertTrustedSender(event);
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200) throw new Error("Invalid session ID.");

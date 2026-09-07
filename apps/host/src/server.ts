@@ -27,7 +27,7 @@ import { TailnetNetwork, TAILNET_PORT } from "./network";
 import { hasAttachmentIntent, requiresAttachmentProtocol } from "./attachment-protocol";
 import { ImageAttachmentsHttp, AttachmentRequestError } from "./attachment-http";
 import { AttachmentImageError } from "./attachments";
-import { sameImageAttachments, detachedAnswerDraft, SESSION_ACTIVITY_OWNER_HEADER } from "@agent-desktop/shared";
+import { sameImageAttachments, detachedAnswerDraft, SESSION_ACTIVITY_OWNER_HEADER, WORKSPACE_OWNER_HEADER } from "@agent-desktop/shared";
 import type { PreparedPromptImage } from "./omp/images";
 import { AccountsHttp } from "./accounts-http";
 import { parseInteractionAnswer } from "./interaction-http";
@@ -904,7 +904,19 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }
         if (request.method === "POST" && url.pathname === "/v1/workspace/query") {
           const input = await request.json() as { target?: unknown; query?: unknown };
-          return Response.json(await workspaces.query(parseWorkspaceTarget(input?.target), parseWorkspaceQuery(input?.query)), { headers: { "Cache-Control": "no-store" } });
+          const copyRequest = Boolean(input?.query && typeof input.query === "object" && !Array.isArray(input.query)
+            && ["file.copy-info", "file.copy-chunk"].includes(String((input.query as { type?: unknown }).type)));
+          if (copyRequest) {
+            const headers = { "Cache-Control": "no-store", [WORKSPACE_OWNER_HEADER]: store.host.id };
+            if (request.headers.get(WORKSPACE_OWNER_HEADER) !== store.host.id) return Response.json({ error: { code: "OWNER_MISMATCH", message: "The file owner no longer matches this host." } }, { status: 409, headers });
+            try {
+              const target = parseWorkspaceTarget(input?.target), query = parseWorkspaceQuery(input?.query);
+              return Response.json(await workspaces.query(target, query), { headers });
+            }
+            catch (error) { return Response.json({ error: errorMessage(error) }, { status: 400, headers }); }
+          }
+          const target = parseWorkspaceTarget(input?.target), query = parseWorkspaceQuery(input?.query);
+          return Response.json(await workspaces.query(target, query), { headers: { "Cache-Control": "no-store" } });
         }
         const questionsPath = /^\/v1\/sessions\/([^/]+)\/questions$/.exec(url.pathname);
         if (questionsPath) {

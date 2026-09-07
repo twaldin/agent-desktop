@@ -1,12 +1,20 @@
 # Milestone status
 
+## Workspace file Save as
+
+The file editor’s Open options now includes Save as…, using the viewing desktop’s native dialog and the owning host’s actual bytes. Cancellation performs no host lookup/read. A copy preserves the active file and dirty buffer, supports binary/large/empty files, and never forces autosave or changes the draft. Transfer failures preserve the destination through staged writes; source/destination changes are checked before publication. Native dialog paths remain in main.
+
+Validation:76 scoped tests/485 assertions passed, followed by17 main-copy tests/83 assertions after authentication-error and IPC-message corrections; current typecheck/build pass. Five hidden-Electron checks/five captures also pass: two exact exports, one guarded failure, one cancellation, one later autosave, zero sessions and an unchanged draft. Dialog choice is injected. Screenshot review caught and verified removal of internal IPC text from errors. See [file editor](workspace-file-editor.md) for the exact evidence and limits. Existing installations, prior Work runs, sealed evidence and runtime pins remain unchanged.
+
+Native save-sheet/overwrite behavior, physical remote copying, download-completion helper behavior and full pixel parity remain unverified. Existing-file replacement has ordinary filesystem races and does not preserve inode/extended metadata; no restart-safe copy receipt is claimed. Private scope: `.data/workspace-file-save-copy-2026-09-07/`.
+
 ## Workspace file Open
 
 Dedicated file tabs now expose the split Open / Open options control, backed by the owning host’s installed application catalog and durable command receipts. The host confines file paths, rechecks applications at dispatch, and never substitutes the viewing client’s filesystem. Open uses current host bytes without forcing a save; the existing autosave continues independently. Offline, unavailable, inventory-error and uncertain-launch states have functioning controls.
 
 Validation:83 tests/496 assertions, typecheck/build and eight hidden-Electron checks/seven captures pass. The actual authenticated host recorded six Open deliveries/five unique IDs, four injected launch invocations, one later autosave write, zero sessions and the original revision1 draft. An unknown launch remains unknown after its same-ID check and is not replayed. The UI tests caught and verified fixes for lost focus in an empty menu and repeated discovery caused by portal focus events.
 
-The menu measures170px with14px text and a dark42/42/42 surface; the default menu token now also affects other menus, without granting them new pixel acceptance. External OS launches are injected, not exercised. Save as, dynamic app icons, complete app discovery/preference settings and terminal `$EDITOR` behavior remain open. Existing installations, Work runs, sealed references and runtime pins are unchanged. See [file editor](workspace-file-editor.md); private evidence `.data/workspace-file-open-2026-09-07/` and `.data/ui-acceptance/workspace-file-open-2026-09-07-final3/`.
+The menu measures170px with14px text and a dark42/42/42 surface; the default menu token now also affects other menus, without granting them new pixel acceptance. External OS launches are injected, not exercised. Save as is implemented below; its native OS acceptance, dynamic app icons, complete app discovery/preference settings and terminal `$EDITOR` behavior remain open. Existing installations, Work runs, sealed references and runtime pins are unchanged. See [file editor](workspace-file-editor.md); private evidence `.data/workspace-file-open-2026-09-07/` and `.data/ui-acceptance/workspace-file-open-2026-09-07-final3/`.
 
 ## Workspace file autosave and close recovery
 

@@ -40,7 +40,7 @@ export * from "./goal-control";
 export * from "./detached-questions";
 export * from "./btw";
 export type * from "./preferences";
-export type * from "./workspace-protocol";
+export * from "./workspace-protocol";
 export type * from "./workspace";
 export type * from "./accounts";
 export type * from "./interactions";
@@ -283,6 +283,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getInteractions(sessionId: string, hostId?: string): Promise<OmpInteraction[]>;
   getDetachedQuestions?(sessionId: string, hostId?: string): Promise<import('./detached-questions').DetachedQuestionsSnapshot | null>;
   workspaceQuery(target: WorkspaceTarget, query: WorkspaceQuery, hostId?: string): Promise<WorkspaceQueryResult>;
+  saveWorkspaceCopy?(target: WorkspaceTarget, path: string, hostId: string): Promise<{path: string | null}>;
   getPreferences(): Promise<PreferencesSnapshot>;
   getTheme(): Promise<ThemeState>;
   setTheme(document: ThemeDocument, expectedRevision: string): Promise<ThemeState>;

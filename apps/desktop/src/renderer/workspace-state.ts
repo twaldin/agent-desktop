@@ -3,7 +3,7 @@ import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, Worksp
 import type { FileContent, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "../../../../packages/shared/src/workspace";
 import type { OfflineCache } from "./offline-cache";
 
-type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe">;
+type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe" | "saveWorkspaceCopy">;
 export const WORKSPACE_AUTOSAVE_DELAY_MS = 3_000;
 export interface EditorDocument { discardedSaveId?: string; autosave?: boolean; saveError?: string; content: FileContent | null; text: string; dirty: boolean; conflict?: FileContent | null; recoveredText?: string }
 export interface PendingWorkspaceMutation { envelope: CommandEnvelope & { command: { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation } }; uncertain: boolean }
@@ -47,6 +47,12 @@ export class WorkspaceState {
     this.cacheKey = `agent-desktop:workspace:v1:${hostId}:${workspaceKey(target)}`;
   }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  get canSaveCopy() { return Boolean(this.bridge.saveWorkspaceCopy); }
+  saveCopy(path: string) {
+    if (!this.connected) return Promise.reject(new Error("Reconnect to copy the file from its owning host."));
+    if (!this.bridge.saveWorkspaceCopy) return Promise.reject(new Error("Save as is unavailable in this desktop build."));
+    return this.bridge.saveWorkspaceCopy(this.target, path, this.hostId);
+  }
   private changed() { for (const listener of this.listeners) listener(); this.scheduleAutosave(); }
   start() {
     this.started = true; this.scheduleAutosave();

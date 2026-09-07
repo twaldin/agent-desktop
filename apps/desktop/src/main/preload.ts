@@ -32,6 +32,11 @@ const bridge: DesktopBridge = {
   getInteractions: (sessionId, hostId) => ipcRenderer.invoke("host:interactions", sessionId, hostId),
   getDetachedQuestions: (sessionId, hostId) => ipcRenderer.invoke('host:detached-questions', sessionId, hostId),
   workspaceQuery: (target, query, hostId) => ipcRenderer.invoke("host:workspace-query", target, query, hostId),
+  saveWorkspaceCopy: async (target, path, hostId) => {
+    const result: import("./workspace-save-copy").WorkspaceCopyOutcome = await ipcRenderer.invoke("desktop:workspace-save-copy", target, path, hostId);
+    if (!result.ok) throw new Error(result.error);
+    return result.value;
+  },
   getPreferences: () => ipcRenderer.invoke("host:preferences"),
   getTheme: () => ipcRenderer.invoke("host:theme"),
   setTheme: (document, expectedRevision) => ipcRenderer.invoke("host:theme-set", document, expectedRevision),

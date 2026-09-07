@@ -10,6 +10,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
+const FILE_COPY_CHUNK_BYTES = 1024 * 1024;
 const editTails = new Map<string, Promise<void>>();
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
@@ -92,26 +93,85 @@ export class WorkspaceService {
     return join(parent, basename(target));
   }
 
+  private async assertWorkspaceIdentity(message: string): Promise<void> {
+    let metadata, canonical;
+    try { metadata = await lstat(this.cwd); canonical = await realpath(this.cwd); }
+    catch { throw new WorkspaceError("PATH_CHANGED", message); }
+    if (!metadata.isDirectory() || metadata.dev !== this.cwdIdentity.dev || metadata.ino !== this.cwdIdentity.ino || canonical !== this.cwd) {
+      throw new WorkspaceError("PATH_CHANGED", message);
+    }
+  }
+
   /** Resolve an existing regular file without granting access beyond this workspace. */
   async externalFilePath(path: string): Promise<string> {
-    const assertRoot = async () => {
-      let metadata, canonical;
-      try { metadata = await lstat(this.cwd); canonical = await realpath(this.cwd); }
-      catch { throw new WorkspaceError("PATH_CHANGED", "The selected workspace changed identity. Reopen it before opening a file externally."); }
-      if (!metadata.isDirectory() || metadata.dev !== this.cwdIdentity.dev || metadata.ino !== this.cwdIdentity.ino || canonical !== this.cwd) {
-        throw new WorkspaceError("PATH_CHANGED", "The selected workspace changed identity. Reopen it before opening a file externally.");
-      }
-    };
-    await assertRoot();
+    const changed = "The selected workspace changed identity. Reopen it before opening a file externally.";
+    await this.assertWorkspaceIdentity(changed);
     const target = await this.owned(path);
     const initial = await stat(target);
     if (!initial.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Only a regular workspace file can be opened externally.");
-    await assertRoot();
+    await this.assertWorkspaceIdentity(changed);
     const currentPath = await realpath(target), current = await stat(currentPath);
     if (currentPath !== target || !current.isFile() || current.dev !== initial.dev || current.ino !== initial.ino) {
       throw new WorkspaceError("PATH_CHANGED", "The file changed identity while preparing its external application. Refresh before retrying.");
     }
     return target;
+  }
+
+  private copyRevision(metadata: { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint }): string {
+    return createHash("sha256").update([metadata.dev, metadata.ino, metadata.size, metadata.mtimeNs, metadata.ctimeNs].join(":"), "utf8").digest("hex");
+  }
+
+  private async verifyCopyPath(path: string, target: string, expected: { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint }): Promise<void> {
+    const changed = "The source file changed while it was being copied. Choose Save as again.";
+    await this.assertWorkspaceIdentity(changed);
+    let currentPath: string, current;
+    try { currentPath = await this.owned(path); current = await stat(currentPath, { bigint: true }); }
+    catch { throw new WorkspaceError("FILE_COPY_CHANGED", changed); }
+    if (currentPath !== target || !current.isFile() || this.copyRevision(current) !== this.copyRevision(expected)) {
+      throw new WorkspaceError("FILE_COPY_CHANGED", changed);
+    }
+  }
+
+  private async copyFile(path: string) {
+    const changed = "The source file changed while it was being copied. Choose Save as again.";
+    await this.assertWorkspaceIdentity(changed);
+    const target = await this.owned(path);
+    const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const metadata = await file.stat({ bigint: true });
+      if (!metadata.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Only a regular workspace file can be copied.");
+      if (metadata.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new WorkspaceError("FILE_TOO_LARGE", "This file is too large to copy safely.");
+      await this.verifyCopyPath(path, target, metadata);
+      return { file, target, metadata, size: Number(metadata.size), revision: this.copyRevision(metadata) };
+    } catch (error) { await file.close(); throw error; }
+  }
+
+  async copyInfo(path: string): Promise<{ absolutePath: string; size: number; revision: string }> {
+    const source = await this.copyFile(path);
+    try {
+      await this.verifyCopyPath(path, source.target, source.metadata);
+      return { absolutePath: source.target, size: source.size, revision: source.revision };
+    } finally { await source.file.close(); }
+  }
+
+  async copyChunk(path: string, revision: string, offset: number): Promise<{ size: number; revision: string; offset: number; dataBase64: string }> {
+    if (!/^[a-f0-9]{64}$/.test(revision) || !Number.isSafeInteger(offset) || offset < 0) throw new WorkspaceError("INVALID_COPY_REQUEST", "An exact file revision and non-negative byte offset are required.");
+    const source = await this.copyFile(path);
+    try {
+      if (source.revision !== revision) throw new WorkspaceError("FILE_COPY_CHANGED", "The source file changed before this copy chunk. Choose Save as again.");
+      if (offset > source.size) throw new WorkspaceError("INVALID_COPY_OFFSET", "The file copy offset is beyond the end of the source file.");
+      const buffer = Buffer.alloc(Math.min(FILE_COPY_CHUNK_BYTES, source.size - offset));
+      let read = 0;
+      while (read < buffer.length) {
+        const result = await source.file.read(buffer, read, buffer.length - read, offset + read);
+        if (!result.bytesRead) break;
+        read += result.bytesRead;
+      }
+      const after = await source.file.stat({ bigint: true });
+      if (read !== buffer.length || this.copyRevision(after) !== revision) throw new WorkspaceError("FILE_COPY_CHANGED", "The source file changed while this copy chunk was read. Choose Save as again.");
+      await this.verifyCopyPath(path, source.target, source.metadata);
+      return { size: source.size, revision, offset, dataBase64: buffer.toString("base64") };
+    } finally { await source.file.close(); }
   }
 
   async stat(path: string): Promise<WorkspaceEntry> {

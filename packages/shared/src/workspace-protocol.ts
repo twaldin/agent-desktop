@@ -4,6 +4,7 @@ import type { LocalEnvironmentPreparationPublic, LocalEnvironmentExecutionOutput
 import type { CreateWorktreeOptions, FileContent, FileWriteResult, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "./workspace";
 
 export type { WorkspaceTarget } from "./workspace";
+export const WORKSPACE_OWNER_HEADER = "X-Agent-Host-Id";
 export interface WorkspaceOpenTarget {
   id: string;
   label: string;
@@ -19,6 +20,8 @@ export type WorkspaceQuery =
   | { type: "file.stat"; path: string }
   | { type: "file.read"; path: string }
   | { type: "file.open-options"; path: string }
+  | { type: "file.copy-info"; path: string }
+  | { type: "file.copy-chunk"; path: string; revision: string; offset: number }
   | { type: "git.status" }
   | { type: "git.branches" }
   | { type: "git.diff"; path?: string; staged?: boolean; context?: number }
@@ -33,6 +36,8 @@ export type WorkspaceQueryResult =
   | { type: "file.stat"; entry: WorkspaceEntry }
   | { type: "file.read"; content: FileContent }
   | { type: "file.open-options"; path: string; targets: WorkspaceOpenTarget[]; preferredTargetId?: string; availabilityReason?: string }
+  | { type: "file.copy-info"; path: string; absolutePath: string; size: number; revision: string }
+  | { type: "file.copy-chunk"; path: string; size: number; revision: string; offset: number; dataBase64: string }
   | { type: "git.status"; status: GitStatus }
   | { type: "git.branches"; branches: GitBranch[] }
   | { type: "git.diff"; diff: GitDiff }
