@@ -39,6 +39,11 @@ export class PluginAcquisitionOperations {
   list(cwd?: string): NativePluginAcquisitionReceipt[] { return this.records.list(cwd); }
   get(cwd: string, id: string): NativePluginAcquisitionReceipt | undefined { return this.records.get(cwd,id); }
 
+  closeRequest(cwd: string, id: string, operation: NativePluginAcquisition['operation'], target?: WorkspaceTarget): NativePluginAcquisitionReceipt {
+    if (this.stopping) throw new Error('The host is stopping.');
+    const receipt = this.records.closeRequest(cwd,id,operation,target); this.changed(cwd); return receipt;
+  }
+
   async review(cwd: string, id: string, expectedRevision: string): Promise<NativePluginAcquisitionReceipt> {
     if (this.stopping) throw new Error('The host is stopping.');
     if (this.pending.has(id)) throw new Error('The native operation has not settled.');

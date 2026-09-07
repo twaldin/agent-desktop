@@ -1,7 +1,9 @@
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
+import { closePluginAcquisitionRequest, requestMarketplaceCatalog, requestPluginAcquisitionOperations, reviewPluginAcquisition, startPluginAcquisition } from "./plugin-acquisition-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
 import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondSessionMcpAuthorization } from "./session-mcp-authorization-transport";
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
+import type { NativePluginAcquisition, NativePluginAcquisitionRequest } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
 import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
@@ -389,6 +391,21 @@ ipcMain.handle("desktop:window-theme", (event, effects: WindowThemeEffects) => {
 ipcMain.handle("host:settings-catalog", (event, hostId?: string) => { assertTrustedSender(event); return request("/v1/settings/catalog", undefined, hostId); });
 ipcMain.handle("host:plugins-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/plugins/read", { target }, hostId); });
 ipcMain.handle("host:plugins-mutate", (event, target: WorkspaceTarget | undefined, mutation: NativePluginMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/plugins/mutate", { target, mutation }, hostId); });
+ipcMain.handle("host:plugin-acquisition-catalog", async (event, target?: WorkspaceTarget, hostId?: string) => {
+  assertTrustedSender(event); return requestMarketplaceCatalog(await endpointFor(hostId), target);
+});
+ipcMain.handle("host:plugin-acquisition-start", async (event, target: WorkspaceTarget | undefined, acquisition: NativePluginAcquisitionRequest, hostId?: string) => {
+  assertTrustedSender(event); return startPluginAcquisition(await endpointFor(hostId), target, acquisition);
+});
+ipcMain.handle("host:plugin-acquisition-operations", async (event, hostId?: string) => {
+  assertTrustedSender(event); return requestPluginAcquisitionOperations(await endpointFor(hostId));
+});
+ipcMain.handle("host:plugin-acquisition-review", async (event, target: WorkspaceTarget | undefined, id: string, expectedRevision: string, hostId?: string) => {
+  assertTrustedSender(event); return reviewPluginAcquisition(await endpointFor(hostId), target, id, expectedRevision);
+});
+ipcMain.handle("host:plugin-acquisition-close", async (event, target: WorkspaceTarget | undefined, close: { id: string; operation: NativePluginAcquisition["operation"] }, hostId?: string) => {
+  assertTrustedSender(event); return closePluginAcquisitionRequest(await endpointFor(hostId), target, close);
+});
 ipcMain.handle("host:mcp-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/read", { target }, hostId); });
 ipcMain.handle("host:mcp-detail", (event, target: WorkspaceTarget | undefined, detail: NativeMcpDetailRequest, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/detail", { target, request: detail }, hostId); });
 ipcMain.handle("host:mcp-mutate", (event, target: WorkspaceTarget | undefined, mutation: NativeMcpMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/mutate", { target, mutation }, hostId); });

@@ -44,6 +44,20 @@ export class PluginAcquisitionRecords {
       return {fresh:true,receipt:publicReceipt(record)};
     }).immediate();
   }
+  /** Fence a delayed request only if it has never been admitted. This cannot cancel native work. */
+  closeRequest(cwd: string, id: string, operation: Record['operation'], target?: WorkspaceTarget): NativePluginAcquisitionReceipt {
+    return this.db.transaction(() => {
+      const existing = this.load(id);
+      if (existing) {
+        if (existing.cwd !== cwd || existing.operation !== operation) throw new Error('This operation belongs to another request.');
+        return publicReceipt(existing);
+      }
+      const now = Date.now();
+      const record: Record = {id,cwd,operation,...(target?{target}:{}),requestHash:'closed-before-admission',state:'reviewed',createdAt:now,updatedAt:now,
+        message:'Request closed before native admission. No native operation ran.'};
+      this.write(record); return publicReceipt(record);
+    }).immediate();
+  }
   finish(cwd: string, id: string, state: 'succeeded' | 'needs-review'): NativePluginAcquisitionReceipt {
     return this.db.transaction(() => {
       const record = this.load(id);

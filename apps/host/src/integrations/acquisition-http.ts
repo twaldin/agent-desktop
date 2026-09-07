@@ -59,13 +59,18 @@ export class PluginAcquisitionHttp {
     if(this.stopping)return respond({error:'The host is stopping.'},503);
     if(request.method!=='POST')return respond({error:'Not found.'},404);
     const method=url.pathname.slice('/v1/integrations/acquisition/'.length);
-    if(!['catalog','start','operations','review'].includes(method))return respond({error:'Not found.'},404);
+    if(!['catalog','start','operations','review','close-request'].includes(method))return respond({error:'Not found.'},404);
     try {
       const input=await readIntegrationBody(request);
-      keys(input,method==='start'?['target','request']:method==='review'?['target','id','expectedRevision']:['target']);
+      keys(input,method==='start'?['target','request']:method==='review'?['target','id','expectedRevision']:method==='close-request'?['target','id','operation']:['target']);
       const target=input.target===undefined?undefined:parseWorkspaceTarget(input.target);
+      if(method==='operations'&&target===undefined)return respond(this.options.operations.list());
       const cwd=await this.options.resolveCwd(target);
       if(this.stopping)return respond({error:'The host is stopping.'},503);
+      if(method==='close-request') {
+        if (!['marketplace.add','marketplace.update','marketplace.remove','plugin.install','plugin.uninstall'].includes(String(input.operation))) throw new Error('Invalid operation.');
+        return respond(this.options.operations.closeRequest(cwd,id(input.id),input.operation as NativePluginAcquisition['operation'],target));
+      }
       if(method==='catalog')return respond(await this.options.read(cwd));
       if(method==='operations')return respond(this.options.operations.list());
       if(method==='review')return respond(await this.options.operations.review(cwd,id(input.id),text(input.expectedRevision)));

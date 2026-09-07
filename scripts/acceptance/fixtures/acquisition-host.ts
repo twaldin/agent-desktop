@@ -1,0 +1,14 @@
+import {mkdir,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {startHost} from '../../../apps/host/src/server';
+const root=process.argv[2]!,project=join(root,'project'),agent=join(root,'agent'),market=join(root,'market');
+await Promise.all([mkdir(project,{recursive:true}),mkdir(agent,{recursive:true}),mkdir(join(market,'.omp-plugin'),{recursive:true}),mkdir(join(market,'sample'),{recursive:true})]);
+Bun.spawnSync(['git','init','-q',project]);
+await writeFile(join(agent,'config.yml'),'extensions: []\n');
+await writeFile(join(market,'sample','package.json'),JSON.stringify({name:'parity-sample',version:'1.0.0',omp:{name:'Parity sample',description:'Local marketplace fixture'}}));
+await writeFile(join(market,'.omp-plugin','marketplace.json'),JSON.stringify({name:'parity-market',owner:{name:'Fixture'},plugins:[{name:'sample',description:'Local marketplace fixture',version:'1.0.0',source:'./sample'}]}));
+const host=await startHost({dataDirectory:join(root,'data'),agentDirectory:agent,discoveryDirectory:project,tailscale:false});
+const response=await fetch(host.connection.origin+'/v1/commands',{method:'POST',headers:{Authorization:`Bearer ${host.connection.token}`,'Content-Type':'application/json'},body:JSON.stringify({id:'fixture-project',command:{type:'project.add',path:project}})});
+const result=await response.json() as any;if(!result.ok)throw new Error('Fixture project failed');
+await writeFile(join(root,'ready.json'),JSON.stringify({connection:host.connection,target:{projectId:result.value.id},market}));
+process.on('message',()=>void host.stop().then(()=>process.exit(0)));

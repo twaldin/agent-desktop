@@ -75,6 +75,7 @@ test('bounded private HTTP requires owned targets, returns admission without wai
   const http=new PluginAcquisitionHttp({operations,read:runtime.read,resolveCwd:target=>{if(target&&'projectId'in target&&target.projectId==='p')return '/project';throw new Error('private-path');}});
   const post=async(method:string,body:unknown)=>{const url=new URL('http://host/v1/integrations/acquisition/'+method);return(await http.route(new Request(url,{method:'POST',body:JSON.stringify(body)}),url))!;};
   expect((await post('catalog',{target:{cwd:'/any'}})).status).toBe(400);
+  expect((await post('operations',{})).status).toBe(200); // Host receipts do not depend on the default directory still existing.
   const input=request();const started=await post('start',{target:{projectId:'p'},request:input});
   expect(started.status).toBe(202);expect(started.headers.get('cache-control')).toBe('no-store');
   expect((await started.json() as {state:string}).state).toBe('running');
@@ -87,4 +88,16 @@ test('bounded private HTTP requires owned targets, returns admission without wai
 test('acquisition parser rejects unknown/unsafe fields while preserving an explicit source',()=>{
   const input=request();expect(parsePluginAcquisition(input)).toEqual(input);
   for(const action of [{operation:'marketplace.remove',name:'../escape'},{operation:'plugin.uninstall',pluginId:'x@y@z',scope:'user'},{operation:'plugin.install',name:'x',marketplace:'y',scope:'all'},{operation:'marketplace.add',source:'ok',env:{TOKEN:'secret'}}])expect(()=>parsePluginAcquisition({...input,action})).toThrow();
+});
+
+test('closing an unknown request fences late admission, while an admitted request keeps its original native lifetime',async()=>{
+ const f=await fixture(),input=request(),gate=Promise.withResolvers<void>();let calls=0;
+ const operations=new PluginAcquisitionOperations(f.records,{read:async()=>catalog,mutate:async()=>{calls++;await gate.promise;return catalog;}});
+ expect(operations.closeRequest('/project',input.id,input.action.operation).state).toBe('reviewed');
+ expect(()=>operations.start('/project',input)).toThrow('different request');expect(calls).toBe(0);
+ const admitted=request();operations.start('/project',admitted);
+ expect(operations.closeRequest('/project',admitted.id,admitted.action.operation).state).toBe('running');
+ expect(()=>operations.closeRequest('/other',admitted.id,admitted.action.operation)).toThrow('another request');
+ await tick();expect(calls).toBe(1);gate.resolve();await operations.dispose();
+ expect(operations.get('/project',admitted.id)?.state).toBe('succeeded');
 });

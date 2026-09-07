@@ -2,13 +2,21 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — desktop marketplace acquisition and receipt recovery
+
+The Plugins settings UI now exposes Add a marketplace, marketplace search/detail, native Upgrade/Remove, and scoped Install/Uninstall through the authenticated desktop bridge. Lost responses recover from host receipts without replay. Request identity survives window reload without storing source URLs. Closing an unadmitted request prevents a delayed original dispatch; admitted native work retains its lifetime. Native failure recovery requires explicit configuration inspection and review.
+
+Validation passes **990 tests /27,493 assertions across194 files**, with29 skips and zero failures; focused checks pass34 tests/144 assertions. Typecheck and production build pass. The final17 hidden Electron captures cover nine checks and seven distinct starts: five succeed, one native failure is explicitly reviewed, and one never-admitted request is closed without replay. All1,737 reference records and four manifest hashes still match.
+
+The production components have hidden Electron acceptance against a real isolated authenticated host/OMP worker; desktop main transport has separate tests. This is source/component evidence, not installed main/preload, native-window or pixel acceptance. Project-scope popup input remains unverified after failed hidden-driver attempts. Git ref/sparse fields, Browse directory, Apps/Skills filters, installed-plugin upgrade and remaining visual details stay open. OMP18.1.10/Bun1.3.14, worker protocol24 and host schema7 are unchanged. No Work launch, handoff or installation. Private evidence: `.data/acquisition-ui-checkpoint/`.
+
 ## Source30 — native marketplace acquisition foundation
 
 The host now uses OMP's real marketplace APIs for cached catalog reads and explicit add/update/remove/install/uninstall operations. Durable receipts precede dispatch, survive restart and suppress duplicate execution. Uncertain native results require configuration review. The app-owned18.1.10 patch safely shares identical prepared version caches across user and independent project installs; uninstall preserves caches still usable elsewhere. Runtime package ownership and long-fetch revision checks refuse conflicting changes before promotion.
 
 The full regression passes **982 tests /27,448 assertions across192 files**, with29 skips and zero failures. The final focused batch passes19 tests/129 assertions, including a subsequently added local Git-source test. Typecheck and build pass; a clean frozen-lockfile install reproduces all four changed OMP source/declaration files. All1737 reference-file hashes and four manifest hashes match.
 
-This is a host/worker foundation, not a completed acquisition UI. Desktop/main IPC, Codex-style Add/marketplace/detail/progress/review controls and independent native/pixel acceptance remain open. Worker protocol24; OMP18.1.10/Bun1.3.14 and installed17/Work fixtures remain unchanged. No new Work launch or handoff. Validation and private evidence are recorded in `.data/acquisition-checkpoint/` when this checkpoint closes.
+At this earlier foundation checkpoint, desktop/main IPC and acquisition controls were not yet implemented; the subsequent UI checkpoint above supersedes that source-only limitation. Independent native/pixel acceptance remains open. Worker protocol24; OMP18.1.10/Bun1.3.14 and installed17/Work fixtures remain unchanged. No new Work launch or handoff. Validation and private evidence are recorded in `.data/acquisition-checkpoint/` when this checkpoint closes.
 
 ## Source30 — existing MCP settings and lossless updates
 
