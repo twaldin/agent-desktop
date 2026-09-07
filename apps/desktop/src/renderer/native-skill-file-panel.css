@@ -9,4 +9,4 @@
 .native-skill-file-panel button:hover { background:var(--hover); color:var(--text); }
 .native-skill-file-panel button:disabled { opacity:.45; cursor:default; }
 .native-skill-file-panel button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-.native-skill-file-panel > .pierre-source-editor { flex:1; min-height:0; }
+.native-skill-file-panel > .pierre-source-editor-frame { flex:1; min-height:0; }

@@ -1,5 +1,11 @@
 # Milestone status
 
+## File editor Go to line
+
+The active file panel now exposes Command-L/Control-L with Codex's compact popup, live centered preview, negative line numbers, clamped bounds and explicit validation. Enter commits a line-start cursor; Escape/Close restores the opening selection and scroll, while clicking away retains the preview. Reopening clears the input. Find and other panels retain their own shortcut ownership.
+
+Validation: seven scoped tests/67 assertions, typecheck/build, seven hidden-Electron checks/five captures and the shared skill editor's13-check/10-capture regression pass. The Go to line run records ten authenticated host reads, zero writes/sessions and the original revision1 draft. Cursor positions are exercised by temporary input followed by undo. The popup measures266×38 with200×28 input and20×20 close button. Evidence and limitations are in [file editor](workspace-file-editor.md). Native-window pixels, physical keyboard interaction, narrow-window and dynamic-theme acceptance remain unverified; this is source/renderer progress, not installed or full milestone parity.
+
 ## Workspace file Save as
 
 The file editor’s Open options now includes Save as…, using the viewing desktop’s native dialog and the owning host’s actual bytes. Cancellation performs no host lookup/read. A copy preserves the active file and dirty buffer, supports binary/large/empty files, and never forces autosave or changes the draft. Transfer failures preserve the destination through staged writes; source/destination changes are checked before publication. Native dialog paths remain in main.
