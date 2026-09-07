@@ -1,0 +1,2 @@
+.window-close-status {position:fixed;z-index:2000;left:50%;bottom:24px;transform:translateX(-50%);max-width:calc(100vw - 48px);display:flex;align-items:center;gap:16px;padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius-lg,16px);background:var(--panel-surface,#2a2a2a);color:var(--text);box-shadow:0 8px 24px #0003;font-size:13px;}
+.window-close-status button {flex-shrink:0;}

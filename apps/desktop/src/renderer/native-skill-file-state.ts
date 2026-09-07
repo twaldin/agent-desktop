@@ -43,6 +43,22 @@ export class NativeSkillFileController {
     return write.then(()=>{this.storageError=false;},cause=>{this.storageError=true;this.state.error=`Edits could not be stored on this device: ${message(cause)}`;this.emit();throw cause;});
   }
   async flush(){await this.writes;}
+  async prepareWindowClose(signal?:AbortSignal):Promise<boolean>{
+    if(!await this.restore())return false;
+    signal?.throwIfAborted();
+    while(this.connected&&this.state.dirty){
+      if(this.state.saving)await new Promise<void>((resolve,reject)=>{
+        const clean=()=>{off();signal?.removeEventListener("abort",cancel);};
+        const cancel=()=>{clean();reject(signal?.reason);};
+        const off=this.subscribe(()=>{if(!this.state.saving){clean();resolve();}});
+        signal?.addEventListener("abort",cancel,{once:true});
+      });
+      signal?.throwIfAborted();
+      if(!this.state.dirty)break;
+      if(this.state.conflict||this.state.uncertain||this.storageError||!await this.save())return false;
+    }
+    signal?.throwIfAborted();await this.persist();signal?.throwIfAborted();return true;
+  }
   private async restore():Promise<boolean>{
     if(this.restored)return true;
     if(this.restoreTask)return this.restoreTask;

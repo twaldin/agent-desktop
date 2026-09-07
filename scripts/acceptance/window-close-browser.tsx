@@ -1,0 +1,21 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import type { DesktopBridge, DesktopEvent, WorkspaceTarget } from "@agent-desktop/shared";
+import { WorkspacePanel } from "../../apps/desktop/src/renderer/WorkspacePanel";
+import { WorkspaceState } from "../../apps/desktop/src/renderer/workspace-state";
+import { useWindowClose } from "../../apps/desktop/src/renderer/WindowClose";
+import { offlineCache } from "../../apps/desktop/src/renderer/offline-cache";
+import "../../apps/desktop/src/renderer/styles.css";
+import "../../apps/desktop/src/renderer/theme.css";
+const params=new URLSearchParams(location.search),endpoint=params.get('endpoint')!,target=JSON.parse(params.get('target')!) as WorkspaceTarget,hostId=params.get('hostId')!;
+const request=async(route:string,body:unknown)=>{const r=await fetch(endpoint+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const v=await r.json();if(!r.ok)throw Error((v as any).error?.message??'Fixture request failed');return v as any};
+const listeners=new Set<(event:DesktopEvent)=>void>(),errors:string[]=[];
+setInterval(()=>void request('/test/events',{}).then(events=>{for(const e of events)for(const fn of listeners)fn(e)}).catch(()=>{}),100);
+addEventListener('error',e=>errors.push(e.message));addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
+const bridge={...window.agentDesktop,workspaceQuery:(owner,query,selectedHost)=>request('/v1/workspace/query',{target:owner,query,owner:selectedHost}),command:(envelope,selectedHost)=>request('/v1/commands',{...envelope,owner:selectedHost}),subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn)}}} satisfies DesktopBridge;
+let failStorage=false; const cache={read:offlineCache.read,write:(key:string,value:string)=>{if(failStorage)return Promise.reject(new Error("Fixture recovery storage unavailable"));return offlineCache.write(key,value)}};
+let current:WorkspaceState,setConnection:(value:boolean)=>void;
+function Fixture(){const[connected,setConnected]=useState(params.get('offline')!=='true');setConnection=setConnected;const root=useRef<HTMLDivElement>(null);const data=useMemo(()=>new WorkspaceState(bridge,hostId,target,cache,hostId),[]);current=data;useEffect(()=>()=>data.stop(),[data]);const status=useWindowClose(bridge,root,signal=>data.prepareWindowClose(signal));
+return <><div ref={root} className="workspace-file-fixture"><WorkspacePanel embedded active data={data} connected={connected} filePath="first.ts" name="Window close fixture" path="Fixture" onClose={()=>{}} onOpenProject={async()=>{}}/></div>{status}</>}
+document.documentElement.dataset.theme='dark';createRoot(document.getElementById('root')!).render(<Fixture/>);
+Object.assign(window,{request,storageFailure:(v:boolean)=>{failStorage=v},connection:(v:boolean)=>setConnection(v),state:()=>({restored:current?.restored,document:current?.documents.get('first.ts'),connected:current?.connected,inert:document.querySelector<HTMLElement>('.workspace-file-fixture')?.inert,status:document.querySelector('.window-close-status')?.textContent,errors,viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},font:getComputedStyle(document.body).font}),target:(selector:string,text?:string)=>{const n=[...document.querySelectorAll<HTMLElement>(selector)].find(n=>n.getClientRects().length&&(!text||n.textContent?.trim()===text));if(!n)throw Error('Missing '+selector+' '+text);const r=n.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}},editor:()=>[...document.querySelectorAll('diffs-container')].flatMap(n=>[...(n.shadowRoot?.querySelectorAll<HTMLElement>('[contenteditable=true]')??[])]).find(n=>n.getClientRects().length)});

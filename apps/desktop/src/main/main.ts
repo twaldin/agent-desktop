@@ -28,6 +28,7 @@ import { verifyKnownHost } from "./host-recovery";
 import { resolveHostLaunch } from "./host-launch";
 import { saveWorkspaceCopy, workspaceCopySource, workspaceCopyOutcome } from "./workspace-save-copy";
 import { WorkspaceImageGrants } from "./workspace-image";
+import { WindowCloseGate } from "./window-close";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
@@ -51,6 +52,19 @@ const connectionPath = join(dataDirectory, "connection.json");
 const windows = new Set<BrowserWindow>();
 const workspaceImages = new WorkspaceImageGrants();
 const workspaceImageEpochs = new Map<number, number>();
+const windowCloseGate = new WindowCloseGate({
+  send: (senderId, request) => {
+    const window = [...windows].find(candidate => candidate.webContents.id === senderId && !candidate.isDestroyed());
+    if (!window || window.webContents.isDestroyed()) throw new Error("The renderer is unavailable.");
+    window.webContents.send("desktop:window-close-request", request);
+  },
+  unavailable: (senderId, reason) => {
+    const window = [...windows].find(candidate => candidate.webContents.id === senderId && !candidate.isDestroyed());
+    if (!window) return;
+    void dialog.showMessageBox(window, { type: "error", title: "Agent Desktop", message: "Agent Desktop could not safely close this window.",
+      detail: reason === "timeout" ? "Saving and recovery preparation did not finish in time. Keep the window open and try again." : "The window is not ready to confirm that its work can be recovered. Keep it open and try again.", buttons: ["OK"] });
+  },
+});
 const windowStates = new Map<number, WindowStateStore>();
 let connection: LocalConnection | null = null;
 type HostStream = { endpoint: HostEndpoint; sequence: number; socket?: WebSocket; timer?: ReturnType<typeof setTimeout> };
@@ -288,6 +302,13 @@ ipcMain.on("desktop:notification-ack", (event, id: string) => {
   assertTrustedSender(event); if (id === pendingNotificationNavigation?.id) pendingNotificationNavigation = undefined;
 });
 ipcMain.on("desktop:notification-unready", event => { assertTrustedSender(event); notificationReady.delete(event.sender.id); });
+ipcMain.on("desktop:window-close-ready", event => { assertTrustedSender(event); windowCloseGate.register(event.sender.id); });
+ipcMain.on("desktop:window-close-unready", event => { assertTrustedSender(event); windowCloseGate.unregister(event.sender.id); });
+ipcMain.handle("desktop:window-close-answer", (event, id: string, allowed: boolean) => {
+  assertTrustedSender(event);
+  if (typeof id !== "string" || id.length > 200 || typeof allowed !== "boolean") throw new Error("Invalid window close response.");
+  if (!windowCloseGate.answer(event.sender.id, id, allowed)) throw new Error("The window close request is no longer active.");
+});
 ipcMain.handle("host:state", async (event, hostId?: string) => {
   assertTrustedSender(event);
   const state = await request("/v1/state", undefined, hostId) as HostState;
@@ -635,11 +656,13 @@ async function createWindow(): Promise<void> {
   window.webContents.on("did-start-loading", () => notificationReady.delete(windowContentsId));
   window.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
     if (!isMainFrame) return;
+    windowCloseGate.unregister(windowContentsId);
     workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1);
     workspaceImages.releaseSender(windowContentsId);
   });
-  window.webContents.on("render-process-gone", (_event, details) => { notificationReady.delete(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
-  window.on("closed", () => { windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
+  window.webContents.on("render-process-gone", (_event, details) => { notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
+  window.on("close", event => { if (!windowCloseGate.handleWindowClose(windowContentsId, () => { if (!window.isDestroyed()) window.close(); })) event.preventDefault(); });
+  window.on("closed", () => { windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", event => event.preventDefault());
   const development = process.env.AGENT_DESKTOP_RENDERER_URL;
@@ -663,4 +686,9 @@ app.on("second-instance", () => {
 });
 app.on("activate", () => { if (windows.size === 0) void createWindow(); });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => { shuttingDown = true; notificationDelivery.dispose(); for (const stream of streams.values()) { clearTimeout(stream.timer); stream.socket?.close(); } });
+app.on("before-quit", event => {
+  if (windowCloseGate.consumeQuitPermit()) return;
+  event.preventDefault();
+  windowCloseGate.requestQuit([...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id), () => app.quit());
+});
+app.on("will-quit", () => { shuttingDown = true; notificationDelivery.dispose(); for (const stream of streams.values()) { clearTimeout(stream.timer); stream.socket?.close(); } });

@@ -101,3 +101,25 @@ test("oversized edits survive offline reopening and can be shortened before savi
   restored.setText("shortened retained edit");await restored.load(true);expect(await restored.save()).toBe(true);
   expect(f.calls).toHaveLength(1);expect(restored.state.text).toBe("shortened retained edit");expect(restored.state.dirty).toBe(false);
 });
+
+test("normal close drains skill save and preserves offline edits without delivery",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("close skill save");
+  expect(await c.prepareWindowClose()).toBe(true);expect(f.calls).toHaveLength(1);expect(c.state.dirty).toBe(false);
+  c.setConnected(false);c.setText("offline close");expect(await c.prepareWindowClose()).toBe(true);expect(f.calls).toHaveLength(1);
+  const next=f.controller();await next.load(false);expect(next.state.text).toBe("offline close");expect(next.state.dirty).toBe(true);
+});
+test("close preserves unknown skill command identity and blocks failed recovery storage",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("pending close");
+  f.bridge.command=async e=>{f.calls.push(e);throw new Error("lost receipt");};
+  expect(await c.prepareWindowClose()).toBe(false);expect(await c.prepareWindowClose()).toBe(false);expect(f.calls).toHaveLength(1);
+  expect(JSON.parse(f.values.get(keyFor("h",ref))!).pending.id).toBe(f.calls[0]!.id);
+  c.setConnected(false);f.setFailure(true);await expect(c.prepareWindowClose()).rejects.toThrow("disk full");expect(c.state.text).toBe("pending close");
+});
+
+test("canceling a close waiter does not drain edits after an existing skill save",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("first");let complete!:(result:CommandResult)=>void,envelope!:CommandEnvelope;
+  f.bridge.command=e=>{envelope=e;f.calls.push(e);return new Promise(r=>complete=r);};const saving=c.save();await until(()=>Boolean(complete));
+  const abort=new AbortController(),closing=c.prepareWindowClose(abort.signal),rejected=closing.catch(error=>error);
+  await Promise.resolve();abort.abort(new Error("keep open"));expect((await rejected).message).toBe("keep open");c.setText("later");complete(success(envelope,"first"));await saving;
+  expect(f.calls).toHaveLength(1);expect(c.state.text).toBe("later");expect(c.state.dirty).toBe(true);
+});

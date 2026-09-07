@@ -1,5 +1,9 @@
 # Milestone status
 
+## Normal window close durability
+
+Closing a window or quitting now waits for file-save/recovery preparation, preserves offline edits, and keeps windows usable after a canceled or failed close. Six real Electron lifecycle checks/five hidden captures and48 scoped tests/260 assertions pass; one authenticated file write, zero sessions and the original draft are verified. The actual Electron run caught and fixed a UUID receiver bug that Bun tests missed. This is source/preload/controller/main-gate evidence with fixture event wiring, not installed full-App or native pixel acceptance. Existing Work runs and sealed bundles remain untouched. See [file editor](workspace-file-editor.md).
+
 ## Inline Markdown images
 
 Ordinary Markdown previews now render images from the file’s owning host, including relative/file-URI paths and reference definitions. Selection reveals source, reconnect retries failed images, and opaque Electron grants stream validated chunks without exposing host credentials. External web/data image markup stays raw. Seven hidden-Electron checks/four captures,53 scoped tests/284 assertions, shared-editor regressions, typecheck and build pass. This is a source/preload/renderer/host checkpoint; installed Work routing, skill images, durable image caching and matched native pixels remain open. See [file editor](workspace-file-editor.md). Existing Work runs and sealed evidence remain unchanged.

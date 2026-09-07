@@ -39,6 +39,16 @@ const bridge: DesktopBridge = {
   },
   acquireWorkspaceImage: (target, path, hostId) => ipcRenderer.invoke("desktop:workspace-image-acquire", target, path, hostId),
   releaseWorkspaceImage: id => ipcRenderer.invoke("desktop:workspace-image-release", id),
+  subscribeWindowClose: listener => {
+    const callback = (_event: Electron.IpcRendererEvent, request: {id:string;cancelled?:boolean}) => listener(request);
+    ipcRenderer.on("desktop:window-close-request", callback);
+    ipcRenderer.send("desktop:window-close-ready");
+    return () => {
+      ipcRenderer.send("desktop:window-close-unready");
+      ipcRenderer.removeListener("desktop:window-close-request", callback);
+    };
+  },
+  answerWindowClose: (id, allowed) => ipcRenderer.invoke("desktop:window-close-answer", id, allowed),
   getPreferences: () => ipcRenderer.invoke("host:preferences"),
   getTheme: () => ipcRenderer.invoke("host:theme"),
   setTheme: (document, expectedRevision) => ipcRenderer.invoke("host:theme-set", document, expectedRevision),

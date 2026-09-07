@@ -55,6 +55,7 @@ import { cssColorToRgba } from "./css-color";
 import { transcriptSources, type RecordedSource } from "./transcript-sources";
 import { ImagePreview } from "./ImagePreview";
 import { DockPanel } from "./DockPanel";
+import { useWindowClose } from "./WindowClose";
 import { useWorkspaceFileClose } from "./WorkspaceFileClose";
 import { DockTerminal } from "./DockTerminal";
 import { moveDockTab, type DockTab, type DockDestination } from "./dock-state";
@@ -142,11 +143,6 @@ export function App() {
   const expandAfterNavigation = useRef<string | undefined>(undefined);
   const workspaces = useMemo(() => new Map<string, WorkspaceState>(), [bridge]);
   const fileClose = useWorkspaceFileClose(tab => tab.target === "host" ? undefined : workspaces.get(`${tab.hostId}:${tab.target}`));
-  useEffect(() => {
-    const flush = () => { for (const data of workspaces.values()) for (const [path, document] of data.documents) if (document.autosave && document.dirty) void data.saveUntilClean(path).catch(() => {}); };
-    window.addEventListener("pagehide", flush);
-    return () => { window.removeEventListener("pagehide", flush); };
-  }, [workspaces]);
   const skillFiles = useMemo(() => new Map<string, NativeSkillFileController>(), [bridge]);
   useEffect(() => { for (const controller of skillFiles.values()) controller.setConnected(Boolean(desktop.catalog.records.get(controller.state.hostId)?.connected)); });
   useEffect(() => () => { for (const controller of skillFiles.values()) controller.dispose(); }, [skillFiles]);
@@ -550,7 +546,19 @@ export function App() {
     const ownerProject = record?.state?.projects.find(value => value.id === ("projectId" in target ? target.projectId : ownerSession?.projectId));
     return <WorkspacePanel embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location) => { setWorkspaceFileRequest({ owner, request: { ...location, id: crypto.randomUUID(), path } }); dock.openFile(path,tab.hostId,target); }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
   }
-  return <div className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
+  const shell = useRef<HTMLDivElement>(null);
+  const closeStatus = useWindowClose(bridge, shell, async signal => {
+    for (const data of workspaces.values()) {
+      signal.throwIfAborted();
+      if (!await data.prepareWindowClose(signal)) return false;
+    }
+    for (const controller of skillFiles.values()) {
+      signal.throwIfAborted();
+      if (!await controller.prepareWindowClose(signal)) return false;
+    }
+    return true;
+  });
+  return <><div ref={shell} className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
     {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={<label className="settings-host-picker"><span>Machine</span><select aria-label="Settings machine" value={state?.host.id ?? route.hostId ?? ""} onChange={event => navigate(null,event.target.value,true)}>{!desktop.hosts.length && <option value={route.hostId ?? ""}>{loading ? "Connecting…" : "Host unavailable"}</option>}{desktop.hosts.map(host => <option key={host.key} value={host.hostId ?? host.key} disabled={!host.hostId}>{host.name}{host.local ? " · This machine" : ""}{host.availability !== "available" ? ` · ${host.availability}` : ""}</option>)}</select></label>}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
       <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search conversations" title="Search conversations (⌘ K)" aria-expanded={searchOpen} onClick={() => { setSearchOpen(value => !value); requestAnimationFrame(() => searchInput.current?.focus()); }}><Icon name="search"/></button></div>
@@ -659,5 +667,5 @@ export function App() {
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>
       {dialog === "project" ? <form onSubmit={addRemoteProject}><p className="subtle-notice">Enter an existing absolute folder path on {state?.host.name}. The project and its sessions stay on that machine.</p>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="remote-project-path">Folder path</label><input id="remote-project-path" className="text-field" value={remotePath} onChange={event => setRemotePath(event.target.value)} placeholder="/home/you/projects/example" autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!remotePath.trim() || !connected || addingProject}>{addingProject ? "Adding…" : "Add project"}</button></div></form> : dialog === "rename" ? <form onSubmit={rename}>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="conversation-title">Name</label><input id="conversation-title" className="text-field" value={renameTitle} onChange={event => setRenameTitle(event.target.value)} autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!renameTitle.trim() || !connected}>Save</button></div></form> : <div className="build-status"><p>This connected desktop flow includes host selection and an aggregate project sidebar: projects, revisioned drafts, sessions, model selection, streaming, steering, stopping, rename, and archive.</p><p>Accounts, native OMP settings and pending requests, file/editor/Git/worktree panels, and terminal sessions use the owning host’s APIs. Shared sidebar organization and the theme file are connected. Attachments, richer review, browser panels, plugins, automations, remain incomplete.</p><p>The layout uses the pinned package and measured colors from the supplied screenshot. Full visual parity and physical cross-device acceptance remain pending.</p><p>{desktop.networkError ?? desktop.network?.error ?? (desktop.network?.status === "connected" ? "Tailscale discovery is connected." : "Tailscale discovery is not connected.")}</p><button className="secondary-button" onClick={() => void desktop.refreshNetwork()}>Refresh machines</button><div className="build-host">{state?.host.name ?? "Host unavailable"} · {state?.host.platform ?? "Unknown platform"}</div></div>}
     </dialog>
-  </div>;
+  </div>{closeStatus}</>;
 }

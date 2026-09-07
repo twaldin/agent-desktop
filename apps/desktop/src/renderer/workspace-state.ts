@@ -204,22 +204,45 @@ export class WorkspaceState {
       void this.saveFile(path).finally(() => { this.autosaveRunning = false; this.scheduleAutosave(); });
     }, Math.max(0, selected.due - Date.now()));
   }
-  private async waitForMutation() {
+  private async waitForMutation(signal?: AbortSignal) {
+    signal?.throwIfAborted();
     if (!this.busy) return;
-    await new Promise<void>(resolve => { const off = this.subscribe(() => { if (!this.busy) { off(); resolve(); } }); });
+    await new Promise<void>((resolve, reject) => {
+      const clean = () => { off(); signal?.removeEventListener("abort", cancel); };
+      const cancel = () => { clean(); reject(signal?.reason); };
+      const off = this.subscribe(() => { if (!this.busy) { clean(); resolve(); } });
+      signal?.addEventListener("abort", cancel, { once: true });
+    });
   }
   /** Close uses the same receipt queue and drains newer edits; unresolved outcomes stop it. */
-  async saveUntilClean(path: string): Promise<boolean> {
+  async saveUntilClean(path: string, signal?: AbortSignal): Promise<boolean> {
     await this.restore();
     if (!this.restored) return false;
     while (true) {
-      await this.waitForMutation();
+      await this.waitForMutation(signal);
+      signal?.throwIfAborted();
       const item = this.documents.get(path);
       if (!item?.dirty) return true;
       if (!this.restored || !this.connected || this.pending || this.cacheWarning || item.conflict !== undefined || item.content && item.content.kind !== "text") return false;
+      signal?.throwIfAborted();
       await this.saveFile(path);
+      signal?.throwIfAborted();
       if (this.pending || this.documents.get(path)?.saveError || this.errors.action || this.cacheWarning) return false;
     }
+  }
+  /** Normal window shutdown drains opted-in saves; offline/manual buffers stay recoverable. */
+  async prepareWindowClose(signal?: AbortSignal): Promise<boolean> {
+    await this.restore();
+    signal?.throwIfAborted();
+    if (!this.restored) return false;
+    for (const [path, document] of this.documents) {
+      signal?.throwIfAborted();
+      if (document.autosave && document.dirty && this.connected && !await this.saveUntilClean(path, signal)) return false;
+    }
+    signal?.throwIfAborted();
+    await this.persist();
+    signal?.throwIfAborted();
+    return true;
   }
   async discardFileEdits(path: string): Promise<boolean> {
     const item = this.documents.get(path); if (!item) return this.restored;

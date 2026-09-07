@@ -347,3 +347,42 @@ test("discard receipt marker survives restore and clean reads but never replaces
     expect(resumed.documents.get("sample.txt")!.text).toBe(editAgain ? "new explicit edit after discard\n" : "accepted on host\n");
   }
 });
+
+test("normal window close drains an opted-in save and persists manual/offline buffers", async () => {
+  const f = await fixture(); await f.data.open("sample.txt");
+  f.data.edit("sample.txt", "close autosave\n", true);
+  const held = deferred(); f.delay(() => held.promise);
+  let done = false; const closing = f.data.prepareWindowClose().then(value => { done = true; return value; });
+  for (let i = 0; !f.deliveries.length && i < 100; i++) await Bun.sleep(5);
+  expect(f.deliveries).toHaveLength(1); expect(done).toBe(false);
+  held.resolve(); expect(await closing).toBe(true);
+  expect(await readFile(join(f.path, "sample.txt"), "utf8")).toBe("close autosave\n");
+  f.data.setConnected(false); f.data.edit("sample.txt", "offline recovery\n", true);
+  expect(await f.data.prepareWindowClose()).toBe(true); expect(f.deliveries).toHaveLength(1);
+  const next = new WorkspaceState(f.bridge, "home", {projectId:"project"}, f.cache, "home"); await next.restore();
+  expect(next.documents.get("sample.txt")?.text).toBe("offline recovery\n");
+  expect(next.documents.get("sample.txt")?.dirty).toBe(true);
+});
+
+test("window close never replays an unconfirmed save and refuses recovery storage failure", async () => {
+  const f = await fixture(); await f.data.open("sample.txt"); f.data.edit("sample.txt", "unconfirmed\n", true); f.dropNextReceipt();
+  expect(await f.data.prepareWindowClose()).toBe(false); const id = f.deliveries[0]!.id;
+  expect(await f.data.prepareWindowClose()).toBe(false); expect(f.deliveries).toHaveLength(1);
+  expect(f.data.pending?.envelope.id).toBe(id);
+  f.data.setConnected(false); f.cache.write = async () => { throw new Error("disk full"); };
+  await expect(f.data.prepareWindowClose()).rejects.toThrow("disk full");
+  expect(f.data.documents.get("sample.txt")?.text).toBe("unconfirmed\n");
+});
+
+test("close preserves online manual buffers and cancellation cannot drain a later edit", async () => {
+  const f = await fixture(); await f.data.open("sample.txt"); f.data.edit("sample.txt", "manual recovery\n", false);
+  expect(await f.data.prepareWindowClose()).toBe(true); expect(f.deliveries).toHaveLength(0);
+  const restored = new WorkspaceState(f.bridge, "home", {projectId:"project"}, f.cache, "home"); await restored.restore();
+  expect(restored.documents.get("sample.txt")?.text).toBe("manual recovery\n"); expect(restored.documents.get("sample.txt")?.dirty).toBe(true);
+  f.data.edit("sample.txt", "save A\n", true); const held = deferred(); f.delay(() => held.promise);
+  const abort = new AbortController(), closing = f.data.prepareWindowClose(abort.signal); const rejected = closing.catch(error => error);
+  for (let i = 0; !f.deliveries.length && i < 100; i++) await Bun.sleep(5);
+  abort.abort(new Error("keep open")); f.data.edit("sample.txt", "later B\n", true); held.resolve(); expect((await rejected).message).toBe("keep open");
+  expect(f.deliveries).toHaveLength(1); expect(await readFile(join(f.path, "sample.txt"), "utf8")).toBe("save A\n");
+  expect(f.data.documents.get("sample.txt")?.text).toBe("later B\n"); expect(f.data.documents.get("sample.txt")?.dirty).toBe(true);
+});
