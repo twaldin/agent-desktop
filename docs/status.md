@@ -1,5 +1,14 @@
 # Milestone status
 
+
+## Native plugin directory and skill browsing
+
+The sidebar Plugins entry and settings Browse directory now open the owning host's native installed-plugin and marketplace catalogs. Installed chips return to real management controls, marketplace rows open the existing scoped installation view, and Add opens the existing marketplace source form. Skills search reads the native composer catalog and opens the current discovered skill file through an authenticated, owner- and revision-bound endpoint. Directory navigation persists per window without replacing its conversation owner or draft.
+
+The final hidden Electron component run passes 12 checks with 14 captures against a real isolated OMP host: management navigation and focus restoration, installation identity, delayed catalog/detail responses, project switching, same-owner offline cache, read failure/recovery, search and 720-point desktop-minimum control bounds. The full regression suite passed1,002 tests with 29 skips and no failures; final targeted checks, typecheck and build pass. Earlier 390-point captures were clipped despite a weak overflow assertion and are explicitly excluded from usability credit. All 1,737 sealed reference payload hashes and four manifest hashes still match.
+
+This is source/component and native local-catalog evidence, not installed main/preload or native-window/pixel acceptance. Skill detail is currently a read-only file view; the reference modal, rendered document, enable/disable, uninstall/edit/try actions and in-place settings skill filter remain open. Directory icons, toolbar controls and exact styling remain mismatches. Hosted public/popularity catalogs and Apps classifications are not fabricated from OMP metadata. OMP 18.1.10/Bun 1.3.14, worker protocol 25 and host schema 7 remain unchanged. No Work launch, handoff or installation. Private evidence: `.data/directory-checkpoint/` and `.data/directory-ui-7/`.
+
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
 ## Source30 — Git marketplace source options

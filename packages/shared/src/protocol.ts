@@ -24,7 +24,7 @@ import type { TerminalBridge, NativeTerminalBridge } from "./terminals";
 import type { OmpApprovalMode, OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot } from "./settings";
 import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingOptions, OmpSettingsCatalog, OmpSettingsMutation, OmpSettingsSnapshot } from "./settings";
 import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities, UploadedImageMetadata, RecordedImageBytes } from "./attachments";
-import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions } from "./composer-actions";
+import type { ComposerActionsCatalog, ComposerCompletionQuery, ComposerCompletions, ComposerSkillDetail } from "./composer-actions";
 import type { SessionActivitySnapshot } from "./session-activity";
 import type { BrowserMetadataSnapshot, BrowserFrameTarget, BrowserFrameSnapshot } from "./browser";
 export * from "./attachments";
@@ -256,6 +256,7 @@ export interface AccountActionResult { login?: LoginSnapshot; accounts?: Account
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge> {
   getComposerActions?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<ComposerActionsCatalog | null>;
+  getSkillDetail?(target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string): Promise<ComposerSkillDetail>;
   getComposerCompletions?(query: ComposerCompletionQuery, hostId?: string): Promise<ComposerCompletions>;
   inspectImageAttachment?(data: Uint8Array): Promise<UploadedImageMetadata>;
   getImageAttachmentCapabilities?(hostId: string): Promise<ImageAttachmentCapabilities | null>;

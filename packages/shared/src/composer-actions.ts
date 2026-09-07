@@ -35,6 +35,15 @@ export interface ComposerActionsCatalog {
   referenceSchemes?: string[];
   diagnostics: string[];
 }
+export interface ComposerSkillDetail {
+  protocolVersion: typeof COMPOSER_ACTIONS_PROTOCOL_VERSION;
+  hostId: string;
+  target?: WorkspaceTarget;
+  cwd: string;
+  revision: string;
+  skillId: string;
+  content: string;
+}
 export interface ComposerCompletionQuery {
   target?: WorkspaceTarget;
   kind: "file" | "reference" | "command-argument";

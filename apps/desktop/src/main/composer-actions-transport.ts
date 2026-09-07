@@ -1,4 +1,4 @@
-import { COMPOSER_OWNER_HEADER, type ComposerActionsCatalog, type ComposerCompletionQuery, type ComposerCompletions, type WorkspaceTarget } from "@agent-desktop/shared";
+import { COMPOSER_OWNER_HEADER, type ComposerActionsCatalog, type ComposerCompletionQuery, type ComposerCompletions, type ComposerSkillDetail, type WorkspaceTarget } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
 
 async function query(endpoint: HostEndpoint, path: string, body: unknown): Promise<unknown> {
@@ -27,4 +27,9 @@ export async function requestComposerActions(endpoint: HostEndpoint, target?: Wo
 }
 export async function requestComposerCompletions(endpoint: HostEndpoint, input: ComposerCompletionQuery): Promise<ComposerCompletions> {
   return await query(endpoint, "/v1/composer/completions", input) as ComposerCompletions;
+}
+export async function requestSkillDetail(endpoint: HostEndpoint, target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string): Promise<ComposerSkillDetail> {
+  const value = await query(endpoint, "/v1/composer/skill-detail", { target, skillId, catalogRevision }) as ComposerSkillDetail;
+  if (value.skillId !== skillId || value.revision !== catalogRevision || typeof value.content !== "string" || Buffer.byteLength(value.content, "utf8") > 1024 * 1024) throw new Error("Native skill detail response is invalid.");
+  return value;
 }

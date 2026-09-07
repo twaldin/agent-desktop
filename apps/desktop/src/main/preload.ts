@@ -58,6 +58,7 @@ const bridge: DesktopBridge = {
   getModelCapabilities: (target, refresh, hostId) => ipcRenderer.invoke("host:model-capabilities", target, refresh, hostId),
   getComposerActions: (target, refresh, hostId) => ipcRenderer.invoke("host:composer-actions", target, refresh, hostId),
   getComposerCompletions: (query, hostId) => ipcRenderer.invoke("host:composer-completions", query, hostId),
+  getSkillDetail: (target, skillId, catalogRevision, hostId) => ipcRenderer.invoke("host:skill-detail", target, skillId, catalogRevision, hostId),
   getComposerCatalog: (target, refresh, hostId) => ipcRenderer.invoke("host:composer-catalog", target, refresh, hostId),
   getModelDefinitions: hostId => ipcRenderer.invoke("host:model-definitions", hostId),
   setModelDefinitions: (mutation, hostId) => ipcRenderer.invoke("host:model-definitions-set", mutation, hostId),

@@ -29,3 +29,10 @@ test("invalid bootstrap and native storage failure stay visible while usable nav
   Object.defineProperty(window, "agentDesktopWindow", { get() { throw new Error("bridge unavailable"); } });
   expect(readWindowRestoration().error).toContain("storage is unavailable");
 });
+
+test("directory navigation restores separately from conversation owner and drafts", () => {
+ const saved={...defaultWindowView(),route:{hostId:"remote",sessionId:"original"},pluginDirectoryOpen:true,pluginDirectoryTab:"skills" as const};
+ fixture({state:saved});expect(readWindowRestoration().state).toEqual(saved);
+ fixture({state:{...saved,pluginDirectoryTab:"unknown"}});expect(readWindowRestoration().error).toContain("invalid");
+ fixture({state:{...saved,pluginDirectoryTab:["plugins"]}});expect(readWindowRestoration().error).toContain("invalid");
+});

@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { COMPOSER_OWNER_HEADER } from "@agent-desktop/shared";
 import { ComposerActionsHttp } from "./composer-actions-http";
 
 const catalog = (cwd: string) => ({ protocolVersion: 1 as const, cwd, revision: "a".repeat(64), commands: [], skills: [], diagnostics: [] });
-const request = (body: unknown, owner = "owner") => new Request("http://host/v1/composer/actions", {
+const request = (body: unknown, owner = "owner", path = "/v1/composer/actions") => new Request(`http://host${path}`, {
   method: "POST", headers: { "Content-Type": "application/json", [COMPOSER_OWNER_HEADER]: owner }, body: JSON.stringify(body),
 });
 
@@ -32,4 +34,65 @@ test("composer HTTP rechecks target ownership after native discovery", async () 
     } });
   const response = await http.route(request({ target: { projectId: "project" } }));
   expect(response?.status).toBe(409); expect(await response?.json()).toMatchObject({ error: { code: "STALE_TARGET" } });
+});
+
+test("skill detail reads the discovered file, rechecks revision, and never starts a session", async () => {
+  const root = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "composer-skill-"));
+  try {
+    const file = join(root, "skill.md"); await writeFile(file, "# Native skill\n\ncontent\n");
+    const revision = "b".repeat(64);
+    const source = { kind: "skill" as const, label: "Personal", path: file };
+    const make = () => ({ ...catalog("/owned"), revision, skills: [{ id: "skill:one", name: "one", description: "", insertText: "/skill:one ", source, availability: "executable" as const, argumentCompletions: false }] });
+    let discovery = 0;
+    const http = new ComposerActionsHttp({ hostId: "owner", resolveCwd: () => "/owned", getHandle: async () => { throw new Error("must not start a session worker"); }, runtime: {
+      getComposerActions: async () => { discovery++; return make(); }, getComposerCompletions: async () => { throw new Error("unexpected"); },
+    } });
+    const response = await http.route(request({ skillId: "skill:one", catalogRevision: revision }, "owner", "/v1/composer/skill-detail"));
+    expect(response?.status).toBe(200); expect(await response?.json()).toMatchObject({ skillId: "skill:one", content: "# Native skill\n\ncontent\n", revision }); expect(discovery).toBe(2);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("skill detail rejects oversized and changed files without exposing source paths", async () => {
+  const root = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "composer-skill-"));
+  try {
+    const file = join(root, "large.md"); await writeFile(file, Buffer.alloc(1024 * 1024 + 1, 97));
+    const revision = "c".repeat(64); const make = () => ({ ...catalog("/owned"), revision, skills: [{ id: "skill:large", name: "large", description: "", insertText: "/skill:large ", source: { kind: "skill" as const, label: "Personal", path: file }, availability: "executable" as const, argumentCompletions: false }] });
+    const http = new ComposerActionsHttp({ hostId: "owner", resolveCwd: () => "/owned", getHandle: async () => { throw new Error("unexpected session"); }, runtime: { getComposerActions: async () => make(), getComposerCompletions: async () => { throw new Error("unexpected"); } } });
+    const response = await http.route(request({ skillId: "skill:large", catalogRevision: revision }, "owner", "/v1/composer/skill-detail")); const body = await response?.json() as { error?: { message?: string } };
+    expect(response?.status).toBe(413); expect(body.error?.message).not.toContain(file);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("skill detail accepts a discovered symlink but rejects missing and directory sources", async () => {
+  const root = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "composer-skill-"));
+  try {
+    const target = join(root, "target.md"); const link = join(root, "link.md"); await writeFile(target, "linked"); await symlink(target, link);
+    const revision = "d".repeat(64); const catalogFor = (path: string) => ({ ...catalog("/owned"), revision, skills: [{ id: "skill:x", name: "x", description: "", insertText: "/skill:x ", source: { kind: "skill" as const, label: "Personal", path }, availability: "executable" as const, argumentCompletions: false }] });
+    const http = new ComposerActionsHttp({ hostId: "owner", resolveCwd: () => "/owned", getHandle: async () => { throw new Error("unexpected session"); }, runtime: { getComposerActions: async () => catalogFor(link), getComposerCompletions: async () => { throw new Error("unexpected"); } } });
+    const linked = await http.route(request({ skillId: "skill:x", catalogRevision: revision }, "owner", "/v1/composer/skill-detail")); expect(linked?.status).toBe(200); expect((await linked?.json()).content).toBe("linked");
+    await rm(link); const missing = await http.route(request({ skillId: "skill:x", catalogRevision: revision }, "owner", "/v1/composer/skill-detail")); expect(missing?.status).toBe(404);
+    const directory = join(root, "directory"); await mkdir(directory); const directoryHttp = new ComposerActionsHttp({ hostId: "owner", resolveCwd: () => "/owned", getHandle: async () => { throw new Error("unexpected session"); }, runtime: { getComposerActions: async () => catalogFor(directory), getComposerCompletions: async () => { throw new Error("unexpected"); } } });
+    const bad = await directoryHttp.route(request({ skillId: "skill:x", catalogRevision: revision }, "owner", "/v1/composer/skill-detail")); expect(bad?.status).toBe(404);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("skill detail fences target changes and encoded JSON expansion", async () => {
+  const root = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "composer-skill-"));
+  try {
+    const file = join(root, "nul.md"); await writeFile(file, Buffer.alloc(400_000, 0)); const revision = "e".repeat(64); let current = "/owned";
+    const make = () => ({ ...catalog("/owned"), revision, skills: [{ id: "skill:nul", name: "nul", description: "", insertText: "/skill:nul ", source: { kind: "skill" as const, label: "Personal", path: file }, availability: "executable" as const, argumentCompletions: false }] });
+    let calls = 0; let moveOnSecond = true; const http = new ComposerActionsHttp({ hostId: "owner", resolveCwd: () => current, getHandle: async () => { throw new Error("unexpected session"); }, runtime: { getComposerActions: async () => { calls++; if (moveOnSecond && calls === 2) current = "/moved"; return make(); }, getComposerCompletions: async () => { throw new Error("unexpected"); } } });
+    const moved = await http.route(request({ skillId: "skill:nul", catalogRevision: revision }, "owner", "/v1/composer/skill-detail")); expect(moved?.status).toBe(409);
+    current = "/owned"; calls = 0; moveOnSecond = false; const huge = await http.route(request({ skillId: "skill:nul", catalogRevision: revision }, "owner", "/v1/composer/skill-detail")); expect(huge?.status).toBe(413);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("skill detail rejects a same-path replacement that happens during the second catalog read", async () => {
+  const root = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "composer-skill-"));
+  try {
+    const file = join(root, "replace.md"); await writeFile(file, "before"); const revision = "f".repeat(64); let calls = 0;
+    const make = () => ({ ...catalog("/owned"), revision, skills: [{ id: "skill:replace", name: "replace", description: "", insertText: "/skill:replace ", source: { kind: "skill" as const, label: "Personal", path: file }, availability: "executable" as const, argumentCompletions: false }] });
+    const http = new ComposerActionsHttp({ hostId: "owner", resolveCwd: () => "/owned", getHandle: async () => { throw new Error("unexpected session"); }, runtime: { getComposerActions: async () => { calls++; if (calls === 2) await writeFile(file, "after"); return make(); }, getComposerCompletions: async () => { throw new Error("unexpected"); } } });
+    const response = await http.route(request({ skillId: "skill:replace", catalogRevision: revision }, "owner", "/v1/composer/skill-detail")); expect(response?.status).toBe(409);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

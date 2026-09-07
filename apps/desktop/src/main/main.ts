@@ -5,7 +5,7 @@ import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondS
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
 import type { NativePluginAcquisition, NativePluginAcquisitionRequest } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
-import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
+import { requestComposerActions, requestComposerCompletions, requestSkillDetail } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBtw } from "./btw-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
@@ -424,6 +424,9 @@ ipcMain.handle("host:composer-actions", async (event, target?: WorkspaceTarget, 
 });
 ipcMain.handle("host:composer-completions", async (event, query: ComposerCompletionQuery, hostId?: string) => {
   assertTrustedSender(event); return requestComposerCompletions(await endpointFor(hostId), query);
+});
+ipcMain.handle("host:skill-detail", async (event, target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string) => {
+  assertTrustedSender(event); return requestSkillDetail(await endpointFor(hostId), target, skillId, catalogRevision);
 });
 ipcMain.handle("host:composer-catalog", async (event, target?: WorkspaceTarget, refresh?: boolean, hostId?: string) => {
   assertTrustedSender(event); return requestComposerCatalog(await endpointFor(hostId), target, refresh);

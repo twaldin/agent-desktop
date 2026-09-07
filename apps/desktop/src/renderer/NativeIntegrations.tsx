@@ -26,13 +26,16 @@ export interface NativeIntegrationsProps {
   target?: WorkspaceTarget;
   page: "plugins" | "mcp";
   onClose(): void;
+  onBrowse?(tab?:"plugins"|"skills"): void;
+  initialPluginId?: string;
+  initialMarketplace?: { name?: string; add?: boolean };
   onPageChange?(page: "plugins" | "mcp"): void;
   sessionIdle?: boolean;
 }
 
-export function NativeIntegrations({ bridge, hostId, hostName, connected, target, page, onClose, onPageChange, sessionIdle = false }: NativeIntegrationsProps) {
+export function NativeIntegrations({ bridge, hostId, hostName, connected, target, page, onClose, onPageChange, onBrowse, initialPluginId, initialMarketplace, sessionIdle = false }: NativeIntegrationsProps) {
   const [actionsRoot,setActionsRoot]=useState<HTMLDivElement|null>(null);
-  const [marketplaces,setMarketplaces]=useState(false),[addMcp,setAddMcp]=useState(false);
+  const [marketplaces,setMarketplaces]=useState(Boolean(initialMarketplace)),[addMcp,setAddMcp]=useState(false);
   useEffect(()=>{if(page==='mcp'){setMarketplaces(false);setAddMcp(false);}},[page]);
   const [plugins, setPlugins] = useState<NativePluginCatalog | null>(null);
   const [mcp, setMcp] = useState<NativeMcpCatalog | null>(null);
@@ -42,7 +45,7 @@ export function NativeIntegrations({ bridge, hostId, hostName, connected, target
   const setSaving = (value: boolean) => { savingRef.current = value; if (value) { epoch.current++; setLoading(false); } updateSaving(value); };
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialPluginId ?? null);
   const [liveMcp, setLiveMcp] = useState(false);
   const epoch = useRef(0);
   const targetKey = JSON.stringify(target);
@@ -60,7 +63,7 @@ export function NativeIntegrations({ bridge, hostId, hostName, connected, target
   useEffect(() => {
     // A write belongs to the old context; its fenced completion must not keep
     // the new host/project (or a reconnected view) permanently disabled.
-    setSaving(false); setSelected(null); setLiveMcp(false); setPlugins(null); setMcp(null); setQuery("");
+    setSaving(false); setSelected(initialPluginId ?? null); setLiveMcp(false); setPlugins(null); setMcp(null); setQuery("");
     void reload(); return () => { epoch.current++; };
   }, [page, hostId, targetKey, connected]);
   useEffect(() => bridge.subscribe(event => {
@@ -70,11 +73,11 @@ export function NativeIntegrations({ bridge, hostId, hostName, connected, target
   const plugin = plugins?.plugins.find(item => item.id === selected);
   return <section className="settings-page native-integrations" aria-label={page === "plugins" ? "Plugins" : "MCP servers"}>
     <div className="integration-content">
-    <header className="integration-heading"><div><h1>Plugins</h1><p>Manage plugins and MCPs on {hostName}</p></div><div className="integration-header-actions"><div ref={setActionsRoot}/><button className="icon-button" aria-label="Reload integrations" title="Reload integrations" disabled={!connected || loading || saving} onClick={() => void reload()}><Icon name="refresh"/></button></div></header>
-    <div className="integration-navigation"><div role="tablist" aria-label="Integrations"><button role="tab" aria-selected={page === "plugins" && !marketplaces} onClick={() => { setMarketplaces(false); onPageChange?.("plugins"); }}>Plugins{plugins ? ` ${plugins.plugins.length}` : ""}</button><button role="tab" aria-selected={page === "mcp"} onClick={() => onPageChange?.("mcp")}>MCPs{mcp ? ` ${mcp.servers.length}` : ""}</button><button role="tab" aria-selected={page === "plugins" && marketplaces} onClick={()=>{setMarketplaces(true);onPageChange?.("plugins");}}>Marketplace</button></div><label className="integration-search"><Icon name="search"/><input type="search" aria-label={page === "plugins" ? marketplaces ? "Search marketplaces" : "Search plugins" : "Search MCP servers"} placeholder={page === "plugins" ? marketplaces ? "Search marketplaces" : "Search plugins" : "Search MCP servers"} value={query} onChange={event => setQuery(event.target.value)}/></label></div>
+    <header className="integration-heading"><div><h1>Plugins</h1><p>Manage plugins and MCPs on {hostName}</p></div><div className="integration-header-actions">{onBrowse&&<button className="secondary-button" onClick={()=>onBrowse()}>Browse directory</button>}<div ref={setActionsRoot}/><button className="icon-button" aria-label="Reload integrations" title="Reload integrations" disabled={!connected || loading || saving} onClick={() => void reload()}><Icon name="refresh"/></button></div></header>
+    <div className="integration-navigation"><div role="tablist" aria-label="Integrations"><button role="tab" aria-selected={page === "plugins" && !marketplaces} onClick={() => { setMarketplaces(false); onPageChange?.("plugins"); }}>Plugins{plugins ? ` ${plugins.plugins.length}` : ""}</button><button role="tab" aria-selected={page === "mcp"} onClick={() => onPageChange?.("mcp")}>MCPs{mcp ? ` ${mcp.servers.length}` : ""}</button>{onBrowse&&<button role="tab" aria-selected={false} onClick={()=>onBrowse("skills")}>Skills</button>}<button role="tab" aria-selected={page === "plugins" && marketplaces} onClick={()=>{setMarketplaces(true);onPageChange?.("plugins");}}>Marketplace</button></div><label className="integration-search"><Icon name="search"/><input type="search" aria-label={page === "plugins" ? marketplaces ? "Search marketplaces" : "Search plugins" : "Search MCP servers"} placeholder={page === "plugins" ? marketplaces ? "Search marketplaces" : "Search plugins" : "Search MCP servers"} value={query} onChange={event => setQuery(event.target.value)}/></label></div>
     {!connected && <div className="connection-banner" role="status">This machine is disconnected. Changes require reconnection.</div>}
     {error && <div className="inline-error settings-error" role="alert">{error}</div>}
-    {page === "plugins" ? <PluginAcquisition key={`${hostId}:${targetKey}`} bridge={bridge} hostId={hostId} target={target} connected={connected} visible={marketplaces} query={query} actionsRoot={actionsRoot} onMcp={()=>{setAddMcp(true);onPageChange?.("mcp");}} onInstalledChanged={()=>void reload()}><PluginPage catalog={plugins ? {...plugins, plugins:plugins.plugins.filter(p => `${p.name} ${p.title} ${p.description ?? ""}`.toLowerCase().includes(query.toLowerCase()))} : null} selected={plugin} connected={connected} saving={saving} setSaving={setSaving} setCatalog={setPlugins} setError={setError} bridge={bridge} target={target} hostId={hostId} onSelect={setSelected}/></PluginAcquisition> : liveMcp && target && "sessionId" in target ? <SessionMcp bridge={bridge} hostId={hostId} sessionId={target.sessionId} target={target} connected={connected} idle={sessionIdle} mutationPending={saving} query={query} onBack={() => setLiveMcp(false)}/> : <McpPage initialAdd={addMcp} key={`${hostId}:${targetKey}`} catalog={mcp ? {...mcp, servers:mcp.servers.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))} : null} connected={connected} saving={saving} setSaving={setSaving} setCatalog={setMcp} setError={setError} bridge={bridge} target={target} hostId={hostId} onLive={() => setLiveMcp(true)}/>}
+    {page === "plugins" ? <PluginAcquisition key={`${hostId}:${targetKey}`} bridge={bridge} hostId={hostId} target={target} connected={connected} visible={marketplaces} initialMarketplace={initialMarketplace?.name} initialAdd={initialMarketplace?.add} query={query} actionsRoot={actionsRoot} onMcp={()=>{setAddMcp(true);onPageChange?.("mcp");}} onInstalledChanged={()=>void reload()}><PluginPage catalog={plugins ? {...plugins, plugins:plugins.plugins.filter(p => `${p.name} ${p.title} ${p.description ?? ""}`.toLowerCase().includes(query.toLowerCase()))} : null} selected={plugin} connected={connected} saving={saving} setSaving={setSaving} setCatalog={setPlugins} setError={setError} bridge={bridge} target={target} hostId={hostId} onSelect={setSelected}/></PluginAcquisition> : liveMcp && target && "sessionId" in target ? <SessionMcp bridge={bridge} hostId={hostId} sessionId={target.sessionId} target={target} connected={connected} idle={sessionIdle} mutationPending={saving} query={query} onBack={() => setLiveMcp(false)}/> : <McpPage initialAdd={addMcp} key={`${hostId}:${targetKey}`} catalog={mcp ? {...mcp, servers:mcp.servers.filter(s => s.name.toLowerCase().includes(query.toLowerCase()))} : null} connected={connected} saving={saving} setSaving={setSaving} setCatalog={setMcp} setError={setError} bridge={bridge} target={target} hostId={hostId} onLive={() => setLiveMcp(true)}/>}
     </div>
   </section>;
 }

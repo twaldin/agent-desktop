@@ -10,6 +10,8 @@ export interface WindowViewState {
   route: WindowNavigation;
   dock?: { state: DockState; tabs: DockTab[] };
   environmentOpen?: boolean;
+  pluginDirectoryOpen?: boolean;
+  pluginDirectoryTab?: "plugins" | "skills";
   sidebarOpen: boolean;
   workspaceOpen: boolean;
   workspaceTab: WorkspaceTab;
@@ -85,6 +87,8 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     typeof value.environmentOpen !== "boolean"
   )
     return;
+  if (value.pluginDirectoryOpen !== undefined && typeof value.pluginDirectoryOpen !== "boolean") return;
+  if (value.pluginDirectoryTab !== undefined && value.pluginDirectoryTab !== "plugins" && value.pluginDirectoryTab !== "skills") return;
   const dock = parseDockSnapshot(value.dock);
   return {
     route: {
@@ -95,6 +99,8 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     ...(typeof value.environmentOpen === "boolean"
       ? { environmentOpen: value.environmentOpen }
       : {}),
+    ...(typeof value.pluginDirectoryOpen === "boolean" ? {pluginDirectoryOpen:value.pluginDirectoryOpen} : {}),
+    ...(value.pluginDirectoryTab === undefined ? {} : {pluginDirectoryTab:value.pluginDirectoryTab as "plugins"|"skills"}),
     sidebarOpen: value.sidebarOpen as boolean,
     workspaceOpen: value.workspaceOpen as boolean,
     workspaceTab: value.workspaceTab as WorkspaceTab,

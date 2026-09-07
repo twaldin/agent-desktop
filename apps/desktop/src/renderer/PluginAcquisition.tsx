@@ -6,15 +6,15 @@ import {assertMarketplaceGitSource,parseMarketplaceSourceOptions} from '../../..
 import {clearAcquisitionIntent,readAcquisitionIntents,saveAcquisitionIntent,type AcquisitionIntent} from './plugin-acquisition-intents';
 import './plugin-acquisition.css';
 
-type Props={bridge:DesktopBridge;hostId:string;target?:WorkspaceTarget;connected:boolean;visible:boolean;query:string;actionsRoot:HTMLElement|null;onMcp():void;onInstalledChanged():void;children:ReactNode};
+type Props={initialMarketplace?:string;initialAdd?:boolean;bridge:DesktopBridge;hostId:string;target?:WorkspaceTarget;connected:boolean;visible:boolean;query:string;actionsRoot:HTMLElement|null;onMcp():void;onInstalledChanged():void;children:ReactNode};
 const label=(op:NativePluginAcquisition['operation'])=>({'marketplace.add':'Add marketplace','marketplace.update':'Upgrade marketplace','marketplace.remove':'Remove marketplace','plugin.install':'Install plugin','plugin.uninstall':'Uninstall plugin'}[op]);
 const owner=(target?:WorkspaceTarget)=>target?('projectId'in target?target.projectId:target.sessionId):'Host defaults';
-export function PluginAcquisition({bridge,hostId,target,connected,visible,query,actionsRoot,onMcp,onInstalledChanged,children}:Props){
+export function PluginAcquisition({initialMarketplace,initialAdd=false,bridge,hostId,target,connected,visible,query,actionsRoot,onMcp,onInstalledChanged,children}:Props){
  const [catalog,setCatalog]=useState<NativeMarketplaceCatalog|null>(null),[receipts,setReceipts]=useState<NativePluginAcquisitionReceipt[]>([]),[intents,setIntents]=useState<AcquisitionIntent[]>(()=>readAcquisitionIntents(localStorage,hostId));
- const [loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null),[menu,setMenu]=useState(false),[adding,setAdding]=useState(false),[source,setSource]=useState('');
+ const [loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null),[menu,setMenu]=useState(false),[adding,setAdding]=useState(initialAdd),[source,setSource]=useState('');
  const [gitRef,setGitRef]=useState(''),[sparsePaths,setSparsePaths]=useState(''),[sourceHelp,setSourceHelp]=useState(false);
  const formValues=useRef({source,gitRef,sparsePaths});formValues.current={source,gitRef,sparsePaths};
- const [selected,setSelected]=useState<string|null>(null),[scope,setScope]=useState<'user'|'project'>('user');
+ const [selected,setSelected]=useState<string|null>(initialMarketplace??null),[scope,setScope]=useState<'user'|'project'>('user');
  const [review,setReview]=useState<{receipt:NativePluginAcquisitionReceipt;catalog:NativeMarketplaceCatalog}|null>(null),[confirmation,setConfirmation]=useState<NativePluginAcquisition|null>(null);
  const addRef=useRef<HTMLButtonElement>(null),dialog=useRef<HTMLDialogElement>(null),menuRef=useRef<HTMLDivElement>(null),opener=useRef<HTMLElement|null>(null);
  const epoch=useRef(0),busyRef=useRef(false),polling=useRef<number|null>(null),pollSerial=useRef(0),forceQueued=useRef(false),mounted=useRef(true);
