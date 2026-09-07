@@ -154,3 +154,7 @@ h2, h3 { font-family:var(--heading-font); font-weight:var(--heading-font-weight)
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not([data-theme="dark"]) { --welcome-mark-color:#fff; }
 }
+
+:root { --markdown-table-border:color-mix(in oklab,var(--text) 5%,transparent); }
+:root[data-theme="dark"] { --markdown-table-border:rgb(255 255 255 / 4%); }
+@media (prefers-color-scheme:dark) { :root:not([data-theme="light"]):not([data-theme="dark"]) { --markdown-table-border:rgb(255 255 255 / 4%); } }

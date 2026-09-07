@@ -61,8 +61,8 @@ class TaskCheckbox extends WidgetType {
 }
 
 const parsedImages = new WeakMap<EditorState["doc"], ReturnType<typeof parseMarkdownImages>>();
-function richDecorations(state: EditorState): DecorationSet {
-  const decorations: Range<Decoration>[] = [], doc = state.doc;
+function richDecorations(state: EditorState): { body: DecorationSet; cells: DecorationSet } {
+  const decorations: Range<Decoration>[] = [], cells: Range<Decoration>[] = [], doc = state.doc;
   const metadata = markdownMetadata(doc.toString());
   if (metadata) {
     // Leave the final newline outside the block replacement. Including it also
@@ -93,8 +93,15 @@ function richDecorations(state: EditorState): DecorationSet {
     if (name === "InlineCode") mark(from, to, "markdown-inline-code");
     if (name === "Blockquote") lines(from, to, "markdown-quote");
     if (name === "FencedCode" || name === "CodeBlock") { lines(from, to, "markdown-code-line"); }
-    if (name === "Table") lines(from, to, "markdown-table-line");
-    if (name === "TableHeader") mark(from, to, "markdown-strong");
+    // Keep table cells in the live Markdown document. Only delimiters disappear;
+    // the reference does not replace the table with serialized HTML or a grid editor.
+    if (name === "TableHeader" || name === "TableRow")
+      lines(from, to, `markdown-table-row${name === "TableHeader" ? " markdown-table-header" : ""}`);
+    if (name === "TableCell" && to > from) cells.push(Decoration.mark({ class: "markdown-table-cell" }).range(from, to));
+    if (name === "TableDelimiter") {
+      if (parent?.name === "Table") lines(from, to, "markdown-table-separator");
+      hide(from, to); return false;
+    }
     if (name === "HorizontalRule" && !selected(from, to)) {
       lines(from, to, "markdown-horizontal-rule"); hide(from, to); return false;
     }
@@ -130,10 +137,14 @@ function richDecorations(state: EditorState): DecorationSet {
       }
     }
   } });
-  return Decoration.set(decorations, true);
+  return { body: Decoration.set(decorations, true), cells: Decoration.set(cells, true) };
 }
-const decorations = StateField.define<DecorationSet>({ create: richDecorations, update: (_value, transaction) => richDecorations(transaction.state),
-  provide: field => [EditorView.decorations.from(field), EditorView.atomicRanges.of(view => view.state.field(field).update({ filter: (_from, _to, value) => Boolean(value.spec.widget) }))],
+const decorations = StateField.define<ReturnType<typeof richDecorations>>({ create: richDecorations, update: (_value, transaction) => richDecorations(transaction.state),
+  // Cells must wrap inline marks even when emphasis covers the entire cell.
+  // Lower-precedence decorations create the outer DOM span in CodeMirror.
+  provide: field => [EditorView.decorations.from(field, value => value.body),
+    Prec.lowest(EditorView.decorations.from(field, value => value.cells)),
+    EditorView.atomicRanges.of(view => view.state.field(field).body.update({ filter: (_from, _to, value) => Boolean(value.spec.widget) }))],
 });
 
 export interface RichMarkdownEditorProps {

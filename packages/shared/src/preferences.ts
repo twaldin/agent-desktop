@@ -16,6 +16,7 @@ export const THEME_TOKEN_DEFINITIONS = {
   "--dialog-opacity": { kind: "number", minimum: 0, maximum: 1 },
   "--dialog-blur": { kind: "length", minimum: 0, maximum: 100 },
   "--welcome-mark-color": { kind: "color" },
+  "--markdown-table-border": { kind: "color" },
   "--welcome-mark-opacity": { kind: "number", minimum: 0, maximum: 1 },
   "--welcome-mark-hover-opacity": { kind: "number", minimum: 0, maximum: 1 },
   "--user-message-surface": { kind: "color" }, "--user-message-text": { kind: "color" },

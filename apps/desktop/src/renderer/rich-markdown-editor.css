@@ -26,7 +26,12 @@
 .markdown-inline-code { font-family:var(--code-font,monospace); font-size:var(--chat-code-font-size,13px); background:var(--hover); border-radius:4px; }
 .rich-markdown-content .markdown-code-line { font:var(--chat-code-font-size,13px)/1.6 var(--code-font,monospace); background:var(--hover); padding:0 12px; }
 .rich-markdown-content .markdown-quote { border-left:2px solid var(--border); padding-left:12px; color:var(--secondary); }
-.rich-markdown-content .markdown-table-line { font-family:var(--code-font,monospace); }
+.rich-markdown-content .cm-line.markdown-table-row { display:flex; padding:0; }
+.rich-markdown-content .markdown-table-row:not(.markdown-table-header) { border-block-start:1px solid var(--markdown-table-border,var(--border)); }
+.rich-markdown-content .markdown-table-cell { flex:1 1 0; min-inline-size:0; overflow-wrap:anywhere; padding:calc(var(--spacing-sm,8px) * var(--spacing-scale,1)) calc(var(--spacing-md,12px) * var(--spacing-scale,1)); }
+.rich-markdown-content .markdown-table-header .markdown-table-cell { font-weight:600; }
+.rich-markdown-content .markdown-table-row .cm-widgetBuffer { display:none; }
+.rich-markdown-content .cm-line.markdown-table-separator { font-size:0; line-height:0; padding:0; }
 .rich-markdown-content .markdown-horizontal-rule { border-top:1px solid var(--border); margin:12px 0; }
 .markdown-bullet { display:inline-block; min-width:1ch; }
 .markdown-task-checkbox { accent-color:var(--accent); margin:0 4px 0 0; vertical-align:middle; }

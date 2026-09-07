@@ -1,5 +1,9 @@
 # Milestone status
 
+## Editable Markdown tables
+
+Markdown previews now use the pinned live-cell table layout with normal editing/undo, links, source modes and owner-host saving. Seven renderer checks/seven captures verify layout, one real save, offline recovery and narrow/light/custom-token behavior;20 scoped tests/77 assertions, shared skill/image regressions, typecheck and build pass. Screenshot review found and fixed a whole-cell emphasis nesting defect missed by the initial tests. This is source/renderer/host evidence, not installed or matched native-pixel acceptance. See [file editor](workspace-file-editor.md).
+
 ## Normal window close durability
 
 Closing a window or quitting now waits for file-save/recovery preparation, preserves offline edits, and keeps windows usable after a canceled or failed close. Six real Electron lifecycle checks/five hidden captures and48 scoped tests/260 assertions pass; one authenticated file write, zero sessions and the original draft are verified. The actual Electron run caught and fixed a UUID receiver bug that Bun tests missed. This is source/preload/controller/main-gate evidence with fixture event wiring, not installed full-App or native pixel acceptance. Existing Work runs and sealed bundles remain untouched. See [file editor](workspace-file-editor.md).
