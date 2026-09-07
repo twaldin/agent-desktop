@@ -57,11 +57,12 @@ import { approvalMode, hasApprovalIntent } from "./approval";
 import { OmpSettingsError } from "./omp-settings";
 import { ApprovalRecovery } from "./approval-recovery";
 import { NotificationEvents } from "./notification-events";
+import { WorkspaceFileOpen, type WorkspaceFileOpenRuntime } from "./workspace-open";
 
 type SocketData = { after: number; remoteAddress?: string };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string; skillFileReveal?: (canonicalPath: string) => Promise<void> } = {}) {
+export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string; skillFileReveal?: (canonicalPath: string) => Promise<void>; workspaceFileOpen?: WorkspaceFileOpenRuntime } = {}) {
   const dataDirectory = options.dataDirectory ?? getDataDirectory();
   const lease = acquireHostLease(dataDirectory);
   const environmentAbort = new AbortController();
@@ -123,7 +124,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       }
       publishState();
     },
-  }, environmentActions);
+  }, environmentActions, new WorkspaceFileOpen(options.workspaceFileOpen));
   const environmentRuns = new LocalEnvironmentRuns(store.environmentPreparations);
   const environmentLifecycle = new WorktreeEnvironmentLifecycle(store, workspaces, { signal: environmentAbort.signal }, environmentRuns);
   function assertWorkspaceAvailable(cwd: string): void {

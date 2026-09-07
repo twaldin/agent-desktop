@@ -1,5 +1,13 @@
 # Milestone status
 
+## Workspace file Open
+
+Dedicated file tabs now expose the split Open / Open options control, backed by the owning host’s installed application catalog and durable command receipts. The host confines file paths, rechecks applications at dispatch, and never substitutes the viewing client’s filesystem. Open uses current host bytes without forcing a save; the existing autosave continues independently. Offline, unavailable, inventory-error and uncertain-launch states have functioning controls.
+
+Validation:83 tests/496 assertions, typecheck/build and eight hidden-Electron checks/seven captures pass. The actual authenticated host recorded six Open deliveries/five unique IDs, four injected launch invocations, one later autosave write, zero sessions and the original revision1 draft. An unknown launch remains unknown after its same-ID check and is not replayed. The UI tests caught and verified fixes for lost focus in an empty menu and repeated discovery caused by portal focus events.
+
+The menu measures170px with14px text and a dark42/42/42 surface; the default menu token now also affects other menus, without granting them new pixel acceptance. External OS launches are injected, not exercised. Save as, dynamic app icons, complete app discovery/preference settings and terminal `$EDITOR` behavior remain open. Existing installations, Work runs, sealed references and runtime pins are unchanged. See [file editor](workspace-file-editor.md); private evidence `.data/workspace-file-open-2026-09-07/` and `.data/ui-acceptance/workspace-file-open-2026-09-07-final3/`.
+
 ## Workspace file autosave and close recovery
 
 New file-editor changes now autosave after three seconds through the existing host-owned CAS/receipt queue. Dedicated files omit the old healthy Save/footer/notice and show transient save status. File-tab close saves until clean, then offers the reference Continue viewing / Discard changes decision on failure. Discard waits for durable recovery storage; an original unconfirmed receipt remains recoverable without resurrecting discarded text. Subsequent edits remain protected. Older cached manual buffers do not silently become writes.
@@ -22,7 +30,7 @@ Workspace file links and file selections now open dedicated tabs identified by h
 
 The focused suite passes 38 tests/183 assertions, with typecheck and production build passing. The new dock acceptance passes six checks/six captures against an isolated authenticated host: two exact file writes, independent buffers, dirty reopen, breadcrumb navigation/Escape, dock movement and hide/show. The seeded draft remains unchanged and no sessions are created. The existing Files regression also passes nine checks/seven captures. These are production-renderer/host checks, not installed App/main/preload or physical-window acceptance.
 
-Closing or moving a file tab preserves cached edits, but native undo/selection across remounts remains unfinished. The right file tree and recursive picker are covered by the later source checkpoint above; file-type icons and open-target actions remain explicit gaps; the later autosave checkpoint above supersedes manual-only saves. The reference supports a 48-point header and 384×320 picker; current renderer checks do not certify installed OS pixels. See [workspace file editor](workspace-file-editor.md).
+Closing or moving a file tab preserves cached edits, but native undo/selection across remounts remains unfinished. The right file tree and recursive picker are covered by the later source checkpoint above; file-type icons and the remaining Open capabilities remain explicit gaps; the later autosave checkpoint above supersedes manual-only saves. The reference supports a 48-point header and 384×320 picker; current renderer checks do not certify installed OS pixels. See [workspace file editor](workspace-file-editor.md).
 
 ## General Files source editor
 

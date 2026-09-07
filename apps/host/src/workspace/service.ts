@@ -92,6 +92,28 @@ export class WorkspaceService {
     return join(parent, basename(target));
   }
 
+  /** Resolve an existing regular file without granting access beyond this workspace. */
+  async externalFilePath(path: string): Promise<string> {
+    const assertRoot = async () => {
+      let metadata, canonical;
+      try { metadata = await lstat(this.cwd); canonical = await realpath(this.cwd); }
+      catch { throw new WorkspaceError("PATH_CHANGED", "The selected workspace changed identity. Reopen it before opening a file externally."); }
+      if (!metadata.isDirectory() || metadata.dev !== this.cwdIdentity.dev || metadata.ino !== this.cwdIdentity.ino || canonical !== this.cwd) {
+        throw new WorkspaceError("PATH_CHANGED", "The selected workspace changed identity. Reopen it before opening a file externally.");
+      }
+    };
+    await assertRoot();
+    const target = await this.owned(path);
+    const initial = await stat(target);
+    if (!initial.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Only a regular workspace file can be opened externally.");
+    await assertRoot();
+    const currentPath = await realpath(target), current = await stat(currentPath);
+    if (currentPath !== target || !current.isFile() || current.dev !== initial.dev || current.ino !== initial.ino) {
+      throw new WorkspaceError("PATH_CHANGED", "The file changed identity while preparing its external application. Refresh before retrying.");
+    }
+    return target;
+  }
+
   async stat(path: string): Promise<WorkspaceEntry> {
     const target = await this.parentOwned(path);
     const metadata = await lstat(target);

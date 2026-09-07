@@ -229,13 +229,14 @@ export class WorkspaceState {
   private fileSaveError(action: WorkspaceMutation, error: string) {
     if (action.type === "file.write") { const item = this.documents.get(action.path); if (item) item.saveError = error; }
   }
-  async mutate(action: WorkspaceMutation) {
+  async mutate(action: WorkspaceMutation): Promise<boolean> {
     await this.restore();
-    if (this.busy || this.pending) return;
-    if (!this.restored) return;
-    if (!this.connected) { this.errors.action = "Reconnect to change files or Git state on this host."; this.changed(); await this.persist().catch(() => {}); return; }
+    if (this.busy || this.pending) return false;
+    if (!this.restored) return false;
+    if (!this.connected) { this.errors.action = "Reconnect to change files or Git state on this host."; this.changed(); await this.persist().catch(() => {}); return false; }
     this.pending = { envelope: { id: crypto.randomUUID(), command: { type: "workspace.mutate", target: this.target, action } }, uncertain: false };
     await this.deliver();
+    return true;
   }
   async retry() { if (this.pending && !this.busy) await this.deliver(); }
   async acknowledgeUnknown() { if (this.busy || !this.pending?.uncertain) return; this.pending = undefined; this.errors.action = undefined; this.notice = "Previous outcome acknowledged. Review the current files and Git state before a new change."; this.changed(); await this.persist().catch(() => {}); }
