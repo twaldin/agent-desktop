@@ -5,6 +5,7 @@ import { Icon } from "./Icons";
 import { type WorkspaceFileRequest, type WorkspaceFileLink } from "./transcript-links";
 import { ReviewPanel } from "./ReviewPanel";
 import { retainWorkspace } from "./workspace-lease";
+import { markdownImagePath } from "./markdown-images";
 import { resolveMarkdownLink } from "./markdown-links";
 import { MarkdownCopyButton } from "./MarkdownCopyButton";
 import { RichMarkdownEditor } from "./RichMarkdownEditor";
@@ -112,6 +113,8 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
       {markdownFile && document && editable && <div className="workspace-markdown-actions"><MarkdownCopyButton key={`${data.cacheKey}:${filePath}`} text={document.text}/></div>}
       {/* Keep each open file's native history and selection while another tab is visible. */}
       {markdownFile && document && editable && <RichMarkdownEditor documentKey={`${data.cacheKey}:${filePath}:markdown`} value={document.text} label={`Edit Markdown ${filePath}`} active={active && mode === "markdown"} revealRequest={revealRequest} onReveal={(id, error) => setLocationNotice(error ? { id, path: filePath!, message: error } : undefined)}
+        imageGeneration={data.imageGeneration}
+        resolveImage={href => { const path = markdownImagePath(href, filePath!, workspacePath); return path === null ? null : { key: `${data.cacheKey}:${data.imageGeneration}:${path}`, load: () => data.acquireImage(path) }; }}
         openLink={async href => {
           const link = resolveMarkdownLink(href, filePath!, workspacePath);
           if (link.kind === "unavailable") throw new Error(link.reason);

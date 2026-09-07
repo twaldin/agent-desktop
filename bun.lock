@@ -45,6 +45,7 @@
         "@codemirror/view": "6.43.11",
         "@lezer/markdown": "1.7.2",
         "lowlight": "3.3.0",
+        "mdast-util-from-markdown": "2.0.3",
         "react-markdown": "10.1.0",
         "remark-gfm": "4.0.1",
         "tldts": "7.4.9",

@@ -3,7 +3,7 @@ import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, Worksp
 import type { FileContent, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "../../../../packages/shared/src/workspace";
 import type { OfflineCache } from "./offline-cache";
 
-type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe" | "saveWorkspaceCopy">;
+type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe" | "saveWorkspaceCopy" | "acquireWorkspaceImage" | "releaseWorkspaceImage">;
 export const WORKSPACE_AUTOSAVE_DELAY_MS = 3_000;
 export interface EditorDocument { discardedSaveId?: string; autosave?: boolean; saveError?: string; content: FileContent | null; text: string; dirty: boolean; conflict?: FileContent | null; recoveredText?: string }
 export interface PendingWorkspaceMutation { envelope: CommandEnvelope & { command: { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation } }; uncertain: boolean }
@@ -23,6 +23,7 @@ export class WorkspaceState {
   errors: Record<string, string | undefined> = {};
   loading = new Set<string>();
   connected = false;
+  imageGeneration = 0;
   restored = false;
   pending?: PendingWorkspaceMutation;
   busy = false;
@@ -52,6 +53,13 @@ export class WorkspaceState {
     if (!this.connected) return Promise.reject(new Error("Reconnect to copy the file from its owning host."));
     if (!this.bridge.saveWorkspaceCopy) return Promise.reject(new Error("Save as is unavailable in this desktop build."));
     return this.bridge.saveWorkspaceCopy(this.target, path, this.hostId);
+  }
+  async acquireImage(path: string) {
+    if (!this.connected) throw new Error("Reconnect to load this workspace image.");
+    if (!this.bridge.acquireWorkspaceImage || !this.bridge.releaseWorkspaceImage) throw new Error("Workspace image loading is unavailable in this desktop.");
+    const release = this.bridge.releaseWorkspaceImage.bind(this.bridge);
+    const lease = await this.bridge.acquireWorkspaceImage(this.target, path, this.hostId);
+    return { url: lease.url, release: () => release(lease.id) };
   }
   private changed() { for (const listener of this.listeners) listener(); this.scheduleAutosave(); }
   start() {
@@ -87,7 +95,7 @@ export class WorkspaceState {
     return write.then(() => { this.cacheWarning = undefined; this.changed(); }, cause => { this.cacheWarning = `Editor recovery could not be saved on this device. ${message(cause)}`; this.changed(); throw cause; });
   }
   private saveSoon() { void this.persist().catch(() => {}); }
-  setConnected(connected: boolean) { this.connected = connected; this.changed(); }
+  setConnected(connected: boolean) { if (connected && !this.connected) this.imageGeneration++; this.connected = connected; this.changed(); }
   async query(query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
     if (!this.connected) throw new Error("This host is disconnected. Cached workspace data may be out of date.");
     return this.bridge.workspaceQuery(this.target, query, this.hostId);

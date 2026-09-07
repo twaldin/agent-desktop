@@ -17,7 +17,7 @@ import type { BrowserControlRequest, BrowserCreateRequest, BrowserFrameTarget } 
 import type { ComposerCompletionQuery, NativeSkillFileRef } from "@agent-desktop/shared";
 import { NotificationDelivery, type NotificationTarget } from "./notification-delivery";
 import { parsePreferencesSnapshot, type NotificationPreferences } from "../../../../packages/shared/src/preferences";
-import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell } from "electron";
+import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, protocol, screen, shell } from "electron";
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
 import { nativeTerminalResult, requestHost, type HostEndpoint } from "./host-transport";
@@ -27,6 +27,7 @@ import { requestVersionedCommand, requestVersionedControl } from "./command-endp
 import { verifyKnownHost } from "./host-recovery";
 import { resolveHostLaunch } from "./host-launch";
 import { saveWorkspaceCopy, workspaceCopySource, workspaceCopyOutcome } from "./workspace-save-copy";
+import { WorkspaceImageGrants } from "./workspace-image";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
@@ -39,6 +40,7 @@ import type { TerminalInvalidation, TerminalControlAction, TerminalInputRequest,
 import type { OmpModelDefinitionsMutation } from "@agent-desktop/shared";
 import type { NativeTerminalAction, NativeTerminalInputRequest, NativeTerminalInvalidation, NativeTerminalQuery } from "@agent-desktop/shared";
 
+protocol.registerSchemesAsPrivileged([{ scheme: "agent-workspace-image", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setName("Agent Desktop");
 const dataDirectory = getDataDirectory();
 app.setPath("userData", process.env.AGENT_DESKTOP_PROFILE_DIR || dataDirectory);
@@ -47,6 +49,8 @@ const primaryInstance = Boolean(process.env.AGENT_DESKTOP_CAPTURE) || app.reques
 if (!primaryInstance) app.quit();
 const connectionPath = join(dataDirectory, "connection.json");
 const windows = new Set<BrowserWindow>();
+const workspaceImages = new WorkspaceImageGrants();
+const workspaceImageEpochs = new Map<number, number>();
 const windowStates = new Map<number, WindowStateStore>();
 let connection: LocalConnection | null = null;
 type HostStream = { endpoint: HostEndpoint; sequence: number; socket?: WebSocket; timer?: ReturnType<typeof setTimeout> };
@@ -563,6 +567,20 @@ ipcMain.handle("desktop:workspace-save-copy", async (event, target: WorkspaceTar
     });
   } finally { sender.removeListener("destroyed", destroyed); workspaceCopies.delete(id); }
 }));
+ipcMain.handle("desktop:workspace-image-acquire", async (event, target: WorkspaceTarget, path: string, hostId: string) => {
+  assertTrustedSender(event);
+  const sender = event.sender, senderId = sender.id, epoch = workspaceImageEpochs.get(senderId) ?? 0;
+  const endpoint = await endpointFor(hostId);
+  if (sender.isDestroyed() || (workspaceImageEpochs.get(senderId) ?? 0) !== epoch) throw new Error("The viewing page changed before its workspace image was ready.");
+  if (endpoint.hostId !== hostId) throw new Error("The selected image host changed. Reconnect before loading it.");
+  return workspaceImages.acquire({ senderId, target, path, hostId,
+    source: signal => workspaceCopySource(endpoint, target, endpoint.hostId === connection?.hostId, signal) });
+});
+ipcMain.handle("desktop:workspace-image-release", (event, id: string) => {
+  assertTrustedSender(event);
+  if (typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)) throw new Error("Invalid workspace image grant.");
+  workspaceImages.release(id, event.sender.id);
+});
 ipcMain.handle("host:interaction-response", (event, sessionId: string, interactionId: string, response: OmpInteractionResponse, hostId?: string) => {
   assertTrustedSender(event);
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200) throw new Error("Invalid session ID.");
@@ -610,12 +628,18 @@ async function createWindow(): Promise<void> {
   windows.add(window);
   windowStates.set(window.webContents.id, localState);
   const windowContentsId = window.webContents.id;
+  workspaceImageEpochs.set(windowContentsId, 0);
   if (geometry.maximized && !process.env.AGENT_DESKTOP_CAPTURE) window.maximize();
   trackWindowGeometry(window, localState, status => { if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-state:status", status); });
   window.webContents.on("preload-error", (_event, _path, error) => console.error("Desktop preload failed:", error.message));
   window.webContents.on("did-start-loading", () => notificationReady.delete(windowContentsId));
-  window.webContents.on("render-process-gone", (_event, details) => { notificationReady.delete(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
-  window.on("closed", () => { windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); });
+  window.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
+    if (!isMainFrame) return;
+    workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1);
+    workspaceImages.releaseSender(windowContentsId);
+  });
+  window.webContents.on("render-process-gone", (_event, details) => { notificationReady.delete(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
+  window.on("closed", () => { windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", event => event.preventDefault());
   const development = process.env.AGENT_DESKTOP_RENDERER_URL;
@@ -628,7 +652,10 @@ async function createWindow(): Promise<void> {
   }
 }
 
-if (primaryInstance) app.whenReady().then(() => { app.setAccessibilitySupportEnabled(true); return createWindow(); }).catch(error => { dialog.showErrorBox("Agent Desktop", String(error)); app.quit(); });
+if (primaryInstance) app.whenReady().then(() => {
+  protocol.handle("agent-workspace-image", request => workspaceImages.response(request.url, request.signal));
+  app.setAccessibilitySupportEnabled(true); return createWindow();
+}).catch(error => { dialog.showErrorBox("Agent Desktop", String(error)); app.quit(); });
 app.on("second-instance", () => {
   const window = [...windows][0];
   if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }

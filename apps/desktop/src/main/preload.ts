@@ -37,6 +37,8 @@ const bridge: DesktopBridge = {
     if (!result.ok) throw new Error(result.error);
     return result.value;
   },
+  acquireWorkspaceImage: (target, path, hostId) => ipcRenderer.invoke("desktop:workspace-image-acquire", target, path, hostId),
+  releaseWorkspaceImage: id => ipcRenderer.invoke("desktop:workspace-image-release", id),
   getPreferences: () => ipcRenderer.invoke("host:preferences"),
   getTheme: () => ipcRenderer.invoke("host:theme"),
   setTheme: (document, expectedRevision) => ipcRenderer.invoke("host:theme-set", document, expectedRevision),

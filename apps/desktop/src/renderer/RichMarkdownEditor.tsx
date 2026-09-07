@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
+import { Annotation, Compartment, Facet, Prec, EditorSelection, EditorState, StateEffect, StateField, Transaction, type Range } from "@codemirror/state";
 import { Decoration, EditorView, keymap, placeholder, highlightSpecialChars, drawSelection, type DecorationSet, WidgetType } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches, closeSearchPanel } from "@codemirror/search";
@@ -8,9 +8,12 @@ import { markdown } from "@codemirror/lang-markdown";
 import { GFM, Superscript, Subscript, Emoji } from "@lezer/markdown";
 import { applyMarkdownChanges, markdownMetadata, markdownTextChange, normalizeMarkdown, protectMarkdownPrefix } from "./markdown-file-model";
 import { fileLocation, resolveTranscriptLink } from "./transcript-links";
+import { MarkdownImageWidget } from "./MarkdownImageWidget";
+import { parseMarkdownImages, type MarkdownImageResolver } from "./markdown-images";
 import { GoToLine } from "./GoToLine";
 import "./rich-markdown-editor.css";
 
+const imageResolver = Facet.define<MarkdownImageResolver, MarkdownImageResolver | undefined>({ combine: values => values.at(-1) });
 const focusChanged = StateEffect.define<boolean>();
 const externalText = Annotation.define<boolean>();
 const protectMetadata = EditorState.transactionFilter.of(transaction => {
@@ -57,6 +60,7 @@ class TaskCheckbox extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+const parsedImages = new WeakMap<EditorState["doc"], ReturnType<typeof parseMarkdownImages>>();
 function richDecorations(state: EditorState): DecorationSet {
   const decorations: Range<Decoration>[] = [], doc = state.doc;
   const metadata = markdownMetadata(doc.toString());
@@ -104,6 +108,15 @@ function richDecorations(state: EditorState): DecorationSet {
       decorations.push(Decoration.replace({ widget: new Bullet() }).range(from, to));
     if (name === "TaskMarker" && !selected(from, to))
       decorations.push(Decoration.replace({ widget: new TaskCheckbox(doc.sliceString(from + 1, from + 2).toLowerCase() === "x", from + 1, state.readOnly) }).range(from, to));
+    if (name === "Image" && !selected(from, to)) {
+      let images = parsedImages.get(doc);
+      if (!images) { images = parseMarkdownImages(doc.toString()); parsedImages.set(doc, images); }
+      const image = images.get(from), source = image && state.facet(imageResolver)?.(image.href);
+      if (image && source && image.to === to) {
+        decorations.push(Decoration.replace({ widget: new MarkdownImageWidget(source, image.alt, image.title) }).range(from, to));
+        return false;
+      }
+    }
     if (name === "Link" || name === "Autolink") {
       const urlNode = node.node.getChild("URL"), marks = node.node.getChildren("LinkMark");
       if (urlNode && !selected(from, to)) {
@@ -127,6 +140,8 @@ export interface RichMarkdownEditorProps {
   documentKey: string; value: string; label: string; onChange(text: string): void; onSave(): void;
   readOnly?: boolean; active?: boolean; openExternal?(url: string): Promise<void>;
   openLink?(href: string): Promise<void> | void;
+  resolveImage?: MarkdownImageResolver;
+  imageGeneration?: number;
   revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
 }
@@ -190,7 +205,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
       return true;
     };
     const editor = new EditorView({ parent: container.current!, state: EditorState.create({ doc: initial, selection: {anchor:markdownMetadata(initial)?.end??0}, extensions: [
-      protectMetadata,
+      protectMetadata, imageResolver.of(href => latest.current.resolveImage?.(href) ?? null),
       focused, markdown({ extensions: [...GFM, Superscript, Subscript, Emoji], completeHTMLTags: false }),
       history(), drawSelection(), highlightSpecialChars(), highlightSelectionMatches(),
       writable.current.of([EditorState.readOnly.of(Boolean(latest.current.readOnly)), EditorView.editable.of(!latest.current.readOnly)]),
@@ -231,6 +246,7 @@ export function RichMarkdownEditor(props: RichMarkdownEditorProps) {
     if (editor.state.doc.toString() !== value) editor.dispatch({ changes: markdownTextChange(editor.state.doc.toString(),value), annotations: [Transaction.addToHistory.of(false),externalText.of(true)] });
   }, [props.value]);
   useEffect(() => { view.current?.dispatch({ effects: writable.current.reconfigure([EditorState.readOnly.of(Boolean(props.readOnly)), EditorView.editable.of(!props.readOnly)]) }); }, [props.readOnly]);
+  useEffect(() => { view.current?.dispatch({}); }, [props.imageGeneration]);
   useEffect(() => { if (props.active !== false) view.current?.requestMeasure(); }, [props.active]);
   useEffect(() => {
     const editor = view.current, request = props.revealRequest;

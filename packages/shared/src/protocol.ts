@@ -284,6 +284,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getDetachedQuestions?(sessionId: string, hostId?: string): Promise<import('./detached-questions').DetachedQuestionsSnapshot | null>;
   workspaceQuery(target: WorkspaceTarget, query: WorkspaceQuery, hostId?: string): Promise<WorkspaceQueryResult>;
   saveWorkspaceCopy?(target: WorkspaceTarget, path: string, hostId: string): Promise<{path: string | null}>;
+  acquireWorkspaceImage?(target: WorkspaceTarget, path: string, hostId: string): Promise<{url: string; id: string}>;
+  releaseWorkspaceImage?(id: string): Promise<void>;
   getPreferences(): Promise<PreferencesSnapshot>;
   getTheme(): Promise<ThemeState>;
   setTheme(document: ThemeDocument, expectedRevision: string): Promise<ThemeState>;

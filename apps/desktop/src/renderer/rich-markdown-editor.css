@@ -46,3 +46,5 @@
 .source-go-to-line.codemirror-go-to-line .source-go-to-line-close { position:static; transform:none; width:24px; height:24px; margin:-2px; border-radius:6px; background:transparent; color:var(--secondary); }
 .source-go-to-line.codemirror-go-to-line .source-go-to-line-close:hover { background:var(--hover); color:var(--text); }
 .source-go-to-line.codemirror-go-to-line .source-go-to-line-close svg { width:16px; height:16px; }
+
+.markdown-preview-image { max-width:100%; }
