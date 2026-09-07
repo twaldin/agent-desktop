@@ -24,6 +24,14 @@ The successful experiment has **10 bundled-CLI checks and 4 native-API checks**.
 
 Reproducible temporary fixtures, complete transition matrix and exact source hashes are retained in `.data/temp/cooperative-cli-proof/`: `README.md`, `scenario.ts`, `revive.ts`, `result.json`, `revive-result.json`, `source-index.json`. The earlier independent import proof is `apps/host/src/omp-import/inspection.test.ts`. The inspector remains unintegrated and rejects stock writable admission as `ownership-unverified`.
 
+## Model identity on resume
+
+A journal's newest outer row or last `model_change` is not proof of the active model. Native interruption recovery can append a new outer entry with historical assistant model metadata, while explicit CLI resume selection can open another model without recording a new selector row. Last served model and persisted selector intent are historical facts; active worker controls are the current runtime authority.
+
+App-owned session reopening now synchronizes the stored summary from `handle.model` before exposing the handle and publishes the result without changing the conversation activity timestamp. Failed synchronization disposes the new handle. Composer labels qualify saved/loading/offline/failed snapshots as Last reported session; the null draft choice still follows the native session and never copies the displayed fallback into a draft override. Current read-only import inspection exposes no model and grants no writable admission. Future adoption must begin with unknown model until the admitted worker opens, rather than infer it from journal chronology.
+
+Validation:19 tests/103 assertions cover a real isolated no-provider native worker restart, retained activity time, refreshed store/snapshot, label transitions and unchanged draft/image handling. Typecheck, build and independent source review pass. This is host/component evidence, not a private external-session, provider, installed UI or pixel acceptance. Managed runtime artifacts and active external sessions were not changed. Private source audit and test records: `.data/external-session-model-audit.md`, `.data/session-model-reopen-checkpoint/`.
+
 ## Required native persistence lease
 
 The smallest complete boundary belongs to native `SessionManager` persistence and must be shared by app workers and cooperating external processes:

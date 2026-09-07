@@ -58,6 +58,26 @@ describe("owning-workspace composer selection", () => {
     expect(composerSelection(draft(), catalog(), session(), native)).toMatchObject({ reasoning: false, levels: ["off"] });
     expect(composerSelection(draft(), catalog(), session(), { ...controls(), model: null }).model).toBeNull();
   });
+  test("saved and cached model labels remain historical until current native controls settle", async () => {
+    let fail = false;
+    const data = new ComposerCatalogState(fixture({ getSessionControls: async () => { if (fail) throw new Error("Controlled read failure"); return controls("second"); } }), "owner", { sessionId: "session" });
+    const saved = draft();
+    const render = () => renderToStaticMarkup(<ComposerSelections data={data} draft={saved} session={session()} disabled={false} onChange={() => { throw new Error("Read must not mutate draft"); }}/>);
+    expect(render()).toContain("Last reported session: first");
+    data.setConnected(true);
+    expect(render()).toContain("Last reported session: first");
+    await data.refresh();
+    expect(render()).toContain("Current session: second");
+    data.setConnected(false);
+    expect(render()).toContain("Last reported session: second");
+    fail = true; data.setConnected(true); await data.refresh();
+    expect(render()).toContain("Last reported session: second");
+    expect(render()).not.toContain("Current session: second");
+    fail = false; await data.refresh();
+    expect(render()).toContain("Current session: second");
+    expect(saved.model).toBeNull(); expect(saved.revision).toBe(1);
+    data.stop();
+  });
   test("older-host capabilities keep current session controls usable and new-chat defaults explicitly unresolved", async () => {
     const { authenticated: _auth, available: _available, ...legacyModel } = model();
     const legacy: OmpComposerCatalog = { cwd: null, models: [legacyModel], resolution: "legacy-capabilities", default: { model: null, source: "unknown-older-host" } };

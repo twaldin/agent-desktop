@@ -1,5 +1,9 @@
 # Milestone status
 
+## Resumed-session model identity
+
+An app-owned worker reopening now refreshes the stored session model from actual native state before readiness, preserving conversation activity time. Cached/loading/failed model controls are labeled Last reported session; explicit drafts remain unchanged. The read-only external inspector still grants no writable admission or model inference from journal order.19 focused tests/103 assertions, typecheck, build and independent review pass. No private external session, managed artifact, provider or installed UI was touched. See [session ownership](external-session-ownership.md#model-identity-on-resume) and `.data/session-model-reopen-checkpoint/`.
+
 ## Standalone native plugin detail
 
 Installed plugin chips now open a standalone breadcrumb/detail with the ordinary sidebar, preserving directory search/tab/focus. Native marketplace Upgrade/Uninstall use exact host-projected scope/identity. Same-owner offline details remain readable; owner changes fence pending reads. Recovered completion labels are target-scoped while unresolved acquisition barriers stay host-wide.

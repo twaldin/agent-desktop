@@ -457,7 +457,25 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       const session = store.getSession(sessionId);
       if (!session) throw new Error("Session does not exist on this host.");
       assertWorkspaceAvailable(session.cwd);
-      pending = runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) }, store.getSessionEnvironment(sessionId));
+      pending = runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) }, store.getSessionEnvironment(sessionId)).then(async handle => {
+        try {
+          if (stopping) throw new Error('The host is stopping. Reconnect before opening this session.');
+          const current = store.getSession(sessionId);
+          if (!current) throw new Error("Session does not exist on this host.");
+          const model = handle.model;
+          if (current.model?.provider !== model?.provider || current.model?.id !== model?.id) {
+            // The journal is insufficient to identify a resumed worker's current
+            // model. Publish the native runtime value before exposing the handle,
+            // while retaining the session's conversation-activity timestamp.
+            store.upsertSession({ ...current, model });
+            publishState();
+          }
+          return handle;
+        } catch (error) {
+          await handle.dispose();
+          throw error;
+        }
+      });
       handles.set(sessionId, pending);
       pending.catch(() => { if (handles.get(sessionId) === pending) handles.delete(sessionId); });
     }

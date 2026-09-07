@@ -71,7 +71,9 @@ export class ComposerCatalogState {
   }
 }
 
-/** Null means follow native state; a saved non-null model is never guessed away. */
+/** Null means follow native state; a saved non-null model is never guessed away.
+ * `current` is the last reported snapshot, not proof of a connected live worker.
+ * Callers must qualify cached/loading/failed control reads in visible labels. */
 export function composerSelection(draft: Draft, catalog?: OmpComposerCatalog, session?: SessionSummary | null, controls?: OmpSessionControls) {
   const current = controls ? controls.model : session?.model ?? null;
   const model = draft.model ?? (session ? current : catalog?.default.model ?? null);
