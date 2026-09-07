@@ -44,6 +44,7 @@ const bridge: DesktopBridge = {
   getPlugins: (target, hostId) => ipcRenderer.invoke("host:plugins-read", target, hostId),
   mutatePlugin: (target, mutation, hostId) => ipcRenderer.invoke("host:plugins-mutate", target, mutation, hostId),
   getMcpServers: (target, hostId) => ipcRenderer.invoke("host:mcp-read", target, hostId),
+  getMcpServerDetail: (target, request, hostId) => ipcRenderer.invoke("host:mcp-detail", target, request, hostId),
   mutateMcpServer: (target, mutation, hostId) => ipcRenderer.invoke("host:mcp-mutate", target, mutation, hostId),
   getSettingsCatalog: hostId => ipcRenderer.invoke("host:settings-catalog", hostId),
   getSettings: (target, hostId) => ipcRenderer.invoke("host:settings-read", target, hostId),

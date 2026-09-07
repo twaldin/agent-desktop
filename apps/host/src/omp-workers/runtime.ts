@@ -1,5 +1,5 @@
 import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
-import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from "@agent-desktop/shared";
+import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
@@ -551,6 +551,9 @@ export class WorkerRuntime {
   }
   async getMcpServers(cwd: string): Promise<NativeMcpCatalog> {
     return (await this.#discoveryClient()).request({ operation: "getMcpServers", args: { cwd } }, 30_000);
+  }
+  async getMcpServerDetail(cwd: string, request: NativeMcpDetailRequest): Promise<NativeMcpDetail> {
+    return (await this.#discoveryClient()).request({ operation: "getMcpServerDetail", args: { cwd, request } }, 30_000);
   }
   async mutateMcpServer(cwd: string, mutation: NativeMcpMutation): Promise<NativeMcpCatalog> {
     return (await this.#discoveryClient()).request({ operation: "mutateMcpServer", args: { cwd, mutation } }, 30_000);

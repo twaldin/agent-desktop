@@ -10,7 +10,7 @@ import { clearCache } from '@oh-my-pi/pi-coding-agent/capability/fs';
 import { validateServerConfig } from '@oh-my-pi/pi-coding-agent/mcp/config';
 import { writeMCPConfigFile, validateServerName } from '@oh-my-pi/pi-coding-agent/mcp/config-writer';
 import type { MCPConfigFile, MCPServerConfig } from '@oh-my-pi/pi-coding-agent/mcp/types';
-import type { NativeMcpCatalog, NativeMcpMutation, NativeMcpServer } from '@agent-desktop/shared';
+import type { NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation, NativeMcpServer } from '@agent-desktop/shared';
 
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v));
 const validKeys = (v: Record<string, unknown>) => !Object.keys(v).some(k => ['__proto__','constructor','prototype'].includes(k));
@@ -53,15 +53,22 @@ async function raw(file: string): Promise<string | null> {
     return buffer.subarray(0, size).toString('utf8');
   } finally { await handle.close(); }
 }
-async function config(file: string): Promise<MCPConfigFile> {
-  const text=await raw(file); if(text===null)return {mcpServers:{}};
+function parseConfig(text:string|null):MCPConfigFile {
+  if(text===null)return {mcpServers:{}};
   let value:unknown;try{value=JSON.parse(text);}catch{throw new Error('An existing native MCP configuration is not valid JSON. Repair it before editing.');}
   if(!object(value)||!validKeys(value)||value.mcpServers!==undefined&&(!object(value.mcpServers)||!validKeys(value.mcpServers))
     ||['enabledServers','disabledServers'].some(key=>value[key]!==undefined&&(!Array.isArray(value[key])||(value[key] as unknown[]).some(n=>typeof n!=='string'))))throw new Error('An existing MCP configuration has an unsupported structure.');
   if (!safeTree(value) || Object.entries(value.mcpServers ?? {}).some(([name, server]) => !validServer(name, server))) throw new Error('An existing MCP server configuration is invalid. Repair it before editing.');
   return value as MCPConfigFile;
 }
+async function config(file: string): Promise<MCPConfigFile> {return parseConfig(await raw(file));}
 const id=(name:string,file:string)=>createHash('sha256').update(JSON.stringify([name,file])).digest('hex');
+function transport(config:MCPServerConfig):NativeMcpServer['transport'] {
+  if(config.type==='stdio'||'command' in config)return 'stdio';
+  if(config.type==='sse')return 'sse';
+  if(config.type==='http'||'url' in config)return 'http';
+  return 'unknown';
+}
 
 /** Configuration-only native discovery. Never connects a server or evaluates a
  * command from its configuration. Values and credentials stay in this worker. */
@@ -83,7 +90,7 @@ export class NativeMcp {
       if(rows.some(row=>row.row.id===id(item.name,file)))continue;
       const writable=(file===user||file===project||item._source.provider==='mcp-json') && ['mcp.json','.mcp.json'].includes(path.basename(file));
       rows.push({file,writable,row:{id:id(item.name,file),name:item.name,transport:item.transport??(item.command?'stdio':item.url?'http':'unknown'),scope:item._source.level,
-        source:item._source.providerName,enabled:!deny.has(item.name)&&(item.enabled!==false||force.has(item.name)),removable:writable,shadowed:item._shadowed}});
+        source:item._source.providerName,enabled:!deny.has(item.name)&&(item.enabled!==false||force.has(item.name)),removable:writable,editable:writable||undefined,shadowed:item._shadowed}});
     }
     // Native user/project entries and deny-only names must remain editable even
     // if a discovery filter hides them from the runtime's active connection set.
@@ -91,22 +98,36 @@ export class NativeMcp {
       for(const [name,server] of Object.entries(value.mcpServers??{})){
         if(rows.some(r=>r.row.id===id(name,file)))continue;
         const shadowed=rows.some(r=>r.row.name===name&&!r.row.shadowed);
-        rows.push({file,writable:true,row:{id:id(name,file),name,transport:server.type??'stdio',scope,source:'OMP',enabled:!deny.has(name)&&(server.enabled!==false||force.has(name)),removable:true,shadowed}});
+        rows.push({file,writable:true,row:{id:id(name,file),name,transport:transport(server),scope,source:'OMP',enabled:!deny.has(name)&&(server.enabled!==false||force.has(name)),removable:true,editable:true,shadowed}});
       }
     }
     for(const name of new Set([...deny,...force]))if(!rows.some(r=>r.row.name===name))rows.push({file:user,writable:false,row:{id:id(name,user),name,transport:'unknown',scope:'user',source:'Saved server override',enabled:!deny.has(name),removable:false}});
-    const fingerprints=await Promise.all([...files].sort().map(async file=>[file,await raw(file)]));
+    const fingerprints=await Promise.all([...files].sort().map(async file=>[file,await raw(file)] as const));
     const revision=createHmac('sha256',this.secret).update(JSON.stringify([cwd,fingerprints,rows])).digest('hex');
     const snapshot:NativeMcpCatalog={revision,servers:rows.map(r=>r.row).sort((a,b)=>a.name.localeCompare(b.name)||a.scope.localeCompare(b.scope)),application:'new-sessions'};
-    return {snapshot,rows,user,project,files};
+    return {snapshot,rows,user,project,files,fingerprints};
   }
   read(cwd:string):Promise<NativeMcpCatalog>{return this.ordered(async()=> (await this.inspect(cwd)).snapshot);}
+  detail(cwd:string,request:NativeMcpDetailRequest):Promise<NativeMcpDetail>{return this.ordered(async()=>{
+    const observed=await this.inspect(cwd);
+    if(observed.snapshot.revision!==request.expectedRevision)throw new Error('MCP configuration changed. Reload before editing.');
+    const selected=observed.rows.find(row=>row.row.id===request.serverId);
+    if(!selected)throw new Error('The selected MCP server no longer exists.');
+    if(!selected.writable)throw new Error('This server is owned by another configuration source and cannot be edited here.');
+    const captured=observed.fingerprints.find(([file])=>file===selected.file);
+    if(!captured)throw new Error('The selected MCP configuration owner changed. Reload before editing.');
+    const owner=parseConfig(captured[1]),rawConfig=owner.mcpServers?.[selected.row.name];
+    if(!rawConfig)throw new Error('The original MCP server is no longer present.');
+    const server=observed.snapshot.servers.find(row=>row.id===request.serverId);
+    if(!server?.editable)throw new Error('The selected MCP server is no longer editable.');
+    return {revision:observed.snapshot.revision,server,config:structuredClone(rawConfig) as unknown as Record<string,unknown>};
+  });}
   mutate(cwd:string,mutation:NativeMcpMutation):Promise<NativeMcpCatalog>{return this.ordered(async()=>{
     const observed=await this.inspect(cwd);
     if(observed.snapshot.revision!==mutation.expectedRevision)throw new Error('MCP configuration changed. Reload before saving.');
     const selected=mutation.operation==='add'?undefined:observed.rows.find(r=>r.row.id===mutation.serverId);
     if(mutation.operation!=='add'&&!selected)throw new Error('The selected MCP server no longer exists.');
-    if(mutation.operation==='remove'&&!selected?.writable)throw new Error('This server is owned by another configuration source. Disable it here or remove it in its source.');
+    if((mutation.operation==='remove'||mutation.operation==='update')&&!selected?.writable)throw new Error('This server is owned by another configuration source. Disable it here or remove it in its source.');
     const writeFile=mutation.operation==='add'?(mutation.scope==='user'?observed.user:observed.project):selected!.writable?selected!.file:observed.user;
     const locks=[...new Set([observed.user,writeFile])].sort();
     const lock=async<T>(index:number,fn:()=>Promise<T>):Promise<T>=>{if(index===locks.length)return fn();await mkdir(path.dirname(locks[index]!),{recursive:true,mode:0o700});return withFileLock(locks[index]!,()=>lock(index+1,fn));};
@@ -120,6 +141,13 @@ export class NativeMcp {
         if(!validServer(mutation.name,mutation.config))throw new Error('The MCP server configuration is invalid.');
         if(Object.hasOwn(target.mcpServers??{},mutation.name))throw new Error('An MCP server with that name already exists in this scope.');
         target.mcpServers={...target.mcpServers,[mutation.name]:structuredClone(mutation.config) as unknown as MCPServerConfig};
+      }else if(mutation.operation==='update'){
+        const original=target.mcpServers?.[selected!.row.name];
+        if(!original)throw new Error('The original MCP server is no longer present.');
+        if(!validServer(selected!.row.name,mutation.config))throw new Error('The MCP server configuration is invalid.');
+        const replacement=structuredClone(mutation.config) as unknown as MCPServerConfig;
+        if(transport(original)!==transport(replacement))throw new Error('Changing an MCP server transport requires removing and adding the server again.');
+        target.mcpServers![selected!.row.name]=replacement;
       }else if(mutation.operation==='remove'){
         if(!Object.hasOwn(target.mcpServers??{},selected!.row.name))throw new Error('The original MCP server is no longer present.');
         delete target.mcpServers![selected!.row.name];

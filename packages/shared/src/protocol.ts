@@ -1,8 +1,8 @@
 export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";
-import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpMutation } from './integrations';
-export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpMutation, NativeMcpServer } from './integrations';
+import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from './integrations';
+export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation, NativeMcpServer } from './integrations';
 export * from "./local-environments";
 export * from "./environment-selection";
 export * from "./environment-preparations";
@@ -279,6 +279,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getPlugins(target?: WorkspaceTarget, hostId?: string): Promise<NativePluginCatalog>;
   mutatePlugin(target: WorkspaceTarget | undefined, mutation: NativePluginMutation, hostId?: string): Promise<NativePluginCatalog>;
   getMcpServers(target?: WorkspaceTarget, hostId?: string): Promise<NativeMcpCatalog>;
+  getMcpServerDetail(target: WorkspaceTarget | undefined, request: NativeMcpDetailRequest, hostId?: string): Promise<NativeMcpDetail>;
   mutateMcpServer(target: WorkspaceTarget | undefined, mutation: NativeMcpMutation, hostId?: string): Promise<NativeMcpCatalog>;
   getSettingsCatalog(hostId?: string): Promise<OmpSettingsCatalog>;
   getSettings(target?: WorkspaceTarget, hostId?: string): Promise<OmpSettingsSnapshot>;

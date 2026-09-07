@@ -1,4 +1,4 @@
-import type { NativePluginMutation, NativeMcpMutation } from "@agent-desktop/shared";
+import type { NativePluginMutation, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserFrameTarget, BrowserMetadataAvailability, ComposerCompletionQuery, GoalMutationRequest, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractionResponse, PreparedPromptImage } from "../omp";
 import type { GoalContinuationEligibility } from "../omp/goal-controller";
@@ -6,7 +6,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 22;
+export const WORKER_PROTOCOL_VERSION = 23;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -36,6 +36,7 @@ export type WorkerOperation =
   | { operation: "getPlugins"; args: { cwd: string } }
   | { operation: "mutatePlugin"; args: { cwd: string; mutation: NativePluginMutation } }
   | { operation: "getMcpServers"; args: { cwd: string } }
+  | { operation: "getMcpServerDetail"; args: { cwd: string; request: NativeMcpDetailRequest } }
   | { operation: "mutateMcpServer"; args: { cwd: string; mutation: NativeMcpMutation } }
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }

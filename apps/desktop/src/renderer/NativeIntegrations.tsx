@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { DesktopBridge, NativeMcpCatalog, NativeMcpMutation, NativePlugin, NativePluginCatalog, NativePluginMutation, WorkspaceTarget } from "@agent-desktop/shared";
+import type { DesktopBridge, NativeMcpCatalog, NativeMcpDetail, NativeMcpMutation, NativePlugin, NativePluginCatalog, NativePluginMutation, WorkspaceTarget } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
+import { readMcpServerForm } from "./mcp-server-form";
 import { McpServerForm } from "./McpServerForm";
 import { SessionMcp } from "./SessionMcp";
 import "./native-integrations.css";
@@ -91,13 +92,45 @@ function PluginSettingEditor({ plugin, setting, catalog, connected, saving, muta
 }
 
 function McpPage({ catalog, connected, saving, setSaving, setCatalog, setError, bridge, target, hostId, onLive }: { catalog: NativeMcpCatalog | null; connected: boolean; saving: boolean; setSaving: (v: boolean) => void; setCatalog: (v: NativeMcpCatalog) => void; setError: (v: string | null) => void; bridge: DesktopBridge; target?: WorkspaceTarget; hostId: string; onLive?(): void }) {
-  const [showAdd, setShowAdd] = useState(false); const [formOpened, setFormOpened] = useState(false); const epochForMutations = useRef(0); const addButton = useRef<HTMLButtonElement>(null);
+  const [showAdd, setShowAdd] = useState(false); const [formOpened, setFormOpened] = useState(false);
+  const [editing, setEditing] = useState(false); const [detail, setDetail] = useState<NativeMcpDetail | null>(null); const [detailLoading, setDetailLoading] = useState(false);
+  const epochForMutations = useRef(0); const detailEpoch = useRef(0); const addButton = useRef<HTMLButtonElement>(null); const detailOpener = useRef<HTMLButtonElement | null>(null);
   const targetKey = JSON.stringify(target);
-  useEffect(() => () => { epochForMutations.current++; }, [hostId, targetKey, connected]);
+  useEffect(() => () => { epochForMutations.current++; detailEpoch.current++; }, [hostId, targetKey, connected]);
+  useEffect(() => { if (!connected) setDetailLoading(false); }, [connected]);
   const mutate = async (mutation: NativeMcpMutation): Promise<boolean> => { const requestEpoch = epochForMutations.current; setSaving(true); setError(null); try { const value = await bridge.mutateMcpServer(target, mutation, hostId); if (requestEpoch === epochForMutations.current) setCatalog(value); return requestEpoch === epochForMutations.current; } catch (cause) { if (requestEpoch === epochForMutations.current) setError(message(cause)); return false; } finally { if (requestEpoch === epochForMutations.current) setSaving(false); } };
-
-  return <div className="mcp-layout"><section className="mcp-catalog" hidden={showAdd}><div className="integration-list-heading"><h2>MCP servers</h2><div className="integration-heading-actions">{onLive && target && "sessionId" in target && <button className="secondary-button" type="button" disabled={!connected} onClick={onLive}>Live session state</button>}<button ref={addButton} className="primary-button" disabled={!connected || saving || !catalog} onClick={() => { setFormOpened(true); setShowAdd(true); }}>Add MCP</button></div></div>{!catalog && <p role="status">{connected ? "Loading MCP servers…" : "MCP catalog unavailable offline."}</p>}{catalog?.servers.map(server => <article className="mcp-row" key={server.id}><div><strong>{server.name}</strong><small>{mcpTransportLabel(server.transport)}{server.shadowed ? " · Shadowed" : ""} · {server.scope} · {server.source}</small></div><label><input type="checkbox" checked={server.enabled} disabled={!connected || saving} onChange={event => void mutate({ expectedRevision: catalog.revision, operation: "enabled", serverId: server.id, enabled: event.target.checked })}/> Enabled</label>{server.removable && <button className="secondary-button" disabled={!connected || saving} onClick={() => { if (window.confirm(`Remove MCP server “${server.name}”?`)) void mutate({ expectedRevision: catalog.revision, operation: "remove", serverId: server.id }); }}>Remove</button>}</article>)}</section>{formOpened && <div hidden={!showAdd}><button className="integration-back" type="button" disabled={saving} onClick={() => { setShowAdd(false); setError(null); requestAnimationFrame(() => addButton.current?.focus()); }}><Icon name="browserBack"/> Back</button>
-    <McpServerForm active={showAdd} disabled={!connected || saving || !catalog} hasProject={Boolean(target)} onError={setError}
-      onDocs={() => { void bridge.openExternal("https://github.com/can1357/oh-my-pi/blob/main/docs/mcp-config.md").catch(cause => setError(message(cause))); }}
-      onSave={async input => { if (!catalog) return false; const success = await mutate({ ...input, expectedRevision: catalog.revision }); if (success) { setShowAdd(false); setFormOpened(false); requestAnimationFrame(() => addButton.current?.focus()); } return success; }}/></div>}</div>;
+  const closeDetails = () => { detailEpoch.current++; setEditing(false); setDetail(null); setDetailLoading(false); setError(null); requestAnimationFrame(() => detailOpener.current?.isConnected ? detailOpener.current.focus() : addButton.current?.focus()); };
+  const openDetails = async (serverId: string, opener: HTMLButtonElement) => {
+    if (!catalog || !connected || saving) return;
+    detailOpener.current = opener; const epoch = ++detailEpoch.current;
+    setEditing(true); setDetail(null); setDetailLoading(true); setError(null);
+    try {
+      const value = await bridge.getMcpServerDetail(target, {serverId, expectedRevision:catalog.revision}, hostId);
+      if (value.server.id !== serverId || value.revision !== catalog.revision || value.server.editable !== true) throw new Error("Mismatched MCP detail response.");
+      readMcpServerForm(value.config); // Unsupported native fields fail without crashing the settings page.
+      if (detailEpoch.current === epoch) setDetail(value);
+    } catch { if (detailEpoch.current === epoch) setError("This MCP configuration could not be opened. Go back, reload the catalog, and try again."); }
+    finally { if (detailEpoch.current === epoch) setDetailLoading(false); }
+  };
+  const docs = () => { void bridge.openExternal("https://github.com/can1357/oh-my-pi/blob/main/docs/mcp-config.md").catch(cause => setError(message(cause))); };
+  return <div className="mcp-layout">
+    <section className="mcp-catalog" hidden={showAdd || editing}>
+      <div className="integration-list-heading"><h2>MCP servers</h2><div className="integration-heading-actions">{onLive && target && "sessionId" in target && <button className="secondary-button" type="button" disabled={!connected} onClick={onLive}>Live session state</button>}<button ref={addButton} className="primary-button" disabled={!connected || saving || !catalog} onClick={() => { setFormOpened(true); setShowAdd(true); }}>Add MCP</button></div></div>
+      {!catalog && <p role="status">{connected ? "Loading MCP servers…" : "MCP catalog unavailable offline."}</p>}
+      {catalog?.servers.map(server => <article className="mcp-row" key={server.id} data-server-id={server.id}><div><strong>{server.name}</strong><small>{mcpTransportLabel(server.transport)}{server.shadowed ? " · Shadowed" : ""} · {server.scope} · {server.source}</small></div><label><input type="checkbox" checked={server.enabled} disabled={!connected || saving} onChange={event => void mutate({ expectedRevision: catalog.revision, operation: "enabled", serverId: server.id, enabled: event.target.checked })}/> Enabled</label>
+        {server.editable && <button className="secondary-button" type="button" disabled={!connected || saving} aria-label={`Settings for ${server.name}`} onClick={event => void openDetails(server.id,event.currentTarget)}>Settings</button>}
+        {server.removable && !server.editable && <button className="secondary-button" disabled={!connected || saving} onClick={() => { if (window.confirm(`Remove MCP server “${server.name}”?`)) void mutate({ expectedRevision: catalog.revision, operation: "remove", serverId: server.id }); }}>Remove</button>}
+      </article>)}
+    </section>
+    {formOpened && <div hidden={!showAdd}><button className="integration-back" type="button" disabled={saving} onClick={() => { setShowAdd(false); setError(null); requestAnimationFrame(() => addButton.current?.focus()); }}><Icon name="browserBack"/> Back</button>
+      <McpServerForm active={showAdd} disabled={!connected || saving || !catalog} hasProject={Boolean(target)} onError={setError} onDocs={docs}
+        onSave={async input => { if (!catalog || input.operation !== "add") return false; const success = await mutate({ ...input, expectedRevision: catalog.revision }); if (success) { setShowAdd(false); setFormOpened(false); requestAnimationFrame(() => addButton.current?.focus()); } return success; }}/>
+    </div>}
+    {editing && <div><button className="integration-back" type="button" disabled={saving} onClick={closeDetails}><Icon name="browserBack"/> Back</button>
+      {detailLoading && <p role="status">Loading MCP configuration…</p>}{!detailLoading && !detail && <p className="integration-note">Go back and open the server settings again to read its current configuration.</p>}
+      {detail && <McpServerForm key={`${detail.server.id}:${detail.revision}`} initial={detail} active disabled={!connected || saving} hasProject={Boolean(target)} onError={setError} onDocs={docs}
+        onUninstall={() => { if (window.confirm(`Uninstall MCP server “${detail.server.name}”?`)) void mutate({operation:"remove",serverId:detail.server.id,expectedRevision:detail.revision}).then(ok => { if(ok) closeDetails(); }); }}
+        onSave={async input => { if (input.operation !== "update") return false; const success = await mutate({...input,expectedRevision:detail.revision}); if(success) closeDetails(); return success; }}/> }
+    </div>}
+  </div>;
 }

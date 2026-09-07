@@ -23,13 +23,16 @@ export type NativePluginMutation = { expectedRevision: string; pluginId: string 
 );
 export interface NativeMcpServer {
   id: string; name: string; transport: 'stdio' | 'http' | 'sse' | 'unknown'; scope: 'user' | 'project' | 'native';
-  source: string; enabled: boolean; removable: boolean; shadowed?: boolean;
+  source: string; enabled: boolean; removable: boolean; editable?: boolean; shadowed?: boolean;
 }
 export interface NativeMcpCatalog {
   revision: string; servers: NativeMcpServer[]; application: 'new-sessions';
 }
+export interface NativeMcpDetailRequest { serverId: string; expectedRevision: string }
+export interface NativeMcpDetail { revision: string; server: NativeMcpServer; config: Record<string, unknown> }
 export type NativeMcpMutation = { expectedRevision: string } & (
   | { operation: 'enabled'; serverId: string; enabled: boolean }
   | { operation: 'remove'; serverId: string }
+  | { operation: 'update'; serverId: string; config: Record<string, unknown> }
   | { operation: 'add'; scope: IntegrationScope; name: string; config: Record<string, unknown> }
 );

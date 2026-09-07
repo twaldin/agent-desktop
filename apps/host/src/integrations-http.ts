@@ -1,4 +1,4 @@
-import type { NativePluginMutation, NativeMcpMutation, WorkspaceTarget } from '@agent-desktop/shared';
+import type { NativePluginMutation, NativeMcpDetailRequest, NativeMcpMutation, WorkspaceTarget } from '@agent-desktop/shared';
 import type { WorkerRuntime } from './omp-workers';
 import { parseWorkspaceTarget } from './workspace-http';
 
@@ -52,6 +52,7 @@ export function parseMcpMutation(value: unknown): NativeMcpMutation {
   switch (input.operation) {
     case 'enabled': keys(input,['expectedRevision','serverId','operation','enabled']); return {expectedRevision, operation:'enabled', serverId:text(input.serverId), enabled:boolean(input.enabled)};
     case 'remove': keys(input,['expectedRevision','serverId','operation']); return {expectedRevision, operation:'remove', serverId:text(input.serverId)};
+    case 'update': keys(input,['expectedRevision','serverId','operation','config']); return {expectedRevision, operation:'update', serverId:text(input.serverId), config:object(safeJson(object(input.config)))};
     case 'add': {
       keys(input,['expectedRevision','operation','scope','name','config']);
       if (input.scope !== 'user' && input.scope !== 'project') throw new InvalidRequest('Invalid MCP scope.');
@@ -59,6 +60,10 @@ export function parseMcpMutation(value: unknown): NativeMcpMutation {
     }
     default: throw new InvalidRequest('Unknown MCP operation.');
   }
+}
+export function parseMcpDetailRequest(value: unknown): NativeMcpDetailRequest {
+  const input=object(value);keys(input,['serverId','expectedRevision']);
+  return {serverId:text(input.serverId),expectedRevision:text(input.expectedRevision)};
 }
 async function body(request: Request): Promise<Record<string, unknown>> {
   if (!request.body) throw new InvalidRequest('A request body is required.');
@@ -76,7 +81,7 @@ async function body(request: Request): Promise<Record<string, unknown>> {
   } finally { reader.releaseLock(); }
 }
 interface Options {
-  runtime: Pick<WorkerRuntime, 'getPlugins'|'mutatePlugin'|'getMcpServers'|'mutateMcpServer'>;
+  runtime: Pick<WorkerRuntime, 'getPlugins'|'mutatePlugin'|'getMcpServers'|'getMcpServerDetail'|'mutateMcpServer'>;
   resolveCwd(target?: WorkspaceTarget): string | Promise<string>;
   changed(target?: WorkspaceTarget): void;
 }
@@ -97,9 +102,10 @@ export class IntegrationsHttp {
     const respond = (value:unknown,status=200) => Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
     try {
       if (this.stopping) return respond({error:'The host is stopping.'},503);
-      const match = /^\/v1\/integrations\/(plugins|mcp)\/(read|mutate)$/.exec(url.pathname);
+      const match = /^\/v1\/integrations\/(plugins|mcp)\/(read|detail|mutate)$/.exec(url.pathname);
       if (!match || request.method !== 'POST') return respond({error:'Not found'},404);
-      const input = await body(request); keys(input,match[2] === 'read' ? ['target'] : ['target','mutation']);
+      if(match[2]==='detail'&&match[1]!=='mcp')return respond({error:'Not found'},404);
+      const input = await body(request); keys(input,match[2] === 'read' ? ['target'] : match[2]==='detail'?['target','request']:['target','mutation']);
       let target:WorkspaceTarget | undefined;
       try { target = input.target === undefined ? undefined : parseWorkspaceTarget(input.target); }
       catch { throw new InvalidRequest('Select an existing project or session.'); }
@@ -107,6 +113,7 @@ export class IntegrationsHttp {
       if (this.stopping) return respond({error:'The host is stopping.'},503);
       const {runtime} = this.options;
       if (match[2] === 'read') return respond(await (match[1] === 'plugins' ? runtime.getPlugins(cwd) : runtime.getMcpServers(cwd)));
+      if(match[2]==='detail')return respond(await runtime.getMcpServerDetail(cwd,parseMcpDetailRequest(input.request)));
       let result: unknown;
       if (match[1] === 'plugins') result = await runtime.mutatePlugin(cwd,parsePluginMutation(input.mutation));
       else {

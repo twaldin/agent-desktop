@@ -1,7 +1,7 @@
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
 import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondSessionMcpAuthorization } from "./session-mcp-authorization-transport";
-import type { NativePluginMutation, NativeMcpMutation } from "@agent-desktop/shared";
+import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
 import { requestComposerActions, requestComposerCompletions } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
@@ -390,6 +390,7 @@ ipcMain.handle("host:settings-catalog", (event, hostId?: string) => { assertTrus
 ipcMain.handle("host:plugins-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/plugins/read", { target }, hostId); });
 ipcMain.handle("host:plugins-mutate", (event, target: WorkspaceTarget | undefined, mutation: NativePluginMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/plugins/mutate", { target, mutation }, hostId); });
 ipcMain.handle("host:mcp-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/read", { target }, hostId); });
+ipcMain.handle("host:mcp-detail", (event, target: WorkspaceTarget | undefined, detail: NativeMcpDetailRequest, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/detail", { target, request: detail }, hostId); });
 ipcMain.handle("host:mcp-mutate", (event, target: WorkspaceTarget | undefined, mutation: NativeMcpMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/mutate", { target, mutation }, hostId); });
 ipcMain.handle("host:settings-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/settings/read", { target }, hostId); });
 ipcMain.handle("host:settings-mutate", (event, mutation: OmpSettingsMutation, target?: WorkspaceTarget, hostId?: string) => {

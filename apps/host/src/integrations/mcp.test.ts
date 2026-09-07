@@ -14,7 +14,7 @@ async function fixture(){
   await mkdir(agentDir,{recursive:true});await mkdir(path.dirname(project),{recursive:true});await mkdir(path.join(cwd,'.git'));
   await writeFile(path.join(agentDir,'config.yml'),'extensions: []\n');
   const sentinel=path.join(root,'must-not-execute');
-  await writeFile(user,json({preserved:'user-field',disabledServers:['disabled','orphan'],mcpServers:{alpha:{command:'/bin/sh',args:['-c',`touch '${sentinel}'`],env:{TOKEN:'user-secret'}},disabled:{type:'http',url:'https://invalid.example',headers:{Authorization:'secret-header'},enabled:false}}}));
+  await writeFile(user,json({preserved:'user-field',disabledServers:['disabled','orphan'],mcpServers:{alpha:{command:'/bin/sh',args:['-c',`touch '${sentinel}'`],env:{TOKEN:'user-secret',TEMPLATE:'${UNEXPANDED_TOKEN}'},auth:{type:'bearer',token:'opaque-auth'},oauth:{clientId:'opaque-client',scope:'scope:value'},timeout:4321},disabled:{type:'http',url:'https://invalid.example',headers:{Authorization:'secret-header'},enabled:false}}}));
   await writeFile(project,json({preserved:'project-field',mcpServers:{alpha:{command:'/bin/false',enabled:false},local:{command:'/bin/false'}}}));
   const runtime=new WorkerRuntime({agentDir,workerPath:fileURLToPath(new URL('../omp-workers/fixtures/no-provider-worker.ts',import.meta.url)),environment:{HOME:root,PATH:process.env.PATH,TMPDIR:tmpdir(),PI_CODING_AGENT_DIR:agentDir,TERM:'dumb'},startupTimeoutMs:30000});
   cleanups.push(()=>runtime.dispose());
@@ -27,7 +27,34 @@ test('native discovery retains disabled/project/shadowed rows while never exposi
   expect(catalog.servers.find(s=>s.name==='alpha'&&s.scope==='user')?.shadowed).toBe(true);
   expect(catalog.servers.find(s=>s.name==='disabled')).toMatchObject({enabled:false,transport:'http'});
   expect(catalog.servers.find(s=>s.name==='orphan')).toMatchObject({enabled:false,removable:false,transport:'unknown'});
-  const publicText=JSON.stringify(catalog);for(const secret of ['user-secret','secret-header','/bin/sh','invalid.example'])expect(publicText).not.toContain(secret);
+  expect(catalog.servers.find(s=>s.name==='alpha'&&s.scope==='user')?.editable).toBe(true);
+  expect(catalog.servers.find(s=>s.name==='orphan')?.editable).toBeUndefined();
+  const publicText=JSON.stringify(catalog);for(const secret of ['user-secret','secret-header','opaque-auth','opaque-client','/bin/sh','invalid.example'])expect(publicText).not.toContain(secret);
+  await expect(access(f.sentinel)).rejects.toThrow();
+},30000);
+test('explicit detail returns exact unexpanded owner config and update preserves opaque and unrelated native fields',async()=>{
+  const f=await fixture();let catalog=await f.runtime.getMcpServers(f.cwd);
+  const selected=catalog.servers.find(server=>server.name==='alpha'&&server.scope==='user')!;
+  await expect(f.runtime.getMcpServerDetail(f.cwd,{serverId:selected.id,expectedRevision:'stale'})).rejects.toThrow('changed');
+  const detail=await f.runtime.getMcpServerDetail(f.cwd,{serverId:selected.id,expectedRevision:catalog.revision});
+  expect(detail).toMatchObject({revision:catalog.revision,server:{id:selected.id,editable:true},config:{command:'/bin/sh',env:{TOKEN:'user-secret',TEMPLATE:'${UNEXPANDED_TOKEN}'},auth:{token:'opaque-auth'},oauth:{clientId:'opaque-client'},timeout:4321}});
+  const replacement={...detail.config,args:['-c','exit 0'],env:{...(detail.config.env as Record<string,string>),EXPANDED:'${NATIVE_VALUE}'}};
+  catalog=await f.runtime.mutateMcpServer(f.cwd,{operation:'update',serverId:selected.id,expectedRevision:detail.revision,config:replacement});
+  const stored=JSON.parse(await readFile(f.user,'utf8'));
+  expect(stored).toMatchObject({preserved:'user-field',disabledServers:['disabled','orphan'],mcpServers:{alpha:{command:'/bin/sh',args:['-c','exit 0'],env:{TOKEN:'user-secret',TEMPLATE:'${UNEXPANDED_TOKEN}',EXPANDED:'${NATIVE_VALUE}'},auth:{token:'opaque-auth'},oauth:{clientId:'opaque-client',scope:'scope:value'},timeout:4321},disabled:{headers:{Authorization:'secret-header'}}}});
+  expect(JSON.stringify(catalog)).not.toContain('user-secret');
+  const bytes=await readFile(f.user,'utf8');
+  await expect(f.runtime.mutateMcpServer(f.cwd,{operation:'update',serverId:selected.id,expectedRevision:catalog.revision,config:{command:''}})).rejects.toThrow('invalid');
+  expect(await readFile(f.user,'utf8')).toBe(bytes);
+  await expect(f.runtime.mutateMcpServer(f.cwd,{operation:'update',serverId:selected.id,expectedRevision:catalog.revision,config:{type:'http',url:'https://invalid.example',headers:{Authorization:'do-not-log'}}})).rejects.toThrow('transport');
+  expect(await readFile(f.user,'utf8')).toBe(bytes);
+  const orphan=catalog.servers.find(server=>server.name==='orphan')!;
+  await expect(f.runtime.getMcpServerDetail(f.cwd,{serverId:orphan.id,expectedRevision:catalog.revision})).rejects.toThrow('another configuration source');
+  await expect(f.runtime.getMcpServerDetail(f.cwd,{serverId:'0'.repeat(64),expectedRevision:catalog.revision})).rejects.toThrow('no longer exists');
+  const current=await f.runtime.getMcpServerDetail(f.cwd,{serverId:selected.id,expectedRevision:catalog.revision});
+  const external={...JSON.parse(await readFile(f.user,'utf8')),externalWriter:true},externalBytes=json(external);await writeFile(f.user,externalBytes);
+  await expect(f.runtime.mutateMcpServer(f.cwd,{operation:'update',serverId:selected.id,expectedRevision:current.revision,config:current.config})).rejects.toThrow('changed');
+  expect(await readFile(f.user,'utf8')).toBe(externalBytes);
   await expect(access(f.sentinel)).rejects.toThrow();
 },30000);
 test('actual worker edits exact native owners, preserves secrets and unrelated fields, rejects stale writes',async()=>{
@@ -66,6 +93,11 @@ test('configuration HTTP uses catalog targets, masks native failures, and reject
   };
   const first=await post('mcp/read',{target:{projectId:'admitted'}});expect(first.status).toBe(200);
   const catalog=await first.json() as import('@agent-desktop/shared').NativeMcpCatalog;
+  const selected=catalog.servers.find(server=>server.name==='alpha'&&server.scope==='user')!;
+  const detail=await post('mcp/detail',{target:{projectId:'admitted'},request:{serverId:selected.id,expectedRevision:catalog.revision}});
+  expect(detail.status).toBe(200);expect(detail.headers.get('cache-control')).toBe('no-store');
+  expect(await detail.json()).toMatchObject({revision:catalog.revision,server:{id:selected.id},config:{env:{TOKEN:'user-secret'},auth:{token:'opaque-auth'}}});
+  expect((await post('mcp/detail',{target:{projectId:'missing'},request:{serverId:selected.id,expectedRevision:catalog.revision}})).status).toBe(400);
   const original=await readFile(f.user,'utf8');
   expect((await post('mcp/read',{target:{cwd:f.root}})).status).toBe(400);
   expect((await post('mcp/read',{target:{projectId:'missing'}})).status).toBe(400);
@@ -101,7 +133,7 @@ test('native configuration rejects FIFOs, external links and invalid nested entr
 test('configuration shutdown drains its admitted write and rejects new work',async()=>{
  const {IntegrationsHttp}=await import('../integrations-http');let release!:()=>void,entered!:()=>void,finished=false;
  const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
- const service=new IntegrationsHttp({runtime:{getPlugins:async()=>({revision:'r',plugins:[],application:'new-sessions'}),getMcpServers:async()=>({revision:'r',servers:[],application:'new-sessions'}),mutatePlugin:async()=>{throw new Error('Unused');},mutateMcpServer:async()=>{entered();await gate;finished=true;return {revision:'done',servers:[],application:'new-sessions'};}},resolveCwd:()=>'/admitted',changed:()=>{}});
+ const service=new IntegrationsHttp({runtime:{getPlugins:async()=>({revision:'r',plugins:[],application:'new-sessions'}),getMcpServers:async()=>({revision:'r',servers:[],application:'new-sessions'}),getMcpServerDetail:async()=>{throw new Error('Unused');},mutatePlugin:async()=>{throw new Error('Unused');},mutateMcpServer:async()=>{entered();await gate;finished=true;return {revision:'done',servers:[],application:'new-sessions'};}},resolveCwd:()=>'/admitted',changed:()=>{}});
  const url=new URL('http://localhost/v1/integrations/mcp/mutate');const pending=service.route(new Request(url,{method:'POST',body:JSON.stringify({mutation:{operation:'add',expectedRevision:'r',scope:'user',name:'server',config:{command:'/bin/false'}}})}),url);
  await started;let disposed=false;const closing=service.dispose().then(()=>{disposed=true;});await Promise.resolve();expect(disposed).toBe(false);
  const rejected=await service.route(new Request(url,{method:'POST',body:'{}'}),url);expect(rejected?.status).toBe(503);

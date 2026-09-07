@@ -159,11 +159,14 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
       }
       case "getMcpServers":
+      case "getMcpServerDetail":
       case "mutateMcpServer": {
         if (!runtime || session) throw new Error("Native configuration requires an initialized discovery worker.");
         mcp ??= import("../integrations/mcp").then(module => new module.NativeMcp());
         const backend = await mcp;
-        respond(true, message.operation === "getMcpServers" ? await backend.read(message.args.cwd) : await backend.mutate(message.args.cwd, message.args.mutation));
+        respond(true, message.operation === "getMcpServers" ? await backend.read(message.args.cwd)
+          : message.operation === "getMcpServerDetail" ? await backend.detail(message.args.cwd, message.args.request)
+          : await backend.mutate(message.args.cwd, message.args.mutation));
         break;
       }
       case "listModels":
