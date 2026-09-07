@@ -1,3 +1,4 @@
+import type { SelectedTextAttachment } from "./selected-text";
 export * from "./selected-text";
 export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
@@ -120,6 +121,8 @@ export interface Draft {
   environment?: LocalEnvironmentSelection;
   /** Presence persists after clearing the last chip; older command writers must refuse. */
   attachments?: ImageAttachmentRef[];
+  /** Sticky snapshot format, including after the last selection is removed. */
+  selectedTextAttachments?: SelectedTextAttachment[];
   /** Owning-host receipt, never editable draft input. */
   lastConsumption?: DraftConsumption;
   updatedAt: number;
@@ -168,6 +171,7 @@ export interface HostState {
   notifications?: HostNotification[];
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
+  selectedText?: { commandVersion: 6; maxSerializedChars: number; ordinaryPrompt: true };
   newChatExecution?: { commandVersion: 4; worktrees: true };
   localEnvironments?: { configuration: true; actions?: true; execution?: { commandVersion: 5; scriptOutput?: true; scriptCancellation?: true } };
   diagnostics?: { models?: string; preferences?: string };
@@ -183,8 +187,8 @@ export type HostCommand =
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
-  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
-  | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft?: { id: string; revision: number } }
+  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; draft?: { id: string; revision: number } }
+  | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; draft?: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.btw.start"; sessionId: string; question: string; draft?: { id: string; revision: number }; nativeCommand?: "btw" }
   | { type: "session.mcp.authorize"; hostId: string; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
@@ -201,7 +205,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5;
+  commandVersion?: 4 | 5 | 6;
 }
 
 export interface ImageAdmission {

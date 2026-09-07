@@ -1,5 +1,11 @@
 # Milestone status
 
+## Selected-text draft and submission transport
+
+Selected excerpts now persist through host schema8, version6 commands, renderer draft caches/conflicts and the original submission envelope. Old endpoints refuse snapshot intent; an accepted ordinary native user receipt clears only the submitted revision. Lost replies and later edits retain their content across restart. A legacy text-clear collision with a newer excerpt-only draft is preserved as a conflict.
+
+The 94-test/648-assertion regression and subsequent three actual authenticated HTTP tests/59 assertions pass; the latter includes production DraftController/SubmissionController/main endpoint routing through the real host and pinned OMP worker. Typecheck/build pass. Private evidence is in `.data/selected-text-public-2026-09-07/`. Editor actions, grouped composer chips, transcript projection, native skill/reference/steer composition and installed/pixel checks remain open; this is working transport/controller integration without a visible selection UI.
+
 ## Selected-text native foundation
 
 Captured excerpts now have a validated immutable representation and a pinned-OMP admission path. The native journal must contain exactly the selected context before the attributable ordinary user prompt is accepted; failures retain an uncertain outcome. Existing image/skill receipt handling remains intact, and worker protocol30 rejects older consumers. The real isolated local-provider fixture covers model context, persistence, reopen and excerpt-only prompts.42 focused tests/318 assertions, typecheck and build pass; private evidence is in `.data/selected-text-native-2026-09-07/`. This is a backend foundation: public drafts/commands, editor and composer UI, native reference/steer composition and installed acceptance remain open. See [file editor](workspace-file-editor.md).

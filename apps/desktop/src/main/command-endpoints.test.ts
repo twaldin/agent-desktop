@@ -95,3 +95,21 @@ test("an uncertain policy delivery or coded error is never changed into a defini
     expect(calls).toBe(1);
   }
 });
+
+
+test("selected snapshots and cleared markers use only v6 without losing uncertain outcomes", async () => {
+  const envelopes: CommandEnvelope[] = [
+    { id: "selected-draft", command: { type: "draft.put", expectedRevision: 1, draft: { id: "d", text: "", projectId: null, model: null, selectedTextAttachments: [], attachments: [], environment: null } } },
+    { id: "selected-send", command: { type: "session.prompt", sessionId: "s", text: "text", selectedTextAttachments: [] } },
+    { id: "selected-consume", commandVersion: 6, command: { type: "session.btw.start", sessionId: "s", question: "question", draft: { id: "d", revision: 1 } } },
+  ];
+  for (const envelope of envelopes) {
+    const paths: string[] = [];
+    expect(commandEndpoint(envelope)).toBe("/v6/commands");
+    expect(await requestVersionedCommand(async path => { paths.push(path); throw new HostRequestError("Not found", 404); }, envelope))
+      .toMatchObject({ ok: false, error: { code: "SELECTED_TEXT_PROTOCOL_UNSUPPORTED" } });
+    expect(paths).toEqual(["/v6/commands"]);
+    for (const error of [new Error("Lost response"), new HostRequestError("Not authorized", 401), new HostRequestError("Target missing", 404, "NOT_FOUND")])
+      await expect(requestVersionedCommand(async () => { throw error; }, envelope)).rejects.toBe(error);
+  }
+});

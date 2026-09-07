@@ -520,3 +520,40 @@ test("a recorded create failure after preparation observation retains recovery o
   expect(calls.map(item => item.command.type)).toEqual(["session.create", "session.environment.resume", "session.prompt"]);
   expect(calls[2]?.command).toMatchObject({ text: environmentDraft.text, sessionId: environmentSession.id });
 });
+
+
+test("selected-text retry retains the original snapshot, v6 envelope and command identity across edits and reload", async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  const selected: Draft = { ...original, selectedTextAttachments: [{ id: "excerpt", text: "raw excerpt", source: { kind: "file", hostId: "different-owner", path: "/unsaved/code.ts", range: { start: { line: 1, column: 1 }, end: { line: 1, column: 12 } } } }] };
+  const first = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return unknown(envelope); }, "host-a", storage);
+  await expect(first.submit(selected, session.id, "prompt")).rejects.toThrow("pending");
+  selected.selectedTextAttachments![0]!.source.path = "/changed/after-send.ts";
+  const restored = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return { ok: true, commandId: envelope.id, admission: { kind: "user-message", entryId: "native" } }; }, "host-a", storage);
+  const result = await restored.submit({ ...edited, selectedTextAttachments: [] }, session.id, "prompt");
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[0]).toMatchObject({ commandVersion: 6, command: { selectedTextAttachments: [{ source: { hostId: "different-owner", path: "/unsaved/code.ts" } }] } });
+  expect(result.submitted.selectedTextAttachments![0]!.source.path).toBe("/unsaved/code.ts");
+  expect(restored.entries()).toHaveLength(0);
+});
+
+test("selected-text steering is rejected before a command or pending submission is created", async () => {
+  const calls: CommandEnvelope[] = [];
+  const controller = new SubmissionController(async envelope => { calls.push(envelope); return unknown(envelope); }, "host-a", cache());
+  const draft: Draft = { ...original, selectedTextAttachments: [{ id: "s", text: "x", source: { kind: "file", hostId: "remote", path: "/file", range: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } } }] };
+  await expect(controller.submit(draft, session.id, "steer")).rejects.toThrow("Selected text");
+  expect(calls).toEqual([]); expect(controller.entries()).toEqual([]);
+});
+
+
+test("selected-text success without native user admission remains pending for the original command", async () => {
+  const storage = cache();
+  const draft: Draft = { ...original, selectedTextAttachments: [{ id: "s", text: "x", source: { kind: "file", hostId: "remote", path: "/file", range: { start: { line: 1, column: 1 }, end: { line: 1, column: 2 } } } }] };
+  const controller = new SubmissionController(async envelope => ({ ok: true, commandId: envelope.id }), "host-a", storage);
+  await expect(controller.submit(draft, session.id, "prompt")).rejects.toThrow("native user receipt");
+  const pending = controller.get(draft.id)!;
+  expect(pending.uncertain).toBe(true);
+  expect(pending.draft.selectedTextAttachments).toEqual(draft.selectedTextAttachments);
+  const restored = new SubmissionController(async envelope => ({ ok: true, commandId: envelope.id, admission: { kind: "user-message", entryId: "actual-native-entry" } }), "host-a", storage);
+  const result = await restored.submit({ ...draft, selectedTextAttachments: [] }, session.id, "prompt");
+  expect(result.commandId).toBe(pending.send!.id);
+});

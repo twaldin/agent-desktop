@@ -1,3 +1,4 @@
+import { hasSelectedTextIntent, requiresSelectedTextProtocol } from "./selected-text-protocol";
 import { PluginAcquisitionOperations } from "./integrations/acquisition-operations";
 import { PluginAcquisitionHttp } from "./integrations/acquisition-http";
 import { SessionMcpAuthorizationHttp } from "./session-mcp-authorization-http";
@@ -27,7 +28,7 @@ import { TailnetNetwork, TAILNET_PORT } from "./network";
 import { hasAttachmentIntent, requiresAttachmentProtocol } from "./attachment-protocol";
 import { ImageAttachmentsHttp, AttachmentRequestError } from "./attachment-http";
 import { AttachmentImageError } from "./attachments";
-import { sameImageAttachments, detachedAnswerDraft, SESSION_ACTIVITY_OWNER_HEADER, WORKSPACE_OWNER_HEADER } from "@agent-desktop/shared";
+import { sameSelectedTextAttachments, MAX_SELECTED_TEXT_SERIALIZED_CHARS, sameImageAttachments, detachedAnswerDraft, SESSION_ACTIVITY_OWNER_HEADER, WORKSPACE_OWNER_HEADER } from "@agent-desktop/shared";
 import type { PreparedPromptImage } from "./omp/images";
 import { AccountsHttp } from "./accounts-http";
 import { parseInteractionAnswer } from "./interaction-http";
@@ -255,7 +256,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   goalContinuations = new GoalContinuationController({
     session: id => store.getSession(id), ordered, getHandle,
     executing: id => executions.has(id),
-    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length || store.getSession(id)?.questionDeliveryPending); },
+    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length || draft?.selectedTextAttachments?.length || store.getSession(id)?.questionDeliveryPending); },
     checkpoint: (id, state) => {
       const current = store.getSession(id);
       if (current && !stopping && JSON.stringify(current.goalContinuation) !== JSON.stringify(state)) updateSession(id, { goalContinuation: state });
@@ -291,7 +292,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
   questionDeliveries = new QuestionDeliveryController({
     session: id => store.getSession(id), ordered, getHandle,
-    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length); },
+    hasDraft: id => { const draft = store.getDraft(`session:${id}`); return Boolean(draft?.text.trim() || draft?.attachments?.length || draft?.selectedTextAttachments?.length); },
     isCurrent: async (id, handle) => !stopping && await handles.get(id)?.catch(() => undefined) === handle,
     checkpoint: (id, pending) => {
       if (!stopping && store.getSession(id)?.questionDeliveryPending !== pending) updateSession(id, { questionDeliveryPending: pending });
@@ -434,7 +435,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput): void {
@@ -553,13 +554,17 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6): Promise<CommandResult> {
     const command = envelope.command;
+    if (commandVersion < 6 && requiresSelectedTextProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "SELECTED_TEXT_PROTOCOL_REQUIRED", "This draft requires the selected-text protocol. Its content was preserved.");
     if (commandVersion < 5 && requiresEnvironmentProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "ENVIRONMENT_PROTOCOL_REQUIRED", "This draft requires the environment protocol. Its selection was preserved.");
     if (commandVersion < 4 && requiresNewChatProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "NEW_CHAT_PROTOCOL_REQUIRED", "This draft requires the new-chat execution protocol. Its choices were preserved.");
     if (commandVersion < 3 && requiresAttachmentProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "ATTACHMENT_PROTOCOL_REQUIRED", "This draft requires the image attachment protocol. Its content was preserved.");
     if ((command.type === "session.prompt" || command.type === "session.steer") && command.draft) {
       const draft = store.getDraft(command.draft.id);
+      if (draft?.selectedTextAttachments !== undefined && command.selectedTextAttachments === undefined) return fail(envelope.id, "SELECTED_TEXT_PROTOCOL_REQUIRED", "Send the captured selections with this draft. Its content was preserved.");
+      if (draft?.revision === command.draft.revision && (draft.selectedTextAttachments !== undefined || command.selectedTextAttachments !== undefined)
+        && (draft.text !== command.text || !sameSelectedTextAttachments(draft.selectedTextAttachments, command.selectedTextAttachments))) return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "The submitted selections do not match this draft revision. Reload its preserved content before sending.");
       if (draft?.attachments !== undefined && command.attachments === undefined) return fail(envelope.id, "ATTACHMENT_PROTOCOL_REQUIRED", "Send the captured image manifest with this draft. Its content was preserved.");
       if (draft?.revision === command.draft.revision && (draft.attachments !== undefined || command.attachments !== undefined)
         && (draft.text !== command.text || !sameImageAttachments(draft.attachments, command.attachments))) return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "The submitted content does not match this draft revision. Reload its preserved content before sending.");
@@ -590,7 +595,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (command.draft) {
           const draft = store.getDraft(command.draft.id);
           if (!draft || draft.revision !== command.draft.revision) return fail(envelope.id, "DRAFT_CONFLICT", "The side-question draft changed elsewhere. Its content was preserved.");
-          if (draft.attachments?.length) return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "Native side questions do not accept image attachments. The draft was preserved.");
+          if (draft.attachments?.length || draft.selectedTextAttachments?.length) return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "Native side questions do not accept attachments yet. The draft was preserved.");
           if (command.nativeCommand === "btw") {
             if (draft.id !== `session:${command.sessionId}` || nativeBtwQuestion(draft.text) !== command.question)
               return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "The submitted /btw question does not match this main composer draft. Reload its preserved content before sending.");
@@ -695,7 +700,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case 'session.question.answer': {
         const saved = store.getDraft(command.draft.id);
         if (command.draft.id !== `question:${command.sessionId}:${command.questionId}` || !saved || saved.revision !== command.draft.revision
-          || saved.text !== detachedAnswerDraft(command.answers) || saved.attachments?.length) {
+          || saved.text !== detachedAnswerDraft(command.answers) || saved.attachments?.length || saved.selectedTextAttachments?.length) {
           return fail(envelope.id, 'DRAFT_CONFLICT', 'The question draft changed. Reload its preserved answers before submitting.');
         }
         const current = store.getSession(command.sessionId);
@@ -713,6 +718,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         return ok({ type: command.type, receipt });
       }
       case "session.steer": {
+        if (command.selectedTextAttachments?.length) return fail(envelope.id, "SELECTED_TEXT_STEER_UNSUPPORTED", "Selected-text steering is not connected yet. The draft was retained; stop the turn before sending its selections.");
         if (command.attachments?.length) return fail(envelope.id, "IMAGE_STEER_UNSUPPORTED", "Image steering is not supported yet. The draft was retained; stop the turn before sending its images.");
         const handle = await getHandle(command.sessionId);
         if (!executions.has(command.sessionId) || !handle.isStreaming) throw new Error("There is no running turn to steer.");
@@ -733,6 +739,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         return ok(undefined, receipt);
       }
       case "session.prompt": {
+        if (command.selectedTextAttachments?.length && command.text.trimStart().startsWith("/")) return fail(envelope.id, "SELECTED_TEXT_COMMAND_UNSUPPORTED", "Selected text is not connected to slash commands yet. No command was executed.");
         if (command.attachments?.length && command.text.trimStart().startsWith("/")) return fail(envelope.id, "IMAGE_COMMAND_UNSUPPORTED", "Image attachments are not supported on slash commands yet. No command was executed.");
         const prompt = async (images?: PreparedPromptImage[]) => {
         if (executions.has(command.sessionId)) throw new Error("This session is running. Steer or stop its current turn first.");
@@ -743,7 +750,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         goalContinuations?.cancel(command.sessionId);
         const nativeTitleBefore = handle.title;
         updateSession(command.sessionId, { status: "running", error: undefined });
-        const turn = handle.startPrompt(command.text, { model: command.model, thinkingLevel: command.thinkingLevel, ...(images === undefined ? {} : { images }) });
+        const turn = handle.startPrompt(command.text, { model: command.model, thinkingLevel: command.thinkingLevel, ...(command.selectedTextAttachments === undefined ? {} : { selectedText: { submissionId: envelope.id, attachments: command.selectedTextAttachments } }), ...(images === undefined ? {} : { images }) });
         let notificationOutcome: 'completed' | 'failed' | 'stopped' = 'failed';
         const completion = turn.completion.then(agentInvoked => {
           const error = runtimeErrors.get(command.sessionId);
@@ -766,7 +773,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         questionDeliveries?.request(command.sessionId);
         const current = store.getSession(command.sessionId)!;
         if (handle.title && handle.title !== nativeTitleBefore) updateSession(command.sessionId, { title: handle.title });
-        else if (accepted.kind === "user-message" && current.title === "New conversation") updateSession(command.sessionId, { title: (command.text.trim().split("\n")[0] || command.attachments?.map(image => image.name).join(", ") || "Image conversation").slice(0, 90) });
+        else if (accepted.kind === "user-message" && current.title === "New conversation") updateSession(command.sessionId, { title: (command.text.trim().split("\n")[0] || command.attachments?.map(image => image.name).join(", ") || (command.selectedTextAttachments?.length ? "Selected text conversation" : "Image conversation")).slice(0, 90) });
         return ok(store.getSession(command.sessionId), accepted);
         };
         return command.attachments === undefined ? prompt() : attachments.withPrepared(command.attachments, prompt);
@@ -774,7 +781,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     }
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -955,13 +962,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
         }
-        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands"].includes(url.pathname)) {
+        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands"].includes(url.pathname)) {
           const value = await request.json();
-          if (url.pathname !== "/v5/commands" && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v4/commands", "/v5/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v3/commands", "/v4/commands", "/v5/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
+          if (url.pathname !== "/v6/commands" && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v5/commands", "/v6/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v4/commands", "/v5/commands", "/v6/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
           if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
-          return Response.json(await dispatch(parseCommandEnvelope(value), url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1));
+          return Response.json(await dispatch(parseCommandEnvelope(value), url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1));
         }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
         if (request.method === "GET" && messagePath) return Response.json(await (await getHandle(decodeURIComponent(messagePath[1]!))).getMessages());

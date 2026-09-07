@@ -1,12 +1,74 @@
 import { describe, expect, test } from "bun:test";
-import type { CommandEnvelope, CommandResult, Draft, SessionSummary } from "../../../../packages/shared/src/protocol";
+import type { CommandEnvelope, CommandResult, Draft, SelectedTextAttachment, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { DraftController, type DraftCache } from "./drafts";
 import { SubmissionController } from "./submissions";
 
 const draft = (patch: Partial<Draft> = {}): Draft => ({ id: "new-conversation", revision: 1, text: "first prompt", projectId: "project-1", model: null, updatedAt: 1, ...patch });
+const selected = (id = "selection-one", text = "unsaved"): SelectedTextAttachment => ({ id, text,
+  source: { kind: "file", hostId: "another-host", path: "/outside/project/unsaved.ts",
+    range: { start: { line: 4, column: 1 }, end: { line: 4, column: text.length + 1 } } } });
 function cache(): DraftCache { const values = new Map<string, string>(); return { read: key => values.get(key) ?? null, write: (key, value) => { values.set(key, value); } }; }
 function saver(calls: CommandEnvelope[]) { return async (envelope: CommandEnvelope): Promise<CommandResult> => { calls.push(envelope); if (envelope.command.type !== "draft.put") throw new Error("Unexpected command"); return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: 2 } }; }; }
 const session: SessionSummary = { id: "session-1", hostId: "host", projectId: "project-1", cwd: "/project", title: "New conversation", status: "idle", sessionFile: "/session.jsonl", model: null, createdAt: 1, updatedAt: 1, archived: false };
+
+test("selected snapshots survive offline cache restore with remote provenance detached", () => {
+  const local = cache(), controller = new DraftController(saver([]), "host", local);
+  try {
+    controller.get("selected-offline");
+    const snapshot = selected(); controller.update("selected-offline", { selectedTextAttachments: [snapshot] });
+    snapshot.text = "caller mutation";
+    const restored = new DraftController(saver([]), "host", local);
+    try {
+      expect(restored.get("selected-offline")).toMatchObject({ status: "offline", draft: { selectedTextAttachments: [{ id: "selection-one", text: "unsaved", source: { hostId: "another-host" } }] } });
+    } finally { restored.dispose(); }
+  } finally { controller.dispose(); }
+});
+
+test("missing selected snapshot metadata conflicts without dropping local intent", () => {
+  const controller = new DraftController(saver([]), "host");
+  try {
+    const original = draft({ selectedTextAttachments: [selected()] });
+    controller.ingest(original);
+    controller.ingest({ ...original, revision: 2, selectedTextAttachments: undefined });
+    expect(controller.get(original.id)).toMatchObject({ status: "conflict", draft: { selectedTextAttachments: [{ id: "selection-one" }] }, conflict: { revision: 2 } });
+  } finally { controller.dispose(); }
+});
+
+test("a newer selected-text draft never acknowledges a legacy plain-text clear", () => {
+  const controller = new DraftController(saver([]), "host");
+  try {
+    const original = draft();
+    controller.ingest(original);
+    controller.beginPendingSubmission(original, "legacy-command");
+    controller.finishSubmission(original.id, original, true, false, "legacy-command");
+    expect(controller.get(original.id).draft.text).toBe("");
+    controller.ingest({ ...original, revision: 2, text: "", selectedTextAttachments: [selected()] });
+    expect(controller.get(original.id)).toMatchObject({ status: "conflict", draft: { text: original.text },
+      conflict: { revision: 2, selectedTextAttachments: [{ id: "selection-one" }] } });
+  } finally { controller.dispose(); }
+});
+
+test("delayed selected-text consumption clears only the sent selection and preserves a newer offline edit", async () => {
+  const calls: CommandEnvelope[] = [], controller = new DraftController(saver(calls), "host");
+  try {
+    const original = draft({ selectedTextAttachments: [selected()] });
+    controller.ingest(original); controller.setConnected(true);
+    const submitted = await controller.prepareSubmission(original.id);
+    controller.beginPendingSubmission(submitted, "selected-command");
+    controller.update(original.id, { selectedTextAttachments: [selected("newer", "newer")] });
+    controller.finishSubmission(original.id, submitted, true, false, "selected-command");
+    controller.ingest({ ...original, revision: 2, text: "", selectedTextAttachments: [], lastConsumption: { commandId: "selected-command", submittedRevision: 1 } });
+    // The local view keeps its pre-save revision until its newer edit is saved
+    // against the advanced base; it must not be overwritten by consumption.
+    expect(controller.get(original.id)).toMatchObject({ status: "unsaved", draft: { text: original.text, selectedTextAttachments: [{ id: "newer", text: "newer" }], revision: 1 } });
+    const saved = await controller.flush(original.id);
+    expect(calls).toHaveLength(1);
+    const save = calls[0]!;
+    if (save.command.type !== "draft.put") throw new Error("Expected draft save");
+    expect(save.command).toMatchObject({ expectedRevision: 2, draft: { selectedTextAttachments: [{ id: "newer", text: "newer" }] } });
+    expect(saved).toMatchObject({ revision: 3, selectedTextAttachments: [{ id: "newer", text: "newer" }] });
+  } finally { controller.dispose(); }
+});
 
 test('execution selections require the matching consumption receipt and preserve unrelated clears as conflicts', async () => {
   const controller = new DraftController(saver([]), 'host');
