@@ -1,12 +1,20 @@
 # Milestone status
 
+## Workspace file autosave and close recovery
+
+New file-editor changes now autosave after three seconds through the existing host-owned CAS/receipt queue. Dedicated files omit the old healthy Save/footer/notice and show transient save status. File-tab close saves until clean, then offers the reference Continue viewing / Discard changes decision on failure. Discard waits for durable recovery storage; an original unconfirmed receipt remains recoverable without resurrecting discarded text. Subsequent edits remain protected. Older cached manual buffers do not silently become writes.
+
+The focused suite passes 48 tests / 251 assertions; typecheck and production build pass. The dedicated hidden-Electron/actual-host run passes six checks/six captures: idle save, edits during a held write, offline conflict, explicit close decisions and discarded-original receipt recovery. Six HTTP deliveries represent five unique commands; the seeded draft fields remain at revision1 and no sessions are created. A separate DockPanel consumer run passes three checks/one capture with two exact writes: close buttons, duplicate handler activation and removal from the latest dock after a pending move. It does not establish integrated App editor unmount or native window shutdown. Capture00 is transitional, still showing Saving despite the later clean state; it does not establish settled idle appearance.
+
+This is uninstalled renderer/host evidence. App pagehide flush is best effort; installed exit completion, exact status artwork/animation, native pixel comparison and broader file editor interactions remain open. Work runs, sealed bundles and runtime pins are unchanged. See [file editor behavior and evidence](workspace-file-editor.md); private scope `.data/workspace-file-autosave-2026-09-07/` and run `.data/ui-acceptance/workspace-file-autosave-final-2026-09-07-r2/`.
+
 ## Recursive workspace file tree
 
 Dedicated file tabs now share a resizable right tree and recursive breadcrumb picker. Filtering discovers files in unopened folders through the owning host; selecting an existing file reuses its dock tab. Tree toggles keep the editor mounted, preserving its current undo history. Open state persists independently per window; the shared width starts at250 each renderer lifetime, with a200 minimum,60% maximum and drag-to-close below100.
 
 The focused suite passes32 tests/171 assertions; typecheck and production build pass. The final isolated authenticated-host/hidden-Electron acceptance passes nine checks/ten captures: exact file saves, independent dirty buffers, recursive selection/filtering, pointer resize, keyboard navigation, toggle undo/redo and tab move/hide/reopen. Exactly two file writes occurred, the seeded draft remains at revision1, and no sessions were created. The legacy Files regression also passes nine checks/seven captures. These are renderer/host checks, not installed OS input or matched pixel proof.
 
-The popup measures384×320 and the shared header48 in the fixture; generic file icons, filter focus treatment, sticky/compacted trees, large-tree performance, symlink-directory navigation, native autosave and undo across remounts remain open. Failed-folder reconnect recovery has source review but no direct tree reconnect interaction proof. Private evidence: `.data/ui-acceptance/workspace-file-tree-final-2026-09-07-r6/` and `.data/workspace-file-tree-2026-09-07/`. Existing Work runs, sealed references and runtime pins are unchanged.
+The popup measures384×320 and the shared header48 in the fixture; generic file icons, filter focus treatment, sticky/compacted trees, large-tree performance, symlink-directory navigation, installed exit saving and undo across remounts remain open. Failed-folder reconnect recovery has source review but no direct tree reconnect interaction proof. Private evidence: `.data/ui-acceptance/workspace-file-tree-final-2026-09-07-r6/` and `.data/workspace-file-tree-2026-09-07/`. Existing Work runs, sealed references and runtime pins are unchanged.
 
 ## Workspace files as dock tabs
 
@@ -14,7 +22,7 @@ Workspace file links and file selections now open dedicated tabs identified by h
 
 The focused suite passes 38 tests/183 assertions, with typecheck and production build passing. The new dock acceptance passes six checks/six captures against an isolated authenticated host: two exact file writes, independent buffers, dirty reopen, breadcrumb navigation/Escape, dock movement and hide/show. The seeded draft remains unchanged and no sessions are created. The existing Files regression also passes nine checks/seven captures. These are production-renderer/host checks, not installed App/main/preload or physical-window acceptance.
 
-Closing or moving a file tab preserves cached edits, but native undo/selection across remounts remains unfinished. The right file tree and recursive picker are covered by the later source checkpoint above; file-type icons, open-target actions and native autosave remain explicit gaps. The reference supports a 48-point header and 384×320 picker; current renderer checks do not certify installed OS pixels. See [workspace file editor](workspace-file-editor.md).
+Closing or moving a file tab preserves cached edits, but native undo/selection across remounts remains unfinished. The right file tree and recursive picker are covered by the later source checkpoint above; file-type icons and open-target actions remain explicit gaps; the later autosave checkpoint above supersedes manual-only saves. The reference supports a 48-point header and 384×320 picker; current renderer checks do not certify installed OS pixels. See [workspace file editor](workspace-file-editor.md).
 
 ## General Files source editor
 

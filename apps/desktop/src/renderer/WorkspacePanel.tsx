@@ -39,7 +39,7 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
     {!data.restored && <p className="workspace-notice">{data.cacheWarning ?? "Restoring editor buffers…"}{data.cacheWarning && <button onClick={() => void data.restore()}>Retry recovery</button>}</p>}
     {data.cacheWarning && data.restored && <p className="workspace-notice" role="alert">{data.cacheWarning}</p>}
     {data.errors.action && <div className="inline-error" role="alert">{data.errors.action}</div>}
-    {data.notice && <p className="workspace-notice" role="status">{data.notice}</p>}
+    {data.notice && !(filePath && data.mutationReceipt?.value.type === "file.write") && <p className="workspace-notice" role="status">{data.notice}</p>}
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
     <div id={embedded ? undefined : "workspace-view"} className="workspace-view" role={embedded ? undefined : "tabpanel"} aria-labelledby={embedded ? undefined : `workspace-tab-${tab}`}>
       {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} onOpenFile={onOpenFile} fileTree={fileTree} onFileTreeChange={onFileTreeChange} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
@@ -74,14 +74,14 @@ function Files({ data, disabled, fileRequest, filePath, onOpenFile, fileTree, on
     <section className="file-editor" aria-label="File editor">
       {!filePath && data.documents.size > 0 && <div className="editor-tabs">{[...data.documents].map(([path, item]) => <button className={path === opened ? "selected" : ""} key={path} title={path} onClick={() => open(path)}>{path.split("/").at(-1)}{item.dirty ? " •" : ""}</button>)}</div>}
       {!opened ? <div className="workspace-empty"><Icon name="compose"/><p>Select a file to read or edit.</p></div> : <>
-        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}{filePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}<button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button></div>
+        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}{filePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}{!filePath && <button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button>}</div>
       </>}
       <div className="workspace-file-body" hidden={!opened}><div className="workspace-file-main">
       {opened && <>
         {fileError && <p className="workspace-notice" role="alert">{fileError}</p>}
         {locationNotice?.path === opened && locationNotice?.id === fileRequest?.id && <p className="workspace-notice" role="status">{locationNotice.message}</p>}
         {document?.conflict !== undefined && <div className="file-conflict"><strong>The host file changed.</strong><details><summary>View host version</summary><pre>{document.conflict?.kind === "text" ? document.conflict.text : document.conflict ? `File is ${document.conflict.kind}` : "The file no longer exists."}</pre></details><div><button className="secondary-button" onClick={() => data.resolve(opened!, "remote")}>Use host version</button><button className="primary-button" onClick={() => data.resolve(opened!, "local")}>Keep my edits for next save</button></div></div>}
-        {document?.recoveredText !== undefined && <details className="editor-recovery"><summary>Previous local buffer retained</summary><pre>{document.recoveredText}</pre><button onClick={() => data.edit(opened!, document.recoveredText!)}>Restore this text into editor</button></details>}
+        {document?.recoveredText !== undefined && <details className="editor-recovery"><summary>Previous local buffer retained</summary><pre>{document.recoveredText}</pre><button onClick={() => data.edit(opened!, document.recoveredText!, true)}>Restore this text into editor</button></details>}
         {!document ? <p className="workspace-notice">{data.loading.has(`file:${opened}`) ? "Loading file…" : "No file content is cached."}</p> : editable ? null : <div className="workspace-empty"><p>{document.content?.kind === "binary" ? "This is a binary file. Text editing is unavailable." : document.content?.kind === "too-large" ? `This file is ${size(document.content.size)}; the host text editor limit is ${size(document.content.maximumBytes)}.` : document.content?.kind === "unsupported-encoding" ? `${document.content.encoding} editing is not supported. The original file is unchanged.` : "No text to display."}</p></div>}
       </>}
       {/* Keep each open file's native history and selection while another tab is visible. */}
@@ -89,7 +89,7 @@ function Files({ data, disabled, fileRequest, filePath, onOpenFile, fileTree, on
         {[...data.documents].filter(([path, item]) => (!filePath || path === filePath) && (!item.content || item.content.kind === "text")).map(([path, item]) =>
           <PierreSourceEditor key={path} documentKey={`${data.cacheKey}:${path}`} name={path} value={item.text}
             label={`Edit ${path}`} active={active && opened === path}
-            onChange={text => data.edit(path, text)} onSave={() => { if (!disabled) void data.saveFile(path); }}
+            onChange={text => data.edit(path, text, true)} onSave={() => { if (!disabled) void data.saveFile(path); }}
             revealRequest={opened === path ? revealRequest : undefined}
             onReveal={(id, error) => {
               if (opened !== path || fileRequest?.id !== id) return;
@@ -98,7 +98,11 @@ function Files({ data, disabled, fileRequest, filePath, onOpenFile, fileTree, on
             }}/>
         )}
       </div>
-      {document && <footer className="editor-status">{document.dirty ? "Unsaved edits" : "Host version"}{document.content?.kind === "text" ? ` · UTF-8${document.content.bom ? " with BOM" : ""}` : ""}{!data.connected ? " · Offline cache" : ""}</footer>}
+      {document && !filePath && <footer className="editor-status">{document.dirty ? "Unsaved edits" : "Host version"}{document.content?.kind === "text" ? ` · UTF-8${document.content.bom ? " with BOM" : ""}` : ""}{!data.connected ? " · Offline cache" : ""}</footer>}
+      {filePath && document && <div className="workspace-file-save-status" role="status">
+        {data.busy && data.pending?.envelope.command.action.type === "file.write" && data.pending.envelope.command.action.path === filePath
+          ? <span><Icon name="refresh"/>Saving…</span> : document.saveError ? <button title={document.saveError} disabled={disabled || document.conflict !== undefined} onClick={() => void data.saveFile(filePath)}>Save failed</button> : null}
+      </div>}
       </div>{filePath && <WorkspaceFileTreePane data={data} filePath={filePath} active={active} view={tree} onChange={changeTree} onOpenFile={open}/>}</div>
     </section>
   </div>;

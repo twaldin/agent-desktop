@@ -55,6 +55,7 @@ import { cssColorToRgba } from "./css-color";
 import { transcriptSources, type RecordedSource } from "./transcript-sources";
 import { ImagePreview } from "./ImagePreview";
 import { DockPanel } from "./DockPanel";
+import { useWorkspaceFileClose } from "./WorkspaceFileClose";
 import { DockTerminal } from "./DockTerminal";
 import { moveDockTab, type DockTab, type DockDestination } from "./dock-state";
 import { useWorkbenchDock, targetFromDock } from "./use-workbench-dock";
@@ -140,6 +141,12 @@ export function App() {
   }, [sidebarOpen]);
   const expandAfterNavigation = useRef<string | undefined>(undefined);
   const workspaces = useMemo(() => new Map<string, WorkspaceState>(), [bridge]);
+  const fileClose = useWorkspaceFileClose(tab => tab.target === "host" ? undefined : workspaces.get(`${tab.hostId}:${tab.target}`));
+  useEffect(() => {
+    const flush = () => { for (const data of workspaces.values()) for (const [path, document] of data.documents) if (document.autosave && document.dirty) void data.saveUntilClean(path).catch(() => {}); };
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); };
+  }, [workspaces]);
   const skillFiles = useMemo(() => new Map<string, NativeSkillFileController>(), [bridge]);
   useEffect(() => { for (const controller of skillFiles.values()) controller.setConnected(Boolean(desktop.catalog.records.get(controller.state.hostId)?.connected)); });
   useEffect(() => () => { for (const controller of skillFiles.values()) controller.dispose(); }, [skillFiles]);
@@ -642,10 +649,11 @@ export function App() {
     </main>
       {environmentOpen && workspace && !settingsOpen && !pluginDirectoryOpen && <div className="environment-overlay"><EnvironmentCard sideChats={dock.snapshot.tabs.filter(tab => tab.kind === "side-chat" && tab.hostId === hostId && tab.target === `session:${selectedId}`).map(tab => ({ id:tab.id,title:tab.title,unread:Boolean(tab.unread),onOpen:() => dock.open("side-chat") }))} actions={state?.localEnvironments?.actions ? <EnvironmentActions workspace={workspace} connected={connected} onTerminal={(terminal,title) => dock.bindTerminal(terminal.id,hostId,workspace.target,"bottom",title)} onSettings={() => { if(project?.id) setEnvironmentProject({hostId,projectId:project.id}); setSettingsPage("environments"); openSettings(); }}/> : undefined} key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal()} onHost={() => { setSidebarOpen(true);requestAnimationFrame(() => document.getElementById("active-host")?.focus()); }} onClose={() => setEnvironmentOpen(false)}/></div>}
     {(["right", "bottom"] as const).map(destination => <div className={`dock-slot dock-slot-${destination}`} key={destination} style={{display:!settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open ? undefined : "none"}} inert={settingsOpen || pluginDirectoryOpen || !dock.snapshot.state[destination].open || undefined}>
-      <DockPanel destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} onChange={dock.change} onTabDrop={(id,_from,to,index) => dock.change(moveDockTab(dock.snapshot.state,id,to,index))} addActions={dockActions} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
+      <DockPanel onBeforeClose={fileClose.onBeforeClose} destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} onChange={dock.change} onTabDrop={(id,_from,to,index) => dock.change(moveDockTab(dock.snapshot.state,id,to,index))} addActions={dockActions} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
       {!dock.snapshot.state[destination].tabIds.length && <div className="dock-empty-actions">{dockActions.map(action => <button key={action.id} onClick={() => action.onSelect(destination)}><Icon name={(action.id === "browser" || action.id === "existing-browser") ? "globe" : action.id === "side-chat" ? "sideChat" : action.id === "terminal" ? "terminal" : "folder"}/>{action.label}</button>)}</div>}
     </div>)}
     </div>
+    {fileClose.dialog}
     {sourcePreview && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>

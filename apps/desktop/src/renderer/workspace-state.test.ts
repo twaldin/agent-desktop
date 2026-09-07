@@ -204,3 +204,146 @@ describe("workspace renderer against actual file and Git services", () => {
     expect(f.owners).toHaveLength(0); await f.data.refresh(); expect(f.owners.every(owner => owner === "home")).toBe(true); f.data.stop();
   });
 });
+
+async function until(condition: () => boolean, timeout = 7_000) {
+  const end = Date.now() + timeout;
+  while (!condition()) { if (Date.now() > end) throw new Error("Workspace condition did not settle"); await Bun.sleep(20); }
+}
+
+describe("workspace autosave through native file writes", () => {
+  test("UI edits debounce into one owner-scoped write; manual buffer edits stay manual", async () => {
+    const { data, deliveries, path, owners } = await fixture();
+    await data.open("sample.txt"); data.start();
+    try {
+      data.edit("sample.txt", "manual\n"); await Bun.sleep(3_150);
+      expect(deliveries).toHaveLength(0);
+      data.edit("sample.txt", "first UI edit\n", true); await Bun.sleep(200);
+      expect(deliveries).toHaveLength(0);
+      data.edit("sample.txt", "latest UI edit\n", true);
+      await until(() => !data.documents.get("sample.txt")!.dirty);
+      expect(await readFile(join(path, "sample.txt"), "utf8")).toBe("latest UI edit\n");
+      expect(deliveries).toHaveLength(1); expect(owners.every(owner => owner === "home")).toBe(true);
+    } finally { data.stop(); }
+  }, 12_000);
+
+  test("a second edit while saving drains after the first actual receipt", async () => {
+    const { data, deliveries, path, delay } = await fixture();
+    await data.open("sample.txt"); const entered = deferred(), release = deferred();
+    delay(async () => { if (deliveries.length === 1) { entered.resolve(); await release.promise; } });
+    data.start();
+    try {
+      data.edit("sample.txt", "submitted\n", true); await entered.promise;
+      data.edit("sample.txt", "newer\n", true); release.resolve();
+      await until(() => deliveries.length === 2 && !data.busy);
+      expect(await readFile(join(path, "sample.txt"), "utf8")).toBe("newer\n");
+      expect(deliveries[0]!.id).not.toBe(deliveries[1]!.id);
+      expect(data.documents.get("sample.txt")!.dirty).toBe(false);
+    } finally { release.resolve(); data.stop(); }
+  }, 12_000);
+
+  test("offline edits resume with CAS and never overwrite a changed host file", async () => {
+    const { data, deliveries, path } = await fixture();
+    await data.open("sample.txt"); data.start();
+    try {
+      data.setConnected(false); data.edit("sample.txt", "offline\n", true); await Bun.sleep(3_150);
+      expect(deliveries).toHaveLength(0);
+      await writeFile(join(path, "sample.txt"), "external\n"); data.setConnected(true);
+      await until(() => data.documents.get("sample.txt")!.conflict !== undefined);
+      expect(await readFile(join(path, "sample.txt"), "utf8")).toBe("external\n");
+      expect(data.documents.get("sample.txt")!.text).toBe("offline\n");
+      const count = deliveries.length; await Bun.sleep(3_150); expect(deliveries).toHaveLength(count);
+      expect(await data.saveUntilClean("sample.txt")).toBe(false);
+    } finally { data.stop(); }
+  }, 12_000);
+
+  test("unknown receipt pauses autosave and explicit recovery reuses the original command", async () => {
+    const { data, deliveries, path, dropNextReceipt } = await fixture();
+    await data.open("sample.txt"); data.start();
+    try {
+      dropNextReceipt(); data.edit("sample.txt", "saved with lost receipt\n", true);
+      await until(() => Boolean(data.pending?.uncertain) && !data.busy);
+      expect(await readFile(join(path, "sample.txt"), "utf8")).toBe("saved with lost receipt\n");
+      const first = deliveries[0]!; await Bun.sleep(3_150); expect(deliveries).toHaveLength(1);
+      expect(await data.saveUntilClean("sample.txt")).toBe(false);
+      await data.retry(); expect(deliveries).toHaveLength(2); expect(deliveries[1]).toEqual(first);
+      expect(data.pending).toBeUndefined(); expect(data.documents.get("sample.txt")!.dirty).toBe(false);
+    } finally { data.stop(); }
+  }, 12_000);
+
+  test("close saves until clean, including edits during save; discard preserves an unresolved receipt", async () => {
+    const { data, path, delay, deliveries, dropNextReceipt } = await fixture();
+    await data.read("sample.txt"); const entered = deferred(), release = deferred();
+    delay(async () => { if (deliveries.length === 1) { entered.resolve(); await release.promise; } });
+    data.edit("sample.txt", "close first\n", true);
+    const closing = data.saveUntilClean("sample.txt"); await entered.promise;
+    data.edit("sample.txt", "close latest\n", true); release.resolve();
+    expect(await closing).toBe(true); expect(deliveries).toHaveLength(2);
+    expect(await readFile(join(path, "sample.txt"), "utf8")).toBe("close latest\n");
+    dropNextReceipt(); data.edit("sample.txt", "uncertain\n", true); expect(await data.saveUntilClean("sample.txt")).toBe(false);
+    const id = data.pending!.envelope.id; expect(await data.discardFileEdits("sample.txt")).toBe(true);
+    expect(data.documents.get("sample.txt")!.dirty).toBe(false);
+    expect(data.pending!.envelope.id).toBe(id);
+    await data.retry(); expect(data.documents.get("sample.txt")!.dirty).toBe(false);
+    expect(data.documents.get("sample.txt")!.text).toBe("uncertain\n");
+    expect(data.documents.get("sample.txt")!.discardedSaveId).toBeUndefined();
+  });
+});
+
+test("restored explicit autosave intent survives offline restart without adopting a legacy manual buffer", async () => {
+  const { data, bridge, cache, path, deliveries } = await fixture();
+  await data.open("sample.txt"); data.setConnected(false);
+  data.edit("sample.txt", "restored autosave draft\n", true);
+  await until(() => Boolean(cache.values.get(data.cacheKey)?.includes("restored autosave draft")));
+  const resumed = new WorkspaceState(bridge, "home", { projectId: "project" }, cache, "home");
+  await resumed.restore(); resumed.start();
+  try {
+    await Bun.sleep(200); expect(deliveries).toHaveLength(0);
+    expect(resumed.documents.get("sample.txt")!.text).toBe("restored autosave draft\n");
+    resumed.setConnected(true);
+    await until(() => !resumed.documents.get("sample.txt")!.dirty);
+    expect(await readFile(join(path, "sample.txt"), "utf8")).toBe("restored autosave draft\n");
+    expect(deliveries).toHaveLength(1);
+  } finally { resumed.stop(); }
+}, 8_000);
+
+test("failed durable discard keeps the buffer and cannot confirm tab closure", async () => {
+  const { data, cache, deliveries } = await fixture(); await data.open("sample.txt");
+  data.edit("sample.txt", "retain if discard storage fails\n");
+  await until(() => Boolean(cache.values.get(data.cacheKey)?.includes("retain if discard storage fails")));
+  cache.write = async () => { throw new Error("Recovery storage unavailable"); };
+  expect(await data.discardFileEdits("sample.txt")).toBe(false);
+  expect(data.documents.get("sample.txt")!.text).toBe("retain if discard storage fails\n");
+  expect(data.documents.get("sample.txt")!.dirty).toBe(true); expect(deliveries).toHaveLength(0);
+});
+
+test("legacy version1 dirty cache without autosave intent never becomes an automatic write", async () => {
+  const { data, bridge, cache, deliveries, path } = await fixture();
+  await data.open("sample.txt"); data.edit("sample.txt", "legacy manual draft\n");
+  await until(() => Boolean(cache.values.get(data.cacheKey)?.includes("legacy manual draft")));
+  const cached = JSON.parse(cache.values.get(data.cacheKey)!);
+  expect(cached.version).toBe(1); expect(cached.documents[0][1].autosave).toBeUndefined();
+  const resumed = new WorkspaceState(bridge, "home", { projectId: "project" }, cache, "home");
+  await resumed.restore(); resumed.setConnected(true); resumed.start();
+  try {
+    await Bun.sleep(3_150); expect(deliveries).toHaveLength(0);
+    expect(resumed.documents.get("sample.txt")!.text).toBe("legacy manual draft\n");
+    expect(await readFile(join(path, "sample.txt"), "utf8")).toBe("original\n");
+  } finally { resumed.stop(); }
+}, 8_000);
+
+test("discard receipt marker survives restore and clean reads but never replaces a later edit", async () => {
+  for (const [readAgain, editAgain] of [[false, false], [true, false], [true, true]]) {
+    const { data, bridge, cache, dropNextReceipt, deliveries } = await fixture();
+    await data.read("sample.txt"); data.edit("sample.txt", "accepted on host\n", true);
+    dropNextReceipt(); await data.saveFile("sample.txt"); const id = data.pending!.envelope.id;
+    expect(await data.discardFileEdits("sample.txt")).toBe(true);
+    const resumed = new WorkspaceState(bridge, "home", { projectId: "project" }, cache, "home");
+    await resumed.restore(); resumed.setConnected(true); if (readAgain) await resumed.read("sample.txt");
+    expect(resumed.documents.get("sample.txt")!.discardedSaveId).toBe(id);
+    if (editAgain) resumed.edit("sample.txt", "new explicit edit after discard\n");
+    await resumed.retry();
+    expect(deliveries).toHaveLength(2); expect(deliveries[1]!.id).toBe(id);
+    expect(resumed.documents.get("sample.txt")!.dirty).toBe(editAgain);
+    expect(resumed.documents.get("sample.txt")!.text).toBe(editAgain ? "new explicit edit after discard\n" : "accepted on host\n");
+  }
+});

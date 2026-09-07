@@ -8,3 +8,9 @@
 .workspace-file-toolbar .file-tree-toggle[aria-pressed="true"] { background:var(--selected); color:var(--text); }
 .workspace-file-toolbar .file-tree-toggle .icon { width:20px; height:20px; }
 .workspace-file-body[hidden] { display:none; }
+.workspace-file-main { position:relative; }
+.workspace-file-save-status { position:absolute; right:16px; bottom:16px; z-index:10; display:flex; align-items:center; gap:1px; padding:4px; border:var(--border-width,1px) solid var(--border); border-radius:var(--radius,8px); background:color-mix(in srgb,var(--elevated-surface) 90%,transparent); box-shadow:0 1px 2px #0002; backdrop-filter:blur(24px); }
+.workspace-file-save-status:empty { display:none; }
+.workspace-file-save-status>span,.workspace-file-save-status>button { display:flex; align-items:center; gap:4px; padding:0 8px; color:var(--secondary); font-size:12px; line-height:1; }
+.workspace-file-save-status>button { color:var(--danger); }
+.workspace-file-save-status .icon { width:14px; height:14px; }

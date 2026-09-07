@@ -4,7 +4,8 @@ import type { FileContent, GitBranch, GitDiff, GitStatus, GitWorktree, Workspace
 import type { OfflineCache } from "./offline-cache";
 
 type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe">;
-export interface EditorDocument { content: FileContent | null; text: string; dirty: boolean; conflict?: FileContent | null; recoveredText?: string }
+export const WORKSPACE_AUTOSAVE_DELAY_MS = 3_000;
+export interface EditorDocument { discardedSaveId?: string; autosave?: boolean; saveError?: string; content: FileContent | null; text: string; dirty: boolean; conflict?: FileContent | null; recoveredText?: string }
 export interface PendingWorkspaceMutation { envelope: CommandEnvelope & { command: { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation } }; uncertain: boolean }
 export const workspaceKey = (target: WorkspaceTarget) => "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}`;
 
@@ -37,19 +38,24 @@ export class WorkspaceState {
   private writes: Promise<void> = Promise.resolve();
   private restoration?: Promise<void>;
   private unsubscribe?: () => void;
+  private started = false;
+  private autosaveTimer?: ReturnType<typeof setTimeout>;
+  private autosaveRunning = false;
+  private autosaveDue = new Map<string, number>();
   readonly cacheKey: string;
   constructor(private bridge: WorkspaceBridge, readonly hostId: string, readonly target: WorkspaceTarget, private cache: OfflineCache, private localHostId?: string) {
     this.cacheKey = `agent-desktop:workspace:v1:${hostId}:${workspaceKey(target)}`;
   }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  private changed() { for (const listener of this.listeners) listener(); }
+  private changed() { for (const listener of this.listeners) listener(); this.scheduleAutosave(); }
   start() {
+    this.started = true; this.scheduleAutosave();
     this.unsubscribe ??= this.bridge.subscribe(event => {
       if ((event.hostId ?? this.localHostId) !== this.hostId) return;
       if (event.type === "workspace" && workspaceKey(event.target) === workspaceKey(this.target)) void this.refresh();
     });
   }
-  stop() { this.unsubscribe?.(); this.unsubscribe = undefined; }
+  stop() { this.started = false; clearTimeout(this.autosaveTimer); this.unsubscribe?.(); this.unsubscribe = undefined; }
   restore(): Promise<void> {
     return this.restoration ??= (async () => {
       try {
@@ -116,20 +122,21 @@ export class WorkspaceState {
       const previous = this.documents.get(path);
       if (previous?.dirty) {
         if (previous.content?.revision !== result.content.revision) previous.conflict = result.content;
-      } else this.documents.set(path, { content: result.content, text: result.content.kind === "text" ? result.content.text : "", dirty: false, recoveredText: previous?.recoveredText });
+      } else this.documents.set(path, { content: result.content, text: result.content.kind === "text" ? result.content.text : "", dirty: false, recoveredText: previous?.recoveredText, discardedSaveId: previous?.discardedSaveId });
       this.documentEpochs.set(path, epoch + 1);
       this.saveSoon();
     });
   }
-  edit(path: string, text: string) { const item = this.documents.get(path); if (!item) return; item.text = text; item.dirty = item.content?.kind !== "text" || text !== item.content.text; this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1); this.changed(); this.saveSoon(); }
-  newFile(path: string) { if (!path || path.startsWith("/") || path.split("/").includes("..")) { this.errors.action = "Use a relative file path within this workspace."; this.changed(); return; } if (!this.documents.has(path)) { this.documents.set(path, { content: null, text: "", dirty: true }); this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1); } this.opened = path; this.changed(); this.saveSoon(); }
+  edit(path: string, text: string, autosave = false) { const item = this.documents.get(path); if (!item) return; item.text = text; item.discardedSaveId = undefined; if (autosave) { item.autosave = true; item.saveError = undefined; this.autosaveDue.set(path, Date.now() + WORKSPACE_AUTOSAVE_DELAY_MS); } item.dirty = item.content?.kind !== "text" || text !== item.content.text; this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1); this.changed(); this.saveSoon(); }
+  newFile(path: string) { if (!path || path.startsWith("/") || path.split("/").includes("..")) { this.errors.action = "Use a relative file path within this workspace."; this.changed(); return; } if (!this.documents.has(path)) { this.documents.set(path, { content: null, text: "", dirty: true, autosave: true }); this.autosaveDue.set(path, Date.now() + WORKSPACE_AUTOSAVE_DELAY_MS); this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1); } this.opened = path; this.changed(); this.saveSoon(); }
   setCommitMessage(value: string) { this.commitMessage = value; this.changed(); this.saveSoon(); }
   resolve(path: string, choice: "local" | "remote") {
     const item = this.documents.get(path); if (!item || item.conflict === undefined) return;
     const current = item.conflict;
     if (choice === "local" && current && current.kind !== "text") { this.errors.action = "The host file is no longer editable UTF-8 text. Your buffer is preserved."; this.changed(); return; }
     if (choice === "remote") { item.recoveredText = item.text; item.text = current?.kind === "text" ? current.text : ""; }
-    item.content = current; item.conflict = undefined; item.dirty = choice === "local";
+    item.content = current; item.conflict = undefined; item.dirty = choice === "local"; item.saveError = undefined;
+    this.autosaveDue.set(path, Date.now() + WORKSPACE_AUTOSAVE_DELAY_MS);
     this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1);
     this.changed(); this.saveSoon();
   }
@@ -164,7 +171,64 @@ export class WorkspaceState {
   private loadDiff() {
     return this.load("diff", async () => { const selection = this.diffSelection; const result = await this.query({ type: "git.diff", ...selection }); if (result.type !== "git.diff") throw new Error("The host returned the wrong diff response."); if (this.diffSelection === selection) this.diff = result.diff; });
   }
-  saveFile(path: string) { const item = this.documents.get(path); if (!item || !item.dirty || item.conflict !== undefined) return Promise.resolve(); return this.mutate({ type: "file.write", path, text: item.text, expectedRevision: item.content?.revision ?? null, bom: item.content?.kind === "text" ? item.content.bom : false }); }
+  saveFile(path: string) { const item = this.documents.get(path); if (!item || !item.dirty || item.conflict !== undefined) return Promise.resolve(); item.saveError = undefined; this.autosaveDue.set(path, Date.now() + WORKSPACE_AUTOSAVE_DELAY_MS); return this.mutate({ type: "file.write", path, text: item.text, expectedRevision: item.content?.revision ?? null, bom: item.content?.kind === "text" ? item.content.bom : false }); }
+  /** Only new UI edits opt in. Older manual buffers never become writes on upgrade. */
+  private scheduleAutosave() {
+    clearTimeout(this.autosaveTimer);
+    if (!this.started || !this.restored || !this.connected || this.cacheWarning || this.pending || this.busy || this.autosaveRunning) return;
+    let selected: { path: string; due: number } | undefined;
+    for (const [path, item] of this.documents) {
+      if (!item.autosave || !item.dirty || item.saveError || item.conflict !== undefined || item.content && item.content.kind !== "text") continue;
+      const due = this.autosaveDue.get(path) ?? Date.now() + WORKSPACE_AUTOSAVE_DELAY_MS;
+      this.autosaveDue.set(path, due);
+      if (!selected || due < selected.due) selected = { path, due };
+    }
+    if (!selected) return;
+    const path = selected.path;
+    this.autosaveTimer = setTimeout(() => {
+      this.autosaveRunning = true;
+      void this.saveFile(path).finally(() => { this.autosaveRunning = false; this.scheduleAutosave(); });
+    }, Math.max(0, selected.due - Date.now()));
+  }
+  private async waitForMutation() {
+    if (!this.busy) return;
+    await new Promise<void>(resolve => { const off = this.subscribe(() => { if (!this.busy) { off(); resolve(); } }); });
+  }
+  /** Close uses the same receipt queue and drains newer edits; unresolved outcomes stop it. */
+  async saveUntilClean(path: string): Promise<boolean> {
+    await this.restore();
+    if (!this.restored) return false;
+    while (true) {
+      await this.waitForMutation();
+      const item = this.documents.get(path);
+      if (!item?.dirty) return true;
+      if (!this.restored || !this.connected || this.pending || this.cacheWarning || item.conflict !== undefined || item.content && item.content.kind !== "text") return false;
+      await this.saveFile(path);
+      if (this.pending || this.documents.get(path)?.saveError || this.errors.action || this.cacheWarning) return false;
+    }
+  }
+  async discardFileEdits(path: string): Promise<boolean> {
+    const item = this.documents.get(path); if (!item) return this.restored;
+    const previous = { ...item };
+    const current = item.conflict !== undefined ? item.conflict : item.content;
+    item.content = current; item.text = current?.kind === "text" ? current.text : "";
+    item.dirty = false; item.autosave = false; item.conflict = undefined; item.saveError = undefined;
+    item.discardedSaveId = this.pending?.envelope.command.action.type === "file.write" && this.pending.envelope.command.action.path === path ? this.pending.envelope.id : undefined;
+    this.autosaveDue.delete(path);
+    const epoch = (this.documentEpochs.get(path) ?? 0) + 1;
+    this.documentEpochs.set(path, epoch);
+    // Do not report clean to a close observer until the discard is durable.
+    try { await this.persist(); return this.documents.get(path) === item && !item.dirty; }
+    catch {
+      if (this.documents.get(path) === item && this.documentEpochs.get(path) === epoch) {
+        this.documents.set(path, previous); this.documentEpochs.set(path, epoch + 1);
+      }
+      this.changed(); return false;
+    }
+  }
+  private fileSaveError(action: WorkspaceMutation, error: string) {
+    if (action.type === "file.write") { const item = this.documents.get(action.path); if (item) item.saveError = error; }
+  }
   async mutate(action: WorkspaceMutation) {
     await this.restore();
     if (this.busy || this.pending) return;
@@ -185,26 +249,38 @@ export class WorkspaceState {
       if (!result.ok) {
         if (result.error.code === "OUTCOME_UNKNOWN") throw new Error(result.error.message);
         this.pending = undefined; this.errors.action = result.error.message;
+        const action = item.envelope.command.action, document = action.type === "file.write" ? this.documents.get(action.path) : undefined;
+        if (document?.discardedSaveId === item.envelope.id) { document.discardedSaveId = undefined; document.saveError = undefined; }
+        else this.fileSaveError(action, result.error.message);
       } else {
         const value = result.value;
         if (!value || !("type" in value) || value.type !== item.envelope.command.action.type) throw new Error("The host did not return the expected mutation receipt.");
-        this.applyResult(item.envelope.command.action, value); this.mutationReceipt = { commandId: item.envelope.id, value }; this.pending = undefined;
+        this.applyResult(item.envelope.command.action, value, item.envelope.id); this.mutationReceipt = { commandId: item.envelope.id, value }; this.pending = undefined;
       }
       await this.persist();
     } catch (cause) {
       if (this.pending) this.pending.uncertain = true;
       this.errors.action = this.pending ? `Delivery needs confirmation. Retry checks the original command. ${message(cause)}` : `The host replied, but its recovery receipt could not be saved. ${message(cause)}`;
+      this.fileSaveError(item.envelope.command.action, this.errors.action!);
       this.saveSoon();
     } finally { this.busy = false; this.changed(); await this.refresh(); }
   }
-  private applyResult(action: WorkspaceMutation, value: WorkspaceMutationResult) {
+  private applyResult(action: WorkspaceMutation, value: WorkspaceMutationResult, commandId: string) {
     if (value.type === "environment.select") this.environmentActions = value.state;
     else if (action.type === "file.write" && value.type === "file.write") {
       const item = this.documents.get(action.path); if (!item) return;
       this.documentEpochs.set(action.path, (this.documentEpochs.get(action.path) ?? 0) + 1);
+      if (item.discardedSaveId === commandId) {
+        const content = value.result.ok ? value.result.document : value.result.current;
+        item.content = content; item.text = content?.kind === "text" ? content.text : "";
+        item.dirty = false; item.conflict = undefined; item.saveError = undefined; item.discardedSaveId = undefined;
+        this.notice = "Original save outcome checked. Discarded edits remain discarded.";
+        return;
+      }
       if (!value.result.ok) { item.conflict = value.result.current; this.errors.action = "The file changed on the host. Both versions are preserved below."; return; }
       const newer = item.text !== action.text;
-      item.content = value.result.document; item.conflict = undefined;
+      item.content = value.result.document; item.conflict = undefined; item.saveError = undefined;
+      this.autosaveDue.set(action.path, Date.now() + WORKSPACE_AUTOSAVE_DELAY_MS);
       if (!newer) item.text = value.result.document.text;
       item.dirty = item.text !== value.result.document.text;
       this.notice = newer ? "Saved the submitted version. Your newer edits remain unsaved." : "File saved on the owning host.";
