@@ -1,5 +1,9 @@
 # Private host installation
 
+The separate source30 candidate at `out/source30-4dd81e0/desktop/Agent Desktop.app` freezes production `4dd81e003ca401c4912dc802c6a44d8e43bcffe2`, Bun 1.3.14/OMP 18.1.10, worker protocol 29 and host schemas 1–7. Its adjacent `host.tar.gz` SHA-256 is `9e806fddb77a452003417e4c85f0bef525c257f8ba6e524ddc724ad7cbdff95b`. It is uninstalled and has no native UI acceptance yet.
+
+Own-runtime CLI/SDK and two actual discovery workers pass under hostile and empty PATH with temporary HOME/native profiles. Three additional packaged-entrypoint tests verify SIGINT/SIGTERM cleanup, including stalled local model discovery. All 30,197 recorded file/link entries and 170 host hashes pass; dependencies have no shared hardlinks, and deep/strict signing still passes after probes. No personal runtime executable was invoked. Evidence is in `.data/source30-package-4dd81e0/`; earlier independent Work verdicts below remain scoped to their original artifacts.
+
 The host artifact contains maintained TypeScript sources, shared protocol, the unchanged workspace manifests, frozen Bun lockfile and explicitly supplied private tmux runtime bundles. It includes the desktop workspace's manifest to keep dependency resolution exact; desktop code, development dependencies, user settings, credentials, sessions and `node_modules` are excluded. Production installation resolves the pinned native packages on each target architecture. No service runs from the development checkout.
 
 Create a fresh immutable release only after the complete source passes its relevant tests and typecheck:

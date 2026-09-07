@@ -1,5 +1,15 @@
 # Milestone status
 
+## Source30 packaged candidate
+
+A separate uninstalled macOS candidate freezes production `4dd81e0` at `out/source30-4dd81e0/desktop/Agent Desktop.app`, with its host archive alongside. It includes the current plugin/skill surfaces and resumed-session model fixes, using owned Bun 1.3.14/OMP 18.1.10, worker 29 and schema 7.
+
+The owned regression runner passes 1,048 tests/28,058 assertions across 202 files with the verified native terminal bundle; only the Linux systemd parser is skipped on macOS. The plugin wrapper also executes its unchanged nine native tests in a minimal-environment child. Typecheck, packaging and strict signing pass. Actual packaged CLI/SDK/discovery checks pass under hostile and empty PATH; three isolated packaged-host signal tests verify locator/worker cleanup. All 30,197 artifact records and 170 host hashes match, with no shared dependency hardlinks or personal-runtime sentinel calls.
+
+The first regression failures came from a duplicate local development `pi-utils` directory, which created separate native resolver/cleanup instances. Restoring the canonical frozen dependency link fixes both original shared-process plugin checks and signal cleanup. The fresh package already used that layout. The isolated plugin test launcher is retained as test hygiene, not the causal fix. No production change or new runtime pin was needed.
+
+This is packaged/runtime and regression evidence, not installed/native UI or pixel acceptance. Existing apps, verifier runs and sealed bundles remain unchanged. Private evidence: `.data/source30-package-4dd81e0/`.
+
 ## Native plugin Information
 
 Installed details now show category/homepage from exact cached OMP metadata, without network fetch or repository guesses. Only referenced marketplaces are read; metadata changes alter the catalog revision. Website actions use the existing desktop opener and owner-fenced failure handling. Uninstall now uses the configurable danger token with reference dark#ff6764.
