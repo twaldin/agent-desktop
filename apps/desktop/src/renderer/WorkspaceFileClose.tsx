@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type ReactNode } from "react";
 import type { DockTab } from "./dock-state";
+import type { NativeSkillFileController } from "./native-skill-file-state";
 import type { WorkspaceState } from "./workspace-state";
 
 interface CloseDecision {
   tabId: string;
   path: string;
-  data: WorkspaceState;
+  buffer: {
+    subscribe(listener:()=>void):()=>void;
+    save():Promise<boolean>;
+    clean():boolean;
+    error():string|undefined;
+    canDiscard():boolean;
+    discard():Promise<boolean>;
+  };
   resolve(allowed: boolean): void;
 }
 
 /** Coordinates file saves and the explicit discard decision before DockPanel
  * removes a tab. The workspace resolver retains owner identity in App. */
-export function useWorkspaceFileClose(resolveWorkspace: (tab: DockTab) => WorkspaceState | undefined): {
+export function useWorkspaceFileClose(resolveWorkspace: (tab: DockTab) => WorkspaceState | undefined, resolveSkillFile?: (tab:DockTab)=>NativeSkillFileController|undefined): {
   onBeforeClose(tab: DockTab): Promise<boolean>;
   dialog: ReactNode;
 } {
@@ -39,7 +47,7 @@ export function useWorkspaceFileClose(resolveWorkspace: (tab: DockTab) => Worksp
       current?.resolve(false);
     };
   }, []);
-  useEffect(() => decision?.data.subscribe(redraw), [decision?.data]);
+  useEffect(() => decision?.buffer.subscribe(redraw), [decision?.buffer]);
   useEffect(() => {
     if (!decision) return;
     const element = dialog.current;
@@ -48,32 +56,45 @@ export function useWorkspaceFileClose(resolveWorkspace: (tab: DockTab) => Worksp
     return () => { if (element?.open) element.close(); };
   }, [decision]);
   const onBeforeClose = useCallback(async (tab: DockTab) => {
-    if (tab.kind !== "file" || !tab.filePath) return true;
+    if (tab.kind !== "skill-file" && (tab.kind !== "file" || !tab.filePath)) return true;
     if (gate.current) return false;
     gate.current = true;
-    const data = resolveWorkspace(tab);
     try {
-      if (!data) return true;
-      try {
-        await data.restore();
-        if (await data.saveUntilClean(tab.filePath)) return true;
-      } catch {
+      const skill=tab.kind==="skill-file"?resolveSkillFile?.(tab):undefined;
+      const data=tab.kind==="file"?resolveWorkspace(tab):undefined;
+      const path=tab.filePath??tab.skillFile?.sourcePath??tab.title;
+      if(!skill&&!data)return true;
+      const buffer:CloseDecision["buffer"]=skill?{
+        subscribe:skill.subscribe,
+        save:()=>skill.saveUntilClean(),
+        clean:()=>false,
+        error:()=>skill.state.error,
+        canDiscard:()=>skill.canDiscardEdits(),
+        discard:()=>skill.discardEdits(),
+      }:{
+        subscribe:listener=>data!.subscribe(listener),
+        save:async()=>{await data!.restore();return data!.saveUntilClean(path);},
+        clean:()=>data!.restored&&!data!.documents.get(path)?.dirty,
+        error:()=>data!.documents.get(path)?.saveError??data!.cacheWarning??data!.errors.action,
+        canDiscard:()=>data!.restored,
+        discard:()=>data!.discardFileEdits(path),
+      };
+      try { if(await buffer.save())return true; } catch {
         // The decision below retains any recoverable buffer and original receipt.
       }
       if (!mounted.current) return false;
-      if (data.restored && !data.documents.get(tab.filePath)?.dirty) return true;
+      if (buffer.clean()) return true;
       return await new Promise<boolean>(resolve => {
-        const next = { tabId: tab.id, path: tab.filePath!, data, resolve };
+        const next = { tabId: tab.id, path, buffer, resolve };
         pending.current = next;
         setDecision(next);
       });
     } finally {
       gate.current = false;
     }
-  }, [resolveWorkspace]);
+  }, [resolveWorkspace,resolveSkillFile]);
 
-  const document = decision?.data.documents.get(decision.path);
-  const error = document?.saveError ?? decision?.data.cacheWarning ?? decision?.data.errors.action;
+  const error = decision?.buffer.error();
   return {
     onBeforeClose,
     dialog: decision ? <dialog ref={dialog} className="app-dialog" aria-labelledby={titleId} aria-describedby={descriptionId}
@@ -83,11 +104,11 @@ export function useWorkspaceFileClose(resolveWorkspace: (tab: DockTab) => Worksp
       {error && <p className="inline-error" role="alert">{error}</p>}
       <div className="dialog-footer">
         <button type="button" className="secondary-button" data-continue-viewing disabled={discarding} onClick={() => finish(false)}>Continue viewing</button>
-        <button type="button" className="primary-button" disabled={!decision.data.restored || discarding} onClick={() => {
+        <button type="button" className="primary-button" disabled={!decision.buffer.canDiscard() || discarding} onClick={() => {
           const current = pending.current;
           if (!current || discarding) return;
           setDiscarding(true);
-          void current.data.discardFileEdits(current.path).then(allowed => {
+          void current.buffer.discard().then(allowed => {
             if (pending.current !== current) return;
             if (allowed) finish(true);
             else if (mounted.current) setDiscarding(false);

@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DesktopBridge, NativeSkillFileRef } from "@agent-desktop/shared";
 import { NativePluginDirectory } from "../../apps/desktop/src/renderer/NativePluginDirectory";
+import { useWorkspaceFileClose } from "../../apps/desktop/src/renderer/WorkspaceFileClose";
 import { NativeSkillFileController } from "../../apps/desktop/src/renderer/native-skill-file-state";
 import { NativeSkillFilePanel } from "../../apps/desktop/src/renderer/NativeSkillFilePanel";
 import { offlineCache } from "../../apps/desktop/src/renderer/offline-cache";
@@ -62,6 +63,8 @@ function Fixture() {
     if(dock.persisted){const view={...defaultWindowView(),dock:dock.persisted};windowWrites=windowWrites.then(()=>request("/test/window-view",{action:"save",view}));}
   },[dock.persisted]);
   const controllers = useMemo(() => new Map<string, NativeSkillFileController>(), [generation]);
+  const fileClose=useWorkspaceFileClose(()=>undefined,tab=>controllers.get(tab.id));
+  useEffect(()=>{const live=new Set(dock.snapshot.tabs.map(tab=>tab.id));for(const [id,controller] of controllers)if(!live.has(id)){controller.dispose();controllers.delete(id);}},[controllers,dock.snapshot.tabs]);
   flushFiles=async()=>{await Promise.all([...controllers.values()].map(controller=>controller.flush()));};
   controllerProjection = () => [...controllers.entries()].map(([id, controller]) => ({ id, ...controller.state, file: controller.state.file ? {
     revision: controller.state.file.document.revision, text: controller.state.file.document.text,
@@ -76,8 +79,9 @@ function Fixture() {
   return <main className="app-shell skill-file-fixture">
     <section className="skill-file-directory"><NativePluginDirectory bridge={bridge} hostId={hostId} hostName="Disposable native host" connected={connected}
       target={target} initialTab="skills" onOpenSkillFile={dock.openSkillFile} onManage={()=>{}} onMarketplace={()=>{}} onClose={()=>{}}/></section>
-    {dock.snapshot.state.right.open && <DockPanel destination="right" state={dock.snapshot.state} tabs={dock.snapshot.tabs}
+    {dock.snapshot.state.right.open && <DockPanel onBeforeClose={fileClose.onBeforeClose} destination="right" state={dock.snapshot.state} tabs={dock.snapshot.tabs}
       viewport={{ width: innerWidth, height: innerHeight, left: 0, top: 0, rightMinWidth: 360 }} onChange={dock.change} renderTab={renderTab}/>}
+    {fileClose.dialog}
     {error && <p role="alert">{error}</p>}
   </main>;
 }

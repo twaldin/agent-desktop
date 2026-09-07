@@ -142,8 +142,8 @@ export function App() {
   }, [sidebarOpen]);
   const expandAfterNavigation = useRef<string | undefined>(undefined);
   const workspaces = useMemo(() => new Map<string, WorkspaceState>(), [bridge]);
-  const fileClose = useWorkspaceFileClose(tab => tab.target === "host" ? undefined : workspaces.get(`${tab.hostId}:${tab.target}`));
   const skillFiles = useMemo(() => new Map<string, NativeSkillFileController>(), [bridge]);
+  const fileClose = useWorkspaceFileClose(tab => tab.target === "host" ? undefined : workspaces.get(`${tab.hostId}:${tab.target}`),tab=>skillFiles.get(tab.id));
   useEffect(() => { for (const controller of skillFiles.values()) controller.setConnected(Boolean(desktop.catalog.records.get(controller.state.hostId)?.connected)); });
   useEffect(() => () => { for (const controller of skillFiles.values()) controller.dispose(); }, [skillFiles]);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -251,6 +251,10 @@ export function App() {
   useEffect(() => { environmentCatalog?.setConnected(connected); }, [environmentCatalog, connected]);
   const workspaceTarget: WorkspaceTarget | undefined = selected ? { sessionId: selected.id } : project ? { projectId: project.id } : undefined;
   const dock = useWorkbenchDock(bridge, windowRestoration.state, hostId, workspaceTarget, connected, setActionError);
+  useEffect(()=>{
+    const live=new Set(dock.snapshot.tabs.map(tab=>tab.id));
+    for(const [id,controller] of skillFiles)if(!live.has(id)){controller.dispose();skillFiles.delete(id);}
+  },[skillFiles,dock.snapshot.tabs]);
   const workspaceOpen = dock.snapshot.state.right.open;
   const terminalOpen = dock.snapshot.state.bottom.open;
   const windowWarning = useWindowViewPersistence({ route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,

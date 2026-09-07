@@ -17,7 +17,7 @@ const sources = [
   "apps/desktop/src/renderer/native-skill-dialog.css",
   "apps/desktop/src/renderer/native-skill-file-state.ts", "apps/desktop/src/renderer/NativeSkillFilePanel.tsx",
   "apps/desktop/src/renderer/native-skill-file-panel.css", "apps/desktop/src/renderer/use-workbench-dock.tsx",
-  "apps/desktop/src/main/window-state.ts",
+  "apps/desktop/src/main/window-state.ts", "apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/WorkspaceFileClose.tsx",
   "apps/desktop/src/renderer/DockPanel.tsx", "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/window-state.ts",
   "apps/desktop/src/renderer/styles.css", "apps/desktop/src/renderer/theme.css",
   "apps/host/src/skill-files.ts", "apps/host/src/composer-actions-http.ts", "apps/host/src/omp/composer-actions.ts",

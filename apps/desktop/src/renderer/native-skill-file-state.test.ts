@@ -181,3 +181,44 @@ test("close after disconnect waits for a previously dispatched write but retains
   expect(c.state.text).toBe("later offline");expect(c.state.dirty).toBe(true);expect(f.calls).toHaveLength(1);
   const restored=f.controller();await restored.load(false);expect(restored.state.text).toBe("later offline");
 });
+
+test("explicit offline discard persists the baseline without a host write",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setConnected(false);c.setText("discard me");await c.flush();
+  expect(await c.discardEdits()).toBe(true);expect(c.state.text).toBe("original");expect(c.state.dirty).toBe(false);
+  c.dispose();const restored=f.controller();await restored.load(false);expect(restored.state.text).toBe("original");expect(restored.state.dirty).toBe(false);expect(f.calls).toHaveLength(0);
+});
+test("discard cannot abandon the receipt of a write with unknown outcome",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("delivered");
+  f.bridge.command=async e=>{f.calls.push(e);throw new Error("lost receipt");};await c.save();c.setText("later");
+  expect(c.canDiscardEdits()).toBe(false);expect(await c.discardEdits()).toBe(false);expect(c.state.text).toBe("later");
+  expect(JSON.parse(f.values.get(keyFor("h",ref))!).pending.id).toBe(f.calls[0]!.id);expect(f.calls).toHaveLength(1);
+});
+test("failed discard storage restores edits and can be retried explicitly",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setConnected(false);c.setText("retained");await c.flush();f.setFailure(true);
+  expect(await c.discardEdits()).toBe(false);expect(c.state.text).toBe("retained");expect(c.state.dirty).toBe(true);expect(c.state.error).toContain("disk full");
+  f.setFailure(false);expect(await c.discardEdits()).toBe(true);expect(f.calls).toHaveLength(0);
+});
+test("newer edit during discard persistence keeps the file open",async()=>{
+  const f=setup();let release!:(()=>void),held=false;
+  const cache:OfflineCache={read:f.cache.read,write:async(k,v)=>{if(held){held=false;await new Promise<void>(r=>release=r);}await f.cache.write(k,v);}};
+  const c=f.controller(cache);await c.load(true);c.setConnected(false);c.setText("old");await c.flush();held=true;
+  const discard=c.discardEdits();await until(()=>Boolean(release));c.setText("newer");release();
+  expect(await discard).toBe(false);await c.flush();expect(c.state.text).toBe("newer");expect(c.state.dirty).toBe(true);
+  const restored=f.controller();await restored.load(false);expect(restored.state.text).toBe("newer");
+});
+test("disposal blocks autosave scheduled by a queued cache completion or late receipt",async()=>{
+  const f=setup(),c=f.controller();await c.load(true);c.setText("queued");c.dispose();await c.flush();
+  const second=f.controller();await second.load(true);second.setText("in flight");let reply!:(result:CommandResult)=>void;
+  f.bridge.command=e=>{f.calls.push(e);return new Promise(r=>reply=r);};const save=second.save();await until(()=>Boolean(reply));
+  second.setText("later retained");second.dispose();reply(success(f.calls[0]!,"in flight"));await save;
+  await Bun.sleep(3100);expect(f.calls).toHaveLength(1);expect(await second.save()).toBe(false);expect(await second.saveUntilClean()).toBe(false);
+});
+
+test("disposal during pre-dispatch persistence prevents the queued host command",async()=>{
+  const f=setup();let hold=false,release!:()=>void;
+  const cache:OfflineCache={read:f.cache.read,write:async(k,v)=>{if(hold){hold=false;await new Promise<void>(r=>release=r);}await f.cache.write(k,v);}};
+  const c=f.controller(cache);await c.load(true);c.setText("not sent");await c.flush();hold=true;
+  const save=c.save();await until(()=>Boolean(release));c.dispose();release();expect(await save).toBe(false);
+  expect(f.calls).toHaveLength(0);expect(await c.toggleSource()).toBe(false);
+  const restored=f.controller();await restored.load(false);expect(restored.state.text).toBe("not sent");expect(restored.state.dirty).toBe(true);expect(restored.state.uncertain).toBe(false);
+});

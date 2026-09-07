@@ -29,6 +29,7 @@ export class NativeSkillFileController {
   private restoreTask?:Promise<boolean>;
   private restored=false;
   private storageError=false;
+  private disposed=false;
   constructor(private bridge:DesktopBridge, hostId:string, ref:NativeSkillFileRef, private cache:OfflineCache, initialMode:"markdown"|"source"="markdown") {
     this.state={hostId,ref:parseNativeSkillFileRef(ref),file:null,text:"",dirty:false,saving:false,loading:false,conflict:false,uncertain:false,source:initialMode==="source",switchingSource:false};
   }
@@ -56,8 +57,9 @@ export class NativeSkillFileController {
   }
   /** Drain current and newer edits without inventing a retry for an unknown receipt. */
   async saveUntilClean(signal?:AbortSignal):Promise<boolean>{
-    if(!await this.restore())return false;
+    if(this.disposed||!await this.restore())return false;
     for(;;){
+      if(this.disposed)return false;
       signal?.throwIfAborted();
       // Even a locally clean buffer can have an older write in flight (Undo).
       if(this.state.saving){
@@ -101,9 +103,11 @@ export class NativeSkillFileController {
     })();return this.restoreTask;
   }
   setConnected(connected:boolean){
+    if(this.disposed)return;
     if(this.connected!==connected){this.connected=connected;if(!connected){this.epoch++;this.state.loading=false;clearTimeout(this.timer);}else this.schedule();this.emit();}
   }
   async load(connected=this.connected){
+    if(this.disposed)return;
     this.setConnected(connected);const epoch=++this.epoch;this.state.loading=true;this.state.error=undefined;this.emit();
     if(!await this.restore()){this.state.loading=false;this.emit();return;}
     if(epoch!==this.epoch)return;
@@ -128,16 +132,16 @@ export class NativeSkillFileController {
   }
   private schedule(){
     clearTimeout(this.timer);
-    if(this.connected&&this.restored&&this.state.file&&this.state.dirty&&!this.state.saving&&!this.state.conflict&&!this.state.uncertain&&!this.state.error&&!this.storageError)
+    if(!this.disposed&&this.connected&&this.restored&&this.state.file&&this.state.dirty&&!this.state.saving&&!this.state.conflict&&!this.state.uncertain&&!this.state.error&&!this.storageError)
       this.timer=setTimeout(()=>void this.save(),3000);
   }
   setText(text:string){
-    if(!this.restored)return;
+    if(this.disposed||!this.restored)return;
     this.state.text=text;this.state.dirty=text!==this.state.file?.document.text;this.state.notice=undefined;this.state.error=undefined;this.emit();
     void this.persist().then(()=>this.schedule(),()=>{});
   }
   async toggleSource(signal?:AbortSignal, nextSource=!this.state.source):Promise<boolean>{
-    if(this.state.switchingSource||!this.state.file||this.state.loading||signal?.aborted)return false;
+    if(this.disposed||this.state.switchingSource||!this.state.file||this.state.loading||signal?.aborted)return false;
     this.state.switchingSource=true;this.emit();
     try {
       for(;;){
@@ -182,17 +186,17 @@ export class NativeSkillFileController {
     } finally {this.state.saving=false;this.emit();this.schedule();}
   }
   async save(){
-    if(!this.connected||!this.restored||!this.state.dirty||this.state.saving||this.state.conflict||this.state.uncertain||!this.state.file)return false;
+    if(this.disposed||!this.connected||!this.restored||!this.state.dirty||this.state.saving||this.state.conflict||this.state.uncertain||!this.state.file)return false;
     clearTimeout(this.timer);
     if(new TextEncoder().encode(this.state.text).byteLength>1024*1024){this.state.error="Skill files must be at most 1 MiB. Your edits are retained on this device; shorten them before saving.";this.emit();return false;}
     const pending:Pending={id:crypto.randomUUID(),command:{type:"skill.file.write",ref:this.state.ref,text:this.state.text,expectedRevision:this.state.file.document.revision,bom:this.state.file.document.bom}};
     this.pending=pending;this.state.saving=true;this.state.error=undefined;this.emit();
     try {await this.persist();}catch{this.pending=undefined;this.state.saving=false;this.emit();return false;}
-    if(!this.connected){this.pending=undefined;this.state.saving=false;await this.persist().catch(()=>{});this.emit();return false;}
+    if(this.disposed||!this.connected){this.pending=undefined;this.state.saving=false;await this.persist().catch(()=>{});this.emit();return false;}
     return this.dispatch(pending);
   }
   async inspectUnknown(){
-    if(!this.connected||!this.pending||!this.state.uncertain||this.state.saving||!this.bridge.getSkillFile)return false;
+    if(this.disposed||!this.connected||!this.pending||!this.state.uncertain||this.state.saving||!this.bridge.getSkillFile)return false;
     this.state.loading=true;this.state.error=undefined;this.emit();
     try {
       const pending=this.pending,file=this.owned(await this.bridge.getSkillFile(this.state.ref,this.state.hostId));
@@ -205,7 +209,7 @@ export class NativeSkillFileController {
     finally {this.state.loading=false;this.emit();this.schedule();}
   }
   async retryUnknown(){
-    if(!this.connected||!this.pending||!this.state.uncertain||this.state.saving||this.state.loading)return false;
+    if(this.disposed||!this.connected||!this.pending||!this.state.uncertain||this.state.saving||this.state.loading)return false;
     this.state.saving=true;this.state.error=undefined;this.emit();
     return this.dispatch(this.pending);
   }
@@ -218,5 +222,23 @@ export class NativeSkillFileController {
     void this.persist().then(()=>this.schedule(),()=>{});
   }
   restorePreviousEdits(){if(this.state.recoveredText===undefined)return;const text=this.state.recoveredText;this.state.recoveredText=undefined;this.setText(text);}
-  dispose(){clearTimeout(this.timer);this.epoch++;}
+  canDiscardEdits(){return !this.disposed&&this.restored&&Boolean(this.state.file)&&!this.state.saving&&!this.pending;}
+  async discardEdits():Promise<boolean>{
+    // Discard is not an acknowledgement or cancellation of a delivered write.
+    if(!this.canDiscardEdits())return false;
+    clearTimeout(this.timer);
+    const previous={text:this.state.text,dirty:this.state.dirty,conflict:this.state.conflict,recoveredText:this.state.recoveredText};
+    const baseline=this.state.file!.document.text;
+    this.state.text=baseline;this.state.dirty=false;this.state.conflict=false;this.state.recoveredText=undefined;
+    this.state.error=undefined;this.state.notice=undefined;
+    try {
+      await this.persist();
+      return !this.state.dirty&&!this.pending&&this.state.text===baseline;
+    } catch {
+      // Do not replace a newer edit that arrived while recovery storage failed.
+      if(this.state.text===baseline&&!this.state.dirty)Object.assign(this.state,previous);
+      return false;
+    } finally {this.emit();}
+  }
+  dispose(){this.disposed=true;clearTimeout(this.timer);this.epoch++;}
 }

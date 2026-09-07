@@ -1,8 +1,12 @@
 # Milestone status
 
+## Skill tab close durability
+
+Skill tabs now save before closing, use the existing discard decision when needed, and release their controllers only after actual dock removal. Unknown receipts stay recoverable; discarded offline edits do not reappear on reopen.34 tests/201 assertions,19 renderer/host checks with22 PNG+AX captures, ordinary-file close regression, typecheck/build and independent review pass. Installed/native-pixel acceptance remains open. See [file editor](workspace-file-editor.md).
+
 ## Skill tab view persistence
 
-Skill tabs now restore their source/preview selection using the existing per-window dock state, including offline edits after a renderer reload.41 scoped tests/261 assertions and16 renderer/host checks with15 PNG+AX captures pass; typecheck/build and independent mode-state review pass. Existing closed skill controllers still need explicit close-time durability/disposal handling. Installed/native-pixel acceptance remains open. See [file editor](workspace-file-editor.md).
+Skill tabs now restore their source/preview selection using the existing per-window dock state, including offline edits after a renderer reload.41 scoped tests/261 assertions and16 renderer/host checks with15 PNG+AX captures pass; typecheck/build and independent mode-state review pass. Installed/native-pixel acceptance remains open. See [file editor](workspace-file-editor.md).
 
 ## Skill file view switching
 
