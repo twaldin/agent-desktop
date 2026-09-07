@@ -87,6 +87,8 @@ describe("owner-scoped link and editor location contracts", () => {
   });
   test("file locations preserve actual buffer offsets and expose missing lines/columns", () => {
     expect(fileLocation("a\r\nbb\r\n", 2)).toEqual({ start: 3, end: 5 });
+    expect(fileLocation("a\rbb\r", 2)).toEqual({ start: 2, end: 4 });
+    expect(fileLocation("a\rbb\r", 3)).toEqual({ start: 5, end: 5 });
     expect(fileLocation("a\n👩🏽‍💻 text\n", 2, 3)).toEqual({ start: 4, end: 4 });
     expect(fileLocation("a\nbb\n", 3)).toEqual({ start: 5, end: 5 });
     expect(fileLocation("a\nbb", 4)).toEqual({ error: "Line 4 is unavailable; this buffer has 2 lines." });

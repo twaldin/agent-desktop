@@ -51,11 +51,16 @@ export function resolveTranscriptLink(href: string, cwd?: string): TranscriptLin
   if (resolved === root || root !== "/" && !resolved.startsWith(`${root}/`)) return unavailable("This file link is outside the session’s workspace.");
   return { kind: "file", file: { path: resolved.slice(root === "/" ? 1 : root.length + 1), ...(line !== undefined ? { line } : {}), ...(column !== undefined ? { column } : {}) } };
 }
-/** Browser textarea selection offsets; line and optional UTF-16 column are one based. */
+/** Source selection offsets; line and optional UTF-16 column are one based. */
 export function fileLocation(text: string, line: number, column?: number): { start: number; end: number } | { error: string } {
-  const lines = text.split("\n");
+  const lines = text.split(/\r\n|\r|\n/);
   if (!Number.isSafeInteger(line) || line < 1 || line > lines.length) return { error: `Line ${line} is unavailable; this buffer has ${lines.length} lines.` };
-  const row = lines[line - 1]!.replace(/\r$/, ""), start = lines.slice(0, line - 1).reduce((sum, value) => sum + value.length + 1, 0);
+  const row = lines[line - 1]!;
+  let start = 0, currentLine = 1;
+  for (const newline of text.matchAll(/\r\n|\r|\n/g)) {
+    if (currentLine++ === line) break;
+    start = newline.index + newline[0].length;
+  }
   if (column !== undefined) {
     if (!Number.isSafeInteger(column) || column < 1 || column > row.length + 1) return { error: `Column ${column} is unavailable on line ${line}.` };
     return { start: start + column - 1, end: start + column - 1 };

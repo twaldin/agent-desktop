@@ -72,7 +72,7 @@ h2, h3 { font-family:var(--heading-font); font-weight:var(--heading-font-weight)
 .composer-footnote, .provider-subtitle { font-size:calc(var(--small-font-size) * .9090909); }
 .sidebar-empty, .workspace-notice, .settings-description { font-size:calc(var(--small-font-size) * 1.0909091); }
 .code-block { background:var(--code-surface); color:var(--code-text); }
-.code-block pre, .tool-message pre, .editor-content textarea, .editor-gutter, .diff-view pre { font-family:var(--code-font); font-size:var(--code-font-size); font-weight:var(--code-font-weight); line-height:var(--code-line-height); }
+.code-block pre, .tool-message pre, .diff-view pre { font-family:var(--code-font); font-size:var(--code-font-size); font-weight:var(--code-font-weight); line-height:var(--code-line-height); }
 .code-block pre, .tool-message pre { padding:calc(var(--spacing-md) * var(--spacing-scale)) calc(var(--panel-padding) * var(--spacing-scale)); }
 .connection-dot.online { background:var(--success); }
 .file-conflict, .draft-conflict { border-color:var(--warning); }

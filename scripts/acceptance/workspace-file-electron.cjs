@@ -1,0 +1,72 @@
+const { app, BrowserWindow } = require("electron"), fs = require("node:fs"), path = require("node:path");
+const output = process.argv[2], launch = JSON.parse(fs.readFileSync(path.join(output, "launch.json"), "utf8"));
+app.setPath("userData", launch.profile); app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.whenReady().then(async () => {
+  const win = new BrowserWindow({ width: 1440, height: 1000, show: false, useContentSize: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  const js = source => win.webContents.executeJavaScript(source), sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const captures = [], checks = [], consoleMessages = [], rendererGone = [];
+  win.webContents.on("console-message", (...args) => consoleMessages.push(args.slice(1).map(String).join(" | ")));
+  win.webContents.on("render-process-gone", (_event, details) => rendererGone.push(details));
+  const wait = async source => { for (let i = 0; i < 800; i++) { if (await js(source)) return; await sleep(25); } throw new Error("Condition failed: " + source); };
+  const click = async (selector, label) => { const point = await js(`window.target(${JSON.stringify(selector)},${JSON.stringify(label)})`); for (const type of ["mouseMove", "mouseDown", "mouseUp"]) win.webContents.sendInputEvent({ type, ...(type === "mouseMove" ? {} : { button: "left", clickCount: 1 }), ...point }); await sleep(100); };
+  const chord = async (keyCode, modifiers) => { for (const type of ["keyDown", "keyUp"]) win.webContents.sendInputEvent({ type, keyCode, modifiers }); await sleep(80); };
+  const replace = async (label, value) => { const focused = await js(`(()=>{const node=window.editor(${JSON.stringify(label)});if(!node)return false;node.focus();return node.getRootNode().activeElement===node})()`); if (!focused) throw new Error("Editor focus failed: " + label); await chord("a", ["meta"]); await win.webContents.insertText(value); await sleep(100); };
+  const capture = async name => { const image = await win.webContents.capturePage(); fs.writeFileSync(path.join(output, `${name}.png`), image.toPNG()); captures.push({ name, raster: image.getSize(), frame: win.getBounds(), rendererZoomFactor: win.webContents.getZoomFactor(), state: await js("window.state()") }); };
+  const hostFile = file => js(`window.request('/test/file',{file:${JSON.stringify(file)}})`);
+  let step = "load";
+  try {
+    await win.loadFile(path.join(output, "web/index.html"), { query: { endpoint: launch.endpoint, target: JSON.stringify(launch.target), hostId: launch.hostId } }); win.webContents.focus();
+    await wait(`document.querySelector('.file-entry')&&!window.state().busy&&window.state().restored`);
+    step = "open-first"; await click(".file-entry", "first.ts"); await wait(`window.state().opened==='first.ts'&&window.editor('Edit first.ts')`);
+    await capture("00-highlighted-typescript-source");
+    await js(`window.editor('Edit first.ts').focus()`); await chord("f", ["meta"]); await wait(`window.search()&&window.search()===window.search().getRootNode().activeElement`);
+    await win.webContents.insertText("bravo"); await wait(`window.search().value==='bravo'`); await capture("00b-native-find-open"); await chord("Escape", []); await wait(`!window.search()`);
+    checks.push("Native Command-F opens Pierre search, accepts text, and Escape closes it in the production source editor");
+    const initial = launch.files["first.ts"], edited = initial + "const localEdit = true;\n";
+    await replace("Edit first.ts", edited); await wait(`window.state().text===${JSON.stringify(edited)}&&window.state().dirty`);
+    if ((await hostFile("first.ts")).text !== initial) throw new Error("Editing wrote host bytes before manual save");
+    await chord("z", ["meta"]); await wait(`window.state().text===${JSON.stringify(initial)}`);
+    await chord("z", ["meta", "shift"]); await wait(`window.state().text===${JSON.stringify(edited)}`);
+    step = "switch-files"; await click(".file-entry", "second.ts"); await wait(`window.state().opened==='second.ts'&&window.editor('Edit second.ts')`); await click(".editor-tabs button", "first.ts •"); await wait(`window.state().opened==='first.ts'&&window.editor('Edit first.ts')`);
+    await js(`window.editor('Edit first.ts').focus()`);
+    await chord("z", ["meta"]); await wait(`window.state().text===${JSON.stringify(initial)}`); await chord("z", ["meta", "shift"]); await wait(`window.state().text===${JSON.stringify(edited)}`);
+    step = "switch-panels"; await click("[role=tab]", "Changes"); await wait(`document.querySelector('.review-panel')`); await click("[role=tab]", "Files"); await wait(`window.editor('Edit first.ts')`);
+    await js(`window.editor('Edit first.ts').focus()`);
+    await chord("z", ["meta"]); await wait(`window.state().text===${JSON.stringify(initial)}`); await chord("z", ["meta", "shift"]); await wait(`window.state().text===${JSON.stringify(edited)}`);
+    checks.push("Native input and Pierre undo/redo survive parent echoes, file switches, and Files/Changes switches");
+    step = "manual-save"; await chord("s", ["meta"]); await wait(`window.request('/test/file',{file:'first.ts'}).then(value=>value.text===${JSON.stringify(edited)}&&!window.state().dirty&&!window.state().pending)`);
+    checks.push("Command-S performs one explicit WorkspaceState CAS save; editing alone does not write host bytes");
+    step = "file-location"; await js("window.active(false)"); await js(`window.openRequest('first.ts',2,7)`); await sleep(150);
+    if (await js(`window.editor('Edit first.ts')?.getRootNode().activeElement===window.editor('Edit first.ts')`)) throw new Error("Hidden Files panel consumed its pending reveal request");
+    await js("window.active(true)"); await wait(`window.editor('Edit first.ts')?.getRootNode().activeElement===window.editor('Edit first.ts')`); await win.webContents.insertText("X");
+    const located = edited.replace("const bravo", "const Xbravo"); await wait(`window.state().text===${JSON.stringify(located)}`); await chord("z", ["meta"]); await wait(`window.state().text===${JSON.stringify(edited)}`);
+    checks.push("A hidden Files panel retains its pending fileRequest, then focuses Pierre at the requested one-based line and column when reactivated");
+    const dirty = edited + "DIRTY_BUFFER\n"; await replace("Edit first.ts", dirty); await js(`window.openRequest('first.ts',99)`); await wait(`document.body.innerText.includes('Line 99 is unavailable')&&window.state().text===${JSON.stringify(dirty)}&&window.state().dirty`);
+    if ((await hostFile("first.ts")).text !== edited) throw new Error("Invalid file location changed host bytes");
+    checks.push("An invalid linked line reports against and preserves the dirty local buffer"); await capture("01-editor-location-and-manual-save");
+    step = "offline-recovery"; await js("window.connection(false)"); await wait(`document.body.innerText.includes('Offline')`); const offline = dirty + "OFFLINE_EDIT\n"; await replace("Edit first.ts", offline); await sleep(250);
+    await js("window.recreateState()"); await wait(`window.state().restored&&window.state().opened==='first.ts'&&window.state().text===${JSON.stringify(offline)}&&window.state().dirty&&window.editor('Edit first.ts')`);
+    if ((await hostFile("first.ts")).text !== edited) throw new Error("Offline edit reached host bytes");
+    checks.push("A recreated WorkspaceState and Pierre editor restore owner-scoped offline dirty text without sending it"); await capture("02-offline-restored");
+    step = "conflict"; const external = edited + "EXTERNAL_EDIT\n"; await js(`window.request('/test/external-write',{file:'first.ts',text:${JSON.stringify(external)}})`); await js("window.connection(true)");
+    await wait(`document.querySelector('.file-conflict')&&window.state().text===${JSON.stringify(offline)}&&window.state().conflict?.text===${JSON.stringify(external)}`);
+    checks.push("Reconnect detects the real external revision and displays both external bytes and the recovered local buffer"); await capture("03-conflict");
+    await click(".file-conflict button", "Keep my edits for next save"); await wait(`!document.querySelector('.file-conflict')&&window.state().dirty`); await js(`window.editor('Edit first.ts').focus()`); await chord("s", ["meta"]);
+    await wait(`window.request('/test/file',{file:'first.ts'}).then(value=>value.text===${JSON.stringify(offline)}&&!window.state().dirty&&!window.state().pending)`);
+    checks.push("Explicit keep-local resolution updates the CAS baseline and a second manual save writes only the retained local text"); await capture("04-resolved");
+    step = "crlf"; await click(".file-entry", "crlf.ts"); await wait(`window.state().opened==='crlf.ts'&&window.editor('Edit crlf.ts')`);
+    const crlf = launch.files["crlf.ts"], crlfEdited = crlf.replace("const bravo", "const Xbravo"); await js(`window.openRequest('crlf.ts',2,7)`);
+    await wait(`window.editor('Edit crlf.ts')?.getRootNode().activeElement===window.editor('Edit crlf.ts')`); await win.webContents.insertText("X"); await wait(`window.state().text===${JSON.stringify(crlfEdited)}`);
+    await chord("z", ["meta"]); await wait(`window.state().text===${JSON.stringify(crlf)}`); await chord("z", ["meta", "shift"]); await wait(`window.state().text===${JSON.stringify(crlfEdited)}`); await chord("s", ["meta"]);
+    await wait(`window.request('/test/file',{file:'crlf.ts'}).then(value=>value.text===${JSON.stringify(crlfEdited)}&&!window.state().dirty&&!window.state().pending)`);
+    checks.push("A native caret edit, undo/redo and manual save preserve every CRLF byte outside the inserted character"); await capture("05-crlf-preserved");
+    const proxy = await js("window.request('/test/state',{})");
+    if (proxy.workspaceWrites !== 3) throw new Error(`Expected exactly three workspace file writes, received ${proxy.workspaceWrites}`);
+    if (proxy.sessions !== 0 || proxy.calls.some(call => call.command && (call.command !== "workspace.mutate" || call.action !== "file.write")) ||
+      proxy.draft?.text !== "EXISTING_UNSENT_WORKSPACE_DRAFT" || proxy.draft?.projectId !== launch.target.projectId || proxy.draft?.model !== null || proxy.draft?.revision !== 1)
+      throw new Error(`Fixture escaped file-only scope or changed the existing draft: ${JSON.stringify(proxy)}`);
+    const state = await js("window.state()"); if (state.runtimeErrors.length || state.cacheWarning || state.pending || state.busy) throw new Error(JSON.stringify(state));
+    fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, checks, captures, calls: proxy.calls, finalHost: { sessionCount: proxy.sessions, draft: proxy.draft, workspaceWrites: proxy.workspaceWrites }, hidden: true, rendererRuntimeHarness: true, authenticatedNativeHost: true, nativeOsPixelParity: false, consoleMessages, rendererGone,
+      scope: "Production WorkspacePanel, WorkspaceState and PierreSourceEditor in hidden Electron against a real authenticated isolated host. Native keyboard editing, undo/redo, explicit saves, file-link reveal, offline cache recovery and CAS conflict resolution are exercised. This is not an installed main/preload, native OS window, or pixel-parity claim." }, null, 2)); app.exit(0);
+  } catch (error) { await capture("failure").catch(() => {}); fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: false, step, error: String(error), checks, captures, state: await js("window.state()").catch(() => null), consoleMessages, rendererGone }, null, 2)); app.exit(1); }
+});

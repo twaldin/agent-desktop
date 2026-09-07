@@ -20,6 +20,7 @@ async function fixture() {
   const native = new WorkspaceService(path, { worktreeRoot: join(path, ".managed-worktrees") });
   const receipts = new Map<string, CommandResult>(); const deliveries: CommandEnvelope[] = []; const owners: string[] = []; const listeners = new Set<(event: DesktopEvent) => void>();
   let before: (() => Promise<void>) | undefined; let drop = false;
+  let heldRead: { started: ReturnType<typeof deferred>; release: ReturnType<typeof deferred> } | undefined;
   const bridge = {
     workspaceQuery: async (_target: unknown, query: Parameters<ConstructorParameters<typeof WorkspaceState>[0]["workspaceQuery"]>[1], hostId?: string): Promise<WorkspaceQueryResult> => {
       owners.push(hostId!);
@@ -27,7 +28,11 @@ async function fixture() {
         case "environment.actions": case "environment.output": case "environment.preparation": case "environment.read": case "environments.list": throw new Error("Environment catalog is outside this file/Git fixture.");
         case "files.list": return { type: query.type, entries: await native.list(query.path) };
         case "file.stat": return { type: query.type, entry: await native.stat(query.path) };
-        case "file.read": return { type: query.type, content: await native.readText(query.path) };
+        case "file.read": {
+          const content = await native.readText(query.path), held = heldRead; heldRead = undefined;
+          if (held) { held.started.resolve(); await held.release.promise; }
+          return { type: query.type, content };
+        }
         case "git.status": return { type: query.type, status: await native.gitStatus() };
         case "git.diff": return { type: query.type, diff: await native.diff(query) };
         case "git.branches": return { type: query.type, branches: await native.branches() };
@@ -62,7 +67,8 @@ async function fixture() {
     subscribe: (listener: (event: DesktopEvent) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
   const cache = storage(); const data = new WorkspaceState(bridge, "home", { projectId: "project" }, cache, "home"); data.setConnected(true); await data.restore();
-  return { path, git, native, bridge, cache, data, deliveries, owners, listeners, delay: (callback: () => Promise<void>) => { before = callback; }, dropNextReceipt: () => { drop = true; } };
+  return { path, git, native, bridge, cache, data, deliveries, owners, listeners, delay: (callback: () => Promise<void>) => { before = callback; },
+    holdNextRead: () => { const held = { started: deferred(), release: deferred() }; heldRead = held; return held; }, dropNextReceipt: () => { drop = true; } };
 }
 
 describe("workspace renderer against actual file and Git services", () => {
@@ -99,6 +105,30 @@ describe("workspace renderer against actual file and Git services", () => {
     expect(await readFile(join(f.path, "sample.txt"), "utf8")).toBe("submitted\n");
     expect(f.data.documents.get("sample.txt")).toMatchObject({ text: "newer local edit\n", dirty: true, content: { text: "submitted\n" } });
     expect(f.data.documents.get("sample.txt")?.conflict).toBeUndefined();
+  });
+  test("a read captured before a confirmed save cannot replace the newly clean document", async () => {
+    const f = await fixture(); await f.data.open("sample.txt");
+    const held = f.holdNextRead(), stale = f.data.read("sample.txt"); await held.started.promise;
+    f.data.edit("sample.txt", "saved version\n"); const saving = f.data.saveFile("sample.txt");
+    while ((await readFile(join(f.path, "sample.txt"), "utf8")) !== "saved version\n") await Bun.sleep(5);
+    while (!f.data.mutationReceipt) await Bun.sleep(5);
+    held.release.resolve(); await stale;
+    expect(f.data.documents.get("sample.txt")).toMatchObject({ text: "saved version\n", dirty: false, content: { text: "saved version\n" } });
+    expect(f.data.documents.get("sample.txt")?.conflict).toBeUndefined();
+    await saving; await f.data.read("sample.txt");
+  });
+  test("a pre-save read cannot invent a conflict against edits made after the submitted revision", async () => {
+    const f = await fixture(); await f.data.open("sample.txt");
+    const held = f.holdNextRead(), stale = f.data.read("sample.txt"); await held.started.promise;
+    f.data.edit("sample.txt", "submitted\n");
+    const commandStarted = deferred(), releaseCommand = deferred(); f.delay(async () => { commandStarted.resolve(); await releaseCommand.promise; });
+    const saving = f.data.saveFile("sample.txt"); await commandStarted.promise; f.data.edit("sample.txt", "newer local edit\n"); releaseCommand.resolve();
+    while ((await readFile(join(f.path, "sample.txt"), "utf8")) !== "submitted\n") await Bun.sleep(5);
+    while (!f.data.mutationReceipt) await Bun.sleep(5);
+    held.release.resolve(); await stale;
+    expect(f.data.documents.get("sample.txt")).toMatchObject({ text: "newer local edit\n", dirty: true, content: { text: "submitted\n" } });
+    expect(f.data.documents.get("sample.txt")?.conflict).toBeUndefined();
+    await saving; await f.data.read("sample.txt");
   });
   test("host write conflicts preserve both versions and explicit use-host retains the previous buffer", async () => {
     const f = await fixture(); await f.data.open("sample.txt"); f.data.edit("sample.txt", "my unsaved text\n"); await writeFile(join(f.path, "sample.txt"), "another client\n"); await f.data.saveFile("sample.txt");

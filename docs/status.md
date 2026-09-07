@@ -1,5 +1,13 @@
 # Milestone status
 
+## General Files source editor
+
+General Files now uses the pinned Pierre editor with syntax highlighting, native Find, line/column links and undo retained across file and Files/Changes switches. The existing host-owned manual Save, offline cache, CAS conflicts and original command receipts remain authoritative. A delayed pre-save read can no longer replace a confirmed save or invent a conflict over newer edits. App dock visibility gates editor focus; code font and editor-surface theme controls remain connected.
+
+The focused suite passes43 tests/240 assertions; typecheck and production build pass. The shared skill-editor regression passes13 checks/10 captures with five real writes and its existing draft intact. General Files acceptance passes9 checks/7 captures and exercises actual keyboard input, Find, undo, three explicit saves, hidden link reveal, offline restoration, external conflict resolution and CRLF preservation in production renderer code against an isolated authenticated host. No sessions or provider prompts are created. Evidence and exact boundaries: [workspace file editor](workspace-file-editor.md).
+
+This remains partial Files parity: the permanent directory list, nested tabs, Save/footer, breadcrumb/file-tree menus, general Markdown rich mode, native autosave, inline selection actions and restart undo/scroll still need work. Installed OS/window pixels are unverified. Existing Work runs, sealed reference bundles and runtime pins are unchanged.
+
 ## OMP-backed desktop notifications
 
 Real OMP prompt/goal completion and native question/permission events now feed a main-process notification delivery service. General settings expose Never / Only when unfocused / Always and separate question/permission switches. Shared legacy settings remain readable. Replay barriers, durable IDs, pending-question retention and acknowledged owner/session navigation address reconnect and renderer-reload races. Alerts never answer an interaction.
@@ -12,7 +20,7 @@ Skill files now use a source-preserving CodeMirror rich editor and the pinned Pi
 
 The final isolated native-host/hidden-Electron run passes13 checks with10 captures and exactly five UI writes. It covers metadata protection, rich input, source undo across a mode round trip, offline restoration, explicit conflict recovery and native skill exclusion/re-discovery. The shared draft remains unchanged; no sessions, provider prompts or Reveal actions occur. Twenty-five focused tests pass105 assertions; typecheck and production build pass. Review caught hidden-prefix deletion and whole-document undo invalidation; earlier failed captures remain retained. Evidence: `.data/ui-acceptance/native-rich-skill-editor-2026-09-07-r8/` and `.data/markdown-editor-reference-2026-09-07/`.
 
-This is a partial editor implementation, not full visual parity. Rich tables, image/Mermaid widgets, restart history, save-before-mode-switch behavior, general Files-panel integration and matched native pixel acceptance remain open. New CodeMirror/Lezer dependencies are exact maintained pins; the unrecoverable Codex dependency versions are not claimed. OMP18.1.10, Bun1.3.14, Pierre1.3.5, installed apps, Work fixtures and sealed bundles are unchanged.
+This is a partial editor implementation, not full visual parity. Rich tables, image/Mermaid widgets, restart history, save-before-mode-switch behavior, remaining Files-panel integration and matched native pixel acceptance remain open. New CodeMirror/Lezer dependencies are exact maintained pins; the unrecoverable Codex dependency versions are not claimed. OMP18.1.10, Bun1.3.14, Pierre1.3.5, installed apps, Work fixtures and sealed bundles are unchanged.
 
 ## Native skill file editing
 

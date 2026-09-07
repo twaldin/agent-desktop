@@ -31,6 +31,7 @@ export class WorkspaceState {
   cacheWarning?: string;
   commitMessage = "";
   private listeners = new Set<() => void>();
+  private documentEpochs = new Map<string, number>();
   private inFlight = new Map<string, Promise<void>>();
   private again = new Set<string>();
   private writes: Promise<void> = Promise.resolve();
@@ -102,16 +103,22 @@ export class WorkspaceState {
   open(path: string) { this.opened = path; this.changed(); this.saveSoon(); return this.read(path); }
   read(path: string) {
     return this.load(`file:${path}`, async () => {
-      const result = await this.query({ type: "file.read", path }); if (result.type !== "file.read") throw new Error("The host returned the wrong file response.");
+      const epoch = this.documentEpochs.get(path) ?? 0;
+      let result: WorkspaceQueryResult;
+      try { result = await this.query({ type: "file.read", path }); }
+      catch (cause) { if ((this.documentEpochs.get(path) ?? 0) !== epoch) return; throw cause; }
+      if (result.type !== "file.read") throw new Error("The host returned the wrong file response.");
+      if ((this.documentEpochs.get(path) ?? 0) !== epoch) return;
       const previous = this.documents.get(path);
       if (previous?.dirty) {
         if (previous.content?.revision !== result.content.revision) previous.conflict = result.content;
       } else this.documents.set(path, { content: result.content, text: result.content.kind === "text" ? result.content.text : "", dirty: false, recoveredText: previous?.recoveredText });
+      this.documentEpochs.set(path, epoch + 1);
       this.saveSoon();
     });
   }
-  edit(path: string, text: string) { const item = this.documents.get(path); if (!item) return; item.text = text; item.dirty = item.content?.kind !== "text" || text !== item.content.text; this.changed(); this.saveSoon(); }
-  newFile(path: string) { if (!path || path.startsWith("/") || path.split("/").includes("..")) { this.errors.action = "Use a relative file path within this workspace."; this.changed(); return; } if (!this.documents.has(path)) this.documents.set(path, { content: null, text: "", dirty: true }); this.opened = path; this.changed(); this.saveSoon(); }
+  edit(path: string, text: string) { const item = this.documents.get(path); if (!item) return; item.text = text; item.dirty = item.content?.kind !== "text" || text !== item.content.text; this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1); this.changed(); this.saveSoon(); }
+  newFile(path: string) { if (!path || path.startsWith("/") || path.split("/").includes("..")) { this.errors.action = "Use a relative file path within this workspace."; this.changed(); return; } if (!this.documents.has(path)) { this.documents.set(path, { content: null, text: "", dirty: true }); this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1); } this.opened = path; this.changed(); this.saveSoon(); }
   setCommitMessage(value: string) { this.commitMessage = value; this.changed(); this.saveSoon(); }
   resolve(path: string, choice: "local" | "remote") {
     const item = this.documents.get(path); if (!item || item.conflict === undefined) return;
@@ -119,6 +126,7 @@ export class WorkspaceState {
     if (choice === "local" && current && current.kind !== "text") { this.errors.action = "The host file is no longer editable UTF-8 text. Your buffer is preserved."; this.changed(); return; }
     if (choice === "remote") { item.recoveredText = item.text; item.text = current?.kind === "text" ? current.text : ""; }
     item.content = current; item.conflict = undefined; item.dirty = choice === "local";
+    this.documentEpochs.set(path, (this.documentEpochs.get(path) ?? 0) + 1);
     this.changed(); this.saveSoon();
   }
   loadEnvironmentActions() {
@@ -189,6 +197,7 @@ export class WorkspaceState {
     if (value.type === "environment.select") this.environmentActions = value.state;
     else if (action.type === "file.write" && value.type === "file.write") {
       const item = this.documents.get(action.path); if (!item) return;
+      this.documentEpochs.set(action.path, (this.documentEpochs.get(action.path) ?? 0) + 1);
       if (!value.result.ok) { item.conflict = value.result.current; this.errors.action = "The file changed on the host. Both versions are preserved below."; return; }
       const newer = item.text !== action.text;
       item.content = value.result.document; item.conflict = undefined;

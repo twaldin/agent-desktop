@@ -1,15 +1,18 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import type { WorkspaceTab } from "../window-state";
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
-import { fileLocation, type WorkspaceFileRequest } from "./transcript-links";
+import { type WorkspaceFileRequest } from "./transcript-links";
 import { ReviewPanel } from "./ReviewPanel";
 import { retainWorkspace } from "./workspace-lease";
+import { PierreSourceEditor } from "./PierreSourceEditor";
 
-export function WorkspacePanel({ data, connected, name, path, fileRequest, embedded = false, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; embedded?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
+export function WorkspacePanel({ data, connected, name, path, fileRequest, embedded = false, active = true, commitRequest, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; embedded?: boolean; active?: boolean; commitRequest?: string; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [localTab, setLocalTab] = useState<WorkspaceTab>("files");
   const tab = selectedTab ?? localTab;
+  const [filesVisited, setFilesVisited] = useState(tab === "files");
+  useEffect(() => { if (tab === "files") setFilesVisited(true); }, [tab]);
   const setTab = (value: WorkspaceTab) => { setLocalTab(value); onTabChange?.(value); };
   useEffect(() => { const off = data.subscribe(redraw); const release = retainWorkspace(data); void data.restore().then(() => { if (data.connected) void data.refresh(); }); return () => { off(); release(); }; }, [data]);
   useEffect(() => { data.setConnected(connected); if (connected) void data.refresh(); }, [data, connected]);
@@ -36,40 +39,25 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, embed
     {data.notice && <p className="workspace-notice" role="status">{data.notice}</p>}
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
     <div id={embedded ? undefined : "workspace-view"} className="workspace-view" role={embedded ? undefined : "tabpanel"} aria-labelledby={embedded ? undefined : `workspace-tab-${tab}`}>
-      {tab === "files" ? <Files data={data} disabled={disabled} fileRequest={fileRequest}/> : tab === "changes" ? <ReviewPanel commitRequest={commitRequest} data={data} disabled={disabled} onEdit={path => { setTab("files"); void data.open(path); }}/> : <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/>}
+      {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} active={active && tab === "files"}/>}
+      {tab === "changes" ? <ReviewPanel commitRequest={commitRequest} data={data} disabled={disabled} onEdit={path => { setTab("files"); void data.open(path); }}/> : tab === "worktrees" ? <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/> : null}
     </div>
   </aside>;
 }
 
-function Files({ data, disabled, fileRequest }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest }) {
+function Files({ data, disabled, fileRequest, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; active: boolean }) {
   const [folder, setFolder] = useState(data.directory);
   const [newPath, setNewPath] = useState("");
   const [adding, setAdding] = useState(false);
-  const editor = useRef<HTMLTextAreaElement>(null);
-  const gutter = useRef<HTMLPreElement>(null);
-  const appliedFileRequest = useRef<string>(undefined);
-  const [locationNotice, setLocationNotice] = useState<string>();
+  const [locationNotice, setLocationNotice] = useState<{ id: string; path: string; message: string }>();
   const document = data.opened ? data.documents.get(data.opened) : undefined;
   const entries = data.directories.get(data.directory);
   const editable = document && (!document.content || document.content.kind === "text");
   useEffect(() => { setFolder(data.directory); }, [data.directory]);
   const fileError = data.opened && data.errors[`file:${data.opened}`];
   const readingLinkedFile = Boolean(data.opened && data.loading.has(`file:${data.opened}`));
-  useEffect(() => {
-    if (data.opened !== fileRequest?.path) { setLocationNotice(undefined); return; }
-    if (!fileRequest || appliedFileRequest.current === fileRequest.id || !data.restored || readingLinkedFile || fileError || !document || !editable || !editor.current) return;
-    appliedFileRequest.current = fileRequest.id; setLocationNotice(undefined);
-    editor.current.focus({ preventScroll: true });
-    if (fileRequest.line === undefined) return;
-    const location = fileLocation(editor.current.value, fileRequest.line, fileRequest.column);
-    if ("error" in location) { setLocationNotice(location.error); return; }
-    editor.current.setSelectionRange(location.start, location.end);
-    const lineHeight = Number.parseFloat(getComputedStyle(editor.current).lineHeight);
-    if (Number.isFinite(lineHeight)) editor.current.scrollTop = Math.max(0, (fileRequest.line - 1) * lineHeight - editor.current.clientHeight / 2);
-    if (gutter.current) gutter.current.scrollTop = editor.current.scrollTop;
-    if (document.dirty) setLocationNotice(`File link opened at line ${fileRequest.line} in your unsaved buffer.`);
-  }, [fileRequest, data.opened, data.restored, document, editable, readingLinkedFile, fileError]);
-  return <div className="files-view">
+  const revealRequest = active && data.restored && !readingLinkedFile && !fileError && data.opened === fileRequest?.path ? fileRequest : undefined;
+  return <div className="files-view" hidden={!active}>
     <section className="file-browser" aria-label="Workspace directory">
       <form className="workspace-path-form" onSubmit={event => { event.preventDefault(); void data.list(folder || "."); }}><label className="sr-only" htmlFor="workspace-directory">Directory relative to workspace</label><input id="workspace-directory" value={folder} onChange={event => setFolder(event.target.value)} autoComplete="off"/><button disabled={!data.connected}>Go</button><button type="button" title="New file" aria-label="New file" className="icon-button small" disabled={!data.restored} onClick={() => setAdding(value => !value)}><Icon name="plus"/></button></form>
       {adding && <form className="workspace-path-form" onSubmit={event => { event.preventDefault(); data.newFile(newPath); if (data.opened === newPath) { setAdding(false); setNewPath(""); } }}><input aria-label="New file relative path" placeholder="folder/file.txt" value={newPath} onChange={event => setNewPath(event.target.value)} autoFocus/><button disabled={!newPath.trim()}>Create buffer</button></form>}
@@ -81,12 +69,26 @@ function Files({ data, disabled, fileRequest }: { data: WorkspaceState; disabled
       {!data.opened ? <div className="workspace-empty"><Icon name="compose"/><p>Select a file to read or edit.</p></div> : <>
         <div className="editor-toolbar"><span className="truncate" title={data.opened}>{data.opened}</span><button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(data.opened!)}>Save <kbd>⌘S</kbd></button></div>
         {fileError && <p className="workspace-notice" role="alert">{fileError}</p>}
-        {locationNotice && <p className="workspace-notice" role="status">{locationNotice}</p>}
+        {locationNotice?.path === data.opened && locationNotice?.id === fileRequest?.id && <p className="workspace-notice" role="status">{locationNotice.message}</p>}
         {document?.conflict !== undefined && <div className="file-conflict"><strong>The host file changed.</strong><details><summary>View host version</summary><pre>{document.conflict?.kind === "text" ? document.conflict.text : document.conflict ? `File is ${document.conflict.kind}` : "The file no longer exists."}</pre></details><div><button className="secondary-button" onClick={() => data.resolve(data.opened!, "remote")}>Use host version</button><button className="primary-button" onClick={() => data.resolve(data.opened!, "local")}>Keep my edits for next save</button></div></div>}
         {document?.recoveredText !== undefined && <details className="editor-recovery"><summary>Previous local buffer retained</summary><pre>{document.recoveredText}</pre><button onClick={() => data.edit(data.opened!, document.recoveredText!)}>Restore this text into editor</button></details>}
-        {!document ? <p className="workspace-notice">{data.loading.has(`file:${data.opened}`) ? "Loading file…" : "No file content is cached."}</p> : editable ? <div className="editor-content"><pre ref={gutter} className="editor-gutter" aria-hidden="true">{Array.from({ length: document.text.split("\n").length }, (_, index) => index + 1).join("\n")}</pre><textarea ref={editor} aria-label={`Edit ${data.opened}`} value={document.text} wrap="off" spellCheck={false} autoComplete="off" onChange={event => data.edit(data.opened!, event.target.value)} onScroll={event => { if (gutter.current) gutter.current.scrollTop = event.currentTarget.scrollTop; }} onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!disabled) void data.saveFile(data.opened!); } }}/></div> : <div className="workspace-empty"><p>{document.content?.kind === "binary" ? "This is a binary file. Text editing is unavailable." : document.content?.kind === "too-large" ? `This file is ${size(document.content.size)}; the host text editor limit is ${size(document.content.maximumBytes)}.` : document.content?.kind === "unsupported-encoding" ? `${document.content.encoding} editing is not supported. The original file is unchanged.` : "No text to display."}</p></div>}
-        {document && <footer className="editor-status">{document.dirty ? "Unsaved edits" : "Host version"}{document.content?.kind === "text" ? ` · UTF-8${document.content.bom ? " with BOM" : ""}` : ""}{!data.connected ? " · Offline cache" : ""}</footer>}
+        {!document ? <p className="workspace-notice">{data.loading.has(`file:${data.opened}`) ? "Loading file…" : "No file content is cached."}</p> : editable ? null : <div className="workspace-empty"><p>{document.content?.kind === "binary" ? "This is a binary file. Text editing is unavailable." : document.content?.kind === "too-large" ? `This file is ${size(document.content.size)}; the host text editor limit is ${size(document.content.maximumBytes)}.` : document.content?.kind === "unsupported-encoding" ? `${document.content.encoding} editing is not supported. The original file is unchanged.` : "No text to display."}</p></div>}
       </>}
+      {/* Keep each open file's native history and selection while another tab is visible. */}
+      <div className="workspace-source-editors" hidden={!editable}>
+        {[...data.documents].filter(([, item]) => !item.content || item.content.kind === "text").map(([path, item]) =>
+          <PierreSourceEditor key={path} documentKey={`${data.cacheKey}:${path}`} name={path} value={item.text}
+            label={`Edit ${path}`} active={active && data.opened === path}
+            onChange={text => data.edit(path, text)} onSave={() => { if (!disabled) void data.saveFile(path); }}
+            revealRequest={data.opened === path ? revealRequest : undefined}
+            onReveal={(id, error) => {
+              if (data.opened !== path || fileRequest?.id !== id) return;
+              const message = error ?? (item.dirty && fileRequest.line !== undefined ? `File link opened at line ${fileRequest.line} in your unsaved buffer.` : undefined);
+              setLocationNotice(message ? { id, path, message } : undefined);
+            }}/>
+        )}
+      </div>
+      {document && <footer className="editor-status">{document.dirty ? "Unsaved edits" : "Host version"}{document.content?.kind === "text" ? ` · UTF-8${document.content.bom ? " with BOM" : ""}` : ""}{!data.connected ? " · Offline cache" : ""}</footer>}
     </section>
   </div>;
 }
