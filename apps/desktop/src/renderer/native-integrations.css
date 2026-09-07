@@ -26,7 +26,6 @@
 .mcp-row label { display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:12px; }
 .mcp-add { margin-top:0; display:flex; flex-direction:column; gap:12px; align-self:start; }
 .mcp-add label { justify-content:space-between; }
-.mcp-add label input,.mcp-add label select { width:58%; }
 @media (max-width:760px) { .integration-layout,.mcp-layout { display:flex; flex-direction:column; overflow:auto; } .integration-list { max-height:190px; border-right:0; border-bottom:1px solid var(--border); } .integration-detail,.mcp-layout { overflow:visible; padding:18px; } }
 .integration-list-hidden { display: none; }
 .integration-back { display:flex; align-items:center; gap:7px; padding:0; margin:0 0 18px; border:0; color:var(--secondary); background:transparent; cursor:pointer; font:inherit; }
@@ -49,9 +48,9 @@
 .integration-heading p { margin:0; color:var(--secondary); line-height:20px; }
 .integration-navigation { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:40px; }
 .integration-navigation [role=tablist] { display:flex; gap:4px; }
-.integration-navigation [role=tab] { background:transparent; border:0; border-radius:var(--radius-medium,10px); padding:7px 10px; color:var(--secondary); font:inherit; cursor:pointer; }
+.integration-navigation [role=tab] { background:transparent; border:0; border-radius:var(--radius-medium,10px); padding:4px 10px; color:var(--secondary); font:inherit; line-height:20px; cursor:pointer; }
 .integration-navigation [aria-selected=true] { color:var(--text); background:var(--hover); }
-.integration-search { display:flex; align-items:center; gap:8px; padding:6px 12px; border:1px solid var(--border); border-radius:999px; background:var(--composer-surface); min-width:0; max-width:224px; }
+.integration-search { display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; border:1px solid var(--border); border-radius:999px; background:var(--composer-surface); min-width:0; max-width:224px; }
 .integration-search .icon { width:16px; height:16px; color:var(--secondary); }
 .integration-search input { width:100%; min-width:0; border:0; background:transparent; color:var(--text); font:inherit; outline:none; }
 .integration-layout { display:block; }
@@ -65,10 +64,8 @@
 .integration-list-heading h2,.mcp-add h2 { font-size:20px; font-weight:500; margin:0; }
 .integration-section,.mcp-row { background:var(--composer-surface); border:1px solid var(--border); border-radius:var(--radius-large,16px); corner-shape:superellipse(1.25); }
 .mcp-row { padding:16px; margin-bottom:10px; }
-.mcp-add { gap:8px; }
-.mcp-add h2 { margin-bottom:18px; }
-.mcp-add > label { padding:12px; background:var(--composer-surface); border:1px solid var(--border); border-radius:var(--radius-large,16px); corner-shape:superellipse(1.25); display:flex; align-items:stretch; flex-direction:column; gap:10px; }
-.mcp-add > label input,.mcp-add > label select,.mcp-add > label textarea { width:100%; }
+.mcp-add { gap:8px; line-height:20px; }
+.mcp-layout > div > .integration-back { min-height:28px; padding:4px 8px; line-height:20px; margin-bottom:20px; }
 .integration-setting-control { display:flex; align-items:center; gap:8px; min-width:0; }
 .integration-setting-control .text-field { width:200px; }
 @media(max-width:900px){.native-integrations{padding:40px 20px}.integration-list{grid-template-columns:1fr}.integration-navigation{flex-wrap:wrap}.integration-setting{align-items:stretch;flex-direction:column}.integration-setting-control .text-field{width:100%}.integration-setting-control{width:100%}}
@@ -86,6 +83,32 @@
 .mcp-add .text-field { background:var(--composer-surface); border:1px solid var(--border); border-radius:var(--radius-medium,10px); }
 .mcp-add input.text-field { min-height:36px; }
 .mcp-add > .primary-button { align-self:flex-end; min-width:88px; }
+
+/* Custom MCP repeaters share a continuous card, as in the reference form. */
+.mcp-form-heading { display:flex; flex-direction:column; align-items:flex-start; gap:6px; margin:0 0 12px; }
+.mcp-form-heading h2 { line-height:1.33; }
+.mcp-docs { display:inline-flex; align-items:center; gap:4px; color:var(--secondary); background:transparent; border:0; padding:0; font:inherit; font-size:var(--font-size-small,13px); line-height:1.428571; cursor:pointer; }
+.mcp-docs:hover { color:var(--text); }
+.mcp-docs .icon { width:12px; height:12px; }
+.mcp-form-group { border:1px solid var(--border); border-radius:var(--radius-large,16px); corner-shape:superellipse(1.25); background:var(--sidebar-surface); overflow:hidden; }
+.mcp-add .mcp-form-section { display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; gap:12px; padding:8px 12px; min-width:0; background:var(--dialog-surface); border-radius:var(--radius-medium,10px); margin:0; }
+.mcp-add .mcp-form-section h3 { font:inherit; margin:0; }
+.mcp-add label.mcp-form-section { gap:8px; }
+.mcp-add .mcp-form-section .text-field { width:100%; min-width:0; padding:6px 10px; height:36px; border-color:color-mix(in srgb,var(--text) 15%,transparent); background:transparent; }
+.mcp-type-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; min-height:52px; padding:10px 16px; }
+.mcp-type-row .integration-segments { flex-wrap:wrap; }
+.mcp-type-row .integration-segments button { min-height:28px; padding:4px 10px; line-height:20px; border:0; background:transparent; font:inherit; line-height:20px; cursor:pointer; }
+.mcp-type-row .integration-segments button[aria-pressed=true] { background:var(--hover); }
+.mcp-entry { display:grid; grid-template-columns:minmax(0,1fr) 24px; align-items:center; gap:8px; }
+.mcp-pair-entry { grid-template-columns:repeat(2,minmax(0,1fr)) 24px; }
+.mcp-remove-entry.icon-button { width:24px; height:28px; min-width:0; padding:4px; color:var(--secondary); }
+.mcp-remove-entry .icon { width:12px; height:12px; }
+.mcp-remove-entry:disabled { opacity:.3; }
+.mcp-add-entry { display:flex; justify-content:center; align-items:center; gap:4px; width:100%; min-height:28px; padding:3px 8px; font:inherit; color:var(--secondary); background:color-mix(in srgb,var(--text) 6%,transparent); border:1px dashed transparent; border-radius:var(--radius-medium,10px); cursor:pointer; }
+.mcp-add-entry .icon { width:12px; height:12px; }
+.mcp-add-entry:hover { color:var(--text); background:var(--selected,var(--hover)); }
+.mcp-add :is(.mcp-add-entry,.mcp-docs,.integration-segments button):focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.mcp-advanced select { width:100%; }
 
 .session-mcp-row summary { display:flex; align-items:center; gap:4px; width:fit-content; margin-top:8px; color:var(--secondary); cursor:pointer; list-style:none; }
 .session-mcp-row summary::-webkit-details-marker { display:none; }

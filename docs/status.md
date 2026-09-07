@@ -2,6 +2,12 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — custom MCP form rows and native saves
+
+The Add form now exposes STDIO arguments, environment variables/passthrough and working directory, plus HTTP/SSE URL, bearer-token environment name, headers and environment-backed headers. Grouped cards, row controls and the pinned trash artwork replace the multiline/JSON-only common fields. Transport switching and Back preserve unfinished input within the owning view. Conflicting header names fail before a write; reconnection no longer leaves settings stuck in a prior save.
+
+The focused regression passes **25 tests /130 assertions across4 files**; typecheck and production build pass. Twelve final hidden Electron captures exercise real user/project configuration saves through an isolated OMP worker, with exact raw native-file readback, keyboard/focus checks, duplicate refusal and a delayed-response reconnect. Form spacing was recaptured against the frozen reference; same-window pixel parity is not claimed. Existing-server Update and broader integration acquisition/detail surfaces remain open. OMP18.1.10/Bun1.3.14, worker protocol22 and installed releases remain unchanged. Evidence: `.data/mcp-form-checkpoint/` and `.data/integrations-mcp-form-final-2/`. All1737 recorded reference hashes and their four manifest hashes still match. No new Work launch or handoff.
+
 ## Source30 — automatic native MCP tool consent
 
 A model-invoked protected MCP tool now opens conversation consent through the session’s native OAuth controller. After grant storage and config ownership checks, the controller hands private config to OMP, which reconnects and retries the original tool once. The card reports connected only after that native reconnect succeeds. Tool abort, Stop and disposal cancel pending consent; different-server challenges cannot replace an active operation. Explicit Authenticate and `/mcp reauth` retain their existing behavior.

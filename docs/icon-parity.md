@@ -53,3 +53,7 @@ The detached question header uses the pinned `chat-bubble-questionmark-light-16`
 ## Source29 environment project card
 
 The project card uses the pinned settings caller's notebook glyph (`zp` export, `S8o`, initial bundle character offset8,804,021). All three filled paths and the16-point canvas are retained. The settings caller selects this icon for an ordinary project. Controlled environment-settings captures exercise the artwork in the actual React component; its use is source-supported, without a new native pixel-equality claim.
+
+## Source30 MCP repeater remove
+
+The MCP form removes entries with the actual filled20-point artwork selected by the pinned repeater, rendered in its12-point icon slot. The binding trace is `plugins-page-ab74c4c3acdd.js` `Ia` → primary export `GC` → definition `kL` at character offset1,374,563. The single complete path replaces the unrelated close glyph. Private source hashes and the corrected trace are in `.data/mcp-form-checkpoint/trash-icon.json`; the similarly named Lucide chunk is not the icon used by this control. This establishes artwork selection from source, not native-window pixel parity.
