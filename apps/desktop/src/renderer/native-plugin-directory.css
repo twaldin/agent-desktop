@@ -43,7 +43,7 @@
 .plugin-settings-skills { display:block; overflow:visible; background:transparent; }
 .plugin-settings-skills .plugin-directory-content { max-width:none; padding:0; overflow:visible; }
 .plugin-settings-skills .plugin-skills { margin-top:16px; }
-.plugin-settings-skills .plugin-directory-grid { grid-template-columns:1fr; }
+.plugin-skills .plugin-directory-grid { grid-template-columns:1fr; }
 .plugin-settings-skills .plugin-directory-row { min-height:68px; padding:12px 8px; }
 .plugin-settings-skills .plugin-tile.skill { width:40px; height:40px; border-radius:50%; }
 

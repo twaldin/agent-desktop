@@ -7,6 +7,12 @@ An opt-in native dotenv patch now separates managed profile configuration from a
 
 Native lifecycle checks pass20 tests, including model/effort reopen and byte-identical global/project defaults. Two focused isolation tests pass12 assertions. An actual separately built macOS CLI starts under hostile/empty PATH without opening four test dotenv FIFOs; the actual native helper resolver invokes the same owned CLI and preserves HOME/ticket identity. Missing owned SDK and missing explicit profile are rejected. These are uninstalled CLI/SDK/worker checks without provider calls, not desktop/native-pixel or Linux acceptance. The coordinating task owns managed-profile deployment and pilot verification.
 
+## Skills list layout follow-up
+
+Standalone Skills now uses full-width rows, matching the settings-local list instead of inheriting the two-column marketplace grid. Descriptions and Disabled badges have room to render. The acceptance capture helper waits for finite visual transitions before recording settled screenshots; the earlier switch image caught its in-flight transition despite already-updated accessibility state.
+
+The fresh hidden Electron/native OMP run passes21 checks with26 captures, including full list-width measurement, settings writes/events and preserved revision2 draft with zero sessions. This does not establish full native/pixel parity. Evidence: `.data/skill-management-ui-6/`.
+
 ## Native skill inventory and scoped controls
 
 Skills settings now retain disabled skills for inspection and expose native user/project enable controls, the master skill setting, and skill commands. Inventory respects configured source roots, include/ignore rules and plugin gates; the normal executable catalog remains native. Writes use revision checks, preserve unrelated disables and require a refresh after failure. Other clients' settings events refresh the current owner and dismiss stale documents with focus restored after the dialog closes.
