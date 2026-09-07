@@ -1,5 +1,11 @@
 # Milestone status
 
+## Current-source packaged checkpoint
+
+Source `dc20e7f` is packaged separately as `source31-dc20e7f`, signed and uninstalled. Bundled Bun1.3.14/OMP18.1.10 pass hostile/empty-PATH SDK and native discovery-worker checks; the actual packaged host passes12 isolated skill discovery/read/copy/image/Open-options checks with zero sessions or prompts. All174 host hashes,328 emitted desktop files and1,025 internal symlinks verify; the30,529-entry artifact remains unchanged after probing.
+
+The full suite passes1,170 tests/28,475 assertions. Its28 native-bundle skips are covered by a separate44-test/540-assertion pass against this package’s tmux bundle; the Linux-only systemd check remains unrun here. Typecheck and packaged production build pass. Private receipts are in `.data/current-package-dc20e7f/`. This advances packaged runtime/host evidence, not installed Electron interaction, physical-device or pixel acceptance. Existing Work runs and sealed references remain unchanged.
+
 ## Native skill Open and Save as
 
 Skill tabs now reuse the ordinary editor’s host-owned Open menu and native Save as path.26 renderer/host checks with36 captures and81 tests/406 assertions cover durable launch receipts, missing-app receipt recovery, ownership checks and byte-exact copies while preserving edits; typecheck/build and independent review pass. GUI launch/dialog boundaries use controlled fixtures, so installed/native-pixel acceptance remains open. See [file editor](workspace-file-editor.md).
