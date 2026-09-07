@@ -1,0 +1,21 @@
+.native-plugin-summary { width:100%; max-width:736px; margin:0 auto; }
+.plugin-detail-artwork { display:grid; place-items:center; width:60px; height:60px; margin-bottom:16px; border:1px solid var(--border); border-radius:var(--radius-large,16px); color:var(--secondary); }
+.plugin-detail-artwork .icon { width:32px; height:32px; }
+.plugin-detail-title { align-items:center; gap:16px; }
+.native-plugin-summary .plugin-detail-title h2 { min-width:0; overflow-wrap:anywhere; font-size:20px; line-height:28px; font-weight:500; }
+.native-plugin-summary .plugin-detail-enable { display:flex; flex:none; align-items:center; gap:6px; height:28px; min-height:28px; padding:3px 10px; font:inherit; font-size:14px; line-height:20px; }
+.plugin-detail-enable .icon { width:16px; height:16px; }
+.plugin-detail-description { margin:6px 0 0; color:var(--secondary); line-height:20px; overflow-wrap:anywhere; }
+.plugin-detail-information { margin-top:32px; }
+.plugin-detail-information h3 { margin:0; padding-bottom:12px; border-bottom:1px solid var(--border); font-size:16px; line-height:24px; font-weight:500; }
+.plugin-detail-information dl { display:grid; grid-template-columns:132px minmax(0,1fr); gap:10px 0; margin:20px 0 0; line-height:20px; }
+.plugin-detail-information dt { color:var(--secondary); }
+.plugin-detail-information dd { margin:0; overflow-wrap:anywhere; }
+.plugin-native-configuration { max-width:736px; margin:32px auto 0; }
+.plugin-native-configuration > summary { display:flex; align-items:center; gap:8px; list-style:none; cursor:pointer; color:var(--text); font-size:16px; line-height:24px; }
+.plugin-native-configuration .integration-section { margin-top:16px; }
+@media(max-width:760px) { .plugin-detail-information dl { grid-template-columns:112px minmax(0,1fr); } }
+
+.plugin-native-configuration > summary::-webkit-details-marker { display:none; }
+.plugin-native-configuration > summary .icon { width:16px; height:16px; color:var(--secondary); }
+.plugin-native-configuration[open] > summary .icon { transform:rotate(90deg); }

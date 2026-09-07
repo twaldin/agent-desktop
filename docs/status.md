@@ -1,5 +1,9 @@
 # Milestone status
 
+## Installed-plugin summary
+
+The existing plugin detail now has a compact native enable action and Information rows, with OMP features/settings under Configuration. Final measured content width is736px and button height28px. Three hidden Electron checks/five captures verify four actual native writes; three renderer tests/eight assertions, typecheck, build and source review pass. Standalone routing, detail-local More actions, additional metadata/artwork and native pixel parity remain open. No installed app changed. Evidence: `.data/plugin-detail-checkpoint/`, `.data/plugin-detail-ui-3/`.
+
 ## Scoped native plugin upgrades
 
 Installed marketplace plugins now expose Upgrade and Uninstall in a compact More actions menu. Upgrade follows the selected native scope, preserves stable-name settings/feature choices, supports native package renames and retains old version caches used by other projects. Conflicting paths and changed content under the same version are refused. Reconnect no longer leaves acquisition controls stuck behind an obsolete client request.

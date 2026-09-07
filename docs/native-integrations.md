@@ -14,6 +14,14 @@ Saved configuration changes apply to new sessions by default. For a loaded selec
 
 The renderer uses the reference’s centered Plugins settings canvas, tabs/search, list/detail navigation and a separate MCP-add view. OMP scope and schema controls differ where required. The Add form now uses grouped cards, repeatable rows and the actual pinned remove-entry artwork. SSE and native scope/configuration controls are OMP additions. The Update form reuses those rows for existing native servers. The Add popup and Marketplace list/detail are now connected to acquisition. Browse directory, Apps/Skills filters and full hover/focus/geometry matching remain open; no pixel-parity pass is implied.
 
+## Installed-plugin summary
+
+The installed detail now separates identity, enable state and Information from the OMP configuration editors. Version, user/project ownership and package/marketplace source use the native catalog. Enable/Enabled dispatches the existing revisioned mutation. Feature and typed setting editors remain available under Configuration, including secret replacement and existing read-only capability checks.
+
+The summary uses a736px content width and28px enable control. It still lives in the settings canvas; standalone breadcrumb routing, a detail-local acquisition menu, authored artwork, category and website projection remain open. The cube is an application fallback, not plugin artwork. No metadata is inferred from names or fabricated.
+
+The scoped hidden Electron/native worker run passes three checks with five captures and four verified configuration writes. Three renderer tests/eight assertions, typecheck, production build and independent source review pass. Earlier captures retain a test-bridge read omission and an actual generic-button style override; the final run corrects both. This is component/worker evidence, not native-window or matched-pixel acceptance. See `.data/plugin-detail-checkpoint/` and `.data/plugin-detail-ui-3/`.
+
 ## Custom MCP Add fields
 
 Each argument row is one exact native argument, including explicit empty arguments and spaces; there is no shell splitting. Entirely blank key/value rows are omitted. Named values retain their exact text in the saved configuration. Native runtime expansion remains authoritative: environment passthrough writes `${NAME}`, environment-backed headers write `${NAME}`, and bearer-token environment names write `Bearer ${NAME}`. The renderer never reads the host’s environment. Native OMP may subsequently expand placeholders, resolve configured values or omit empty values according to its own policies; saved text is not a promise of literal runtime interpretation. Advanced `envPolicy`, `envLiteralKeys` and `headerPolicy` remain available.
