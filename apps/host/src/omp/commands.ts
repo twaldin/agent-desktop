@@ -20,6 +20,7 @@ import { formatMcpInspection, type McpInspection } from "./mcp-output";
 export interface NativeCommandBridges {
   reloadMcp(): Promise<void>;
   inspectMcp(): NativeSessionMcpSnapshot;
+  reconnectMcp(serverName: string): Promise<NativeSessionMcpSnapshot>;
 }
 export async function dispatchNativePrompt(session: AgentSession, text: string, images?: ImageContent[], skill?: NativeSkillPrompt, bridges?: NativeCommandBridges): Promise<NativePromptDispatchResult> {
   if (images?.length && text.trimStart().startsWith("/")) throw new Error("Image attachments are not supported on slash commands yet; no command was executed");
@@ -53,7 +54,22 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
     if (parsed && builtin) {
       const availability = builtinAvailability(builtin.name, parsed.args);
       if (availability.availability !== "executable" || !builtin.handle) throw new Error(`Native /${builtin.name} is not connected to the desktop command dispatcher for this invocation. ${availability.reason ?? ""} This input was not executed or sent to a model.`);
-      const verb = parsed.args.trim().split(/\s+/, 1)[0];
+      const verb = parsed.args.trim().split(/\s+/, 1)[0]?.toLowerCase();
+      if (builtin.name === "mcp" && verb === "reconnect") {
+        if (!bridges) throw new Error("The native MCP reconnect bridge is unavailable; no command was executed.");
+        const serverName = parsed.args.trim().split(/\s+/)[1];
+        if (!serverName) throw new Error("Server name required. Usage: /mcp reconnect <name>");
+        const before = bridges.inspectMcp();
+        if (!before.canReconnect || !before.servers.some(server => server.name === serverName))
+          throw new Error("The requested server is not available for reconnect in this native session.");
+        try {
+          const value = await bridges.reconnectMcp(serverName);
+          const server = value.servers.find(server => server.name === serverName);
+          const output = `Reconnected to "${serverName}"\nTools: ${server?.tools.length ?? 0}`;
+          const commandEntryId = session.sessionManager.appendCustomEntry("agent-desktop.command-output", { command: "mcp", output });
+          return { agentInvoked: false, handledCommand: "mcp", commandEntryId, output };
+        } catch (error) { throw new OmpPromptAdmissionError(error); }
+      }
       if (builtin.name === "mcp" && ["resources", "prompts", "notifications"].includes(verb!)) {
         if (!bridges) throw new Error("The native MCP inspection bridge is unavailable; no command was executed.");
         const output = formatMcpInspection(verb as McpInspection, bridges.inspectMcp());
@@ -62,7 +78,7 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
           return { agentInvoked: false, handledCommand: "mcp", commandEntryId, output };
         } catch (error) { throw new OmpPromptAdmissionError(error); }
       }
-      const reloadMcp = builtin.name === "mcp" && parsed.args.trim().split(/\s+/,1)[0] === "reload";
+      const reloadMcp = builtin.name === "mcp" && verb === "reload";
       if (reloadMcp && !bridges) throw new Error("The native MCP runtime reload bridge is unavailable; no command was executed.");
       const chunks: string[] = []; let length = 0;
       try {

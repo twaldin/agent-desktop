@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseNativeSessionMcpSnapshot, type NativeSessionMcpSnapshot } from "./session-mcp";
+import { parseNativeSessionMcpSnapshot, parseNativeSessionMcpReconnect, type NativeSessionMcpSnapshot } from "./session-mcp";
 
 const legacy: NativeSessionMcpSnapshot = {
 	epoch: "epoch",
@@ -43,4 +43,20 @@ test("detail parser rejects malformed, excessive, and unknown metadata", () => {
 	const oversized = structuredClone(legacy) as any;
 	oversized.servers[0].resources = Array.from({ length: 140 }, (_, index) => ({ uri: `fixture://${index}/${"x".repeat(16_000)}`, name: String(index) }));
 	expect(() => parseNativeSessionMcpSnapshot(oversized)).toThrow("2 MiB");
+});
+
+
+test("reconnect tickets preserve exact server identity and reject malformed capabilities or fields", () => {
+  const ticket = { epoch: "manager", expectedRevision: 2, serverName: " exact name " };
+  expect(parseNativeSessionMcpReconnect(ticket)).toEqual(ticket);
+  for (const invalid of [
+    { ...ticket, serverName: "" }, { ...ticket, serverName: "a\0b" },
+    { ...ticket, serverName: "😀".repeat(257) }, { ...ticket, expectedRevision: -1 },
+    { ...ticket, expectedRevision: 1.5 }, { ...ticket, epoch: "" },
+    { ...ticket, command: "external" },
+  ]) expect(() => parseNativeSessionMcpReconnect(invalid)).toThrow();
+  expect(parseNativeSessionMcpSnapshot({ ...legacy, canReconnect: true }).canReconnect).toBe(true);
+  expect(parseNativeSessionMcpSnapshot({ ...legacy, canReconnect: false }).canReconnect).toBe(false);
+  expect(parseNativeSessionMcpSnapshot(legacy).canReconnect).toBeUndefined();
+  expect(() => parseNativeSessionMcpSnapshot({ ...legacy, canReconnect: "true" })).toThrow();
 });

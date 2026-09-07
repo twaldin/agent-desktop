@@ -4,6 +4,7 @@ import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability
 import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import type {
 	NativeSessionMcpReload,
+	NativeSessionMcpReconnect,
 	NativeSessionMcpServer,
 	NativeSessionMcpSnapshot,
 } from "../../../../packages/shared/src/session-mcp";
@@ -106,7 +107,7 @@ export class NativeSessionMcp {
 	#revision = 0;
 	#fingerprint = "";
 	#failures = new Set<string>();
-	#reloadTail: Promise<void> = Promise.resolve();
+	#mutationTail: Promise<void> = Promise.resolve();
 
 	constructor(
 		private readonly session: AgentSession,
@@ -120,7 +121,7 @@ export class NativeSessionMcp {
 			}
 		}
 		const value = this.manager
-			? { available: true, servers: collectServers(this.manager, this.#failures) }
+			? { available: true, canReconnect: true, servers: collectServers(this.manager, this.#failures) }
 			: { available: false, reason: UNAVAILABLE, servers: [] };
 		if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES) throw new Error("Native MCP catalog exceeds its 2 MiB response limit.");
 		return value;
@@ -143,7 +144,7 @@ export class NativeSessionMcp {
 	}
 
 	reload(request: NativeSessionMcpReload): Promise<NativeSessionMcpSnapshot> {
-		const operation = this.#reloadTail.then(async () => {
+		const operation = this.#mutationTail.then(async () => {
 			const before = this.read();
 			if (request.epoch !== before.epoch || request.expectedRevision !== before.revision) {
 				throw new Error("Native MCP state changed before reload.");
@@ -178,7 +179,39 @@ export class NativeSessionMcp {
 			// identical. Consuming the ticket prevents a duplicate native launch.
 			this.#consumeRevision();
 		});
-		this.#reloadTail = operation.catch(() => undefined);
+		this.#mutationTail = operation.catch(() => undefined);
+		return operation.then(() => this.read());
+	}
+
+	reconnect(request: NativeSessionMcpReconnect): Promise<NativeSessionMcpSnapshot> {
+		const operation = this.#mutationTail.then(async () => {
+			const before = this.read();
+			if (request.epoch !== before.epoch || request.expectedRevision !== before.revision) {
+				throw new Error("Native MCP state changed before reconnect.");
+			}
+			if (!this.manager) throw new Error(UNAVAILABLE);
+			if (!before.servers.some(server => server.name === request.serverName)) {
+				throw new Error("Native MCP server is not part of this session.");
+			}
+
+			let connected = false;
+			try {
+				connected = (await this.manager.reconnectServer(request.serverName, { manual: true })) !== null;
+				if (!connected) throw new Error(CONNECTION_ERROR);
+				await this.session.refreshMCPTools(this.manager.getTools());
+				this.#failures.delete(request.serverName);
+			} catch {
+				this.#failures.add(request.serverName);
+				// Rebind the session to the manager's actual post-attempt registry. The
+				// native manager intentionally keeps the target's stale selected tools
+				// on a failed reconnect; unrelated server tools remain untouched.
+				await this.session.refreshMCPTools(this.manager.getTools()).catch(() => undefined);
+				this.#consumeRevision();
+				throw new Error("Native MCP reconnect failed.");
+			}
+			this.#consumeRevision();
+		});
+		this.#mutationTail = operation.catch(() => undefined);
 		return operation.then(() => this.read());
 	}
 }

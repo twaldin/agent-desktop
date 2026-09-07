@@ -6,7 +6,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 18;
+export const WORKER_PROTOCOL_VERSION = 19;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -47,6 +47,7 @@ export type WorkerOperation =
   | { operation: "startQuestionDelivery"; args: { questionId: string } }
   | { operation: "getSessionMcp" }
   | { operation: "reloadSessionMcp"; args: { request: import("@agent-desktop/shared").NativeSessionMcpReload } }
+  | { operation: "reconnectSessionMcp"; args: { request: import("@agent-desktop/shared").NativeSessionMcpReconnect } }
   | { operation: "getBtw" }
   | { operation: "startBtw"; args: NativeBtwStart }
   | { operation: "cancelBtw"; args: { runId: string } }

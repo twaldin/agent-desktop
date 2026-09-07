@@ -18,6 +18,9 @@ app.whenReady().then(async()=>{
   await click('button','Reload servers');await wait(`document.body.innerText.includes('Reloading')`);await capture('03-native-reloading');
   await wait(`[...document.querySelectorAll('button')].some(x=>x.textContent==='Reload servers'&&!x.disabled)`);await capture('04-native-reloaded');
   await win.webContents.reload();await wait(`document.body.innerText.includes('fixture') && [...document.querySelectorAll('button')].some(x=>x.textContent==='Reload servers'&&!x.disabled)`);await capture('05-page-reopen-no-replay');
+  await click('button[aria-label="Reconnect fixture"]');await wait(`document.body.innerText.includes('Reconnecting…')`);await capture('06-native-reconnecting');
+  await wait(`[...document.querySelectorAll('button')].some(x=>x.getAttribute('aria-label')==='Reconnect fixture'&&!x.disabled)`);await capture('07-native-reconnected');
+  await win.webContents.reload();await wait(`[...document.querySelectorAll('button')].some(x=>x.getAttribute('aria-label')==='Reconnect fixture'&&!x.disabled)`);await capture('08-reconnect-page-reopen-no-replay');
   fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({passed:true,electron:process.versions.electron,hidden:true,captures},null,2));app.exit(0);
  }catch(error){fs.writeFileSync(path.join(output,'failure.png'),(await win.webContents.capturePage()).toPNG());fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({passed:false,error:String(error),captures},null,2));app.exit(1);}
 });

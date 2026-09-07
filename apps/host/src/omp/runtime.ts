@@ -1,5 +1,5 @@
 import { NativeSessionMcp } from "./mcp-session";
-import type { NativeSessionMcpSnapshot, NativeSessionMcpReload } from "@agent-desktop/shared";
+import type { NativeSessionMcpSnapshot, NativeSessionMcpReload, NativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { constants } from "node:fs";
 import { access, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -88,6 +88,7 @@ export interface OmpSession {
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
   getSessionMcp(): NativeSessionMcpSnapshot;
   reloadSessionMcp(request: NativeSessionMcpReload): Promise<NativeSessionMcpSnapshot>;
+  reconnectSessionMcp(request: NativeSessionMcpReconnect): Promise<NativeSessionMcpSnapshot>;
   getBtw(): NativeBtwSnapshot | null;
   startBtw(input: NativeBtwStart): NativeBtwSnapshot;
   cancelBtw(runId: string): NativeBtwSnapshot | null;
@@ -510,6 +511,12 @@ export class OmpRuntime {
         assertSessionActive();
         if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
+      const trackMcpMutation = (run: Promise<NativeSessionMcpSnapshot>) => {
+        mcpMutation = run;
+        const clear = () => { if (mcpMutation === run) mcpMutation = undefined; };
+        void run.then(clear, clear);
+        return run;
+      };
       const listAccounts = async () => {
         assertSessionActive();
         await auth.revalidateCredentials();
@@ -619,11 +626,13 @@ export class OmpRuntime {
           assertIdle();
           if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
             throw new Error("Resolve pending native work before reloading MCP servers.");
-          const run = mcp.reload(request);
-          mcpMutation = run;
-          const clear = () => { if (mcpMutation === run) mcpMutation = undefined; };
-          void run.then(clear, clear);
-          return run;
+          return trackMcpMutation(mcp.reload(request));
+        },
+        reconnectSessionMcp: request => {
+          assertIdle();
+          if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
+            throw new Error("Resolve pending native work before reconnecting an MCP server.");
+          return trackMcpMutation(mcp.reconnect(request));
         },
         getBtw: () => { assertSessionActive(); return btw.get(); },
         startBtw: input => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are reloading."); return btw.start(input); },
@@ -716,7 +725,7 @@ export class OmpRuntime {
           } finally { goalMutation = false; }
         },
         getComposerActions: async () => { assertSessionActive(); return sessionComposerActions(session, result.extensionsResult?.extensions ?? []); },
-        getComposerCompletions: async query => { assertSessionActive(); return composerCompletions(sessionComposerActions(session, result.extensionsResult?.extensions ?? []), query, session); },
+        getComposerCompletions: async query => { assertSessionActive(); return composerCompletions(sessionComposerActions(session, result.extensionsResult?.extensions ?? []), query, session, result.mcpManager); },
         getImage: async (nativeEntryId, blockIndex) => {
           assertSessionActive();
           if (typeof nativeEntryId !== "string" || nativeEntryId.length > 200 || !Number.isSafeInteger(blockIndex) || blockIndex < 0) throw new Error("Invalid native image identity");
@@ -795,10 +804,15 @@ export class OmpRuntime {
                       || ui?.list().length || btw.get()?.status === "running")
                       throw new Error("Resolve pending native work before reloading MCP servers.");
                     const ticket = mcp.read();
-                    const reload = mcp.reload({ epoch: ticket.epoch, expectedRevision: ticket.revision });
-                    mcpMutation = reload;
-                    try { await reload; }
-                    finally { if (mcpMutation === reload) mcpMutation = undefined; }
+                    await trackMcpMutation(mcp.reload({ epoch: ticket.epoch, expectedRevision: ticket.revision }));
+                  },
+                  reconnectMcp: async serverName => {
+                    assertSessionActive();
+                    if (interruptsInFlight || controller.signal.aborted || session.queuedMessageCount > 0
+                      || ui?.list().length || btw.get()?.status === "running")
+                      throw new Error("Resolve pending native work before reconnecting an MCP server.");
+                    const ticket = mcp.read();
+                    return trackMcpMutation(mcp.reconnect({ epoch: ticket.epoch, expectedRevision: ticket.revision, serverName }));
                   },
                 });
               }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt);

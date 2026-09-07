@@ -1,4 +1,4 @@
-import { parseNativeSessionMcpReload } from "@agent-desktop/shared";
+import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { isAbsolute } from "node:path";
 import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
@@ -93,6 +93,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
         ...(draft ? { draft } : {}), ...(input.nativeCommand === "btw" ? { nativeCommand: "btw" as const } : {}) } };
     }
     case "session.mcp.reload": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), ...parseNativeSessionMcpReload({epoch:input.epoch,expectedRevision:input.expectedRevision}) } };
+    case "session.mcp.reconnect": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), ...parseNativeSessionMcpReconnect({epoch:input.epoch,expectedRevision:input.expectedRevision,serverName:input.serverName}) } };
     case "session.btw.promote":
     case "session.btw.cancel": {
       const runId = text(input.runId, "side question run ID", 200);

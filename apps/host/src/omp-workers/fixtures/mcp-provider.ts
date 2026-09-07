@@ -8,6 +8,10 @@ import path from "node:path";
 export default function(pi: ExtensionAPI) {
   const gates = process.env.MCP_CONTRACT_GATES;
   if (!gates) throw new Error("MCP fixture requires isolated gates");
+  pi.registerCommand("fixture-tool-selection", { description: "Controlled native tool selection", handler: async args => {
+    if (args === "read") await pi.setActiveTools(["read"]);
+    writeFileSync(path.join(gates, "active-tools.json"), JSON.stringify(pi.getActiveTools()));
+  } });
   pi.registerProvider("mcp-contract", {baseUrl:"https://controlled.invalid", apiKey:"inert-local-fixture-key",api:"mcp-contract-api" as Api,
     models:[{id:"controlled",name:"Controlled native MCP fixture",reasoning:false,input:["text"],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:128000,maxTokens:1024}],
     streamSimple(model,context,options) {

@@ -1,4 +1,4 @@
-import { parseNativeSessionMcpReload } from "@agent-desktop/shared";
+import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { parseBrowserControlRequest, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
@@ -216,6 +216,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       }
       case "getSessionMcp": respond(true, requireSession().getSessionMcp()); break;
       case "reloadSessionMcp": respond(true, await requireSession().reloadSessionMcp(parseNativeSessionMcpReload(message.args.request))); break;
+      case "reconnectSessionMcp": respond(true, await requireSession().reconnectSessionMcp(parseNativeSessionMcpReconnect(message.args.request))); break;
       case "getBtw": respond(true, requireSession().getBtw()); break;
       case "startBtw": respond(true, requireSession().startBtw(message.args)); break;
       case "cancelBtw": respond(true, requireSession().cancelBtw(message.args.runId)); break;

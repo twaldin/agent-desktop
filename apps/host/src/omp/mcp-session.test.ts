@@ -64,6 +64,15 @@ async function waitForCatalog(controller: NativeSessionMcp) {
 	throw new Error("Disposable MCP catalog did not settle.");
 }
 
+async function markerLines(path: string): Promise<string[]> {
+	for (let index = 0; index < 200; index++) {
+		const value = await readFile(path, "utf8").catch(() => "");
+		if (value.trim()) return value.trim().split("\n");
+		await Bun.sleep(5);
+	}
+	throw new Error("Disposable MCP marker did not appear.");
+}
+
 test("reload uses native discovery filters and publishes only live MCP metadata", async () => {
 	const root = await mkdtemp(join(tmpdir(), "agent-desktop-mcp-session-")); roots.push(root);
 	const options: LoadMCPConfigsOptions[] = [];
@@ -205,4 +214,67 @@ test("connected unsupported catalogs are measured empty while identities stay ex
 		resourceCount: 0, promptCount: 0, resources: [], resourceTemplates: [], prompts: [],
 		notifications: { enabled: true, toolsListChanged: true, resourcesListChanged: false, promptsListChanged: false, resourceSubscribe: false, subscriptions: [] },
 	}]);
+});
+
+test("manual reconnect restarts only its exact native server and consumes one serialized ticket", async () => {
+	const root = await mkdtemp(join(tmpdir(), "agent-desktop-mcp-reconnect-")); roots.push(root);
+	const fixture = join(import.meta.dir, "fixtures", "mcp-server.ts");
+	const alphaMarker = join(root, "alpha.txt");
+	const betaMarker = join(root, "beta.txt");
+	const manager = new MCPManager(root, null, async () => ({
+		configs: {
+			alpha: { type: "stdio", command: process.execPath, args: [fixture], env: { AGENT_DESKTOP_MCP_TEST_MARKER: alphaMarker, AGENT_DESKTOP_MCP_TEST_TOOL: "alpha_tool" } },
+			beta: { type: "stdio", command: process.execPath, args: [fixture], env: { AGENT_DESKTOP_MCP_TEST_MARKER: betaMarker, AGENT_DESKTOP_MCP_TEST_TOOL: "beta_tool" } },
+		},
+		sources: { alpha: source(join(root, "alpha.json")), beta: source(join(root, "beta.json")) }, exaApiKeys: [],
+	}));
+	managers.push(manager);
+	const nativeSession = session();
+	const controller = new NativeSessionMcp(nativeSession.value, manager);
+	const initial = controller.read();
+	await controller.reload({ epoch: initial.epoch, expectedRevision: initial.revision });
+	expect(await markerLines(alphaMarker)).toEqual(["started"]);
+	expect(await markerLines(betaMarker)).toEqual(["started"]);
+
+	const before = controller.read();
+	const reconnected = await controller.reconnect({ epoch: before.epoch, expectedRevision: before.revision, serverName: "alpha" });
+	expect(await markerLines(alphaMarker)).toEqual(["started", "started"]);
+	expect(await markerLines(betaMarker)).toEqual(["started"]);
+	expect(reconnected.servers.map(server => [server.name, server.status])).toEqual([["alpha", "connected"], ["beta", "connected"]]);
+	expect(nativeSession.calls.tools.at(-1)?.map(tool => (tool as { mcpServerName: string }).mcpServerName).sort()).toEqual(["alpha", "beta"]);
+
+	await expect(controller.reconnect({ epoch: before.epoch, expectedRevision: before.revision, serverName: "alpha" })).rejects.toThrow("changed before reconnect");
+	const current = controller.read();
+	await expect(controller.reconnect({ epoch: current.epoch, expectedRevision: current.revision, serverName: " alpha " })).rejects.toThrow("not part of this session");
+	expect(await markerLines(alphaMarker)).toEqual(["started", "started"]);
+	expect(await markerLines(betaMarker)).toEqual(["started"]);
+});
+
+test("failed reconnect is generic, refreshes the post-attempt registry, and keeps unrelated servers", async () => {
+	const statuses = new Map<string, "connected" | "connecting" | "disconnected">([["target", "connected"], ["other", "connected"]]);
+	const calls: string[] = [];
+	const tools = [{ mcpServerName: "target", name: "target_tool" }, { mcpServerName: "other", name: "other_tool" }];
+	const manager = {
+		getTools: () => tools,
+		getAllServerNames: () => ["target", "other"],
+		getConnectionStatus: (name: "target" | "other") => statuses.get(name),
+		getConnection: (name: "target" | "other") => statuses.get(name) === "connected" ? { capabilities: {} } : undefined,
+		getSource: () => undefined,
+		getNotificationState: () => ({ enabled: false, subscriptions: new Map() }),
+		reconnectServer: async (name: string) => { calls.push(name); statuses.set("target", "disconnected"); return null; },
+	} as unknown as MCPManager;
+	const nativeSession = session();
+	const controller = new NativeSessionMcp(nativeSession.value, manager);
+	const before = controller.read();
+	await expect(controller.reconnect({ epoch: before.epoch, expectedRevision: before.revision, serverName: "target" })).rejects.toThrow("Native MCP reconnect failed.");
+	expect(calls).toEqual(["target"]);
+	expect(nativeSession.calls.tools.at(-1)).toEqual(tools);
+	const failed = controller.read();
+	expect(failed.revision).toBeGreaterThan(before.revision);
+	expect(failed.servers.find(server => server.name === "target")).toMatchObject({ status: "disconnected", error: "Native MCP server could not connect." });
+	expect(failed.servers.find(server => server.name === "other")).toMatchObject({ status: "connected" });
+	expect(failed.servers.find(server => server.name === "other")?.error).toBeUndefined();
+
+	statuses.set("target", "connected");
+	expect(controller.read().servers.find(server => server.name === "target")?.error).toBeUndefined();
 });

@@ -176,6 +176,7 @@ export type HostCommand =
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.btw.start"; sessionId: string; question: string; draft?: { id: string; revision: number }; nativeCommand?: "btw" }
   | { type: "session.mcp.reload"; sessionId: string; epoch: string; expectedRevision: number }
+  | { type: "session.mcp.reconnect"; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
   | { type: "session.btw.cancel"; sessionId: string; runId: string }
   | { type: "session.btw.promote"; sessionId: string; runId: string }
   | { type: "session.interrupt"; sessionId: string }

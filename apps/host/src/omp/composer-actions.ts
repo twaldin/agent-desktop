@@ -6,7 +6,9 @@ import { loadSlashCommands } from "@oh-my-pi/pi-coding-agent/extensibility/slash
 import { discoverCustomCommands } from "@oh-my-pi/pi-coding-agent/extensibility/custom-commands/loader";
 import { withActiveSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { BUILTIN_SLASH_COMMANDS_INTERNAL, lookupBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
-import { buildArgumentCompletions } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-completions";
+import { buildArgumentCompletions, buildMcpArgumentCompletions } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-completions";
+import type { TuiSlashCommandRuntime } from "@oh-my-pi/pi-coding-agent/slash-commands/types";
+import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import { getInternalUrlSuggestions } from "@oh-my-pi/pi-coding-agent/modes/internal-url-autocomplete";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls";
 import { CombinedAutocompleteProvider, type AutocompleteItem } from "@oh-my-pi/pi-tui";
@@ -25,9 +27,9 @@ const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "r
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
   if (supportedBuiltins.has(name)) return { availability: "executable" };
   if (name === "mcp") {
-    if (args === undefined) return {availability:"partial",reason:"Native help, live resource/prompt/notification lists and runtime reload are connected. Other subcommands retain their native integration requirements."};
-    const verb=args.trim().split(/\s+/,1)[0];
-    if (!verb || ["reload", "help", "resources", "prompts", "notifications"].includes(verb)) return {availability:"executable"};
+    if (args === undefined) return {availability:"partial",reason:"Native help, live resource/prompt/notification lists, runtime reload and server reconnect are connected. Other subcommands retain their native integration requirements."};
+    const verb=args.trim().split(/\s+/,1)[0]?.toLowerCase();
+    if (!verb || ["reload", "help", "resources", "prompts", "notifications", "reconnect"].includes(verb)) return {availability:"executable"};
     return {availability:"pending",reason:"This MCP operation requires its remaining native manager, configuration or interactive authorization bridge."};
   }
   if (name === "btw") return { availability: "partial", reason: "Ask a side question using this conversation’s context." };
@@ -144,7 +146,7 @@ export function sessionComposerActions(session: AgentSession, extensions: readon
   return finish(session.sessionManager.getCwd(), commands, skillRows(session.skills, session.skillsSettings?.enableSkillCommands === true), session.skillWarnings.map(warning => `${warning.skillPath}: ${warning.message}`));
 }
 
-export async function composerCompletions(catalog: NativeComposerCatalog, query: ComposerCompletionQuery, session?: AgentSession): Promise<NativeComposerCompletions> {
+export async function composerCompletions(catalog: NativeComposerCatalog, query: ComposerCompletionQuery, session?: AgentSession, mcpManager?: MCPManager): Promise<NativeComposerCompletions> {
   if (query.catalogRevision && query.catalogRevision !== catalog.revision) throw new Error("The native composer catalog changed. Refresh the selected target before using this completion.");
   const limit = query.limit ?? 50;
   if (!Number.isInteger(limit) || limit < 1 || limit > 100 || typeof query.query !== "string" || query.query.length > 2048 || /[\0\r\n]/.test(query.query)) throw new Error("Invalid native completion query.");
@@ -167,9 +169,14 @@ export async function composerCompletions(catalog: NativeComposerCatalog, query:
     if (command?.getArgumentCompletions) {
       try { items = await session!.extensionRunner!.runScoped(() => command.getArgumentCompletions!(query.query)) ?? []; }
       catch (error) { diagnostics.push(`Native argument completion failed: ${bounded(error instanceof Error ? error.message : error)}`); }
-    } else {
+    } else if (!command && !session?.customCommands.some(command => command.command.name === query.commandName)) {
       const spec = lookupBuiltinSlashCommand(query.commandName);
-      if (spec?.subcommands) items = await buildArgumentCompletions(spec.subcommands)(query.query) ?? [];
+      if (spec?.name === "mcp" && spec.subcommands && session) {
+        // Pinned native completer reads only ctx.mcpManager and its own scoped
+        // configuration APIs. It does not render or invoke a TUI controller.
+        const runtime = { ctx: { mcpManager } } as TuiSlashCommandRuntime;
+        items = await buildMcpArgumentCompletions(spec.subcommands, runtime)(query.query) ?? [];
+      } else if (spec?.subcommands) items = await buildArgumentCompletions(spec.subcommands)(query.query) ?? [];
       else if (catalog.commands.some(row => row.name === query.commandName && row.argumentCompletions)) diagnostics.push("This command callback is not loaded in the selected native session.");
     }
     prefix = query.query;

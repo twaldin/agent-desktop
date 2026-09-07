@@ -444,6 +444,7 @@ export class WorkerRuntime {
       startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
       getSessionMcp: () => client.request({ operation: "getSessionMcp" }, 15_000),
       reloadSessionMcp: request => client.request({ operation: "reloadSessionMcp", args: { request } }, 120_000),
+      reconnectSessionMcp: request => client.request({ operation: "reconnectSessionMcp", args: { request } }, 120_000),
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),
       startBtw: input => client.request({ operation: "startBtw", args: input }, 15_000),
       cancelBtw: runId => client.request({ operation: "cancelBtw", args: { runId } }, 15_000),

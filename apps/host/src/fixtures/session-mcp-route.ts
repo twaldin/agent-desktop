@@ -196,16 +196,32 @@ try {
 	assert.equal(await starts(), launched);
 	assert.equal((await mcp(session.id, "missing-command")).body.receipt?.state, "absent");
 	assert.equal((await mcp(session.id, "create-session-mcp")).body.receipt?.state, "absent");
+	const reconnectTicket = (await mcp(session.id)).body.value!;
+	assert.equal(reconnectTicket.canReconnect, true);
+	const reconnect: CommandEnvelope = { id: "reconnect-once", command: { type: "session.mcp.reconnect", sessionId: session.id,
+		epoch: reconnectTicket.epoch, expectedRevision: reconnectTicket.revision, serverName: "route" } };
+	const reconnected = await command(reconnect); assert(reconnected.result.ok);
+	assert.equal(await starts(), launched + 1);
+	assert.equal((await mcp(session.id, reconnect.id)).body.receipt?.state, "succeeded");
+	assert.equal((await mcp(otherSession.id, reconnect.id)).body.receipt?.state, "absent");
+	assert.deepEqual((await command(reconnect)).result, reconnected.result);
+	assert.equal(await starts(), launched + 1);
+	const staleReconnect = await command({ ...reconnect, id: "stale-reconnect" });
+	assert(!staleReconnect.result.ok); assert.equal(await starts(), launched + 1);
+	const unknownTicket = (await mcp(session.id)).body.value!;
+	const unknownReconnect = await command({id:"unknown-reconnect-server",command:{type:"session.mcp.reconnect",sessionId:session.id,
+		epoch:unknownTicket.epoch,expectedRevision:unknownTicket.revision,serverName:"other-session-server"}});
+	assert(!unknownReconnect.result.ok); assert.equal(await starts(), launched + 1);
 
 	const current = await waitConnected(session.id);
-	const lost: CommandEnvelope = { id: "reload-lost-receipt", command: { type: "session.mcp.reload", sessionId: session.id,
-		epoch: current.value!.epoch, expectedRevision: current.value!.revision } };
+	const lost: CommandEnvelope = { id: "reload-lost-receipt", command: { type: "session.mcp.reconnect", sessionId: session.id,
+		epoch: current.value!.epoch, expectedRevision: current.value!.revision, serverName: "route" } };
 	const databasePath = path.join(root, "data", "state.sqlite");
 	const database = new Database(databasePath);
 	database.exec("CREATE TRIGGER reject_mcp_command_receipt BEFORE UPDATE ON commands WHEN OLD.id = 'reload-lost-receipt' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END");
 	const lostResult = await command(lost);
 	assert(lostResult.result && !lostResult.result.ok); assert.equal(lostResult.result.error.code, "OUTCOME_UNKNOWN");
-	assert.equal(await starts(), launched + 1);
+	assert.equal(await starts(), launched + 2);
 	assert.equal((await mcp(session.id, lost.id)).body.receipt?.state, "unknown");
 	database.close();
 
@@ -214,6 +230,7 @@ try {
 	host = await startHost(options);
 	assert.equal(await starts(), beforeRestart);
 	assert.deepEqual((await command(typedEnvelope)).result, typed.result);
+	assert.deepEqual((await command(reconnect)).result, reconnected.result);
 	assert.deepEqual(host.store.getDraft(draftId), newerDraft);
 	assert.equal(await starts(), beforeRestart);
 	const recovered = await mcp(session.id, lost.id);

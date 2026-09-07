@@ -325,7 +325,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     existing:async id=>handles.get(id)?.catch(()=>undefined),
     receipt:(sessionId,commandId)=>{
       const entry=store.getCommand(commandId);
-      if (!entry || entry.command?.type !== 'session.mcp.reload' || entry.command.sessionId !== sessionId) return {commandId,state:'absent'};
+      if (!entry || (entry.command?.type !== 'session.mcp.reload' && entry.command?.type !== 'session.mcp.reconnect') || entry.command.sessionId !== sessionId) return {commandId,state:'absent'};
       if(entry.state==='pending') return {commandId,state:commands.has(commandId)?'pending':'unknown'};
       const result=entry.result;
       return {commandId,state:result?.ok?'succeeded':result && !result.ok && result.error.code!=='OUTCOME_UNKNOWN'?'failed':'unknown',
@@ -519,12 +519,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const snapshot = await btw.start(command.sessionId, { runId: envelope.id, question: command.question }, checkedHandle);
         return ok({ type: "session.btw", snapshot });
       }
-      case "session.mcp.reload": {
+      case "session.mcp.reload":
+      case "session.mcp.reconnect": {
         if (!store.getSession(command.sessionId)) return fail(envelope.id,"STALE_TARGET","The selected session no longer exists.");
-        if (executions.has(command.sessionId)) return fail(envelope.id,"SESSION_BUSY","Wait for the native turn to finish before reloading MCP servers.");
+        if (executions.has(command.sessionId)) return fail(envelope.id,"SESSION_BUSY","Wait for the native turn to finish before changing MCP connections.");
         const handle = await handles.get(command.sessionId)?.catch(()=>undefined);
-        if (!handle) return fail(envelope.id,"MCP_NOT_LOADED","This session has no loaded native runtime. Reload did not start a worker.");
-        const snapshot = await handle.reloadSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision});
+        if (!handle) return fail(envelope.id,"MCP_NOT_LOADED","This session has no loaded native runtime. No MCP operation started a worker.");
+        const snapshot = command.type === "session.mcp.reconnect"
+          ? await handle.reconnectSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision,serverName:command.serverName})
+          : await handle.reloadSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision});
         return ok({type:"session.mcp",snapshot});
       }
       case "session.btw.promote": return btwPromotion.promote(envelope.id, command.sessionId, command.runId);

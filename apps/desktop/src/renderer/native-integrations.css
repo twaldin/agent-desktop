@@ -107,4 +107,5 @@
 .session-mcp-details dt span { color:var(--secondary); }
 .session-mcp-details dd { margin:2px 0 0; }
 .session-mcp .integration-list-heading > button { white-space:nowrap; flex-shrink:0; }
+.session-mcp-counts { align-items:center; }
 @media(max-width:680px) { .session-mcp .integration-list-heading { flex-wrap:wrap; } }

@@ -2,6 +2,12 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — native per-server MCP reconnect
+
+Live MCP settings and `/mcp reconnect <name>` now reconnect an exact session-owned server through OMP's actual manager. Reload and reconnect share serialized revision checks and durable receipt recovery; stale or duplicate requests cause no additional launch. Unrelated servers remain connected. Native argument completion respects extension/custom precedence. Worker protocol19 carries the operation, with OMP18.1.10/Bun1.3.14 unchanged.
+
+The focused batch passes **28 tests / 264 assertions across7 files**, plus typecheck and production build. Real worker checks confirm the SDK's refresh behavior: connected manager tools become active while the non-MCP selection is retained, despite a contradictory upstream TUI comment. Twelve controlled Electron captures verify one reload, one reconnect, two lost-acknowledgement recoveries and no replay on reopen; the run produces zero messages. Independent review found no concrete lifecycle blocker. This is source/component evidence, not a packaged/native-window or pixel-parity pass. Resource bodies, interactive authorization, remaining plugin/command workflows and precise appearance stay open. Private evidence: `.data/mcp-reconnect-checkpoint/` and `.data/mcp-reconnect-ui-final/result.json`. Preserved Work runs and reference seals are unchanged.
+
 ## Source30 — live MCP resource, prompt and notification details
 
 Live session settings now expand actual cached resources/templates, prompt arguments and notification capabilities/subscriptions. The matching `/mcp resources`, `/mcp prompts` and `/mcp notifications` commands persist those lists without opening another MCP connection or invoking a model. Names and URIs remain exact; missing enrichment is unmeasured, unsupported catalogs are empty, and bounded parsing rejects oversized metadata. Optional fields preserve older snapshots and worker protocol18 remains unchanged.

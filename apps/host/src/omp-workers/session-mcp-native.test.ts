@@ -26,7 +26,27 @@ test('real worker reload rebinds native MCP tools, fences active turns and retir
     const run=session.startPrompt('Hold this native turn.',{model});await run.accepted;
     const current=await session.getSessionMcp();
     await expect(session.reloadSessionMcp({epoch:current.epoch,expectedRevision:current.revision})).rejects.toThrow('busy');
+    await expect(session.reconnectSessionMcp({epoch:current.epoch,expectedRevision:current.revision,serverName:'fixture'})).rejects.toThrow('busy');
     await session.abort();await run.completion.catch(()=>false);await rm(path.join(gates,'hold'));
+    expect(await session.prompt('/fixture-tool-selection read')).toBe(false);
+    const selectedTools = JSON.parse(await readFile(path.join(gates, 'active-tools.json'), 'utf8'));
+    expect(selectedTools).toEqual(['read']);
+    const reconnectTicket = await session.getSessionMcp();
+    expect(reconnectTicket.canReconnect).toBe(true);
+    expect((await session.reconnectSessionMcp({epoch:reconnectTicket.epoch,expectedRevision:reconnectTicket.revision,serverName:'fixture'})).servers[0]?.status).toBe('connected');
+    // Pinned session-tools.ts refreshMCPTools enables connected manager tools;
+    // the TUI controller's older preservation comment contradicts its implementation.
+    // Keep the actual native behavior while preserving the non-MCP selection.
+    const refreshedTools = [...selectedTools, 'mcp__fixture_tool'];
+    expect(await session.prompt('/fixture-tool-selection inspect')).toBe(false);
+    expect(JSON.parse(await readFile(path.join(gates, 'active-tools.json'), 'utf8'))).toEqual(refreshedTools);
+    expect(await session.prompt('/fixture-tool-selection read')).toBe(false);
+    const nativeReconnect = session.startPrompt('/mcp reconnect fixture');
+    const reconnectReceipt = await nativeReconnect.accepted;
+    expect(reconnectReceipt).toMatchObject({kind:'native-command',command:'mcp',output:expect.stringContaining('Reconnected to "fixture"')});
+    expect(await nativeReconnect.completion).toBe(false);
+    expect(await session.prompt('/fixture-tool-selection inspect')).toBe(false);
+    expect(JSON.parse(await readFile(path.join(gates, 'active-tools.json'), 'utf8'))).toEqual(refreshedTools);
     await writeFile(config,JSON.stringify({mcpServers:{}}));
     const ticket=await session.getSessionMcp();
     const reloaded=await session.reloadSessionMcp({epoch:ticket.epoch,expectedRevision:ticket.revision});
@@ -55,7 +75,8 @@ test('typed native MCP help and reload persist output without a model turn and r
     const catalog = await session.getComposerActions();
     const mcp = catalog.commands.find(row => row.id === 'builtin:mcp')!;
     expect(mcp.availability).toBe('partial');
-    expect(mcp.subcommands?.filter(row => row.availability === 'executable').map(row => row.name).sort()).toEqual(['help', 'notifications', 'prompts', 'reload', 'resources']);
+    expect(mcp.subcommands?.filter(row => row.availability === 'executable').map(row => row.name).sort()).toEqual(['help', 'notifications', 'prompts', 'reconnect', 'reload', 'resources']);
+    expect((await session.getComposerCompletions({ kind: 'command-argument', commandName: 'mcp', query: 'reconnect fi', catalogRevision: catalog.revision })).items).toMatchObject([{ label: 'fixture', insertText: 'reconnect fixture ' }]);
     const receipts: string[] = [];
     for (const text of ['/mcp', '/mcp help', '/mcp reload']) {
       const run = session.startPrompt(text);
@@ -82,6 +103,7 @@ test('typed native MCP help and reload persist output without a model turn and r
     const shadow = await runtime.create({ cwd, interactions: true });
     const before = await readFile(marker, 'utf8');
     expect((await shadow.getComposerActions()).commands.find(row => row.id === 'builtin:mcp')?.availability).toBe('shadowed');
+    expect((await shadow.getComposerCompletions({ kind: 'command-argument', commandName: 'mcp', query: 'reconnect fi' })).items).toEqual([]);
     const run = shadow.startPrompt('/mcp reload');
     expect(await run.accepted).toEqual({ kind: 'native-command', command: 'mcp' });
     expect(await run.completion).toBe(false);
