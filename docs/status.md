@@ -1,5 +1,13 @@
 # Milestone status
 
+## Workspace files as dock tabs
+
+Workspace file links and file selections now open dedicated tabs identified by host, workspace and relative path. Reopening activates the existing tab in its current dock. Each file has one source editor with interactive breadcrumbs above it; the directory browser and nested file tabs are omitted from that dedicated view. Breadcrumb reads preserve the separate Files tab’s selected directory. The generic Files view remains available for navigation and legacy restoration.
+
+The focused suite passes 38 tests/183 assertions, with typecheck and production build passing. The new dock acceptance passes six checks/six captures against an isolated authenticated host: two exact file writes, independent buffers, dirty reopen, breadcrumb navigation/Escape, dock movement and hide/show. The seeded draft remains unchanged and no sessions are created. The existing Files regression also passes nine checks/seven captures. These are production-renderer/host checks, not installed App/main/preload or physical-window acceptance.
+
+Closing or moving a file tab preserves cached edits, but native undo/selection across remounts remains unfinished. The persistent right file tree, recursive/searchable picker, file-type icons, open-target actions and native autosave remain explicit gaps. The reference supports a 48-point header and 384×320 picker; current renderer checks do not certify installed OS pixels. See [workspace file editor](workspace-file-editor.md).
+
 ## General Files source editor
 
 General Files now uses the pinned Pierre editor with syntax highlighting, native Find, line/column links and undo retained across file and Files/Changes switches. The existing host-owned manual Save, offline cache, CAS conflicts and original command receipts remain authoritative. A delayed pre-save read can no longer replace a confirmed save or invent a conflict over newer edits. App dock visibility gates editor focus; code font and editor-surface theme controls remain connected.

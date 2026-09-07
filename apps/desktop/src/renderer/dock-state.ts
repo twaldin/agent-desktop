@@ -5,6 +5,7 @@ export type DockTabKind =
   | "goal"
   | "review"
   | "skill-file"
+  | "file"
   | "files"
   | "worktrees"
   | "terminal"
@@ -18,6 +19,7 @@ export interface DockTab {
   hostId: string;
   target: DockTarget;
   skillFile?: NativeSkillFileRef;
+  filePath?: string;
   terminalId?: string;
   browserTarget?: BrowserFrameTarget;
 }
@@ -45,6 +47,14 @@ export interface DockViewport {
   rightMinWidth?: number;
 }
 export const DOCK_BOTTOM_DEFAULT_HEIGHT = 280;
+export const MAX_WORKSPACE_FILE_PATH_LENGTH = 16_384;
+export const isWorkspaceFilePath = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= MAX_WORKSPACE_FILE_PATH_LENGTH &&
+  !value.startsWith("/") &&
+  !/[\\\x00-\x1f\x7f-\x9f]/.test(value) &&
+  value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 const emptyRegion = (): DockRegion => ({ tabIds: [], open: false });
 const other = (destination: DockDestination): DockDestination =>
   destination === "right" ? "bottom" : "right";
@@ -59,11 +69,12 @@ const clone = (state: DockState): DockState => ({
 export const dockTabId = (
   tab: Pick<
     DockTab,
-    "hostId" | "target" | "kind" | "terminalId" | "browserTarget" | "skillFile"
+    "hostId" | "target" | "kind" | "terminalId" | "browserTarget" | "skillFile" | "filePath"
   >,
 ) => {
   const base = `${tab.hostId}:${tab.target}:${tab.kind}`;
   if (tab.kind === "skill-file" && tab.skillFile) return `${base}:${encodeURIComponent(tab.skillFile.skillId)}:${encodeURIComponent(tab.skillFile.sourcePath)}:${tab.skillFile.inventory ? "inventory" : "composer"}`;
+  if (tab.kind === "file" && tab.filePath) return `${base}:${encodeURIComponent(tab.filePath)}`;
   if (tab.kind === "browser" && tab.browserTarget)
     return `${base}:target=${encodeURIComponent(`${tab.browserTarget.workerPid}\0${tab.browserTarget.name}\0${tab.browserTarget.targetId}`)}`;
   return `${base}${tab.terminalId ? `:${tab.terminalId}` : ""}`;

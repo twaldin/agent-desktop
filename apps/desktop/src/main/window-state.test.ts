@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import type { BrowserWindow } from "electron";
-import { createDockState, resizeDock, dockTabId, insertDockTab } from "../renderer/dock-state";
+import { createDockState, resizeDock, dockTabId, insertDockTab, moveDockTab, MAX_WORKSPACE_FILE_PATH_LENGTH } from "../renderer/dock-state";
 import {
   defaultWindowView,
   parseDockSnapshot,
@@ -450,4 +450,32 @@ test("skill file dock restoration preserves host-native scope and rejects confli
   expect(parseDockSnapshot(changed({skillFile:{...skillFile,target:{projectId:"p"}}}))).toBeUndefined();
   expect(parseDockSnapshot(changed({skillFile:{...skillFile,sourcePath:"/another/SKILL.md"}}))).toBeUndefined();
   expect(parseDockSnapshot(changed({skillFile:{...skillFile,content:"must not persist in window state"}}))).toBeUndefined();
+});
+
+test("workspace file docks move and restore with their exact path", () => {
+  const descriptor = { kind: "file" as const, hostId: "offline-machine", target: "project:project-one" as const, title: "a file.ts", filePath: "src/a file.ts" };
+  const tab = { ...descriptor, id: dockTabId(descriptor) };
+  let state = insertDockTab(createDockState(), tab, "right");
+  state = moveDockTab(state, tab.id, "bottom");
+  const dock = { state, tabs: [tab] };
+  expect(parseDockSnapshot(JSON.parse(JSON.stringify(dock)))).toEqual(dock);
+  const directory = temporary();
+  const store = new WindowStateStore(directory, "primary");
+  expect(store.saveView({ ...selected(), dock })).toEqual({});
+  expect(new WindowStateStore(directory, "primary").bootstrap().state?.dock).toEqual(dock);
+});
+
+test("workspace file persistence rejects invalid paths and owners", () => {
+  const descriptor = { kind: "file" as const, hostId: "owner", target: "project:p" as const, title: "file.ts", filePath: "src/file.ts" };
+  const tab = { ...descriptor, id: dockTabId(descriptor) };
+  const snapshot = { state: insertDockTab(createDockState(), tab, "right"), tabs: [tab] };
+  const changed = (patch: Record<string, unknown>) => {
+    const changedTab = { ...tab, ...patch };
+    return { ...snapshot, tabs: [changedTab], state: { ...snapshot.state, right: { ...snapshot.state.right, tabIds: [String(changedTab.id)], activeTabId: String(changedTab.id) } } };
+  };
+  for (const filePath of [undefined, "", "/absolute.ts", "src//file.ts", "src/./file.ts", "src/../file.ts", "src\\file.ts", "src/\0file.ts", `a${"b".repeat(MAX_WORKSPACE_FILE_PATH_LENGTH)}`])
+    expect(parseDockSnapshot(changed({ filePath }))).toBeUndefined();
+  expect(parseDockSnapshot(changed({ hostId: "https://owner" }))).toBeUndefined();
+  expect(parseDockSnapshot(changed({ target: "host" }))).toBeUndefined();
+  expect(parseDockSnapshot(changed({ kind: "files" }))).toBeUndefined();
 });

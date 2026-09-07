@@ -1,5 +1,5 @@
 import { parseNativeSkillFileRef } from "@agent-desktop/shared";
-import { dockTabId, type DockState, type DockTab } from "./renderer/dock-state";
+import { dockTabId, isWorkspaceFilePath, type DockState, type DockTab } from "./renderer/dock-state";
 /** Device/profile-local presentation only. Never sent to a host or shared preferences. */
 export interface WindowNavigation {
   hostId?: string;
@@ -139,7 +139,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target)) ||
       typeof item.title !== "string" ||
       item.title.length > 1000 ||
-      !["review", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file"].includes(
+      !["review", "file", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file"].includes(
         String(item.kind),
       ) ||
       (item.terminalId !== undefined && !id(item.terminalId))
@@ -153,6 +153,11 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       if (item.target !== expected) return;
     }
     if ((item.kind === "skill-file") !== Boolean(skillFile) || (item.target === "host" && item.kind !== "skill-file")) return;
+    let filePath: string | undefined;
+    if (item.kind === "file") {
+      if (!isWorkspaceFilePath(item.filePath)) return;
+      filePath = item.filePath;
+    } else if (item.filePath !== undefined) return;
     const browserTarget = item.browserTarget;
     const validBrowserTarget =
       browserTarget &&
@@ -167,6 +172,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       title: item.title,
       ...(item.unread === true ? { unread: true } : {}),
       ...(skillFile ? {skillFile} : {}),
+      ...(filePath === undefined ? {} : { filePath }),
       hostId: item.hostId,
       target: item.target as DockTab["target"],
       kind: item.kind as DockTab["kind"],

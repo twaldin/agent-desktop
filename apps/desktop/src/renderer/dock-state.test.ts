@@ -40,3 +40,25 @@ test("native skill files remain distinct across hosts, files and discovery scope
   expect(dockTabId({...descriptor,skillFile:{...descriptor.skillFile,sourcePath:"/other/SKILL.md"}})).not.toBe(first);
   expect(dockTabId({...descriptor,target:"project:p",skillFile:{...descriptor.skillFile,target:{projectId:"p"}}})).not.toBe(first);
 });
+
+test("workspace file IDs preserve the exact path, owner and workspace", () => {
+  const descriptor = { hostId: "home", target: "project:p" as const, kind: "file" as const, filePath: "src/a file.ts" };
+  const first = dockTabId(descriptor);
+  expect(first).toBe("home:project:p:file:src%2Fa%20file.ts");
+  expect(dockTabId({ ...descriptor, filePath: "src/b.ts" })).not.toBe(first);
+  expect(dockTabId({ ...descriptor, hostId: "work" })).not.toBe(first);
+  expect(dockTabId({ ...descriptor, target: "session:s" })).not.toBe(first);
+});
+
+test("reopening an exact workspace file reuses its tab across docks", () => {
+  const descriptor = { hostId: "home", target: "project:p" as const, kind: "file" as const, filePath: "src/a.ts", title: "a.ts" };
+  const tab = { ...descriptor, id: dockTabId(descriptor) };
+  let state = insertDockTab(createDockState(), tab, "right");
+  state = insertDockTab(state, tab, "bottom");
+  expect(state.right).toMatchObject({ tabIds: [tab.id], activeTabId: tab.id, open: true });
+  expect(state.bottom.tabIds).toEqual([]);
+  state = moveDockTab(state, tab.id, "bottom");
+  state = insertDockTab(state, tab, "right");
+  expect(state.right.tabIds).toEqual([]);
+  expect(state.bottom).toMatchObject({ tabIds: [tab.id], activeTabId: tab.id, open: true });
+});

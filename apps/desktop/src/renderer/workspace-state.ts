@@ -98,6 +98,10 @@ export class WorkspaceState {
   }
   list(path: string) {
     this.directory = path; this.changed();
+    return this.readDirectory(path);
+  }
+  /** Cache entries without navigating another panel’s directory browser. */
+  readDirectory(path: string) {
     return this.load(`files:${path}`, async () => { const result = await this.query({ type: "files.list", path }); if (result.type !== "files.list") throw new Error("The host returned the wrong directory response."); this.directories.set(path, result.entries); this.saveSoon(); });
   }
   open(path: string) { this.opened = path; this.changed(); this.saveSoon(); return this.read(path); }

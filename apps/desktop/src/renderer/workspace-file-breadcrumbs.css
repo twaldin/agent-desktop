@@ -1,0 +1,14 @@
+.editor-toolbar.workspace-file-toolbar { min-height:48px; height:48px; padding:0 8px!important; gap:8px; border-bottom:var(--border-width,1px) solid var(--border); font:var(--font-weight,400) var(--font-size,14px) var(--ui-font); }
+.workspace-file-breadcrumbs { display:flex; flex:1; min-width:0; align-items:center; overflow:hidden; font-size:calc(var(--font-size,14px) * 0.8571428571); }
+.workspace-file-breadcrumbs>span { display:flex; align-items:center; min-width:0; flex-shrink:1; }
+.workspace-file-breadcrumbs>span:last-child { flex-shrink:0; max-width:60%; }
+.workspace-file-breadcrumbs button { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:4px; border-radius:4px; color:var(--secondary); font:inherit; }
+.workspace-file-breadcrumbs>span:last-child button { color:var(--text); font-weight:500; }
+.workspace-file-breadcrumbs button:hover { background:var(--hover); }
+.workspace-file-breadcrumbs .icon { width:16px; height:16px; flex:none; color:var(--tertiary); }
+.workspace-file-picker { position:fixed; z-index:100; overflow:auto; padding:4px; border:var(--border-width,1px) solid var(--border); border-radius:var(--radius-large,12px); background:var(--menu-surface,var(--elevated-surface)); box-shadow:0 8px 24px #0005; outline:none; }
+.workspace-file-picker>button { display:flex; align-items:center; gap:8px; width:100%; min-width:0; min-height:28px; padding:4px 8px; border-radius:var(--radius-small,6px); text-align:left; font:var(--font-weight,400) var(--font-size,14px) var(--ui-font); }
+.workspace-file-picker>button>span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-file-picker>button .icon { width:16px; height:16px; flex:none; color:var(--secondary); }
+.workspace-file-picker>button:hover,.workspace-file-picker>button:focus-visible { background:var(--hover); outline:none; }
+.workspace-file-picker>p { margin:0; padding:8px; font-size:var(--small-font-size,12px); color:var(--secondary); }

@@ -10,6 +10,7 @@ import {
   createDockState,
   dockTabId,
   insertDockTab,
+  isWorkspaceFilePath,
   type DockDestination,
   type DockState,
   type DockTab,
@@ -50,7 +51,7 @@ export function useWorkbenchDock(
     }));
   };
   function open(
-    kind: Exclude<DockTab["kind"], "terminal" | "skill-file">,
+    kind: Exclude<DockTab["kind"], "terminal" | "skill-file" | "file">,
     destination: DockDestination = "right",
     owner = hostId,
     workspace = target,
@@ -68,6 +69,26 @@ export function useWorkbenchDock(
             : kind === "browser"
               ? "Browser"
               : "Files",
+    };
+    add({ ...descriptor, id: dockTabId(descriptor) }, destination);
+  }
+
+  function openFile(
+    path: string,
+    owner: string,
+    workspace: WorkspaceTarget,
+    destination: DockDestination = "right",
+  ) {
+    if (!isWorkspaceFilePath(path)) {
+      onError("Use a relative file path within this workspace.");
+      return;
+    }
+    const descriptor: Omit<DockTab, "id"> = {
+      kind: "file",
+      hostId: owner,
+      target: workspaceKey(workspace) as DockTarget,
+      filePath: path,
+      title: path.split("/").at(-1)!.slice(0, 1000),
     };
     add({ ...descriptor, id: dockTabId(descriptor) }, destination);
   }
@@ -385,6 +406,7 @@ export function useWorkbenchDock(
     change,
     toggle,
     open,
+    openFile,
     openSkillFile,
     terminal,
     bindTerminal,

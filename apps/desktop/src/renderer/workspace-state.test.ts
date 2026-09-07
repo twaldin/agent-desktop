@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceService } from "../../../host/src/workspace/service";
@@ -72,6 +72,20 @@ async function fixture() {
 }
 
 describe("workspace renderer against actual file and Git services", () => {
+  test("breadcrumb reads cache folders without navigating the directory tab", async () => {
+    const { path, data, owners, deliveries } = await fixture();
+    await mkdir(join(path, "src")); await mkdir(join(path, "docs"));
+    await writeFile(join(path, "docs", "guide.txt"), "guide\n");
+    await data.list("src"); await data.open("sample.txt"); data.edit("sample.txt", "unsaved\n");
+    await data.readDirectory("docs");
+    expect(data.directories.get("docs")?.map(entry => entry.path)).toEqual(["docs/guide.txt"]);
+    expect(data.directory).toBe("src"); expect(data.opened).toBe("sample.txt");
+    expect(data.documents.get("sample.txt")?.text).toBe("unsaved\n");
+    expect(data.documents.get("sample.txt")?.dirty).toBe(true);
+    expect(owners.every(owner => owner === "home")).toBe(true); expect(deliveries).toHaveLength(0);
+    data.stop();
+  });
+
   test("branch checkout refreshes native files while preserving unsaved editor text", async () => {
     const f = await fixture();
     f.git("switch", "-c", "feature");
