@@ -1,10 +1,12 @@
 import type {ReactNode} from 'react';
 import type { NativePlugin } from '@agent-desktop/shared';
 import { Icon } from './Icons';
+import { resolveTranscriptLink } from './transcript-links';
 import './native-plugin-summary.css';
 
-/** Public native metadata only; package artwork and website are not in this catalog. */
-export function NativePluginSummary({plugin,disabled,onToggle,actions}:{plugin:NativePlugin;disabled:boolean;onToggle():void;actions?:ReactNode}) {
+/** Public native metadata only; artwork is an application fallback. */
+export function NativePluginSummary({plugin,disabled,onToggle,onOpenWebsite,actions}:{plugin:NativePlugin;disabled:boolean;onToggle():void;onOpenWebsite?(url:string):void;actions?:ReactNode}) {
+ const website=plugin.homepage?resolveTranscriptLink(plugin.homepage):undefined;
  return <div className="native-plugin-summary">
   <div className="plugin-detail-artwork" aria-hidden="true"><Icon name="skill"/></div>
   <div className="integration-title plugin-detail-title">
@@ -16,7 +18,9 @@ export function NativePluginSummary({plugin,disabled,onToggle,actions}:{plugin:N
   <section className="plugin-detail-information" aria-label="Plugin information">
    <h3>Information</h3>
    <dl>
+    {plugin.category && <><dt>Category</dt><dd>{plugin.category}</dd></>}
     <dt>Version</dt><dd>{plugin.version}</dd>
+    <dt>Website</dt><dd>{plugin.homepage ? website?.kind==='external'&&onOpenWebsite ? <a className="plugin-detail-website" href={website.url} onClick={event=>{event.preventDefault();onOpenWebsite(website.url);}}><span>{plugin.homepage}</span><Icon name="browserExternal"/></a> : <span title={website?.kind==='unavailable'?website.reason:undefined}>{plugin.homepage}</span> : <span className="plugin-detail-unavailable">Unavailable</span>}</dd>
     <dt>Installed for</dt><dd>{plugin.scope==='project'?'This project':'User'}{plugin.shadowed && ' · Shadowed'}</dd>
     <dt>Source</dt><dd>{plugin.kind==='marketplace'?'Marketplace':'Package'}</dd>
    </dl>

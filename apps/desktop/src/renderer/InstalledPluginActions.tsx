@@ -25,5 +25,5 @@ export function InstalledPluginActions({name,revision,disabled,canUpgrade,onActi
   if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
   event.preventDefault();const items=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')],index=items.indexOf(document.activeElement as HTMLButtonElement);
   items[event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();
- }}><button role="menuitem" disabled={!canUpgrade} onClick={()=>{dismiss();onAction('upgrade',trigger.current!);}}><Icon name="refresh"/>Upgrade</button><button role="menuitem" onClick={()=>{dismiss();onAction('uninstall',trigger.current!);}}><Icon name="trash"/>Uninstall</button></div>,document.body)}</>;
+ }}><button role="menuitem" disabled={!canUpgrade} onClick={()=>{dismiss();onAction('upgrade',trigger.current!);}}><Icon name="refresh"/>Upgrade</button><button role="menuitem" className="installed-plugin-uninstall" onClick={()=>{dismiss();onAction('uninstall',trigger.current!);}}><Icon name="trash"/>Uninstall</button></div>,document.body)}</>;
 }

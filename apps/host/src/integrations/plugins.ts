@@ -15,6 +15,8 @@ import {
   getInstalledPluginsRegistryPath,
   getMarketplacesCacheDir,
   getPluginsCacheDir,
+  parseMarketplaceCatalog,
+  parsePluginId,
   type InstalledPluginEntry,
 } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/marketplace";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "@oh-my-pi/pi-coding-agent/discovery/helpers";
@@ -31,6 +33,8 @@ const READ_ONLY_PROJECT = "Project-scoped plugin settings and features require a
 const EMPTY_RUNTIME: PluginRuntimeConfig = { plugins: {}, settings: {} };
 const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_CATEGORY_BYTES = 128;
+const MAX_HOMEPAGE_BYTES = 2048;
 
 type JsonObject = Record<string, unknown>;
 type ProjectOverrides = {
@@ -44,6 +48,8 @@ type Context = {
   userPackage: string;
   userLock: string;
   userRegistry: string;
+  marketplaceRegistry: string;
+  marketplaceCache: string;
   projectRegistry?: string;
   projectRoot?: string;
   projectPackage?: string;
@@ -51,10 +57,29 @@ type Context = {
   projectOverrides: string;
 };
 type Row = { public: NativePlugin; nativeName: string; manifest: PluginManifest };
+type PluginMetadata = Pick<NativePlugin, "category" | "homepage">;
 
 function object(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must contain a JSON object`);
   return value as JsonObject;
+}
+function safeText(value: unknown, maxBytes: number): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0") || Buffer.byteLength(value) > maxBytes) return undefined;
+  return value;
+}
+function safeHomepage(value: unknown): string | undefined {
+  const raw = safeText(value, MAX_HOMEPAGE_BYTES);
+  if (!raw || /[\u0000-\u001f\u007f]/.test(raw)) return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || !["http:", "https:"].includes(url.protocol)) return undefined;
+    return raw;
+  } catch { return undefined; }
+}
+function safeCategory(value: unknown): string | undefined {
+  const raw = safeText(value, MAX_CATEGORY_BYTES);
+  if (!raw || !raw.trim() || /[\u0000-\u001f\u007f]/.test(raw)) return undefined;
+  return raw;
 }
 async function text(file: string): Promise<string | undefined> {
   let handle;
@@ -186,7 +211,8 @@ function manifest(value: unknown, version: string, label: string): PluginManifes
   }
   return { ...raw, version } as unknown as PluginManifest;
 }
-async function installed(name: string, pluginPath: string, config: PluginRuntimeConfig, project: ProjectOverrides): Promise<InstalledPlugin | undefined> {
+type InstalledProjection = InstalledPlugin & { homepage?: string };
+async function installed(name: string, pluginPath: string, config: PluginRuntimeConfig, project: ProjectOverrides): Promise<InstalledProjection | undefined> {
   const pkg = await json(path.join(pluginPath, "package.json"), `Plugin ${name} package`);
   if (!pkg) return undefined;
   const actual = typeof pkg.name === "string" && pkg.name ? pkg.name : name;
@@ -194,8 +220,10 @@ async function installed(name: string, pluginPath: string, config: PluginRuntime
   if (typeof pkg.version !== "string") throw new Error(`Plugin ${name} package version is invalid`);
   const pluginManifest = manifest(pkg.omp ?? pkg.pi ?? {}, pkg.version, `Plugin ${name} manifest`);
   const state = config.plugins[actual] ?? { version: pkg.version, enabled: true, enabledFeatures: null };
+  const homepage = safeHomepage(pkg.homepage);
   return {
     name: actual, version: pkg.version, path: pluginPath, manifest: pluginManifest,
+    ...(homepage ? { homepage } : {}),
     enabled: state.enabled && !(project.disabled?.includes(actual) ?? false),
     enabledFeatures: project.features?.[actual] ?? state.enabledFeatures,
   };
@@ -219,14 +247,15 @@ function pluginSettings(plugin: InstalledPlugin, raw: Record<string, unknown>, p
     };
   });
 }
-function row(id: string, scope: "user" | "project", kind: "package" | "marketplace", plugin: InstalledPlugin,
+function row(id: string, scope: "user" | "project", kind: "package" | "marketplace", plugin: InstalledProjection,
   rawSettings: Record<string, unknown>, projectSettings: Record<string, unknown>, capabilities: { toggle: boolean; features: boolean; settings: boolean; reason?: string }, shadowed = false,
-  acquisition?: NonNullable<NativePlugin["acquisition"]>): Row {
+  acquisition?: NonNullable<NativePlugin["acquisition"]>, metadata?: PluginMetadata): Row {
   const definitions = plugin.manifest.features ?? {};
   const enabledSet = plugin.enabledFeatures === null ? null : new Set(plugin.enabledFeatures);
   return { nativeName: plugin.name, manifest: plugin.manifest, public: {
     id, name: plugin.name, title: plugin.manifest.name ?? plugin.name,
     ...(plugin.manifest.description ? { description: plugin.manifest.description } : {}),
+    ...(kind === "package" && plugin.homepage ? { homepage: plugin.homepage } : metadata ?? {}),
     version: plugin.version, scope, kind, enabled: plugin.enabled, ...(shadowed ? { shadowed: true } : {}),
     ...(acquisition ? { acquisition } : {}),
     canToggle: capabilities.toggle, canSetFeatures: capabilities.features, canSetSettings: capabilities.settings,
@@ -251,7 +280,8 @@ export class NativePlugins {
     const projectRoot = projectRegistry ? path.dirname(projectRegistry) : undefined;
     return {
       cwd: canonical, userRoot: getPluginsDir(), userPackage: getPluginsPackageJson(), userLock: getPluginsLockfile(),
-      userRegistry: getInstalledPluginsRegistryPath(), projectRegistry, projectRoot,
+      userRegistry: getInstalledPluginsRegistryPath(), marketplaceRegistry: getMarketplacesRegistryPath(), marketplaceCache: getMarketplacesCacheDir(),
+      projectRegistry, projectRoot,
       projectPackage: projectRoot ? path.join(projectRoot, "package.json") : undefined,
       projectLock: projectRoot ? path.join(projectRoot, "omp-plugins.lock.json") : undefined,
       projectOverrides: getProjectPluginOverridesPath(canonical),
@@ -259,10 +289,56 @@ export class NativePlugins {
   }
   #marketplace(context: Context): MarketplaceManager {
     return new MarketplaceManager({
-      marketplacesRegistryPath: getMarketplacesRegistryPath(), installedRegistryPath: context.userRegistry,
+      marketplacesRegistryPath: context.marketplaceRegistry, installedRegistryPath: context.userRegistry,
       ...(context.projectRegistry ? { projectInstalledRegistryPath: context.projectRegistry } : {}),
-      marketplacesCacheDir: getMarketplacesCacheDir(), pluginsCacheDir: getPluginsCacheDir(), clearPluginRootsCache: clearPluginRootsAndCaches,
+      marketplacesCacheDir: context.marketplaceCache, pluginsCacheDir: getPluginsCacheDir(), clearPluginRootsCache: clearPluginRootsAndCaches,
     });
+  }
+  async #marketplaceMetadata(context: Context, referenced: ReadonlySet<string>): Promise<{ metadata: Map<string, PluginMetadata>; files: string[] }> {
+    const files = [context.marketplaceRegistry];
+    const metadata = new Map<string, PluginMetadata>();
+    const rawRegistry = await text(context.marketplaceRegistry);
+    if (rawRegistry === undefined) return { metadata, files };
+    let value: unknown;
+    try { value = JSON.parse(rawRegistry); } catch { return { metadata, files }; }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return { metadata, files };
+    const registry = value as JsonObject;
+    if (registry.version !== 1 || !Array.isArray(registry.marketplaces) || registry.marketplaces.length > 256) return { metadata, files };
+    const names = new Map<string, number>();
+    for (const item of registry.marketplaces) if (item && typeof item === "object" && !Array.isArray(item) && typeof (item as JsonObject).name === "string") {
+      const name = (item as JsonObject).name as string;
+      names.set(name, (names.get(name) ?? 0) + 1);
+    }
+    const cacheRoot = await realpath(context.marketplaceCache).catch(() => undefined);
+    if (!cacheRoot) return { metadata, files };
+    for (const item of registry.marketplaces) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const entry = item as JsonObject;
+      if (typeof entry.name !== "string" || !referenced.has(entry.name) || !parsePluginId(`metadata@${entry.name}`) || names.get(entry.name) !== 1) continue;
+      const catalogPath = path.resolve(context.marketplaceCache, entry.name, "marketplace.json");
+      if (typeof entry.catalogPath !== "string" || path.resolve(entry.catalogPath) !== catalogPath) continue;
+      let parent: string;
+      try { parent = await realpath(path.dirname(catalogPath)); } catch { continue; }
+      const relative = path.relative(cacheRoot, parent);
+      if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+      let rawCatalog: string | undefined;
+      try { rawCatalog = await text(catalogPath); } catch { continue; }
+      files.push(catalogPath);
+      if (rawCatalog === undefined) continue;
+      let catalog;
+      try { catalog = parseMarketplaceCatalog(rawCatalog, catalogPath); } catch { continue; }
+      if (catalog.name !== entry.name || catalog.plugins.length > 4096) continue;
+      const pluginNames = new Map<string, number>();
+      for (const plugin of catalog.plugins) pluginNames.set(plugin.name, (pluginNames.get(plugin.name) ?? 0) + 1);
+      for (const plugin of catalog.plugins) {
+        if (pluginNames.get(plugin.name) !== 1) continue;
+        const category = safeCategory(plugin.category), homepage = safeHomepage(plugin.homepage);
+        if (category || homepage) metadata.set(`${plugin.name}@${catalog.name}`, {
+          ...(category ? { category } : {}), ...(homepage ? { homepage } : {}),
+        });
+      }
+    }
+    return { metadata, files };
   }
   async #load(context: Context): Promise<{ rows: Row[]; files: string[] }> {
     const files = [context.userPackage, context.userLock, context.userRegistry, context.projectOverrides,
@@ -280,6 +356,12 @@ export class NativePlugins {
     const project = overrides(projectOverridesValue, "Project plugin overrides");
     const userMarket = registry(userRegistryValue, "User marketplace registry", "user");
     const projectMarket = registry(projectRegistryValue, "Project marketplace registry", "project");
+    const referencedMarketplaces = new Set([...Object.keys(userMarket), ...Object.keys(projectMarket)].flatMap(id => {
+      const identity = parsePluginId(id);
+      return identity ? [identity.marketplace] : [];
+    }));
+    const marketplaceMetadata = await this.#marketplaceMetadata(context, referencedMarketplaces);
+    files.push(...marketplaceMetadata.files);
     const marketPaths = new Set(await Promise.all([...Object.values(userMarket), ...Object.values(projectMarket)].flat().map(async entry => {
       try { return await realpath(entry.installPath); } catch { return path.resolve(entry.installPath); }
     })));
@@ -300,10 +382,14 @@ export class NativePlugins {
       files.push(path.join(pluginPath, "package.json"));
     }
     for (const plugin of await new PluginManager(context.cwd).list()) {
-      rows.push(row(`package:user:${plugin.name}`, "user", "package", plugin,
+      const packageFile = path.join(plugin.path, "package.json");
+      const pkg = await json(packageFile, `Plugin ${plugin.name} package`);
+      const homepage = safeHomepage(pkg?.homepage);
+      const projected: InstalledProjection = { ...plugin, ...(homepage ? { homepage } : {}) };
+      rows.push(row(`package:user:${plugin.name}`, "user", "package", projected,
         userRuntime.settings[plugin.name] ?? {}, project.settings?.[plugin.name] ?? {},
         { toggle: true, features: true, settings: true }, enabledProjectNames.has(plugin.name)));
-      files.push(path.join(plugin.path, "package.json"));
+      files.push(packageFile);
     }
     const summaries = await this.#marketplace(context).listInstalledPlugins();
     for (const summary of summaries) {
@@ -318,11 +404,12 @@ export class NativePlugins {
       if (!plugin) throw new Error(`Marketplace plugin ${summary.id} package is missing`);
       plugin.enabled = entry.enabled !== false && plugin.enabled;
       const projectScoped = summary.scope === "project";
+      const identity = parsePluginId(summary.id);
       rows.push(row(`marketplace:${summary.scope}:${summary.id}`, summary.scope, "marketplace", plugin,
         scopedRuntime.settings[plugin.name] ?? {}, project.settings?.[plugin.name] ?? {},
         { toggle: true, features: !projectScoped, settings: !projectScoped,
           ...(projectScoped ? { reason: READ_ONLY_PROJECT } : {}) }, summary.shadowedBy === "project",
-        { pluginId: summary.id, scope: summary.scope }));
+        { pluginId: summary.id, scope: summary.scope }, identity ? marketplaceMetadata.metadata.get(summary.id) : undefined));
       files.push(path.join(entry.installPath, "package.json"));
     }
     rows.sort((a, b) => a.public.title.localeCompare(b.public.title) || a.public.id.localeCompare(b.public.id));

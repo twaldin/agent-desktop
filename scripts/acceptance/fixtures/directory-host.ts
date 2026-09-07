@@ -7,7 +7,7 @@ Bun.spawnSync(['git','init','-q',project]);
 await writeFile(join(agent,'config.yml'),'extensions: []\ndisabledExtensions:\n  - skill:unrelated\n');
 await writeFile(join(project,'.omp','skills','directory-skill','SKILL.md'),'---\nname: directory-skill\ndescription: Read the fixture checklist before changing files\n---\n# Directory skill\n\nDIRECTORY_SKILL_CONTENT from the actual owning project.\n'+Array.from({length:24},(_,i)=>`\n## Checklist item ${i+1}\n\nRead the current workspace before applying item ${i+1}.\n`).join('')+'\nDOCUMENT_END_MARKER\n');
 await writeFile(join(market,'sample','package.json'),JSON.stringify({name:'directory-sample',version:'1.0.0',omp:{name:'Directory sample',description:'Installed native package for browsing'}}));
-await writeFile(join(market,'.omp-plugin','marketplace.json'),JSON.stringify({name:'directory-market',owner:{name:'Fixture'},plugins:[{name:'sample',description:'Native marketplace sample',version:'1.0.0',source:'./sample'}]}));
+await writeFile(join(market,'.omp-plugin','marketplace.json'),JSON.stringify({name:'directory-market',owner:{name:'Fixture'},plugins:[{name:'sample',description:'Native marketplace sample',category:'productivity',homepage:'https://example.com/plugins/directory-sample',version:'1.0.0',source:'./sample'}]}));
 const host=await startHost({dataDirectory:join(root,'data'),agentDirectory:agent,discoveryDirectory:project,tailscale:false});
 const request=async(route:string,body:unknown)=>{const r=await fetch(host.connection.origin+route,{method:'POST',headers:{Authorization:`Bearer ${host.connection.token}`,'Content-Type':'application/json','X-Agent-Host-Id':host.connection.hostId},body:JSON.stringify(body)});const v=await r.json() as any;if(!r.ok)throw new Error('Fixture native setup failed '+r.status);return v;};
 const response=await request('/v1/commands',{id:'directory-project',command:{type:'project.add',path:project}});if(!response.ok)throw new Error('Project creation failed');
@@ -20,7 +20,7 @@ for(const action of [{operation:'marketplace.add',source:market},{operation:'plu
 }
 if(process.env.PLUGIN_STANDALONE_FIXTURE==='1'){
  await writeFile(join(market,'sample','package.json'),JSON.stringify({name:'directory-sample',version:'2.0.0',omp:{name:'Directory sample',description:'Installed native package for browsing'}}));
- await writeFile(join(market,'.omp-plugin','marketplace.json'),JSON.stringify({name:'directory-market',owner:{name:'Fixture'},plugins:[{name:'sample',description:'Native marketplace sample',version:'2.0.0',source:'./sample'}]}));
+ await writeFile(join(market,'.omp-plugin','marketplace.json'),JSON.stringify({name:'directory-market',owner:{name:'Fixture'},plugins:[{name:'sample',description:'Native marketplace sample',category:'productivity',homepage:'https://example.com/plugins/directory-sample',version:'2.0.0',source:'./sample'}]}));
  const catalog=await request('/v1/integrations/acquisition/catalog',{target}),id=crypto.randomUUID();
  await request('/v1/integrations/acquisition/start',{target,request:{id,expectedRevision:catalog.revision,action:{operation:'marketplace.update',name:'directory-market'}}});
  for(let i=0;;i++){const row=(await request('/v1/integrations/acquisition/operations',{})).find((x:any)=>x.id===id);if(row.state==='succeeded')break;if(row.state!=='running'||i>400)throw new Error('Fixture update failed');await Bun.sleep(25);}

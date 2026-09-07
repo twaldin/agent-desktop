@@ -1,5 +1,11 @@
 # Milestone status
 
+## Native plugin Information
+
+Installed details now show category/homepage from exact cached OMP metadata, without network fetch or repository guesses. Only referenced marketplaces are read; metadata changes alter the catalog revision. Website actions use the existing desktop opener and owner-fenced failure handling. Uninstall now uses the configurable danger token with reference dark#ff6764.
+
+Validation:30 tests/156 assertions, typecheck/build/review and9 hidden Electron checks/13 captures using a real native host. One upgrade/uninstall, unchanged revision1 draft, zero sessions. Website opening was deliberately rejected by the component fixture; successful OS opening remains unverified. Candidate ICC normalization reproduces the danger value, but untagged reference/native capture differences prevent full pixel credit. Worker29/schema7; runtime pins and Work runs unchanged. Evidence: `.data/plugin-metadata-checkpoint/`, `.data/plugin-metadata-ui-1/`.
+
 ## Resumed-session model identity
 
 An app-owned worker reopening now refreshes the stored session model from actual native state before readiness, preserving conversation activity time. Cached/loading/failed model controls are labeled Last reported session; explicit drafts remain unchanged. The read-only external inspector still grants no writable admission or model inference from journal order.19 focused tests/103 assertions, typecheck, build and independent review pass. No private external session, managed artifact, provider or installed UI was touched. See [session ownership](external-session-ownership.md#model-identity-on-resume) and `.data/session-model-reopen-checkpoint/`.

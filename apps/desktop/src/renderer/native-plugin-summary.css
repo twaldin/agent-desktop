@@ -29,3 +29,9 @@
 .plugin-detail-toolbar button:hover { color:var(--text); }
 .plugin-detail-toolbar .icon { width:16px; height:16px; flex:none; color:var(--secondary); }
 .plugin-detail-toolbar span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+
+.plugin-detail-website { display:inline-flex; align-items:center; gap:6px; max-width:100%; color:var(--text); text-decoration:none; }
+.plugin-detail-website:hover { text-decoration:underline; }
+.plugin-detail-website .icon { width:14px; height:14px; flex:none; color:var(--secondary); }
+
+.plugin-detail-website > span { min-width:0; overflow-wrap:anywhere; }

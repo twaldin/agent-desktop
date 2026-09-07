@@ -20,3 +20,5 @@
 .marketplace-dialog form>p:first-child{margin:4px 0 12px}.marketplace-dialog label+label{margin-top:12px}.marketplace-dialog footer button{height:32px;box-sizing:border-box;font-size:inherit;line-height:20px;padding:4px 12px}.marketplace-dialog input:focus-visible,.marketplace-dialog textarea:focus-visible{outline:none;border-color:var(--focus-ring,var(--accent));box-shadow:none}
 
 .installed-plugin-actions-trigger{width:28px;height:28px;flex:none}.installed-plugin-actions-trigger .icon{width:16px;height:16px}.installed-plugin-version{color:var(--secondary);font-size:12px;white-space:nowrap}.installed-plugin-actions-menu{position:fixed;right:auto;z-index:100;min-width:176px}.installed-plugin-actions-menu button{display:flex;align-items:center;gap:8px}.installed-plugin-actions-menu .icon{width:16px;height:16px;flex:none}.installed-plugin-actions-menu button:disabled{color:var(--tertiary);cursor:default}
+
+.installed-plugin-actions-menu .installed-plugin-uninstall:not(:disabled){color:var(--danger)}
