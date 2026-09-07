@@ -7,20 +7,29 @@ import { SESSION_MCP_OWNER_HEADER, type CommandEnvelope, type CommandResult, typ
 const root = process.argv[2]!;
 const agentDir = path.join(root, "agent"), cwd = path.join(root, "project");
 await Promise.all([agentDir, cwd, path.join(root,"gates")].map(dir => mkdir(dir)));
-let tokens = 0, initializes = 0;
+const toolMode = process.argv[3] === "--tool" || process.argv[3] === "--ui-tool";
+let tokens = 0, initializes = 0, toolCalls = 0;
+let requireGrant = true;
 const remote = Bun.serve({ hostname:"127.0.0.1", port:0, async fetch(request) {
   const url = new URL(request.url);
   if (url.pathname === "/mcp") {
     if (request.method !== "POST") return new Response(null,{status:405});
     const body = await request.json() as {method:string;id?:number};
     if (body.method === "initialize") initializes++;
-    if (request.headers.get("Authorization") !== "Bearer route-private-access") return new Response("authorization required", {status:401,headers:{"WWW-Authenticate":`Bearer resource_metadata="${url.origin}/protected"`}});
-    if (body.method === "initialize") return Response.json({jsonrpc:"2.0",id:body.id,result:{protocolVersion:"2025-03-26",capabilities:{},serverInfo:{name:"auth-route",version:"1"}}});
+    if (!toolMode && request.headers.get("Authorization") !== "Bearer route-private-access") return new Response("authorization required", {status:401,headers:{"WWW-Authenticate":`Bearer resource_metadata="${url.origin}/protected"`}});
+    if (body.method === "initialize") return Response.json({jsonrpc:"2.0",id:body.id,result:{protocolVersion:"2025-03-26",capabilities:toolMode?{tools:{}}:{},serverInfo:{name:"auth-route",version:"1"}}});
+    if (body.method === "tools/list") return Response.json({jsonrpc:"2.0",id:body.id,result:{tools:[{name:"tool",description:"Protected native read",inputSchema:{type:"object",properties:{}}}]}});
+    if (body.method === "tools/call") {
+      toolCalls++;
+      return Response.json({jsonrpc:"2.0",id:body.id,result: !requireGrant && request.headers.get("Authorization")==="Bearer route-private-access"
+        ? {content:[{type:"text",text:"Native protected read completed."}]}
+        : {isError:true,content:[{type:"text",text:"Authorization required"}],_meta:{"mcp/www_authenticate":[`Bearer resource_metadata="${url.origin}/protected"`]}}});
+    }
     return new Response(null,{status:202});
   }
   if (url.pathname === "/protected" || url.pathname.startsWith("/.well-known/oauth-protected-resource")) return Response.json({resource:`${url.origin}/mcp`,authorization_servers:[url.origin],scopes_supported:["read"]});
   if (url.pathname === "/.well-known/oauth-authorization-server") return Response.json({issuer:url.origin,authorization_endpoint:`${url.origin}/authorize`,token_endpoint:`${url.origin}/token`,client_id:"route-client"});
-  if (url.pathname === "/token") { tokens++; return Response.json({access_token:"route-private-access",refresh_token:"route-private-refresh",expires_in:3600,token_type:"Bearer"}); }
+  if (url.pathname === "/token") { tokens++; requireGrant=false; return Response.json({access_token:"route-private-access",refresh_token:"route-private-refresh",expires_in:3600,token_type:"Bearer"}); }
   return new Response(null,{status:404});
 }});
 const origin = `http://127.0.0.1:${remote.port}`;
@@ -44,10 +53,12 @@ function responseBody(value:NativeMcpAuthorizationResponse){const current=value.
 try {
   const created=await command({id:"create",command:{type:"session.create",projectId:null,cwd,model:{provider:"mcp-contract",id:"controlled"}}});assert(created.ok);
   const session=created.value as SessionSummary;
-  if (process.argv[3] === "--ui" || process.argv[3] === "--ui-slash") {
+  if (process.argv[3] === "--ui" || process.argv[3] === "--ui-slash" || process.argv[3] === "--ui-tool") {
     const slash = process.argv[3] === "--ui-slash";
     const slashRun = slash ? command({id:"ui-slash-reauth",command:{type:"session.prompt",sessionId:session.id,text:"/mcp reauth fixture"}}) : undefined;
-    await writeFile(path.join(root,"ui-ready.json"),JSON.stringify({endpoint:host.connection,sessionId:session.id,issuer:origin,slash}));
+    const toolRun = toolMode ? command({id:"ui-tool-auth",command:{type:"session.prompt",sessionId:session.id,text:"Read the protected MCP fixture once."}}) : undefined;
+    if (toolRun) assert((await toolRun).ok);
+    await writeFile(path.join(root,"ui-ready.json"),JSON.stringify({endpoint:host.connection,sessionId:session.id,issuer:origin,slash,tool:toolMode,conversation:slash||toolMode}));
     const deadline=Date.now()+90_000;
     while (!await Bun.file(path.join(root,"ui-done")).exists()) { if(Date.now()>deadline)throw new Error("UI acceptance timed out");await Bun.sleep(50); }
     if (slashRun) { const receipt=await slashRun;assert(receipt.ok);assert.equal(receipt.admission?.kind,"native-command"); }
@@ -57,11 +68,43 @@ try {
     const db=new Database(path.join(root,"data","state.sqlite"));
     const rows=db.query("SELECT * FROM commands").all();db.close();
     for(const secret of ["route-private-code","route-private-access","route-private-refresh","/authorize?"])assert(!JSON.stringify(rows).includes(secret));
+    if (toolMode) {for (let i=0;i<400&&host.store.getSession(session.id)?.status!=="idle";i++) await Bun.sleep(10);assert.equal(host.store.getSession(session.id)?.status,"idle");}
     const entries=(await readFile(session.sessionFile,"utf8")).trim().split("\n").map(line=>JSON.parse(line));
     const nativeUserMessages=entries.filter(entry=>entry.type==="message"&&entry.message?.role==="user").length;
     const nativeAssistantMessages=entries.filter(entry=>entry.type==="message"&&entry.message?.role==="assistant").length;
-    assert.equal(nativeUserMessages,0);assert.equal(nativeAssistantMessages,0);
-    await writeFile(path.join(root,"ui-proof.json"),JSON.stringify({tokens,initializes,commands:rows.length,slash,nativeUserMessages,nativeAssistantMessages,status:final.value?.status,reconnected:final.value?.reconnected,privateJournal:true}));
+    if (toolMode) {
+      for (let i=0;i<400&&toolCalls<2;i++) await Bun.sleep(10);
+      assert.equal(toolCalls,2);assert.equal(nativeUserMessages,1);assert(nativeAssistantMessages>0);
+    } else {assert.equal(nativeUserMessages,0);assert.equal(nativeAssistantMessages,0);}
+    await writeFile(path.join(root,"ui-proof.json"),JSON.stringify({tokens,initializes,toolCalls,tool:toolMode,commands:rows.length,slash,nativeUserMessages,nativeAssistantMessages,status:final.value?.status,reconnected:final.value?.reconnected,privateJournal:true}));
+  } else if (process.argv[3] === "--tool") {
+    const envelope:CommandEnvelope={id:"tool-auth",command:{type:"session.prompt",sessionId:session.id,text:"Read the protected MCP fixture once."}};
+    assert((await command(envelope)).ok);
+    const pending=await wait(session.id,x=>Boolean(x.value?.login.auth&&x.value.login.prompts.length));
+    assert.equal(tokens,0);assert.equal(toolCalls,1);
+    const callback=await fetch(`${host.connection.origin}/v1/sessions/${session.id}/mcp/authorization/respond`,{method:"POST",headers:headers(),body:JSON.stringify(responseBody(pending))});
+    assert.equal(callback.status,200);
+    await wait(session.id,x=>x.value?.status==="succeeded");
+    for(let i=0;i<500;i++) {if((await readFile(session.sessionFile,"utf8")).includes("Native MCP tool completed."))break;await Bun.sleep(10);}
+    assert.equal(tokens,1);assert.equal(toolCalls,2);
+    let log=await readFile(session.sessionFile,"utf8");
+    assert(log.includes("Native protected read completed."));assert(log.includes("Native MCP tool completed."));
+    assert((await command(envelope)).ok);assert.equal(toolCalls,2);
+    // Force a new tool-level challenge while retaining the previously stored
+    // grant. Stop must cancel this second flow without replacing that grant.
+    requireGrant=true;
+    for(let i=0;i<300&&host.store.getSession(session.id)?.status!=="idle";i++) await Bun.sleep(10);
+    assert.equal(host.store.getSession(session.id)?.status,"idle");
+    assert((await command({id:"tool-auth-stop",command:{type:"session.prompt",sessionId:session.id,text:"Read the protected MCP fixture again."}})).ok);
+    const next=await wait(session.id,x=>x.value?.authorizationId!==pending.value?.authorizationId&&Boolean(x.value?.login.auth&&x.value.login.prompts.length));
+    assert.equal(toolCalls,3);
+    assert((await command({id:"tool-stop",command:{type:"session.interrupt",sessionId:session.id}})).ok);
+    const cancelled=await wait(session.id,x=>x.value?.authorizationId===next.value?.authorizationId&&x.value?.status==="cancelled");
+    assert.equal(cancelled.value?.credentialsStored,false);assert.equal(tokens,1);assert.equal(toolCalls,3);
+    log=await readFile(session.sessionFile,"utf8");
+    const db=new Database(path.join(root,"data","state.sqlite"));const journal=JSON.stringify(db.query("SELECT * FROM commands").all());db.close();
+    for(const secret of ["route-private-code","route-private-access","route-private-refresh","/authorize?"]) {assert(!log.includes(secret));assert(!journal.includes(secret));}
+    await writeFile(path.join(root,"tool-authorization.passed"),"native model tool auth, single retry and Stop passed\n");
   } else if (process.argv[3] === "--slash") {
     const envelope:CommandEnvelope={id:"slash-reauth",command:{type:"session.prompt",sessionId:session.id,text:"/mcp reauth fixture"}};
     const sent=command(envelope),duplicate=command(envelope);

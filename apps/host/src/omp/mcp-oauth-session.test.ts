@@ -14,12 +14,14 @@ import { NativeSessionMcp } from "./mcp-session";
 
 const roots: string[] = [];
 const managers: MCPManager[] = [];
+const controllers: NativeSessionMcp[] = [];
 const servers: Bun.Server<unknown>[] = [];
 const databases: Database[] = [];
 let savedAgentDir: string | undefined;
 
 beforeEach(() => { savedAgentDir = process.env.PI_CODING_AGENT_DIR; });
 afterEach(async () => {
+	await Promise.all(controllers.splice(0).map(controller => controller.dispose()));
 	await Promise.all(managers.splice(0).map(manager => manager.disconnectAll()));
 	await Promise.all(servers.splice(0).map(server => server.stop(true)));
 	for (const database of databases.splice(0)) database.close();
@@ -38,7 +40,7 @@ async function unusedPort(): Promise<number> {
 	return port;
 }
 
-function oauthFixture() {
+function oauthFixture(options: { protectedTool?: boolean; rejectReconnect?: boolean; alwaysChallenge?: boolean } = {}) {
 	const requests: Array<{ path: string; method: string; authorization: string | null }> = [];
 	let issued = 0;
 	const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -48,13 +50,23 @@ function oauthFixture() {
 			if (request.method !== "POST") return new Response(null, { status: 405 });
 			const body = await request.json() as { id?: number; method: string };
 			requests.push({ path: url.pathname, method: body.method, authorization });
-			if (authorization !== "Bearer session-oauth-access") return new Response("authorization required", {
+			if (!options.protectedTool && authorization !== "Bearer session-oauth-access") return new Response("authorization required", {
 				status: 401,
 				headers: { "WWW-Authenticate": `Bearer resource_metadata="${url.origin}/protected", scope="fixture:read"` },
 			});
+			if (body.method === "initialize" && issued && options.rejectReconnect) return new Response("reconnect rejected", { status: 503 });
 			if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
-				protocolVersion: "2025-03-26", capabilities: {}, serverInfo: { name: "session-oauth", version: "1" },
+				protocolVersion: "2025-03-26", capabilities: options.protectedTool ? { tools: {} } : {}, serverInfo: { name: "session-oauth", version: "1" },
 			} });
+			if (body.method === "tools/list") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
+				tools: [{ name: "tool", description: "Protected fixture read", inputSchema: { type: "object", properties: {} } }],
+			} });
+			if (body.method === "tools/call") return Response.json({ jsonrpc: "2.0", id: body.id, result:
+				authorization === "Bearer session-oauth-access" && !options.alwaysChallenge
+					? { content: [{ type: "text", text: "Native authorized tool completed." }] }
+					: { isError: true, content: [{ type: "text", text: "Authorization required" }],
+						_meta: { "mcp/www_authenticate": [`Bearer resource_metadata="${url.origin}/protected", scope="fixture:read"`] } },
+			});
 			return new Response(null, { status: 202 });
 		}
 		requests.push({ path: url.pathname, method: request.method, authorization });
@@ -77,7 +89,7 @@ function oauthFixture() {
 	return { origin: `http://127.0.0.1:${server.port}`, requests, issued: () => issued };
 }
 
-async function harness(options: { existingCredentialId?: string } = {}) {
+async function harness(options: { existingCredentialId?: string; protectedTool?: boolean; rejectReconnect?: boolean; alwaysChallenge?: boolean } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "agent-desktop-mcp-oauth-session-"));
 	roots.push(root);
 	const cwd = join(root, "project");
@@ -85,7 +97,7 @@ async function harness(options: { existingCredentialId?: string } = {}) {
 	refreshDirsFromEnv();
 	await mkdir(cwd, { recursive: true });
 	await mkdir(process.env.PI_CODING_AGENT_DIR, { recursive: true });
-	const fixture = oauthFixture();
+	const fixture = oauthFixture(options);
 	const callbackPort = await unusedPort();
 	const configPath = getMCPConfigPath("user", cwd);
 	const config: MCPServerConfig = {
@@ -119,6 +131,7 @@ async function harness(options: { existingCredentialId?: string } = {}) {
 		refreshMCPTools: async () => { calls.refresh++; },
 	} as unknown as AgentSession;
 	const controller = new NativeSessionMcp(session, manager);
+	controllers.push(controller);
 	return { root, cwd, fixture, callbackPort, configPath, config, authStorage, manager, controller, calls };
 }
 
@@ -283,4 +296,118 @@ describe("native session MCP authorization", () => {
 		await rebound.stop(true);
 	});
 
+});
+
+async function toolHarness(options: { rejectReconnect?: boolean; alwaysChallenge?: boolean } = {}) {
+	const value = await harness({ ...options, protectedTool: true });
+	await value.manager.waitForConnection("fixture");
+	for (let i = 0; i < 200 && !value.manager.getTools().length; i++) await Bun.sleep(5);
+	expect(value.manager.getTools()).toHaveLength(1);
+	let callbacks = 0;
+	value.manager.setAuthHandler(async (name, challenge, context) => {
+		callbacks++;
+		if (!context) throw new Error("Missing native reconnect lifecycle");
+		const pending = value.controller.startToolAuthorization(name, challenge, context, {
+			cwd: value.cwd, authStorage: value.authStorage, assertOwner: () => {},
+		});
+		return pending.config;
+	});
+	const execute = (signal?: AbortSignal) => value.manager.getTools()[0]!.execute(crypto.randomUUID(), {}, undefined, {} as never, signal);
+	const pending = async () => {
+		for (let i = 0; i < 400; i++) {
+			const operation = value.controller.getAuthorization();
+			if (operation) return { operation, manual: await waitForManual(operation) };
+			await Bun.sleep(5);
+		}
+		throw new Error("Native tool did not request authorization");
+	};
+	return { ...value, execute, pending, callbacks: () => callbacks };
+}
+
+describe("session-owned native tool authorization", () => {
+	test("real protected tool resumes once through the native manager without a full reload", async () => {
+		const value = await toolHarness();
+		const epoch = value.controller.read().epoch;
+		const run = value.execute();
+		const { operation, manual } = await value.pending();
+		expect(operation.snapshot()).toMatchObject({ status: "running", reconnected: false, credentialWrite: "not-started" });
+		completeManually(operation, manual);
+		expect((await run).content).toEqual([{ type: "text", text: "Native authorized tool completed." }]);
+		expect(await operation.completion).toMatchObject({ status: "succeeded", reconnected: true, credentialsStored: true });
+		expect(value.callbacks()).toBe(1);
+		expect(value.fixture.issued()).toBe(1);
+		expect(value.fixture.requests.filter(row => row.method === "tools/call").map(row => row.authorization)).toEqual([null, "Bearer session-oauth-access"]);
+		expect(value.calls.refresh).toBe(0); // Native manager owns registry updates; no adapter rediscovery.
+		expect(value.controller.read().epoch).toBe(epoch);
+	});
+
+
+	test("two simultaneous tools share native server authorization and each retries only its own call", async () => {
+		const value = await toolHarness();
+		const runs = [value.execute(), value.execute()];
+		const { operation, manual } = await value.pending();
+		for (let i=0;i<200&&value.fixture.requests.filter(row=>row.method==="tools/call").length<2;i++) await Bun.sleep(5);
+		expect(value.fixture.requests.filter(row => row.method === "tools/call")).toHaveLength(2);
+		completeManually(operation, manual);
+		for (const result of await Promise.all(runs)) expect(result.content).toEqual([{ type: "text", text: "Native authorized tool completed." }]);
+		expect(await operation.completion).toMatchObject({ status: "succeeded", reconnected: true });
+		expect(value.callbacks()).toBe(1);
+		expect(value.fixture.issued()).toBe(1);
+		expect(value.fixture.requests.filter(row => row.method === "tools/call")).toHaveLength(4);
+	});
+
+	test("a discarded native manager cannot receive a grant from its stale consent card", async () => {
+		const value = await toolHarness();
+		const bytes = await readFile(value.configPath, "utf8");
+		const run = value.execute();
+		const { operation, manual } = await value.pending();
+		await value.manager.disconnectAll();
+		completeManually(operation, manual);
+		await run;
+		expect(await operation.completion).toMatchObject({ status: "failed", credentialsStored: false, credentialWrite: "not-started", configuration: "untouched", reconnected: false });
+		expect(value.fixture.requests.filter(row => row.method === "tools/call")).toHaveLength(1);
+		expect(await readFile(value.configPath, "utf8")).toBe(bytes);
+	});
+
+	test.each(["tool-abort", "cancel", "dispose"])("%s before consent settles the original call without a token or retry", async mode => {
+		const value = await toolHarness();
+		const bytes = await readFile(value.configPath, "utf8");
+		const abort = new AbortController();
+		const run = value.execute(abort.signal).then(result => ({ result }), error => ({ error }));
+		const { operation } = await value.pending();
+		if (mode === "tool-abort") abort.abort();
+		else if (mode === "dispose") await value.controller.dispose();
+		else operation.cancel();
+		const completed = await Promise.race([run, Bun.sleep(1500).then(() => "timeout")]);
+		expect(completed).not.toBe("timeout");
+		expect(await operation.completion).toMatchObject({ status: "cancelled", credentialsStored: false, reconnected: false });
+		expect(value.fixture.issued()).toBe(0);
+		expect(value.fixture.requests.filter(row => row.method === "tools/call")).toHaveLength(1);
+		expect(await readFile(value.configPath, "utf8")).toBe(bytes);
+		const rebound = Bun.serve({ hostname: "127.0.0.1", port: value.callbackPort, fetch: () => new Response(null) });
+		await rebound.stop(true);
+	});
+
+	test("stored credentials do not imply a successful native reconnect or a tool retry", async () => {
+		const value = await toolHarness({ rejectReconnect: true });
+		const run = value.execute();
+		const { operation, manual } = await value.pending();
+		completeManually(operation, manual);
+		await run;
+		expect(await operation.completion).toMatchObject({ status: "failed", credentialsStored: true, reconnected: false, configuration: "not-needed" });
+		expect(value.fixture.issued()).toBe(1);
+		expect(value.fixture.requests.filter(row => row.method === "tools/call")).toHaveLength(1);
+	}, 20_000);
+
+	test("a second protected error does not trigger another authorization or replay", async () => {
+		const value = await toolHarness({ alwaysChallenge: true });
+		const run = value.execute();
+		const { operation, manual } = await value.pending();
+		completeManually(operation, manual);
+		const result = await run;
+		expect(JSON.stringify(result)).toContain("Authorization required");
+		expect(await operation.completion).toMatchObject({ status: "succeeded", reconnected: true });
+		expect(value.callbacks()).toBe(1);
+		expect(value.fixture.requests.filter(row => row.method === "tools/call")).toHaveLength(2);
+	});
 });

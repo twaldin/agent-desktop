@@ -1,6 +1,6 @@
 # Native MCP authorization
 
-The authorization foundation uses the app-owned OMP18.1.10 runtime and the session's native `AuthStorage`. It does not use a global OMP executable, create a second account store, or change the provider/broker ownership contract. The session/worker lifecycle, authenticated host routing and explicit desktop Authenticate action are implemented. Native `/mcp reauth <name>` also executes through the same controller. Automatic tool-challenge integration remains pending; opening settings alone never executes authorization.
+The authorization foundation uses the app-owned OMP18.1.10 runtime and the session's native `AuthStorage`. It does not use a global OMP executable, create a second account store, or change the provider/broker ownership contract. The session/worker lifecycle, authenticated host routing and explicit desktop Authenticate action are implemented. Native `/mcp reauth <name>` also executes through the same controller. Tool-triggered authorization now uses the same consent controller with a private handoff to OMP’s own reconnect and single retry; opening settings alone never executes authorization.
 
 ## Private authorization material
 
@@ -21,6 +21,7 @@ The repository's existing OMP patch also carries the authorization repairs. Thes
 - HTTP/SSE failures retain bounded raw authentication hints in an error-identity `WeakMap`, read only through an explicit internal getter. Ordinary messages, JSON serialization and tool diagnostics keep token redaction. This prevents the diagnostic sanitizer from erasing `resource_metadata` when it follows `Bearer`, and preserves exact URL/query identity for discovery without publishing it in an error.
 - Initial, cached and refreshed tool registrations forward the authentication challenge to the native manager's reconnect handler. The native tool bridge can then perform its existing single retry after successful authorization.
 - Caller cancellation reaches the legacy SSE handshake, including when native timeouts are disabled.
+- Tool reconnects carry the invoking AbortSignal into an optional third `MCPAuthContext` handler argument. Its guarded completion observer reports the actual native connection or failure once. The existing two-argument TUI handler remains compatible; signal cancellation stops pending consent and later reconnect attempts.
 
 The patch remains subject to focused native tests and frozen-install verification. Ordinary transport retry policies, provider approvals and the existing browser patch are not replaced.
 
@@ -54,8 +55,18 @@ Only terminal status, credential-write/configuration outcome and reconnection st
 
 The actual host slash fixture verifies one local OAuth exchange, duplicate command receipts, Stop before a second exchange, and journals without callback/token material. The controlled Electron conversation run exercises native pending consent, explicit issuer opening and callback typing,390px layout and reopening without replay or a historical result card. Native command submission in that run is host-fixture initiated, not a full-composer Send interaction. Evidence: `.data/mcp-reauth-checkpoint/` and `.data/mcp-reauth-conversation-ui-3/`. The targeted regression passes24 tests/227 assertions; typecheck/build pass. No new installed/native-window or external-provider proof is implied.
 
-## Remaining integration
+## Automatic tool authorization
 
-Native tool challenges still need the callback-safe completion mode of this controller. The latter must preserve the native blocked tool lifetime and interactive consent; `setAuthHandler` supplies no cancellation signal, so cancelling the tool alone does not cancel the underlying callback. The app must own that lifetime explicitly. In the pinned implementation, `MCPManager.setAuthHandler` returns updated `MCPServerConfig`; the manager then reconnects and the tool bridge retries once. Native TUI authorization uses `reload:false` for that callback. Calling the current explicit-command full reload from inside that handler would race the manager's reconnect. The remaining implementation must keep refreshed config private, avoid the second reload, carry tool cancellation through the callback, and distinguish grant completion from measured reconnection. This source trace is a design requirement, not an installed handler or live tool-auth proof. Provider/tool approvals remain interactive and separate from detached questions.
+The runtime installs a handler on its session’s actual MCP manager. A structured tool authentication challenge starts consent during the running turn, without reacquiring idle admission. Noninteractive sessions and competing MCP mutations reject the request; different-server challenges cannot overwrite an active card. Same-server concurrent calls share OMP’s existing reconnect operation.
+
+`startToolAuthorization` separates the private config handoff from public operation completion. The native OAuth flow first checks source ownership, stores the actual grant and performs any locked config update. It then returns the refreshed config to OMP without a full reload. The consent operation remains pending until the native manager’s completion observer reports its real reconnect result. The original native tool bridge owns its single retry; neither the app nor the consent form replays a tool. A second protected result stays a tool error even if authorization and connection succeeded.
+
+Tool cancellation reaches the consent controller. Stop and disposal retain the existing session ownership/drain rules. Cancellation before the handoff returns no config and performs no reconnect; completed credential/config writes remain truthful partial outcomes. Once a reconnect has started, its actual terminal result determines the connection outcome. Private callback values and grants never enter the command journal or model transcript. The actual tool invocation and its ordinary result remain part of native history.
+
+Local tests exercise the real manager/tool registry with protected HTTP tools, successful OAuth, cancellation, failed reconnect, repeated challenge and shared concurrent calls. A separate isolated host/worker fixture uses a controlled model transport to invoke the actual tool and checks one retry plus Stop on a later challenge. Hidden Electron controls exercise that tool-triggered conversation card, one explicit callback, narrow layout and reopening without replay. These prove the named source/component contracts; the model and OAuth issuer are disposable local fixtures. Evidence: `.data/mcp-tool-authorization-checkpoint/` and `.data/mcp-tool-authorization-ui-2/`.
+
+## Remaining acceptance
+
+Provider/tool approvals remain interactive and separate from detached questions.
 
 Cross-device UI resolution, broker refresh, installed artifacts, real external-provider consent, cancellation/error visual states and matched reference geometry remain separate acceptance gates. The frozen reference marks MCP OAuth Authenticate as an uncaptured fixture frontier; current captures do not establish one-to-one appearance for that missing reference state. Local issuer tests do not establish those gates.

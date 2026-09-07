@@ -525,6 +525,18 @@ export class OmpRuntime {
         void run.then(clear, clear);
         return run;
       };
+      result.mcpManager?.setAuthHandler(async (serverName, challenge, nativeContext) => {
+        assertSessionActive();
+        // Tools invoke this during their running turn. Do not acquire the idle
+        // gate or reload the manager that is awaiting this callback.
+        if (!options.interactions || !nativeContext || interruptsInFlight || mcpMutation
+          || admissionAbort?.signal.aborted) throw new Error("Native MCP authorization cannot start during pending session work.");
+        const pending = mcp.startToolAuthorization(serverName, challenge, nativeContext, {
+          cwd: manager.getCwd(), authStorage: auth, assertOwner: assertSessionActive,
+        });
+        void trackMcpMutation(pending.operation.completion);
+        return pending.config;
+      });
       const listAccounts = async () => {
         assertSessionActive();
         await auth.revalidateCredentials();

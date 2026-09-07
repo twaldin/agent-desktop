@@ -3,7 +3,8 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability/fs";
 import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { NativeMcpAuthorization, type NativeMcpAuthorizationSnapshot } from "./mcp-oauth-session";
-import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
+import type { MCPAuthChallenge, MCPServerConfig } from "@oh-my-pi/pi-coding-agent/mcp/types";
+import type { MCPAuthContext, MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import type {
 	NativeSessionMcpReload,
 	NativeSessionMcpReconnect,
@@ -244,6 +245,9 @@ export class NativeSessionMcp {
 		authStorage: AuthStorage;
 		assertOwner(): void;
 		notify?(snapshot: NativeMcpAuthorizationSnapshot): void;
+		/** Private handoff to the native tool reconnect; never a second reload. */
+		challenge?: MCPAuthChallenge;
+		reconnect?(config: MCPServerConfig): Promise<boolean>;
 	}): NativeMcpAuthorization {
 		if (this.#disposed) throw new Error("Native MCP session was disposed.");
 		if (!this.manager) throw new Error(UNAVAILABLE);
@@ -264,17 +268,52 @@ export class NativeSessionMcp {
 				if (this.#disposed) throw new Error("Native MCP session was disposed.");
 				options.assertOwner();
 			},
-			reload: async () => {
+			reconnect: async config => {
 				try {
+					if (options.reconnect) return await options.reconnect(config);
 					await this.#reload();
 					await this.manager!.waitForConnection(request.serverName);
 					await this.session.refreshMCPTools(this.manager!.getTools());
+					return this.manager!.getConnectionStatus(request.serverName) === "connected";
 				} finally { this.#consumeRevision(); }
 			},
 		});
 		this.#authorization = operation;
 		this.#mutationTail = operation.completion.then(() => undefined);
 		return operation;
+	}
+
+	/** A running native tool owns this admission. Return its private refreshed
+	 * config as soon as OAuth finishes, while keeping the UI/mutation pending
+	 * until the manager acknowledges its own reconnect. Awaiting completion in
+	 * the handler would deadlock the manager that must perform that reconnect. */
+	startToolAuthorization(serverName: string, challenge: MCPAuthChallenge, context: MCPAuthContext, options: {
+		cwd: string;
+		authStorage: AuthStorage;
+		assertOwner(): void;
+	}): { operation: NativeMcpAuthorization; config: Promise<MCPServerConfig | undefined> } {
+		if (!context || typeof context.onReconnect !== "function") throw new Error("Native MCP authorization lifecycle is unavailable.");
+		context.signal?.throwIfAborted();
+		const config = Promise.withResolvers<MCPServerConfig | undefined>();
+		const reconnected = Promise.withResolvers<boolean>();
+		context.onReconnect(connection => reconnected.resolve(connection !== null));
+		const before = this.read();
+		const operation = this.startAuthorization({ serverName, epoch: before.epoch, expectedRevision: before.revision }, {
+			...options, challenge,
+			reconnect: async updated => {
+				config.resolve(updated);
+				return reconnected.promise;
+			},
+		});
+		const cancel = () => operation.cancel();
+		context.signal?.addEventListener("abort", cancel, { once: true });
+		if (context.signal?.aborted) cancel();
+		void operation.completion.then(() => {
+			// Failures before the config handoff must release the native handler.
+			config.resolve(undefined);
+			context.signal?.removeEventListener("abort", cancel);
+		});
+		return { operation, config: config.promise };
 	}
 
 	getAuthorization(): NativeMcpAuthorization | undefined { return this.#authorization; }

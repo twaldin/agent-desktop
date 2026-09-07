@@ -1,3 +1,4 @@
+import type { MCPAuthChallenge, MCPServerConfig } from "@oh-my-pi/pi-coding-agent/mcp/types";
 import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import type { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import type { LoginResponse } from "../omp-accounts/types";
@@ -33,7 +34,8 @@ export class NativeMcpAuthorization {
     authStorage: AuthStorage;
     ready: Promise<void>;
     assertOwner(): void;
-    reload(): Promise<void>;
+    challenge?: MCPAuthChallenge;
+    reconnect(config: MCPServerConfig): Promise<boolean>;
     notify?(snapshot: NativeMcpAuthorizationSnapshot): void;
   }) {
     let target: NativeMcpOAuthConfigTarget;
@@ -58,7 +60,7 @@ export class NativeMcpAuthorization {
       this.#phase = "discovering";
       this.#emit();
       const signal = AbortSignal.any([this.#abort.signal, callbacks.signal!]);
-      plan = await prepareNativeMcpOAuth({ config: target.config, manager: input.manager, authStorage: input.authStorage, signal });
+      plan = await prepareNativeMcpOAuth({ config: target.config, manager: input.manager, authStorage: input.authStorage, signal, challenge: input.challenge });
       await assertCurrent();
       this.#phase = "authorizing";
       this.#emit();
@@ -96,8 +98,7 @@ export class NativeMcpAuthorization {
         this.#emit();
         input.assertOwner();
         this.#abort.signal.throwIfAborted();
-        await input.reload();
-        this.#reconnected = input.manager.getConnectionStatus(input.serverName) === "connected";
+        this.#reconnected = await input.reconnect(updated.config);
         if (!this.#reconnected) throw new Error("Native MCP server did not reconnect.");
         this.#status = "succeeded";
       } catch {

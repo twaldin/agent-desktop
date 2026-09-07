@@ -883,3 +883,365 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..0be25024f098435b0da823a6e6043756
  /** Create and connect a legacy HTTP+SSE transport. */
 -export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
 +export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;
+diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
+index 9933dc7..d1fd2fc 100644
+--- a/dist/types/mcp/manager.d.ts
++++ b/dist/types/mcp/manager.d.ts
+@@ -50,8 +50,14 @@ export interface MCPDiscoverOptions {
+     /** Called when MCP server connection state changes. */
+     onStatus?: (event: McpConnectionStatusEvent) => void;
+ }
++export interface MCPAuthContext {
++    /** Signal from the tool invocation that encountered the authorization challenge. */
++    readonly signal?: AbortSignal;
++    /** Observe the actual native reconnect result after refreshed config is returned. */
++    onReconnect(listener: (connection: MCPServerConnection | null) => void): void;
++}
+ /** Handles an MCP `WWW-Authenticate` challenge and returns refreshed config. */
+-export type MCPAuthHandler = (serverName: string, challenge: MCPAuthChallenge) => Promise<MCPServerConfig | undefined>;
++export type MCPAuthHandler = (serverName: string, challenge: MCPAuthChallenge, context?: MCPAuthContext) => Promise<MCPServerConfig | undefined>;
+ /**
+  * MCP Server Manager.
+  *
+@@ -228,6 +234,7 @@ export declare class MCPManager {
+     reconnectServer(name: string, options?: {
+         manual?: boolean;
+         authChallenge?: MCPAuthChallenge;
++        signal?: AbortSignal;
+     }): Promise<MCPServerConnection | null>;
+     /**
+      * Refresh tools from a specific server.
+diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
+index 7a53726..d3d4d16 100644
+--- a/dist/types/mcp/tool-bridge.d.ts
++++ b/dist/types/mcp/tool-bridge.d.ts
+@@ -13,6 +13,7 @@ import type { MCPAuthChallenge, MCPContent, MCPServerConnection, MCPToolDefiniti
+ /** Reconnect callback: tears down a stale connection, optionally authorizing first. */
+ export type MCPReconnect = (options?: {
+     authChallenge?: MCPAuthChallenge;
++    signal?: AbortSignal;
+ }) => Promise<MCPServerConnection | null>;
+ export declare function isRetriableConnectionError(error: unknown): boolean;
+ /** Details included in MCP tool results for rendering */
+diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
+index 7d43dce..dc226ea 100644
+--- a/src/mcp/manager.ts
++++ b/src/mcp/manager.ts
+@@ -7,7 +7,7 @@
+ import * as path from "node:path";
+ import * as url from "node:url";
+ import type { TSchema } from "@oh-my-pi/pi-ai";
+-import { logger } from "@oh-my-pi/pi-utils";
++import { logger, untilAborted } from "@oh-my-pi/pi-utils";
+ import type { EffectiveExtensionRoots, SourceMeta } from "../capability/types";
+ import { resolveConfigValue } from "../config/resolve-config-value";
+ import type { CustomTool } from "../extensibility/custom-tools/types";
+@@ -189,8 +189,19 @@ export interface MCPDiscoverOptions {
+ 	onStatus?: (event: McpConnectionStatusEvent) => void;
+ }
+ 
++export interface MCPAuthContext {
++	/** Signal from the tool invocation that encountered the authorization challenge. */
++	readonly signal?: AbortSignal;
++	/** Observe the actual native reconnect result after refreshed config is returned. */
++	onReconnect(listener: (connection: MCPServerConnection | null) => void): void;
++}
++
+ /** Handles an MCP `WWW-Authenticate` challenge and returns refreshed config. */
+-export type MCPAuthHandler = (serverName: string, challenge: MCPAuthChallenge) => Promise<MCPServerConfig | undefined>;
++export type MCPAuthHandler = (
++	serverName: string,
++	challenge: MCPAuthChallenge,
++	context?: MCPAuthContext,
++) => Promise<MCPServerConfig | undefined>;
+ 
+ /**
+  * MCP Server Manager.
+@@ -696,7 +707,7 @@ export class MCPManager {
+ 				.then(async ({ connection, serverTools }) => {
+ 					if (this.#pendingToolLoads.get(name) !== toolsPromise) return;
+ 					this.#pendingToolLoads.delete(name);
+-					const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) =>
++					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
+ 						this.reconnectServer(name, options);
+ 					const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
+ 					this.#replaceServerTools(name, customTools);
+@@ -773,7 +784,7 @@ export class MCPManager {
+ 					if (!value) continue;
+ 					const { connection, serverTools } = value;
+ 					connectedServers.add(name);
+-					const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) =>
++					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
+ 						this.reconnectServer(name, options);
+ 					this.#replaceServerTools(name, MCPTool.fromTools(connection, serverTools, reconnect));
+ 				} else if (task.tracked.status === "rejected") {
+@@ -785,7 +796,7 @@ export class MCPManager {
+ 					const cached = cachedTools.get(name);
+ 					if (cached) {
+ 						const source = this.#sources.get(name);
+-						const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) =>
++						const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
+ 							this.reconnectServer(name, options);
+ 						this.#replaceServerTools(
+ 							name,
+@@ -1109,7 +1120,7 @@ export class MCPManager {
+ 	 */
+ 	async reconnectServer(
+ 		name: string,
+-		options?: { manual?: boolean; authChallenge?: MCPAuthChallenge },
++		options?: { manual?: boolean; authChallenge?: MCPAuthChallenge; signal?: AbortSignal },
+ 	): Promise<MCPServerConnection | null> {
+ 		if (options?.manual) {
+ 			this.#reconnectHistory.delete(name);
+@@ -1122,7 +1133,7 @@ export class MCPManager {
+ 			return null;
+ 		}
+ 
+-		const attempt = this.#doReconnect(name, options?.authChallenge);
++		const attempt = this.#doReconnect(name, options?.authChallenge, options?.signal);
+ 		this.#pendingReconnections.set(name, attempt);
+ 		return attempt.finally(() => {
+ 			if (this.#pendingReconnections.get(name) === attempt) {
+@@ -1174,89 +1185,118 @@ export class MCPManager {
+ 		return false;
+ 	}
+ 
+-	async #doReconnect(name: string, authChallenge?: MCPAuthChallenge): Promise<MCPServerConnection | null> {
+-		const oldConnection = this.#connections.get(name);
+-		let config = oldConnection?.config ?? this.#serverConfigs.get(name);
+-		const source = this.#sources.get(name) ?? oldConnection?._source;
+-		if (!config) return null;
+-
+-		if (authChallenge) {
+-			if (!this.#authHandler) {
+-				logger.error("MCP auth challenge cannot be handled; no auth handler is configured", {
+-					path: `mcp:${name}`,
+-				});
+-				return null;
+-			}
++	async #doReconnect(name: string, authChallenge?: MCPAuthChallenge, signal?: AbortSignal): Promise<MCPServerConnection | null> {
++		let reconnectObserver: ((connection: MCPServerConnection | null) => void) | undefined;
++		let reconnectResult: MCPServerConnection | null = null;
++		const notifyReconnect = (): void => {
++			const observer = reconnectObserver;
++			reconnectObserver = undefined;
++			if (!observer) return;
+ 			try {
+-				const refreshedConfig = await this.#authHandler(name, authChallenge);
+-				if (!refreshedConfig) return null;
+-				config = refreshedConfig;
+-				this.#serverConfigs.set(name, config);
++				observer(reconnectResult);
+ 			} catch (error) {
+-				logger.error("MCP auth challenge handling failed", { path: `mcp:${name}`, error });
+-				return null;
++				logger.error("MCP auth reconnect observer failed", { path: `mcp:${name}`, error });
++			}
++		};
++		try {
++			const reconnectEpoch = this.#epoch;
++			const configuredConfig = this.#serverConfigs.get(name);
++			const oldConnection = this.#connections.get(name);
++			let config = oldConnection?.config ?? configuredConfig;
++			const source = this.#sources.get(name) ?? oldConnection?._source;
++			if (!config) return null;
++
++			if (authChallenge) {
++				if (signal?.aborted) return null;
++				if (!this.#authHandler) {
++					logger.error("MCP auth challenge cannot be handled; no auth handler is configured", {
++						path: `mcp:${name}`,
++					});
++					return null;
++				}
++				try {
++					const refreshedConfig = await untilAborted(signal, () => this.#authHandler!(name, authChallenge, {
++						signal,
++						onReconnect(listener) {
++							if (reconnectObserver) throw new Error("An MCP auth reconnect observer is already registered");
++							reconnectObserver = listener;
++						},
++					}));
++					if (signal?.aborted) return null;
++					if (this.#epoch !== reconnectEpoch || this.#serverConfigs.get(name) !== configuredConfig) return null;
++					if (!refreshedConfig) return null;
++					config = refreshedConfig;
++					this.#serverConfigs.set(name, config);
++				} catch (error) {
++					logger.error("MCP auth challenge handling failed", { path: `mcp:${name}`, error });
++					return null;
++				}
+ 			}
+-		}
+ 
+-		logger.debug("MCP reconnecting", { path: `mcp:${name}` });
++			logger.debug("MCP reconnecting", { path: `mcp:${name}` });
+ 
+-		// Close the old transport without removing tools or notifying consumers.
+-		// Tools stay available (stale) while we establish the new connection.
+-		// Fire-and-forget: don't await the close — HttpTransport.close() sends a
+-		// DELETE with config.timeout (30s default), and blocking here delays the
+-		// reconnect loop by that amount on every server restart.
+-		const reconnectEpoch = this.#epoch;
+-		if (oldConnection) {
+-			void this.#discardConnection(name, oldConnection).catch(() => {});
+-		}
+-		this.#pendingConnections.delete(name);
+-		this.#pendingToolLoads.delete(name);
+-
+-		// Retry with backoff — the server may still be starting up.
+-		const delays = [500, 1000, 2000, 4000];
+-		for (let attempt = 0; attempt <= delays.length; attempt++) {
+-			if (this.#epoch !== reconnectEpoch || this.#serverConfigs.get(name) !== config) {
+-				logger.debug("MCP reconnect aborted before attempt after configuration changed", {
+-					path: `mcp:${name}`,
+-					storedEpoch: reconnectEpoch,
+-					currentEpoch: this.#epoch,
+-				});
+-				return null;
++			// Close the old transport without removing tools or notifying consumers.
++			// Tools stay available (stale) while we establish the new connection.
++			// Fire-and-forget: don't await the close — HttpTransport.close() sends a
++			// DELETE with config.timeout (30s default), and blocking here delays the
++			// reconnect loop by that amount on every server restart.
++			if (oldConnection) {
++				void this.#discardConnection(name, oldConnection).catch(() => {});
+ 			}
+-			try {
+-				const connection = await this.#connectAndWireServer(name, config, source, reconnectEpoch);
+-				logger.debug("MCP reconnected", { path: `mcp:${name}`, tools: connection.tools?.length ?? 0 });
+-				this.#emitConnectionStatus({ type: "connected", serverName: name });
+-				return connection;
+-			} catch (error) {
++			this.#pendingConnections.delete(name);
++			this.#pendingToolLoads.delete(name);
++
++			// Retry with backoff — the server may still be starting up.
++			const delays = [500, 1000, 2000, 4000];
++			for (let attempt = 0; attempt <= delays.length; attempt++) {
++				if (signal?.aborted) return null;
+ 				if (this.#epoch !== reconnectEpoch || this.#serverConfigs.get(name) !== config) {
+-					logger.debug("MCP reconnect aborted after configuration changed", {
++					logger.debug("MCP reconnect aborted before attempt after configuration changed", {
+ 						path: `mcp:${name}`,
+ 						storedEpoch: reconnectEpoch,
+ 						currentEpoch: this.#epoch,
+ 					});
+ 					return null;
+ 				}
++				try {
++					const connection = await this.#connectAndWireServer(name, config, source, reconnectEpoch, signal);
++					logger.debug("MCP reconnected", { path: `mcp:${name}`, tools: connection.tools?.length ?? 0 });
++					this.#emitConnectionStatus({ type: "connected", serverName: name });
++					reconnectResult = connection;
++					return connection;
++				} catch (error) {
++					if (signal?.aborted) return null;
++					if (this.#epoch !== reconnectEpoch || this.#serverConfigs.get(name) !== config) {
++						logger.debug("MCP reconnect aborted after configuration changed", {
++							path: `mcp:${name}`,
++							storedEpoch: reconnectEpoch,
++							currentEpoch: this.#epoch,
++						});
++						return null;
++					}
+ 
+-				const msg = error instanceof Error ? error.message : String(error);
+-				if (attempt < delays.length) {
+-					logger.debug("MCP reconnect attempt failed, retrying", {
+-						path: `mcp:${name}`,
+-						attempt: attempt + 1,
+-						error: msg,
+-					});
+-					await Bun.sleep(delays[attempt]);
+-				} else {
+-					logger.error("MCP reconnect failed after retries", { path: `mcp:${name}`, error: msg });
+-					this.#emitConnectionStatus({ type: "failed", serverName: name, error: msg });
+-					// Don't remove stale tools — keep them in the registry so they
+-					// remain selected. Calls will fail with MCP errors, which
+-					// triggers the tool-level reconnect, or the user can run
+-					// /mcp reconnect <name> manually.
++					const msg = error instanceof Error ? error.message : String(error);
++					if (attempt < delays.length) {
++						logger.debug("MCP reconnect attempt failed, retrying", {
++							path: `mcp:${name}`,
++							attempt: attempt + 1,
++							error: msg,
++						});
++						await untilAborted(signal, () => Bun.sleep(delays[attempt]));
++					} else {
++						logger.error("MCP reconnect failed after retries", { path: `mcp:${name}`, error: msg });
++						this.#emitConnectionStatus({ type: "failed", serverName: name, error: msg });
++						// Don't remove stale tools — keep them in the registry so they
++						// remain selected. Calls will fail with MCP errors, which
++						// triggers the tool-level reconnect, or the user can run
++						// /mcp reconnect <name> manually.
++					}
+ 				}
+ 			}
++			return null;
++		} finally {
++			notifyReconnect();
+ 		}
+-		return null;
+ 	}
+ 
+ 	/** Establish a new connection to a server, wire handlers, load tools. */
+@@ -1265,9 +1305,11 @@ export class MCPManager {
+ 		config: MCPServerConfig,
+ 		source: SourceMeta | undefined,
+ 		reconnectEpoch: number,
++		signal?: AbortSignal,
+ 	): Promise<MCPServerConnection> {
+ 		const resolvedConfig = await this.#resolveAuthConfig(config);
+ 		const connection = await connectToServer(name, resolvedConfig, {
++			signal,
+ 			onNotification: (method, params) => {
+ 				this.#handleServerNotification(name, method, params);
+ 			},
+@@ -1306,8 +1348,8 @@ export class MCPManager {
+ 			void this.reconnectServer(name);
+ 		};
+ 		try {
+-			const serverTools = await listTools(connection);
+-			const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) => this.reconnectServer(name, options);
++			const serverTools = await listTools(connection, { signal });
++			const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
+ 			const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
+ 			void this.toolCache?.set(name, config, serverTools);
+ 			this.#replaceServerTools(name, customTools);
+@@ -1357,7 +1399,7 @@ export class MCPManager {
+ 
+ 		// Reload tools
+ 		const serverTools = await listTools(connection);
+-		const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) => this.reconnectServer(name, options);
++		const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
+ 		const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
+ 		void this.toolCache?.set(name, connection.config, serverTools);
+ 
+diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
+index 955b724..679ec59 100644
+--- a/src/mcp/tool-bridge.ts
++++ b/src/mcp/tool-bridge.ts
+@@ -33,7 +33,7 @@ import type {
+ } from "./types";
+ 
+ /** Reconnect callback: tears down a stale connection, optionally authorizing first. */
+-export type MCPReconnect = (options?: { authChallenge?: MCPAuthChallenge }) => Promise<MCPServerConnection | null>;
++export type MCPReconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => Promise<MCPServerConnection | null>;
+ 
+ /**
+  * Network-level and stale-session errors that warrant a reconnect + single retry.
+@@ -385,10 +385,10 @@ function rethrowIfAborted(error: unknown, signal?: AbortSignal): void {
+ async function reconnectWithAbort(
+ 	reconnect: MCPReconnect,
+ 	signal?: AbortSignal,
+-	options?: { authChallenge?: MCPAuthChallenge },
++	options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal },
+ ): Promise<MCPServerConnection | null> {
+ 	try {
+-		return await untilAborted(signal, () => reconnect(options));
++		return await untilAborted(signal, () => reconnect({ ...options, signal }));
+ 	} catch (error) {
+ 		rethrowIfAborted(error, signal);
+ 		return null;
