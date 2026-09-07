@@ -1245,3 +1245,177 @@ index 955b724..679ec59 100644
  	} catch (error) {
  		rethrowIfAborted(error, signal);
  		return null;
+diff --git a/src/extensibility/plugins/marketplace/cache.ts b/src/extensibility/plugins/marketplace/cache.ts
+--- a/src/extensibility/plugins/marketplace/cache.ts
++++ b/src/extensibility/plugins/marketplace/cache.ts
+@@ -54,11 +54,56 @@
+ 	return path.join(cacheDir, `${marketplace}___${pluginName}___${version}`);
+ }
+ 
++/** Compare staged content before reusing a cache that other projects may own. */
++async function identicalCacheTree(left: string, right: string): Promise<boolean> {
++	const [a, b] = await Promise.all([fs.lstat(left), fs.lstat(right)]);
++	if ((a.mode & 0o111) !== (b.mode & 0o111)) return false;
++	if (a.isDirectory() && b.isDirectory()) {
++		const [an, bn] = await Promise.all([fs.readdir(left), fs.readdir(right)]);
++		an.sort(); bn.sort();
++		if (an.length !== bn.length || an.some((name, index) => name !== bn[index])) return false;
++		for (const name of an) {
++			if (!(await identicalCacheTree(path.join(left, name), path.join(right, name)))) return false;
++		}
++		return true;
++	}
++	if (a.isSymbolicLink() && b.isSymbolicLink()) {
++		return (await fs.readlink(left)) === (await fs.readlink(right));
++	}
++	if (!a.isFile() || !b.isFile() || a.size !== b.size) return false;
++	const ah = await fs.open(left, "r");
++	try {
++		const bh = await fs.open(right, "r");
++		try {
++			const ab = Buffer.alloc(64 * 1024), bb = Buffer.alloc(64 * 1024);
++			let offset = 0;
++			while (offset < a.size) {
++				const length = Math.min(ab.length, a.size - offset);
++				// FileHandle.read may return a short read without EOF.
++				for (const [handle, buffer] of [[ah, ab], [bh, bb]] as const) {
++					let read = 0;
++					while (read < length) {
++						const { bytesRead } = await handle.read(buffer, read, length - read, offset + read);
++						if (!bytesRead) return false;
++						read += bytesRead;
++					}
++				}
++				if (!ab.subarray(0, length).equals(bb.subarray(0, length))) return false;
++				offset += length;
++			}
++			const [afterA, afterB] = await Promise.all([ah.stat(), bh.stat()]);
++			return afterA.size === a.size && afterB.size === b.size
++				&& afterA.mtimeMs === a.mtimeMs && afterB.mtimeMs === b.mtimeMs
++				&& afterA.ctimeMs === a.ctimeMs && afterB.ctimeMs === b.ctimeMs;
++		} finally { await bh.close(); }
++	} finally { await ah.close(); }
++}
++
+ /**
+  * Copy `sourcePath` into the cache, returning the absolute cache path.
+  *
+- * Idempotent: if the target already exists it is removed before copying,
+- * so a partial previous cache is never silently reused.
++ * By default an existing target is replaced after staging. With reuseExisting,
++ * only byte-identical prepared content is reused; a conflict leaves it intact.
+  */
+ export async function cachePlugin(
+ 	sourcePath: string,
+@@ -66,18 +111,31 @@
+ 	marketplace: string,
+ 	pluginName: string,
+ 	version: string,
++	options?: { reuseExisting?: boolean; prepare?: (stagingPath: string) => Promise<void> },
+ ): Promise<string> {
+ 	const targetPath = getCachedPluginPath(cacheDir, marketplace, pluginName, version);
+ 
+ 	// Ensure cache directory exists before writing into it
+ 	await fs.mkdir(cacheDir, { recursive: true });
++	if (!(await fs.lstat(cacheDir)).isDirectory()) throw new Error("Plugin cache root must be a real directory.");
+ 
+ 	// Copy to a staging directory first, then atomically rename into place.
+ 	// This prevents destroying an active install if fs.cp fails mid-copy.
+-	const stagingPath = `${targetPath}.staging-${Date.now()}`;
++	const stagingPath = await fs.mkdtemp(`${targetPath}.staging-`);
+ 	try {
+ 		await fs.cp(sourcePath, stagingPath, { recursive: true });
+-		await fs.rm(targetPath, { recursive: true, force: true });
++		await options?.prepare?.(stagingPath);
++		if (options?.reuseExisting) {
++			const existing = await fs.lstat(targetPath).catch(error => { if (isEnoent(error)) return null; throw error; });
++			if (existing) {
++				if (!existing.isDirectory() || !(await identicalCacheTree(stagingPath, targetPath))) {
++					throw new Error("Plugin version cache differs from the requested content; use a new version.");
++				}
++				await fs.rm(stagingPath, { recursive: true, force: true });
++				return targetPath;
++			}
++		}
++		if (!options?.reuseExisting) await fs.rm(targetPath, { recursive: true, force: true });
+ 		await fs.rename(stagingPath, targetPath);
+ 	} catch (err) {
+ 		// Clean up staging dir on any failure; leave existing targetPath intact
+diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibility/plugins/marketplace/manager.ts
+--- a/src/extensibility/plugins/marketplace/manager.ts
++++ b/src/extensibility/plugins/marketplace/manager.ts
+@@ -241,7 +241,7 @@
+ 	async installPlugin(
+ 		name: string,
+ 		marketplace: string,
+-		options?: { force?: boolean; scope?: "user" | "project" },
++		options?: { force?: boolean; scope?: "user" | "project"; reuseExistingCache?: boolean; validatePackage?: (packageName: string) => Promise<void> },
+ 	): Promise<InstalledPluginEntry> {
+ 		const force = options?.force ?? false;
+ 		const scope = options?.scope ?? "user";
+@@ -303,9 +303,14 @@
+ 		let cachePath!: string;
+ 		try {
+ 			version = await this.#resolvePluginVersion(pluginEntry, sourcePath);
+-			cachePath = await cachePlugin(sourcePath, this.#opts.pluginsCacheDir, marketplace, name, version);
+-			await this.#writeEmbeddedLspConfig(pluginEntry, cachePath);
+-			await this.#writeEmbeddedDapConfig(pluginEntry, cachePath);
++			cachePath = await cachePlugin(sourcePath, this.#opts.pluginsCacheDir, marketplace, name, version, {
++				reuseExisting: options?.reuseExistingCache,
++				prepare: async stagingPath => {
++					await this.#writeEmbeddedLspConfig(pluginEntry, stagingPath);
++					await this.#writeEmbeddedDapConfig(pluginEntry, stagingPath);
++					await options?.validatePackage?.(await this.#resolvePluginPackageName(stagingPath, name));
++				},
++			});
+ 		} finally {
+ 			// Clean up temp clone dirs created by resolvePluginSource; leave user-supplied local dirs alone
+ 			if (tempCloneRoot) {
+@@ -443,7 +448,7 @@
+ 	}
+ 
+ 	/** Validates and removes a marketplace plugin, or only validates when `dryRun` is set. */
+-	async uninstallPlugin(pluginId: string, scope?: "user" | "project", options?: { dryRun?: boolean }): Promise<void> {
++	async uninstallPlugin(pluginId: string, scope?: "user" | "project", options?: { dryRun?: boolean; preserveCache?: boolean }): Promise<void> {
+ 		const parsed = parsePluginId(pluginId);
+ 		if (!parsed) {
+ 			throw new Error(`Invalid plugin ID format: "${pluginId}". Expected "name@marketplace".`);
+@@ -500,7 +505,7 @@
+ 		const referenced = collectReferencedPaths(freshUserReg, freshProjectReg);
+ 
+ 		for (const entry of targetEntries) {
+-			if (!referenced.has(entry.installPath)) {
++			if (!options?.preserveCache && !referenced.has(entry.installPath)) {
+ 				await fs.rm(entry.installPath, { recursive: true, force: true });
+ 			}
+ 		}
+diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
+--- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
++++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
+@@ -34,11 +34,14 @@
+     getPluginInfo(name: string, marketplace: string): Promise<MarketplacePluginEntry | null>;
+     installPlugin(name: string, marketplace: string, options?: {
+         force?: boolean;
++        reuseExistingCache?: boolean;
++        validatePackage?: (packageName: string) => Promise<void>;
+         scope?: "user" | "project";
+     }): Promise<InstalledPluginEntry>;
+     /** Validates and removes a marketplace plugin, or only validates when `dryRun` is set. */
+     uninstallPlugin(pluginId: string, scope?: "user" | "project", options?: {
+         dryRun?: boolean;
++        preserveCache?: boolean;
+     }): Promise<void>;
+     listInstalledPlugins(): Promise<InstalledPluginSummary[]>;
+     setPluginEnabled(pluginId: string, enabled: boolean, scope?: "user" | "project"): Promise<void>;
+diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/types/extensibility/plugins/marketplace/cache.d.ts
+--- a/dist/types/extensibility/plugins/marketplace/cache.d.ts
++++ b/dist/types/extensibility/plugins/marketplace/cache.d.ts
+@@ -22,7 +22,7 @@
+  * Idempotent: if the target already exists it is removed before copying,
+  * so a partial previous cache is never silently reused.
+  */
+-export declare function cachePlugin(sourcePath: string, cacheDir: string, marketplace: string, pluginName: string, version: string): Promise<string>;
++export declare function cachePlugin(sourcePath: string, cacheDir: string, marketplace: string, pluginName: string, version: string, options?: { reuseExisting?: boolean; prepare?: (stagingPath: string) => Promise<void> }): Promise<string>;
+ /**
+  * Synchronous check — true when the cache directory exists on disk.
+  * Uses `existsSync` because callers may need to run this check inline without async.

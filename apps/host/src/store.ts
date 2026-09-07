@@ -1,3 +1,4 @@
+import { PluginAcquisitionRecords } from "./integrations/acquisition-records";
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { arch, hostname, platform } from "node:os";
@@ -85,6 +86,7 @@ type EnvironmentPreparationAccessor = Pick<LocalEnvironmentPreparations, "get" |
 /** Host-owned app state. Native OMP files remain the source of transcripts. */
 export class HostStore {
   readonly host: HostIdentity;
+  readonly pluginAcquisitions: PluginAcquisitionRecords;
   readonly environmentPreparations: EnvironmentPreparationAccessor;
   private readonly db: Database;
   private readonly environmentPreparationStore: LocalEnvironmentPreparations;
@@ -124,6 +126,7 @@ export class HostStore {
           .run("host", JSON.stringify(identity));
         return identity;
       }).immediate();
+      this.pluginAcquisitions = new PluginAcquisitionRecords(this.db);
       this.environmentPreparationStore = new LocalEnvironmentPreparations(this.db, this.host.id);
       this.environmentPreparations = this.environmentPreparationStore;
       this.recoverInterruptedSessions();

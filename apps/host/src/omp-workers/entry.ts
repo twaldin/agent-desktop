@@ -11,6 +11,7 @@ import { projectWorkerEvent } from "./events";
 
 // All SDK imports are deferred until the child has received its explicit native
 // directory. The daemon never imports/initializes OMP through this boundary.
+let marketplaces: Promise<import("../integrations/marketplaces").NativeMarketplaces> | undefined;
 let plugins: Promise<import("../integrations/plugins").NativePlugins> | undefined;
 let mcp: Promise<import("../integrations/mcp").NativeMcp> | undefined;
 let runtime: OmpRuntime | undefined;
@@ -148,6 +149,14 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         if (init.mode === "create") session = await runtime.create({ ...init.options, onEvent: emit });
         if (init.mode === "open") session = await runtime.open({ ...init.options, onEvent: emit });
         respond(true, snapshot());
+        break;
+      }
+      case "getMarketplaceCatalog":
+      case "acquirePlugin": {
+        if (!runtime || session) throw new Error("Native acquisition requires an initialized discovery worker.");
+        marketplaces ??= import("../integrations/marketplaces").then(module => new module.NativeMarketplaces());
+        const backend = await marketplaces;
+        respond(true, message.operation === "getMarketplaceCatalog" ? await backend.read(message.args.cwd) : await backend.mutate(message.args.cwd,message.args.expectedRevision,message.args.action));
         break;
       }
       case "getPlugins":

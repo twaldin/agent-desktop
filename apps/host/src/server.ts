@@ -1,3 +1,5 @@
+import { PluginAcquisitionOperations } from "./integrations/acquisition-operations";
+import { PluginAcquisitionHttp } from "./integrations/acquisition-http";
 import { SessionMcpAuthorizationHttp } from "./session-mcp-authorization-http";
 import { SessionMcpResourceHttp } from "./session-mcp-resource-http";
 import { SessionMcpHttp } from "./session-mcp-http";
@@ -67,6 +69,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let preferences: PreferencesSync | undefined;
   let settings: SettingsHttp | undefined;
   let integrations: IntegrationsHttp | undefined;
+  let acquisitions: PluginAcquisitionHttp | undefined;
   let theme: ThemeFile | undefined;
   let terminals: TerminalManager | undefined;
   let terminalsHttp: TerminalsHttp | undefined;
@@ -369,17 +372,22 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       const pending = handles.get(id);
       return pending ? await pending.catch(() => undefined) : undefined;
     } });
-  integrations = new IntegrationsHttp({ runtime,
-    resolveCwd: async target => {
-      if (!target) return options.discoveryDirectory ?? homedir();
-      const cwd = "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
-      if (!cwd) throw new Error("The selected integration owner does not exist on this host.");
-      const canonical = await realpath(cwd);
-      if (canonical !== resolve(cwd)) throw new Error("The integration owner's directory has changed. Re-add the project before editing configuration.");
-      return canonical;
-    },
-    changed: target => publish({ type: "settings", target }),
-  });
+  const resolveIntegrationCwd = async (target?: import("@agent-desktop/shared").WorkspaceTarget) => {
+    const cwd = !target ? options.discoveryDirectory ?? homedir() : "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
+    if (!cwd) throw new Error("The selected integration owner does not exist on this host.");
+    const canonical = await realpath(cwd);
+    if (canonical !== resolve(cwd)) throw new Error("The integration owner's directory has changed. Re-add the project before editing configuration.");
+    return canonical;
+  };
+  integrations = new IntegrationsHttp({ runtime, resolveCwd:resolveIntegrationCwd,
+    changed: target => publish({type:"settings",target}) });
+  // The exclusive host lease is held. A predecessor worker may still drain;
+  // profile locks in its adapter prevent a new operation or review overtaking it.
+  store.pluginAcquisitions.recoverInterrupted();
+  const acquisitionOperations = new PluginAcquisitionOperations(store.pluginAcquisitions, {
+    read:cwd=>runtime.getMarketplaceCatalog(cwd), mutate:(cwd,revision,action)=>runtime.acquirePlugin(cwd,revision,action),
+  },()=>publish({type:"settings"}));
+  acquisitions = new PluginAcquisitionHttp({operations:acquisitionOperations,read:cwd=>runtime.getMarketplaceCatalog(cwd),resolveCwd:resolveIntegrationCwd});
   settings = new SettingsHttp({ agentDir: options.agentDirectory, defaultCwd: options.discoveryDirectory ?? homedir(), runtime,
     resolveCwd: target => {
       if (!target) return options.discoveryDirectory ?? homedir();
@@ -817,6 +825,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (browserControlResponse) return browserControlResponse;
         const browserFrameResponse = await browserFrames.route(request, url);
         if (browserFrameResponse) return browserFrameResponse;
+        const acquisitionResponse = await acquisitions!.route(request,url);
+        if(acquisitionResponse)return acquisitionResponse;
         const integrationsResponse = await integrations!.route(request, url);
         if (integrationsResponse) return integrationsResponse;
         const settingsResponse = await settings!.route(request, url);
@@ -955,14 +965,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         // Configuration writes are bounded, local operations. Drain them before
         // retiring their discovery worker so a graceful stop cannot interrupt
         // a native registry write midway through serialization.
-        await integrations!.dispose();
+        // Native acquisition has no abort API; graceful shutdown drains it.
+        const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
         const outcomes = await Promise.allSettled([runtime.dispose(), networkCall, discovery, modelsRefresh,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
-        const errors = outcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+        const errors = [...configurationOutcomes,...outcomes].flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
         if (errors.length) throw new AggregateError(errors, "Some host resources did not finish cleanup.");
       } finally {
         // Remove our locator while still owning the lease, so a successor's locator survives.
@@ -979,7 +990,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     questionDeliveries?.stop();
     clearInterval(networkTimer);
     server?.stop(true); tailServer?.stop(true);
-    try { terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose(); await Promise.allSettled([terminals?.shutdown(), nativeTerminals?.shutdown()]); await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await integrations?.dispose(); await runtime?.dispose(); }
+    try { terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose(); await Promise.allSettled([terminals?.shutdown(), nativeTerminals?.shutdown()]); await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose(); await runtime?.dispose(); }
     finally {
       try {
         store?.close();

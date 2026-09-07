@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — native marketplace acquisition foundation
+
+The host now uses OMP's real marketplace APIs for cached catalog reads and explicit add/update/remove/install/uninstall operations. Durable receipts precede dispatch, survive restart and suppress duplicate execution. Uncertain native results require configuration review. The app-owned18.1.10 patch safely shares identical prepared version caches across user and independent project installs; uninstall preserves caches still usable elsewhere. Runtime package ownership and long-fetch revision checks refuse conflicting changes before promotion.
+
+The full regression passes **982 tests /27,448 assertions across192 files**, with29 skips and zero failures. The final focused batch passes19 tests/129 assertions, including a subsequently added local Git-source test. Typecheck and build pass; a clean frozen-lockfile install reproduces all four changed OMP source/declaration files. All1737 reference-file hashes and four manifest hashes match.
+
+This is a host/worker foundation, not a completed acquisition UI. Desktop/main IPC, Codex-style Add/marketplace/detail/progress/review controls and independent native/pixel acceptance remain open. Worker protocol24; OMP18.1.10/Bun1.3.14 and installed17/Work fixtures remain unchanged. No new Work launch or handoff. Validation and private evidence are recorded in `.data/acquisition-checkpoint/` when this checkpoint closes.
+
 ## Source30 — existing MCP settings and lossless updates
 
 Native-owned MCP rows now open Settings → Update with the original unexpanded configuration. Name/transport stay fixed, unchanged Save is disabled, and successful Save restores the row’s focus. Changed fields are applied to the original config, preserving untouched/absent keys, native placeholders, auth/OAuth and policy fields. Raw detail stays on the private no-store route and in form memory; catalog/event/journal responses remain redacted. External configuration changes reject stale Save/Uninstall revisions while keeping unfinished text.

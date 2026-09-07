@@ -1,3 +1,4 @@
+import type { NativeMarketplaceCatalog, NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
 import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
@@ -543,6 +544,13 @@ export class WorkerRuntime {
     return client.request<OmpComposerCatalog>({ operation: "getComposerCatalog", args: { cwd, refresh: options.refresh } });
   }
 
+  async getMarketplaceCatalog(cwd: string): Promise<NativeMarketplaceCatalog> {
+    return (await this.#discoveryClient()).request({operation:"getMarketplaceCatalog",args:{cwd}},30_000);
+  }
+  async acquirePlugin(cwd: string, expectedRevision: string, action: NativePluginAcquisition): Promise<NativeMarketplaceCatalog> {
+    // Native acquisition has no abort API. Keep ownership until its actual result or worker exit.
+    return (await this.#discoveryClient()).request({operation:"acquirePlugin",args:{cwd,expectedRevision,action}});
+  }
   async getPlugins(cwd: string): Promise<NativePluginCatalog> {
     return (await this.#discoveryClient()).request({ operation: "getPlugins", args: { cwd } }, 30_000);
   }

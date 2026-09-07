@@ -65,7 +65,7 @@ export function parseMcpDetailRequest(value: unknown): NativeMcpDetailRequest {
   const input=object(value);keys(input,['serverId','expectedRevision']);
   return {serverId:text(input.serverId),expectedRevision:text(input.expectedRevision)};
 }
-async function body(request: Request): Promise<Record<string, unknown>> {
+export async function readIntegrationBody(request: Request): Promise<Record<string, unknown>> {
   if (!request.body) throw new InvalidRequest('A request body is required.');
   const reader = request.body.getReader(), chunks: Uint8Array[] = [];
   let size = 0;
@@ -105,7 +105,7 @@ export class IntegrationsHttp {
       const match = /^\/v1\/integrations\/(plugins|mcp)\/(read|detail|mutate)$/.exec(url.pathname);
       if (!match || request.method !== 'POST') return respond({error:'Not found'},404);
       if(match[2]==='detail'&&match[1]!=='mcp')return respond({error:'Not found'},404);
-      const input = await body(request); keys(input,match[2] === 'read' ? ['target'] : match[2]==='detail'?['target','request']:['target','mutation']);
+      const input = await readIntegrationBody(request); keys(input,match[2] === 'read' ? ['target'] : match[2]==='detail'?['target','request']:['target','mutation']);
       let target:WorkspaceTarget | undefined;
       try { target = input.target === undefined ? undefined : parseWorkspaceTarget(input.target); }
       catch { throw new InvalidRequest('Select an existing project or session.'); }

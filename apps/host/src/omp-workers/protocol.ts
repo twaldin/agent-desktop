@@ -1,3 +1,4 @@
+import type { NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
 import type { NativePluginMutation, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserFrameTarget, BrowserMetadataAvailability, ComposerCompletionQuery, GoalMutationRequest, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { OmpOpenOptions, OmpPromptOptions, OmpSessionOptions, OmpInteractionResponse, PreparedPromptImage } from "../omp";
@@ -6,7 +7,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 23;
+export const WORKER_PROTOCOL_VERSION = 24;
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -33,6 +34,8 @@ export type WorkerOperation =
   | { operation: "getComposerCatalog"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerActions"; args: { cwd?: string; refresh?: boolean } }
   | { operation: "getComposerCompletions"; args: { cwd?: string; query: ComposerCompletionQuery } }
+  | { operation: "getMarketplaceCatalog"; args: { cwd: string } }
+  | { operation: "acquirePlugin"; args: { cwd: string; expectedRevision: string; action: NativePluginAcquisition } }
   | { operation: "getPlugins"; args: { cwd: string } }
   | { operation: "mutatePlugin"; args: { cwd: string; mutation: NativePluginMutation } }
   | { operation: "getMcpServers"; args: { cwd: string } }
