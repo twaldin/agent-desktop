@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CommandResult, DraftInput, HostCommand, HostState, SessionSummary } from "@agent-desktop/shared";
+import type { CommandResult, DraftInput, HostCommand, HostState, SessionSummary, TranscriptMessage } from "@agent-desktop/shared";
 import { startHost } from "./server";
 
 const model = { provider: "selected-text-contract", id: "controlled" };
@@ -67,9 +67,17 @@ test("selected snapshots traverse authenticated HTTP, native admission and durab
     expect(custom).toHaveLength(1);
     expect(custom[0].details).toMatchObject({ submissionId: "selected-send", attachments: f.draft.selectedTextAttachments });
     expect(entries.filter(row => row.type === "message" && row.message.role === "user")).toHaveLength(1);
+    const bound = entries.find(row => row.type === "custom" && row.customType === "agent-desktop.selected-text-binding");
+    expect(bound?.data).toMatchObject({ submissionId: "selected-send", contextEntryId: custom[0].id });
+    const messages = await (await f.request(`/v1/sessions/${f.session.id}/messages`)).json() as TranscriptMessage[];
+    const user = messages.find(message => message.nativeId === bound?.data.userEntryId);
+    expect(user).toMatchObject({ role: "user", text: f.draft.text, selectedText: { bindingEntryId: bound.id, attachments: f.draft.selectedTextAttachments } });
+    expect(messages.some(message => message.role === "selectedText")).toBe(false);
     expect(entries.find(row => row.type === "message" && row.message.role === "assistant").message.content[0].text).toContain("unsaved value");
     expect(await f.command(send, "selected-send")).toEqual(result);
     await f.restart();
+    const reopened = await (await f.request(`/v1/sessions/${f.session.id}/messages`)).json() as TranscriptMessage[];
+    expect(reopened.find(message => message.nativeId === user?.nativeId)?.selectedText).toEqual(user?.selectedText);
     expect(await f.command(send, "selected-send")).toEqual(result);
     expect((await f.raw()).filter(row => row.customType === "agent-desktop.selected-text")).toHaveLength(1);
     expect(f.host.store.getDraft(f.draft.id)?.selectedTextAttachments).toEqual([]);

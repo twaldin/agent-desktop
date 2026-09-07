@@ -1,3 +1,4 @@
+import { projectSelectedText } from "./selected-text-history";
 import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativeSessionMcpResourceRequest, NativeSessionMcpResourceResult } from "@agent-desktop/shared";
 import { NativeSessionMcp } from "./mcp-session";
@@ -466,7 +467,7 @@ export class OmpRuntime {
             timestamp: Date.parse(entry.timestamp), lifecycle: "complete", commandOutput: { entryId: entry.id, command: data.command, output: data.output } });
         }
         projectGoalCompletions(messages, branch);
-        return messages.sort((left, right) => (left.nativeId ? order.get(left.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER)
+        return projectSelectedText(messages, branch).sort((left, right) => (left.nativeId ? order.get(left.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER)
           - (right.nativeId ? order.get(right.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER));
       };
       // Reserve identities from resumed history before a prompt can emit events,

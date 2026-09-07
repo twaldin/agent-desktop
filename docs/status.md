@@ -1,16 +1,22 @@
 # Milestone status
 
+## Selected-text history
+
+Sent selections now appear above their exact native user message as a read-only grouped chip, using the same icon and hover preview as the draft. An excerpt-only prompt has no empty text bubble. Native metadata binds the original context entry to the observed user entry and must flush before admission. Valid but unlinked contexts remain visible with an explicit unlinked status; conflicting metadata never causes a guessed association. Worker protocol31 rejects older workers; OMP18.1.10 remains pinned.
+
+The actual worker/local-provider acceptance covers ordinary `@file` composition, unchanged captured snapshots and reopen. Authenticated HTTP checks cover transcript projection, draft consumption, retry and host restart. 62 focused tests/435 assertions, five renderer checks/four PNG+Chromium-AX captures, typecheck and build pass; details are in the file-editor checkpoint. This batch is not packaged or installed; native skill/slash/steer combinations, cross-device graphical behavior and matched-pixel acceptance remain open. Existing Work runs and sealed evidence remain untouched. See [file editor](workspace-file-editor.md).
+
 ## Editor selections in the composer
 
 Source and rich Markdown editors now expose **Add to chat**. The composer groups captured excerpts into one selection chip with the pinned icon, hover preview and group removal. Original text, line endings, UTF-16 ranges and source-host provenance enter the existing version6 draft path; later buffer edits cannot rewrite an attached snapshot. Read-only Markdown is keyboard-focusable and supports selection capture. Ordinary workspace and native skill tabs are wired to the current draft; archived or unsupported hosts cannot attach.
 
-Seven hidden-Electron checks/seven original renderer PNG+Chromium-AX pairs pass against an authenticated isolated host, including source/rich/read-only selection, unsaved-edit snapshot retention, reload, group removal and narrow light-theme placement.52 focused tests/317 assertions, typecheck and build pass. Independent integration review found no actionable defect. Evidence: `.data/selected-text-ui-2026-09-07/`. This composition test excludes the full App routing, installed main/preload, native macOS captures, cross-host UI, provider prompts and matched-pixel parity. Read-only Pierre, selected-context transcript projection and native skill/reference/steer composition remain open. Existing Work runs and seals remain untouched.
+Seven hidden-Electron checks/seven original renderer PNG+Chromium-AX pairs pass against an authenticated isolated host, including source/rich/read-only selection, unsaved-edit snapshot retention, reload, group removal and narrow light-theme placement.52 focused tests/317 assertions, typecheck and build pass. Independent integration review found no actionable defect. Evidence: `.data/selected-text-ui-2026-09-07/`. This composition test excludes the full App routing, installed main/preload, native macOS captures, cross-host UI, provider prompts and matched-pixel parity. This earlier editor pass left read-only Pierre, transcript projection and native skill/reference/steer composition open; the subsequent history checkpoint above covers projection and ordinary @file composition. Existing Work runs and seals remain untouched.
 
 ## Selected-text draft and submission transport
 
 Selected excerpts now persist through host schema8, version6 commands, renderer draft caches/conflicts and the original submission envelope. Old endpoints refuse snapshot intent; an accepted ordinary native user receipt clears only the submitted revision. Lost replies and later edits retain their content across restart. A legacy text-clear collision with a newer excerpt-only draft is preserved as a conflict.
 
-The 94-test/648-assertion regression and subsequent three actual authenticated HTTP tests/59 assertions pass; the latter includes production DraftController/SubmissionController/main endpoint routing through the real host and pinned OMP worker. Typecheck/build pass. Private evidence is in `.data/selected-text-public-2026-09-07/`. This earlier checkpoint established transport/controller integration. The visible editor/chip pass is described above; transcript projection, native skill/reference/steer composition and installed/pixel checks remain open.
+The 94-test/648-assertion regression and subsequent three actual authenticated HTTP tests/59 assertions pass; the latter includes production DraftController/SubmissionController/main endpoint routing through the real host and pinned OMP worker. Typecheck/build pass. Private evidence is in `.data/selected-text-public-2026-09-07/`. This earlier checkpoint established transport/controller integration. The later editor/chip and history passes are described above; native skill/slash/steer combinations and installed/pixel checks remain open.
 
 ## Selected-text native foundation
 

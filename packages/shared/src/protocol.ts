@@ -154,6 +154,8 @@ export interface TranscriptMessage {
   assistant?: TranscriptAssistantMetadata;
   /** App-owned native command output entry. This is never a model message. */
   commandOutput?: { entryId: string; command: string; output: string };
+  /** Captured context, linked only by explicit persisted native metadata. */
+  selectedText?: { contextEntryId: string; submissionId: string; attachments: SelectedTextAttachment[]; bindingEntryId?: string };
   /** Bounded native goal-completed entry attached to its preceding assistant. */
   goalCompletion?: { entryId: string; objective: string; tokensUsed: number; tokenBudget?: number; timeUsedSeconds: number };
   blocks?: unknown[];

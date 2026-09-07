@@ -4,6 +4,7 @@ import { OmpPromptAdmissionError } from "./prompt";
 
 export const SELECTED_TEXT_CUSTOM_TYPE = "agent-desktop.selected-text";
 const SELECTED_TEXT_DETAILS_VERSION = 1;
+export const SELECTED_TEXT_BINDING_TYPE = "agent-desktop.selected-text-binding";
 
 /** Immutable snapshot supplied by the desktop with a single submission. */
 export interface NativeSelectedTextInput {
@@ -77,6 +78,7 @@ function isAppendedContext(entry: ReturnType<SessionManager["getEntries"]>[numbe
 export class NativeSelectedTextPrompt {
   readonly #input: NativeSelectedTextInput;
   #attempted = false;
+  #contextEntryId?: string;
   #message?: NativeUserMessage;
   #text?: string;
   #allowImages = false;
@@ -129,6 +131,22 @@ export class NativeSelectedTextPrompt {
   }
   close(): void { this.#restore?.(); this.#restore = undefined; }
 
+  /** Native metadata binds this exact persisted context to the observed user entry.
+   * It is not another model/context message and must flush before admission. */
+  async persistBinding(userEntryId: string): Promise<void> {
+    const manager = this.session.sessionManager, entries = manager.getEntries();
+    const user = entries.find(entry => entry.id === userEntryId);
+    if (!this.#contextEntryId || user?.type !== "message" || !this.matches(user.message))
+      throw new Error("Selected context has no attributable native user entry");
+    const data = { version: 1, submissionId: this.#input.submissionId, contextEntryId: this.#contextEntryId, userEntryId };
+    const id = manager.appendCustomEntry(SELECTED_TEXT_BINDING_TYPE, data);
+    const bindings = manager.getEntries().filter(entry => entry.type === "custom" && entry.customType === SELECTED_TEXT_BINDING_TYPE
+      && (entry.data as { submissionId?: unknown } | undefined)?.submissionId === data.submissionId);
+    if (bindings.length !== 1 || bindings[0]?.id !== id || bindings[0]?.type !== "custom"
+      || JSON.stringify(bindings[0].data) !== JSON.stringify(data)) throw new Error("Selected context binding was not recorded exactly");
+    await manager.flush();
+  }
+
   async append(): Promise<void> {
     if (this.#attempted) throw new OmpPromptAdmissionError(new Error("This selected-text submission has already been attempted. Inspect its native outcome before sending it again."));
     this.#attempted = true;
@@ -159,5 +177,6 @@ export class NativeSelectedTextPrompt {
       throw new OmpPromptAdmissionError(new Error("Native selected-text context append was not observed exactly. Inspect its native outcome before sending again."));
     }
     await this.session.sessionManager.flush();
+    this.#contextEntryId = appended[0]!.id;
   }
 }

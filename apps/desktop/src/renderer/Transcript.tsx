@@ -1,3 +1,4 @@
+import { ComposerSelectedText } from "./ComposerSelectedText";
 import { createContext, useContext, useId, useMemo, useState, type ReactNode } from "react";
 import type { TranscriptBlock, TranscriptMessage } from "../../../../packages/shared/src/protocol";
 import { Icon } from "./Icons";
@@ -36,15 +37,20 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
     <summary><Icon name="terminal"/><span>/{message.commandOutput.command.replace(/^\//, "")}</span><span className="transcript-command-origin">Command output</span></summary>
     <pre className="transcript-output-text">{message.commandOutput.output}</pre>
   </details>;
+  if (message.role === "selectedText" && message.selectedText) return <section className="transcript-selected-context" data-message-id={message.id} data-native-id={message.nativeId} aria-label="Saved selected text">
+    <ComposerSelectedText attachments={message.selectedText.attachments}/><span className="transcript-selected-context-status">Saved context · prompt not linked</span>
+  </section>;
   const user = message.role === "user", assistant = message.role === "assistant";
   if (!user && !assistant) return <section className="transcript-native-message" data-message-id={message.id} aria-label={`Native ${message.role} message`}><div className="transcript-native-role">{message.role}</div>{blocks.map(renderBlock)}{!blocks.length && <p className="subtle-notice">No displayable content was supplied for this native message.</p>}</section>;
   const metadata = message.assistant, complete = message.lifecycle === "complete", goalCompletion = assistant ? message.goalCompletion : undefined;
-  return <article className={`message ${user ? "user-message" : "assistant-message"}`} data-message-id={message.id} data-native-id={message.nativeId} aria-label={user ? "Your message" : "Assistant message"}>
-    <div className="message-body">{blocks.map(renderBlock)}
+  const showBody = !user || !message.selectedText || blocks.some(block => block.type !== "text" || block.text.length > 0);
+  return <article className={`message ${user ? `user-message${message.selectedText ? " has-selected-text" : ""}` : "assistant-message"}`} data-message-id={message.id} data-native-id={message.nativeId} aria-label={user ? "Your message" : "Assistant message"}>
+    {user && message.selectedText && <div className="transcript-user-attachments"><ComposerSelectedText attachments={message.selectedText.attachments}/></div>}
+    {showBody && <div className="message-body">{blocks.map(renderBlock)}
       {complete && metadata?.stopReason === "error" && <p className="transcript-message-error" role="status">{metadata.errorMessage || "The provider ended this response with an error."}</p>}
       {complete && metadata?.stopReason === "aborted" && <p className="transcript-message-notice" role="status">{metadata.errorMessage || "This response was interrupted."}</p>}
       {complete && metadata?.stopReason === "length" && <p className="transcript-message-notice">The response reached its output limit.</p>}
-    </div>
+    </div>}
     {assistant && <div className="transcript-message-actions">{message.text && <button className="copy-message" onClick={async () => { try { await navigator.clipboard.writeText(message.text); setCopyState("copied"); } catch { setCopyState("failed"); } }}><span aria-live="polite">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed · retry" : "Copy"}</span></button>}{goalCompletion && <span className="transcript-goal-achievement" title={goalCompletionTitle(goalCompletion)}><GoalIcon name="achieved"/><span>Goal achieved in {goalDuration(goalCompletion.timeUsedSeconds)}</span></span>}{metadata && Object.keys(metadata).length > 0 && <details className="transcript-message-metadata"><summary>Response details</summary><dl>{metadata.provider && <><dt>Provider</dt><dd>{metadata.provider}</dd></>}{metadata.model && <><dt>Model</dt><dd>{metadata.model}</dd></>}{metadata.upstreamProvider && <><dt>Upstream provider</dt><dd>{metadata.upstreamProvider}</dd></>}{metadata.upstreamModel && <><dt>Upstream model</dt><dd>{metadata.upstreamModel}</dd></>}{complete && metadata.stopReason && <><dt>Native stop reason</dt><dd>{metadata.stopReason}</dd></>}{metadata.durationMs !== undefined && <><dt>Native duration</dt><dd>{metadata.durationMs} ms</dd></>}{metadata.usage && <><dt>Reported usage</dt><dd><pre>{JSON.stringify(metadata.usage, null, 2)}</pre></dd></>}</dl></details>}</div>}
   </article>;
 }

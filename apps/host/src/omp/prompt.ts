@@ -30,7 +30,7 @@ export function beginNativePrompt(
   settlePersistence: () => Promise<void>,
   imageAdmission?: { matches(message: unknown): boolean; receipt(): ImageAdmission[]; readonly dispatched: boolean },
   skillAdmission?: { matchesEntry(entry: Parameters<NonNullable<SessionManager["onEntryAppended"]>>[0]): boolean; readonly name: string; readonly dispatched: boolean },
-  selectedTextAdmission?: { readonly attempted: boolean; matches(message: unknown): boolean },
+  selectedTextAdmission?: { readonly attempted: boolean; matches(message: unknown): boolean; persistBinding?(entryId: string): Promise<void> },
 ): OmpPromptRun {
   const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
   let entryObserved = false;
@@ -46,7 +46,7 @@ export function beginNativePrompt(
     entryObserved = true;
     // message_end precedes persistence. onEntryAppended follows native append;
     // flush additionally checks asynchronous writes and latched disk failures.
-    void manager.flush().then(() => {
+    void Promise.resolve().then(() => selectedTextAdmission?.persistBinding?.(entry.id)).then(() => manager.flush()).then(() => {
       receipt.resolve(skillEntry ? { kind: "skill-message", entryId: entry.id, name: skillAdmission!.name }
         : { kind: "user-message", entryId: entry.id, ...(imageAdmission ? { images: imageAdmission.receipt() } : {}) });
     }).catch(error => receipt.reject(admissionFailure(error)));

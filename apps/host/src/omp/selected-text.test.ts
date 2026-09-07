@@ -226,3 +226,40 @@ test("real native session sends persisted selected context before unchanged user
     await runtime.dispose();
   }
 }, 30_000);
+
+test("selected admission flushes an exact native user binding before acknowledging", async () => {
+  const { manager, session } = await managerFixture();
+  try {
+    const agent = { prompt: async (message: unknown) => { manager.appendMessage(message as never); } };
+    const native = { ...session, agent } as unknown as AgentSession;
+    const selected = NativeSelectedTextPrompt.fromInput(native, { ...input, submissionId: "bound-submit" })!;
+    selected.prepare(native, "Exact authored text");
+    const run = beginNativePrompt(manager, async () => {
+      await selected.append();
+      await native.agent.prompt({ role: "user", content: "Exact authored text", timestamp: 1 });
+      return { agentInvoked: true };
+    }, async () => {}, undefined, undefined, selected);
+    const receipt = await run.accepted; await run.completion; selected.close();
+    const entries = manager.getEntries(), binding = entries.find(entry => entry.type === "custom" && entry.customType === "agent-desktop.selected-text-binding");
+    expect(binding).toMatchObject({ data: { version: 1, submissionId: "bound-submit", userEntryId: receipt?.entryId, contextEntryId: entries[0]?.id } });
+    expect(await readFile(manager.getSessionFile()!, "utf8")).toContain('"customType":"agent-desktop.selected-text-binding"');
+  } finally { await manager.close(); }
+});
+
+test("missing binding append never acknowledges or consumes the selected prompt", async () => {
+  const { manager, session } = await managerFixture();
+  try {
+    const native = { ...session, agent: { prompt: async (message: unknown) => { manager.appendMessage(message as never); } } } as unknown as AgentSession;
+    const selected = NativeSelectedTextPrompt.fromInput(native, { ...input, submissionId: "binding-failure" })!;
+    selected.prepare(native, "Exact authored text");
+    const original = manager.appendCustomEntry.bind(manager);
+    manager.appendCustomEntry = ((type, data) => type === "agent-desktop.selected-text-binding" ? "not-appended" : original(type, data)) as typeof original;
+    const run = beginNativePrompt(manager, async () => {
+      await selected.append(); await native.agent.prompt({ role: "user", content: "Exact authored text", timestamp: 1 }); return { agentInvoked: true };
+    }, async () => {}, undefined, undefined, selected);
+    await expect(run.accepted).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    await run.completion; selected.close();
+    expect(manager.getEntries().filter(entry => entry.type === "message")).toHaveLength(1);
+    expect(manager.getEntries().some(entry => entry.type === "custom" && entry.customType === "agent-desktop.selected-text-binding")).toBe(false);
+  } finally { await manager.close(); }
+});

@@ -15,7 +15,7 @@ function SelectedTextIcon() {
 export function ComposerSelectedText({ attachments, disabled = false, onRemove, onFocusComposer }: {
   attachments?: readonly SelectedTextAttachment[];
   disabled?: boolean;
-  onRemove(ids: string[]): void;
+  onRemove?(ids: string[]): void;
   onFocusComposer?: () => void;
 }) {
   const selected = attachments ?? [];
@@ -84,7 +84,7 @@ export function ComposerSelectedText({ attachments, disabled = false, onRemove, 
   const label = `${selected.length} ${selected.length === 1 ? "selection" : "selections"}`;
   const remove = () => {
     const ids = selected.map(attachment => attachment.id);
-    onRemove(ids);
+    onRemove?.(ids);
     onFocusComposer?.();
   };
   const key = (event: React.KeyboardEvent, action: () => void) => {
@@ -102,8 +102,8 @@ export function ComposerSelectedText({ attachments, disabled = false, onRemove, 
       onClick={() => { clearCloseTimer(); setOpen(value => !value); }} onKeyDown={event => key(event, () => { clearCloseTimer(); setOpen(value => !value); })}>
       <SelectedTextIcon/><span>{label}</span>
     </button>
-    <button type="button" className="composer-selected-text-remove" aria-label="Remove selected text attachment" disabled={disabled} onClick={remove}
-      onKeyDown={event => key(event, remove)}><Icon name="close"/></button>
+    {onRemove && <button type="button" className="composer-selected-text-remove" aria-label="Remove selected text attachment" disabled={disabled} onClick={remove}
+      onKeyDown={event => key(event, remove)}><Icon name="close"/></button>}
     {popup}
   </span>;
 }

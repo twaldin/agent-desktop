@@ -7,7 +7,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 30;
+export const WORKER_PROTOCOL_VERSION = 31;
 export interface SessionSnapshot {
   revision: number;
   id: string;
