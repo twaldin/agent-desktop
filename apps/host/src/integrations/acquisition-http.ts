@@ -1,5 +1,6 @@
 import type { WorkspaceTarget } from '@agent-desktop/shared';
 import type { NativePluginAcquisition, NativePluginAcquisitionRequest, NativeMarketplaceCatalog } from '../../../../packages/shared/src/plugin-acquisition';
+import { assertMarketplaceGitSource, parseMarketplaceSourceOptions } from '../../../../packages/shared/src/plugin-acquisition';
 import { parseWorkspaceTarget } from '../workspace-http';
 import { readIntegrationBody } from '../integrations-http';
 import { PluginAcquisitionOperations } from './acquisition-operations';
@@ -33,7 +34,7 @@ export function parsePluginAcquisition(value: unknown): NativePluginAcquisitionR
   const input=object(value);keys(input,['id','expectedRevision','action']);
   const raw=object(input.action);let action: NativePluginAcquisition;
   switch(raw.operation) {
-    case 'marketplace.add': keys(raw,['operation','source']);action={operation:raw.operation,source:text(raw.source,8192)};break;
+    case 'marketplace.add': keys(raw,['operation','source','sourceOptions']);action={operation:raw.operation,source:text(raw.source,8192),...(raw.sourceOptions === undefined ? {} : {sourceOptions:parseMarketplaceSourceOptions(raw.sourceOptions)})};if(action.sourceOptions)assertMarketplaceGitSource(action.source);break;
     case 'marketplace.update': case 'marketplace.remove': keys(raw,['operation','name']);action={operation:raw.operation,name:name(raw.name)};break;
     case 'plugin.install': keys(raw,['operation','name','marketplace','scope']);action={operation:raw.operation,name:name(raw.name),marketplace:name(raw.marketplace),scope:scope(raw.scope)};break;
     case 'plugin.uninstall': {

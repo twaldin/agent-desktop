@@ -4,6 +4,7 @@ import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type { NativeMarketplaceCatalog, NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
+import { parseMarketplaceSourceOptions, type NativeMarketplaceSourceOptions } from "../../../../packages/shared/src/plugin-acquisition";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "@oh-my-pi/pi-coding-agent/discovery/helpers";
 import {
   MarketplaceManager,
@@ -31,6 +32,7 @@ type MarketplaceEntry = {
   sourceType: "github" | "git" | "url" | "local";
   sourceUri: string;
   catalogPath: string;
+  sourceOptions?: NativeMarketplaceSourceOptions;
 };
 type InstalledEntry = { scope: Scope; installPath: string; version: string; enabled?: boolean };
 type InstalledRow = { id: string; entry: InstalledEntry };
@@ -101,6 +103,7 @@ function parseMarketplaces(value: unknown): MarketplaceEntry[] {
     if (!object(raw) || typeof raw.name !== "string" || !isValidNameSegment(raw.name) ||
       !["github", "git", "url", "local"].includes(String(raw.sourceType)) || typeof raw.sourceUri !== "string" ||
       typeof raw.catalogPath !== "string") throw new Error(`Native marketplace registry entry ${index} is invalid`);
+    if (raw.sourceOptions !== undefined) parseMarketplaceSourceOptions(raw.sourceOptions);
     return raw as MarketplaceEntry;
   });
 }
@@ -275,13 +278,14 @@ export class NativeMarketplaces {
       const raw = await boundedText(expected);
       files.push([expected, raw]);
       if (raw === undefined) {
-        marketplaces.push({ name: entry.name, sourceType: entry.sourceType, catalogAvailable: false, plugins: [] });
+        marketplaces.push({ name: entry.name, sourceType: entry.sourceType, ...(entry.sourceOptions ? {sourceOptions:entry.sourceOptions} : {}), catalogAvailable: false, plugins: [] });
         continue;
       }
       const parsed = parseMarketplaceCatalog(raw, expected);
       if (parsed.name !== entry.name || parsed.plugins.length > MAX_PLUGINS) throw new Error("Native marketplace cache does not match its registry entry");
       marketplaces.push({
         name: entry.name, sourceType: entry.sourceType, catalogAvailable: true,
+        ...(entry.sourceOptions ? {sourceOptions:entry.sourceOptions} : {}),
         ...(typeof parsed.metadata?.description === "string" ? { description: parsed.metadata.description } : {}),
         plugins: parsed.plugins.map(plugin => {
           const npm = typeof plugin.source === "object" && plugin.source.source === "npm";
@@ -357,7 +361,8 @@ export class NativeMarketplaces {
     const manager = this.#manager(current.context);
     if (action.operation === "marketplace.add") {
       if (!action.source || action.source.includes("\0")) throw new Error("Marketplace source is invalid");
-      await nativeMutation(action.operation, () => manager.addMarketplace(action.source));
+      const options = action.sourceOptions === undefined ? undefined : parseMarketplaceSourceOptions(action.sourceOptions);
+      await nativeMutation(action.operation, () => manager.addMarketplace(action.source, options));
     } else if (action.operation === "marketplace.update" || action.operation === "marketplace.remove") {
       if (!isValidNameSegment(action.name) || !current.catalog.marketplaces.some(row => row.name === action.name)) throw new Error("Marketplace is unavailable");
       const cacheDir = path.join(current.context.marketplaceCache, action.name);

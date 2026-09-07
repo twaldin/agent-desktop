@@ -2,6 +2,14 @@
 
 Home and Work run desktop **17**; all three hosts run **17**. This is an intermediate working app; the full completion contract remains in [GOAL.md](../GOAL.md). Source tests, installed behavior and supplied-reference comparison are separate evidence.
 
+## Source30 — Git marketplace source options
+
+The Add marketplace form now supports Git ref and literal sparse paths through the app-owned pinned OMP fetcher. Options survive dismissal, persist in the host’s native registry and are reused by Upgrade after host/worker restart. Local/JSON sources with Git options and unsafe paths/refs are rejected before admission. Literal spaces/brackets are preserved, and marketplace Upgrade does not change installed plugin versions. Sparse checkout follows the native clone; reduced initial transfer is not claimed.
+
+Validation: **994 tests /27,530 assertions across196 files**,29 skips, zero failures. Final focused checks pass15 tests/111 assertions; typecheck and production build pass. Production components pass12 hidden Electron checks with23 captures and9 distinct starts, including lost-response recovery, preflight rejection and dialog-padding interaction. All1,737 sealed reference records and four manifest hashes still match; the six changed OMP source/type files match an isolated clean install.
+
+This is source/component and real local-host/worker evidence. Installed main/preload, native-window pixels, project-scope popup input and remote Git authentication remain unverified. The form panel sample matches reference RGB42; remaining height/title weight, overall settings layout, Browse directory, Apps/Skills filters and installed-plugin upgrade remain open. OMP18.1.10/Bun1.3.14 stay pinned; worker protocol25 adds source options, host schema7 is unchanged. No Work launch/handoff/installation or sealed-bundle mutation. Private evidence: `.data/marketplace-source-options-checkpoint/`.
+
 ## Source30 — desktop marketplace acquisition and receipt recovery
 
 The Plugins settings UI now exposes Add a marketplace, marketplace search/detail, native Upgrade/Remove, and scoped Install/Uninstall through the authenticated desktop bridge. Lost responses recover from host receipts without replay. Request identity survives window reload without storing source URLs. Closing an unadmitted request prevents a delayed original dispatch; admitted native work retains its lifetime. Native failure recovery requires explicit configuration inspection and review.

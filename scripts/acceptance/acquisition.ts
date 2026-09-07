@@ -23,7 +23,7 @@ try{
   if(route==='/test/lose'){lose=true;return Response.json({ok:true},{headers:cors});}
   if(route==='/test/hold'){hold=true;return Response.json({ok:true},{headers:cors});}
   if(route==='/test/release'){gate.resolve();return Response.json({ok:true},{headers:cors});}
-  if(route==='/test/state')return Response.json({calls,held,market:ready.market},{headers:cors});
+  if(route==='/test/state')return Response.json({calls,held,market:ready.market,gitSource:ready.gitSource},{headers:cors});
   if(!/^\/v1\/integrations\/(acquisition\/(catalog|start|operations|review|close-request)|plugins\/read|mcp\/read)$/.test(route))return new Response(null,{status:403});
   if(route.endsWith('/operations')&&failStatus){failStatus=false;return Response.json({error:'Read outage fixture'},{status:503,headers:cors});}
   calls.push({route,operation:input.request?.action?.operation??input.operation,id:input.request?.id??input.id});

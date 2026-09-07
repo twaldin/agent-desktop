@@ -6,6 +6,7 @@ import type {
   WorkspaceTarget,
 } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
+import { parseMarketplaceSourceOptions } from "../../../../packages/shared/src/plugin-acquisition";
 
 const MAX_RESPONSE = 2 * 1024 * 1024;
 function object(value: unknown): Record<string, unknown> {
@@ -66,7 +67,8 @@ function catalog(value: unknown): NativeMarketplaceCatalog {
   if (typeof root.projectScopeAvailable !== "boolean" || !Array.isArray(root.marketplaces) || root.marketplaces.length > 256 ||
     !Array.isArray(root.installed) || root.installed.length > 4096) throw new Error("Invalid plugin acquisition response.");
   for (const item of root.marketplaces) {
-    const market = object(item); exact(market, ["name", "sourceType", "catalogAvailable", "description", "plugins"]);
+    const market = object(item); exact(market, ["name", "sourceType", "sourceOptions", "catalogAvailable", "description", "plugins"]);
+    if (market.sourceOptions !== undefined) parseMarketplaceSourceOptions(market.sourceOptions);
     string(market.name, 64);
     if (!["github", "git", "url", "local"].includes(String(market.sourceType)) || typeof market.catalogAvailable !== "boolean" ||
       (market.description !== undefined && (typeof market.description !== "string" || market.description.length > 8192)) ||

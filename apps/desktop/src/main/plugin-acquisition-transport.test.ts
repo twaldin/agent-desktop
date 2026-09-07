@@ -16,7 +16,7 @@ const baseReceipt: NativePluginAcquisitionReceipt = {
 const seen: Array<{ path: string; authorization: string | null; cache: string | null; body: unknown }> = [];
 const catalog: NativeMarketplaceCatalog = {
   revision: "catalog-revision", projectScopeAvailable: true,
-  marketplaces: [{ name: "local", sourceType: "local", catalogAvailable: true, plugins: [{ name: "sample", installable: true }] }],
+  marketplaces: [{ name: "local", sourceType: "git", sourceOptions: {ref:"selected",sparsePaths:["plugins/a"]}, catalogAvailable: true, plugins: [{ name: "sample", installable: true }] }],
   installed: [],
 };
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -29,7 +29,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   if (url.pathname.endsWith("/operations")) return Response.json([baseReceipt]);
   if (url.pathname.endsWith("/review")) return Response.json({ ...baseReceipt, state: "reviewed", updatedAt: 11 });
   if (url.pathname.endsWith("/close-request")) return Response.json({ ...baseReceipt, state: "reviewed", updatedAt: 11 });
-  return Response.json(baseReceipt, { status: 202 });
+  return Response.json({...baseReceipt,operation:(body as any)?.request?.action?.operation??baseReceipt.operation}, { status: 202 });
 } });
 const endpoint = (prefix = "ok") => ({ origin: `http://127.0.0.1:${server.port}/${prefix}`, hostId: "host-a", token: "transport-token" });
 afterAll(() => server.stop(true));
@@ -46,6 +46,11 @@ describe("plugin acquisition desktop transport", () => {
       body: { target, request },
     });
     expect(JSON.stringify(seen.at(-1)?.body)).not.toContain("transport-token");
+  });
+
+  test("forwards complete source options without dropping or moving them into the source URL",async()=>{
+    const request={id,expectedRevision:'catalog-revision',action:{operation:'marketplace.add' as const,source:'https://fixture.invalid/repo',sourceOptions:{ref:'release/x',sparsePaths:['plugins/a','literal[1].txt']}}};
+    expect(await startPluginAcquisition(endpoint(),target,request)).toMatchObject({id,operation:'marketplace.add'});expect(seen.at(-1)?.body).toEqual({target,request});
   });
 
   test("reads host-wide operations and reviews or closes only the exact target and identity", async () => {

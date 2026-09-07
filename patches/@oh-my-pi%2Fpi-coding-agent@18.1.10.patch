@@ -1419,3 +1419,282 @@ diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/type
  /**
   * Synchronous check — true when the cache directory exists on disk.
   * Uses `existsSync` because callers may need to run this check inline without async.
+diff --git a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
+index 54f6204..a1c142d 100644
+--- a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
++++ b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
+@@ -3,7 +3,7 @@
+  *
+  * Classifies a source string, resolves it, and loads the catalog.
+  */
+-import { type MarketplaceCatalog, type MarketplaceSourceType } from "./types.js";
++import { type MarketplaceCatalog, type MarketplaceSourceOptions, type MarketplaceSourceType } from "./types.js";
+ export interface FetchResult {
+     catalog: MarketplaceCatalog;
+     /** For git sources: path to the cloned marketplace directory. */
+@@ -29,6 +29,7 @@ export declare function classifySource(source: string): MarketplaceSourceType;
+  * @throws on JSON parse failure or missing/invalid required fields.
+  */
+ export declare function parseMarketplaceCatalog(content: string, filePath: string): MarketplaceCatalog;
++export declare function validateMarketplaceSourceOptions(value: MarketplaceSourceOptions | undefined): MarketplaceSourceOptions | undefined;
+ /**
+  * Fetch a marketplace catalog from a source.
+  *
+@@ -38,7 +39,7 @@ export declare function parseMarketplaceCatalog(content: string, filePath: strin
+  * @param source   Source identifier: path, GitHub shorthand, git URL, or HTTP URL.
+  * @param cacheDir Cache directory root for non-local sources.
+  */
+-export declare function fetchMarketplace(source: string, cacheDir: string): Promise<FetchResult>;
++export declare function fetchMarketplace(source: string, cacheDir: string, options?: MarketplaceSourceOptions): Promise<FetchResult>;
+ /**
+  * Promote a temporary clone directory to its final cache location.
+  *
+diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
+index f36cc40..f92a051 100644
+--- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
++++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
+@@ -5,7 +5,7 @@
+  * The `clearPluginRootsCache` dependency is injected so callers can provide
+  * the real `clearClaudePluginRootsCache` while tests supply a counter stub.
+  */
+-import type { InstalledPluginEntry, InstalledPluginSummary, MarketplacePluginEntry, MarketplaceRegistryEntry } from "./types.js";
++import type { InstalledPluginEntry, InstalledPluginSummary, MarketplacePluginEntry, MarketplaceRegistryEntry, MarketplaceSourceOptions } from "./types.js";
+ export interface MarketplaceManagerOptions {
+     marketplacesRegistryPath: string;
+     installedRegistryPath: string;
+@@ -25,7 +25,7 @@ export interface MarketplaceManagerOptions {
+ export declare class MarketplaceManager {
+     #private;
+     constructor(options: MarketplaceManagerOptions);
+-    addMarketplace(source: string): Promise<MarketplaceRegistryEntry>;
++    addMarketplace(source: string, sourceOptions?: MarketplaceSourceOptions): Promise<MarketplaceRegistryEntry>;
+     removeMarketplace(name: string): Promise<void>;
+     updateMarketplace(name: string): Promise<MarketplaceRegistryEntry>;
+     updateAllMarketplaces(): Promise<MarketplaceRegistryEntry[]>;
+diff --git a/dist/types/extensibility/plugins/marketplace/types.d.ts b/dist/types/extensibility/plugins/marketplace/types.d.ts
+index 6d66e30..d8a6893 100644
+--- a/dist/types/extensibility/plugins/marketplace/types.d.ts
++++ b/dist/types/extensibility/plugins/marketplace/types.d.ts
+@@ -88,10 +88,15 @@ export interface MarketplacesRegistry {
+     marketplaces: MarketplaceRegistryEntry[];
+ }
+ export type MarketplaceSourceType = "github" | "git" | "url" | "local";
++export interface MarketplaceSourceOptions {
++    ref?: string;
++    sparsePaths?: string[];
++}
+ export interface MarketplaceRegistryEntry {
+     name: string;
+     sourceType: MarketplaceSourceType;
+     sourceUri: string;
++    sourceOptions?: MarketplaceSourceOptions;
+     catalogPath: string;
+     addedAt: string;
+     updatedAt: string;
+diff --git a/src/extensibility/plugins/marketplace/fetcher.ts b/src/extensibility/plugins/marketplace/fetcher.ts
+index 389da79..75a3c78 100644
+--- a/src/extensibility/plugins/marketplace/fetcher.ts
++++ b/src/extensibility/plugins/marketplace/fetcher.ts
+@@ -5,14 +5,80 @@
+  */
+ 
+ import * as fs from "node:fs/promises";
++import { spawn } from "node:child_process";
+ import * as os from "node:os";
+ import * as path from "node:path";
+ import * as vcs from "@oh-my-pi/pi-natives/vcs";
+ import { isEnoent, logger } from "@oh-my-pi/pi-utils";
+ 
+-import { isValidNameSegment, type MarketplaceCatalog, type MarketplaceSourceType } from "./types";
++import { isValidNameSegment, type MarketplaceCatalog, type MarketplaceSourceOptions, type MarketplaceSourceType } from "./types";
+ 
+ const GIT_CLONE_TIMEOUT_MS = 30 * 60 * 1000;
++const MAX_SPARSE_PATHS = 128;
++
++export function validateMarketplaceSourceOptions(value: MarketplaceSourceOptions | undefined): MarketplaceSourceOptions | undefined {
++	if (value === undefined) return undefined;
++	if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "ref" && key !== "sparsePaths")) {
++		throw new Error("Invalid marketplace source options");
++	}
++	if (value.ref !== undefined && (typeof value.ref !== "string" || !value.ref || value.ref.length > 256 || value.ref.startsWith("-") || /[\x00-\x20\x7f~^:?*[\\]/.test(value.ref) || value.ref.includes("..") || value.ref.includes("@{"))) {
++		throw new Error("Invalid marketplace Git ref");
++	}
++	if (value.sparsePaths !== undefined && (!Array.isArray(value.sparsePaths) || value.sparsePaths.length > MAX_SPARSE_PATHS)) {
++		throw new Error("Invalid marketplace sparse paths");
++	}
++	let total = 0;
++	for (const item of value.sparsePaths ?? []) {
++		if (typeof item !== "string" || !item || item.length > 1024 || item.startsWith("/") || item.startsWith("-") || item.includes("\\") || /[\x00-\x1f\x7f]/.test(item) ||
++			item.split("/").some(part => part === "" || part === "." || part === ".." || part.toLowerCase() === ".git")) {
++			throw new Error("Invalid marketplace sparse path");
++		}
++		total += item.length;
++	}
++	if (total > 32_768) throw new Error("Marketplace sparse paths are too large");
++	return { ...(value.ref !== undefined ? { ref: value.ref } : {}), ...(value.sparsePaths !== undefined ? { sparsePaths: [...value.sparsePaths] } : {}) };
++}
++
++function gitPattern(value: string, directory: boolean): string {
++	const escaped = value.replace(/([*?\[\] ])/g, "\\$1");
++	return `/${escaped}${directory ? "/" : ""}`;
++}
++
++async function applySparseCheckout(root: string, paths: readonly string[]): Promise<void> {
++	const patterns = ["/.omp-plugin/", "/.claude-plugin/"];
++	for (const raw of paths) {
++		const value = raw;
++		const info = await fs.lstat(path.join(root, ...value.split("/"))).catch(error => { if (isEnoent(error)) return null; throw error; });
++		if (!info) throw new Error(`Marketplace sparse path does not exist: ${JSON.stringify(raw)}`);
++		patterns.push(gitPattern(value, info.isDirectory()));
++	}
++	await new Promise<void>((resolve, reject) => {
++		const child = spawn("git", ["-C", root, "sparse-checkout", "set", "--no-cone", "--stdin"], { stdio: ["pipe", "ignore", "pipe"] });
++		let stderr = "";
++		let settled = false;
++		let killTimer: ReturnType<typeof setTimeout> | undefined;
++		const finish = (error?: Error): void => {
++			if (settled) return;
++			settled = true;
++			clearTimeout(timer);
++			if (killTimer) clearTimeout(killTimer);
++			if (error) reject(error);
++			else resolve();
++		};
++		child.stderr.setEncoding("utf8");
++		child.stderr.on("data", chunk => { if (stderr.length < 16_384) stderr += String(chunk).slice(0, 16_384 - stderr.length); });
++		child.stdin.on("error", error => finish(error));
++		const timer = setTimeout(() => {
++			child.kill("SIGTERM");
++			killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
++		}, GIT_CLONE_TIMEOUT_MS);
++		child.once("error", error => finish(error));
++		child.once("exit", (code, signal) => {
++			if (code === 0) finish(); else finish(new Error(`Git sparse checkout failed (${signal ?? code}): ${stderr}`));
++		});
++		child.stdin.end(`${patterns.join("\n")}\n`);
++	});
++}
+ 
+ // ── Types ─────────────────────────────────────────────────────────────
+ 
+@@ -242,8 +308,10 @@ function expandHome(p: string): string {
+  * @param source   Source identifier: path, GitHub shorthand, git URL, or HTTP URL.
+  * @param cacheDir Cache directory root for non-local sources.
+  */
+-export async function fetchMarketplace(source: string, cacheDir: string): Promise<FetchResult> {
++export async function fetchMarketplace(source: string, cacheDir: string, options?: MarketplaceSourceOptions): Promise<FetchResult> {
+ 	const type = classifySource(source);
++	const validated = validateMarketplaceSourceOptions(options);
++	if (validated && (type === "local" || type === "url")) throw new Error("Marketplace source options require a Git source");
+ 
+ 	if (type === "local") {
+ 		const resolved = path.resolve(expandHome(source));
+@@ -254,11 +322,11 @@ export async function fetchMarketplace(source: string, cacheDir: string): Promis
+ 
+ 	if (type === "github") {
+ 		const url = `https://github.com/${source}.git`;
+-		return cloneAndReadCatalog(url, source, cacheDir);
++		return cloneAndReadCatalog(url, source, cacheDir, validated);
+ 	}
+ 
+ 	if (type === "git") {
+-		return cloneAndReadCatalog(source, source, cacheDir);
++		return cloneAndReadCatalog(source, source, cacheDir, validated);
+ 	}
+ 
+ 	// type === "url"
+@@ -286,14 +354,16 @@ export async function fetchMarketplace(source: string, cacheDir: string): Promis
+  * responsible for promoting the clone to its final cache location via
+  * `promoteCloneToCache` after any duplicate/drift checks pass.
+  */
+-async function cloneAndReadCatalog(url: string, source: string, cacheDir: string): Promise<FetchResult> {
++async function cloneAndReadCatalog(url: string, source: string, cacheDir: string, options?: MarketplaceSourceOptions): Promise<FetchResult> {
+ 	const tmpDir = path.join(cacheDir, `.tmp-clone-${Date.now()}`);
+ 	await fs.mkdir(cacheDir, { recursive: true });
+ 
+-	logger.debug(`[marketplace] cloning ${url} → ${tmpDir}`);
+-	await vcs.clone(url, tmpDir, { timeoutMs: GIT_CLONE_TIMEOUT_MS });
+-
+ 	try {
++		logger.debug(`[marketplace] cloning ${url} → ${tmpDir}`);
++		const ref = options?.ref;
++		const isObjectId = ref !== undefined && (/^[0-9a-fA-F]{40}$/.test(ref) || /^[0-9a-fA-F]{64}$/.test(ref));
++		await vcs.clone(url, tmpDir, { ...(isObjectId ? { sha: ref } : ref ? { refName: ref } : {}), timeoutMs: GIT_CLONE_TIMEOUT_MS });
++		if (options?.sparsePaths?.length) await applySparseCheckout(tmpDir, options.sparsePaths);
+ 		const { displayPath, content } = await readMarketplaceCatalog(tmpDir, { relativeDisplayPaths: true });
+ 		const catalog = parseMarketplaceCatalog(content, displayPath);
+ 		return { catalog, clonePath: tmpDir };
+diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibility/plugins/marketplace/manager.ts
+index 67c8234..ca4e865 100644
+--- a/src/extensibility/plugins/marketplace/manager.ts
++++ b/src/extensibility/plugins/marketplace/manager.ts
+@@ -16,7 +16,7 @@ import { normalizePluginRuntimeConfig } from "../runtime-config";
+ import type { PluginRuntimeConfig } from "../types";
+ 
+ import { cachePlugin } from "./cache";
+-import { classifySource, fetchMarketplace, parseMarketplaceCatalog, promoteCloneToCache } from "./fetcher";
++import { classifySource, fetchMarketplace, parseMarketplaceCatalog, promoteCloneToCache, validateMarketplaceSourceOptions } from "./fetcher";
+ import {
+ 	addInstalledPlugin,
+ 	addMarketplaceEntry,
+@@ -38,6 +38,7 @@ import type {
+ 	MarketplaceCatalog,
+ 	MarketplacePluginEntry,
+ 	MarketplaceRegistryEntry,
++	MarketplaceSourceOptions,
+ } from "./types";
+ import { buildPluginId, parsePluginId } from "./types";
+ 
+@@ -89,11 +90,12 @@ export class MarketplaceManager {
+ 
+ 	// ── Marketplace lifecycle ─────────────────────────────────────────────────
+ 
+-	async addMarketplace(source: string): Promise<MarketplaceRegistryEntry> {
++	async addMarketplace(source: string, sourceOptions?: MarketplaceSourceOptions): Promise<MarketplaceRegistryEntry> {
+ 		const reg = await readMarketplacesRegistry(this.#opts.marketplacesRegistryPath);
+ 		const existingNames = new Set(reg.marketplaces.map(m => m.name));
++		const validatedSourceOptions = validateMarketplaceSourceOptions(sourceOptions);
+ 
+-		const { catalog, clonePath } = await fetchMarketplace(source, this.#opts.marketplacesCacheDir);
++		const { catalog, clonePath } = await fetchMarketplace(source, this.#opts.marketplacesCacheDir, validatedSourceOptions);
+ 
+ 		if (existingNames.has(catalog.name)) {
+ 			if (clonePath) {
+@@ -122,6 +124,7 @@ export class MarketplaceManager {
+ 			name: catalog.name,
+ 			sourceType,
+ 			sourceUri: normalizedSource,
++			...(validatedSourceOptions ? { sourceOptions: validatedSourceOptions } : {}),
+ 			catalogPath,
+ 			addedAt: now,
+ 			updatedAt: now,
+@@ -155,7 +158,7 @@ export class MarketplaceManager {
+ 			throw new Error(`Marketplace "${name}" not found`);
+ 		}
+ 
+-		const { catalog, clonePath } = await fetchMarketplace(existing.sourceUri, this.#opts.marketplacesCacheDir);
++		const { catalog, clonePath } = await fetchMarketplace(existing.sourceUri, this.#opts.marketplacesCacheDir, existing.sourceOptions);
+ 
+ 		// Guard against upstream catalog silently renaming itself — the registry
+ 		// entry is keyed by name, so a drift would corrupt the entry on next read.
+diff --git a/src/extensibility/plugins/marketplace/types.ts b/src/extensibility/plugins/marketplace/types.ts
+index fd101ff..109e85f 100644
+--- a/src/extensibility/plugins/marketplace/types.ts
++++ b/src/extensibility/plugins/marketplace/types.ts
+@@ -142,10 +142,16 @@ export interface MarketplacesRegistry {
+ 
+ export type MarketplaceSourceType = "github" | "git" | "url" | "local";
+ 
++export interface MarketplaceSourceOptions {
++	ref?: string;
++	sparsePaths?: string[];
++}
++
+ export interface MarketplaceRegistryEntry {
+ 	name: string;
+ 	sourceType: MarketplaceSourceType;
+ 	sourceUri: string;
++	sourceOptions?: MarketplaceSourceOptions;
+ 	catalogPath: string;
+ 	addedAt: string;
+ 	updatedAt: string;
