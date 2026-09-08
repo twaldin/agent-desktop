@@ -169,6 +169,8 @@ export interface TranscriptMessage {
   commandOutput?: { entryId: string; command: string; output: string };
   /** Captured context, linked only by explicit persisted native metadata. */
   selectedText?: { contextEntryId: string; submissionId: string; attachments: SelectedTextAttachment[]; bindingEntryId?: string };
+  /** Verified native binding; text/content still contain the actual model-visible Markdown. */
+  wholeFiles?: { bindingEntryId: string; submissionId: string; fileEntryIds: string[]; authoredText: string; attachments: WholeFileAttachment[] };
   /** Files actually recorded by OMP auto-read, never inferred from prompt text. */
   fileReferences?: readonly TranscriptFileReference[];
   /** Bounded native goal-completed entry attached to its preceding assistant. */

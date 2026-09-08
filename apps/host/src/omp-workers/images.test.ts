@@ -9,6 +9,7 @@ import { projectWorkerEvent } from "./events";
 import type { WorkerEvent } from "./events";
 import type { PreparedPromptImage } from "../omp";
 import { ImageAttachmentStore } from "../attachments";
+import { serializeWholeFilePrompt } from "@agent-desktop/shared";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/hZkAAAAASUVORK5CYII=", "base64");
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -75,6 +76,41 @@ test("actual native worker records an image-only ordered turn, normalization rec
     const restored = (await reopened.getMessages()).find(message => message.nativeId === accepted.entryId)!;
     expect(restored.content).toEqual(user.content);
     for (const image of accepted.images!) expect(hash((await reopened.getImage(accepted.entryId, image.blockIndex)).data)).toBe(image.nativeSha256);
+  } finally { await f.close(); }
+}, 30_000);
+
+test("inline whole files preserve serialized native text through actual image admission and reopen", async () => {
+  const f = await fixture();
+  try {
+    const filePath = path.join(f.cwd, "@linked # file.txt"); await writeFile(filePath, "bound whole-file context\n");
+    const authoredText = "show @authored", attachments = [{ id: "whole", textOffset: 5, source: { kind: "file" as const, hostId: "isolated-owner", path: filePath } }];
+    const nativeText = serializeWholeFilePrompt(authoredText, attachments), image = await f.image(png);
+    const session = await f.runtime.create({ cwd: f.cwd, interactions: true });
+    const oversized = "x".repeat(499_999);
+    const rejected = session.startPrompt(oversized, { model: vision, wholeFiles: { submissionId: "too-large", attachments: [{ ...attachments[0]!, textOffset: oversized.length }] } });
+    await expect(rejected.accepted).rejects.toThrow("durable-history limit"); await expect(rejected.completion).rejects.toThrow("durable-history limit");
+    expect((await session.getMessages()).some(message => message.role === "fileMention" || message.role === "user")).toBe(false);
+    expect(await readFile(session.sessionFile, "utf8")).not.toContain("too-large");
+    const run = session.startPrompt(authoredText, { model: vision, images: [image], wholeFiles: { submissionId: "image-and-whole", attachments } });
+    const accepted = await run.accepted; expect(accepted?.kind).toBe("user-message"); await expect(run.completion).resolves.toBe(true);
+    if (accepted?.kind !== "user-message") throw new Error("Expected actual native image/file admission");
+    const provider = JSON.parse(await readFile(path.join(f.gates, "provider-input.json"), "utf8"));
+    // OMP may append a date/cwd reminder as another model-visible user message.
+    // Identify our exact submitted text, rather than assuming it is the last row.
+    const submitted = provider.filter((message: {content: unknown}) => Array.isArray(message.content)
+      && message.content.some(block => block.type === "text" && block.text === nativeText));
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0].content.filter((block: {type: string}) => block.type === "image"))
+      .toEqual([expect.objectContaining({sha256: accepted.images?.[0]?.nativeSha256})]);
+    const messages = await session.getMessages(), user = messages.find(message => message.nativeId === accepted?.entryId);
+    expect(user).toMatchObject({ role: "user", text: nativeText, wholeFiles: { submissionId: "image-and-whole", authoredText, attachments } });
+    expect(user?.content?.filter(block => block.type === "image")).toHaveLength(1);
+    expect(messages.some(message => message.role === "fileMention")).toBe(false);
+    const sessionFile = session.sessionFile; await session.dispose();
+    const reopened = await f.runtime.open({ sessionFile, interactions: true });
+    const restored = (await reopened.getMessages()).find(message => message.nativeId === accepted?.entryId);
+    expect(restored).toMatchObject({ text: nativeText, wholeFiles: { submissionId: "image-and-whole", authoredText, attachments } });
+    expect(restored?.content?.filter(block => block.type === "image")).toHaveLength(1);
   } finally { await f.close(); }
 }, 30_000);
 

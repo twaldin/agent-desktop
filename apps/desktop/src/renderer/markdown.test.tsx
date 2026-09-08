@@ -3,11 +3,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MarkdownText, TranscriptMarkdownContext, highlightCode, HIGHLIGHT_LIMIT } from "./MarkdownText";
 import { MarkdownViewState, markdownScope } from "./markdown-state";
 import { fileLocation, resolveTranscriptLink, type TranscriptLinkActions } from "./transcript-links";
+import {serializeWholeFilePrompt} from '@agent-desktop/shared';
 const actions: TranscriptLinkActions = { cwd: "/home/owner/project", openFile: () => {}, openExternal: async () => {} };
 const render = (text: string, key = "message-1:block:0", views = new MarkdownViewState()) => renderToStaticMarkup(<TranscriptMarkdownContext value={{ actions, views }}><MarkdownText text={text} blockKey={key}/></TranscriptMarkdownContext>);
 const codeText = (html: string) => html.match(/<pre[^>]*><code>([\s\S]*?)<\/code><\/pre>/)?.[1]?.replace(/<[^>]+>/g, "").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&").replaceAll("&quot;", '"').replaceAll("&#x27;", "'");
 
 describe("CommonMark/GFM production renderer contracts", () => {
+  test("sent inline files use the real file control inside surrounding Markdown with literal labels and targets", () => {
+    const name = '@note [1]#L2?%20:42.ts', path = `/home/owner/project/${name}`;
+    const wire = serializeWholeFilePrompt('**Read**  now', [{id:'file',textOffset:9,source:{kind:'file',hostId:'owner',path}}]);
+    const html = render(wire);
+    expect(html).toContain('<strong>Read</strong> ');
+    expect(html).toContain('class="transcript-file-reference"');
+    expect(html).toContain(`title="${name}"`);
+    expect(html).toContain(`>${name}</button> now`);
+    expect(html).not.toContain('markdown-unavailable-link');
+    expect(html).not.toContain('href=');
+  });
   test("renders semantic headings, paragraphs, emphasis, nested lists, tasks, quotes, rules and aligned tables", () => {
     const html = render("# Title\n\nA **strong** and *emphasized* paragraph with `inline` and ~~removed~~.\n\n1. First\n   - Nested\n2. Second\n\n- [x] Finished\n- [ ] Pending\n\n> Quote\n\n---\n\n| Left | Right |\n| :--- | ---: |\n| A | B |\n");
     for (const part of ["<h1>Title</h1>", "<strong>strong</strong>", "<em>emphasized</em>", "<code>inline</code>", "<del>removed</del>", "<ol>", "<ul>", "Nested", 'type="checkbox"', "disabled=", "checked=", "<blockquote>", "<hr/>", "<table>", "<thead>", "<tbody>", 'style="text-align:right"']) expect(html).toContain(part);

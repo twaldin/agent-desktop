@@ -1,5 +1,15 @@
 # Workspace file editor
 
+## Sent inline-file links
+
+Inline files now serialize into the actual ordinary OMP user text at their authored UTF-16 positions. The surrounding text and whitespace remain intact. This closes the earlier semantic gap where OMP received a native file snapshot but the user text omitted the inline reference. Unpositioned legacy attachments keep their earlier context-only behavior.
+
+The binding-v2 format stores the original authored text, attachment descriptors and exact native entry identities. History verifies the serialized text, recorded file paths, ordering and uniqueness before attaching provenance and folding successful bound file rows into their user message. Older bindings, ambiguous/malformed records and native read failures stay visible. Worker protocol33 rejects older workers; public v8 and SQLite schema10 remain unchanged.
+
+The reference uses a custom Markdown link grammar. This bridge uses CommonMark escaping and encoded path segments because OMP independently scans text for `@` mentions: generated filename labels must not trigger an additional read. The existing production Markdown renderer displays the original filename and opens its literal owner-workspace path. This wire-encoding difference is intentional; it does not establish native pixel parity.
+
+60 focused tests/523 assertions, typecheck and build pass. Validation includes the real pinned OMP worker with a controlled local provider, exact provider-visible text and file snapshot, authenticated command replay/restart, binding corruption cases, CommonMark decoding, and production renderer markup. There are no external provider calls or Work fixture changes. Installed/native appearance, clipboard restoration, file hover/open in the composer, richer selected-text nodes and whole-file steering/command combinations remain open. Private results: `.data/sent-inline-files-2026-09-07/REPORT.md`.
+
 ## Inline composer nodes
 
 The main composer replaces the interim separate-row file chips with real ProseMirror inline, atomic, nonselectable nodes. Each whole-file reference may carry `textOffset`, a UTF-16 position in authored draft text; file nodes consume no authored characters. Tied offsets retain array order. Edits preserve positions through editor transactions. A menu insertion is a separate undo step, and completion replacements edit their bounded range. Semantically changed external drafts reset undo history; equal echoes and autocomplete menu renders preserve it.

@@ -2,7 +2,7 @@ import type { AgentSession, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { generateFileMentionMessages } from "@oh-my-pi/pi-coding-agent/utils/file-mentions";
 import { resolveFileDisplayMode } from "@oh-my-pi/pi-coding-agent/utils/file-display-mode";
 import { getEditStore } from "@oh-my-pi/pi-coding-agent/edit/store";
-import { parseWholeFileAttachments, type WholeFileAttachment } from "@agent-desktop/shared";
+import { parseWholeFileAttachments, serializeWholeFilePrompt, type WholeFileAttachment } from "@agent-desktop/shared";
 import { OmpPromptAdmissionError } from "./prompt";
 
 export const WHOLE_FILE_BINDING_TYPE = "agent-desktop.whole-file-binding";
@@ -15,10 +15,18 @@ function label(value: unknown, name: string, maximum: number): string {
 }
 
 /** Detach only identity/path intent. The owning server authorizes source-host identity; this accepts any canonical absolute path on that host. */
-export function copyNativeWholeFileInput(input: NativeWholeFileInput | undefined): NativeWholeFileInput | undefined {
+export function copyNativeWholeFileInput(input: NativeWholeFileInput | undefined, textLength?: number): NativeWholeFileInput | undefined {
   if (input === undefined) return undefined;
   if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 2 || !Object.hasOwn(input, "submissionId") || !Object.hasOwn(input, "attachments") || !Array.isArray(input.attachments)) throw new Error("Invalid whole-file input.");
-  return { submissionId: label(input.submissionId, "submission identity", 200), attachments: parseWholeFileAttachments(input.attachments) };
+  return { submissionId: label(input.submissionId, "submission identity", 200), attachments: parseWholeFileAttachments(input.attachments, textLength) };
+}
+
+function exactUserText(value: unknown, expected: string): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value) || (value as { role?: unknown }).role !== "user") return false;
+  const content = (value as { content?: unknown }).content;
+  if (typeof content === "string") return content === expected;
+  if (!Array.isArray(content) || content[0]?.type !== "text" || content[0].text !== expected) return false;
+  return content.slice(1).every(block => block && typeof block === "object" && !Array.isArray(block) && (block as { type?: unknown }).type !== "text");
 }
 
 function sameSubmission(entry: ReturnType<SessionManager["getEntries"]>[number], submissionId: string): boolean {
@@ -52,12 +60,16 @@ export class NativeWholeFilePrompt {
   #files: unknown[] = [];
   #fileEntryIds: string[] = [];
   #user?: unknown;
+  readonly #authoredText: string;
+  readonly #nativeText: string;
 
-  private constructor(private readonly session: Pick<AgentSession, "agent" | "sessionManager">, input: NativeWholeFileInput) { this.#input = input; }
-  static fromInput(session: Pick<AgentSession, "agent" | "sessionManager">, input: NativeWholeFileInput | undefined): NativeWholeFilePrompt | undefined {
-    const copied = copyNativeWholeFileInput(input); if (!copied || !copied.attachments.length) return;
+  private constructor(private readonly session: Pick<AgentSession, "agent" | "sessionManager">, input: NativeWholeFileInput, authoredText: string) {
+    this.#input = input; this.#authoredText = authoredText; this.#nativeText = serializeWholeFilePrompt(authoredText, input.attachments);
+  }
+  static fromInput(session: Pick<AgentSession, "agent" | "sessionManager">, input: NativeWholeFileInput | undefined, authoredText = ""): NativeWholeFilePrompt | undefined {
+    const copied = copyNativeWholeFileInput(input, authoredText.length); if (!copied || !copied.attachments.length) return;
     if (session.sessionManager.getEntries().some(entry => sameSubmission(entry, copied.submissionId))) throw new OmpPromptAdmissionError(new Error("This whole-file submission may already be recorded. Inspect its native outcome before sending it again."));
-    return new NativeWholeFilePrompt(session, copied);
+    return new NativeWholeFilePrompt(session, copied, authoredText);
   }
   get attempted(): boolean { return this.#attempted; }
   get dispatched(): boolean { return this.#files.length > 0; }
@@ -88,7 +100,7 @@ export class NativeWholeFilePrompt {
     const wrapper = (async (...args: Parameters<typeof original>) => {
       const payload = args[0], messages = Array.isArray(payload) ? payload : [payload];
       const users = messages.filter(message => message?.role === "user");
-      if (users.length !== 1) throw new Error("Native whole-file prompt did not produce one attributable user message.");
+      if (users.length !== 1 || !exactUserText(users[0], this.#nativeText)) throw new Error("Native whole-file prompt did not produce one attributable user message.");
       this.#user = users[0];
       // Place actual native file messages before their user message so the durable
       // binding can be atomically observed before the ordinary admission receipt.
@@ -103,8 +115,12 @@ export class NativeWholeFilePrompt {
   async persistBinding(userEntryId: string): Promise<void> {
     const entries = this.session.sessionManager.getEntries();
     const user = entries.find(entry => entry.id === userEntryId);
-    if (user?.type !== "message" || user.message !== this.#user || this.#fileEntryIds.length !== this.#files.length) throw new Error("Native whole-file context has no attributable persisted entries.");
-    const data = { version: 1, submissionId: this.#input.submissionId, userEntryId, fileEntryIds: [...this.#fileEntryIds] };
+    if (user?.type !== "message" || user.message !== this.#user || !exactUserText(user.message, this.#nativeText)
+      || this.#fileEntryIds.length !== this.#files.length) throw new Error("Native whole-file context has no attributable persisted entries.");
+    const inline = this.#input.attachments.some(item => item.textOffset !== undefined);
+    const data = inline
+      ? { version: 2, submissionId: this.#input.submissionId, userEntryId, fileEntryIds: [...this.#fileEntryIds], authoredText: this.#authoredText, attachments: this.#input.attachments }
+      : { version: 1, submissionId: this.#input.submissionId, userEntryId, fileEntryIds: [...this.#fileEntryIds] };
     const id = this.session.sessionManager.appendCustomEntry(WHOLE_FILE_BINDING_TYPE, data);
     const binding = this.session.sessionManager.getEntries().find(entry => entry.id === id);
     if (binding?.type !== "custom" || binding.customType !== WHOLE_FILE_BINDING_TYPE || JSON.stringify(binding.data) !== JSON.stringify(data)) throw new Error("Native whole-file binding was not recorded exactly.");

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CommandResult, DraftInput, HostCommand, HostState, SessionSummary, TranscriptMessage } from "@agent-desktop/shared";
+import { serializeWholeFilePrompt } from "@agent-desktop/shared";
 import { startHost } from "./server";
 
 const model = { provider: "selected-text-contract", id: "controlled" };
@@ -96,7 +97,9 @@ test("inline whole-file positions require v8, retain exact drafts, and consume o
  const f=await fixture();try{
   const state=await (await f.request("/v1/state")).json() as HostState;
   expect(state.wholeFiles).toEqual({commandVersion:7,ordinaryPrompt:true,maxFiles:100,inlineMentions:{commandVersion:8}});
-  const inlineFile={...f.draft.wholeFileAttachments![0]!,textOffset:8};
+  const inlinePath=path.join(path.dirname(f.draft.wholeFileAttachments![0]!.source.path),'@literal # % :42.ts');
+  await writeFile(inlinePath,'INLINE_CONTENT_AT_SEND\n');
+  const inlineFile={...f.draft.wholeFileAttachments![0]!,source:{...f.draft.wholeFileAttachments![0]!.source,path:inlinePath},textOffset:8};
   const inlineDraft:DraftInput={...f.draft,wholeFileAttachments:[inlineFile]};
   const put:HostCommand={type:"draft.put",draft:inlineDraft,expectedRevision:0};
 
@@ -123,8 +126,27 @@ test("inline whole-file positions require v8, retain exact drafts, and consume o
   expect(f.host.store.getDraft(inlineDraft.id)?.lastConsumption).toBeUndefined();
 
   const send:HostCommand={...referenced,wholeFileAttachments:[inlineFile]};
-  expect(await f.command(send,"inline-v8-send",8)).toMatchObject({ok:true,admission:{kind:"user-message"}});
+  const receipt=await f.command(send,"inline-v8-send",8);
+  expect(receipt).toMatchObject({ok:true,admission:{kind:"user-message"}});
   await f.settled();
   expect(f.host.store.getDraft(inlineDraft.id)).toMatchObject({revision:2,text:"",wholeFileAttachments:[],lastConsumption:{commandId:"inline-v8-send",submittedRevision:1}});
+  const wire=serializeWholeFilePrompt(inlineDraft.text,[inlineFile]),entries=await f.raw();
+  const users=entries.filter(row=>row.type==='message'&&row.message.role==='user');
+  expect(users).toHaveLength(1);expect(users[0].message.content).toEqual([{type:'text',text:wire}]);
+  const fileRows=entries.filter(row=>row.type==='message'&&row.message.role==='fileMention');
+  expect(fileRows).toHaveLength(1);expect(fileRows[0].message.files).toHaveLength(1);
+  expect(fileRows[0].message.files[0].path).toBe(inlinePath);
+  const providerContext=JSON.parse(entries.find(row=>row.type==='message'&&row.message.role==='assistant').message.content[0].text);
+  expect(providerContext.some((message:any)=>message.role==='user'&&message.content.some((block:any)=>block.type==='text'&&block.text===wire))).toBe(true);
+  expect(JSON.stringify(providerContext)).toContain('INLINE_CONTENT_AT_SEND');
+  const messages=await (await f.request(`/v1/sessions/${f.session.id}/messages`)).json() as TranscriptMessage[];
+  expect(messages.some(message=>message.role==='fileMention')).toBe(false);
+  expect(messages.find(message=>message.role==='user')).toMatchObject({text:wire,wholeFiles:{authoredText:inlineDraft.text,attachments:[inlineFile]}});
+  expect(await f.command(send,'inline-v8-send',8)).toEqual(receipt);
+  await f.restart();expect(await f.command(send,'inline-v8-send',8)).toEqual(receipt);
+  const reopened=await (await f.request(`/v1/sessions/${f.session.id}/messages`)).json() as TranscriptMessage[];
+  expect(reopened.find(message=>message.role==='user')).toMatchObject({text:wire,wholeFiles:{authoredText:inlineDraft.text,attachments:[inlineFile]}});
+  expect((await f.raw()).filter(row=>row.type==='message'&&row.message.role==='user')).toHaveLength(1);
+  expect((await f.raw()).filter(row=>row.type==='message'&&row.message.role==='fileMention')).toHaveLength(1);
  }finally{await f.close();}
 },30000);

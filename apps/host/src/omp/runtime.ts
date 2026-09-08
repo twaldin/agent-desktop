@@ -29,6 +29,8 @@ import { dispatchNativePrompt } from "./commands";
 import { NativeSkillPrompt } from "./skills";
 import { copyNativeSelectedTextInput, NativeSelectedTextPrompt, type NativeSelectedTextInput } from "./selected-text";
 import { copyNativeWholeFileInput, NativeWholeFilePrompt, type NativeWholeFileInput } from "./whole-file";
+import { projectWholeFiles } from "./whole-file-history";
+import { serializeWholeFilePrompt } from "@agent-desktop/shared";
 import { discoverComposerActions, discoverSkillInventory, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions, type NativeSkillInventoryCatalog } from "./composer-actions";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
@@ -469,7 +471,7 @@ export class OmpRuntime {
             timestamp: Date.parse(entry.timestamp), lifecycle: "complete", commandOutput: { entryId: entry.id, command: data.command, output: data.output } });
         }
         projectGoalCompletions(messages, branch);
-        return projectSelectedText(messages, branch).sort((left, right) => (left.nativeId ? order.get(left.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER)
+        return projectWholeFiles(projectSelectedText(messages, branch), branch).sort((left, right) => (left.nativeId ? order.get(left.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER)
           - (right.nativeId ? order.get(right.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER));
       };
       // Reserve identities from resumed history before a prompt can emit events,
@@ -836,15 +838,18 @@ export class OmpRuntime {
           // A selected context is persisted separately, so its ordinary user
           // text must itself fit OMP's durable-string bound.
           const selectedTextInput = copyNativeSelectedTextInput(promptOptions.selectedText);
-          const wholeFileInput = copyNativeWholeFileInput(promptOptions.wholeFiles);
+          const wholeFileInput = copyNativeWholeFileInput(promptOptions.wholeFiles, text.length);
+          const nativeText = wholeFileInput ? serializeWholeFilePrompt(text, wholeFileInput.attachments) : text;
           if (selectedTextInput?.attachments.length && text.length > 500_000)
             throw new Error("Prompt text exceeds the native durable-history limit when selected text is attached.");
+          if (wholeFileInput?.attachments.some(item => item.textOffset !== undefined) && nativeText.length > 500_000)
+            throw new Error("Serialized inline whole-file prompt exceeds the native durable-history limit.");
           const selectedText = NativeSelectedTextPrompt.fromInput(session, selectedTextInput);
-          const wholeFiles = NativeWholeFilePrompt.fromInput(session, wholeFileInput);
+          const wholeFiles = NativeWholeFilePrompt.fromInput(session, wholeFileInput, text);
           // A slash handler may finish locally, rewrite the input, or record a
           // special native message. Never append selected context before it.
           if ((selectedText || wholeFiles) && text.trimStart().startsWith("/")) throw new Error("Selected text and whole-file attachments are only supported for ordinary prompts; slash commands and skills were not executed.");
-          const imagePrompt = images?.length ? new NativeImagePrompt(images, text) : undefined;
+          const imagePrompt = images?.length ? new NativeImagePrompt(images, nativeText) : undefined;
           promptInFlight = true;
           admissionPending = true;
           const controller = new AbortController();
@@ -878,12 +883,12 @@ export class OmpRuntime {
                 await imagePrompt?.prepare(session, manager);
                 await skillPrompt?.prepare();
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
-                selectedText?.prepare(session, text, { allowImages: imagePrompt !== undefined });
+                selectedText?.prepare(session, nativeText, { allowImages: imagePrompt !== undefined });
                 await selectedText?.append();
                 await wholeFiles?.prepare(session);
                 assertSessionActive();
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted after attachment context append");
-                return dispatchNativePrompt(session, text, imagePrompt?.images, skillPrompt, {
+                return dispatchNativePrompt(session, nativeText, imagePrompt?.images, skillPrompt, {
                   inspectMcp: () => { assertSessionActive(); return mcp.read(); },
                   reloadMcp: async () => {
                     // This callback runs inside the existing native-command admission.

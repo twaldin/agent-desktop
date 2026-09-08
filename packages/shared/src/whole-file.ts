@@ -79,3 +79,30 @@ export function hasInlineFileIntent(value:unknown):boolean {
  const draft=command.type==='draft.put'&&command.draft&&typeof command.draft==='object'?command.draft as Record<string,unknown>:command;
  return Array.isArray(draft.wholeFileAttachments)&&draft.wholeFileAttachments.some(file=>file&&typeof file==='object'&&Object.hasOwn(file,'textOffset'));
 }
+
+/**
+ * Binding-v2 wire format. Keep this deterministic for persisted history verification.
+ * Unlike the reference's custom link grammar, OMP also scans ordinary text for @.
+ * CommonMark escaping prevents a filename from becoming an additional native mention;
+ * encoded path segments keep spaces, fragments and location-like suffixes literal.
+ */
+export function wholeFileMarkdownLink(path: string): string {
+  const checked = canonicalAbsolutePath(path);
+  const name = checked.slice(checked.lastIndexOf("/") + 1).replace(/[!-/:-@\[-`{-~]/g, "\\$&");
+  const destination = checked.split("/").map(part => encodeURIComponent(part)
+    .replace(/[!'()*]/g, value => `%${value.charCodeAt(0).toString(16).toUpperCase()}`)).join("/");
+  return `[${name}](${destination})`;
+}
+
+export function serializeWholeFilePrompt(text: string, files: readonly WholeFileAttachment[]): string {
+  const ordered = parseWholeFileAttachments(files, text.length)
+    .map((file, index) => ({ file, index }))
+    .filter((item): item is { file: WholeFileAttachment & { textOffset: number }; index: number } => item.file.textOffset !== undefined)
+    .sort((left, right) => left.file.textOffset - right.file.textOffset || left.index - right.index);
+  let result = "", cursor = 0;
+  for (const { file } of ordered) {
+    result += text.slice(cursor, file.textOffset) + wholeFileMarkdownLink(file.source.path);
+    cursor = file.textOffset;
+  }
+  return result + text.slice(cursor);
+}

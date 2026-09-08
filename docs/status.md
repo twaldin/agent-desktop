@@ -1,5 +1,11 @@
 # Milestone status
 
+## Sent inline-file links
+
+Inline file references now appear in the actual OMP user prompt and restore with verified native provenance. The shared serializer preserves filenames with spaces, punctuation and Unicode while preventing generated `@` labels from causing extra reads. Exact v8 command replay and host restart retain one native user/file record. Worker protocol33 fences the changed prompt semantics; OMP18.1.10 and Bun1.3.14 stay pinned.
+
+60 focused tests/523 assertions, typecheck and build pass, including the actual native image/file path and explicit IPC32 rejection. This is source/native-backend and renderer-markup verification, not installed or pixel parity. Clipboard restoration, composer file activation and other rich-editor gaps remain open. See [file editor](workspace-file-editor.md) and private `.data/sent-inline-files-2026-09-07/REPORT.md`.
+
 ## Inline file mentions
 
 The main composer now uses ProseMirror inline file nodes. Tree Add to chat inserts at the caret; OMP's native @ file completion selects the same owner-host node. Text edits, Backspace and undo/redo preserve authored text and update the stored UTF-16 positions. Offline draft reload restores the same file positions. Directory and native-resource completions retain OMP insertion text.
