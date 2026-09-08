@@ -1,10 +1,16 @@
 # Milestone status
 
+## Replaceable file preview tabs
+
+Single-click file opening now uses one replaceable preview per dock pane. Double-clicking a reference, tree file or tab makes it permanent; interacting with editor content also promotes it, matching the pinned reference. Tree and breadcrumb navigation stay exempt. Dirty, recovered, conflicted and unresolved-save buffers are retained, and unpinned previews are omitted from saved window state.
+
+82 focused/regression tests pass477 assertions, including actual filesystem/Git autosave and disk window-state restoration. Six hidden-Electron interaction checks/eight PNG+Chromium-AX captures exercise production components, real click pairs, editor input and React restoration from the saved snapshot. Typecheck, strict fixture checking and build pass. This is uninstalled source work, not full-App, physical-device or pixel acceptance; filetype glyphs, cross-pane graphical drag behavior and broader reference actions remain open. See [file editor](workspace-file-editor.md). Existing Work runs and sealed bundles remain unchanged.
+
 ## File-reference opening interactions
 
 Markdown file links and native OMP references now share one owner-bound control: normal/Enter/Space opening in the dock, platform-modified and middle-click opening on the file’s host, hover/focus target discovery, and a keyboard-accessible context menu with Open with, Save as, Copy path and host file-manager reveal. External opens reuse the existing durable workspace queue; failed or unresolved opens remain visible and are not replayed. An explicit reveal targets the file; external editor actions with line locations remain unavailable rather than discarding the location.
 
-28 focused tests/163 assertions pass, including actual WorkspaceState ownership and command recovery with controlled transport. Ten renderer interaction checks/seven PNG+Chromium-AX captures, Markdown/scroll regression, typecheck and build pass; evidence is described in [file editor](workspace-file-editor.md). This remains uninstalled source work: preview-tab replacement/double-click behavior, filetype icons, full conditional reference actions, actual external-editor line navigation and matched native pixels remain open. Existing Work runs and sealed bundles are unchanged.
+28 focused tests/163 assertions pass, including actual WorkspaceState ownership and command recovery with controlled transport. Ten renderer interaction checks/seven PNG+Chromium-AX captures, Markdown/scroll regression, typecheck and build pass; evidence is described in [file editor](workspace-file-editor.md). The preview-tab checkpoint above adds replacement and promotion. This remains uninstalled source work: filetype icons, full conditional reference actions, actual external-editor line navigation and matched native pixels remain open. Existing Work runs and sealed bundles are unchanged.
 
 ## Native auto-read file context
 

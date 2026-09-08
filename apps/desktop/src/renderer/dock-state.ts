@@ -20,6 +20,8 @@ export interface DockTab {
   target: DockTarget;
   skillFile?: NativeSkillFileRef;
   filePath?: string;
+  /** A replaceable file view; pinning never changes the owner-qualified identity. */
+  preview?: true;
   fileMode?: "markdown" | "source";
   fileScroll?: { markdown?: number; source?: number };
   terminalId?: string;

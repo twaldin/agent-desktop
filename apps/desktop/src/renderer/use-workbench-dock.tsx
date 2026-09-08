@@ -16,6 +16,7 @@ import {
   type DockTab,
   type DockTarget,
 } from "./dock-state";
+import { openFileTab, pinFileTab, persistentFileTabs, changeFileDock } from "./file-preview-tabs";
 import { hasNativeTerminalBridge } from "./native-terminal-state";
 import { nativeTerminalClient } from "./native-terminal-bridge";
 import { workspaceKey } from "./workspace-state";
@@ -33,6 +34,7 @@ export function useWorkbenchDock(
   target: WorkspaceTarget | undefined,
   connected: boolean,
   onError: (message: string) => void,
+  canReplacePreview: (tab: DockTab) => boolean = () => false,
 ) {
   const [snapshot, setSnapshot] = useState<DockSnapshot>(
     () => initial.dock ?? { state: createDockState(), tabs: [] },
@@ -78,6 +80,7 @@ export function useWorkbenchDock(
     owner: string,
     workspace: WorkspaceTarget,
     destination: DockDestination = "right",
+    preview = true,
   ) {
     if (!isWorkspaceFilePath(path)) {
       onError("Use a relative file path within this workspace.");
@@ -90,8 +93,10 @@ export function useWorkbenchDock(
       filePath: path,
       title: path.split("/").at(-1)!.slice(0, 1000),
     };
-    add({ ...descriptor, id: dockTabId(descriptor) }, destination);
+    setReady(true);
+    setSnapshot(previous => openFileTab(previous, { ...descriptor, id: dockTabId(descriptor) }, destination, preview, canReplacePreview));
   }
+  const pinFile = (id: string) => setSnapshot(previous => pinFileTab(previous,id));
 
   function openSkillFile(ref: NativeSkillFileRef, owner: string) {
     const descriptor: Omit<DockTab, "id"> = {kind:"skill-file", hostId:owner,
@@ -388,11 +393,7 @@ export function useWorkbenchDock(
   }, [ready, hostId, target && workspaceKey(target)]);
   function change(state: DockState) {
     setReady(true);
-    const used = new Set([...state.right.tabIds, ...state.bottom.tabIds]);
-    setSnapshot((previous) => ({
-      state,
-      tabs: previous.tabs.filter((tab) => used.has(tab.id)),
-    }));
+    setSnapshot(previous => changeFileDock(previous,state,canReplacePreview));
   }
   function toggle(destination: DockDestination) {
     setReady(true);
@@ -410,11 +411,11 @@ export function useWorkbenchDock(
   const workspaceTab: WorkspaceTab = initial.workspaceTab;
   return {
     snapshot,
-    persisted: ready ? snapshot : undefined,
+    persisted: ready ? persistentFileTabs(snapshot) : undefined,
     change,
     toggle,
     open,
-    openFile,
+    openFile, pinFile,
     openSkillFile,
     terminal,
     bindTerminal,

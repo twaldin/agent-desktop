@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import type { BrowserWindow } from "electron";
 import { createDockState, resizeDock, dockTabId, insertDockTab, moveDockTab, MAX_WORKSPACE_FILE_PATH_LENGTH } from "../renderer/dock-state";
+import { persistentFileTabs } from "../renderer/file-preview-tabs";
 import {
   defaultWindowView,
   parseDockSnapshot,
@@ -463,6 +464,20 @@ test("workspace file docks move and restore with their exact path", () => {
   const store = new WindowStateStore(directory, "primary");
   expect(store.saveView({ ...selected(), dock })).toEqual({});
   expect(new WindowStateStore(directory, "primary").bootstrap().state?.dock).toEqual(dock);
+});
+
+test("disk restoration omits unpinned file previews and retains the promoted file route", () => {
+  const descriptor = {kind:"file" as const,hostId:"owner",target:"session:s" as const,title:"preview.ts",filePath:"preview.ts"};
+  const preview = {...descriptor,id:dockTabId(descriptor),preview:true as const};
+  const state = insertDockTab(createDockState(),preview,"right");
+  const directory = temporary(), store = new WindowStateStore(directory,"file-preview");
+  expect(store.saveView({...selected(),dock:persistentFileTabs({state,tabs:[preview]})})).toEqual({});
+  expect(new WindowStateStore(directory,"file-preview").bootstrap().state?.dock).toMatchObject({tabs:[],state:{right:{tabIds:[],open:true}}});
+  // A caller accidentally serializing a live snapshot cannot turn a preview into a permanent tab.
+  expect(parseDockSnapshot({state,tabs:[preview]})).toBeUndefined();
+  const {preview:_preview,...pinned}=preview;
+  expect(store.saveView({...selected(),dock:{state,tabs:[pinned]}})).toEqual({});
+  expect(new WindowStateStore(directory,"file-preview").bootstrap().state?.dock?.tabs).toEqual([pinned]);
 });
 
 test("workspace file persistence rejects invalid paths and owners", () => {

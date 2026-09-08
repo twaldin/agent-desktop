@@ -7,7 +7,7 @@ import "./workspace-file-breadcrumbs.css";
 
 /** Every picker read and file selection stays on this tab's owning workspace. */
 export function WorkspaceFileBreadcrumbs({ data, filePath, workspaceName, active, onOpenFile }: {
-  data: WorkspaceState; filePath: string; workspaceName: string; active: boolean; onOpenFile(path: string): void;
+  data: WorkspaceState; filePath: string; workspaceName: string; active: boolean; onOpenFile(path: string, options?: {preview?:boolean}): void;
 }) {
   const [directory, setDirectory] = useState<string>();
   const [anchorIndex, setAnchorIndex] = useState<number>();
@@ -39,7 +39,7 @@ export function WorkspaceFileBreadcrumbs({ data, filePath, workspaceName, active
     { label: workspaceName, directory: "." },
     ...parts.map((label, index) => ({ label, directory: parts.slice(0, index === parts.length - 1 ? index : index + 1).join("/") || "." })),
   ];
-  return <nav className="workspace-file-breadcrumbs" aria-label="File path">
+  return <nav data-tab-preview-pin-exempt className="workspace-file-breadcrumbs" aria-label="File path">
     {segments.map((segment, index) => <span key={index}>
       {index > 0 && <Icon name="chevron"/>}
       <button type="button" aria-haspopup="dialog" aria-expanded={directory !== undefined && anchorIndex === index} data-breadcrumb-index={index}
@@ -54,7 +54,7 @@ export function WorkspaceFileBreadcrumbs({ data, filePath, workspaceName, active
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
       }}>
       <WorkspaceFileTree key={anchorIndex} data={data} filePath={filePath} active={active} initialDirectory={directory} showFilter={false}
-        onOpenFile={path => { close(); onOpenFile(path); }}/>
+        onOpenFile={(path,options) => { close(); onOpenFile(path,options); }}/>
 
     </div>, document.body)}
   </nav>;

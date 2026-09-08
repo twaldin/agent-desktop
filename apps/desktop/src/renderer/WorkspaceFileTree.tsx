@@ -44,7 +44,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
   active: boolean;
   initialDirectory?: string;
   showFilter?: boolean;
-  onOpenFile(path: string): void;
+  onOpenFile(path: string, options?: {preview?:boolean}): void;
 }) {
   const safeInitialDirectory = initialDirectory === "." || isWorkspaceFilePath(initialDirectory) ? initialDirectory : ".";
   const [revision, changed] = useReducer((value: number) => value + 1, 0);
@@ -158,7 +158,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
   }, [rows, filePath, focusedPath]);
 
   const toggle = (row: TreeRow, force?: boolean) => {
-    if (row.entry.kind !== "directory") { if (supportedFile(row.entry)) onOpenFile(row.entry.path); return; }
+    if (row.entry.kind !== "directory") { if (supportedFile(row.entry)) onOpenFile(row.entry.path,{preview:true}); return; }
     setExpanded(previous => {
       const next = new Set(previous), open = force ?? !next.has(row.entry.path);
       if (open) next.add(row.entry.path); else next.delete(row.entry.path);
@@ -201,7 +201,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
   const uncachedExpanded = !data.connected && data.directories.has(".")
     ? rows.find(row => row.entry.kind === "directory" && row.expanded && !data.directories.has(row.entry.path))
     : undefined;
-  return <section className="workspace-file-tree-shell" aria-label="Workspace files">
+  return <section data-tab-preview-pin-exempt className="workspace-file-tree-shell" aria-label="Workspace files">
     {showFilter && <label className="workspace-file-tree-filter">
       <span className="sr-only">Filter files</span><Icon name="search"/>
       <input value={filter} disabled={!active} placeholder="Filter files…" onChange={event => setFilter(event.target.value)} />
@@ -223,7 +223,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
           aria-disabled={disabled || undefined} tabIndex={-1}
           className={`workspace-file-tree-row${row.entry.path === filePath ? " selected" : ""}${disabled ? " disabled" : ""}`}
           style={{ "--tree-level": row.level } as CSSProperties} title={row.entry.path}
-          onFocus={() => setFocusedPath(row.entry.path)} onKeyDown={event => onRowKeyDown(event, row, index)} onClick={() => { if (!disabled) toggle(row); }}>
+          onFocus={() => setFocusedPath(row.entry.path)} onKeyDown={event => onRowKeyDown(event, row, index)} onClick={() => { if (!disabled) toggle(row); }} onDoubleClick={() => { if (!disabled && row.entry.kind !== "directory" && supportedFile(row.entry)) onOpenFile(row.entry.path,{preview:false}); }}>
           <span className={`workspace-file-tree-chevron${row.expanded ? " expanded" : ""}`}>{row.entry.kind === "directory" && <Icon name="chevron"/>}</span>
           <Icon name={row.entry.kind === "directory" ? "folder" : "compose"}/><span className="workspace-file-tree-name">{row.entry.name}</span>
           {row.loading && <span className="workspace-file-tree-progress" aria-label="Loading"/>}

@@ -9,7 +9,7 @@ import { fileTreeWidth, fileTreeResize } from "./file-tree-layout";
 /** Presentation belongs to this window; entries remain owned by the workspace host. */
 export function WorkspaceFileTreePane({ data, filePath, active, view, onChange, onOpenFile }: {
   data: WorkspaceState; filePath: string; active: boolean; view: FileTreeView;
-  onChange(view: FileTreeView): void; onOpenFile(path: string): void;
+  onChange(view: FileTreeView): void; onOpenFile(path: string, options?: {preview?:boolean}): void;
 }) {
   const pane = useRef<HTMLElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -41,7 +41,7 @@ export function WorkspaceFileTreePane({ data, filePath, active, view, onChange, 
   }, []);
   useEffect(() => { if (!active) drag.current = undefined; }, [active]);
   const width = fileTreeWidth(view.width, containerWidth);
-  return <aside ref={pane} className="workspace-file-tree-pane" aria-label="Workspace file tree" hidden={!view.open} style={{ width }}>
+  return <aside data-tab-preview-pin-exempt ref={pane} className="workspace-file-tree-pane" aria-label="Workspace file tree" hidden={!view.open} style={{ width }}>
     <div className="workspace-file-tree-resize" role="separator" aria-label="Resize file tree" aria-orientation="vertical" tabIndex={0}
       aria-valuemin={Math.min(200, containerWidth * .6)} aria-valuemax={containerWidth * .6} aria-valuenow={Math.min(width, containerWidth * .6)}
       onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); drag.current = { pointer: event.pointerId, start: view }; }}

@@ -137,6 +137,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
   const tabs: DockTab[] = [],
     seen = new Set<string>();
   for (const item of value.tabs) {
+    if (record(item) && item.preview === true) return; // Live snapshots must strip transient previews before saving.
     if (
       !record(item) ||
       !id(item.hostId) ||

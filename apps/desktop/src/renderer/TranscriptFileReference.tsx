@@ -73,13 +73,17 @@ export function FileReferenceControl({ file, title, children }: { file: Workspac
       .finally(() => { read.current = undefined; if (alive.current) setLoading(false); });
     read.current = task; return task;
   };
-  const activate = async (external = false, targetId?: string) => {
+  const activate = async (external = false, targetId?: string, preview = true) => {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError(undefined); close();
     try {
-      const action = external ? currentActions.current?.openFileOnHost : currentActions.current?.openFile;
-      if (!action) throw new Error(external ? "Opening in an application on the owning host is unavailable." : "The owning workspace is unavailable.");
-      await action(file, targetId);
+      if (external) {
+        if (!currentActions.current?.openFileOnHost) throw new Error("Opening in an application on the owning host is unavailable.");
+        await currentActions.current.openFileOnHost(file,targetId);
+      } else {
+        if (!currentActions.current?.openFile) throw new Error("The owning workspace is unavailable.");
+        await currentActions.current.openFile(file,{preview});
+      }
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   };
@@ -116,6 +120,7 @@ export function FileReferenceControl({ file, title, children }: { file: Workspac
   return <><button ref={trigger} type="button" className="transcript-file-reference" title={title} data-file-reference aria-busy={busy || undefined}
     onFocus={() => void discover()} onPointerEnter={() => void discover()}
     onClick={event => void activate((/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? event.metaKey : event.ctrlKey))}
+    onDoubleClick={event => { if (!(/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? event.metaKey : event.ctrlKey)) void activate(false,undefined,false); }}
     onAuxClick={event => { if (event.button === 1) { event.preventDefault(); void activate(true); } }}
     onContextMenu={event => { event.preventDefault(); showMenu(event.clientX,event.clientY); }}
     onKeyDown={event => { if (event.key === "ContextMenu" || event.key === "F10" && event.shiftKey) { event.preventDefault(); showMenu(); } }}>{children}</button>

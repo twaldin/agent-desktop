@@ -9,7 +9,7 @@ export interface TranscriptLinkActions {
   fileOpenOptions?(file: WorkspaceFileLink): Promise<Extract<WorkspaceQueryResult, { type: "file.open-options" }>>;
   saveFileCopy?(file: WorkspaceFileLink): Promise<void>;
   openFileOnHost?(file: WorkspaceFileLink, targetId?: string): Promise<void>;
-  openFile?(file: WorkspaceFileLink): Promise<void> | void;
+  openFile?(file: WorkspaceFileLink, options?: {preview?: boolean}): Promise<void> | void;
   openExternal?(url: string): Promise<void>;
 }
 export type TranscriptLink =
