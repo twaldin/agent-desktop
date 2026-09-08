@@ -1,8 +1,8 @@
 import type { LocalEnvironmentActions } from "./local-environments/actions";
 import { LocalEnvironmentStore } from "./local-environments";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
-import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "@agent-desktop/shared";
+import { parseStandaloneFilePath, type WorkspaceMutation, type WorkspaceMutationResult, type WorkspaceQuery, type WorkspaceQueryResult, type WorkspaceTarget } from "@agent-desktop/shared";
 import type { HostStore } from "./store";
 import { WorkspaceService } from "./workspace";
 import type { WorktreeStartingState, GitWorktree } from '@agent-desktop/shared';
@@ -30,7 +30,8 @@ export function parseWorkspaceTarget(value: unknown): WorkspaceTarget {
   if (Object.keys(target).length !== 1) throw new Error("Select one workspace owner.");
   if ("projectId" in target) return { projectId: text(target.projectId, 200) };
   if ("sessionId" in target) return { sessionId: text(target.sessionId, 200) };
-  throw new Error("A catalogued project or session is required.");
+  if ("filePath" in target) return { filePath: parseStandaloneFilePath(target.filePath) };
+  throw new Error("A catalogued project, session, or standalone file is required.");
 }
 export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
   const query = object(value);
@@ -101,6 +102,7 @@ export class HostWorkspaces {
     private removal?: { before(path: string): Promise<void>; committed(sessions: SessionSummary[]): void }, private actions?: LocalEnvironmentActions,
     private fileOpen = new WorkspaceFileOpen()) {}
   #resolve(target: WorkspaceTarget): WorkspaceService {
+    if ("filePath" in target) return new WorkspaceService(dirname(parseStandaloneFilePath(target.filePath)));
     const session = "sessionId" in target ? this.store.getSession(target.sessionId) : undefined;
     const projectId = "projectId" in target ? target.projectId : session?.projectId;
     const project = projectId ? this.store.getProject(projectId) : undefined;
@@ -132,6 +134,12 @@ export class HostWorkspaces {
     return verifyWorktreeDirectories(context, path);
   }
   async query(target: WorkspaceTarget, query: WorkspaceQuery): Promise<WorkspaceQueryResult> {
+    if ("filePath" in target) {
+      if (!["file.stat", "file.read", "file.open-options", "file.copy-info", "file.copy-chunk"].includes(query.type))
+        throw new Error("A standalone file target does not grant directory, Git, terminal, or environment access.");
+      if (!("path" in query) || query.path !== basename(parseStandaloneFilePath(target.filePath)))
+        throw new Error("A standalone file target grants access only to its exact basename.");
+    }
     const owner = this.#resolve(target);
     // Git controls intentionally address the containing repository; file controls stay project-confined.
     const workspace = query.type.startsWith("git.") ? await owner.gitRootService() : owner;
@@ -142,6 +150,7 @@ export class HostWorkspaces {
       }
       case "environment.output":
       case "environment.preparation": {
+        if ("filePath" in target) throw new Error("A standalone file cannot own an environment preparation.");
         const projectId = 'projectId' in target ? target.projectId : this.store.getSession(target.sessionId)?.projectId;
         const preparation = this.store.environmentPreparations.get(query.preparationId);
         if (!preparation || preparation.projectId !== projectId) throw new Error('Preparation does not belong to this workspace.');
@@ -166,6 +175,12 @@ export class HostWorkspaces {
     }
   }
   async mutate(target: WorkspaceTarget, action: WorkspaceMutation, commandId?: string): Promise<WorkspaceMutationResult> {
+    if ("filePath" in target) {
+      if (action.type !== "file.write" && action.type !== "file.open")
+        throw new Error("A standalone file target does not grant directory, Git, terminal, or environment access.");
+      if (action.path !== basename(parseStandaloneFilePath(target.filePath)))
+        throw new Error("A standalone file target grants access only to its exact basename.");
+    }
     const owner = this.#resolve(target);
     const workspace = action.type.startsWith("git.") || action.type.startsWith("worktree.") ? await owner.gitRootService() : owner;
     switch (action.type) {
@@ -255,6 +270,7 @@ export class HostWorkspaces {
 }
 
 function ownerProjectId(store: HostStore, target: WorkspaceTarget): string {
+  if ("filePath" in target) throw new Error("A standalone file cannot own a managed worktree.");
   const projectId = "projectId" in target ? target.projectId : store.getSession(target.sessionId)?.projectId;
   if (!projectId) throw new Error("A managed worktree must belong to a project.");
   return projectId;

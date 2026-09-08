@@ -36,3 +36,10 @@ test("line ranges select exact mixed-newline/UTF-16 offsets without truncating t
   expect(fileLocation(text, 2, undefined, 5)).toHaveProperty("error");
   expect(fileLocation(text, 2, 4)).toEqual({ start: 10, end: 10 });
 });
+
+
+test("standalone files resolve parent and absolute links into explicit host file identities", () => {
+  expect(resolveMarkdownLink("../assets/diagram.png", "project/docs/readme.md", "/")).toEqual({kind:"file",file:{path:"project/assets/diagram.png"}});
+  expect(resolveMarkdownLink("/other/report.md#L3", "project/docs/readme.md", "/")).toEqual({kind:"file",file:{path:"other/report.md",line:3}});
+  expect(resolveMarkdownLink("file://elsewhere/secret", "project/docs/readme.md", "/").kind).toBe("unavailable");
+});

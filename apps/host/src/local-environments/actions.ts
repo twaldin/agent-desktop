@@ -55,6 +55,7 @@ export class LocalEnvironmentActions {
 
   private async resolve(target: WorkspaceTarget): Promise<Resolved> {
     if (!target || typeof target !== "object" || Object.keys(target).length !== 1) fail("INVALID_WORKSPACE_TARGET", "One workspace target is required.");
+    if ("filePath" in target) fail("INVALID_WORKSPACE_TARGET", "A standalone file cannot own environment actions.");
     const store = this.store;
     let cwd: string, projectRoot: string, sessionId: string | undefined;
     let targetKey: string;
@@ -66,13 +67,13 @@ export class LocalEnvironmentActions {
       if (session.projectId && (!project || project.hostId !== store.host.id)) throw new TerminalError("WORKSPACE_NOT_FOUND", "The requested session project does not exist on this host.");
       cwd = session.cwd; projectRoot = project?.path ?? session.cwd; sessionId = session.id;
       targetKey = `sessionId:${target.sessionId}`;
-    } else {
+    } else if ("projectId" in target) {
       if (typeof target.projectId !== "string") fail("INVALID_WORKSPACE_TARGET", "A workspace target id is required.");
       const project = store.getProject(target.projectId);
       if (!project || project.hostId !== store.host.id) throw new TerminalError("WORKSPACE_NOT_FOUND", "The requested project does not exist on this host.");
       cwd = project.path; projectRoot = project.path;
       targetKey = `projectId:${target.projectId}`;
-    }
+    } else return fail("INVALID_WORKSPACE_TARGET", "A standalone file cannot own environment actions.");
     try { cwd = realpathSync(cwd); projectRoot = realpathSync(projectRoot); if (!statSync(cwd).isDirectory()) throw new Error(); }
     catch { fail("WORKSPACE_NOT_FOUND", "The workspace directory no longer exists."); }
     let configRoot = cwd, initialConfigPath: string | null | undefined;

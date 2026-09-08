@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import type { BrowserWindow } from "electron";
-import { createDockState, resizeDock, dockTabId, insertDockTab, moveDockTab, MAX_WORKSPACE_FILE_PATH_LENGTH } from "../renderer/dock-state";
+import { createDockState, resizeDock, dockTabId, insertDockTab, moveDockTab, MAX_WORKSPACE_FILE_PATH_LENGTH, standaloneFileDockTarget } from "../renderer/dock-state";
 import { persistentFileTabs } from "../renderer/file-preview-tabs";
 import {
   defaultWindowView,
@@ -492,6 +492,21 @@ test("workspace file persistence rejects invalid paths and owners", () => {
     expect(parseDockSnapshot(changed({ filePath }))).toBeUndefined();
   expect(parseDockSnapshot(changed({ hostId: "https://owner" }))).toBeUndefined();
   expect(parseDockSnapshot(changed({ target: "host" }))).toBeUndefined();
+  expect(parseDockSnapshot(changed({ kind: "files" }))).toBeUndefined();
+});
+
+test("standalone file docks retain the absolute identity only through their target", () => {
+  const target = standaloneFileDockTarget("/outside project/a file.ts");
+  const descriptor = { kind: "file" as const, hostId: "owner", target, title: "a file.ts", filePath: "a file.ts" };
+  const tab = { ...descriptor, id: dockTabId(descriptor) };
+  const snapshot = { state: insertDockTab(createDockState(), tab, "right"), tabs: [tab] };
+  expect(parseDockSnapshot(snapshot)).toEqual(snapshot);
+  const changed = (patch: Record<string, unknown>) => {
+    const changedTab = { ...tab, ...patch };
+    return { ...snapshot, tabs: [changedTab], state: { ...snapshot.state, right: { ...snapshot.state.right, tabIds: [String(changedTab.id)], activeTabId: String(changedTab.id) } } };
+  };
+  expect(parseDockSnapshot(changed({ filePath: "other.ts" }))).toBeUndefined();
+  expect(parseDockSnapshot(changed({ target: "file:%2Foutside%2F..%2Fsecret", id: tab.id }))).toBeUndefined();
   expect(parseDockSnapshot(changed({ kind: "files" }))).toBeUndefined();
 });
 

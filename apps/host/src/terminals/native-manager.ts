@@ -23,6 +23,7 @@ const active = (info: NativeTerminalInfo) => info.status === "running" || info.s
 function integer(value: number, minimum: number, maximum: number): number { if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new TerminalError("INVALID_TERMINAL_NUMBER", `Expected an integer between ${minimum} and ${maximum}.`); return value; }
 function targetKey(target: WorkspaceTarget): string {
   if (!target || typeof target !== "object" || Object.keys(target).length !== 1) throw new TerminalError("INVALID_TERMINAL_TARGET", "One catalog target is required.");
+  if ("filePath" in target) throw new TerminalError("INVALID_TERMINAL_TARGET", "A standalone file cannot own a native terminal.");
   const key = "projectId" in target ? "projectId" : "sessionId"; const value = target[key as keyof WorkspaceTarget] as string;
   if (!UUID.test(value)) throw new TerminalError("INVALID_TERMINAL_TARGET", "A catalog UUID is required."); return `${key}:${value}`;
 }

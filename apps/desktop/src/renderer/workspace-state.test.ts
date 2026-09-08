@@ -12,7 +12,7 @@ const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 function storage(): OfflineCache & { values: Map<string, string> } { const values = new Map<string, string>(); return { values, read: async key => values.get(key) ?? null, write: async (key, value) => { values.set(key, value); } }; }
 function deferred() { let resolve!: () => void; return { promise: new Promise<void>(done => { resolve = done; }), resolve: () => resolve() }; }
-async function fixture() {
+async function fixture(standalone = false) {
   const path = await mkdtemp(join(tmpdir(), "agent-renderer-workspace-")); directories.push(path);
   const git = (...args: string[]) => { const result = Bun.spawnSync(["git", "-C", path, ...args]); if (result.exitCode !== 0) throw new Error(result.stderr.toString()); return result.stdout.toString().trim(); };
   git("init", "--initial-branch=main"); git("config", "user.name", "Workspace Test"); git("config", "user.email", "workspace-test@example.invalid");
@@ -66,7 +66,7 @@ async function fixture() {
     },
     subscribe: (listener: (event: DesktopEvent) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
-  const cache = storage(); const data = new WorkspaceState(bridge, "home", { projectId: "project" }, cache, "home"); data.setConnected(true); await data.restore();
+  const cache = storage(); const data = new WorkspaceState(bridge, "home", standalone ? {filePath: join(path, "sample.txt")} : { projectId: "project" }, cache, "home"); data.setConnected(true); await data.restore();
   return { path, git, native, bridge, cache, data, deliveries, owners, listeners, delay: (callback: () => Promise<void>) => { before = callback; },
     holdNextRead: () => { const held = { started: deferred(), release: deferred() }; heldRead = held; return held; }, dropNextReceipt: () => { drop = true; } };
 }
@@ -385,4 +385,72 @@ test("close preserves online manual buffers and cancellation cannot drain a late
   abort.abort(new Error("keep open")); f.data.edit("sample.txt", "later B\n", true); held.resolve(); expect((await rejected).message).toBe("keep open");
   expect(f.deliveries).toHaveLength(1); expect(await readFile(join(f.path, "sample.txt"), "utf8")).toBe("save A\n");
   expect(f.data.documents.get("sample.txt")?.text).toBe("later B\n"); expect(f.data.documents.get("sample.txt")?.dirty).toBe(true);
+});
+
+
+describe("standalone file editor ownership", () => {
+  test("refresh reads only the file and offline recovery preserves edits across host conflicts", async () => {
+    const f = await fixture(true);
+    const queries: string[] = [];
+    const original = f.bridge.workspaceQuery;
+    f.bridge.workspaceQuery = async (target, query, hostId) => {
+      expect(target).toEqual({filePath: join(f.path, "sample.txt")});
+      queries.push(query.type);
+      return original(target, query, hostId);
+    };
+    await f.data.refresh();
+    expect(queries).toEqual(["file.read"]);
+    expect(f.data.directories.size).toBe(0);
+    expect(f.data.status).toBeUndefined();
+    f.data.edit("sample.txt", "standalone draft\n");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const resumed = new WorkspaceState(f.bridge, "home", {filePath:join(f.path,"sample.txt")}, f.cache, "home");
+    await resumed.restore();
+    expect(resumed.documents.get("sample.txt")?.text).toBe("standalone draft\n");
+    expect(resumed.documents.get("sample.txt")?.dirty).toBe(true);
+    await writeFile(join(f.path,"sample.txt"), "changed on host\n");
+    resumed.setConnected(true); await resumed.refresh();
+    expect(resumed.documents.get("sample.txt")?.text).toBe("standalone draft\n");
+    expect(resumed.documents.get("sample.txt")?.conflict?.kind).toBe("text");
+    expect(f.deliveries).toHaveLength(0);
+    resumed.resolve("sample.txt", "local"); await resumed.saveFile("sample.txt");
+    expect(await readFile(join(f.path,"sample.txt"),"utf8")).toBe("standalone draft\n");
+    expect(f.deliveries).toHaveLength(1);
+    expect(f.deliveries[0]!.command).toMatchObject({type:"workspace.mutate",target:{filePath:join(f.path,"sample.txt")},action:{type:"file.write",path:"sample.txt"}});
+    expect(queries.every(type => type === "file.read")).toBe(true);
+  });
+
+  test("restored standalone state cannot replay a different owner or broader action", async () => {
+    const f = await fixture(true);
+    for (const command of [
+      {type:"workspace.mutate", target:{filePath:join(f.path,"other.txt")}, action:{type:"file.write",path:"other.txt",text:"wrong",expectedRevision:null}},
+      {type:"workspace.mutate", target:f.data.target, action:{type:"git.stage",paths:["sample.txt"]}},
+      {type:"workspace.mutate", target:f.data.target, action:{type:"file.write",path:"other.txt",text:"wrong",expectedRevision:null}},
+    ]) {
+      await f.cache.write(f.data.cacheKey,JSON.stringify({version:1,documents:[],pending:{envelope:{id:crypto.randomUUID(),command},uncertain:true}}));
+      const resumed = new WorkspaceState(f.bridge,"home",f.data.target,f.cache,"home");
+      await resumed.restore(); resumed.setConnected(true); await resumed.retry();
+      expect(resumed.restored).toBe(false); expect(resumed.cacheWarning).toContain("Mutations are paused");
+      expect(resumed.pending).toBeUndefined(); expect(f.deliveries).toHaveLength(0);
+    }
+    await f.cache.write(f.data.cacheKey,JSON.stringify({version:1,documents:[["other.txt",{text:"foreign",dirty:true}]]}));
+    const resumed = new WorkspaceState(f.bridge,"home",f.data.target,f.cache,"home");
+    await resumed.restore(); expect(resumed.restored).toBe(false); expect(resumed.documents.size).toBe(0);
+  });
+
+  test("Markdown image leases use their own exact host file target", async () => {
+    const f = await fixture(true), acquired: unknown[] = [], released: string[] = [];
+    const bridge = {...f.bridge, acquireWorkspaceImage: async (target: unknown,path: string,hostId?:string) => {
+      acquired.push({target,path,hostId}); return {id:"image-lease",url:"agent-workspace-image://image-lease"};
+    }, releaseWorkspaceImage: async (id:string) => {released.push(id);}};
+    const data = new WorkspaceState(bridge,"home",f.data.target,f.cache,"home"); data.setConnected(true);
+    const lease = await data.acquireImage("images/chart.png");
+    expect(acquired).toEqual([{target:{filePath:join(f.path,"images/chart.png")},path:"chart.png",hostId:"home"}]);
+    await lease.release(); expect(released).toEqual(["image-lease"]);
+    await expect(data.acquireImage("../escape.png")).rejects.toThrow("canonical absolute");
+    expect(acquired).toHaveLength(1);
+    const outside = await data.acquireImage("/other/assets/chart.png");
+    expect(acquired[1]).toEqual({target:{filePath:"/other/assets/chart.png"},path:"chart.png",hostId:"home"});
+    await outside.release();
+  });
 });

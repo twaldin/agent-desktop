@@ -27,7 +27,7 @@ export interface NativeIntegrationsProps {
   hostId: string;
   hostName: string;
   connected: boolean;
-  target?: WorkspaceTarget;
+  target?: Exclude<WorkspaceTarget, { filePath: string }>;
   page: "plugins" | "mcp";
   onTrySkill?(action: ComposerAction): void;
   onOpenSkillFile?(ref:NativeSkillFileRef,hostId:string):void;

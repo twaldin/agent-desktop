@@ -1,5 +1,17 @@
-/** The host resolves this catalog identity; clients never supply an absolute root. */
-export type WorkspaceTarget = { projectId: string } | { sessionId: string };
+/** A standalone file grants authority to that exact path, never its parent directory. */
+export function parseStandaloneFilePath(value: unknown): string {
+  if (typeof value !== "string" || value.length > 16_384 || value === "/" || !value.startsWith("/")
+    || /[\p{Cc}\\]/u.test(value)
+    || /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value))
+    throw new Error("A canonical absolute standalone file path is required.");
+  const segments = value.slice(1).split("/");
+  if (segments.some(segment => !segment || segment === "." || segment === ".."))
+    throw new Error("A canonical absolute standalone file path is required.");
+  return value;
+}
+
+/** The host resolves catalog identities; a filePath owns only that literal file. */
+export type WorkspaceTarget = { projectId: string } | { sessionId: string } | { filePath: string };
 
 export interface FileWriteInput { text: string; expectedRevision: string | null; bom?: boolean }
 export interface GitDiffOptions { path?: string; staged?: boolean; context?: number }

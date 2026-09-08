@@ -1,5 +1,6 @@
 import type { CommandEnvelope, DesktopBridge, LocalEnvironmentActionsState } from "../../../../packages/shared/src/protocol";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "../../../../packages/shared/src/workspace-protocol";
+import { parseStandaloneFilePath } from "../../../../packages/shared/src/workspace";
 import type { FileContent, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "../../../../packages/shared/src/workspace";
 import type { OfflineCache } from "./offline-cache";
 
@@ -7,7 +8,7 @@ type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subsc
 export const WORKSPACE_AUTOSAVE_DELAY_MS = 3_000;
 export interface EditorDocument { discardedSaveId?: string; autosave?: boolean; saveError?: string; content: FileContent | null; text: string; dirty: boolean; conflict?: FileContent | null; recoveredText?: string }
 export interface PendingWorkspaceMutation { envelope: CommandEnvelope & { command: { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation } }; uncertain: boolean }
-export const workspaceKey = (target: WorkspaceTarget) => "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}`;
+export const workspaceKey = (target: WorkspaceTarget) => "filePath" in target ? `file:${encodeURIComponent(target.filePath)}` : "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}`;
 
 /** Owner-scoped editor buffers and mutation receipts. Reads never replace an unsaved buffer. */
 export class WorkspaceState {
@@ -45,8 +46,11 @@ export class WorkspaceState {
   private autosaveDue = new Map<string, number>();
   readonly cacheKey: string;
   constructor(private bridge: WorkspaceBridge, readonly hostId: string, readonly target: WorkspaceTarget, private cache: OfflineCache, private localHostId?: string) {
+    if ("filePath" in target) parseStandaloneFilePath(target.filePath);
     this.cacheKey = `agent-desktop:workspace:v1:${hostId}:${workspaceKey(target)}`;
   }
+  get standalonePath() { return "filePath" in this.target ? this.target.filePath : undefined; }
+  get standaloneName() { return this.standalonePath?.split("/").at(-1); }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   get canSaveCopy() { return Boolean(this.bridge.saveWorkspaceCopy); }
   saveCopy(path: string) {
@@ -58,7 +62,8 @@ export class WorkspaceState {
     if (!this.connected) throw new Error("Reconnect to load this workspace image.");
     if (!this.bridge.acquireWorkspaceImage || !this.bridge.releaseWorkspaceImage) throw new Error("Workspace image loading is unavailable in this desktop.");
     const release = this.bridge.releaseWorkspaceImage.bind(this.bridge);
-    const lease = await this.bridge.acquireWorkspaceImage(this.target, path, this.hostId);
+    const absolute = this.standalonePath ? parseStandaloneFilePath(path.startsWith("/") ? path : this.standalonePath.slice(0,this.standalonePath.lastIndexOf("/")+1)+path) : undefined;
+    const lease = await this.bridge.acquireWorkspaceImage(absolute ? {filePath:absolute} : this.target, absolute ? path.split("/").at(-1)! : path, this.hostId);
     return { url: lease.url, release: () => release(lease.id) };
   }
   private changed() { for (const listener of this.listeners) listener(); this.scheduleAutosave(); }
@@ -75,6 +80,18 @@ export class WorkspaceState {
       try {
         const saved = JSON.parse(await this.cache.read(this.cacheKey) ?? "null");
         if (saved?.version === 1) {
+          const pendingCommand = saved.pending?.envelope?.command;
+          if (saved.pending && (!pendingCommand?.target || workspaceKey(pendingCommand.target) !== workspaceKey(this.target)))
+            throw new Error("The recovered command belongs to a different file or workspace.");
+          if (this.standaloneName) {
+            if ((saved.documents ?? []).some(([path]: [string]) => path !== this.standaloneName)
+              || (saved.opened !== undefined && saved.opened !== this.standaloneName)
+              || (saved.directories?.length ?? 0) > 0
+              || pendingCommand && (pendingCommand.type !== "workspace.mutate"
+                || !["file.write", "file.open"].includes(pendingCommand.action?.type)
+                || pendingCommand.action.path !== this.standaloneName))
+              throw new Error("The recovered editor state exceeds this file's scope.");
+          }
           for (const [path, document] of saved.documents ?? []) if (!this.documents.has(path) && typeof document?.text === "string") this.documents.set(path, document);
           for (const [path, entries] of saved.directories ?? []) if (!this.directories.has(path)) this.directories.set(path, entries);
           this.pending ??= saved.pending ? { ...saved.pending, uncertain: true } : undefined;
@@ -111,6 +128,7 @@ export class WorkspaceState {
   }
   async refresh() {
     await this.restore();
+    if(this.standaloneName) { await this.read(this.standaloneName); return; }
     const reads = [this.list(this.directory), this.loadGit()];
     if (this.environmentActions !== undefined) reads.push(this.loadEnvironmentActions());
     if (this.opened) reads.push(this.read(this.opened));

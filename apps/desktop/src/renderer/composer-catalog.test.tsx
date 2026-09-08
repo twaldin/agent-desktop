@@ -1,7 +1,7 @@
 // Controlled transport/state and static markup contracts, not provider or installed UI acceptance.
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { DesktopBridge, DesktopEvent, Draft, OmpComposerCatalog, OmpComposerModel, OmpSessionControls, SessionSummary } from "@agent-desktop/shared";
+import type { DesktopBridge, DesktopEvent, Draft, OmpComposerCatalog, OmpComposerModel, OmpSessionControls, SessionSummary, WorkspaceTarget } from "@agent-desktop/shared";
 import { ComposerCatalogState, composerSelection } from "./composer-catalog";
 import { ComposerSelections } from "./ComposerSelections";
 import { DraftController } from "./drafts";
@@ -22,6 +22,9 @@ function fixture(overrides: Partial<Pick<DesktopBridge, "getComposerCatalog" | "
 }
 
 describe("owning-workspace composer selection", () => {
+  test("standalone files cannot request a native composer catalog", () => {
+    expect(() => new ComposerCatalogState(fixture(), "owner", { filePath: "/outside/file.ts" } as unknown as Exclude<WorkspaceTarget, { filePath: string }>)).toThrow("Standalone files");
+  });
   test("project catalog requests carry only their owning host and catalog target", async () => {
     const calls: unknown[] = [];
     const bridge = fixture({ getComposerCatalog: async (target, refresh, hostId) => { calls.push({ target, refresh, hostId }); return catalog("second"); } });

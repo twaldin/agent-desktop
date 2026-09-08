@@ -10,9 +10,10 @@ import "./terminal-panel.css";
 import "./native-terminal-panel.css";
 
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
-const targetKey = (target: WorkspaceTarget) => "projectId" in target ? `project:${target.projectId}` : `session:${target.sessionId}`;
+type TerminalWorkspaceTarget = Exclude<WorkspaceTarget, { filePath: string }>;
+const targetKey = (target: TerminalWorkspaceTarget) => "projectId" in target ? `project:${target.projectId}` : `session:${target.sessionId}`;
 const running = (terminal: NativeTerminalInfo) => ["starting", "running", "closing"].includes(terminal.status);
-export function NativeTerminalPanel({ bridge, target, hostId, connected, onClose }: { bridge: NativeTerminalClient; target: WorkspaceTarget; hostId: string; connected: boolean; onClose(): void }) {
+export function NativeTerminalPanel({ bridge, target, hostId, connected, onClose }: { bridge: NativeTerminalClient; target: TerminalWorkspaceTarget; hostId: string; connected: boolean; onClose(): void }) {
   const key = targetKey(target), storageKey = `terminal.native.selected.${hostId}.${key}`;
   const [terminals, setTerminals] = useState<NativeTerminalInfo[]>([]), [selected, setSelected] = useState<string | undefined>(() => { try { return localStorage.getItem(storageKey) ?? undefined; } catch { return; } });
   const [error, setError] = useState<string>(), [loading, setLoading] = useState(false), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
@@ -37,7 +38,7 @@ export function NativeTerminalPanel({ bridge, target, hostId, connected, onClose
     const off = bridge.subscribeNativeTerminals(event => {
       if (event.hostId !== hostId) return;
       if (event.type === "removed") { setTerminals(current => current.filter(item => item.id !== event.terminalId)); void load(); }
-      else if (event.type === "state" && targetKey(event.terminal.target) === key) setTerminals(current => current.some(item => item.id === event.terminal.id) ? current.map(item => item.id === event.terminal.id ? newestNativeTerminal(item, event.terminal) : item) : [...current, event.terminal]);
+      else if (event.type === "state" && !("filePath" in event.terminal.target) && targetKey(event.terminal.target) === key) setTerminals(current => current.some(item => item.id === event.terminal.id) ? current.map(item => item.id === event.terminal.id ? newestNativeTerminal(item, event.terminal) : item) : [...current, event.terminal]);
     });
     void load(); const timer = setInterval(() => void load(), 5000);
     return () => { alive = false; off(); clearInterval(timer); };

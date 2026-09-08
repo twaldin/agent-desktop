@@ -45,7 +45,7 @@ export function replaceComposerToken(text: string, token: ComposerToken, inserti
 }
 export interface ComposerAppAction { id: string; name: string; description: string; icon: "sideChat" | "archive" | "folder" | "terminal" | "compose" | "refresh" | "more"; reason?: string; run(): void | Promise<void> }
 export interface ComposerSuggestion { id: string; label: string; description: string; origin: string; insertText: string; icon: ComposerAppAction["icon"] | "skill" | "file" | "command"; disabled?: string; action?: ComposerAppAction; native?: ComposerAction; source?: { hostId: string; path: string } }
-export function targetIdentity(target?: WorkspaceTarget): string { return target ? "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}` : "default"; }
+export function targetIdentity(target?: WorkspaceTarget): string { return target ? "filePath" in target ? `file:${encodeURIComponent(target.filePath)}` : "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}` : "default"; }
 export function assertComposerOwner<T extends Pick<ComposerActionsCatalog, "hostId" | "target" | "protocolVersion"> | null>(value: T, hostId: string, target?: WorkspaceTarget): asserts value is NonNullable<T> {
   if (!value) throw new Error("Update the owning host to load native commands and skills.");
   if (value.protocolVersion !== 1 || value.hostId !== hostId || targetIdentity(value.target) !== targetIdentity(target)) throw new Error("The completion response belongs to a different host or workspace. Refresh this menu.");

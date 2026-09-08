@@ -1,5 +1,5 @@
-import { extname, isAbsolute } from "node:path";
-import { parseNativeSkillFileRef, type NativeSkillFileRef, type WorkspaceQueryResult, type WorkspaceTarget } from "@agent-desktop/shared";
+import { basename, extname, isAbsolute } from "node:path";
+import { parseNativeSkillFileRef, parseStandaloneFilePath, type NativeSkillFileRef, type WorkspaceQueryResult, type WorkspaceTarget } from "@agent-desktop/shared";
 import type { WorkspaceCopySource } from "./workspace-save-copy";
 
 const CHUNK_BYTES = 1024 * 1024;
@@ -13,8 +13,10 @@ type Chunk = Extract<WorkspaceQueryResult, {type: "file.copy-chunk"}>;
 type Grant = { senderId: number; path: string; mime: string; source(signal: AbortSignal): WorkspaceCopySource; active: Set<AbortController> };
 
 function validateOwner(target: WorkspaceTarget, path: string, hostId: string): void {
-  if (!target || typeof target !== "object" || Object.keys(target).length !== 1 || !("projectId" in target || "sessionId" in target)
-    || typeof Object.values(target)[0] !== "string" || !Object.values(target)[0] || Object.values(target)[0].length > 200) throw new Error("Select one workspace image owner.");
+  if (!target || typeof target !== "object" || Object.keys(target).length !== 1 || !("projectId" in target || "sessionId" in target || "filePath" in target)
+    || typeof Object.values(target)[0] !== "string" || !Object.values(target)[0]) throw new Error("Select one workspace image owner.");
+  if ("filePath" in target) { parseStandaloneFilePath(target.filePath); if (basename(target.filePath) !== path) throw new Error("The standalone image path must match its file name."); }
+  else if (Object.values(target)[0]!.length > 200) throw new Error("Select one workspace image owner.");
 }
 function validatePath(path: string, hostId: string): void {
   if (typeof hostId !== "string" || !hostId || hostId.length > 200) throw new Error("Select the workspace image host.");

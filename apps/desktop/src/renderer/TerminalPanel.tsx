@@ -13,7 +13,8 @@ import { nativeTerminalClient } from "./native-terminal-bridge";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal-panel.css";
 
-export interface TerminalPanelProps { target: WorkspaceTarget; hostId: string; connected: boolean; onClose(): void; bridge?: TerminalBridge & Partial<NativeTerminalBridge> }
+type TerminalWorkspaceTarget = Exclude<WorkspaceTarget, { filePath: string }>;
+export interface TerminalPanelProps { target: TerminalWorkspaceTarget; hostId: string; connected: boolean; onClose(): void; bridge?: TerminalBridge & Partial<NativeTerminalBridge> }
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 const activeStatus = (terminal: TerminalInfo) => terminal.status === "running" || terminal.status === "starting" || terminal.status === "closing";
 
@@ -72,6 +73,7 @@ function TerminalPanelBody({ target, hostId, connected, onClose, bridge = window
       if (event.hostId !== hostId || event.type === "output") return;
       if (event.type === "removed") { setTerminals(current => current.filter(item => item.id !== event.terminalId)); void refresh(); }
       else {
+        if ("filePath" in event.terminal.target) return;
         const same = "projectId" in event.terminal.target ? `project:${event.terminal.target.projectId}` : `session:${event.terminal.target.sessionId}`;
         if (same === targetKey) { setTerminals(current => current.some(item => item.id === event.terminal.id) ? current.map(item => item.id === event.terminal.id ? newestTerminalInfo(item, event.terminal) : item) : [...current, event.terminal]); }
       }

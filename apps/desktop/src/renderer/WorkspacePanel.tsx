@@ -30,15 +30,15 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
     void data.restore().then(() => { if (!cancelled && data.restored) void (filePath ? data.read(filePath) : data.open(fileRequest.path)); });
     return () => { cancelled = true; };
   }, [data, fileRequest, filePath, data.restored]);
-  useEffect(() => { if (filePath && active && data.restored) void data.read(filePath); }, [data, filePath, active, connected, data.restored]);
+  useEffect(() => { if (filePath && active && data.restored && connected) void data.read(filePath); }, [data, filePath, active, connected, data.restored]);
   useEffect(() => {
     if (!connected || !active) return;
     if (tab === "worktrees") void data.loadWorktrees();
-    const interval = setInterval(() => { if (tab === "worktrees") void data.loadWorktrees(); else if (tab === "changes") void data.loadGit(); else { void data.list(data.directory); if (filePath ?? data.opened) void data.read((filePath ?? data.opened)!); } }, 5_000);
+    const interval = setInterval(() => { if (tab === "worktrees") void data.loadWorktrees(); else if (tab === "changes") void data.loadGit(); else { if(!data.standalonePath)void data.list(data.directory); if (filePath ?? data.opened) void data.read((filePath ?? data.opened)!); } }, 5_000);
     return () => clearInterval(interval);
   }, [data, connected, active, tab, filePath]);
   const disabled = !connected || data.busy || Boolean(data.pending) || !data.restored;
-  return <aside className={`workspace-panel ${embedded ? "workspace-embedded" : ""}`} aria-label="Workspace files and Git" aria-busy={data.loading.size > 0 || !data.restored}>
+  return <aside className={`workspace-panel ${embedded ? "workspace-embedded" : ""}`} aria-label={data.standalonePath ? "File" : "Workspace files and Git"} aria-busy={data.loading.size > 0 || !data.restored}>
     {!embedded && <><header className="workspace-header"><div className="truncate"><strong>{name}</strong><span title={path}>{path}</span></div><button className="icon-button" aria-label="Refresh workspace" disabled={!connected || data.loading.size > 0} onClick={() => { void data.refresh(); if (tab === "worktrees") void data.loadWorktrees(); if (tab === "changes" && data.diff) void data.showDiff(data.diffSelection.path, data.diffSelection.staged); }}><Icon name="refresh"/></button><button className="icon-button" aria-label="Close workspace panel" onClick={onClose}><Icon name="close"/></button></header>
     <div className="workspace-tabs" role="tablist" aria-label="Workspace view">{(["files", "changes", "worktrees"] as const).map(value => <button key={value} id={`workspace-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls="workspace-view" onClick={() => setTab(value)}>{value === "files" ? "Files" : value === "changes" ? "Changes" : "Worktrees"}</button>)}</div></>}
     {!connected && <p className="workspace-notice">Offline · displaying cached files and status. Editor changes stay on this device.</p>}
@@ -55,6 +55,8 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
 }
 
 function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, onFileEdit, onAddToChat, onAddFile, openExternal, fileTree, onFileTreeChange, workspaceName, workspacePath, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string, location?: Omit<WorkspaceFileLink, "path">, options?: {preview?:boolean}): void; onFileEdit?(path:string):void; onAddToChat?(path: string, selection: FileTextSelection): void; onAddFile?(path:string):void; openExternal?(url: string): Promise<void>; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; workspaceName: string; workspacePath: string; active: boolean }) {
+  const markdownPath = data.standalonePath?.slice(1) ?? filePath!;
+  const markdownRoot = data.standalonePath ? "/" : workspacePath;
   const edit = (path:string,text:string,autosave?:boolean) => { onFileEdit?.(path); data.edit(path,text,autosave); };
   useEffect(() => {
     const protect = () => { if (filePath) { const document = data.documents.get(filePath); if(document?.dirty || document?.conflict !== undefined || document?.recoveredText !== undefined) onFileEdit?.(filePath); } };
@@ -106,7 +108,7 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
     <section className="file-editor" aria-label="File editor">
       {!filePath && data.documents.size > 0 && <div className="editor-tabs">{[...data.documents].map(([path, item]) => <button className={path === opened ? "selected" : ""} key={path} title={path} onClick={() => open(path)}>{path.split("/").at(-1)}{item.dirty ? " •" : ""}</button>)}</div>}
       {!opened ? <div className="workspace-empty"><Icon name="compose"/><p>Select a file to read or edit.</p></div> : <>
-        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={opened}>{opened}</span>}{markdownFile && <button type="button" className="workspace-markdown-mode" disabled={switchingMode || !document || !editable} onClick={() => void switchMode()}>{mode === "markdown" ? "View source" : "View preview"}</button>}{filePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}{filePath && <WorkspaceFileOpen key={`${data.cacheKey}:${filePath}`} data={data} path={filePath} active={active} disabled={disabled}/>}{!filePath && <button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button>}</div>
+        <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath && !data.standalonePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={data.standalonePath??opened}>{opened}</span>}{markdownFile && <button type="button" className="workspace-markdown-mode" disabled={switchingMode || !document || !editable} onClick={() => void switchMode()}>{mode === "markdown" ? "View source" : "View preview"}</button>}{filePath && !data.standalonePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}{filePath && <WorkspaceFileOpen key={`${data.cacheKey}:${filePath}`} data={data} path={filePath} active={active} disabled={disabled}/>}{!filePath && <button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button>}</div>
       </>}
       <div className="workspace-file-body" hidden={!opened}><div className={`workspace-file-main ${markdownFile ? "workspace-markdown-main" : ""}`}>
       {opened && <>
@@ -120,14 +122,14 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
       {/* Keep each open file's native history and selection while another tab is visible. */}
       {markdownFile && document && editable && <RichMarkdownEditor documentKey={`${data.cacheKey}:${filePath}:markdown`} value={document.text} label={`Edit Markdown ${filePath}`} active={active && mode === "markdown"} revealRequest={revealRequest} onReveal={(id, error) => setLocationNotice(error ? { id, path: filePath!, message: error } : undefined)}
         onAddToChat={onAddToChat ? selection => onAddToChat(filePath!, selection) : undefined} imageGeneration={data.imageGeneration}
-        resolveImage={href => { const path = markdownImagePath(href, filePath!, workspacePath); return path === null ? null : { key: `${data.cacheKey}:${data.imageGeneration}:${path}`, load: () => data.acquireImage(path) }; }}
+        resolveImage={href => { const path = markdownImagePath(href, markdownPath, markdownRoot); return path === null ? null : { key: `${data.cacheKey}:${data.imageGeneration}:${path}`, load: () => data.acquireImage(data.standalonePath ? `/${path}` : path) }; }}
         openLink={async href => {
-          const link = resolveMarkdownLink(href, filePath!, workspacePath);
+          const link = resolveMarkdownLink(href, markdownPath, markdownRoot);
           if (link.kind === "unavailable") throw new Error(link.reason);
           if (link.kind === "external") { if (!openExternal) throw new Error("The browser opener is unavailable."); await openExternal(link.url); return; }
           if (link.kind === "fragment") throw new Error("This document anchor is unavailable.");
           if (!onOpenFile) throw new Error("The owning workspace file opener is unavailable.");
-          const { path, ...location } = link.file; onOpenFile(path, location);
+          const { path, ...location } = link.file; onOpenFile(data.standalonePath ? `/${path}` : path, location);
         }} onChange={text => edit(filePath!, text, true)} onSave={() => { if (!disabled) void data.saveFile(filePath!); }}/>}
       <div className="workspace-source-editors" hidden={!editable || mode === "markdown"}>
         {[...data.documents].filter(([path, item]) => (!filePath || path === filePath) && (!item.content || item.content.kind === "text")).map(([path, item]) =>
@@ -147,7 +149,7 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
         {data.busy && data.pending?.envelope.command.action.type === "file.write" && data.pending.envelope.command.action.path === filePath
           ? <span><Icon name="refresh"/>Saving…</span> : document.saveError ? <button title={document.saveError} disabled={disabled || document.conflict !== undefined} onClick={() => void data.saveFile(filePath)}>Save failed</button> : null}
       </div>}
-      </div>{filePath && <WorkspaceFileTreePane cwd={workspacePath} onAddFile={onAddFile} data={data} filePath={filePath} active={active} view={tree} onChange={changeTree} onOpenFile={open}/>}</div>
+      </div>{filePath && !data.standalonePath && <WorkspaceFileTreePane cwd={workspacePath} onAddFile={onAddFile} data={data} filePath={filePath} active={active} view={tree} onChange={changeTree} onOpenFile={open}/>}</div>
     </section>
   </div>;
 }

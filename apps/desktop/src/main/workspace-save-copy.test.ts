@@ -29,6 +29,11 @@ test("native cancellation never resolves the host or reads source", async () => 
   })).toEqual({path: null});
   expect(names).toEqual(["file.txt"]); expect(lookups).toBe(0);
 });
+test("standalone file targets require the exact basename", async () => {
+  const f = await fixture();
+  expect(await saveWorkspaceCopy({target: {filePath: "/tmp/source.bin"}, path: "source.bin", hostId: "host"}, {choose: async () => null, source: async () => f.source})).toEqual({path: null});
+  await expect(saveWorkspaceCopy({target: {filePath: "/tmp/source.bin"}, path: "other.bin", hostId: "host"}, {choose: async () => null, source: async () => f.source})).rejects.toThrow("match");
+});
 test("default destination name follows the native filename sanitization", () => {
   expect(workspaceCopyDefaultName('src/a:b?*.txt')).toBe('a_b__.txt');
   expect(workspaceCopyDefaultName('/')).toBe('download');

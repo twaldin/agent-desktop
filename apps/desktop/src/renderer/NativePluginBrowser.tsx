@@ -2,9 +2,11 @@ import {useEffect,useRef,useState} from 'react';
 import {NativePluginDirectory,type NativePluginDirectoryProps} from './NativePluginDirectory';
 import {NativeIntegrations} from './NativeIntegrations';
 import {targetIdentity} from './composer-autocomplete';
+type PluginWorkspaceTarget=Exclude<NonNullable<NativePluginDirectoryProps['target']>,{filePath:string}>;
+type NativePluginBrowserProps=Omit<NativePluginDirectoryProps,'target'>&{target?:PluginWorkspaceTarget};
 
 /** Keep directory navigation mounted while the selected native detail is open. */
-export function NativePluginBrowser(props:NativePluginDirectoryProps) {
+export function NativePluginBrowser(props:NativePluginBrowserProps) {
  const owner=`${props.hostId}:${targetIdentity(props.target)}`;
  const [selection,setSelection]=useState<{owner:string;id:string}|null>(null);
  const opener=useRef<HTMLElement|null>(null),directory=useRef<HTMLDivElement>(null);

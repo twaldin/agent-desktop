@@ -51,12 +51,16 @@ function dimensions(cols: number, rows: number): { cols: number; rows: number } 
 }
 function owner(target: WorkspaceTarget): WorkspaceTarget {
   if (!target || typeof target !== "object" || Object.keys(target).length !== 1) throw new TerminalError("INVALID_TERMINAL_TARGET", "One catalog project or session identity is required.");
+  if ("filePath" in target) throw new TerminalError("INVALID_TERMINAL_TARGET", "A standalone file cannot own a terminal.");
   const key = "projectId" in target ? "projectId" : "sessionId";
   const id = target[key as keyof WorkspaceTarget] as unknown;
   if (typeof id !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id)) throw new TerminalError("INVALID_TERMINAL_TARGET", "A catalog UUID is required.");
   return { [key]: id } as WorkspaceTarget;
 }
-function ownerKey(target: WorkspaceTarget): string { return "projectId" in target ? `project:${target.projectId}` : `session:${target.sessionId}`; }
+function ownerKey(target: WorkspaceTarget): string {
+  if ("filePath" in target) throw new TerminalError("INVALID_TERMINAL_TARGET", "A standalone file cannot own a terminal.");
+  return "projectId" in target ? `project:${target.projectId}` : `session:${target.sessionId}`;
+}
 async function deadline<T>(promise: Promise<T>, milliseconds: number, error: () => Error): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(error()), milliseconds); })]); }

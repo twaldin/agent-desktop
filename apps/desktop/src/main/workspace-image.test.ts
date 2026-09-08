@@ -23,6 +23,13 @@ function source(bytes: Uint8Array, behavior?: { changed?: boolean; hold?: Promis
 }
 
 describe("sender-scoped workspace image streams", () => {
+  test("admits a standalone file owner only when the queried name matches its basename", () => {
+    const fixture = source(Buffer.from("image")), grants = new WorkspaceImageGrants();
+    expect(grants.acquire({ senderId: 1, target: { filePath: "/tmp/image.png" }, path: "image.png", hostId: "host", source: fixture.create }).id).toBeString();
+    expect(() => grants.acquire({ senderId: 1, target: { filePath: "/tmp/image.png" }, path: "other.png", hostId: "host", source: fixture.create })).toThrow("match");
+    expect(() => grants.acquire({ senderId: 1, target: { filePath: "/tmp/../image.png" }, path: "image.png", hostId: "host", source: fixture.create })).toThrow();
+  });
+
   test("streams large owner-fenced images in sequential chunks and rechecks final metadata", async () => {
     const bytes = Buffer.alloc(2 * 1024 * 1024 + 17); for (let index = 0; index < bytes.length; index++) bytes[index] = index % 251;
     const fixture = source(bytes), grants = new WorkspaceImageGrants();

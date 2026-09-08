@@ -1,4 +1,4 @@
-import type { NativeSkillFileRef } from "@agent-desktop/shared";
+import { parseStandaloneFilePath, type NativeSkillFileRef } from "@agent-desktop/shared";
 export type DockDestination = "right" | "bottom";
 export type DockTabKind =
   | "side-chat"
@@ -10,7 +10,7 @@ export type DockTabKind =
   | "worktrees"
   | "terminal"
   | "browser";
-export type DockTarget = `session:${string}` | `project:${string}` | "host";
+export type DockTarget = `session:${string}` | `project:${string}` | `file:${string}` | "host";
 export interface DockTab {
   id: string;
   title: string;
@@ -59,6 +59,20 @@ export const isWorkspaceFilePath = (value: unknown): value is string =>
   !value.startsWith("/") &&
   !/[\\\x00-\x1f\x7f-\x9f]/.test(value) &&
   value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+/** Canonical owner-host absolute path encoded as one dock-target segment. */
+export function standaloneFileDockTarget(path: unknown): DockTarget {
+  return `file:${encodeURIComponent(parseStandaloneFilePath(path))}`;
+}
+/** Returns undefined rather than allowing persisted malformed targets to throw. */
+export function standaloneFilePathFromDock(target: unknown): string | undefined {
+  if (typeof target !== "string" || !target.startsWith("file:")) return;
+  try {
+    const path = parseStandaloneFilePath(decodeURIComponent(target.slice(5)));
+    return standaloneFileDockTarget(path) === target ? path : undefined;
+  } catch {
+    return;
+  }
+}
 const emptyRegion = (): DockRegion => ({ tabIds: [], open: false });
 const other = (destination: DockDestination): DockDestination =>
   destination === "right" ? "bottom" : "right";

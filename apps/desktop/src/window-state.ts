@@ -1,5 +1,5 @@
 import { parseNativeSkillFileRef } from "@agent-desktop/shared";
-import { dockTabId, isWorkspaceFilePath, type DockState, type DockTab } from "./renderer/dock-state";
+import { dockTabId, isWorkspaceFilePath, standaloneFilePathFromDock, type DockState, type DockTab } from "./renderer/dock-state";
 /** Device/profile-local presentation only. Never sent to a host or shared preferences. */
 export interface WindowNavigation {
   hostId?: string;
@@ -138,11 +138,12 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
     seen = new Set<string>();
   for (const item of value.tabs) {
     if (record(item) && item.preview === true) return; // Live snapshots must strip transient previews before saving.
+    const standalonePath = record(item) ? standaloneFilePathFromDock(item.target) : undefined;
     if (
       !record(item) ||
       !id(item.hostId) ||
       typeof item.target !== "string" ||
-      !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target)) ||
+      !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) || standalonePath !== undefined) ||
       typeof item.title !== "string" ||
       item.title.length > 1000 ||
       !["review", "file", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file"].includes(
@@ -155,15 +156,18 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
     if (item.skillFile !== undefined) {
       try { skillFile = parseNativeSkillFileRef(item.skillFile); } catch { return; }
       const target = skillFile.target;
+      if (target && "filePath" in target) return;
       const expected = !target ? "host" : "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}`;
       if (item.target !== expected) return;
     }
     if ((item.kind === "skill-file") !== Boolean(skillFile) || (item.target === "host" && item.kind !== "skill-file")) return;
     let filePath: string | undefined;
     if (item.kind === "file") {
-      if (!isWorkspaceFilePath(item.filePath)) return;
+      if (standalonePath !== undefined) {
+        if (typeof item.filePath !== "string" || item.filePath !== standalonePath.split("/").at(-1)) return;
+      } else if (!isWorkspaceFilePath(item.filePath)) return;
       filePath = item.filePath;
-    } else if (item.filePath !== undefined) return;
+    } else if (item.filePath !== undefined || standalonePath !== undefined) return;
     let fileScroll: DockTab["fileScroll"];
     if (item.fileScroll !== undefined) {
       if ((!filePath && !skillFile) || !record(item.fileScroll)) return;

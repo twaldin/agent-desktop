@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { access, chmod, link, lstat, open, readlink, realpath, rename, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { parseNativeSkillFileRef, type NativeSkillFileRef } from "@agent-desktop/shared";
+import { parseNativeSkillFileRef, parseStandaloneFilePath, type NativeSkillFileRef } from "@agent-desktop/shared";
 import type { WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "@agent-desktop/shared";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
 
@@ -52,8 +52,10 @@ export function workspaceCopySource(endpoint: HostEndpoint, target: WorkspaceTar
 
 function validateInput(target: WorkspaceTarget, path: string, hostId: string) {
   if (!target || typeof target !== "object" || Object.keys(target).length !== 1 ||
-    !("projectId" in target || "sessionId" in target) || typeof Object.values(target)[0] !== "string" ||
-    !Object.values(target)[0] || Object.values(target)[0].length > 200) throw new Error("Select one owning project or session.");
+    !("projectId" in target || "sessionId" in target || "filePath" in target) || typeof Object.values(target)[0] !== "string" ||
+    !Object.values(target)[0]) throw new Error("Select one owning project or session.");
+  if ("filePath" in target) { parseStandaloneFilePath(target.filePath); if (basename(target.filePath) !== path) throw new Error("The standalone file path must match its file name."); }
+  else if (Object.values(target)[0]!.length > 200) throw new Error("Select one owning project or session.");
   if (typeof hostId !== "string" || !hostId || hostId.length > 200) throw new Error("Select the file’s owning host.");
   if (typeof path !== "string" || !path || path.length > 16_384 || path.includes("\0") || path.includes("\\") || isAbsolute(path) || path.split("/").includes("..")) throw new Error("Select a relative file path in the owning workspace.");
 }

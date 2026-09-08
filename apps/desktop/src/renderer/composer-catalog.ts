@@ -1,7 +1,8 @@
 import type { DesktopBridge, Draft, ModelChoice, OmpComposerCatalog, OmpComposerModel, OmpSessionControls, SessionSummary, WorkspaceTarget } from "@agent-desktop/shared";
 
 export const composerModelKey = (model: ModelChoice | null | undefined) => model ? `${model.provider}\0${model.id}` : "";
-export const composerTargetKey = (target?: WorkspaceTarget) => target ? "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}` : "new";
+type ComposerWorkspaceTarget = Exclude<WorkspaceTarget, { filePath: string }>;
+export const composerTargetKey = (target?: WorkspaceTarget) => target ? "filePath" in target ? `file:${encodeURIComponent(target.filePath)}` : "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}` : "new";
 type Bridge = Pick<DesktopBridge, "getComposerCatalog" | "getSessionControls" | "subscribe">;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "Native model metadata could not be loaded.";
 
@@ -21,7 +22,10 @@ export class ComposerCatalogState {
   #epoch = 0;
   #stopped = false;
   #sessionModel?: string;
-  constructor(private bridge: Bridge, readonly hostId: string, readonly target?: WorkspaceTarget) {}
+  constructor(private bridge: Bridge, readonly hostId: string, readonly target?: ComposerWorkspaceTarget) {
+    if (target && "filePath" in (target as WorkspaceTarget))
+      throw new Error("Standalone files cannot load composer catalogs.");
+  }
   subscribe = (listener: () => void) => { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; };
   #notify() { for (const listener of this.#listeners) listener(); }
   start(localHostId?: string) {

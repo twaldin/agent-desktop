@@ -184,6 +184,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   await theme.start();
   terminals = new TerminalManager();
   const resolveTerminalTarget: ConstructorParameters<typeof TerminalsHttp>[0]["resolveTarget"] = target => {
+    if ("filePath" in target) throw new Error("A standalone file cannot own a terminal.");
     const cwd = "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
     if (!cwd) throw new Error("The selected terminal owner does not exist on this host.");
     assertWorkspaceAvailable(cwd);
@@ -244,6 +245,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
   const resolveComposerCwd = (target?: import("@agent-desktop/shared").WorkspaceTarget) => {
     if (!target) return options.discoveryDirectory ?? homedir();
+    if ("filePath" in target) throw new Error("A standalone file cannot own composer actions or skills.");
     const cwd = "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
     if (!cwd) throw new Error("The composer target is not catalogued on this host.");
     return cwd;
@@ -395,6 +397,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       return pending ? await pending.catch(() => undefined) : undefined;
     } });
   const resolveIntegrationCwd = async (target?: import("@agent-desktop/shared").WorkspaceTarget) => {
+    if (target && "filePath" in target) throw new Error("A standalone file cannot own integration settings.");
     const cwd = !target ? options.discoveryDirectory ?? homedir() : "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
     if (!cwd) throw new Error("The selected integration owner does not exist on this host.");
     const canonical = await realpath(cwd);
@@ -413,6 +416,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   settings = new SettingsHttp({ agentDir: options.agentDirectory, defaultCwd: options.discoveryDirectory ?? homedir(), runtime,
     resolveCwd: target => {
       if (!target) return options.discoveryDirectory ?? homedir();
+      if ("filePath" in target) throw new Error("A standalone file cannot own native settings.");
       const cwd = "sessionId" in target ? store.getSession(target.sessionId)?.cwd : store.getProject(target.projectId)?.path;
       if (!cwd) throw new Error("The selected settings owner does not exist on this host.");
       return cwd;

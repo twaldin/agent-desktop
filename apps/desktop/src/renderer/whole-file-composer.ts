@@ -1,11 +1,12 @@
 import { parseWholeFileAttachments, parseInlineWholeFileMentions, hasRepeatedWholeFileSources, type Draft, type HostState, type WholeFileAttachment } from '@agent-desktop/shared';
+import { parseStandaloneFilePath } from '@agent-desktop/shared';
 import { resolveTranscriptFileReference } from './TranscriptFileReference';
 
 export function wholeFileOpenTarget(source:WholeFileAttachment['source'],hostId:string,cwd?:string){
   if(source.hostId!==hostId)throw new Error('This file belongs to another host. Open its owning conversation to view it.');
-  const target=resolveTranscriptFileReference(source.path,cwd);
-  if('error' in target)throw new Error(target.error);
-  return target.file;
+  const absolutePath=parseStandaloneFilePath(source.path);
+  const target=resolveTranscriptFileReference(absolutePath,cwd === "/" || cwd === "~" ? undefined : cwd);
+  return 'error' in target ? {absolutePath} : target.file;
 }
 
 export function appendWholeFile(draft: Draft, hostId: string, source: { hostId: string; path: string }, inline?:{textOffset:number;allowRepeated?:boolean}): WholeFileAttachment[] {

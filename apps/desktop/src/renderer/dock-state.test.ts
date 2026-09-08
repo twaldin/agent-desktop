@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { activateDockTab, closeDockTab, createDockState, dockTabId, hideDock, insertDockTab, moveDockTab, reorderDockTab, resizeDock, validateDockState, type DockTab } from "./dock-state";
+import { activateDockTab, closeDockTab, createDockState, dockTabId, hideDock, insertDockTab, moveDockTab, reorderDockTab, resizeDock, standaloneFileDockTarget, standaloneFilePathFromDock, validateDockState, type DockTab } from "./dock-state";
 
 const viewport = { width: 1200, height: 800 };
 const tabs: DockTab[] = ["files", "review", "terminal"].map(kind => ({ id: `home:project:demo:${kind}`, title: kind, kind: kind as DockTab["kind"], hostId: "home", target: "project:demo" }));
@@ -48,6 +48,14 @@ test("workspace file IDs preserve the exact path, owner and workspace", () => {
   expect(dockTabId({ ...descriptor, filePath: "src/b.ts" })).not.toBe(first);
   expect(dockTabId({ ...descriptor, hostId: "work" })).not.toBe(first);
   expect(dockTabId({ ...descriptor, target: "session:s" })).not.toBe(first);
+});
+
+test("standalone file targets encode canonical absolute owner paths", () => {
+  const target = standaloneFileDockTarget("/outside project/a # %.ts");
+  expect(target).toBe("file:%2Foutside%20project%2Fa%20%23%20%25.ts");
+  expect(standaloneFilePathFromDock(target)).toBe("/outside project/a # %.ts");
+  for (const invalid of ["file:", "file:/outside/path", "file:/outside/../secret", "file:%2Foutside%2F", "file:%E0%A4%A"])
+    expect(standaloneFilePathFromDock(invalid)).toBeUndefined();
 });
 
 test("reopening an exact workspace file reuses its tab across docks", () => {

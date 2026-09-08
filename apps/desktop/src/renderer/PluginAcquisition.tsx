@@ -7,9 +7,14 @@ import {assertMarketplaceGitSource,parseMarketplaceSourceOptions} from '../../..
 import {clearAcquisitionIntent,latestLocalAcquisitionResult,readAcquisitionIntents,saveAcquisitionIntent,type AcquisitionIntent} from './plugin-acquisition-intents';
 import './plugin-acquisition.css';
 
-type Props={showHistoricalResult?:boolean;initialMarketplace?:string;initialAdd?:boolean;bridge:DesktopBridge;hostId:string;target?:WorkspaceTarget;connected:boolean;visible:boolean;query:string;actionsRoot:HTMLElement|null;onMcp():void;onInstalledChanged():void;children:ReactNode|((controls:{blocked:boolean;installedActions(plugin:NativePlugin,disabled?:boolean):ReactNode})=>ReactNode)};
+type PluginWorkspaceTarget=Exclude<WorkspaceTarget,{filePath:string}>;
+type Props={showHistoricalResult?:boolean;initialMarketplace?:string;initialAdd?:boolean;bridge:DesktopBridge;hostId:string;target?:PluginWorkspaceTarget;connected:boolean;visible:boolean;query:string;actionsRoot:HTMLElement|null;onMcp():void;onInstalledChanged():void;children:ReactNode|((controls:{blocked:boolean;installedActions(plugin:NativePlugin,disabled?:boolean):ReactNode})=>ReactNode)};
 const label=(op:NativePluginAcquisition['operation'])=>({'marketplace.add':'Add marketplace','marketplace.update':'Upgrade marketplace','marketplace.remove':'Remove marketplace','plugin.install':'Install plugin','plugin.upgrade':'Upgrade plugin','plugin.uninstall':'Uninstall plugin'}[op]);
-const owner=(target?:WorkspaceTarget)=>target?('projectId'in target?target.projectId:target.sessionId):'Host defaults';
+const owner=(target?:PluginWorkspaceTarget)=>target?('projectId'in target?target.projectId:target.sessionId):'Host defaults';
+const receiptTarget=(target?:WorkspaceTarget):PluginWorkspaceTarget|undefined=>{
+ if(target&&"filePath" in target)throw new Error('Standalone files cannot manage plugins.');
+ return target;
+};
 export function PluginAcquisition({showHistoricalResult=true,initialMarketplace,initialAdd=false,bridge,hostId,target,connected,visible,query,actionsRoot,onMcp,onInstalledChanged,children}:Props){
  const [catalog,setCatalog]=useState<NativeMarketplaceCatalog|null>(null),[receipts,setReceipts]=useState<NativePluginAcquisitionReceipt[]>([]),[intents,setIntents]=useState<AcquisitionIntent[]>(()=>readAcquisitionIntents(localStorage,hostId));
  const localResults=useRef(new Set(intents.map(intent=>intent.id)));
@@ -88,18 +93,18 @@ export function PluginAcquisition({showHistoricalResult=true,initialMarketplace,
  useEffect(()=>{const value=receipts.filter(x=>x.state==='succeeded').map(x=>x.id).join();if(value!==observed.current){observed.current=value;onInstalledChanged();}},[receipts]);
  const inspect=async(receipt:NativePluginAcquisitionReceipt,button:HTMLElement)=>{
   opener.current=button;setError(null);const ticket=epoch.current;
-  try{const current=await bridge.getMarketplaceCatalog(receipt.target,hostId);if(mounted.current&&ticket===epoch.current)setReview({receipt,catalog:current});}
+  try{const current=await bridge.getMarketplaceCatalog(receiptTarget(receipt.target),hostId);if(mounted.current&&ticket===epoch.current)setReview({receipt,catalog:current});}
   catch{if(mounted.current&&ticket===epoch.current)rememberError();}
  };
  const confirmReview=async()=>{
   if(!review||!connected||busyRef.current)return;const ticket=epoch.current;busyRef.current=true;setLoading(true);
-  try{await bridge.reviewPluginAcquisition(review.receipt.target,review.receipt.id,review.catalog.revision,hostId);if(ticket===epoch.current){closeDialog();setError(null);}}
+  try{await bridge.reviewPluginAcquisition(receiptTarget(review.receipt.target),review.receipt.id,review.catalog.revision,hostId);if(ticket===epoch.current){closeDialog();setError(null);}}
   catch{if(ticket===epoch.current)setError('Configuration changed or review could not be recorded. Close and inspect it again.');}
   finally{if(mounted.current&&ticket===epoch.current){busyRef.current=false;setLoading(false);void refresh();}}
  };
  const closeUnknown=async(intent:AcquisitionIntent)=>{
   if(!connected||busyRef.current)return;const ticket=epoch.current;busyRef.current=true;setLoading(true);
-  try{await bridge.closePluginAcquisitionRequest(intent.target,{id:intent.id,operation:intent.operation},hostId);if(ticket===epoch.current)setError(null);}
+  try{await bridge.closePluginAcquisitionRequest(receiptTarget(intent.target),{id:intent.id,operation:intent.operation},hostId);if(ticket===epoch.current)setError(null);}
   catch{if(ticket===epoch.current)rememberError();}
   finally{if(mounted.current&&ticket===epoch.current){busyRef.current=false;setLoading(false);void refresh();}}
  };
@@ -120,7 +125,7 @@ export function PluginAcquisition({showHistoricalResult=true,initialMarketplace,
  }}><button role="menuitem" onClick={()=>{opener.current=addRef.current;setMenu(false);setAdding(true);}}>Add a marketplace</button><button role="menuitem" onClick={()=>{setMenu(false);onMcp();}}>Add MCP server</button></div>}</div>,actionsRoot)}
  {error&&!dialogOpen&&<p role="alert" className="inline-error">{error}</p>}
  {(active.length>0||unknown.length>0)&&<section className="acquisition-receipts" aria-label="Plugin operations">
- {active.map(row=><div className="acquisition-receipt" key={row.id}><div><strong>{label(row.operation)}</strong><small>{row.state==='running'?'Running on this host…':'Needs configuration review'}{JSON.stringify(row.target)!==targetKey?` · ${owner(row.target)}`:''}</small></div>{row.state==='needs-review'&&<button className="secondary-button" disabled={!connected||loading} onClick={event=>void inspect(row,event.currentTarget)}>Inspect configuration</button>}</div>)}
+ {active.map(row=><div className="acquisition-receipt" key={row.id}><div><strong>{label(row.operation)}</strong><small>{row.state==='running'?'Running on this host…':'Needs configuration review'}{JSON.stringify(row.target)!==targetKey?` · ${owner(row.target as PluginWorkspaceTarget|undefined)}`:''}</small></div>{row.state==='needs-review'&&<button className="secondary-button" disabled={!connected||loading} onClick={event=>void inspect(row,event.currentTarget)}>Inspect configuration</button>}</div>)}
  {unknown.map(intent=><div className="acquisition-receipt" key={intent.id}><div><strong>{label(intent.operation)}</strong><small>No host receipt yet. Closing only prevents a request that has not started.</small></div><button className="secondary-button" disabled={!connected||loading} onClick={()=>void closeUnknown(intent)}>Close pending request</button></div>)}
  <button className="native-reset" disabled={!connected} onClick={()=>{setError(null);void refresh();}}>Refresh status</button></section>}
  {latest&&!active.length&&!unknown.length&&<p role="status" className="acquisition-result">{label(latest.operation)} · {latest.state==='succeeded'?'Completed':latest.message??'Reviewed'}</p>}

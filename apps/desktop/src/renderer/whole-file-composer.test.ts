@@ -2,12 +2,15 @@ import { expect, test } from 'bun:test';
 import type { Draft } from '@agent-desktop/shared';
 import { appendWholeFile, wholeFileSendIssue, wholeFileOpenTarget } from './whole-file-composer';
 const draft:Draft={id:'draft',text:'',projectId:null,model:null,revision:0,updatedAt:0};
-test('composer activation uses the literal file path and never remaps ownership or escapes its workspace',()=>{
+test('composer activation preserves literal host files independently of project selection',()=>{
  const source={kind:'file' as const,hostId:'work',path:'/project/a # % :42.ts'};
  expect(wholeFileOpenTarget(source,'work','/project')).toEqual({path:'a # % :42.ts'});
  expect(()=>wholeFileOpenTarget(source,'home','/project')).toThrow('another host');
- expect(()=>wholeFileOpenTarget(source,'work')).toThrow('workspace');
- expect(()=>wholeFileOpenTarget(source,'work','/project/subdir')).toThrow('outside');
+ expect(wholeFileOpenTarget(source,'work')).toEqual({absolutePath:source.path});
+ expect(wholeFileOpenTarget(source,'work','/')).toEqual({absolutePath:source.path});
+ expect(wholeFileOpenTarget(source,'work','~')).toEqual({absolutePath:source.path});
+ expect(()=>wholeFileOpenTarget({...source,path:'/project/../file'},'work')).toThrow('canonical absolute');
+ expect(wholeFileOpenTarget(source,'work','/project/subdir')).toEqual({absolutePath:source.path});
 });
 test('whole-file staging binds to the draft host, deduplicates source identities, and keeps literal paths',()=>{
  const source={hostId:'home',path:'/project/a # % :.ts'};

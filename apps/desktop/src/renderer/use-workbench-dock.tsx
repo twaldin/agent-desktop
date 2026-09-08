@@ -1,4 +1,4 @@
-import type { NativeSkillFileRef } from "@agent-desktop/shared";
+import { parseStandaloneFilePath, type NativeSkillFileRef } from "@agent-desktop/shared";
 import { useEffect, useRef, useState } from "react";
 import type {
   BrowserFrameTarget,
@@ -11,6 +11,8 @@ import {
   dockTabId,
   insertDockTab,
   isWorkspaceFilePath,
+  standaloneFileDockTarget,
+  standaloneFilePathFromDock,
   type DockDestination,
   type DockState,
   type DockTab,
@@ -22,10 +24,18 @@ import { nativeTerminalClient } from "./native-terminal-bridge";
 import { workspaceKey } from "./workspace-state";
 
 export type DockSnapshot = NonNullable<WindowViewState["dock"]>;
+const dockTargetForWorkspace = (target: WorkspaceTarget): DockTarget =>
+  "filePath" in target ? standaloneFileDockTarget(target.filePath) : workspaceKey(target) as DockTarget;
 export function targetFromDock(target: Exclude<DockTarget, "host">): WorkspaceTarget {
   return target.startsWith("session:")
     ? { sessionId: target.slice(8) }
-    : { projectId: target.slice(8) };
+    : target.startsWith("project:")
+      ? { projectId: target.slice(8) }
+      : (() => {
+          const filePath = standaloneFilePathFromDock(target);
+          if (!filePath) throw new Error("The dock file target is invalid.");
+          return { filePath };
+        })();
 }
 export function useWorkbenchDock(
   bridge: DesktopBridge,
@@ -59,6 +69,10 @@ export function useWorkbenchDock(
     workspace = target,
   ) {
     if (!workspace || (kind === "side-chat" && !("sessionId" in workspace))) return;
+    if ("filePath" in workspace) {
+      onError("Standalone files support only file tabs.");
+      return;
+    }
     const descriptor = {
       kind,
       hostId: owner,
@@ -82,19 +96,35 @@ export function useWorkbenchDock(
     destination: DockDestination = "right",
     preview = true,
   ) {
-    if (!isWorkspaceFilePath(path)) {
-      onError("Use a relative file path within this workspace.");
-      return;
-    }
+    if ("filePath" in workspace) {
+      let absolutePath: string;
+      try { absolutePath = parseStandaloneFilePath(workspace.filePath); }
+      catch { onError("Use a canonical absolute file path."); return; }
+      if (path !== absolutePath.split("/").at(-1)) {
+        onError("Standalone file tabs may read only their own basename.");
+        return;
+      }
+    } else if (!isWorkspaceFilePath(path)) { onError("Use a relative file path within this workspace."); return; }
     const descriptor: Omit<DockTab, "id"> = {
       kind: "file",
       hostId: owner,
-      target: workspaceKey(workspace) as DockTarget,
+      target: dockTargetForWorkspace(workspace),
       filePath: path,
       title: path.split("/").at(-1)!.slice(0, 1000),
     };
     setReady(true);
     setSnapshot(previous => openFileTab(previous, { ...descriptor, id: dockTabId(descriptor) }, destination, preview, canReplacePreview));
+  }
+  function openHostFile(
+    absolutePath: string,
+    owner: string,
+    destination: DockDestination = "right",
+    preview = true,
+  ) {
+    let path: string;
+    try { path = parseStandaloneFilePath(absolutePath); }
+    catch { onError("Use a canonical absolute file path."); return; }
+    openFile(path.split("/").at(-1)!, owner, { filePath: path }, destination, preview);
   }
   const pinFile = (id: string) => setSnapshot(previous => pinFileTab(previous,id));
 
@@ -256,6 +286,10 @@ export function useWorkbenchDock(
     destination: DockDestination,
     title = "Terminal",
   ) => {
+    if ("filePath" in workspace) {
+      onError("Standalone files cannot host terminals.");
+      return;
+    }
     const descriptor = {
       kind: "terminal" as const,
       hostId: owner,
@@ -270,6 +304,10 @@ export function useWorkbenchDock(
     create = false,
   ) {
     if (!target) return;
+    if ("filePath" in target) {
+      onError("Standalone files cannot host terminals.");
+      return;
+    }
     const owner = hostId,
       workspace = target,
       key = `${owner}:${workspaceKey(workspace)}`;
@@ -415,7 +453,7 @@ export function useWorkbenchDock(
     change,
     toggle,
     open,
-    openFile, pinFile,
+    openFile, openHostFile, pinFile,
     openSkillFile,
     terminal,
     bindTerminal,

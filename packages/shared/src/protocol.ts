@@ -45,6 +45,7 @@ export * from "./detached-questions";
 export * from "./btw";
 export type * from "./preferences";
 export * from "./workspace-protocol";
+export { parseStandaloneFilePath } from "./workspace";
 export type * from "./workspace";
 export type * from "./accounts";
 export type * from "./interactions";
