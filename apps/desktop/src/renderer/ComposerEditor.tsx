@@ -6,11 +6,12 @@ import { EditorView } from 'prosemirror-view';
 import { history, undo, redo, closeHistory } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
-import type { WholeFileAttachment } from '@agent-desktop/shared';
+import { hasRepeatedWholeFileSources, type WholeFileAttachment } from '@agent-desktop/shared';
 import { TreeFileIcon } from './TreeFileIcon';
 import { authoredOffset, composerDocument, composerSchema, documentPosition, readComposerDocument, replaceAuthoredText } from './composer-document';
 import 'prosemirror-view/style/prosemirror.css';
 import './composer-editor.css';
+import { parseComposerClipboard, composerClipboardText } from './composer-clipboard';
 
 /** Small shared interface used by both the rich main composer and textarea-only surfaces. */
 export interface ComposerInput {focus():void;readonly selectionStart:number;readonly selectionEnd:number;setSelectionRange(start:number,end:number):void;closest(selector:string):Element|null}
@@ -18,6 +19,7 @@ export interface ComposerEditorHandle extends ComposerInput { readonly element:H
 interface Props {
  inputRef:RefObject<ComposerEditorHandle|null>; scope:string; text:string; files?:readonly WholeFileAttachment[]; disabled?:boolean;placeholder:string;
  onChange(value:{text:string;files:WholeFileAttachment[]}):void;
+ clipboardHostId?:string;canPasteFiles?:boolean;allowRepeatedFiles?:boolean;onPasteError?(error:Error):void;
  onOpenFile?(source:WholeFileAttachment['source']):void;
  onSelection?():void;onFocus?():void;onBlur?():void;onCompositionStart?():void;onCompositionEnd?():void;
  onKeyDown?(event:ReactKeyboardEvent<HTMLElement>):void;
@@ -44,16 +46,25 @@ export function ComposerEditor(props:Props){
    dispatchTransaction:transaction=>{const state=view.state.apply(transaction);view.updateState(state);if(transaction.docChanged)latest.current.onChange(readComposerDocument(state.doc));if(transaction.selectionSet||transaction.docChanged)latest.current.onSelection?.();},
    handleDOMEvents:{drop:(_editor,event)=>{if(!event.dataTransfer?.files.length)return false;event.preventDefault();return true;},focus:()=>{latest.current.onFocus?.();return false;},blur:()=>{latest.current.onBlur?.();return false;},compositionstart:()=>{latest.current.onCompositionStart?.();return false;},compositionend:()=>{latest.current.onCompositionEnd?.();return false;}},
    handlePaste:(editor,event)=>{
-    if(!event.clipboardData)return false;if(event.clipboardData.files.length){event.preventDefault();return true;}const text=event.clipboardData.getData('text/plain');event.preventDefault();
-    const slice=composerDocument(text).firstChild!.content;editor.dispatch(editor.state.tr.replaceSelection(new Slice(slice,0,0)).scrollIntoView());return true;
+    if(!event.clipboardData)return false;if(event.clipboardData.files.length){event.preventDefault();return true;}event.preventDefault();
+    try {
+     const pasted=parseComposerClipboard(event.clipboardData,latest.current.clipboardHostId,editor.dom.ownerDocument);
+     if(pasted.files.length&&!latest.current.canPasteFiles)throw new Error('Update the owning host before pasting file mentions. Your draft is unchanged.');
+     const slice=composerDocument(pasted.text,pasted.files).firstChild!.content;
+     const tr=closeHistory(editor.state.tr).replaceSelection(new Slice(slice,0,0));
+     const next=readComposerDocument(tr.doc);
+     if(hasRepeatedWholeFileSources(next.files)&&!latest.current.allowRepeatedFiles)throw new Error('Update the owning host before repeating a file mention. Your draft is unchanged.');
+     editor.dispatch(tr.scrollIntoView());editor.dispatch(closeHistory(editor.state.tr));
+    } catch(error){latest.current.onPasteError?.(error instanceof Error?error:new Error(String(error)));}
+    return true;
    },
-   clipboardTextSerializer:slice=>slice.content.textBetween(0,slice.content.size,'\n',node=>node.type.name==='file'?node.attrs.path:'\n'),
+   clipboardTextSerializer:composerClipboardText,
   });
   viewRef.current=view;lastPropDocument.current=view.state.doc;
   props.inputRef.current={get element(){return view.dom;},focus:()=>view.focus(),closest:selector=>view.dom.closest(selector),get selectionStart(){return authoredOffset(view.state.doc,view.state.selection.from);},get selectionEnd(){return authoredOffset(view.state.doc,view.state.selection.to);},setSelectionRange:(start,end)=>view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc,documentPosition(view.state.doc,start),documentPosition(view.state.doc,end))).scrollIntoView()),replaceText:text=>{view.dispatch(replaceAuthoredText(view.state,text));},insertFile:(file,range)=>{
    const state=view.state;const tr=closeHistory(state.tr);const existing=readComposerDocument(state.doc).files.find(item=>item.source.hostId===file.source.hostId&&item.source.path===file.source.path);
    if(range)tr.setSelection(TextSelection.create(tr.doc,documentPosition(tr.doc,range.start,'before'),documentPosition(tr.doc,range.end)));
-   if(existing){if(range)tr.deleteSelection();}else tr.replaceSelectionWith(composerSchema.nodes.file!.create({id:file.id,hostId:file.source.hostId,path:file.source.path}));
+   if(existing&&!latest.current.allowRepeatedFiles){if(range)tr.deleteSelection();}else tr.replaceSelectionWith(composerSchema.nodes.file!.create({id:file.id,hostId:file.source.hostId,path:file.source.path}));
    view.dispatch(tr.scrollIntoView());view.dispatch(closeHistory(view.state.tr));view.focus();
   }};
   return()=>{props.inputRef.current=null;viewRef.current=null;view.destroy();for(const root of roots)queueMicrotask(()=>root.unmount());roots.clear();};

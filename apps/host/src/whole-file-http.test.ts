@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CommandResult, DraftInput, HostCommand, HostState, SessionSummary, TranscriptMessage } from "@agent-desktop/shared";
-import { serializeWholeFilePrompt } from "@agent-desktop/shared";
+import { serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt } from "@agent-desktop/shared";
 import { startHost } from "./server";
 
 const model = { provider: "selected-text-contract", id: "controlled" };
@@ -96,7 +96,7 @@ test("files-only empty authored text delivers actual OMP context and preserves e
 test("inline whole-file positions require v8, retain exact drafts, and consume only an accepted v8 prompt",async()=>{
  const f=await fixture();try{
   const state=await (await f.request("/v1/state")).json() as HostState;
-  expect(state.wholeFiles).toEqual({commandVersion:7,ordinaryPrompt:true,maxFiles:100,inlineMentions:{commandVersion:8}});
+  expect(state.wholeFiles).toEqual({commandVersion:7,ordinaryPrompt:true,maxFiles:100,inlineMentions:{commandVersion:8,repeatedSources:{commandVersion:9}}});
   const inlinePath=path.join(path.dirname(f.draft.wholeFileAttachments![0]!.source.path),'@literal # % :42.ts');
   await writeFile(inlinePath,'INLINE_CONTENT_AT_SEND\n');
   const inlineFile={...f.draft.wholeFileAttachments![0]!,source:{...f.draft.wholeFileAttachments![0]!.source,path:inlinePath},textOffset:8};
@@ -148,5 +148,34 @@ test("inline whole-file positions require v8, retain exact drafts, and consume o
   expect(reopened.find(message=>message.role==='user')).toMatchObject({text:wire,wholeFiles:{authoredText:inlineDraft.text,attachments:[inlineFile]}});
   expect((await f.raw()).filter(row=>row.type==='message'&&row.message.role==='user')).toHaveLength(1);
   expect((await f.raw()).filter(row=>row.type==='message'&&row.message.role==='fileMention')).toHaveLength(1);
+ }finally{await f.close();}
+},30000);
+
+test("repeated inline file mentions require v9, read one snapshot, and retain both bound positions",async()=>{
+ const f=await fixture();try{
+  const source=f.draft.wholeFileAttachments![0]!.source;
+  const files=[{id:'first',textOffset:0,source:{...source}},{id:'second',textOffset:f.draft.text.length,source:{...source}}];
+  const repeated:DraftInput={...f.draft,wholeFileAttachments:files};
+  const put:HostCommand={type:'draft.put',draft:repeated,expectedRevision:0};
+  const oldDirect=await f.request('/v8/commands',{method:'POST',body:JSON.stringify({id:'repeat-v8-direct',commandVersion:8,command:put})});
+  expect(oldDirect.status).toBe(422);expect(await oldDirect.json()).toMatchObject({code:'REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED'});
+  expect(f.host.store.getCommand('repeat-v8-direct')).toBeUndefined();
+  expect(await f.command(put,'repeat-put',9)).toMatchObject({ok:true,value:{wholeFileAttachments:files}});
+  const database=new (await import('bun:sqlite')).Database(path.join(f.root,'data','state.sqlite'));
+  try{expect(database.query<{user_version:number},[]>('PRAGMA user_version').get()?.user_version).toBe(11);}finally{database.close();}
+  const oldReference:HostCommand={type:'session.prompt',sessionId:f.session.id,text:repeated.text,model,draft:{id:repeated.id,revision:1}};
+  expect(await f.command(oldReference,'repeat-v8-reference',8)).toMatchObject({ok:false,error:{code:'REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED'}});
+  const oldClear:HostCommand={type:'draft.put',draft:{...repeated,wholeFileAttachments:[]},expectedRevision:1};
+  expect(await f.command(oldClear,'repeat-v8-clear',8)).toMatchObject({ok:false,error:{code:'REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED'}});
+  expect(f.host.store.getDraft(repeated.id)).toMatchObject({revision:1,wholeFileAttachments:files});
+  const send:HostCommand={...oldReference,wholeFileAttachments:files};
+  const receipt=await f.command(send,'repeat-v9-send',9);expect(receipt).toMatchObject({ok:true,admission:{kind:'user-message'}});await f.settled();
+  const wire=serializeRepeatedWholeFilePrompt(repeated.text,files),entries=await f.raw();
+  expect(entries.filter(row=>row.type==='message'&&row.message.role==='fileMention')).toHaveLength(1);
+  expect(entries.find(row=>row.type==='custom'&&row.customType==='agent-desktop.whole-file-binding')).toMatchObject({data:{version:3,authoredText:repeated.text,attachments:files}});
+  expect(entries.filter(row=>row.type==='message'&&row.message.role==='user')).toEqual([expect.objectContaining({message:expect.objectContaining({content:[{type:'text',text:wire}]})})]);
+  const messages=await (await f.request(`/v1/sessions/${f.session.id}/messages`)).json() as TranscriptMessage[];
+  expect(messages.some(message=>message.role==='fileMention')).toBe(false);
+  expect(messages.find(message=>message.role==='user')).toMatchObject({text:wire,wholeFiles:{authoredText:repeated.text,attachments:files}});
  }finally{await f.close();}
 },30000);

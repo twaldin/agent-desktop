@@ -27,3 +27,13 @@ test('unsupported, foreign and running sends preserve references rather than dro
  expect(wholeFileSendIssue({...captured,text:'/compact'},'home',false,caps)).toContain('commands');
  expect(captured.wholeFileAttachments).toHaveLength(1);
 });
+test('repeated inline insertion retains both caret positions and requires the advertised v9 capability',()=>{
+ const source={hostId:'home',path:'/project/a.ts'},text='hello';
+ const first=appendWholeFile({...draft,text},'home',source,{textOffset:2,allowRepeated:true});
+ const files=appendWholeFile({...draft,text,wholeFileAttachments:first},'home',source,{textOffset:5,allowRepeated:true});
+ expect(files.map(file=>file.textOffset)).toEqual([2,5]);expect(files[0]!.id).not.toBe(files[1]!.id);expect(files.map(file=>file.source)).toEqual([{kind:'file',...source},{kind:'file',...source}]);
+ const captured={...draft,text,wholeFileAttachments:files},base={commandVersion:7 as const,ordinaryPrompt:true as const,maxFiles:100,inlineMentions:{commandVersion:8 as const}};
+ expect(wholeFileSendIssue(captured,'home',false,base)).toContain('repeated');
+ expect(wholeFileSendIssue(captured,'home',false,{...base,inlineMentions:{...base.inlineMentions,repeatedSources:{commandVersion:9}}})).toBeUndefined();
+ expect(()=>appendWholeFile({...draft,text},'home',source,{textOffset:6,allowRepeated:true})).toThrow('offset');
+});

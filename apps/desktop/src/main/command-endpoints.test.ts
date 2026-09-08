@@ -131,3 +131,11 @@ test('inline file offsets use v8 and never retry an older endpoint',async()=>{
  const lost=new Error('receipt lost');await expect(requestVersionedCommand(async()=>{throw lost;},envelope)).rejects.toBe(lost);
  expect(commandEndpoint({id:'consume',commandVersion:8,command:{type:'session.prompt',sessionId:'s',text:'abc',draft:{id:'d',revision:1}}})).toBe('/v8/commands');
 });
+
+test('repeated inline file sources use v9 without fallback',async()=>{
+ const source={kind:'file' as const,hostId:'home',path:'/project/a.ts'};
+ const envelope:CommandEnvelope={id:'repeated',command:{type:'draft.put',expectedRevision:0,draft:{id:'d',text:'abc',projectId:null,model:null,wholeFileAttachments:[{id:'one',textOffset:0,source},{id:'two',textOffset:3,source:{...source}}]}}};
+ const calls:string[]=[];expect(commandEndpoint(envelope)).toBe('/v9/commands');
+ expect(await requestVersionedCommand(async path=>{calls.push(path);throw new HostRequestError('Not found',404);},envelope)).toMatchObject({ok:false,error:{code:'REPEATED_WHOLE_FILE_PROTOCOL_UNSUPPORTED'}});
+ expect(calls).toEqual(['/v9/commands']);
+});

@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { beginNativePrompt } from "./prompt";
-import { serializeWholeFilePrompt } from "@agent-desktop/shared";
-import { NativeWholeFilePrompt, WHOLE_FILE_BINDING_TYPE } from "./whole-file";
+import { serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt } from "@agent-desktop/shared";
+import { copyNativeWholeFileInput, NativeWholeFilePrompt, WHOLE_FILE_BINDING_TYPE } from "./whole-file";
 import { WorkerRuntime } from "../omp-workers/runtime";
 
 const roots: string[] = [];
@@ -54,6 +54,37 @@ test("inline whole-file admission binds authored offsets to the exact serialized
     expect(entries.find(entry => entry.type === "message" && entry.message.role === "user")).toMatchObject({ message: { content: nativeText } });
     expect(binding).toMatchObject({ data: { version: 2, submissionId: "inline-submit", authoredText, attachments } });
   } finally { await manager.close(); }
+});
+
+test("repeated inline mentions read one native snapshot and persist binding v3", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-desktop-repeated-whole-file-")); roots.push(root);
+  const sourcePath = path.join(root, "repeat.txt"); await writeFile(sourcePath, "one snapshot\n");
+  const manager = SessionManager.create(root, path.join(root, "sessions")); await manager.ensureOnDisk();
+  try {
+    const authoredText = "again", attachments = [
+      { id: "first", textOffset: 0, source: { kind: "file" as const, hostId: "owner", path: sourcePath } },
+      { id: "second", textOffset: 5, source: { kind: "file" as const, hostId: "owner", path: sourcePath } },
+    ];
+    const nativeText = serializeRepeatedWholeFilePrompt(authoredText, attachments);
+    const agent = { prompt: async (payload: unknown) => { for (const message of Array.isArray(payload) ? payload : [payload]) manager.appendMessage(message as never); } };
+    const session = { agent, sessionManager: manager, settings: { get: () => false } } as unknown as AgentSession;
+    const whole = NativeWholeFilePrompt.fromInput(session, { submissionId: "repeat-submit", attachments }, authoredText)!;
+    const run = beginNativePrompt(manager, async () => { await whole.prepare(session); await session.agent.prompt({ role: "user", content: nativeText, timestamp: 1 }); return { agentInvoked: true }; }, async () => {}, undefined, undefined, undefined, whole);
+    expect((await run.accepted)?.kind).toBe("user-message"); await run.completion; whole.close();
+    const entries = manager.getEntries(), nativeFiles = entries.filter(entry => entry.type === "message" && entry.message.role === "fileMention");
+    expect(nativeFiles).toHaveLength(1);
+    expect(nativeFiles[0]).toMatchObject({ message: { files: [{ path: sourcePath }] } });
+    expect(entries.find(entry => entry.type === "custom" && entry.customType === WHOLE_FILE_BINDING_TYPE)).toMatchObject({ data: { version: 3, authoredText, attachments, fileEntryIds: [nativeFiles[0]!.id] } });
+  } finally { await manager.close(); }
+});
+
+test("repeated native input rejects mixed owning hosts before reading files", () => {
+  const source = "/tmp/repeated-owner.txt";
+  expect(() => copyNativeWholeFileInput({ submissionId: "mixed-owner", attachments: [
+    { id: "first", textOffset: 0, source: { kind: "file", hostId: "owner-a", path: source } },
+    { id: "second", textOffset: 0, source: { kind: "file", hostId: "owner-b", path: source } },
+    { id: "third", textOffset: 0, source: { kind: "file", hostId: "owner-a", path: source } },
+  ] }, 0)).toThrow("one owning host");
 });
 
 test("a persisted attempt marker blocks a new submission when the binding receipt is lost", async () => {

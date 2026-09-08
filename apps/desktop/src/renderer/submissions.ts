@@ -3,6 +3,7 @@ import { sameEnvironmentSelection } from "../../../../packages/shared/src/enviro
 import type { CommandEnvelope, CommandResult, Draft } from "../../../../packages/shared/src/protocol";
 import type { LocalEnvironmentPreparationPublic } from "../../../../packages/shared/src/environment-preparations";
 import { detachedAnswerDraft, parseDetachedQuestionAnswers, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
+import { hasRepeatedWholeFileSources } from "../../../../packages/shared/src/whole-file";
 import { captureDraft, sameDraftContent, type DraftCache } from "./drafts";
 
 export interface PendingSubmission {
@@ -23,7 +24,7 @@ export class EnvironmentPreparationPause extends Error {
     this.name = "EnvironmentPreparationPause";
   }
 }
-const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | 8 | undefined => draft.wholeFileAttachments?.some(file=>file.textOffset!==undefined) ? 8 : draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
+const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | 8 | 9 | undefined => hasRepeatedWholeFileSources(draft.wholeFileAttachments ?? []) ? 9 : draft.wholeFileAttachments?.some(file=>file.textOffset!==undefined) ? 8 : draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
 const sameDraftReference = (value: { id: string; revision: number } | undefined, draft: Draft, required: boolean) => required
   ? value?.id === draft.id && value.revision === draft.revision
   : value === undefined;

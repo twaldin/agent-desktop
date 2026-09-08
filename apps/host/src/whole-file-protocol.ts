@@ -1,5 +1,5 @@
-import { hasInlineFileIntent } from "@agent-desktop/shared";
-export { hasInlineFileIntent } from "@agent-desktop/shared";
+import { hasInlineFileIntent, hasRepeatedWholeFileIntent, hasRepeatedWholeFileSources } from "@agent-desktop/shared";
+export { hasInlineFileIntent, hasRepeatedWholeFileIntent } from "@agent-desktop/shared";
 import type { Draft, HostCommand } from "@agent-desktop/shared";
 export function hasWholeFileIntent(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
@@ -17,4 +17,10 @@ export function requiresInlineFileProtocol(command:HostCommand,getDraft:(id:stri
  if(hasInlineFileIntent(command))return true;
  const id=command.type==='draft.put'?command.draft.id:'draft'in command?command.draft?.id:undefined;
  return id!==undefined&&Boolean(getDraft(id)?.wholeFileAttachments?.some(file=>file.textOffset!==undefined));
+}
+
+export function requiresRepeatedWholeFileProtocol(command: HostCommand, getDraft: (id: string) => Draft | undefined): boolean {
+  if (hasRepeatedWholeFileIntent(command)) return true;
+  const id = command.type === "draft.put" ? command.draft.id : "draft" in command ? command.draft?.id : undefined;
+  return id !== undefined && hasRepeatedWholeFileSources(getDraft(id)?.wholeFileAttachments ?? []);
 }

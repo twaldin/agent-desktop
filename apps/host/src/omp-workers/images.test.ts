@@ -9,7 +9,7 @@ import { projectWorkerEvent } from "./events";
 import type { WorkerEvent } from "./events";
 import type { PreparedPromptImage } from "../omp";
 import { ImageAttachmentStore } from "../attachments";
-import { serializeWholeFilePrompt } from "@agent-desktop/shared";
+import { serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt } from "@agent-desktop/shared";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/hZkAAAAASUVORK5CYII=", "base64");
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -79,19 +79,24 @@ test("actual native worker records an image-only ordered turn, normalization rec
   } finally { await f.close(); }
 }, 30_000);
 
-test("inline whole files preserve serialized native text through actual image admission and reopen", async () => {
+for (const repeated of [false, true]) test(`${repeated ? "repeated-v3" : "distinct-v2"} inline whole files preserve serialized native text through actual image admission and reopen`, async () => {
   const f = await fixture();
   try {
     const filePath = path.join(f.cwd, "@linked # file.txt"); await writeFile(filePath, "bound whole-file context\n");
-    const authoredText = "show @authored", attachments = [{ id: "whole", textOffset: 5, source: { kind: "file" as const, hostId: "isolated-owner", path: filePath } }];
-    const nativeText = serializeWholeFilePrompt(authoredText, attachments), image = await f.image(png);
+    const authoredText = "show @authored", attachments = repeated ? [
+        { id: "whole-first", textOffset: 5, source: { kind: "file" as const, hostId: "isolated-owner", path: filePath } },
+        { id: "whole-second", textOffset: authoredText.length, source: { kind: "file" as const, hostId: "isolated-owner", path: filePath } },
+      ] : [{ id: "whole", textOffset: 5, source: { kind: "file" as const, hostId: "isolated-owner", path: filePath } }];
+    const nativeText = repeated ? serializeRepeatedWholeFilePrompt(authoredText, attachments)
+      : serializeWholeFilePrompt(authoredText, attachments), image = await f.image(png);
+    const submissionId = repeated ? "image-and-whole-v3" : "image-and-whole-v2";
     const session = await f.runtime.create({ cwd: f.cwd, interactions: true });
     const oversized = "x".repeat(499_999);
     const rejected = session.startPrompt(oversized, { model: vision, wholeFiles: { submissionId: "too-large", attachments: [{ ...attachments[0]!, textOffset: oversized.length }] } });
     await expect(rejected.accepted).rejects.toThrow("durable-history limit"); await expect(rejected.completion).rejects.toThrow("durable-history limit");
     expect((await session.getMessages()).some(message => message.role === "fileMention" || message.role === "user")).toBe(false);
     expect(await readFile(session.sessionFile, "utf8")).not.toContain("too-large");
-    const run = session.startPrompt(authoredText, { model: vision, images: [image], wholeFiles: { submissionId: "image-and-whole", attachments } });
+    const run = session.startPrompt(authoredText, { model: vision, images: [image], wholeFiles: { submissionId, attachments } });
     const accepted = await run.accepted; expect(accepted?.kind).toBe("user-message"); await expect(run.completion).resolves.toBe(true);
     if (accepted?.kind !== "user-message") throw new Error("Expected actual native image/file admission");
     const provider = JSON.parse(await readFile(path.join(f.gates, "provider-input.json"), "utf8"));
@@ -103,13 +108,16 @@ test("inline whole files preserve serialized native text through actual image ad
     expect(submitted[0].content.filter((block: {type: string}) => block.type === "image"))
       .toEqual([expect.objectContaining({sha256: accepted.images?.[0]?.nativeSha256})]);
     const messages = await session.getMessages(), user = messages.find(message => message.nativeId === accepted?.entryId);
-    expect(user).toMatchObject({ role: "user", text: nativeText, wholeFiles: { submissionId: "image-and-whole", authoredText, attachments } });
+    expect(user).toMatchObject({ role: "user", text: nativeText, wholeFiles: { submissionId, authoredText, attachments } });
     expect(user?.content?.filter(block => block.type === "image")).toHaveLength(1);
     expect(messages.some(message => message.role === "fileMention")).toBe(false);
+    const nativeEntries = (await readFile(session.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(nativeEntries.filter(entry => entry.type === "message" && entry.message?.role === "fileMention")).toHaveLength(1);
+    expect(nativeEntries.find(entry => entry.customType === "agent-desktop.whole-file-binding")?.data?.version).toBe(repeated ? 3 : 2);
     const sessionFile = session.sessionFile; await session.dispose();
     const reopened = await f.runtime.open({ sessionFile, interactions: true });
     const restored = (await reopened.getMessages()).find(message => message.nativeId === accepted?.entryId);
-    expect(restored).toMatchObject({ text: nativeText, wholeFiles: { submissionId: "image-and-whole", authoredText, attachments } });
+    expect(restored).toMatchObject({ text: nativeText, wholeFiles: { submissionId, authoredText, attachments } });
     expect(restored?.content?.filter(block => block.type === "image")).toHaveLength(1);
   } finally { await f.close(); }
 }, 30_000);

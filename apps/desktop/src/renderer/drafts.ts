@@ -1,6 +1,6 @@
 import { parseEnvironmentSelection, sameEnvironmentSelection, parseImageAttachments, sameImageAttachments, parseNewChatExecution, sameNewChatExecution, type CommandEnvelope, type CommandResult, type Draft, type DraftInput, type ModelChoice } from "../../../../packages/shared/src/protocol";
 import { parseSelectedTextAttachments, sameSelectedTextAttachments } from "../../../../packages/shared/src/selected-text";
-import { parseWholeFileAttachments, sameWholeFileAttachments } from "../../../../packages/shared/src/whole-file";
+import { hasRepeatedWholeFileSources, parseInlineWholeFileMentions, parseWholeFileAttachments, sameWholeFileAttachments, type WholeFileAttachment } from "../../../../packages/shared/src/whole-file";
 
 export type DraftStatus = "saved" | "unsaved" | "saving" | "offline" | "conflict" | "error";
 export interface DraftView {
@@ -26,6 +26,8 @@ export interface DraftCache {
   write(key: string, value: string): void;
 }
 const equalModel = (a: ModelChoice | null, b: ModelChoice | null) => a?.id === b?.id && a?.provider === b?.provider;
+const parseDraftWholeFiles = (files: readonly WholeFileAttachment[], textLength: number) => hasRepeatedWholeFileSources(files)
+  ? parseInlineWholeFileMentions(files, textLength) : parseWholeFileAttachments(files, textLength);
 export const sameDraftContent = (a: Draft, b: Draft) => a.text === b.text && a.projectId === b.projectId && equalModel(a.model, b.model) && a.thinkingLevel === b.thinkingLevel && a.approvalMode === b.approvalMode && sameNewChatExecution(a.execution, b.execution) && sameEnvironmentSelection(a.environment, b.environment) && sameImageAttachments(a.attachments, b.attachments) && sameSelectedTextAttachments(a.selectedTextAttachments, b.selectedTextAttachments) && sameWholeFileAttachments(a.wholeFileAttachments, b.wholeFileAttachments);
 export const hasDraftContent = (draft: Pick<Draft, "text" | "attachments" | "selectedTextAttachments" | "wholeFileAttachments">) => Boolean(draft.text.trim() || draft.attachments?.length || draft.selectedTextAttachments?.length || draft.wholeFileAttachments?.length);
 /** Copy nested mutable input and preserve the distinction between legacy and image-aware empty drafts. */
@@ -35,7 +37,7 @@ export function captureDraft(draft: Draft, hostId?: string): Draft {
     ...(draft.environment !== undefined ? { environment: parseEnvironmentSelection(draft.environment, draft.projectId) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments, hostId) } : {}),
     ...(draft.selectedTextAttachments !== undefined ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),
-    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseWholeFileAttachments(draft.wholeFileAttachments, draft.text.length) } : {}),
+    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseDraftWholeFiles(draft.wholeFileAttachments, draft.text.length) } : {}),
     ...(draft.lastConsumption ? { lastConsumption: { commandId: draft.lastConsumption.commandId, submittedRevision: draft.lastConsumption.submittedRevision } } : {}) };
 }
 function editableDraft(draft: Draft): DraftInput {
@@ -45,7 +47,7 @@ function editableDraft(draft: Draft): DraftInput {
     ...(draft.environment !== undefined ? { environment: parseEnvironmentSelection(draft.environment, draft.projectId) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments) } : {}),
     ...(draft.selectedTextAttachments !== undefined ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),
-    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseWholeFileAttachments(draft.wholeFileAttachments, draft.text.length) } : {}) };
+    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseDraftWholeFiles(draft.wholeFileAttachments, draft.text.length) } : {}) };
 }
 const needsReceipt = (draft?: Draft) => draft !== undefined && (draft.attachments !== undefined || draft.execution !== undefined || draft.environment !== undefined || draft.selectedTextAttachments !== undefined || draft.wholeFileAttachments !== undefined);
 const stripsWholeFileOffsets = (base: Draft, remote: Draft) => base.wholeFileAttachments?.some(item => item.textOffset !== undefined
@@ -196,7 +198,8 @@ export class DraftController {
     const task = (async () => {
       try {
         const draft = editableDraft(snapshot);
-        const result = await this.send({ id: crypto.randomUUID(), ...((snapshot.wholeFileAttachments?.some(file => file.textOffset !== undefined) || entry.base.wholeFileAttachments?.some(file => file.textOffset !== undefined)) ? { commandVersion: 8 as const } : snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
+        const repeated = hasRepeatedWholeFileSources(snapshot.wholeFileAttachments ?? []) || hasRepeatedWholeFileSources(entry.base.wholeFileAttachments ?? []);
+        const result = await this.send({ id: crypto.randomUUID(), ...(repeated ? { commandVersion: 9 as const } : (snapshot.wholeFileAttachments?.some(file => file.textOffset !== undefined) || entry.base.wholeFileAttachments?.some(file => file.textOffset !== undefined)) ? { commandVersion: 8 as const } : snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
         if (!result.ok) {
           if (result.currentDraft) entry.view = { ...entry.view, status: "conflict", conflict: captureDraft(result.currentDraft, this.hostId), error: result.error.message };
           else entry.view = { ...entry.view, status: this.connected ? "error" : "offline", error: result.error.message };

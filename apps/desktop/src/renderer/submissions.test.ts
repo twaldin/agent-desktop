@@ -574,3 +574,14 @@ test('whole-file submission without attributable user receipt remains uncertain'
  const draft:Draft={...original,wholeFileAttachments:[{id:'whole',source:{kind:'file',hostId:'host-a',path:'/fixture/a.ts'}}]};
  await expect(controller.submit(draft,session.id,'prompt')).rejects.toThrow('uncertain');expect(controller.entries()[0]?.uncertain).toBe(true);
 });
+test('repeated inline file submissions retain exact v9 envelopes across restart',async()=>{
+ const storage=cache(),calls:CommandEnvelope[]=[];
+ const source={kind:'file' as const,hostId:'host-a',path:'/fixture/repeat.ts'};
+ const draft:Draft={...original,text:'read',wholeFileAttachments:[{id:'first',textOffset:0,source},{id:'second',textOffset:4,source:{...source}}]};
+ const first=new SubmissionController(async envelope=>{calls.push(structuredClone(envelope));return unknown(envelope);},'host-a',storage);
+ await expect(first.submit(draft,session.id,'prompt')).rejects.toThrow('pending');
+ const restored=new SubmissionController(async envelope=>{calls.push(structuredClone(envelope));return{ok:true,commandId:envelope.id,admission:{kind:'user-message',entryId:'native'}};},'host-a',storage);
+ const result=await restored.submit({...draft,wholeFileAttachments:[]},session.id,'prompt');
+ expect(calls[1]).toEqual(calls[0]);expect(calls[0]).toMatchObject({commandVersion:9,command:{wholeFileAttachments:[{id:'first'},{id:'second'}]}});
+ expect(result.submitted.wholeFileAttachments).toHaveLength(2);
+});

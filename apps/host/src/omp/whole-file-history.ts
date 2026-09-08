@@ -1,9 +1,9 @@
-import { parseWholeFileAttachments, serializeWholeFilePrompt, type TranscriptMessage, type WholeFileAttachment } from "@agent-desktop/shared";
+import { hasRepeatedWholeFileSources, parseInlineWholeFileMentions, parseWholeFileAttachments, serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt, type TranscriptMessage, type WholeFileAttachment } from "@agent-desktop/shared";
 import { projectFileMentions } from "./file-mentions";
 import { WHOLE_FILE_ATTEMPT_TYPE, WHOLE_FILE_BINDING_TYPE } from "./whole-file";
 
 type Entry = { id: string; type: string; customType?: string; data?: unknown; message?: unknown };
-type Binding = { submissionId: string; userEntryId: string; fileEntryIds: string[]; authoredText: string; attachments: WholeFileAttachment[] };
+type Binding = { version: 2 | 3; submissionId: string; userEntryId: string; fileEntryIds: string[]; authoredText: string; attachments: WholeFileAttachment[] };
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -17,14 +17,17 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 function binding(entry: Entry): Binding | undefined {
   if (entry.type !== "custom" || entry.customType !== WHOLE_FILE_BINDING_TYPE) return;
   const data = record(entry.data);
-  if (!data || data.version !== 2 || !exactKeys(data, ["version", "submissionId", "userEntryId", "fileEntryIds", "authoredText", "attachments"])
+  if (!data || data.version !== 2 && data.version !== 3 || !exactKeys(data, ["version", "submissionId", "userEntryId", "fileEntryIds", "authoredText", "attachments"])
     || !boundedLabel(data.submissionId) || !boundedLabel(data.userEntryId) || typeof data.authoredText !== "string"
     || data.authoredText.length > 500_000 || !Array.isArray(data.fileEntryIds) || data.fileEntryIds.length === 0
     || data.fileEntryIds.some(id => !boundedLabel(id)) || new Set(data.fileEntryIds).size !== data.fileEntryIds.length) return;
   try {
-    const attachments = parseWholeFileAttachments(data.attachments, data.authoredText.length);
+    const attachments = data.version === 3 ? parseInlineWholeFileMentions(data.attachments, data.authoredText.length)
+      : parseWholeFileAttachments(data.attachments, data.authoredText.length);
     if (!attachments.length || attachments.some(item => item.textOffset === undefined)) return;
-    return { submissionId: data.submissionId, userEntryId: data.userEntryId, fileEntryIds: [...data.fileEntryIds] as string[], authoredText: data.authoredText, attachments };
+    if (data.version === 2 && hasRepeatedWholeFileSources(attachments) || data.version === 3 && !hasRepeatedWholeFileSources(attachments)) return;
+    if (data.version === 3 && new Set(attachments.map(item => item.source.hostId)).size !== 1) return;
+    return { version: data.version, submissionId: data.submissionId, userEntryId: data.userEntryId, fileEntryIds: [...data.fileEntryIds] as string[], authoredText: data.authoredText, attachments };
   } catch { return; }
 }
 function exactAttempt(entry: Entry, submissionId: string): boolean {
@@ -63,7 +66,8 @@ export function projectWholeFiles(messages: TranscriptMessage[], branch: readonl
     if (looseAttempts.length !== 1 || !exactAttempt(looseAttempts[0]!, value.submissionId)) continue;
     const userEntries = branch.filter(item => item.id === value.userEntryId), user = uniqueDisplay(value.userEntryId);
     let expectedText: string;
-    try { expectedText = serializeWholeFilePrompt(value.authoredText, value.attachments); } catch { continue; }
+    try { expectedText = value.version === 3 ? serializeRepeatedWholeFilePrompt(value.authoredText, value.attachments)
+      : serializeWholeFilePrompt(value.authoredText, value.attachments); } catch { continue; }
     if (expectedText.length > 500_000) continue;
     const displayTextBlocks = user?.content?.filter(block => block.type === "text");
     if (userEntries.length !== 1 || userEntries[0]?.type !== "message" || userText(userEntries[0].message) !== expectedText
@@ -77,14 +81,16 @@ export function projectWholeFiles(messages: TranscriptMessage[], branch: readonl
     if (visibleFiles.some((visible, index) => !visible!.fileReferences || visible!.fileReferences!.length !== referenceGroups[index]!.length
       || visible!.fileReferences!.some((reference, fileIndex) => reference.path !== referenceGroups[index]![fileIndex]!.path))) continue;
     const references = referenceGroups.flatMap(group => group!);
-    if (references.length !== value.attachments.length
-      || references.some((reference, index) => reference.path !== value.attachments[index]!.source.path)) continue;
+    const expectedPaths = value.version === 3 ? [...new Set(value.attachments.map(item => item.source.path))]
+      : value.attachments.map(item => item.source.path);
+    if (references.length !== expectedPaths.length || references.some((reference, index) => reference.path !== expectedPaths[index])) continue;
     const attemptOrder = order.get(looseAttempts[0]!.id), userOrder = order.get(userEntry.id), bindingOrder = order.get(bindingEntry.id);
     const fileOrders = value.fileEntryIds.map(id => order.get(id));
     if (attemptOrder === undefined || userOrder === undefined || bindingOrder === undefined || fileOrders.some(index => index === undefined)
       || !(attemptOrder < Math.min(...fileOrders as number[]) && Math.max(...fileOrders as number[]) < userOrder && userOrder < bindingOrder)) continue;
     user.wholeFiles = { bindingEntryId: bindingEntry.id, submissionId: value.submissionId, fileEntryIds: [...value.fileEntryIds],
-      authoredText: value.authoredText, attachments: parseWholeFileAttachments(value.attachments, value.authoredText.length) };
+      authoredText: value.authoredText, attachments: value.version === 3 ? parseInlineWholeFileMentions(value.attachments, value.authoredText.length)
+        : parseWholeFileAttachments(value.attachments, value.authoredText.length) };
     for (let index = 0; index < visibleFiles.length; index++) {
       const references = referenceGroups[index]!;
       if (references.every(reference => reference.skippedReason === undefined && reference.image?.error === undefined)) removed.add(visibleFiles[index]!.id);

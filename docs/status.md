@@ -1,5 +1,13 @@
 # Milestone status
 
+## Composer clipboard and repeated file mentions
+
+The main composer now copies native-style file links and HTML, restoring editable file nodes with fresh identities. App clipboard metadata retains the owning host; incomplete or foreign ownership rejects the entire paste without changing the draft. Native HTML falls back from an empty filesystem path to its ordinary path. Undo, redo and offline/reload retain repeated nodes.
+
+Publicv9, schema11 and worker34 preserve repeated mentions through draft/submission transport and native history. Each occurrence reaches the user prompt, while OMP reads each repeated source once. Existing v1/v2 bindings remain frozen; repeated occurrences use v3. Older clients cannot silently clear or consume the saved context. OMP18.1.10 and app-owned Bun1.3.14 remain pinned.
+
+Focused tests, real native host/image/reopen checks, typecheck and build pass. Ten isolated renderer checks/thirteen captures exercise synthetic DataTransfer copy/paste, actual keyboard editing and authenticated persistence with zero sessions. This is not OS clipboard, installed-window or pixel acceptance. Basename-only labels and remaining rich-editor gaps stay open. Private evidence: `.data/composer-clipboard-2026-09-07/REPORT.md`.
+
 ## Composer file activation
 
 Clicking an existing inline file now opens its owner-workspace file panel without changing the draft or sending a prompt. The node uses its current PM identity and the latest composer callback; foreign-host and outside-workspace paths are not remapped. This matches the pinned composer's ordinary pointer callback. Separate keyboard focus, native tooltip and hover-preview behavior belong to other reference surfaces and are not added here.

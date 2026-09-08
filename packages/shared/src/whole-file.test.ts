@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { copyWholeFileAttachments, MAX_WHOLE_FILE_ATTACHMENTS, parseWholeFileAttachments, sameWholeFileAttachments, type WholeFileAttachment } from "./whole-file";
+import { copyWholeFileAttachments, hasRepeatedWholeFileIntent, hasRepeatedWholeFileSources, MAX_WHOLE_FILE_ATTACHMENTS, parseInlineWholeFileMentions, parseWholeFileAttachments, sameWholeFileAttachments, serializeRepeatedWholeFilePrompt, type WholeFileAttachment } from "./whole-file";
 
 const file = (id = "file-one", path = "/outside/project/file.ts", hostId = "other-owner", textOffset?: number): WholeFileAttachment => ({
   id, ...(textOffset !== undefined ? { textOffset } : {}), source: { kind: "file", hostId, path },
@@ -35,6 +35,17 @@ test("UTF-16 text offsets are copied, compared, contextually bounded, and ordere
   expect(() => parseWholeFileAttachments([file("file", "/file", "owner", -1)])).toThrow("UTF-16");
   expect(() => parseWholeFileAttachments([{ ...file(), textOffset: undefined }])).toThrow("UTF-16");
   expect(() => parseWholeFileAttachments([{ ...file(), textOffset: 0, extra: true }])).toThrow();
+});
+
+test("v9 inline mentions retain repeated sources with distinct identities and stable ties", () => {
+  const repeated = [file("first", "/same.ts", "owner", 1), file("second", "/same.ts", "owner", 1)];
+  expect(parseInlineWholeFileMentions(repeated, 2)).toEqual(repeated);
+  expect(hasRepeatedWholeFileSources(repeated)).toBe(true);
+  expect(hasRepeatedWholeFileIntent({ type: "draft.put", draft: { wholeFileAttachments: repeated } })).toBe(true);
+  expect(serializeRepeatedWholeFilePrompt("ab", repeated)).toBe(`a[same\\.ts](/same.ts)[same\\.ts](/same.ts)b`);
+  expect(() => parseInlineWholeFileMentions([file("legacy", "/same.ts")], 0)).toThrow("offsets");
+  expect(() => parseInlineWholeFileMentions([repeated[0], { ...repeated[1], id: "first" }], 2)).toThrow("identities");
+  expect(() => parseWholeFileAttachments(repeated, 2)).toThrow("sources");
 });
 
 test("parser enforces a bounded, exact, canonical absolute file contract", () => {

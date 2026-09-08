@@ -1,10 +1,11 @@
-import { hasInlineFileIntent } from "@agent-desktop/shared";
+import { hasInlineFileIntent, hasRepeatedWholeFileIntent } from "@agent-desktop/shared";
 import type { CommandEnvelope, CommandResult, OmpSessionControlMutation } from "@agent-desktop/shared";
 import { HostRequestError } from "./host-transport";
 
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
-export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" {
+export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" {
   const command = envelope.command;
+  if(envelope.commandVersion===9 || hasRepeatedWholeFileIntent(command))return "/v9/commands";
   if(envelope.commandVersion===8 || hasInlineFileIntent(command))return "/v8/commands";
   if (envelope.commandVersion === 7 || (command.type === "draft.put" ? Object.hasOwn(command.draft, "wholeFileAttachments") : Object.hasOwn(command, "wholeFileAttachments"))) return "/v7/commands";
   if (envelope.commandVersion === 6 || (command.type === "draft.put" ? Object.hasOwn(command.draft, "selectedTextAttachments") : Object.hasOwn(command, "selectedTextAttachments"))) return "/v6/commands";
@@ -30,6 +31,7 @@ export async function requestVersionedCommand(request: (path: string, body: unkn
   catch (error) {
     // A missing endpoint establishes that this versioned request was rejected.
     // A timeout or any other failure retains ordinary uncertain-delivery rules.
+    if (endpoint === '/v9/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:'REPEATED_WHOLE_FILE_PROTOCOL_UNSUPPORTED',message:'Update the owning host to repeat inline file mentions. This request was not accepted.'}} satisfies CommandResult;
     if (endpoint === '/v8/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:'INLINE_FILE_PROTOCOL_UNSUPPORTED',message:'Update the owning host to retain inline file positions. This request was not accepted.'}} satisfies CommandResult;
     if (endpoint === '/v7/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) {
       return { ok: false, commandId: envelope.id, error: { code: 'WHOLE_FILE_PROTOCOL_UNSUPPORTED', message: 'Update the owning host to attach whole files. This request was not accepted.' } } satisfies CommandResult;

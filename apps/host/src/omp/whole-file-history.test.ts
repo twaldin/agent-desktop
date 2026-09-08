@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { serializeWholeFilePrompt, type TranscriptMessage, type WholeFileAttachment } from "@agent-desktop/shared";
+import { serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt, type TranscriptMessage, type WholeFileAttachment } from "@agent-desktop/shared";
 import { projectWholeFiles } from "./whole-file-history";
 import { WHOLE_FILE_ATTEMPT_TYPE, WHOLE_FILE_BINDING_TYPE } from "./whole-file";
 
@@ -61,4 +61,24 @@ test("a binding never moves to an adjacent or content-equal user", () => {
   const result = projectWholeFiles(display, [attempt, files, unrelated, user, binding]);
   expect(result.find(item => item.nativeId === "other")?.wholeFiles).toBeUndefined();
   expect(result.find(item => item.nativeId === "user")?.wholeFiles?.bindingEntryId).toBe("binding");
+});
+
+test("binding v3 projects every repeated mention from one verified native snapshot", () => {
+  const repeated = [attachments[0]!, { ...attachments[0]!, id: "again", textOffset: authoredText.length }];
+  const wire = serializeRepeatedWholeFilePrompt(authoredText, repeated);
+  const repeatedUser = { ...user, message: { role: "user", content: wire } };
+  const repeatedBinding = { ...binding, data: { ...binding.data, version: 3, attachments: repeated } };
+  const display: TranscriptMessage[] = [
+    { id: "files-display", nativeId: "files", role: "fileMention", text: "", fileReferences: [{ path: repeated[0]!.source.path, content: "snapshot" }] },
+    { id: "user-display", nativeId: "user", role: "user", text: wire, content: [{ type: "text", text: wire }] },
+  ];
+  const forgedDisplay = structuredClone(display);
+  const result = projectWholeFiles(display, [attempt, { ...files, message: { ...files.message, files: [{ path: repeated[0]!.source.path, content: "snapshot" }] } }, repeatedUser, repeatedBinding]);
+  expect(result).toHaveLength(1); expect(result[0]!.wholeFiles?.attachments).toEqual(repeated);
+  const forgedV2 = projectWholeFiles(forgedDisplay, [attempt, files, repeatedUser, { ...repeatedBinding, data: { ...repeatedBinding.data, version: 2 } }]);
+  expect(forgedV2.some(item => item.role === "fileMention")).toBe(true); expect(forgedV2.find(item => item.role === "user")?.wholeFiles).toBeUndefined();
+  const mixedOwners = repeated.map((item, index) => index ? { ...item, source: { ...item.source, hostId: "other" } } : item);
+  const forgedOwners = projectWholeFiles(structuredClone(forgedDisplay), [attempt, files, repeatedUser,
+    { ...repeatedBinding, data: { ...repeatedBinding.data, attachments: mixedOwners } }]);
+  expect(forgedOwners.some(item => item.role === "fileMention")).toBe(true); expect(forgedOwners.find(item => item.role === "user")?.wholeFiles).toBeUndefined();
 });

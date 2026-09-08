@@ -85,6 +85,19 @@ test("inline whole-file offsets persist, require atomic text edits, and select c
   } finally { restored.dispose(); }
 });
 
+test("repeated inline file sources persist and select command version 9", async () => {
+  const local = cache(), calls: CommandEnvelope[] = [], controller = new DraftController(saver(calls), "host", local);
+  const files = [wholeFile("first", "/same.ts", 0), wholeFile("second", "/same.ts", 4)];
+  try {
+    controller.ingest(draft({ text: "read", wholeFileAttachments: files }));
+    controller.update("new-conversation", { text: "read!", wholeFileAttachments: [{ ...files[0]! }, { ...files[1]!, textOffset: 5 }] });
+    controller.setConnected(true); await controller.flush("new-conversation");
+    expect(calls[0]).toMatchObject({ commandVersion: 9, command: { draft: { wholeFileAttachments: [{ id: "first" }, { id: "second" }] } } });
+    const restored = new DraftController(saver([]), "host", local);
+    try { expect(restored.get("new-conversation").draft.wholeFileAttachments).toHaveLength(2); } finally { restored.dispose(); }
+  } finally { controller.dispose(); }
+});
+
 test("a remote writer stripping an inline offset conflicts instead of overwriting the reference", () => {
   const controller = new DraftController(saver([]), "host");
   try {

@@ -276,7 +276,7 @@ class WorkerClient {
     if ((options?.images?.length || options?.selectedText?.attachments?.length || options?.wholeFiles?.attachments?.length) && (this.snapshot?.isStreaming || this.snapshot?.hasPostPromptWork || [...this.#pending.keys()].some(key => key.endsWith(":completion")))) {
       throw new Error("OMP session is busy; attached content was not dispatched");
     }
-    const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles) } : undefined;
+    const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles, text.length) } : undefined;
     const id = String(++this.#requestId);
     const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length || preparedOptions?.wholeFiles?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
     const completion = this.#promise<boolean>(`${id}:completion`);

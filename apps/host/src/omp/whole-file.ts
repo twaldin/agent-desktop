@@ -2,7 +2,7 @@ import type { AgentSession, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { generateFileMentionMessages } from "@oh-my-pi/pi-coding-agent/utils/file-mentions";
 import { resolveFileDisplayMode } from "@oh-my-pi/pi-coding-agent/utils/file-display-mode";
 import { getEditStore } from "@oh-my-pi/pi-coding-agent/edit/store";
-import { parseWholeFileAttachments, serializeWholeFilePrompt, type WholeFileAttachment } from "@agent-desktop/shared";
+import { hasRepeatedWholeFileIntent, hasRepeatedWholeFileSources, parseInlineWholeFileMentions, parseWholeFileAttachments, serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt, type WholeFileAttachment } from "@agent-desktop/shared";
 import { OmpPromptAdmissionError } from "./prompt";
 
 export const WHOLE_FILE_BINDING_TYPE = "agent-desktop.whole-file-binding";
@@ -18,7 +18,16 @@ function label(value: unknown, name: string, maximum: number): string {
 export function copyNativeWholeFileInput(input: NativeWholeFileInput | undefined, textLength?: number): NativeWholeFileInput | undefined {
   if (input === undefined) return undefined;
   if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 2 || !Object.hasOwn(input, "submissionId") || !Object.hasOwn(input, "attachments") || !Array.isArray(input.attachments)) throw new Error("Invalid whole-file input.");
-  return { submissionId: label(input.submissionId, "submission identity", 200), attachments: parseWholeFileAttachments(input.attachments, textLength) };
+  const repeated = hasRepeatedWholeFileIntent({ wholeFileAttachments: input.attachments });
+  if (repeated && textLength === undefined) throw new Error("Repeated whole-file mentions require authored text length.");
+  const attachments = repeated
+    ? parseInlineWholeFileMentions(input.attachments, textLength!)
+    : parseWholeFileAttachments(input.attachments, textLength);
+  // A v3 binding represents one owning host's native read. Keep mixed-owner
+  // metadata from producing history that its strict projector cannot verify.
+  if (repeated && new Set(attachments.map(item => item.source.hostId)).size !== 1)
+    throw new Error("Repeated whole-file mentions must belong to one owning host.");
+  return { submissionId: label(input.submissionId, "submission identity", 200), attachments };
 }
 
 function exactUserText(value: unknown, expected: string): boolean {
@@ -64,7 +73,8 @@ export class NativeWholeFilePrompt {
   readonly #nativeText: string;
 
   private constructor(private readonly session: Pick<AgentSession, "agent" | "sessionManager">, input: NativeWholeFileInput, authoredText: string) {
-    this.#input = input; this.#authoredText = authoredText; this.#nativeText = serializeWholeFilePrompt(authoredText, input.attachments);
+    this.#input = input; this.#authoredText = authoredText; this.#nativeText = hasRepeatedWholeFileSources(input.attachments)
+      ? serializeRepeatedWholeFilePrompt(authoredText, input.attachments) : serializeWholeFilePrompt(authoredText, input.attachments);
   }
   static fromInput(session: Pick<AgentSession, "agent" | "sessionManager">, input: NativeWholeFileInput | undefined, authoredText = ""): NativeWholeFilePrompt | undefined {
     const copied = copyNativeWholeFileInput(input, authoredText.length); if (!copied || !copied.attachments.length) return;
@@ -79,13 +89,16 @@ export class NativeWholeFilePrompt {
   async prepare(session: AgentSession): Promise<void> {
     if (this.#attempted) throw new OmpPromptAdmissionError(new Error("This whole-file submission has already been attempted. Inspect its native outcome before sending it again."));
     if (session.sessionManager.getEntries().some(entry => sameSubmission(entry, this.#input.submissionId))) throw new OmpPromptAdmissionError(new Error("This whole-file submission may already be recorded. Inspect its native outcome before sending it again."));
-    const generated = await generateFileMentionMessages(this.#input.attachments.map(item => item.source.path), session.sessionManager.getCwd(), {
+    const repeated = hasRepeatedWholeFileSources(this.#input.attachments);
+    const requestedPaths = repeated ? [...new Set(this.#input.attachments.map(item => item.source.path))]
+      : this.#input.attachments.map(item => item.source.path);
+    const generated = await generateFileMentionMessages(requestedPaths, session.sessionManager.getCwd(), {
       autoResizeImages: session.settings.get("images.autoResize"),
       useHashLines: resolveFileDisplayMode(session).hashLines,
       snapshotStore: getEditStore(session),
     });
     if (!generated.length) throw new Error("None of the selected files could be read by the owning host.");
-    const requested = this.#input.attachments.map(item => item.source.path), recorded = generatedPaths(generated);
+    const requested = requestedPaths, recorded = generatedPaths(generated);
     if (requested.some(file => !recorded.has(file))) throw new Error("One or more selected files could not be read by the owning host. The draft was preserved.");
     // Reading/generation is preflight: if no native message was built, the
     // command has a definite rejection and its preserved draft may be retried.
@@ -117,9 +130,9 @@ export class NativeWholeFilePrompt {
     const user = entries.find(entry => entry.id === userEntryId);
     if (user?.type !== "message" || user.message !== this.#user || !exactUserText(user.message, this.#nativeText)
       || this.#fileEntryIds.length !== this.#files.length) throw new Error("Native whole-file context has no attributable persisted entries.");
-    const inline = this.#input.attachments.some(item => item.textOffset !== undefined);
+    const repeated = hasRepeatedWholeFileSources(this.#input.attachments), inline = this.#input.attachments.some(item => item.textOffset !== undefined);
     const data = inline
-      ? { version: 2, submissionId: this.#input.submissionId, userEntryId, fileEntryIds: [...this.#fileEntryIds], authoredText: this.#authoredText, attachments: this.#input.attachments }
+      ? { version: repeated ? 3 : 2, submissionId: this.#input.submissionId, userEntryId, fileEntryIds: [...this.#fileEntryIds], authoredText: this.#authoredText, attachments: this.#input.attachments }
       : { version: 1, submissionId: this.#input.submissionId, userEntryId, fileEntryIds: [...this.#fileEntryIds] };
     const id = this.session.sessionManager.appendCustomEntry(WHOLE_FILE_BINDING_TYPE, data);
     const binding = this.session.sessionManager.getEntries().find(entry => entry.id === id);

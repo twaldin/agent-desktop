@@ -507,7 +507,7 @@ export function App() {
     input: textarea, readText: () => drafts.get(draftId).draft.text,
     insertFile: state?.wholeFiles?.inlineMentions?.commandVersion===8 ? (source,range) => {
       if(!textarea.current)throw new Error('The composer is unavailable. Your draft is unchanged.');
-      const file=appendWholeFile(drafts.get(draftId).draft,hostId,source).find(item=>item.source.hostId===source.hostId&&item.source.path===source.path)!;
+      const file=appendWholeFile(drafts.get(draftId).draft,hostId,source,{textOffset:range.start,allowRepeated:state?.wholeFiles?.inlineMentions?.repeatedSources?.commandVersion===9}).findLast(item=>item.source.hostId===source.hostId&&item.source.path===source.path)!;
       textarea.current.insertFile(file,range);
     } : undefined,
     updateText: text => { if(textarea.current)textarea.current.replaceText(text); else drafts.update(draftId,{text,wholeFileAttachments:remapFileOffsets(drafts.get(draftId).draft.text,text,drafts.get(draftId).draft.wholeFileAttachments??[])}); },
@@ -554,8 +554,8 @@ export function App() {
   function addWholeFile(sourceHostId: string, sourcePath: string) {
     if (selectedRef.current !== routeKey || selected?.archived || missingSession || state?.wholeFiles?.inlineMentions?.commandVersion !== 8) return;
     try {
-      const files=appendWholeFile(drafts.get(draftId).draft, hostId, {hostId:sourceHostId,path:sourcePath});
-      const file=files.find(file=>file.source.hostId===sourceHostId&&file.source.path===sourcePath)!;
+      const files=appendWholeFile(drafts.get(draftId).draft, hostId, {hostId:sourceHostId,path:sourcePath},{textOffset:textarea.current?.selectionStart??drafts.get(draftId).draft.text.length,allowRepeated:state?.wholeFiles?.inlineMentions?.repeatedSources?.commandVersion===9});
+      const file=files.findLast(file=>file.source.hostId===sourceHostId&&file.source.path===sourcePath)!;
       textarea.current?.insertFile(file);
       requestAnimationFrame(() => { if (selectedRef.current === routeKey) textarea.current?.focus(); });
     } catch (error) { setActionError(errorMessage(error)); }
@@ -688,6 +688,7 @@ export function App() {
             <label className="sr-only" htmlFor="prompt">Message</label>
             <span id="prompt-keyboard-hint" className="sr-only">{`${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${running ? "steer" : "send"}. Shift Enter for a new line.`}</span>
             <ComposerEditor inputRef={textarea} scope={routeKey+':'+draftId} text={draft.text} files={draft.wholeFileAttachments}
+              clipboardHostId={hostId} canPasteFiles={state?.wholeFiles?.inlineMentions?.commandVersion===8} allowRepeatedFiles={state?.wholeFiles?.inlineMentions?.repeatedSources?.commandVersion===9} onPasteError={error=>setActionError(error.message)}
               onOpenFile={source=>{try {
                 const file=wholeFileOpenTarget(source,hostId,selected?.cwd??project?.path);
                 void Promise.resolve(transcriptLinkActions.openFile?.(file)).catch(cause=>setActionError(errorMessage(cause)));

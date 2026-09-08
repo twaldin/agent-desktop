@@ -197,13 +197,13 @@ describe("host artifact state compatibility", () => {
     expect((await readdir(layout.installDirectory)).some(name => name.startsWith(".staging-"))).toBe(false);
   });
 
-  test("schema10 is accepted by the current package while a schema9 reader is rejected before stopping", async () => {
-    const { layout, current, target } = await installedFixture(10);
-    await artifact(current, "current12", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    await artifact(target, "legacy11", [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    expect(checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, layout.dataDirectory).checkedSchemaVersion).toBe(10);
+  test("schema11 is accepted by the current package while a schema10 reader is rejected before stopping", async () => {
+    const { layout, current, target } = await installedFixture(11);
+    await artifact(current, "current12", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    await artifact(target, "legacy11", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }, layout.dataDirectory).checkedSchemaVersion).toBe(11);
     const before = await preservation(layout), service = lifecycle();
-    await expect(manageHost("rollback", layout, undefined, service.hooks)).rejects.toThrow("schema 10 is incompatible");
+    await expect(manageHost("rollback", layout, undefined, service.hooks)).rejects.toThrow("schema 11 is incompatible");
     expect(service.calls).toEqual([]);
     expect(await preservation(layout)).toEqual(before);
   });

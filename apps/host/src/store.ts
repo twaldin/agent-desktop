@@ -16,7 +16,7 @@ import type {
 import type { StoredPreferencesState } from "./preferences/store";
 import { approvalMode, hasApprovalIntent, validateCommandApproval } from "./approval";
 import { parseImageAttachments } from "../../../packages/shared/src/attachments";
-import { parseWholeFileAttachments } from "../../../packages/shared/src/whole-file";
+import { hasRepeatedWholeFileIntent, hasRepeatedWholeFileSources, parseInlineWholeFileMentions, parseWholeFileAttachments } from "../../../packages/shared/src/whole-file";
 import { parseSelectedTextAttachments } from "../../../packages/shared/src/selected-text";
 import { detachedAnswerDraft, type DetachedQuestionSnapshot } from '../../../packages/shared/src/detached-questions';
 import { parseNewChatExecution } from '../../../packages/shared/src/new-chat';
@@ -101,7 +101,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 10) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 11) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -255,7 +255,8 @@ export class HostStore {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error("Invalid draft revision");
     if ("lastConsumption" in input) throw new Error("Draft consumption receipts are owned by the host.");
     if (input.attachments !== undefined) input = { ...input, attachments: parseImageAttachments(input.attachments, this.host.id) };
-    if (input.wholeFileAttachments !== undefined) input = { ...input, wholeFileAttachments: parseWholeFileAttachments(input.wholeFileAttachments,input.text.length) };
+    if (input.wholeFileAttachments !== undefined) input = { ...input, wholeFileAttachments: hasRepeatedWholeFileIntent({ wholeFileAttachments: input.wholeFileAttachments })
+      ? parseInlineWholeFileMentions(input.wholeFileAttachments, input.text.length) : parseWholeFileAttachments(input.wholeFileAttachments,input.text.length) };
     if (input.selectedTextAttachments !== undefined) input = { ...input, selectedTextAttachments: parseSelectedTextAttachments(input.selectedTextAttachments) };
     if (input.approvalMode !== undefined) approvalMode(input.approvalMode);
     if (input.execution !== undefined) input = { ...input, execution: parseNewChatExecution(input.execution, input.projectId) };
@@ -267,7 +268,7 @@ export class HostStore {
       if (currentDraft?.attachments !== undefined && input.attachments === undefined) throw new Error("This draft requires the attachment command protocol; its content was preserved.");
       if (currentDraft?.selectedTextAttachments !== undefined && input.selectedTextAttachments === undefined) throw new Error("This draft requires the selected-text command protocol; its content was preserved.");
       if (currentDraft?.wholeFileAttachments !== undefined && input.wholeFileAttachments === undefined) throw new Error("This draft requires the whole-file protocol; its content was preserved.");
-      if (input.wholeFileAttachments !== undefined) this.requireVersion(input.wholeFileAttachments.some(file=>file.textOffset!==undefined)?10:9);
+      if (input.wholeFileAttachments !== undefined) this.requireVersion(hasRepeatedWholeFileSources(input.wholeFileAttachments) ? 11 : input.wholeFileAttachments.some(file=>file.textOffset!==undefined)?10:9);
       if (input.approvalMode !== undefined) this.requirePermissionVersion();
       if (input.attachments !== undefined) this.requireVersion(3);
       if (input.execution !== undefined) this.requireVersion(4);
@@ -332,7 +333,11 @@ export class HostStore {
       : command?.type === "session.prompt" || command?.type === "session.steer" ? command.selectedTextAttachments : undefined;
     const wholeFileAttachments = command?.type === "draft.put" ? command.draft.wholeFileAttachments
       : command?.type === "session.prompt" || command?.type === "session.steer" ? command.wholeFileAttachments : undefined;
-    if (wholeFileAttachments !== undefined) parseWholeFileAttachments(wholeFileAttachments,command?.type === "draft.put" ? command.draft.text.length : command?.type === "session.prompt" || command?.type === "session.steer" ? command.text.length : undefined);
+    if (wholeFileAttachments !== undefined) {
+      const textLength = command?.type === "draft.put" ? command.draft.text.length : command?.type === "session.prompt" || command?.type === "session.steer" ? command.text.length : undefined;
+      if (hasRepeatedWholeFileSources(wholeFileAttachments)) parseInlineWholeFileMentions(wholeFileAttachments, textLength!);
+      else parseWholeFileAttachments(wholeFileAttachments, textLength);
+    }
     if (attachments !== undefined) parseImageAttachments(attachments, this.host.id);
     if (selectedTextAttachments !== undefined) parseSelectedTextAttachments(selectedTextAttachments);
     return this.db.transaction((): CommandClaim => {
@@ -341,7 +346,7 @@ export class HostStore {
       if (command && hasApprovalIntent(command)) this.requirePermissionVersion();
       if (attachments !== undefined) this.requireVersion(3);
       if (selectedTextAttachments !== undefined) this.requireVersion(8);
-      if (wholeFileAttachments !== undefined) this.requireVersion(wholeFileAttachments.some(file=>file.textOffset!==undefined)?10:9);
+      if (wholeFileAttachments !== undefined) this.requireVersion(hasRepeatedWholeFileSources(wholeFileAttachments) ? 11 : wholeFileAttachments.some(file=>file.textOffset!==undefined)?10:9);
       if (command && hasNewChatIntent(command)) this.requireVersion(4);
       if (command && hasEnvironmentIntent(command)) this.requireVersion(5);
       const now = Date.now();
@@ -596,9 +601,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 10) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 11) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

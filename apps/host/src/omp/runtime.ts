@@ -30,7 +30,7 @@ import { NativeSkillPrompt } from "./skills";
 import { copyNativeSelectedTextInput, NativeSelectedTextPrompt, type NativeSelectedTextInput } from "./selected-text";
 import { copyNativeWholeFileInput, NativeWholeFilePrompt, type NativeWholeFileInput } from "./whole-file";
 import { projectWholeFiles } from "./whole-file-history";
-import { serializeWholeFilePrompt } from "@agent-desktop/shared";
+import { hasRepeatedWholeFileSources, serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt } from "@agent-desktop/shared";
 import { discoverComposerActions, discoverSkillInventory, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions, type NativeSkillInventoryCatalog } from "./composer-actions";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
@@ -839,7 +839,8 @@ export class OmpRuntime {
           // text must itself fit OMP's durable-string bound.
           const selectedTextInput = copyNativeSelectedTextInput(promptOptions.selectedText);
           const wholeFileInput = copyNativeWholeFileInput(promptOptions.wholeFiles, text.length);
-          const nativeText = wholeFileInput ? serializeWholeFilePrompt(text, wholeFileInput.attachments) : text;
+          const nativeText = wholeFileInput ? hasRepeatedWholeFileSources(wholeFileInput.attachments)
+            ? serializeRepeatedWholeFilePrompt(text, wholeFileInput.attachments) : serializeWholeFilePrompt(text, wholeFileInput.attachments) : text;
           if (selectedTextInput?.attachments.length && text.length > 500_000)
             throw new Error("Prompt text exceeds the native durable-history limit when selected text is attached.");
           if (wholeFileInput?.attachments.some(item => item.textOffset !== undefined) && nativeText.length > 500_000)

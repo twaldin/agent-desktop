@@ -53,6 +53,17 @@ test("preserves the captured draft revision for prompts and steering", () => {
   }
 });
 
+test("only command version 9 accepts repeated anchored whole-file sources", () => {
+  const source = { kind: "file" as const, hostId: "host", path: "/project/repeat.ts" };
+  const command = { type: "session.prompt", sessionId: "s", text: "read", wholeFileAttachments: [
+    { id: "first", textOffset: 0, source }, { id: "second", textOffset: 4, source: { ...source } },
+  ] } as const;
+  expect(parseCommandEnvelope({ id: "repeat", commandVersion: 9, command })).toMatchObject({ commandVersion: 9, command });
+  expect(() => parseCommandEnvelope({ id: "old", commandVersion: 8, command })).toThrow("sources");
+  expect(() => parseCommandEnvelope({ id: "legacy", commandVersion: 9, command: { ...command,
+    wholeFileAttachments: command.wholeFileAttachments.map(({ textOffset: _, ...file }) => file) } })).toThrow("offsets");
+});
+
 test("branch checkout requires an exact reviewed status and preserves only its bounded native inputs", () => {
   const revision = "a".repeat(64);
   expect(parseCommandEnvelope({ id: "switch", command: { type: "workspace.mutate", target: { projectId: "project" },

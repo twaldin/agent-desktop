@@ -34,7 +34,7 @@ function canonicalAbsolutePath(value: unknown): string {
 }
 
 /** File references may name another host. They grant no filesystem access. */
-export function parseWholeFileAttachments(value: unknown, textLength?: number): WholeFileAttachment[] {
+function parseFiles(value: unknown, textLength: number | undefined, repeatedInline: boolean): WholeFileAttachment[] {
   if (!Array.isArray(value) || value.length > MAX_WHOLE_FILE_ATTACHMENTS)
     throw new Error(`A draft supports at most ${MAX_WHOLE_FILE_ATTACHMENTS} whole-file attachments.`);
   if (textLength !== undefined && (!Number.isSafeInteger(textLength) || textLength < 0)) throw new Error("Invalid whole-file text length.");
@@ -53,11 +53,31 @@ export function parseWholeFileAttachments(value: unknown, textLength?: number): 
     if (ids.has(id)) throw new Error("Whole-file attachment identities must be distinct.");
     ids.add(id);
     const sourceIdentity = `${hostId}\0${path}`;
-    if (sources.has(sourceIdentity)) throw new Error("Whole-file attachment sources must be distinct.");
+    if (!repeatedInline && sources.has(sourceIdentity)) throw new Error("Whole-file attachment sources must be distinct.");
     sources.add(sourceIdentity);
     result.push({ id, ...(hasTextOffset ? { textOffset: textOffset as number } : {}), source: { kind: "file", hostId, path } });
   }
+  if (repeatedInline && result.some(item => item.textOffset === undefined)) throw new Error("Repeated whole-file mentions require inline text offsets.");
   return result;
+}
+
+export function parseWholeFileAttachments(value: unknown, textLength?: number): WholeFileAttachment[] {
+  return parseFiles(value, textLength, false);
+}
+
+/** Command-v9 inline mentions may reference one literal source more than once. */
+export function parseInlineWholeFileMentions(value: unknown, textLength: number): WholeFileAttachment[] {
+  return parseFiles(value, textLength, true);
+}
+
+export function hasRepeatedWholeFileSources(files: readonly WholeFileAttachment[]): boolean {
+  const sources = new Set<string>();
+  for (const file of files) {
+    const key = `${file.source.hostId}\0${file.source.path}`;
+    if (sources.has(key)) return true;
+    sources.add(key);
+  }
+  return false;
 }
 
 export function copyWholeFileAttachments(value: readonly WholeFileAttachment[]): WholeFileAttachment[] {
@@ -78,6 +98,25 @@ export function hasInlineFileIntent(value:unknown):boolean {
  const command=value as Record<string,unknown>;
  const draft=command.type==='draft.put'&&command.draft&&typeof command.draft==='object'?command.draft as Record<string,unknown>:command;
  return Array.isArray(draft.wholeFileAttachments)&&draft.wholeFileAttachments.some(file=>file&&typeof file==='object'&&Object.hasOwn(file,'textOffset'));
+}
+
+/** Shallow routing probe only. Full validation remains protocol-version specific. */
+export function hasRepeatedWholeFileIntent(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const command = value as Record<string, unknown>;
+  const carrier = command.type === "draft.put" && command.draft && typeof command.draft === "object" && !Array.isArray(command.draft)
+    ? command.draft as Record<string, unknown> : command;
+  if (!Array.isArray(carrier.wholeFileAttachments)) return false;
+  const sources = new Set<string>();
+  for (const value of carrier.wholeFileAttachments) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const source = (value as Record<string, unknown>).source;
+    if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+    const hostId = (source as Record<string, unknown>).hostId, path = (source as Record<string, unknown>).path;
+    if (typeof hostId !== "string" || typeof path !== "string") continue;
+    const key = `${hostId}\0${path}`; if (sources.has(key)) return true; sources.add(key);
+  }
+  return false;
 }
 
 /**
@@ -101,8 +140,20 @@ export function serializeWholeFilePrompt(text: string, files: readonly WholeFile
     .sort((left, right) => left.file.textOffset - right.file.textOffset || left.index - right.index);
   let result = "", cursor = 0;
   for (const { file } of ordered) {
-    result += text.slice(cursor, file.textOffset) + wholeFileMarkdownLink(file.source.path);
+    result += text.slice(cursor, file.textOffset!) + wholeFileMarkdownLink(file.source.path);
     cursor = file.textOffset;
+  }
+  return result + text.slice(cursor);
+}
+
+/** Binding-v3 serializer. Every mention is rendered; repeated sources are read once natively. */
+export function serializeRepeatedWholeFilePrompt(text: string, files: readonly WholeFileAttachment[]): string {
+  const ordered = parseInlineWholeFileMentions(files, text.length).map((file, index) => ({ file, index }))
+    .sort((left, right) => left.file.textOffset! - right.file.textOffset! || left.index - right.index);
+  let result = "", cursor = 0;
+  for (const { file } of ordered) {
+    result += text.slice(cursor, file.textOffset) + wholeFileMarkdownLink(file.source.path);
+    cursor = file.textOffset!;
   }
   return result + text.slice(cursor);
 }

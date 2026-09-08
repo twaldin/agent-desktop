@@ -44,3 +44,16 @@ test('inline whole-file positions raise schema 10 and survive reopening without 
   expect(store.getDraft(draft.id)?.lastConsumption).toBeUndefined();
  }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('repeated inline sources raise schema 11 and retain every mention across reopening',()=>{
+ const root=mkdtempSync(join(tmpdir(),'repeated-whole-file-store-'));let store=new HostStore(root);
+ const source={kind:'file' as const,hostId:store.host.id,path:'/project/repeated.ts'};
+ const files=[{id:'first',textOffset:0,source},{id:'second',textOffset:4,source:{...source}}];
+ const draft:DraftInput={id:'repeated-draft',text:'read',projectId:null,model:null,wholeFileAttachments:files};
+ try{
+  expect(store.putDraft(draft,0)).toMatchObject({ok:true,draft:{wholeFileAttachments:files}});
+  const db=new Database(join(root,'state.sqlite'));try{expect(db.query<{user_version:number},[]>('PRAGMA user_version').get()?.user_version).toBe(11);}finally{db.close();}
+  store.close();store=new HostStore(root);expect(store.getDraft(draft.id)?.wholeFileAttachments).toEqual(files);
+  expect(()=>store.putDraft({...draft,wholeFileAttachments:[{...files[0]!,textOffset:undefined},files[1]!]},1)).toThrow();
+ }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
