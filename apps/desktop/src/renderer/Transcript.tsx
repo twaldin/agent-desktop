@@ -26,7 +26,7 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
   const images = useContext(ImageContext);
   const blocks = messageBlocks(message);
   if (message.role === "fileMention" && message.fileReferences) return <TranscriptFileMentions message={message} images={images} connected={connected}/>;
-  const renderBlock = (block: TranscriptBlock, index: number) => <Block key={index} block={block} blockKey={`${message.id}:block:${index}`} nativeEntryId={message.nativeId} disclosures={disclosures} calls={calls} connected={connected} toolOutput={message.role === "toolResult" || message.role === "tool"}/>;
+  const renderBlock = (block: TranscriptBlock, index: number) => <Block key={index} block={block} blockKey={`${message.id}:block:${index}`} nativeEntryId={message.nativeId} disclosures={disclosures} calls={calls} connected={connected} allowWideBlocks={message.role === "assistant" || message.role === "user"} toolOutput={message.role === "toolResult" || message.role === "tool"}/>;
   if (message.role === "toolResult" || message.role === "tool") {
     const outcome = toolOutcome(message, connected), name = message.tool?.name ?? linkedCall?.call.name ?? "Tool";
     return <div className="transcript-tool-result" data-message-id={message.id} data-native-id={message.nativeId}>
@@ -67,12 +67,12 @@ function goalCompletionTitle(completion: NonNullable<TranscriptMessage["goalComp
   const budget = completion.tokenBudget === undefined ? "" : ` / ${completion.tokenBudget.toLocaleString()} token budget`;
   return `${used} tokens used${budget} · ${goalDuration(completion.timeUsedSeconds)} active time`;
 }
-function Block({ block, blockKey, nativeEntryId, disclosures, calls, connected, toolOutput = false }: { block: TranscriptBlock; blockKey: string; nativeEntryId?: string; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; connected: boolean; toolOutput?: boolean }) {
+function Block({ block, blockKey, nativeEntryId, disclosures, calls, connected, allowWideBlocks = false, toolOutput = false }: { block: TranscriptBlock; blockKey: string; nativeEntryId?: string; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; connected: boolean; allowWideBlocks?: boolean; toolOutput?: boolean }) {
   const images = useContext(ImageContext);
   if (block.type === "image") return images && nativeEntryId
     ? <ImagePreview media={images.media} source={{ kind: "transcript", sessionId: images.sessionId, nativeEntryId, blockIndex: block.blockIndex, mimeType: block.mimeType, bytes: block.bytes, sha256: block.sha256 }} hostId={images.hostId} connected={connected} label="Recorded image" className="transcript-image"/>
     : <p className="subtle-notice">{nativeEntryId ? "Image preview is unavailable in this view." : "This image does not yet have a saved native entry."}</p>;
-  if (block.type === "text") return toolOutput ? <pre className="transcript-output-text">{block.text}</pre> : <MarkdownText text={block.text} blockKey={blockKey}/>;
+  if (block.type === "text") return toolOutput ? <pre className="transcript-output-text">{block.text}</pre> : <MarkdownText text={block.text} blockKey={blockKey} allowWideBlocks={allowWideBlocks}/>;
   if (block.type === "thinking") return <Disclosure state={disclosures} stateKey={blockKey} label="Thinking" variant="thinking"><MarkdownText text={block.thinking} blockKey={blockKey}/></Disclosure>;
   if (block.type === "toolCall") {
     const link = calls.get(blockKey), outcome = toolOutcome(link?.result, connected);

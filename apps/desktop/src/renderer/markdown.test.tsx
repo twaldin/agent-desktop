@@ -22,7 +22,7 @@ describe("CommonMark/GFM production renderer contracts", () => {
   });
   test("renders semantic headings, paragraphs, emphasis, nested lists, tasks, quotes, rules and aligned tables", () => {
     const html = render("# Title\n\nA **strong** and *emphasized* paragraph with `inline` and ~~removed~~.\n\n1. First\n   - Nested\n2. Second\n\n- [x] Finished\n- [ ] Pending\n\n> Quote\n\n---\n\n| Left | Right |\n| :--- | ---: |\n| A | B |\n");
-    for (const part of ["<h1>Title</h1>", "<strong>strong</strong>", "<em>emphasized</em>", "<code>inline</code>", "<del>removed</del>", "<ol>", "<ul>", "Nested", 'type="checkbox"', "disabled=", "checked=", "<blockquote>", "<hr/>", "<table>", "<thead>", "<tbody>", 'style="text-align:right"']) expect(html).toContain(part);
+    for (const part of ["<h1>Title</h1>", "<strong>strong</strong>", "<em>emphasized</em>", "<code>inline</code>", "<del>removed</del>", "<ol>", "<ul>", "Nested", 'type="checkbox"', "disabled=", "checked=", "<blockquote>", "<hr/>", '<table dir="auto">', "<thead>", "<tbody>", 'style="text-align:right"']) expect(html).toContain(part);
     expect(html).toContain('role="region" aria-label="Markdown table" tabindex="0"');
   });
   test("real grammars highlight explicit languages and aliases, unknown/oversized blocks remain plain", () => {

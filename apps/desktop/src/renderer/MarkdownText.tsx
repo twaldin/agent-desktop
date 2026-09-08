@@ -1,5 +1,6 @@
 import { FileReferenceControl } from "./TranscriptFileReference";
 import { TranscriptMarkdownImage } from "./TranscriptMarkdownImage";
+import { TranscriptMarkdownTable } from "./TranscriptMarkdownTable";
 import { createTranscriptImageResolver } from "./transcript-image-source";
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
@@ -11,7 +12,7 @@ import { SelectableCode } from "./code-selection";
 import "./markdown.css";
 
 export const TranscriptMarkdownContext = createContext<{ actions?: TranscriptLinkActions; views?: MarkdownViewState }>({});
-const MarkdownBlockContext = createContext<{ key: string; scope: string; root: { current: HTMLDivElement | null }; views: MarkdownViewState }>({ key: "", scope: "", root: { current: null }, views: new MarkdownViewState() });
+const MarkdownBlockContext = createContext<{ key: string; scope: string; source: string; allowWideBlocks: boolean; root: { current: HTMLDivElement | null }; views: MarkdownViewState }>({ key: "", scope: "", source: "", allowWideBlocks: false, root: { current: null }, views: new MarkdownViewState() });
 const grammars = createLowlight(common);
 export const HIGHLIGHT_LIMIT = 100_000;
 type SyntaxNode = ReturnType<typeof grammars.highlight>["children"][number];
@@ -24,11 +25,11 @@ export function highlightCode(code: string, language: string) {
   catch { return { kind: "plain" as const, reason: "The language grammar could not highlight this block" }; }
 }
 /** No raw-HTML plugin: CommonMark HTML is displayed literally, never executed. */
-export function MarkdownText({ text, blockKey }: { text: string; blockKey: string }) {
+export function MarkdownText({ text, blockKey, allowWideBlocks = false }: { text: string; blockKey: string; allowWideBlocks?: boolean }) {
   const parent = useContext(TranscriptMarkdownContext), root = useRef<HTMLDivElement>(null);
   const localViews = useMemo(() => new MarkdownViewState(), []);
   const scope = markdownScope(blockKey);
-  const value = useMemo(() => ({ key: blockKey, scope, root, views: parent.views ?? localViews }), [blockKey, scope, parent.views, localViews]);
+  const value = useMemo(() => ({ key: blockKey, scope, source: text, allowWideBlocks, root, views: parent.views ?? localViews }), [blockKey, scope, text, allowWideBlocks, parent.views, localViews]);
   return <MarkdownBlockContext value={value}><div className="transcript-markdown" dir="auto" ref={root}>
     <Markdown remarkPlugins={[remarkGfm]} remarkRehypeOptions={{ clobberPrefix: scope }} components={components} urlTransform={(url, key) => key === "href" || key === "src" ? url : undefined}>{text}</Markdown>
   </div></MarkdownBlockContext>;
@@ -97,6 +98,12 @@ const components: Components = {
   pre: CodeBlock,
   a: MarkdownLink,
   img: MarkdownImage,
-  table: ({ children }) => <div className="markdown-table-scroll" role="region" aria-label="Markdown table" tabIndex={0}><table>{children}</table></div>,
+  table: function Table({ children, node }) {
+    const context = useContext(MarkdownBlockContext);
+    const start = node?.position?.start.offset, end = node?.position?.end.offset;
+    const source = start !== undefined && end !== undefined ? context.source.slice(start, end).trim() : "";
+    return <TranscriptMarkdownTable key={`${context.key}:table:${start ?? 0}`} markdownSource={source} allowWideBlocks={context.allowWideBlocks}>{children}</TranscriptMarkdownTable>;
+  },
+  td: ({ node, ...props }) => <td {...props} data-numeric={node && /^\d+$/.test(node.children.map(textOf).join("")) ? "" : undefined}/> ,
   h2: function Heading({ node: _node, id, ...props }) { const { scope } = useContext(MarkdownBlockContext); return <h2 {...props} id={id === "footnote-label" ? `${scope}footnote-label` : id}/>; },
 };

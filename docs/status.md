@@ -1,5 +1,11 @@
 # Milestone status
 
+## Transcript tables and host-file links
+
+Conversation tables now provide source-backed Copy table and Expand table controls, including rich HTML/Markdown copying, honest failure/retry, live previews and keyboard focus restoration. Absolute transcript file links also open through their owning host, including outside-project files and cached offline buffers. OMP/runtime pins are unchanged.
+
+The table batch passes 44 tests/282 assertions and six isolated Electron interaction checks; the preceding host-file batch passes 92 tests/568 assertions and real-host component acceptance. Typecheck/build pass. These are source/component checkpoints, not installed Work or exact native-pixel acceptance; remaining differences are tracked in [transcript-parity.md](transcript-parity.md).
+
 ## Composer clipboard and repeated file mentions
 
 The main composer now copies native-style file links and HTML, restoring editable file nodes with fresh identities. App clipboard metadata retains the owning host; incomplete or foreign ownership rejects the entire paste without changing the draft. Native HTML falls back from an empty filesystem path to its ordinary path. Undo, redo and offline/reload retain repeated nodes.
