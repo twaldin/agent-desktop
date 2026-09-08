@@ -1,4 +1,12 @@
 import { parseWholeFileAttachments, type Draft, type HostState, type WholeFileAttachment } from '@agent-desktop/shared';
+import { resolveTranscriptFileReference } from './TranscriptFileReference';
+
+export function wholeFileOpenTarget(source:WholeFileAttachment['source'],hostId:string,cwd?:string){
+  if(source.hostId!==hostId)throw new Error('This file belongs to another host. Open its owning conversation to view it.');
+  const target=resolveTranscriptFileReference(source.path,cwd);
+  if('error' in target)throw new Error(target.error);
+  return target.file;
+}
 
 export function appendWholeFile(draft: Draft, hostId: string, source: { hostId: string; path: string }): WholeFileAttachment[] {
   if (source.hostId !== hostId) throw new Error('Choose a conversation on this file’s host to attach it. Your draft is unchanged.');

@@ -12,7 +12,7 @@ import { Icon } from "./Icons";
 import "./composer-autocomplete.css";
 
 interface Props {
-  bridge: DesktopBridge; hostId: string; target?: WorkspaceTarget; draftId: string; text: string; connected: boolean; disabled: boolean;
+  bridge: Pick<DesktopBridge, "getComposerActions" | "getComposerCompletions">; hostId: string; target?: WorkspaceTarget; draftId: string; text: string; connected: boolean; disabled: boolean;
   input: RefObject<ComposerInput | null>; readText(): string; updateText(text: string): void; insertFile?(source:{hostId:string;path:string},range:{start:number;end:number}):void; actions: ComposerAppAction[];
 }
 export function useComposerAutocomplete(props: Props) {

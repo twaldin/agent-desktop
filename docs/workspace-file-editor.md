@@ -1,5 +1,11 @@
 # Workspace file editor
 
+## Composer file activation
+
+Clicking an existing inline file now opens its owner-workspace file panel without changing the draft or sending a prompt. The node uses its current PM identity and the latest composer callback; foreign-host and outside-workspace paths are not remapped. This matches the pinned composer's ordinary pointer callback. Separate keyboard focus, native tooltip and hover-preview behavior belong to other reference surfaces and are not added here.
+
+16 focused tests/109 assertions, app typecheck/build and fixture-inclusive typecheck pass. Seven isolated renderer checks/nine PNG+Chromium AX captures include real pointer activation, loaded file content, unchanged host draft and zero sessions. These are component checks, not installed or registered native-pixel acceptance. Projectless/outside-workspace opening, clipboard restoration and the remaining rich-editor requirements stay open. Private evidence: `.data/composer-file-open-2026-09-07/REPORT.md`.
+
 ## Sent inline-file links
 
 Inline files now serialize into the actual ordinary OMP user text at their authored UTF-16 positions. The surrounding text and whitespace remain intact. This closes the earlier semantic gap where OMP received a native file snapshot but the user text omitted the inline reference. Unpositioned legacy attachments keep their earlier context-only behavior.

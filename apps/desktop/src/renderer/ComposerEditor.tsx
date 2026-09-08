@@ -18,12 +18,14 @@ export interface ComposerEditorHandle extends ComposerInput { readonly element:H
 interface Props {
  inputRef:RefObject<ComposerEditorHandle|null>; scope:string; text:string; files?:readonly WholeFileAttachment[]; disabled?:boolean;placeholder:string;
  onChange(value:{text:string;files:WholeFileAttachment[]}):void;
+ onOpenFile?(source:WholeFileAttachment['source']):void;
  onSelection?():void;onFocus?():void;onBlur?():void;onCompositionStart?():void;onCompositionEnd?():void;
  onKeyDown?(event:ReactKeyboardEvent<HTMLElement>):void;
  ariaControls?:string;ariaExpanded?:boolean;ariaActiveDescendant?:string;
 }
 export function ComposerEditor(props:Props){
  const mount=useRef<HTMLDivElement>(null),viewRef=useRef<EditorView|null>(null),lastPropDocument=useRef<ProseMirrorNode|null>(null),latest=useRef(props);latest.current=props;
+ const activateFile=(id:string)=>{const view=viewRef.current;if(!view)return;const file=readComposerDocument(view.state.doc).files.find(file=>file.id===id);if(file)latest.current.onOpenFile?.(file.source);};
  useLayoutEffect(()=>{
   const roots=new Set<Root>();let view:EditorView;
   const newline=(state:EditorState,dispatch?:EditorView['dispatch'])=>{dispatch?.(state.tr.replaceSelectionWith(composerSchema.nodes.hard_break!.create()).scrollIntoView());return true;};
@@ -32,7 +34,9 @@ export function ComposerEditor(props:Props){
    editable:()=>!latest.current.disabled,
    attributes:{id:'prompt',role:'textbox','aria-multiline':'true',spellcheck:'true',class:'composer-rich-input'},
    nodeViews:{file:node=>{
-    const dom=document.createElement('span');dom.className='composer-inline-file';dom.contentEditable='false';dom.title=node.attrs.path;dom.dataset.fileId=node.attrs.id;
+    const dom=document.createElement('span');dom.className='composer-inline-file';dom.contentEditable='false';dom.dataset.fileId=node.attrs.id;
+    if(latest.current.onOpenFile)dom.dataset.interactive='true';
+    dom.addEventListener('click',event=>{if(!latest.current.onOpenFile)return;event.preventDefault();event.stopPropagation();activateFile(node.attrs.id);});
     const icon=document.createElement('span');icon.className='composer-inline-file-icon';const root=createRoot(icon);roots.add(root);root.render(<TreeFileIcon path={node.attrs.path}/>);
     const label=document.createElement('span');label.textContent=node.attrs.path.split('/').at(-1);dom.append(icon,label);
     return{dom,selectNode:()=>dom.classList.add('ProseMirror-selectednode'),deselectNode:()=>dom.classList.remove('ProseMirror-selectednode'),destroy:()=>{roots.delete(root);queueMicrotask(()=>root.unmount());}};

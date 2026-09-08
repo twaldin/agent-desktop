@@ -51,6 +51,20 @@ app.whenReady().then(async()=>{
   await wait(`window.wholeDraft().status==='saved'&&window.wholeDraft().draft.wholeFileAttachments.length===0`);
   final=await js(`window.request('/test/whole-state',{})`);if(final.draft.text!=='🙂 before Cobalt after OFFLINE '||final.sessions!==0)throw Error('Removing last inline file changed authored text');
   await capture('08-all-files-removed');checks.push('Removing both saved inline atoms persists an empty manifest through v8 without changing authored text or creating sessions');
+  step='activate-existing-file';if(!await js(`document.querySelector('[role="treeitem"][title="second.ts"]')?.getClientRects().length`))await click('button[aria-label="Toggle file tree"]');
+  await wait(`document.querySelector('[role="treeitem"][title="second.ts"]')?.getClientRects().length`);await add();await wait(`window.wholeDraft().status==='saved'&&window.wholeDraft().draft.wholeFileAttachments.length===1`);
+  const beforeActivation=await js('window.wholeDraft().draft');
+  await click('.composer-inline-file');
+  await wait(`window.state().fileActivations.length===1&&window.state().workspaceOpened==='second.ts'&&window.state().openedText`);
+  const opened=await js(`window.request('/test/file',{file:'second.ts'})`),activation=await js('window.state()');
+  if(activation.openedText!==opened.text||activation.fileActivations[0].source.hostId!==launch.hostId||activation.fileActivations[0].source.path!==launch.project+'/second.ts')throw Error('Activation lost the literal owner file');
+  await wait(`window.editor()?.innerText.includes(${JSON.stringify(opened.text.trim())})`);
+  if(JSON.stringify(await js('window.wholeDraft().draft'))!==JSON.stringify(beforeActivation)||activation.submitKeys!==0)throw Error('Opening a file changed/submitted its draft');
+  const mention=await js(`(()=>{const node=document.querySelector('.composer-inline-file');return{role:node.getAttribute('role'),tabIndex:node.getAttribute('tabindex'),title:node.getAttribute('title'),cursor:getComputedStyle(node).cursor};})()`);
+  if(mention.role!==null||mention.tabIndex!==null||mention.title!==null||mention.cursor!=='pointer')throw Error('Composer mention acquired non-reference focus/tooltip semantics');
+  final=await js(`window.request('/test/whole-state',{})`);
+  if(final.sessions!==0||final.draft.text!==beforeActivation.text||JSON.stringify(final.draft.wholeFileAttachments)!==JSON.stringify(beforeActivation.wholeFileAttachments))throw Error('Host draft/session changed during file activation');
+  await capture('09-file-opened');checks.push('Real pointer activation of the existing inline file opens its owner-host contents in the production workspace editor, without changing/submitting the draft; no extra focus stop or native tooltip');
   if((await js('window.state().runtimeErrors')).length)throw Error('Renderer error');
   fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({passed:true,checks,captures,final,electron:process.versions.electron,zoom:win.webContents.getZoomFactor(),scope:'Hidden renderer component with authenticated host and real keyboard events; no installed/native-window/pixel parity claim'},null,2));
  }catch(error){fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({passed:false,step,error:String(error.stack||error),checks,captures,consoleMessages,state:await js('window.state()').catch(()=>null)},null,2));process.exitCode=1;}

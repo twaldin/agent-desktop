@@ -1,6 +1,6 @@
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import { remapFileOffsets } from "./composer-document";
-import { appendWholeFile, wholeFileSendIssue } from "./whole-file-composer";
+import { appendWholeFile, wholeFileSendIssue, wholeFileOpenTarget } from "./whole-file-composer";
 import { ComposerSelectedText } from "./ComposerSelectedText";
 import { appendSelectedText, selectedTextSendIssue } from "./selected-text-composer";
 import type { FileTextSelection } from "@agent-desktop/shared";
@@ -688,6 +688,10 @@ export function App() {
             <label className="sr-only" htmlFor="prompt">Message</label>
             <span id="prompt-keyboard-hint" className="sr-only">{`${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${running ? "steer" : "send"}. Shift Enter for a new line.`}</span>
             <ComposerEditor inputRef={textarea} scope={routeKey+':'+draftId} text={draft.text} files={draft.wholeFileAttachments}
+              onOpenFile={source=>{try {
+                const file=wholeFileOpenTarget(source,hostId,selected?.cwd??project?.path);
+                void Promise.resolve(transcriptLinkActions.openFile?.(file)).catch(cause=>setActionError(errorMessage(cause)));
+              }catch(cause){setActionError(errorMessage(cause));}}}
               onChange={({text,files})=>drafts.update(draftId,{text,...(files.length||draft.wholeFileAttachments!==undefined?{wholeFileAttachments:files}:{})})}
               onSelection={autocomplete.observeCaret} onFocus={autocomplete.inputProps.onFocus} onBlur={autocomplete.inputProps.onBlur}
               onCompositionStart={autocomplete.inputProps.onCompositionStart} onCompositionEnd={autocomplete.inputProps.onCompositionEnd}
