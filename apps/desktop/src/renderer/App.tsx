@@ -1,4 +1,5 @@
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
+import { createTranscriptImageResolver } from "./transcript-image-source";
 import { remapFileOffsets } from "./composer-document";
 import { appendWholeFile, wholeFileSendIssue, wholeFileOpenTarget } from "./whole-file-composer";
 import { ComposerSelectedText } from "./ComposerSelectedText";
@@ -294,8 +295,11 @@ export function App() {
     void workspace.restore();
     return release;
   }, [workspace, connected]);
+  const imageConnection = useRef(connected); imageConnection.current = connected;
+  const transcriptImageResolver = useMemo(() => createTranscriptImageResolver(bridge, hostId, () => imageConnection.current), [bridge, hostId]);
   const transcriptLinkActions: TranscriptLinkActions = {
     ownerKey: `${workspaceOwner}:${connected}`,
+    images: { ownerKey: `${hostId}:${selectedId}:${workspace?.imageGeneration ?? 0}`, resolve: transcriptImageResolver },
     ...(workspace ? transcriptHostFileActions(workspace) : {}),
     saveFileCopy: workspace?.canSaveCopy ? async file => { await workspace!.saveCopy(file.path); } : undefined,
     cwd: selected?.cwd,

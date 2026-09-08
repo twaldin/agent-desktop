@@ -57,7 +57,7 @@ describe("CommonMark/GFM production renderer contracts", () => {
     const html = render('<script>window.fixture=true</script>\n\n[unsafe](javascript:alert%281%29) [data](data:text/html,test) [credentials](https://user:pass@example.com/)\n\n![Description](https://example.com/tracker.png)');
     expect(html).toContain("&lt;script&gt;"); expect(html).not.toContain("<script>"); expect(html).not.toContain("href=");
     expect(html).not.toContain("<img"); expect(html).not.toContain("<link"); expect(html).not.toContain("tracker.png");
-    expect(html).toContain("Image: Description"); expect(html).toContain("attachments are not available");
+    expect(html).toContain("Description"); expect(html).toContain("Remote images are unavailable");
   });
   test("owner file links are app actions, external autolinks are sanitized, and unavailable schemes are readable", () => {
     const html = render("[File](/home/owner/project/src/a.ts:12) [relative](src/b.ts#L3C2) https://example.com/path\n\n[mail](mailto:person@example.com) [outside](/etc/passwd)");

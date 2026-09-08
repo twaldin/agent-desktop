@@ -1,4 +1,5 @@
 import type { WorkspaceQueryResult } from "@agent-desktop/shared";
+import type { TranscriptImageActions } from "./transcript-image-source";
 export interface WorkspaceFileLink { path: string; line?: number; column?: number; endLine?: number }
 export interface WorkspaceFileRequest extends WorkspaceFileLink { id: string }
 export interface TranscriptLinkActions {
@@ -6,6 +7,7 @@ export interface TranscriptLinkActions {
   cwd?: string;
   /** Changes when the owner or connection changes; invalidates pending menu reads. */
   ownerKey?: string;
+  images?: TranscriptImageActions;
   fileOpenOptions?(file: WorkspaceFileLink): Promise<Extract<WorkspaceQueryResult, { type: "file.open-options" }>>;
   saveFileCopy?(file: WorkspaceFileLink): Promise<void>;
   openFileOnHost?(file: WorkspaceFileLink, targetId?: string): Promise<void>;

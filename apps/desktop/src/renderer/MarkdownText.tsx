@@ -1,4 +1,6 @@
 import { FileReferenceControl } from "./TranscriptFileReference";
+import { TranscriptMarkdownImage } from "./TranscriptMarkdownImage";
+import { createTranscriptImageResolver } from "./transcript-image-source";
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -28,7 +30,7 @@ export function MarkdownText({ text, blockKey }: { text: string; blockKey: strin
   const scope = markdownScope(blockKey);
   const value = useMemo(() => ({ key: blockKey, scope, root, views: parent.views ?? localViews }), [blockKey, scope, parent.views, localViews]);
   return <MarkdownBlockContext value={value}><div className="transcript-markdown" dir="auto" ref={root}>
-    <Markdown remarkPlugins={[remarkGfm]} remarkRehypeOptions={{ clobberPrefix: scope }} components={components} urlTransform={(url, key) => key === "href" ? url : undefined}>{text}</Markdown>
+    <Markdown remarkPlugins={[remarkGfm]} remarkRehypeOptions={{ clobberPrefix: scope }} components={components} urlTransform={(url, key) => key === "href" || key === "src" ? url : undefined}>{text}</Markdown>
   </div></MarkdownBlockContext>;
 }
 function syntax(nodes: SyntaxNode[], prefix = ""): ReactNode[] {
@@ -81,10 +83,20 @@ function MarkdownLink({ href, children, node: _node, ...props }: React.Component
     : <a {...props} aria-describedby={describedBy} href={link.kind === "external" ? link.url : `#${link.id}`} rel="noreferrer noopener" onClick={event => { event.preventDefault(); void open(); }} onAuxClick={event => { event.preventDefault(); if (event.button === 1) void open(); }}>{children}</a>;
   return <>{content}{error && <span className="markdown-link-error" role="alert">{error}</span>}</>;
 }
+const unownedImage = createTranscriptImageResolver({}, undefined, () => false);
+function MarkdownImage({ src, alt, title }: React.ComponentProps<"img">) {
+  const { actions } = useContext(TranscriptMarkdownContext), context = useContext(MarkdownBlockContext);
+  const resolver = useRef(actions?.images?.resolve ?? unownedImage);
+  resolver.current = actions?.images?.resolve ?? unownedImage;
+  const href = typeof src === "string" ? src : "";
+  // App action objects may change during streaming; an unchanged image retains its decoded lease.
+  const presentation = useMemo(() => resolver.current(href), [href, actions?.images?.ownerKey]);
+  return <TranscriptMarkdownImage {...presentation} alt={alt ?? ""} title={title} rootRef={context.root}/>;
+}
 const components: Components = {
   pre: CodeBlock,
   a: MarkdownLink,
-  img: ({ alt }) => <span className="markdown-image-placeholder">Image{alt ? `: ${alt}` : ""} (attachments are not available in this build)</span>,
+  img: MarkdownImage,
   table: ({ children }) => <div className="markdown-table-scroll" role="region" aria-label="Markdown table" tabIndex={0}><table>{children}</table></div>,
   h2: function Heading({ node: _node, id, ...props }) { const { scope } = useContext(MarkdownBlockContext); return <h2 {...props} id={id === "footnote-label" ? `${scope}footnote-label` : id}/>; },
 };

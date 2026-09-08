@@ -1,0 +1,20 @@
+.transcript-markdown-image { display:inline-block; margin:12px 0; padding:0; vertical-align:top; border:0; border-radius:0; background:transparent; cursor:zoom-in; }
+.transcript-markdown-image > img { display:block; max-width:200px; max-height:200px; width:auto; height:auto; border:1px solid var(--border); border-radius:calc(8px * var(--corner-radius-scale)); box-shadow:0 2px 4px -1px #00000014; object-fit:contain; }
+.transcript-markdown-image-unavailable { display:inline-flex; min-width:96px; min-height:96px; max-width:200px; margin:12px 0; padding:12px; align-items:center; justify-content:center; gap:7px; color:var(--secondary); border:1px solid var(--border); border-radius:6px; background:var(--hover); font-size:var(--small-font-size); text-align:center; overflow-wrap:anywhere; vertical-align:top; }
+.transcript-markdown-image-unavailable .icon { width:20px; height:20px; }
+.transcript-markdown-image-dialog { position:fixed; inset:0; width:100vw; max-width:none; height:100dvh; max-height:none; margin:0; padding:0; overflow:visible; border:0; border-radius:0; color:var(--text); background:transparent; box-shadow:none; }
+.transcript-markdown-image-dialog::backdrop { background:rgb(0 0 0 / .9); }
+.transcript-markdown-image-actions { position:absolute; z-index:2; top:12px; right:12px; display:flex; gap:8px; }
+.transcript-markdown-image-actions .icon-button { width:40px; height:40px; padding:8px; background:color-mix(in srgb, var(--elevated-surface) 95%, transparent); box-shadow:0 1px 4px rgb(0 0 0 / .2); }
+.transcript-markdown-image-download-icon { transform:rotate(180deg); }
+.transcript-markdown-image-download-error { position:absolute; z-index:3; top:52px; right:12px; max-width:min(28rem,calc(100% - 24px)); margin:0; padding:7px 9px; border:1px solid var(--border); border-radius:var(--radius-small); color:var(--danger); background:var(--elevated-surface); box-shadow:0 1px 4px rgb(0 0 0 / .2); font-size:var(--small-font-size); overflow-wrap:anywhere; }
+.transcript-markdown-image-viewport { display:flex; width:100%; height:100%; padding:48px 16px 16px; align-items:center; justify-content:center; overflow:auto; touch-action:none; cursor:grab; }
+.transcript-markdown-image-viewport.gallery { padding-inline:64px; }
+.transcript-markdown-image-viewport:active { cursor:grabbing; }
+.transcript-markdown-image-viewport > img { display:block; max-width:100%; max-height:100%; border-radius:calc(10px * var(--corner-radius-scale)); object-fit:contain; transform-origin:center; transition:transform 80ms linear; user-select:none; }
+@media (prefers-reduced-motion: reduce) { .transcript-markdown-image-viewport > img { transition:none; } }
+.transcript-markdown-image-nav { position:absolute; z-index:2; top:50%; width:36px; height:36px; padding:8px; border-radius:999px; color:var(--text); background:color-mix(in srgb, var(--elevated-surface) 95%, transparent); box-shadow:0 1px 4px rgb(0 0 0 / .2); transform:translateY(-50%); }
+.transcript-markdown-image-nav.previous { left:12px; transform:translateY(-50%) rotate(180deg); }.transcript-markdown-image-nav.next { right:12px; }
+.transcript-markdown-image-nav .icon { width:20px; height:20px; }
+.transcript-markdown-image-zoom { position:absolute; z-index:2; right:50%; bottom:14px; display:flex; overflow:hidden; border:1px solid var(--border); border-radius:999px; background:color-mix(in srgb, var(--elevated-surface) 94%, transparent); box-shadow:0 1px 4px rgb(0 0 0 / .2); transform:translateX(50%); }
+.transcript-markdown-image-zoom button { min-width:36px; height:32px; padding:0 9px; border-radius:0; }.transcript-markdown-image-zoom button + button { border-left:1px solid var(--border); }
