@@ -1,5 +1,13 @@
 # Milestone status
 
+## Inline file mentions
+
+The main composer now uses ProseMirror inline file nodes. Tree Add to chat inserts at the caret; OMP's native @ file completion selects the same owner-host node. Text edits, Backspace and undo/redo preserve authored text and update the stored UTF-16 positions. Offline draft reload restores the same file positions. Directory and native-resource completions retain OMP insertion text.
+
+Public v8 and schema10 prevent older hosts from dropping inline metadata or consuming its saved draft. The package manifest now declares schemas1–10. The pinned OMP18.1.10 worker32 admission path and app-owned Bun1.3.14 remain unchanged.
+
+101 focused tests/694 assertions,16 packaging/compatibility tests and the final store bounds checks pass, as do TypeScript and the app build. Six combined renderer checks/eight PNG+Chromium-AX captures exercise actual keyboard editing and native OMP completion with zero sessions/prompts. These are isolated component checks, not installed or matched native-pixel acceptance. Clipboard restoration, sent inline placement, hover/open, rich selected-text nodes and whole-file steering/command combinations remain open. Private evidence: `.data/inline-files-2026-09-07/REPORT.md` and `.data/inline-files-ui-2026-09-07-r7/`.
+
 ## Whole-file Add to chat
 
 File-tree Add to chat now stages a host-bound whole-file reference, deduplicates repeated selections, restores composer focus and supports removal without losing authored text. Draft cache/conflict handling and submission retries retain the exact reference. Public v7, worker32 and schema9 prevent older consumers from silently dropping this context.

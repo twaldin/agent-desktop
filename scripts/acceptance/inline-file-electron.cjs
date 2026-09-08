@@ -1,0 +1,58 @@
+const {app,BrowserWindow}=require('electron'),fs=require('node:fs'),path=require('node:path');
+const output=process.argv[2],launch=JSON.parse(fs.readFileSync(path.join(output,'launch.json'),'utf8'));
+app.setPath('userData',launch.profile);app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.whenReady().then(async()=>{
+ const win=new BrowserWindow({width:1440,height:1000,useContentSize:true,show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+ const js=source=>win.webContents.executeJavaScript(source),sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ const checks=[],captures=[],consoleMessages=[];win.webContents.on('console-message',(...args)=>consoleMessages.push(args.slice(1).map(String).join(' | ')));
+ const wait=async source=>{for(let i=0;i<400;i++){if(await js(source))return;await sleep(25);}throw Error('Condition failed: '+source);};
+ const click=async(selector,label,button='left')=>{const p=await js(`window.target(${JSON.stringify(selector)},${JSON.stringify(label)})`);for(const type of ['mouseMove','mouseDown','mouseUp'])win.webContents.sendInputEvent({type,...p,...(type==='mouseMove'?{}:{button,clickCount:1})});await sleep(100);};
+ const key=async(keyCode,modifiers=[])=>{for(const type of ['keyDown','keyUp'])win.webContents.sendInputEvent({type,keyCode,modifiers});await sleep(60);};
+ const capture=async name=>{fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());fs.writeFileSync(path.join(output,name+'.ax.json'),JSON.stringify(await win.webContents.debugger.sendCommand('Accessibility.getFullAXTree')));captures.push({name,state:await js('window.state()'),draft:await js('window.wholeDraft()')});};
+ const add=async()=>{await click('[role="treeitem"][title="second.ts"]',undefined,'right');await wait(`document.querySelector('.workspace-file-open-menu')?.textContent.includes('Add to chat')`);await click('.workspace-file-open-menu [role="menuitem"]','Add to chat');};
+ let step='load';
+ try{
+  await win.loadFile(path.join(output,'web','index.html'),{query:{endpoint:launch.endpoint,target:JSON.stringify(launch.target),hostId:launch.hostId,project:launch.project,wholeFiles:'true',inlineFiles:'true'}});
+  win.webContents.focus();win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Accessibility.enable');
+  await wait(`window.state().restored&&window.editor()`);await click('button[aria-label="Toggle file tree"]');await wait(`document.querySelector('[role="treeitem"][title="second.ts"]')`);
+  step='caret-insertion';await click('#prompt');await win.webContents.insertText('before after');await wait(`window.wholeDraft().draft.text==='before after'`);await sleep(100);
+  for(let i=0;i<5;i++)await key('Left');
+  const caret=await js(`(()=>{const selection=getSelection();const range=document.createRange();range.selectNodeContents(document.querySelector('#prompt'));range.setEnd(selection.anchorNode,selection.anchorOffset);return range.toString().length;})()`);if(caret!==7)throw Error('Native pre-menu caret '+caret+' expected 7');
+  await add();await wait(`window.wholeDraft().status==='saved'&&document.querySelector('.composer-inline-file')`);
+  const first=await js(`window.request('/test/whole-state',{})`);
+  if(first.draft.text!=='before after'||first.draft.wholeFileAttachments[0].textOffset!==7||first.sessions!==0)throw Error('Wrong caret insertion '+JSON.stringify(first));
+  if(await js('document.activeElement?.id')!=='prompt')throw Error('Composer focus not restored');
+  await capture('01-inline-file');checks.push('Actual context-menu insertion preserves authored text and persists the file at native caret UTF-16 offset 7 via v8');
+  step='delete-undo';await key('Backspace');await wait(`window.wholeDraft().draft.wholeFileAttachments.length===0`);
+  if(await js('window.wholeDraft().draft.text')!=='before after')throw Error('Deleting atom deleted adjacent text');
+  await key('z',['meta']);await wait(`window.wholeDraft().draft.wholeFileAttachments.length===1`);
+  await key('z',['meta','shift']);await wait(`window.wholeDraft().draft.wholeFileAttachments.length===0`);
+  await key('z',['meta']);await wait(`window.wholeDraft().draft.wholeFileAttachments.length===1`);
+  await capture('02-undo-restored');checks.push('Native Backspace removes exactly the file atom; native undo/redo restores/removes it without changing authored text');
+  step='edit-around-node';await win.webContents.insertText('Cobalt ');await wait(`window.wholeDraft().draft.text==='before Cobalt after'`);
+  for(let i=0;i<15;i++)await key('Left');await win.webContents.insertText('🙂 ');
+  await wait(`window.wholeDraft().status==='saved'&&window.wholeDraft().draft.text==='🙂 before Cobalt after'`);
+  if(await js('window.wholeDraft().draft.wholeFileAttachments[0].textOffset')!==10)throw Error('Emoji edit did not remap offset');
+  await capture('03-edited-inline');checks.push('Typing on both sides retains node placement; surrogate-pair text before it maps the persisted offset to 10');
+  step='offline-reload';await js('window.connection(false)');for(let i=0;i<40;i++)await key('Right');await win.webContents.insertText(' OFFLINE');await wait(`window.wholeDraft().status==='offline'`);await capture('04-offline');
+  await win.webContents.reload();await wait(`window.wholeDraft?.().status==='saved'&&window.wholeDraft().draft.text==='🙂 before Cobalt after OFFLINE'`);
+  let final=await js(`window.request('/test/whole-state',{})`);
+  if(final.sessions!==0||final.draft.wholeFileAttachments.length!==1||final.draft.wholeFileAttachments[0].textOffset!==10)throw Error('Reload lost file position');
+  await capture('05-restored');checks.push('Offline text/file position survives renderer reload and reconnect; no sessions or prompts created');
+  step='native-completion';await click('#prompt');for(let i=0;i<45;i++)await key('Right');await win.webContents.insertText(' @first');
+  await wait(`document.querySelector('.composer-autocomplete-row')?.textContent.includes('first.ts')`);await capture('06-native-file-popup');
+  await key('Enter');await wait(`window.wholeDraft().status==='saved'&&window.wholeDraft().draft.wholeFileAttachments.length===2`);
+  final=await js(`window.request('/test/whole-state',{})`);
+  if(final.sessions!==0||final.draft.text!=='🙂 before Cobalt after OFFLINE '||final.draft.wholeFileAttachments[1].source.path!==launch.project+'/first.ts'||final.draft.wholeFileAttachments[1].textOffset!==final.draft.text.length)throw Error('Completion did not retain native file identity '+JSON.stringify(final));
+  if(await js(`getComputedStyle(document.querySelector('#prompt .ProseMirror-separator')).display`)!=='inline')throw Error('Tailwind reset changed the editor caret separator to a block');
+  await capture('07-native-completion');checks.push('Actual @ popup uses pinned OMP completion metadata; Enter replaces its query with an inline owner-host file atom without sending or inserting a newline');
+  step='persist-removal';await key('Backspace');await wait(`window.wholeDraft().status==='saved'&&window.wholeDraft().draft.wholeFileAttachments.length===1`);
+  for(let i=0;i<40;i++)await key('Left');for(let i=0;i<10;i++)await key('Right');await key('Backspace');
+  await wait(`window.wholeDraft().status==='saved'&&window.wholeDraft().draft.wholeFileAttachments.length===0`);
+  final=await js(`window.request('/test/whole-state',{})`);if(final.draft.text!=='🙂 before Cobalt after OFFLINE '||final.sessions!==0)throw Error('Removing last inline file changed authored text');
+  await capture('08-all-files-removed');checks.push('Removing both saved inline atoms persists an empty manifest through v8 without changing authored text or creating sessions');
+  if((await js('window.state().runtimeErrors')).length)throw Error('Renderer error');
+  fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({passed:true,checks,captures,final,electron:process.versions.electron,zoom:win.webContents.getZoomFactor(),scope:'Hidden renderer component with authenticated host and real keyboard events; no installed/native-window/pixel parity claim'},null,2));
+ }catch(error){fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({passed:false,step,error:String(error.stack||error),checks,captures,consoleMessages,state:await js('window.state()').catch(()=>null)},null,2));process.exitCode=1;}
+ finally{win.destroy();app.exit(process.exitCode||0);}
+});

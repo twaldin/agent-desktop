@@ -1,3 +1,4 @@
+import type { ComposerInput } from "./ComposerEditor";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -12,7 +13,7 @@ import "./composer-autocomplete.css";
 
 interface Props {
   bridge: DesktopBridge; hostId: string; target?: WorkspaceTarget; draftId: string; text: string; connected: boolean; disabled: boolean;
-  input: RefObject<HTMLTextAreaElement | null>; readText(): string; updateText(text: string): void; actions: ComposerAppAction[];
+  input: RefObject<ComposerInput | null>; readText(): string; updateText(text: string): void; insertFile?(source:{hostId:string;path:string},range:{start:number;end:number}):void; actions: ComposerAppAction[];
 }
 export function useComposerAutocomplete(props: Props) {
   const { bridge, hostId, target, draftId, text, input, connected, disabled } = props;
@@ -85,10 +86,18 @@ export function useComposerAutocomplete(props: Props) {
       pendingAction.current = true; setActionState({ scope, pending: true });
       try {
         await item.action.run();
-        if (props.readText() === captured) props.updateText(replaceComposerToken(captured, token, "").text);
+        if (currentScope.current === capturedScope && props.readText() === captured) props.updateText(replaceComposerToken(captured, token, "").text);
         if (currentScope.current === capturedScope) { setDismissed(capturedKey); setActionState({ scope }); }
       } catch (cause) { if (currentScope.current === capturedScope) setActionState({ scope, error: errorMessage(cause) }); }
       finally { pendingAction.current = false; }
+      return;
+    }
+    if (item.source && props.insertFile) {
+      try {
+        props.insertFile(item.source,{start:token.start,end:token.end});
+        setDismissed(`${scope}:${props.readText()}:${token.start}`);setHighlight(undefined);setActionState(undefined);
+        input.current?.focus();observeCaret();
+      } catch(cause) { setActionState({scope,error:errorMessage(cause)}); }
       return;
     }
     const replacement = replaceComposerToken(captured, token, item.insertText);
@@ -101,7 +110,7 @@ export function useComposerAutocomplete(props: Props) {
       setCaret({ scope, start: replacement.caret, end: replacement.caret });
     });
   };
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>): boolean => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return false;
     if (!open || event.ctrlKey || event.metaKey || event.altKey) return false;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDismissed(key); return true; }
@@ -117,7 +126,7 @@ export function useComposerAutocomplete(props: Props) {
     return false;
   };
   return {
-    open, composing,
+    open, composing, observeCaret,
     inputProps: {
       "aria-autocomplete": "list" as const, "aria-controls": open ? menuId : undefined, "aria-expanded": open, "aria-activedescendant": open ? activeId : undefined,
       onFocus: () => { setFocused(true); observeCaret(); }, onBlur: () => setFocused(false), onSelect: observeCaret,
@@ -136,7 +145,7 @@ function CompletionIcon({ item }: { item: ComposerSuggestion }) {
   return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">{item.icon === "skill" ? <><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></> : item.icon === "file" ? <><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Z"/><path d="M14 3v5h5"/></> : <><path d="m8 5-4 7 4 7m8-14 4 7-4 7M13.5 4l-3 16"/></>}</svg>;
 }
 function ComposerAutocompletePopup({ input, id, items, selectedId, onHighlight, onSelect, pending, loading, error, notice, onRefresh, connected, kind }: {
-  input: RefObject<HTMLTextAreaElement | null>; id: string; items: ComposerSuggestion[]; selectedId?: string;
+  input: RefObject<ComposerInput | null>; id: string; items: ComposerSuggestion[]; selectedId?: string;
   onHighlight(id: string): void; onSelect(item: ComposerSuggestion): void; pending: boolean; loading: boolean; error?: string; notice?: string; onRefresh(): void; connected: boolean; kind: string;
 }) {
   const [position, setPosition] = useState<{ left: number; bottom: number; width: number; maxHeight: number }>();

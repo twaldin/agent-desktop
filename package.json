@@ -22,6 +22,12 @@
     "@shikijs/themes": "4.4.3",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "prosemirror-commands": "1.7.2",
+    "prosemirror-history": "1.5.0",
+    "prosemirror-keymap": "1.2.3",
+    "prosemirror-model": "1.25.11",
+    "prosemirror-state": "1.4.4",
+    "prosemirror-view": "1.42.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "shiki": "3.20.0",
@@ -40,7 +46,9 @@
     "vite": "8.2.2"
   },
   "trustedDependencies": ["electron"],
-  "overrides": { "@types/node": "24.13.3" },
+  "overrides": {
+    "@types/node": "24.13.3"
+  },
   "patchedDependencies": {
     "@oh-my-pi/pi-coding-agent@18.1.10": "patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch",
     "@oh-my-pi/pi-utils@18.1.10": "patches/@oh-my-pi%2Fpi-utils@18.1.10.patch"

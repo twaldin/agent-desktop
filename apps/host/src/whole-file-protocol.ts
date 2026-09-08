@@ -1,3 +1,5 @@
+import { hasInlineFileIntent } from "@agent-desktop/shared";
+export { hasInlineFileIntent } from "@agent-desktop/shared";
 import type { Draft, HostCommand } from "@agent-desktop/shared";
 export function hasWholeFileIntent(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
@@ -9,4 +11,10 @@ export function requiresWholeFileProtocol(command: HostCommand, getDraft: (id: s
   if (hasWholeFileIntent(command)) return true;
   const id = command.type === "draft.put" ? command.draft.id : "draft" in command ? command.draft?.id : undefined;
   return id !== undefined && getDraft(id)?.wholeFileAttachments !== undefined;
+}
+
+export function requiresInlineFileProtocol(command:HostCommand,getDraft:(id:string)=>Draft|undefined):boolean {
+ if(hasInlineFileIntent(command))return true;
+ const id=command.type==='draft.put'?command.draft.id:'draft'in command?command.draft?.id:undefined;
+ return id!==undefined&&Boolean(getDraft(id)?.wholeFileAttachments?.some(file=>file.textOffset!==undefined));
 }

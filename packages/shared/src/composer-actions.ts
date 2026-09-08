@@ -92,6 +92,8 @@ export interface ComposerCompletion {
   description?: string;
   insertText: string;
   kind: "file-reference" | "directory-reference" | "native-reference" | "command-argument";
+  /** Canonical absolute path on the response owner's host, when native lookup proved a regular file. */
+  path?: string;
 }
 export interface ComposerCompletions {
   protocolVersion: typeof COMPOSER_ACTIONS_PROTOCOL_VERSION;

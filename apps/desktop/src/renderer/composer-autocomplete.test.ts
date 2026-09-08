@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { ComposerAction, ComposerActionsCatalog } from "../../../../packages/shared/src/composer-actions";
-import { assertComposerOwner, catalogSuggestions, composerToken, nextSuggestion, replaceComposerToken } from "./composer-autocomplete";
+import type { ComposerAction, ComposerActionsCatalog, ComposerCompletions } from "../../../../packages/shared/src/composer-actions";
+import { assertComposerOwner, catalogSuggestions, composerToken, fileSuggestions, nextSuggestion, replaceComposerToken } from "./composer-autocomplete";
 
 const action: ComposerAction = { id: "mode", name: "mode", aliases: ["m"], description: "Set mode", insertText: "/mode ", source: { kind: "builtin", label: "OMP" }, availability: "executable", argumentCompletions: true };
 const catalog: ComposerActionsCatalog = { protocolVersion: 1, hostId: "home", target: { sessionId: "one" }, cwd: "/project", revision: "1", referenceSchemes: ["skill", "local"], commands: [action], skills: [{ ...action, id: "skill", name: "review", insertText: "/skill:review ", source: { kind: "skill", label: "Personal" } }], diagnostics: [] };
@@ -39,6 +39,17 @@ describe("composer completion boundaries and native insertion", () => {
     expect(replaceComposerToken(text, selected, "plan").text).toBe("/m plan tail");
     expect(token("/unknown args")).toBeUndefined();
     expect(token("/mode ")?.query).toBe("");
+  });
+  test("file suggestions retain the native owner and only proven absolute file paths", () => {
+    const completions: ComposerCompletions = { protocolVersion: 1, hostId: "work", cwd: "/owner/project", revision: "1", truncated: false, diagnostics: [], items: [
+      { id: "file", label: "source file.ts", insertText: '@"source file.ts" ', kind: "file-reference", path: "/owner/project/source file.ts" },
+      { id: "folder", label: "folder/", insertText: "@folder/ ", kind: "directory-reference" },
+    ] };
+    expect(fileSuggestions(completions)).toMatchObject([
+      { id: "file:file", source: { hostId: "work", path: "/owner/project/source file.ts" } },
+      { id: "file:folder" },
+    ]);
+    expect(fileSuggestions(completions)[1]?.source).toBeUndefined();
   });
   test("skills use native invocation and reject invalid native nesting", () => {
     const text = "Please $rev";

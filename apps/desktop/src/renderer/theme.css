@@ -37,7 +37,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-v
 .workspace-panel { background:color-mix(in srgb,var(--panel-surface) calc(var(--panel-opacity) * 100%),transparent); backdrop-filter:blur(var(--panel-blur)); border-radius:var(--panel-radius); }
 .composer { background:color-mix(in srgb,var(--composer-surface) calc(var(--composer-opacity) * 100%),transparent); border-radius:calc(var(--composer-radius) * var(--corner-radius-scale)); border-width:var(--composer-border-width); }
 .composer, .user-message .message-body, .icon-button, .model-picker-dialog, .action-menu { corner-shape:superellipse(var(--corner-exponent)); }
-.composer textarea { padding:calc(var(--composer-padding) * var(--spacing-scale)) calc(var(--composer-padding) * var(--spacing-scale)) calc(var(--spacing-xs) * var(--spacing-scale)); line-height:var(--line-height); }
+.composer textarea, .composer .composer-rich-input { padding:calc(var(--composer-padding) * var(--spacing-scale)) calc(var(--composer-padding) * var(--spacing-scale)) calc(var(--spacing-xs) * var(--spacing-scale)); line-height:var(--line-height); }
 .composer-toolbar { padding:calc(var(--composer-padding) * 0.6666667 * var(--spacing-scale)); gap:calc(var(--spacing-sm) * .875 * var(--spacing-scale)); }
 .composer-region { width:min(calc(100% - var(--spacing-xl)),calc(var(--conversation-width) - var(--spacing-xl))); }
 .sidebar-actions { padding:0 calc(var(--spacing-sm) * var(--spacing-scale)) calc(var(--spacing-lg) * var(--spacing-scale)); }

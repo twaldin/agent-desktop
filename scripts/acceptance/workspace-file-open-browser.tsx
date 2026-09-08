@@ -1,7 +1,9 @@
+import { useComposerAutocomplete } from "../../apps/desktop/src/renderer/ComposerAutocomplete";
+import { ComposerEditor, type ComposerEditorHandle } from "../../apps/desktop/src/renderer/ComposerEditor";
 import { DraftController } from "../../apps/desktop/src/renderer/drafts";
 import { appendWholeFile } from "../../apps/desktop/src/renderer/whole-file-composer";
 import { ComposerWholeFiles } from "../../apps/desktop/src/renderer/ComposerWholeFiles";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import type { CommandEnvelope, DesktopBridge, DesktopEvent, WorkspaceQuery, WorkspaceTarget } from "../../packages/shared/src/protocol";
 import { WorkspacePanel } from "../../apps/desktop/src/renderer/WorkspacePanel";
@@ -13,7 +15,7 @@ const params = new URLSearchParams(location.search), endpoint = params.get("endp
 const request = async (route: string, body: unknown) => { const response = await fetch(endpoint + route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const value = await response.json(), problem = (value as any).error; if (!response.ok) throw new Error(typeof problem === "string" ? problem : problem?.message ?? `Request failed (${response.status})`); return value as any; };
 const listeners = new Set<(event: DesktopEvent) => void>(); setInterval(() => void request("/test/events", {}).then(events => { for (const event of events) for (const listener of listeners) listener(event); }).catch(() => {}), 100);
 const runtimeErrors: string[] = []; window.addEventListener("error", event => runtimeErrors.push(`${event.message}\n${event.error?.stack ?? ""}`)); window.addEventListener("unhandledrejection", event => runtimeErrors.push(String(event.reason?.stack ?? event.reason)));
-const bridge = { saveWorkspaceCopy: (owner:WorkspaceTarget,path:string,selectedHost:string)=>request("/test/copy",{target:owner,path,hostId:selectedHost}), workspaceQuery: (owner: WorkspaceTarget, query: WorkspaceQuery, selectedHost?: string) => request("/v1/workspace/query", { target: owner, query, owner: selectedHost }), command: (envelope: CommandEnvelope, selectedHost?: string) => request("/v1/commands", { ...envelope, owner: selectedHost }), subscribe: (listener: (event: DesktopEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); } } satisfies Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe" | "saveWorkspaceCopy">;
+const bridge = { getComposerActions:(target:WorkspaceTarget|undefined,refresh:boolean|undefined,selectedHost:string|undefined)=>request("/v1/composer/actions",{target,refresh,owner:selectedHost}), getComposerCompletions:(query:any,selectedHost:string|undefined)=>request("/v1/composer/completions",{...query,owner:selectedHost}), saveWorkspaceCopy: (owner:WorkspaceTarget,path:string,selectedHost:string)=>request("/test/copy",{target:owner,path,hostId:selectedHost}), workspaceQuery: (owner: WorkspaceTarget, query: WorkspaceQuery, selectedHost?: string) => request("/v1/workspace/query", { target: owner, query, owner: selectedHost }), command: (envelope: CommandEnvelope, selectedHost?: string) => request("/v1/commands", { ...envelope, owner: selectedHost }), subscribe: (listener: (event: DesktopEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); } } satisfies Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe" | "saveWorkspaceCopy" | "getComposerActions" | "getComposerCompletions">;
 let draftController: DraftController;
 let current: WorkspaceState, setConnection: (value: boolean) => void;
 function Fixture() {
@@ -24,12 +26,15 @@ function Fixture() {
  useEffect(()=>{drafts.setConnected(connected);},[drafts,connected]);
  useEffect(()=>()=>{data.stop();drafts.dispose();},[data,drafts]);
  const draft=drafts.get('whole-file-ui').draft;
- const attach=params.get('wholeFiles')==='true';
+ const attach=params.get('wholeFiles')==='true',inline=params.get('inlineFiles')==='true';
+ const editorRef=useRef<ComposerEditorHandle>(null);
+ const autocomplete=useComposerAutocomplete({bridge:bridge as DesktopBridge,hostId,target,draftId:draft.id,text:draft.text,connected:connected&&inline,disabled:!inline,input:editorRef,readText:()=>drafts.get(draft.id).draft.text,updateText:text=>editorRef.current?.replaceText(text),actions:[],insertFile:(source,range)=>editorRef.current?.insertFile(appendWholeFile(drafts.get(draft.id).draft,hostId,source).find(file=>file.source.path===source.path)!,range)});
  return <main className="workspace-file-open-fixture"><WorkspacePanel embedded data={data} connected={connected} active filePath="first.ts" name="Open fixture" path={params.get("project")!} onOpenFile={()=>{}} onClose={()=>{}} onOpenProject={async()=>{}}
- onAddFile={attach ? file=>{drafts.update(draft.id,{wholeFileAttachments:appendWholeFile(drafts.get(draft.id).draft,hostId,{hostId,path:params.get('project')+'/'+file})});document.querySelector<HTMLTextAreaElement>('#whole-file-text')?.focus();}:undefined}/>
- {attach&&<section style={{position:'absolute',bottom:16,left:24,width:500,padding:12,background:'var(--composer-surface)',borderRadius:16}} aria-label="Attachment composer">
+ onAddFile={attach ? file=>{if(inline){editorRef.current?.insertFile(appendWholeFile(drafts.get(draft.id).draft,hostId,{hostId,path:params.get('project')+'/'+file}).find(item=>item.source.path===params.get('project')+'/'+file)!);return;}drafts.update(draft.id,{wholeFileAttachments:appendWholeFile(drafts.get(draft.id).draft,hostId,{hostId,path:params.get('project')+'/'+file})});document.querySelector<HTMLTextAreaElement>('#whole-file-text')?.focus();}:undefined}/>
+ {attach&&<form onSubmit={event=>event.preventDefault()} style={{position:'absolute',bottom:16,left:24,width:500,padding:12,background:'var(--composer-surface)',borderRadius:16}} aria-label="Attachment composer">
+ {inline?<><ComposerEditor inputRef={editorRef} scope="inline-fixture" text={draft.text} files={draft.wholeFileAttachments} placeholder="Ask anything" onSelection={autocomplete.observeCaret} onFocus={autocomplete.inputProps.onFocus} onBlur={autocomplete.inputProps.onBlur} onKeyDown={event=>autocomplete.onKeyDown(event)} onChange={({text,files})=>drafts.update(draft.id,{text,...(files.length||draft.wholeFileAttachments!==undefined?{wholeFileAttachments:files}:{})})}/>{autocomplete.popup}</>:<>
  <ComposerWholeFiles attachments={draft.wholeFileAttachments} onRemove={id=>drafts.update(draft.id,{wholeFileAttachments:(draft.wholeFileAttachments??[]).filter(file=>file.id!==id)})} onFocusComposer={()=>document.querySelector<HTMLTextAreaElement>('#whole-file-text')?.focus()}/>
- <textarea id="whole-file-text" aria-label="Prompt" value={draft.text} onChange={event=>drafts.update(draft.id,{text:event.target.value})}/></section>}
+ <textarea id="whole-file-text" aria-label="Prompt" value={draft.text} onChange={event=>drafts.update(draft.id,{text:event.target.value})}/></>}</form>}
  </main>;
 }
 document.documentElement.dataset.theme = "dark"; createRoot(document.getElementById("root")!).render(<Fixture/>);

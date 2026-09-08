@@ -91,3 +91,40 @@ test("files-only empty authored text delivers actual OMP context and preserves e
   expect(entries.find(row=>row.type==="message"&&row.message.role==="assistant").message.content[0].text).toContain("FILE_CONTENT_AT_SEND");
  }finally{await f.close();}
 },30000);
+
+test("inline whole-file positions require v8, retain exact drafts, and consume only an accepted v8 prompt",async()=>{
+ const f=await fixture();try{
+  const state=await (await f.request("/v1/state")).json() as HostState;
+  expect(state.wholeFiles).toEqual({commandVersion:7,ordinaryPrompt:true,maxFiles:100,inlineMentions:{commandVersion:8}});
+  const inlineFile={...f.draft.wholeFileAttachments![0]!,textOffset:8};
+  const inlineDraft:DraftInput={...f.draft,wholeFileAttachments:[inlineFile]};
+  const put:HostCommand={type:"draft.put",draft:inlineDraft,expectedRevision:0};
+
+  const oldDirect=await f.request("/v7/commands",{method:"POST",body:JSON.stringify({id:"inline-v7-direct",command:put})});
+  expect(oldDirect.status).toBe(422);
+  expect(await oldDirect.json()).toMatchObject({code:"INLINE_FILE_PROTOCOL_REQUIRED"});
+  expect(f.host.store.getCommand("inline-v7-direct")).toBeUndefined();
+  expect(f.host.store.getDraft(inlineDraft.id)).toBeUndefined();
+
+  const invalid={...put,draft:{...inlineDraft,wholeFileAttachments:[{...inlineFile,textOffset:inlineDraft.text.length+1}]}};
+  const outOfBounds=await f.request("/v8/commands",{method:"POST",body:JSON.stringify({id:"inline-out-of-bounds",command:invalid})});
+  expect(outOfBounds.status).toBe(400);
+  expect(await outOfBounds.json()).toMatchObject({error:expect.stringContaining("UTF-16")});
+  expect(f.host.store.getCommand("inline-out-of-bounds")).toBeUndefined();
+  expect(f.host.store.getDraft(inlineDraft.id)).toBeUndefined();
+
+  expect(await f.command(put,"inline-put",8)).toMatchObject({ok:true,value:{text:inlineDraft.text,wholeFileAttachments:[inlineFile]}});
+  expect(f.host.store.getDraft(inlineDraft.id)).toMatchObject({revision:1,text:inlineDraft.text,wholeFileAttachments:[inlineFile]});
+
+  const referenced:HostCommand={type:"session.prompt",sessionId:f.session.id,text:inlineDraft.text,model,draft:{id:inlineDraft.id,revision:1}};
+  expect(await f.command(referenced,"inline-v7-reference",7)).toMatchObject({ok:false,error:{code:"INLINE_FILE_PROTOCOL_REQUIRED"}});
+  expect(f.host.store.getCommand("inline-v7-reference")).toMatchObject({state:"done",result:{ok:false,error:{code:"INLINE_FILE_PROTOCOL_REQUIRED"}}});
+  expect(f.host.store.getDraft(inlineDraft.id)).toMatchObject({revision:1,text:inlineDraft.text,wholeFileAttachments:[inlineFile]});
+  expect(f.host.store.getDraft(inlineDraft.id)?.lastConsumption).toBeUndefined();
+
+  const send:HostCommand={...referenced,wholeFileAttachments:[inlineFile]};
+  expect(await f.command(send,"inline-v8-send",8)).toMatchObject({ok:true,admission:{kind:"user-message"}});
+  await f.settled();
+  expect(f.host.store.getDraft(inlineDraft.id)).toMatchObject({revision:2,text:"",wholeFileAttachments:[],lastConsumption:{commandId:"inline-v8-send",submittedRevision:1}});
+ }finally{await f.close();}
+},30000);

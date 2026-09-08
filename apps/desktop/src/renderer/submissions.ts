@@ -23,7 +23,7 @@ export class EnvironmentPreparationPause extends Error {
     this.name = "EnvironmentPreparationPause";
   }
 }
-const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | undefined => draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
+const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | 8 | undefined => draft.wholeFileAttachments?.some(file=>file.textOffset!==undefined) ? 8 : draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
 const sameDraftReference = (value: { id: string; revision: number } | undefined, draft: Draft, required: boolean) => required
   ? value?.id === draft.id && value.revision === draft.revision
   : value === undefined;

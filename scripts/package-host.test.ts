@@ -11,7 +11,7 @@ const directories: string[] = [];
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-test("new package declares schema1 through 7 and hashes the standalone guard; immutable output cannot be overwritten", async () => {
+test("new package declares schema1 through 10 and hashes the standalone guard; immutable output cannot be overwritten", async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-package-schema-contract-")); directories.push(root);
   const repository = join(root, "repository"), native = join(root, "native-contract-fixture");
   for (const [file, value] of Object.entries({
@@ -40,7 +40,7 @@ test("new package declares schema1 through 7 and hashes the standalone guard; im
   await unpackHostArtifact(output, unpacked);
   expect(Bun.spawnSync(["tar", "-xzf", output, "-C", unpacked], { stdout: "pipe", stderr: "pipe" }).success).toBe(true);
   const manifest = JSON.parse(await readFile(join(unpacked, "host-artifact.json"), "utf8")) as HostArtifact;
-  expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   expect(manifest.files["scripts/host-state-compatibility.ts"]).toBe(hash(await readFile(join(repository, "scripts/host-state-compatibility.ts"))));
   expect(manifest.files["patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch"]).toBe(hash(ompPatch));
   const guard = await readFile(join(unpacked, "scripts/host-state-compatibility.ts"));

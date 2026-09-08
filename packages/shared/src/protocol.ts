@@ -189,7 +189,7 @@ export interface HostState {
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
   selectedText?: { commandVersion: 6; maxSerializedChars: number; ordinaryPrompt: true };
-  wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number };
+  wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number; inlineMentions?: { commandVersion: 8 } };
   newChatExecution?: { commandVersion: 4; worktrees: true };
   localEnvironments?: { configuration: true; actions?: true; execution?: { commandVersion: 5; scriptOutput?: true; scriptCancellation?: true } };
   diagnostics?: { models?: string; preferences?: string };
@@ -223,7 +223,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7;
+  commandVersion?: 4 | 5 | 6 | 7 | 8;
 }
 
 export interface ImageAdmission {

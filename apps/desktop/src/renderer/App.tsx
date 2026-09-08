@@ -1,4 +1,5 @@
-import { ComposerWholeFiles } from "./ComposerWholeFiles";
+import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
+import { remapFileOffsets } from "./composer-document";
 import { appendWholeFile, wholeFileSendIssue } from "./whole-file-composer";
 import { ComposerSelectedText } from "./ComposerSelectedText";
 import { appendSelectedText, selectedTextSendIssue } from "./selected-text-composer";
@@ -153,7 +154,7 @@ export function App() {
   const fileClose = useWorkspaceFileClose(tab => tab.target === "host" ? undefined : workspaces.get(`${tab.hostId}:${tab.target}`),tab=>skillFiles.get(tab.id));
   useEffect(() => { for (const controller of skillFiles.values()) controller.setConnected(Boolean(desktop.catalog.records.get(controller.state.hostId)?.connected)); });
   useEffect(() => () => { for (const controller of skillFiles.values()) controller.dispose(); }, [skillFiles]);
-  const textarea = useRef<HTMLTextAreaElement>(null);
+  const textarea = useRef<ComposerEditorHandle>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [, redraw] = useReducer(value => value + 1, 0);
@@ -370,7 +371,7 @@ export function App() {
     } catch (cause) { setActionError(errorMessage(cause)); }
   };
   useEffect(() => installAppShortcuts(window, {
-    composer: () => textarea.current,
+    composer: () => textarea.current?.element ?? null,
     blocked: () => Boolean(dialog || menuOpen || appMenuOpen),
     actions: {
       "new-chat": () => newConversation(),
@@ -380,10 +381,6 @@ export function App() {
       "side-chat": () => { if (selectedId) dock.open("side-chat"); },
     },
   }), [newConversation, dialog, menuOpen, appMenuOpen]);
-  useEffect(() => {
-    const element = textarea.current;
-    if (element) { element.style.height = "0px"; element.style.height = `${Math.min(Math.max(element.scrollHeight, 56), 240)}px`; }
-  }, [draft.text, selectedId]);
   useEffect(() => {
     if (dialog) {
       if (!dialogRef.current?.open) dialogRef.current?.showModal();
@@ -508,7 +505,12 @@ export function App() {
     bridge, hostId, target: workspaceTarget, draftId, text: draft.text, connected,
     disabled: Boolean(selected?.archived || missingSession || busy || pendingSubmission?.uncertain || settingsOpen),
     input: textarea, readText: () => drafts.get(draftId).draft.text,
-    updateText: text => drafts.update(draftId, { text }),
+    insertFile: state?.wholeFiles?.inlineMentions?.commandVersion===8 ? (source,range) => {
+      if(!textarea.current)throw new Error('The composer is unavailable. Your draft is unchanged.');
+      const file=appendWholeFile(drafts.get(draftId).draft,hostId,source).find(item=>item.source.hostId===source.hostId&&item.source.path===source.path)!;
+      textarea.current.insertFile(file,range);
+    } : undefined,
+    updateText: text => { if(textarea.current)textarea.current.replaceText(text); else drafts.update(draftId,{text,wholeFileAttachments:remapFileOffsets(drafts.get(draftId).draft.text,text,drafts.get(draftId).draft.wholeFileAttachments??[])}); },
     actions: [
       { id: "side-chat", name: "Side chat", description: "Ask a native OMP side question", icon: "sideChat", reason: !selected ? "Open a conversation to ask a side question." : undefined, run: () => dock.open("side-chat") },
       { id: "goal", name: "Goal", description: "Set or edit the native goal", icon: "compose", reason: !selected ? "Open a conversation to manage its goal." : undefined, run: () => dock.open("goal") },
@@ -550,13 +552,15 @@ export function App() {
     } catch (error) { setActionError(errorMessage(error)); }
   }
   function addWholeFile(sourceHostId: string, sourcePath: string) {
-    if (selectedRef.current !== routeKey || selected?.archived || missingSession || state?.wholeFiles?.commandVersion !== 7) return;
+    if (selectedRef.current !== routeKey || selected?.archived || missingSession || state?.wholeFiles?.inlineMentions?.commandVersion !== 8) return;
     try {
-      drafts.update(draftId, { wholeFileAttachments: appendWholeFile(drafts.get(draftId).draft, hostId, { hostId: sourceHostId, path: sourcePath }) });
+      const files=appendWholeFile(drafts.get(draftId).draft, hostId, {hostId:sourceHostId,path:sourcePath});
+      const file=files.find(file=>file.source.hostId===sourceHostId&&file.source.path===sourcePath)!;
+      textarea.current?.insertFile(file);
       requestAnimationFrame(() => { if (selectedRef.current === routeKey) textarea.current?.focus(); });
     } catch (error) { setActionError(errorMessage(error)); }
   }
-  const canAddWholeFile = !selected?.archived && !missingSession && state?.wholeFiles?.commandVersion === 7;
+  const canAddWholeFile = !selected?.archived && !missingSession && state?.wholeFiles?.inlineMentions?.commandVersion === 8;
   const canAddSelection = !selected?.archived && !missingSession && state?.selectedText?.commandVersion === 6;
   function renderDockTab(tab:DockTab, active = true) {
     if (tab.kind === "skill-file") {
@@ -675,7 +679,6 @@ export function App() {
             onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}
             onCheckout={async (branch,create) => { if (!workspace?.status || !connected) return; await workspace.mutate({type:"git.checkout",branch,expectedRevision:workspace.status.revision,...(create ? {create:true} : {})}); }}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
-            <ComposerWholeFiles attachments={draft.wholeFileAttachments} disabled={Boolean(selected?.archived)} onRemove={id => drafts.update(draftId, { wholeFileAttachments: (drafts.get(draftId).draft.wholeFileAttachments ?? []).filter(file => file.id !== id) })} onFocusComposer={() => textarea.current?.focus()}/>
             {wholeFileIssue && <p className="attachment-notice" role="status">{wholeFileIssue}</p>}
             <ComposerSelectedText attachments={draft.selectedTextAttachments} disabled={Boolean(selected?.archived)} onRemove={ids => { const remove = new Set(ids); drafts.update(draftId, { selectedTextAttachments: (drafts.get(draftId).draft.selectedTextAttachments ?? []).filter(item => !remove.has(item.id)) }); }} onFocusComposer={() => textarea.current?.focus()}/>
             {selectedTextIssue && <p className="attachment-notice" role="status">{selectedTextIssue}</p>}
@@ -684,7 +687,13 @@ export function App() {
             {imagesStaging && <p className="attachment-notice" role="status">Finish adding or remove the pending images before sending.</p>}
             <label className="sr-only" htmlFor="prompt">Message</label>
             <span id="prompt-keyboard-hint" className="sr-only">{`${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${running ? "steer" : "send"}. Shift Enter for a new line.`}</span>
-            <textarea id="prompt" aria-describedby="prompt-keyboard-hint" ref={textarea} value={draft.text} {...autocomplete.inputProps} placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)} spellCheck rows={2} onKeyDown={event => { if (autocomplete.onKeyDown(event)) return; if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && !autocomplete.composing.current && event.keyCode !== 229) { event.preventDefault(); void submit(); } }}/>
+            <ComposerEditor inputRef={textarea} scope={routeKey+':'+draftId} text={draft.text} files={draft.wholeFileAttachments}
+              onChange={({text,files})=>drafts.update(draftId,{text,...(files.length||draft.wholeFileAttachments!==undefined?{wholeFileAttachments:files}:{})})}
+              onSelection={autocomplete.observeCaret} onFocus={autocomplete.inputProps.onFocus} onBlur={autocomplete.inputProps.onBlur}
+              onCompositionStart={autocomplete.inputProps.onCompositionStart} onCompositionEnd={autocomplete.inputProps.onCompositionEnd}
+              ariaControls={autocomplete.inputProps['aria-controls']} ariaExpanded={autocomplete.inputProps['aria-expanded']} ariaActiveDescendant={autocomplete.inputProps['aria-activedescendant']}
+              placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)}
+              onKeyDown={event => { if (autocomplete.onKeyDown(event)) return; if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && !autocomplete.composing.current && event.keyCode !== 229) { event.preventDefault(); void submit(); } }}/>
             {autocomplete.popup}
             <div className="composer-toolbar">
               <div className="composer-selections">

@@ -1,3 +1,4 @@
+import { remapFileOffsets } from "./composer-document";
 import type { ComposerAction } from "@agent-desktop/shared";
 import type { DraftController } from "./drafts";
 import { selectProjectWithExecutionMode } from "./project-execution-mode";
@@ -9,5 +10,6 @@ export function prepareSkillDraft(drafts: DraftController, action: ComposerActio
   else drafts.update("new-conversation", { projectId });
   const draft = drafts.get("new-conversation").draft;
   const prefix = `${action.insertText.trim()} `;
-  drafts.update("new-conversation", { text: draft.text.startsWith(prefix) ? draft.text : prefix + draft.text });
+  const text=draft.text.startsWith(prefix)?draft.text:prefix+draft.text;
+  drafts.update("new-conversation", { text, ...(draft.wholeFileAttachments ? {wholeFileAttachments:remapFileOffsets(draft.text,text,draft.wholeFileAttachments)}:{}) });
 }

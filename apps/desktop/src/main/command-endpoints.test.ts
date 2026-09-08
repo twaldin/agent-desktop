@@ -121,3 +121,13 @@ test('whole-file and sticky cleared descriptors use v7 without fallback',async()
  expect(paths).toEqual(['/v7/commands']);
  const error=new Error('Lost response');await expect(requestVersionedCommand(async()=>{throw error;},envelope)).rejects.toBe(error);
 });
+
+test('inline file offsets use v8 and never retry an older endpoint',async()=>{
+ const envelope:CommandEnvelope={id:'inline',command:{type:'draft.put',expectedRevision:0,draft:{id:'d',text:'abc',projectId:null,model:null,wholeFileAttachments:[{id:'f',textOffset:1,source:{kind:'file',hostId:'home',path:'/project/a.ts'}}]}}};
+ const calls:string[]=[];
+ expect(commandEndpoint(envelope)).toBe('/v8/commands');
+ expect(await requestVersionedCommand(async path=>{calls.push(path);throw new HostRequestError('Not found',404);},envelope)).toMatchObject({ok:false,error:{code:'INLINE_FILE_PROTOCOL_UNSUPPORTED'}});
+ expect(calls).toEqual(['/v8/commands']);
+ const lost=new Error('receipt lost');await expect(requestVersionedCommand(async()=>{throw lost;},envelope)).rejects.toBe(lost);
+ expect(commandEndpoint({id:'consume',commandVersion:8,command:{type:'session.prompt',sessionId:'s',text:'abc',draft:{id:'d',revision:1}}})).toBe('/v8/commands');
+});

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { copyWholeFileAttachments, MAX_WHOLE_FILE_ATTACHMENTS, parseWholeFileAttachments, sameWholeFileAttachments, type WholeFileAttachment } from "./whole-file";
 
-const file = (id = "file-one", path = "/outside/project/file.ts", hostId = "other-owner"): WholeFileAttachment => ({
-  id, source: { kind: "file", hostId, path },
+const file = (id = "file-one", path = "/outside/project/file.ts", hostId = "other-owner", textOffset?: number): WholeFileAttachment => ({
+  id, ...(textOffset !== undefined ? { textOffset } : {}), source: { kind: "file", hostId, path },
 });
 
 test("whole-file references retain literal remote provenance without content or ranges", () => {
@@ -23,6 +23,18 @@ test("whole-file identities and sources are distinct while order remains meaning
   expect(sameWholeFileAttachments([one, two], [two, one])).toBe(false);
   expect(sameWholeFileAttachments([one], copyWholeFileAttachments([one]))).toBe(true);
   expect(sameWholeFileAttachments(undefined, [])).toBe(false);
+});
+
+test("UTF-16 text offsets are copied, compared, contextually bounded, and ordered ties are allowed", () => {
+  const one = file("file-one", "/one", "owner", 2), two = file("file-two", "/two", "owner", 2);
+  expect(parseWholeFileAttachments([one, two], "😀".length)).toEqual([one, two]);
+  expect(copyWholeFileAttachments([one])).toEqual([one]);
+  expect(sameWholeFileAttachments([one], [file("file-one", "/one", "owner", 2)])).toBe(true);
+  expect(sameWholeFileAttachments([one], [file("file-one", "/one", "owner", 1)])).toBe(false);
+  expect(() => parseWholeFileAttachments([file("file", "/file", "owner", 3)], "😀".length)).toThrow("UTF-16");
+  expect(() => parseWholeFileAttachments([file("file", "/file", "owner", -1)])).toThrow("UTF-16");
+  expect(() => parseWholeFileAttachments([{ ...file(), textOffset: undefined }])).toThrow("UTF-16");
+  expect(() => parseWholeFileAttachments([{ ...file(), textOffset: 0, extra: true }])).toThrow();
 });
 
 test("parser enforces a bounded, exact, canonical absolute file contract", () => {

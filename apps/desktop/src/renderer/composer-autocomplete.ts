@@ -44,7 +44,7 @@ export function replaceComposerToken(text: string, token: ComposerToken, inserti
   return { text: text.slice(0, token.start) + value + suffix, caret: token.start + value.length };
 }
 export interface ComposerAppAction { id: string; name: string; description: string; icon: "sideChat" | "archive" | "folder" | "terminal" | "compose" | "refresh" | "more"; reason?: string; run(): void | Promise<void> }
-export interface ComposerSuggestion { id: string; label: string; description: string; origin: string; insertText: string; icon: ComposerAppAction["icon"] | "skill" | "file" | "command"; disabled?: string; action?: ComposerAppAction; native?: ComposerAction }
+export interface ComposerSuggestion { id: string; label: string; description: string; origin: string; insertText: string; icon: ComposerAppAction["icon"] | "skill" | "file" | "command"; disabled?: string; action?: ComposerAppAction; native?: ComposerAction; source?: { hostId: string; path: string } }
 export function targetIdentity(target?: WorkspaceTarget): string { return target ? "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}` : "default"; }
 export function assertComposerOwner<T extends Pick<ComposerActionsCatalog, "hostId" | "target" | "protocolVersion"> | null>(value: T, hostId: string, target?: WorkspaceTarget): asserts value is NonNullable<T> {
   if (!value) throw new Error("Update the owning host to load native commands and skills.");
@@ -65,7 +65,7 @@ export function catalogSuggestions(catalog: ComposerActionsCatalog | undefined, 
   return result.sort((a, b) => Number(!a.label.toLocaleLowerCase().startsWith(query)) - Number(!b.label.toLocaleLowerCase().startsWith(query)));
 }
 export function fileSuggestions(result: ComposerCompletions): ComposerSuggestion[] {
-  return result.items.map(item => ({ id: `file:${item.id}`, label: item.label, description: item.description ?? (item.kind === "directory-reference" ? "Folder reference" : "File reference"), origin: item.kind === "command-argument" || item.kind === "native-reference" ? "OMP" : "Files", insertText: item.insertText, icon: item.kind === "command-argument" ? "command" : item.kind === "directory-reference" ? "folder" : "file" }));
+  return result.items.map(item => ({ id: `file:${item.id}`, label: item.label, description: item.description ?? (item.kind === "directory-reference" ? "Folder reference" : "File reference"), origin: item.kind === "command-argument" || item.kind === "native-reference" ? "OMP" : "Files", insertText: item.insertText, icon: item.kind === "command-argument" ? "command" : item.kind === "directory-reference" ? "folder" : "file", ...(item.path === undefined ? {} : { source: { hostId: result.hostId, path: item.path } }) }));
 }
 export function nextSuggestion(items: ComposerSuggestion[], current: string | undefined, direction: 1 | -1): string | undefined {
   const enabled = items.filter(item => !item.disabled); if (!enabled.length) return;

@@ -1,0 +1,10 @@
+.composer-editor { min-width:0; width:100%; }
+.composer-rich-input { position:relative; width:100%; min-height:56px; max-height:240px; overflow-y:auto; background:transparent; color:var(--text); border:0; outline:none; padding:12px 12px 4px; font-family:var(--ui-font); font-size:var(--font-size,14px); line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; -webkit-app-region:no-drag; }
+.composer-rich-input p { margin:0; }
+.composer-rich-input[data-empty="true"]::before { content:attr(data-placeholder); position:absolute; color:var(--secondary); opacity:.8; pointer-events:none; }
+.composer-inline-file { display:inline-flex; vertical-align:bottom; max-width:100%; gap:3px; padding:0 2px; font-family:inherit; font-weight:500; color:color-mix(in srgb,var(--accent) 80%,var(--text) 20%); }
+.composer-inline-file-icon { width:16px; height:1lh; position:relative; flex:none; }
+.composer-inline-file-icon svg { position:absolute; width:16px; height:16px; top:50%; transform:translateY(-50%); }
+.composer-inline-file > span:last-child { min-width:0; overflow-wrap:break-word; }
+.composer-inline-file:hover { text-decoration:underline dashed; text-decoration-thickness:.5px; text-underline-offset:2px; }
+.composer-rich-input[aria-disabled="true"] { opacity:.65; cursor:default; }

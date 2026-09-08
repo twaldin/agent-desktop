@@ -35,7 +35,7 @@ export function captureDraft(draft: Draft, hostId?: string): Draft {
     ...(draft.environment !== undefined ? { environment: parseEnvironmentSelection(draft.environment, draft.projectId) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments, hostId) } : {}),
     ...(draft.selectedTextAttachments !== undefined ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),
-    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseWholeFileAttachments(draft.wholeFileAttachments) } : {}),
+    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseWholeFileAttachments(draft.wholeFileAttachments, draft.text.length) } : {}),
     ...(draft.lastConsumption ? { lastConsumption: { commandId: draft.lastConsumption.commandId, submittedRevision: draft.lastConsumption.submittedRevision } } : {}) };
 }
 function editableDraft(draft: Draft): DraftInput {
@@ -45,9 +45,12 @@ function editableDraft(draft: Draft): DraftInput {
     ...(draft.environment !== undefined ? { environment: parseEnvironmentSelection(draft.environment, draft.projectId) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments) } : {}),
     ...(draft.selectedTextAttachments !== undefined ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),
-    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseWholeFileAttachments(draft.wholeFileAttachments) } : {}) };
+    ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseWholeFileAttachments(draft.wholeFileAttachments, draft.text.length) } : {}) };
 }
 const needsReceipt = (draft?: Draft) => draft !== undefined && (draft.attachments !== undefined || draft.execution !== undefined || draft.environment !== undefined || draft.selectedTextAttachments !== undefined || draft.wholeFileAttachments !== undefined);
+const stripsWholeFileOffsets = (base: Draft, remote: Draft) => base.wholeFileAttachments?.some(item => item.textOffset !== undefined
+  && remote.wholeFileAttachments?.some(other => other.id === item.id && other.source.kind === item.source.kind
+    && other.source.hostId === item.source.hostId && other.source.path === item.source.path && other.textOffset === undefined)) === true;
 function directConsumption(remote: Draft, submitted: SubmissionCorrelation) {
   if (!needsReceipt(submitted.draft)) return remote.revision > submitted.draft.revision && remote.text === "" && remote.attachments === undefined && remote.selectedTextAttachments === undefined && remote.wholeFileAttachments === undefined;
   // This marker is retained by later saves. Those later revisions require ordinary conflict handling.
@@ -137,7 +140,7 @@ export class DraftController {
     }
     if (entry.base.attachments !== undefined && remote.attachments === undefined || entry.base.execution !== undefined && remote.execution === undefined
       || entry.base.environment !== undefined && remote.environment === undefined || entry.base.selectedTextAttachments !== undefined && remote.selectedTextAttachments === undefined
-      || entry.base.wholeFileAttachments !== undefined && remote.wholeFileAttachments === undefined) {
+      || entry.base.wholeFileAttachments !== undefined && remote.wholeFileAttachments === undefined || stripsWholeFileOffsets(entry.base, remote)) {
       entry.view = { ...entry.view, status: "conflict", conflict: remote, error: "The host draft is missing saved image, file context, execution, or environment information. Local content and choices were preserved." };
       this.publish(); return;
     }
@@ -163,6 +166,8 @@ export class DraftController {
     if (entry.view.draft.attachments !== undefined && "attachments" in patch && patch.attachments === undefined) throw new Error("An image-aware draft must retain its attachment format. Remove images with an empty array.");
     if (entry.view.draft.selectedTextAttachments !== undefined && "selectedTextAttachments" in patch && patch.selectedTextAttachments === undefined) throw new Error("A selected-text-aware draft must retain its selection format. Clear selections with an empty array.");
     if (entry.view.draft.wholeFileAttachments !== undefined && "wholeFileAttachments" in patch && patch.wholeFileAttachments === undefined) throw new Error("A whole-file-aware draft must retain its file format. Clear files with an empty array.");
+    if ("text" in patch && patch.text !== entry.view.draft.text && entry.view.draft.wholeFileAttachments?.some(file => file.textOffset !== undefined)
+      && !("wholeFileAttachments" in patch)) throw new Error("Update inline whole-file offsets atomically with draft text.");
     if (entry.view.draft.execution !== undefined && "execution" in patch && patch.execution === undefined) throw new Error("Select Local explicitly to clear a worktree choice.");
     if (entry.view.draft.environment !== undefined && "environment" in patch && patch.environment === undefined) throw new Error("Select No environment explicitly to clear an environment choice.");
     const projectChanged = "projectId" in patch && patch.projectId !== entry.view.draft.projectId;
@@ -191,7 +196,7 @@ export class DraftController {
     const task = (async () => {
       try {
         const draft = editableDraft(snapshot);
-        const result = await this.send({ id: crypto.randomUUID(), ...(snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
+        const result = await this.send({ id: crypto.randomUUID(), ...((snapshot.wholeFileAttachments?.some(file => file.textOffset !== undefined) || entry.base.wholeFileAttachments?.some(file => file.textOffset !== undefined)) ? { commandVersion: 8 as const } : snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
         if (!result.ok) {
           if (result.currentDraft) entry.view = { ...entry.view, status: "conflict", conflict: captureDraft(result.currentDraft, this.hostId), error: result.error.message };
           else entry.view = { ...entry.view, status: this.connected ? "error" : "offline", error: result.error.message };

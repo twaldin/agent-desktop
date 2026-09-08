@@ -1,5 +1,17 @@
 # Workspace file editor
 
+## Inline composer nodes
+
+The main composer replaces the interim separate-row file chips with real ProseMirror inline, atomic, nonselectable nodes. Each whole-file reference may carry `textOffset`, a UTF-16 position in authored draft text; file nodes consume no authored characters. Tied offsets retain array order. Edits preserve positions through editor transactions. A menu insertion is a separate undo step, and completion replacements edit their bounded range. Semantically changed external drafts reset undo history; equal echoes and autocomplete menu renders preserve it.
+
+The pinned OMP completer returns its original insertion text plus an optional absolute regular-file path verified on the owner host. The main @ picker uses that metadata for the same file node as tree Add to chat. Directories and native-resource completions stay on their native text route. Cross-host remapping is not inferred. OMP still reads files through native fileMention admission at Send; inline metadata changes presentation/persistence, not executable ownership or credentials.
+
+Position-bearing commands use v8 and promote storage to schema10. Bounds are validated against authored text before draft writes or command claims. Old endpoints cannot strip positions from an existing draft or consume it through a lower-version request. Packages declare schemas1–10; downgrade to a schema9 reader is refused before stopping the service.
+
+Combined hidden renderer acceptance uses actual context-menu, arrow, Backspace, undo/redo and Enter input against the production editor/autocomplete/controller and an authenticated disposable host. Six checks/eight original PNG+Chromium-AX pairs cover caret insertion, independent file deletion, emoji offset mapping, offline reload and a real native OMP @ result. The capture inspection also corrected a Tailwind reset that made ProseMirror's trailing caret separator a block. See private `.data/inline-files-2026-09-07/REPORT.md` for failed attempts and exact evidence.
+
+This supersedes the main composer's separate-line rendering described in the historical checkpoint below. It does not certify installed pixels or full-window density. Clipboard Markdown/HTML restoration, hover/open, sent inline placement, rich selected-text nodes, command/skill combinations and whole-file steering remain open.
+
 ## Whole-file references from the tree
 
 Add to chat now records `{id, source: {kind: "file", hostId, path}}` in `wholeFileAttachments`. References have canonical absolute literal paths, distinct identities/sources and a 100-file transport bound. They name file intent, not captured bytes. Only files on the draft's owning host can be submitted; a same-host file may belong to another directory. The UI does not offer a cross-host path remap. Duplicate staging retains one reference. The draft remains editable offline, and CAS conflicts preserve both versions.

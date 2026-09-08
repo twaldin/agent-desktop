@@ -83,6 +83,7 @@ export class BtwState {
       submitted = captured ? captureDraft(captured, this.hostId) : await this.drafts.prepareSubmission(this.draftId);
       const composer = sourceId === `session:${this.sessionId}`;
       if (!composer && sourceId !== this.draftId) throw new Error('The side question has a different draft owner.');
+      if (submitted.wholeFileAttachments?.length || submitted.selectedTextAttachments?.length) throw new Error('Native /btw does not accept file context. The draft was retained.');
       if (submitted.attachments?.length) throw new Error('Native /btw does not accept images. The draft was retained.');
       const question = composer ? nativeBtwQuestion(submitted.text) : submitted.text.trim();
       if (!question) throw new Error('Usage: /btw <question>');

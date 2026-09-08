@@ -26,3 +26,21 @@ test('whole-file persistence gates rollback, preserves conflicts, and consumes o
   expect(()=>store.putDraft({...draft,wholeFileAttachments:undefined},2)).toThrow('protocol');
  }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('inline whole-file positions raise schema 10 and survive reopening without a consumption receipt',()=>{
+ const root=mkdtempSync(join(tmpdir(),'inline-whole-file-store-'));let store=new HostStore(root);
+ const file={id:'inline-file',textOffset:2,source:{kind:'file' as const,hostId:store.host.id,path:'/project/inline.ts'}};
+ const draft:DraftInput={id:'inline-draft',text:'a😀b',projectId:null,model:null,wholeFileAttachments:[file]};
+ try{
+  expect(store.putDraft(draft,0)).toMatchObject({ok:true,draft:{revision:1,text:draft.text,wholeFileAttachments:[file]}});
+  const db=new Database(join(root,'state.sqlite'));try{expect(db.query<{user_version:number},[]>('PRAGMA user_version').get()?.user_version).toBe(10);}finally{db.close();}
+  store.close();store=new HostStore(root);
+  expect(store.getDraft(draft.id)).toMatchObject({revision:1,text:draft.text,wholeFileAttachments:[file]});
+  expect(store.getDraft(draft.id)?.lastConsumption).toBeUndefined();
+  expect(()=>store.putDraft({...draft,wholeFileAttachments:[{...file,textOffset:draft.text.length+1}]},1)).toThrow('UTF-16');
+  expect(()=>store.claimCommand('invalid-inline','hash',{type:'session.prompt',sessionId:'s',text:'a',wholeFileAttachments:[file]})).toThrow('UTF-16');
+  expect(store.getCommand('invalid-inline')).toBeUndefined();
+  expect(store.getDraft(draft.id)).toMatchObject({revision:1,text:draft.text,wholeFileAttachments:[file]});
+  expect(store.getDraft(draft.id)?.lastConsumption).toBeUndefined();
+ }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});

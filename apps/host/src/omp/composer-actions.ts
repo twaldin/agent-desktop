@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
 import type { AgentSession, Extension, Settings } from "@oh-my-pi/pi-coding-agent";
 import { discoverPromptTemplates, discoverSessionExtensionPaths } from "@oh-my-pi/pi-coding-agent/sdk";
 import { loadSkills } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
@@ -68,6 +71,29 @@ export function hasNativeBtwComposerWinner(catalog: NativeComposerCatalog): bool
   const builtin = catalog.commands.find(row => row.id === "builtin:btw");
   return builtin?.name === "btw" && builtin.source.kind === "builtin"
     && builtin.desktopAction === "side-chat" && builtin.availability === "partial";
+}
+
+/** Turn the exact native @ completion value into an owner-host path only after
+ * the pinned provider has identified a regular file. Its insertion syntax is
+ * intentionally retained for the editor; this metadata is for structured file
+ * ownership, where directories and ambiguous open quotes must not be treated
+ * as attachable files. */
+async function completionFilePath(cwd: string, value: string): Promise<string | undefined> {
+  if (!value.startsWith("@")) return;
+  let candidate = value.slice(1);
+  if (candidate.startsWith('"')) {
+    if (!candidate.endsWith('"') || candidate.length < 2) return;
+    candidate = candidate.slice(1, -1);
+  }
+  if (!candidate || candidate.endsWith("/")) return;
+  if (candidate === "~") candidate = homedir();
+  else if (candidate.startsWith("~/")) candidate = path.join(homedir(), candidate.slice(2));
+  const absolute = path.isAbsolute(candidate) ? path.normalize(candidate) : path.resolve(cwd, candidate);
+  try {
+    return (await stat(absolute)).isFile() ? absolute : undefined;
+  } catch {
+    return;
+  }
 }
 
 function finish(cwd: string, commands: ComposerAction[], skills: ComposerAction[], diagnostics: string[]): NativeComposerCatalog {
@@ -210,11 +236,13 @@ export async function composerCompletions(catalog: NativeComposerCatalog, query:
     prefix = query.query;
   } else throw new Error("Unsupported native completion kind.");
   if (!Array.isArray(items) || items.length > 1000) throw new Error("Native completion returned too many or invalid entries.");
-  const selected = items.slice(0, limit).map((item, index) => {
+  const selected = await Promise.all(items.slice(0, limit).map(async (item, index) => {
     if (!item || typeof item.value !== "string" || item.value.length > 16_384 || /[\0\r\n]/.test(item.value) || typeof item.label !== "string") throw new Error("Native completion returned an invalid insertion.");
     const insertText = query.kind === "file" ? provider.applyCompletion([prefix], 0, prefix.length, item, prefix).lines.join("\n") : `${item.value}${query.kind === "reference" ? " " : ""}`;
-    return { id: hash([query.kind, item.value, index]), label: bounded(item.label, 16_384), description: bounded(item.description), insertText,
-      kind: query.kind === "file" ? (item.value.replace(/"$/, "").endsWith("/") ? "directory-reference" as const : "file-reference" as const) : query.kind === "reference" ? "native-reference" as const : "command-argument" as const };
-  });
+    const kind = query.kind === "file" ? (item.value.replace(/"$/, "").endsWith("/") ? "directory-reference" as const : "file-reference" as const) : query.kind === "reference" ? "native-reference" as const : "command-argument" as const;
+    const filePath = kind === "file-reference" ? await completionFilePath(catalog.cwd, item.value) : undefined;
+    return { id: hash([query.kind, item.value, index]), label: bounded(item.label, 16_384), description: bounded(item.description), insertText, kind,
+      ...(filePath === undefined ? {} : { path: filePath }) };
+  }));
   return { protocolVersion: 1, cwd: catalog.cwd, revision: catalog.revision, items: selected, truncated: items.length > limit, diagnostics };
 }

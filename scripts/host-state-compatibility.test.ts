@@ -197,6 +197,17 @@ describe("host artifact state compatibility", () => {
     expect((await readdir(layout.installDirectory)).some(name => name.startsWith(".staging-"))).toBe(false);
   });
 
+  test("schema10 is accepted by the current package while a schema9 reader is rejected before stopping", async () => {
+    const { layout, current, target } = await installedFixture(10);
+    await artifact(current, "current12", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    await artifact(target, "legacy11", [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(checkHostStateCompatibility({ stateSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, layout.dataDirectory).checkedSchemaVersion).toBe(10);
+    const before = await preservation(layout), service = lifecycle();
+    await expect(manageHost("rollback", layout, undefined, service.hooks)).rejects.toThrow("schema 10 is incompatible");
+    expect(service.calls).toEqual([]);
+    expect(await preservation(layout)).toEqual(before);
+  });
+
   test("incompatible rollback keeps the current service, symlink, record, files and database intact", async () => {
     const { layout } = await installedFixture(2), before = await preservation(layout), service = lifecycle();
     await expect(manageHost("rollback", layout, undefined, service.hooks)).rejects.toThrow("schema 2 is incompatible");

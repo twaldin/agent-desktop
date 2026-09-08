@@ -7,8 +7,8 @@ const draft = (patch: Partial<Draft> = {}): Draft => ({ id: "new-conversation", 
 const selected = (id = "selection-one", text = "unsaved"): SelectedTextAttachment => ({ id, text,
   source: { kind: "file", hostId: "another-host", path: "/outside/project/unsaved.ts",
     range: { start: { line: 4, column: 1 }, end: { line: 4, column: text.length + 1 } } } });
-const wholeFile = (id = "file-one", path = "/outside/project/file.ts"): WholeFileAttachment => ({ id,
-  source: { kind: "file", hostId: "another-host", path } });
+const wholeFile = (id = "file-one", path = "/outside/project/file.ts", textOffset?: number): WholeFileAttachment => ({ id,
+  ...(textOffset !== undefined ? { textOffset } : {}), source: { kind: "file", hostId: "another-host", path } });
 function cache(): DraftCache { const values = new Map<string, string>(); return { read: key => values.get(key) ?? null, write: (key, value) => { values.set(key, value); } }; }
 function saver(calls: CommandEnvelope[]) { return async (envelope: CommandEnvelope): Promise<CommandResult> => { calls.push(envelope); if (envelope.command.type !== "draft.put") throw new Error("Unexpected command"); return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: 2 } }; }; }
 const session: SessionSummary = { id: "session-1", hostId: "host", projectId: "project-1", cwd: "/project", title: "New conversation", status: "idle", sessionFile: "/session.jsonl", model: null, createdAt: 1, updatedAt: 1, archived: false };
@@ -67,6 +67,32 @@ test("delayed whole-file consumption clears only the sent files and preserves a 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ commandVersion: 7, command: { expectedRevision: 2, draft: { wholeFileAttachments: [{ id: "file-two" }] } } });
     expect(saved).toMatchObject({ revision: 3, wholeFileAttachments: [{ id: "file-two" }] });
+  } finally { controller.dispose(); }
+});
+
+test("inline whole-file offsets persist, require atomic text edits, and select command version 8", async () => {
+  const local = cache(), calls: CommandEnvelope[] = [];
+  const first = new DraftController(saver(calls), "host", local);
+  first.ingest(draft({ text: "a😀b", wholeFileAttachments: [wholeFile("file-one", "/file", 3)] }));
+  first.update("new-conversation", { text: "a😀bc", wholeFileAttachments: [wholeFile("file-one", "/file", 4)] });
+  expect(() => first.update("new-conversation", { text: "plain external edit" })).toThrow("atomically");
+  first.dispose();
+  const restored = new DraftController(saver(calls), "host", local);
+  try {
+    expect(restored.get("new-conversation").draft.wholeFileAttachments?.[0]?.textOffset).toBe(4);
+    restored.setConnected(true); await restored.flush("new-conversation");
+    expect(calls[0]).toMatchObject({ commandVersion: 8, command: { draft: { text: "a😀bc", wholeFileAttachments: [{ textOffset: 4 }] } } });
+  } finally { restored.dispose(); }
+});
+
+test("a remote writer stripping an inline offset conflicts instead of overwriting the reference", () => {
+  const controller = new DraftController(saver([]), "host");
+  try {
+    const original = draft({ wholeFileAttachments: [wholeFile("file-one", "/file", 2)] });
+    controller.ingest(original);
+    controller.ingest({ ...original, revision: 2, text: "remote edit", wholeFileAttachments: [wholeFile("file-one", "/file")] });
+    expect(controller.get(original.id)).toMatchObject({ status: "conflict", draft: { wholeFileAttachments: [{ textOffset: 2 }] }, conflict: { revision: 2, wholeFileAttachments: [{ id: "file-one" }] } });
+    expect(controller.get(original.id).conflict?.wholeFileAttachments?.[0]?.textOffset).toBeUndefined();
   } finally { controller.dispose(); }
 });
 
@@ -309,4 +335,15 @@ describe("submission delivery identities", () => {
     const controller = new SubmissionController(async envelope => { deliveries++; return { ok: true, commandId: envelope.id, value: session }; }, "host", { read: () => null, write: () => { throw new Error("Storage full"); } });
     await expect(controller.submit(draft(), undefined, "prompt")).rejects.toThrow("Storage full"); expect(deliveries).toBe(0);
   });
+});
+
+test('removing the last saved inline reference still uses v8 for its clearing write',async()=>{
+ const calls:CommandEnvelope[]=[],controller=new DraftController(saver(calls),'host');
+ try{
+  const original=draft({wholeFileAttachments:[wholeFile('inline','/project/a.ts',2)]});
+  controller.ingest(original);controller.setConnected(true);
+  controller.update(original.id,{wholeFileAttachments:[]});await controller.flush(original.id);
+  expect(calls.at(-1)?.commandVersion).toBe(8);
+  expect(controller.get(original.id)).toMatchObject({status:'saved',draft:{text:original.text,wholeFileAttachments:[]}});
+ }finally{controller.dispose();}
 });
