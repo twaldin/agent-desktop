@@ -3,6 +3,7 @@ import type { DesktopBridge, DesktopEvent, DesktopTerminalEvent, NativeTerminalI
 
 let lastNotificationNavigation: string | undefined;
 const bridge: DesktopBridge = {
+  showContextMenu: items=>ipcRenderer.invoke("desktop:context-menu",items),
   getNotificationStatus: () => ipcRenderer.invoke("desktop:notification-status"),
   subscribeNotificationStatus: listener => {
     const callback = () => listener(); ipcRenderer.on("desktop:notification-status", callback);

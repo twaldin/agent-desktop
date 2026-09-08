@@ -1,5 +1,11 @@
 # Milestone status
 
+## File-tree context actions
+
+Tree files now expose Open with, Save as and Copy path for the clicked file, independently of the editor selection. Packaged Electron uses a validated native-menu bridge; browser-only rendering retains the HTML fallback. File operations reuse the owning host’s catalog, durable command receipts and copy engine.
+
+34 tests/138 assertions, 11 authenticated-host/renderer checks with nine captures, actual Electron menu construction, typecheck and build pass. Visible native menus and installed parity are still unverified. Add to chat remains missing until whole-file draft descriptors and native OMP admission are implemented; inserting a path into prompt text is not counted as parity. Details: [file editor](workspace-file-editor.md). Work runs/seals remain untouched.
+
 ## Native file-tree glyphs and spacing
 
 The workspace tree now uses the separate 53-glyph native colored sprite, one chevron for folders, compound-suffix resolution and the native 28px row / 13px type / 17.5px indentation. Tree palette and geometry tokens are configurable through the shared theme document and advanced editor. Ordinary file-tab glyphs remain separate.

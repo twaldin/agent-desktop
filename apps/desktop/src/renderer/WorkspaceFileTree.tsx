@@ -1,3 +1,4 @@
+import {WorkspaceTreeMenu,type TreeMenuTarget} from "./WorkspaceTreeMenu";
 import { TreeFileIcon } from "./TreeFileIcon";
 import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import type { WorkspaceEntry } from "@agent-desktop/shared";
@@ -39,14 +40,20 @@ const supportedFile = (entry: WorkspaceEntry) =>
 
 /** Owner-bound workspace navigation. It reads directories through WorkspaceState so
  * cached/offline behavior and host ownership remain identical to the editor. */
-export function WorkspaceFileTree({ data, filePath, active, initialDirectory = ".", showFilter = true, onOpenFile }: {
+export function WorkspaceFileTree({ data, filePath, active, initialDirectory = ".", showFilter = true, onOpenFile, cwd, onAddFile }: {
   data: WorkspaceState;
+  cwd?:string;
+  onAddFile?(path:string):void;
   filePath: string;
   active: boolean;
   initialDirectory?: string;
   showFilter?: boolean;
   onOpenFile(path: string, options?: {preview?:boolean}): void;
 }) {
+  const [context,setContext]=useState<TreeMenuTarget>();
+  const closeContext=(restore=true)=>{if(restore&&context?.anchor.isConnected)context.anchor.focus({preventScroll:true});setContext(undefined)};
+  useEffect(()=>{if(!active)setContext(undefined)},[active,data]);
+  const showContext=(anchor:HTMLElement,path:string,x?:number,y?:number)=>{const r=anchor.getBoundingClientRect();setContext({anchor,path,x:x??r.left+16,y:y??r.bottom});};
   const safeInitialDirectory = initialDirectory === "." || isWorkspaceFilePath(initialDirectory) ? initialDirectory : ".";
   const [revision, changed] = useReducer((value: number) => value + 1, 0);
   const [filter, setFilter] = useState("");
@@ -179,6 +186,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
     });
   };
   const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>, row: TreeRow, index: number) => {
+    if((event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey)&&cwd&&supportedFile(row.entry)){event.preventDefault();event.stopPropagation();showContext(event.currentTarget,row.entry.path);return;}
     let destination: TreeRow | undefined;
     if (event.key === "ArrowDown") destination = rows[index + 1];
     else if (event.key === "ArrowUp") destination = rows[index - 1];
@@ -224,6 +232,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
           aria-disabled={disabled || undefined} tabIndex={-1}
           className={`workspace-file-tree-row${row.entry.path === filePath ? " selected" : ""}${disabled ? " disabled" : ""}`}
           style={{ "--tree-level": row.level } as CSSProperties} title={row.entry.path}
+          onContextMenu={event=>{if(cwd&&supportedFile(row.entry)){event.preventDefault();event.stopPropagation();showContext(event.currentTarget,row.entry.path,event.clientX,event.clientY)}}}
           onFocus={() => setFocusedPath(row.entry.path)} onKeyDown={event => onRowKeyDown(event, row, index)} onClick={() => { if (!disabled) toggle(row); }} onDoubleClick={() => { if (!disabled && row.entry.kind !== "directory" && supportedFile(row.entry)) onOpenFile(row.entry.path,{preview:false}); }}>
           {row.level > 1 && <span className="workspace-file-tree-spacing" aria-hidden="true">{Array.from({length:row.level-1},(_,index)=><i key={index}/>)}</span>}
           <span className="workspace-file-tree-icon"><TreeFileIcon path={row.entry.path} folder={row.entry.kind === "directory"} expanded={row.expanded}/></span><span className="workspace-file-tree-name">{row.entry.name}</span>
@@ -243,5 +252,6 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
       if (rootError) void data.readDirectory(".");
       else { const failed = rows.find(row => row.error); if (failed) void data.readDirectory(failed.entry.path); }
     }}>Retry</button>}</div>}
+    {context&&cwd&&active&&<WorkspaceTreeMenu key={`${data.cacheKey}:${context.path}:${context.x}:${context.y}`} data={data} cwd={cwd} target={context} onClose={closeContext} onAddFile={onAddFile}/>}
   </section>;
 }

@@ -281,6 +281,7 @@ export type AccountAction =
 export interface AccountActionResult { login?: LoginSnapshot; accounts?: AccountInfo[]; selection?: SessionAccountList }
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge> {
+  showContextMenu?(items:import("./context-menu").DesktopMenuItem[]):Promise<string|null>;
   subscribeWindowClose?(listener: (request: {id: string; cancelled?: boolean}) => void): () => void;
   answerWindowClose?(id: string, allowed: boolean): Promise<void>;
   getNotificationStatus?(): Promise<{supported:boolean; error?:string}>;

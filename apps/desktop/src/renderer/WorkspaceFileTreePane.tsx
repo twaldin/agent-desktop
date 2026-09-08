@@ -7,7 +7,8 @@ import "./workspace-file-tree-pane.css";
 import { fileTreeWidth, fileTreeResize } from "./file-tree-layout";
 
 /** Presentation belongs to this window; entries remain owned by the workspace host. */
-export function WorkspaceFileTreePane({ data, filePath, active, view, onChange, onOpenFile }: {
+export function WorkspaceFileTreePane({ data, filePath, active, view, onChange, onOpenFile, cwd, onAddFile }: {
+  cwd?:string;onAddFile?(path:string):void;
   data: WorkspaceState; filePath: string; active: boolean; view: FileTreeView;
   onChange(view: FileTreeView): void; onOpenFile(path: string, options?: {preview?:boolean}): void;
 }) {
@@ -51,6 +52,6 @@ export function WorkspaceFileTreePane({ data, filePath, active, view, onChange, 
         const next = event.key === "Home" ? 200 : event.key === "End" ? containerWidth * .6 : width + (event.key === "ArrowLeft" ? 16 : -16);
         onChange({ open: true, width: fileTreeWidth(next, containerWidth) });
       }}/>
-    <WorkspaceFileTree data={data} filePath={filePath} active={active && view.open} onOpenFile={onOpenFile}/>
+    <WorkspaceFileTree cwd={cwd} onAddFile={onAddFile} data={data} filePath={filePath} active={active && view.open} onOpenFile={onOpenFile}/>
   </aside>;
 }

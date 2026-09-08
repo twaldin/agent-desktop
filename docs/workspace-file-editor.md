@@ -1,5 +1,18 @@
 # Workspace file editor
 
+## File-tree context actions
+
+Right-click or Shift-F10 on a supported file targets that row, without opening it or substituting the selected editor path. Open in/Open with use the owning host's catalog and durable mutation queue. Save as reuses the existing validated byte-copy engine and local destination chooser; Copy path uses the owning workspace's absolute path. Folder actions are not invented where the pinned target extractor accepts files only.
+
+The pinned default is an Electron native menu. A trusted preload/main bridge now accepts bounded display-only menu descriptors, maps selection IDs back to renderer actions and scopes disposal/replacement to the window. The renderer retains HTML fallback and visible errors. Native application icons, warm discovery timing, keyboard popup placement and visible native interaction remain unverified.
+
+Evidence: `.data/tree-menu-2026-09-07-r4/result.json` passes11 checks/nine PNG+Chromium-AX captures against an authenticated disposable host. Nonselected second.ts is copied/opened while first.ts remains the editor. A real copy through the production engine matches bytes; the controlled OS adapter receives the exact second.ts path. The broader toolbar suite retains five injected launches, one autosave write, one copy, zero sessions and the original revision1 draft; uncertain launch recovery does not replay.34 tests/138 assertions, strict fixture checking, typecheck/build and independent Luna reviews pass. Actual Electron Menu construction and callback identity are tested separately, without showing a popup.
+
+Limitations: the fixture exercises HTML fallback and controlled launch/dialog boundaries, not installed native popup, physical Work input or matched pixels. Failed harness runs remain in `.data/tree-menu-2026-09-07/REPORT.md`; one failed attempt changed clipboard text and did not recover the original, while the corrected run restores its own starting text. Work runs and sealed bundles were untouched.
+
+Add to chat remains explicitly incomplete. Native Codex stages whole-file descriptors in the composer, and later native execution produces fileMention context. The app needs a separate durable draft/command representation, owner checks, chips and OMP admission; it must not substitute selected-text snapshots or merely insert @path into authored text.
+
+
 ## Workspace file-tree glyphs
 
 Tree rows now use the pinned complete, colored sprite system: 53 file glyphs and one chevron for a folder. The native exact-name map precedes compound suffixes, with complete-set overrides for JSX/TSX and Sass. Ordinary file-tab glyphs retain their distinct resolver. Each Next.js gradient has a local ID so repeated rows cannot reference another instance.

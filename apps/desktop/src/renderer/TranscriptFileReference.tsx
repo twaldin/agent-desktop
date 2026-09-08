@@ -151,7 +151,7 @@ export function FileReferenceControl({ file, title, children }: { file: Workspac
     </div>,document.body)}</>;
 }
 
-function FileTargetSubmenu({targets,disabled,onOpen,onClose}:{targets:FileOpenOptions["targets"];disabled:boolean;onOpen:(id:string)=>void;onClose:()=>void}) {
+export function FileTargetSubmenu({targets,disabled,onOpen,onClose}:{targets:FileOpenOptions["targets"];disabled:boolean;onOpen:(id:string)=>void;onClose:()=>void}) {
   const ref = useRef<HTMLDivElement>(null);
   const [style,setStyle] = useState<{left:number;top:number}>();
   useLayoutEffect(() => {

@@ -1,3 +1,4 @@
+import {showDesktopContextMenu} from "./native-context-menu";
 import { parseNativeSkillFileRef } from "@agent-desktop/shared";
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { closePluginAcquisitionRequest, requestMarketplaceCatalog, requestPluginAcquisitionOperations, reviewPluginAcquisition, startPluginAcquisition } from "./plugin-acquisition-transport";
@@ -294,6 +295,7 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMa
   }
 }
 
+ipcMain.handle("desktop:context-menu",(event,items:unknown)=>{assertTrustedSender(event);const owner=BrowserWindow.fromWebContents(event.sender);if(!owner)throw new Error("The menu window is unavailable.");return showDesktopContextMenu(owner,items)});
 ipcMain.handle("desktop:notification-status", event => { assertTrustedSender(event); return notificationDelivery.status(); });
 ipcMain.handle("desktop:notification-ready", event => {
   assertTrustedSender(event); notificationReady.add(event.sender.id);
