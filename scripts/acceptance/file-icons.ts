@@ -1,0 +1,14 @@
+import {readFile,mkdir,readdir,writeFile} from "node:fs/promises";
+import {resolve,join,relative} from "node:path";
+import {createHash} from "node:crypto";
+import {build} from "vite";
+import react from "@vitejs/plugin-react";
+import tailwind from "@tailwindcss/vite";
+const output=resolve(process.argv[2]!),reference=JSON.parse(await readFile(resolve(process.argv[3]!),"utf8"));
+await mkdir(output,{recursive:true,mode:0o700});if((await readdir(output)).length)throw Error("Use a new output directory");
+const sources=["apps/desktop/src/renderer/FileTypeIcon.tsx","apps/desktop/src/renderer/file-icon-kind.ts","apps/desktop/src/renderer/DockPanel.tsx","scripts/acceptance/file-icons-browser.tsx","scripts/acceptance/file-icons.ts","scripts/acceptance/file-icons-electron.cjs"];
+const hashes=async()=>Object.fromEntries(await Promise.all(sources.map(async p=>[p,createHash('sha256').update(await readFile(p)).digest('hex')])));const before=await hashes();
+await writeFile(join(output,"index.html"),`<!doctype html><meta charset="utf-8"><style>html,body{margin:0}main{padding:16px}p{margin:10px 0;font:12px system-ui}.glyph-grid{display:grid;grid-template-columns:repeat(7,148px);gap:6px;margin-bottom:12px}.glyph-cell{height:68px;font:11px system-ui}.glyph-cell>span{display:block;margin-bottom:5px}.glyph-pair{display:flex;gap:24px}.glyph-pair>span{display:block}.glyph-pair svg{display:block;width:100%;height:100%}</style><div id="root"></div><script type="module" src="${relative(output,resolve('scripts/acceptance/file-icons-browser.tsx'))}"></script>`);
+await build({configFile:false,root:output,base:'./',logLevel:'warn',plugins:[react(),tailwind()],define:{__FILE_ICON_REFERENCE__:JSON.stringify(reference)},build:{outDir:join(output,'web')}});
+const child=Bun.spawn([process.execPath,resolve('node_modules/electron/cli.js'),resolve('scripts/acceptance/file-icons-electron.cjs'),output],{stdout:Bun.file(join(output,'electron.log')),stderr:Bun.file(join(output,'electron-errors.log'))});const timer=setTimeout(()=>child.kill(),60000);const code=await child.exited;clearTimeout(timer);
+const result=JSON.parse(await readFile(join(output,'result.json'),'utf8'));result.sourceAtBuild=before;result.sourceAfterRun=await hashes();result.referenceSourceHash=reference.sha256;result.sourceStable=JSON.stringify(before)===JSON.stringify(result.sourceAfterRun);result.passed&&=code===0&&result.sourceStable;await writeFile(join(output,'result.json'),JSON.stringify(result,null,2));if(!result.passed)throw Error(`File icons failed: ${output}`);console.log({passed:true,output});

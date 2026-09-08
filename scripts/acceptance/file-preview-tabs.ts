@@ -8,6 +8,7 @@ import tailwindcss from "@tailwindcss/vite";
 const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/file-preview-tabs-${Date.now()}`);
 const sources = [
+  "apps/desktop/src/renderer/FileTypeIcon.tsx", "apps/desktop/src/renderer/file-icon-kind.ts",
   "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/renderer/file-preview-tabs.ts",
   "apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/renderer/DockPanel.tsx",
   "apps/desktop/src/renderer/WorkspaceFileTreePane.tsx", "apps/desktop/src/renderer/WorkspaceFileBreadcrumbs.tsx", "apps/desktop/src/renderer/transcript-links.ts", "apps/desktop/src/renderer/App.tsx",

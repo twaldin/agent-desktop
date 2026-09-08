@@ -1,5 +1,11 @@
 # Milestone status
 
+## Native file-tab glyphs
+
+Ordinary file tabs now use the pinned filename/MIME resolver and all28 native SVG glyphs instead of the compose icon. Repeated office glyphs receive distinct gradient IDs. The tree uses a different native sprite system, and inline references own their children; those surfaces are deliberately tracked separately.
+
+112 static vector comparisons at16/24px in light/dark render with identical pixels in the same Electron container.4,780 resolver cases match the isolated pinned function; two inherited-object filename bugs use a generic-file fallback.39 tests/218 assertions, preview-tab interaction regression, strict fixture check, typecheck and build pass. This proves extracted-asset equivalence and source integration, not installed or whole-window parity. Details and remaining gaps: [file editor](workspace-file-editor.md). Work runs/seals remain untouched.
+
 ## Replaceable file preview tabs
 
 Single-click file opening now uses one replaceable preview per dock pane. Double-clicking a reference, tree file or tab makes it permanent; interacting with editor content also promotes it, matching the pinned reference. Tree and breadcrumb navigation stay exempt. Dirty, recovered, conflicted and unresolved-save buffers are retained, and unpinned previews are omitted from saved window state.
