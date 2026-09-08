@@ -61,11 +61,11 @@ describe("CommonMark/GFM production renderer contracts", () => {
   });
   test("owner file links are app actions, external autolinks are sanitized, and unavailable schemes are readable", () => {
     const html = render("[File](/home/owner/project/src/a.ts:12) [relative](src/b.ts#L3C2) https://example.com/path\n\n[mail](mailto:person@example.com) [outside](/etc/passwd)");
-    expect(html.match(/class="transcript-file-reference"/g)).toHaveLength(2);
+    expect(html.match(/class="transcript-file-reference"/g)).toHaveLength(3);
     expect(html).toContain('title="src/a.ts:12"'); expect(html).toContain('title="src/b.ts:3:2"'); expect(html).not.toContain('href="/home');
     expect(html).toContain('href="https://example.com/path" rel="noreferrer noopener"');
     expect(html).not.toContain('href="mailto:'); expect(html).not.toContain('href="/etc');
-    expect(html).toContain("outside the session’s workspace");
+    expect(html).toContain('title="/etc/passwd"');
   });
   test("footnote IDs and accessibility descriptions are scoped to each message", () => {
     const source = "A note[^a].\n\n[^a]: Its definition.", a = render(source, "a:block:0"), b = render(source, "b:block:0");
@@ -84,6 +84,18 @@ describe("CommonMark/GFM production renderer contracts", () => {
 });
 
 describe("owner-scoped link and editor location contracts", () => {
+  test("transcript standalone routing preserves locations and requires a cwd only for relative links", () => {
+    expect(resolveTranscriptLink("/remote/outside/My%20File.ts#L3C2", "/remote/project", true)).toEqual({kind:"file",file:{path:"/remote/outside/My File.ts",line:3,column:2}});
+    expect(resolveTranscriptLink("/remote/file.ts:2", undefined, true)).toEqual({kind:"file",file:{path:"/remote/file.ts",line:2}});
+    expect(resolveTranscriptLink("/remote/file.ts", "/", true)).toEqual({kind:"file",file:{path:"/remote/file.ts"}});
+    expect(resolveTranscriptLink("../outside/report.md", "/remote/project", true)).toEqual({kind:"file",file:{path:"/remote/outside/report.md"}});
+    expect(resolveTranscriptLink("/remote/project/in.ts", "/remote/project", true)).toEqual({kind:"file",file:{path:"in.ts"}});
+    expect(resolveTranscriptLink("relative.ts", undefined, true).kind).toBe("unavailable");
+    for (const href of ["/", "//other-host/file", "/remote/%00file", "/remote/%C2%85file", "/remote/\ud800", "/remote/file%5Cname", "file:///remote/file", "sandbox:/remote/file"])
+      expect(resolveTranscriptLink(href, undefined, true).kind).toBe("unavailable");
+    // The default is still used by file-editor callers and cannot cross their target.
+    expect(resolveTranscriptLink("../outside/report.md", "/remote/project").kind).toBe("unavailable");
+  });
   test("resolves relative and absolute POSIX files against the owner cwd, with supported line formats", () => {
     expect(resolveTranscriptLink("src/a.ts:12:3", "/remote/project")).toEqual({ kind: "file", file: { path: "src/a.ts", line: 12, column: 3 } });
     expect(resolveTranscriptLink("/remote/project/My%20File.ts#L4-L8", "/remote/project")).toEqual({ kind: "file", file: { path: "My File.ts", line: 4 } });

@@ -62,7 +62,7 @@ function CodeBlock({ node }: ExtraProps) {
 function MarkdownLink({ href, children, node: _node, ...props }: React.ComponentProps<"a"> & ExtraProps) {
   const { actions } = useContext(TranscriptMarkdownContext), context = useContext(MarkdownBlockContext);
   const [error, setError] = useState<string>();
-  const link = resolveTranscriptLink(href ?? "", actions?.cwd);
+  const link = resolveTranscriptLink(href ?? "", actions?.cwd, true);
   const describedBy = props["aria-describedby"]?.replace(/\bfootnote-label\b/g, `${context.scope}footnote-label`);
   async function open() {
     setError(undefined);

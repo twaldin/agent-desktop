@@ -145,6 +145,9 @@ export class WorkspaceState {
   open(path: string) { this.opened = path; this.changed(); this.saveSoon(); return this.read(path); }
   read(path: string) {
     return this.load(`file:${path}`, async () => {
+      // File-link navigation can reveal a cached buffer while its host is offline.
+      // A missing buffer still takes the normal disconnected-error path.
+      if (!this.connected && this.documents.has(path)) return;
       const epoch = this.documentEpochs.get(path) ?? 0;
       let result: WorkspaceQueryResult;
       try { result = await this.query({ type: "file.read", path }); }

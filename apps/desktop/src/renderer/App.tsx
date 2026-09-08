@@ -43,7 +43,7 @@ import { ComposerContext, type ComposerContextHandle } from "./ComposerContext";
 import { PendingDetachedQuestions } from "./DetachedQuestionCard";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { canReplaceFilePreview } from "./file-preview-tabs";
-import { transcriptHostFileActions } from "./transcript-file-actions";
+import { routedTranscriptHostFileActions } from "./transcript-file-actions";
 import { resolveTranscriptLink, type TranscriptLinkActions, type WorkspaceFileRequest } from "./transcript-links";
 import { WorkspaceState, workspaceKey } from "./workspace-state";
 import { offlineCache } from "./offline-cache";
@@ -297,16 +297,38 @@ export function App() {
   }, [workspace, connected]);
   const imageConnection = useRef(connected); imageConnection.current = connected;
   const transcriptImageResolver = useMemo(() => createTranscriptImageResolver(bridge, hostId, () => imageConnection.current), [bridge, hostId]);
+  const transcriptFileWorkspace = (file: {path: string}) => {
+    if (!file.path.startsWith("/")) {
+      if (!workspace) throw new Error("This session has no owning workspace.");
+      return workspace;
+    }
+    const target = { filePath: file.path }, owner = `${hostId}:${workspaceKey(target)}`;
+    let data = workspaces.get(owner);
+    if (!data) { data = new WorkspaceState(bridge, hostId, target, offlineCache, desktop.localHostId); workspaces.set(owner, data); }
+    data.setConnected(Boolean(desktop.catalog.records.get(hostId)?.connected));
+    return data;
+  };
+  useEffect(() => {
+    for (const data of workspaces.values()) {
+      const online = Boolean(desktop.catalog.records.get(data.hostId)?.connected);
+      if (data.connected !== online) data.setConnected(online);
+    }
+  });
   const transcriptLinkActions: TranscriptLinkActions = {
     ownerKey: `${workspaceOwner}:${connected}`,
     images: { ownerKey: `${hostId}:${selectedId}:${workspace?.imageGeneration ?? 0}`, resolve: transcriptImageResolver },
-    ...(workspace ? transcriptHostFileActions(workspace) : {}),
-    saveFileCopy: workspace?.canSaveCopy ? async file => { await workspace!.saveCopy(file.path); } : undefined,
+    ...routedTranscriptHostFileActions(transcriptFileWorkspace),
     cwd: selected?.cwd,
     openExternal: url => bridge.openExternal(url),
     openFile: (file, options) => {
+      if (file.path.startsWith("/")) {
+        const data = transcriptFileWorkspace(file);
+        const owner = `${hostId}:${workspaceKey(data.target)}`;
+        setWorkspaceFileRequest({ owner, request: { ...file, path: data.standaloneName!, id: crypto.randomUUID() } });
+        dock.openHostFile(file.path, hostId, "right", options?.preview ?? true);
+        return;
+      }
       if (!workspace || !workspaceOwner) throw new Error("This session has no owning workspace.");
-      if (!connected) throw new Error("The owning host is disconnected. Reconnect before opening a file link.");
       setWorkspaceFileRequest({ owner: workspaceOwner, request: { ...file, id: crypto.randomUUID() } });
       dock.openFile(file.path, hostId, workspaceTarget!, "right", options?.preview ?? true);
     },
@@ -729,7 +751,7 @@ export function App() {
       </>}
 
     </main>
-      {environmentOpen && workspace && !settingsOpen && !pluginDirectoryOpen && <div className="environment-overlay"><EnvironmentCard sideChats={dock.snapshot.tabs.filter(tab => tab.kind === "side-chat" && tab.hostId === hostId && tab.target === `session:${selectedId}`).map(tab => ({ id:tab.id,title:tab.title,unread:Boolean(tab.unread),onOpen:() => dock.open("side-chat") }))} actions={state?.localEnvironments?.actions ? <EnvironmentActions workspace={workspace} connected={connected} onTerminal={(terminal,title) => dock.bindTerminal(terminal.id,hostId,workspace.target,"bottom",title)} onSettings={() => { if(project?.id) setEnvironmentProject({hostId,projectId:project.id}); setSettingsPage("environments"); openSettings(); }}/> : undefined} key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal()} onHost={() => { setSidebarOpen(true);requestAnimationFrame(() => document.getElementById("active-host")?.focus()); }} onClose={() => setEnvironmentOpen(false)}/></div>}
+      {environmentOpen && workspace && !settingsOpen && !pluginDirectoryOpen && <div className="environment-overlay"><EnvironmentCard sideChats={dock.snapshot.tabs.filter(tab => tab.kind === "side-chat" && tab.hostId === hostId && tab.target === `session:${selectedId}`).map(tab => ({ id:tab.id,title:tab.title,unread:Boolean(tab.unread),onOpen:() => dock.open("side-chat") }))} actions={state?.localEnvironments?.actions ? <EnvironmentActions workspace={workspace} connected={connected} onTerminal={(terminal,title) => dock.bindTerminal(terminal.id,hostId,workspace.target,"bottom",title)} onSettings={() => { if(project?.id) setEnvironmentProject({hostId,projectId:project.id}); setSettingsPage("environments"); openSettings(); }}/> : undefined} key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd,true); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal()} onHost={() => { setSidebarOpen(true);requestAnimationFrame(() => document.getElementById("active-host")?.focus()); }} onClose={() => setEnvironmentOpen(false)}/></div>}
     {(["right", "bottom"] as const).map(destination => <div className={`dock-slot dock-slot-${destination}`} key={destination} style={{display:!settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open ? undefined : "none"}} inert={settingsOpen || pluginDirectoryOpen || !dock.snapshot.state[destination].open || undefined}>
       <DockPanel onPinTab={dock.pinFile} onBeforeClose={fileClose.onBeforeClose} destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} onChange={dock.change} onTabDrop={(id,_from,to,index) => dock.change(moveDockTab(dock.snapshot.state,id,to,index))} addActions={dockActions} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
       {!dock.snapshot.state[destination].tabIds.length && <div className="dock-empty-actions">{dockActions.map(action => <button key={action.id} onClick={() => action.onSelect(destination)}><Icon name={(action.id === "browser" || action.id === "existing-browser") ? "globe" : action.id === "side-chat" ? "sideChat" : action.id === "terminal" ? "terminal" : "folder"}/>{action.label}</button>)}</div>}

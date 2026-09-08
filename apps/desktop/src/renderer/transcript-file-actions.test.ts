@@ -2,23 +2,24 @@ import { afterEach, expect, test } from "bun:test";
 import type { CommandEnvelope, CommandResult, DesktopBridge } from "../../../../packages/shared/src/protocol";
 import type { WorkspaceQueryResult } from "../../../../packages/shared/src/workspace-protocol";
 import { WorkspaceState } from "./workspace-state";
-import { transcriptHostFileActions } from "./transcript-file-actions";
+import { routedTranscriptHostFileActions, transcriptHostFileActions } from "./transcript-file-actions";
 
 const states: WorkspaceState[] = [];
 afterEach(() => { for (const state of states.splice(0)) state.stop(); });
 
-function fixture(overrides: { command?: (envelope: CommandEnvelope, hostId?: string) => Promise<CommandResult>; query?: (query: unknown, hostId?: string) => Promise<WorkspaceQueryResult> } = {}) {
-  const calls: { envelope?: CommandEnvelope; hostId?: string; query?: unknown; queries: unknown[] } = { queries: [] };
+function fixture(overrides: { command?: (envelope: CommandEnvelope, hostId?: string) => Promise<CommandResult>; query?: (query: unknown, hostId?: string) => Promise<WorkspaceQueryResult> } = {}, target: {sessionId:string}|{filePath:string} = {sessionId:"owner-session"}) {
+  const calls: { envelope?: CommandEnvelope; hostId?: string; query?: unknown; queries: unknown[]; copies: Array<{target:unknown;path:string;hostId:string}> } = { queries: [], copies: [] };
   const bridge = {
     workspaceQuery: async (_target: unknown, query: unknown, hostId?: string) => {
       calls.query = query; calls.queries.push(query); calls.hostId = hostId;
       return overrides.query ? overrides.query(query, hostId) : { type: "file.open-options", path: "src/name #1.ts", targets: [{ id: "editor", label: "Editor", kind: "editor" }], preferredTargetId: "editor" };
     },
     command: async (envelope: CommandEnvelope, hostId?: string) => { calls.envelope = envelope; calls.hostId = hostId; return overrides.command?.(envelope, hostId) ?? { ok: true, commandId: envelope.id, value: { type: "file.open", targetId: envelope.command.type === "workspace.mutate" && envelope.command.action.type === "file.open" ? envelope.command.action.targetId : "editor" } }; },
+    saveWorkspaceCopy: async (target:unknown,path:string,hostId:string) => { calls.copies.push({target,path,hostId}); return {path:"/saved/copy"}; },
     subscribe: () => () => {},
   } as unknown as DesktopBridge;
   const cache = { read: async () => null, write: async () => {} };
-  const data = new WorkspaceState(bridge, "owner-host", { sessionId: "owner-session" }, cache, "local-host");
+  const data = new WorkspaceState(bridge, "owner-host", target, cache, "local-host");
   data.setConnected(true); states.push(data);
   return { data, calls };
 }
@@ -87,4 +88,43 @@ test("rejects discovery for another path and never replays an uncertain launch",
   await expect(actions.openFileOnHost!({path:"src/name #1.ts"})).rejects.toThrow();
   expect(uncertain.data.pending?.envelope.id).toBe(original);
   expect(dispatches).toBe(1);
+});
+
+test("routes an absolute path through its exact standalone owner and adapts option paths back to the transcript", async () => {
+  const absolute = "/remote/output/My File.png";
+  const standalone = fixture({ query: async query => ({
+    type: "file.open-options", path: (query as {path:string}).path,
+    targets: [{id:"fileManager",label:"Finder",kind:"file-manager"}], preferredTargetId:"fileManager",
+  }) }, {filePath:absolute});
+  const routed: unknown[] = [];
+  const actions = routedTranscriptHostFileActions(file => { routed.push(file); return standalone.data; });
+  const file = {path:absolute,line:12,column:3,endLine:14};
+  expect(await actions.fileOpenOptions!(file)).toMatchObject({path:absolute,preferredTargetId:"fileManager"});
+  expect(standalone.calls.query).toEqual({type:"file.open-options",path:"My File.png"});
+  await actions.openFileOnHost!(file,"fileManager");
+  expect(standalone.calls.envelope?.command).toEqual({type:"workspace.mutate",target:{filePath:absolute},action:{type:"file.open",path:"My File.png",targetId:"fileManager"}});
+  await actions.saveFileCopy!(file);
+  expect(standalone.calls.copies).toEqual([{target:{filePath:absolute},path:"My File.png",hostId:"owner-host"}]);
+  expect(routed).toEqual([file,file,file]);
+});
+
+test("relative paths retain their session workspace and malformed absolute paths never select an owner", async () => {
+  const session = fixture();
+  const routed: unknown[] = [];
+  const actions = routedTranscriptHostFileActions(file => { routed.push(file); return session.data; });
+  await actions.fileOpenOptions!({path:"src/name #1.ts",line:2});
+  expect(session.calls.query).toEqual({type:"file.open-options",path:"src/name #1.ts"});
+  expect(routed).toEqual([{path:"src/name #1.ts",line:2}]);
+  for (const path of ["//remote/file.png","/remote/../file.png","/remote/./file.png","/remote/bad\\file.png","/remote/bad\0file.png"]) {
+    await expect(actions.fileOpenOptions!({path})).rejects.toThrow("canonical absolute");
+  }
+  expect(routed).toHaveLength(1);
+});
+
+test("absolute routing rejects mismatched option basenames before adapting the public path", async () => {
+  const standalone = fixture({query:async () => ({type:"file.open-options",path:"other.png",targets:[]})},{filePath:"/remote/image.png"});
+  const actions = routedTranscriptHostFileActions(() => standalone.data);
+  await expect(actions.fileOpenOptions!({path:"/remote/image.png"})).rejects.toThrow("different file");
+  await expect(actions.openFileOnHost!({path:"/remote/image.png"},"fileManager")).rejects.toThrow("different file");
+  expect(standalone.calls.envelope).toBeUndefined();
 });

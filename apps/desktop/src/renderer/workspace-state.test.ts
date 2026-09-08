@@ -72,6 +72,31 @@ async function fixture(standalone = false) {
 }
 
 describe("workspace renderer against actual file and Git services", () => {
+  test("offline file-link reads preserve cached edits and reconnect checks the real host revision", async () => {
+    const { path, data, owners, deliveries } = await fixture(true);
+    try {
+      await data.open("sample.txt"); data.edit("sample.txt", "unsaved local edit\n");
+      const document = data.documents.get("sample.txt"), calls = owners.length;
+      data.setConnected(false);
+      await data.open("sample.txt"); await data.read("sample.txt");
+      expect(data.documents.get("sample.txt")).toBe(document);
+      expect(document?.text).toBe("unsaved local edit\n");
+      expect(document?.dirty).toBe(true);
+      expect(data.errors["file:sample.txt"]).toBeUndefined();
+      expect(owners).toHaveLength(calls);
+      await data.read("uncached.txt");
+      expect(data.errors["file:uncached.txt"]).toContain("disconnected");
+      expect(data.documents.has("uncached.txt")).toBe(false);
+      expect(owners).toHaveLength(calls);
+      await writeFile(join(path, "sample.txt"), "changed on host\n");
+      data.setConnected(true); await data.read("sample.txt");
+      expect(owners).toHaveLength(calls + 1);
+      expect(document?.text).toBe("unsaved local edit\n");
+      expect(document?.conflict).toMatchObject({kind:"text",text:"changed on host\n"});
+      expect(deliveries).toHaveLength(0);
+    } finally { data.stop(); }
+  });
+
   test("breadcrumb reads cache folders without navigating the directory tab", async () => {
     const { path, data, owners, deliveries } = await fixture();
     await mkdir(join(path, "src")); await mkdir(join(path, "docs"));

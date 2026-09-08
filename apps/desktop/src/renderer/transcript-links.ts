@@ -1,4 +1,5 @@
 import type { WorkspaceQueryResult } from "@agent-desktop/shared";
+import { parseStandaloneFilePath } from "../../../../packages/shared/src/workspace";
 import type { TranscriptImageActions } from "./transcript-image-source";
 export interface WorkspaceFileLink { path: string; line?: number; column?: number; endLine?: number }
 export interface WorkspaceFileRequest extends WorkspaceFileLink { id: string }
@@ -25,8 +26,10 @@ function absolutePath(path: string): string {
   for (const part of path.split("/")) { if (!part || part === ".") continue; if (part === "..") parts.pop(); else parts.push(part); }
   return `/${parts.join("/")}`;
 }
-/** Classify before opening. The owner host independently enforces its realpath boundary. */
-export function resolveTranscriptLink(href: string, cwd?: string): TranscriptLink {
+/** Transcript callers may route outside-cwd paths to exact standalone file owners.
+ * File-editor callers retain their workspace boundary unless they explicitly opt in.
+ */
+export function resolveTranscriptLink(href: string, cwd?: string, allowStandalone = false): TranscriptLink {
   if (!href || href.length > 32_768 || /[\x00-\x20\x7f\\]/.test(href)) return unavailable("This link has an unsupported URL or path.");
   if (href.startsWith("#")) {
     try { const id = href.slice(1), decoded = decodeURIComponent(id); return id && !/[\x00-\x1f\x7f]/.test(decoded) ? { kind: "fragment", id } : unavailable("This message anchor is invalid."); }
@@ -54,8 +57,14 @@ export function resolveTranscriptLink(href: string, cwd?: string): TranscriptLin
   if (/^[a-z][a-z\d+.-]*:/i.test(path) || path.includes("?")) return unavailable("This link type is not supported by the desktop.");
   try { path = decodeURIComponent(path); } catch { return unavailable("This file path has invalid encoding."); }
   if (!path || /[\x00-\x1f\x7f\\]/.test(path)) return unavailable("This file path is invalid.");
-  if (!cwd?.startsWith("/")) return unavailable("This message has no owning workspace for file links.");
-  const root = absolutePath(cwd), resolved = absolutePath(path.startsWith("/") ? path : `${root}/${path}`);
+  if (!cwd?.startsWith("/") && (!allowStandalone || !path.startsWith("/"))) return unavailable("This message has no owning workspace for file links.");
+  const root = cwd?.startsWith("/") ? absolutePath(cwd) : undefined;
+  const resolved = absolutePath(path.startsWith("/") ? path : `${root}/${path}`);
+  if (allowStandalone && (!root || root === "/" || resolved !== root && !resolved.startsWith(`${root}/`))) {
+    try { return { kind: "file", file: { path: parseStandaloneFilePath(resolved), ...(line !== undefined ? { line } : {}), ...(column !== undefined ? { column } : {}) } }; }
+    catch { return unavailable("This file path is invalid."); }
+  }
+  if (!root) return unavailable("This message has no owning workspace for file links.");
   if (resolved === root || root !== "/" && !resolved.startsWith(`${root}/`)) return unavailable("This file link is outside the session’s workspace.");
   return { kind: "file", file: { path: resolved.slice(root === "/" ? 1 : root.length + 1), ...(line !== undefined ? { line } : {}), ...(column !== undefined ? { column } : {}) } };
 }

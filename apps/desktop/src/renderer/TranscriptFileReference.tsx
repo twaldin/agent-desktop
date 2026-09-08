@@ -1,6 +1,7 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { WorkspaceQueryResult } from "@agent-desktop/shared";
+import { parseStandaloneFilePath } from "../../../../packages/shared/src/workspace";
 import "./workspace-file-open.css";
 type FileOpenOptions = Extract<WorkspaceQueryResult, {type:"file.open-options"}>;
 import { Icon } from "./Icons";
@@ -30,18 +31,24 @@ function absolutePath(path: string): string {
  * Native file references are paths, not Markdown hrefs. In particular `%`,
  * `#`, `?`, `:` and spaces remain literal filename characters.
  */
-export function resolveTranscriptFileReference(path: string, cwd?: string): Resolution {
+export function resolveTranscriptFileReference(path: string, cwd?: string, allowStandalone = false): Resolution {
   if (typeof path !== "string" || !path || path.length > 32_768 || /[\x00-\x1f\x7f\\]/.test(path)) return { error: "This native file reference has an invalid path." };
   if (path.startsWith("//")) return { error: "This native file reference names another host." };
-  if (!cwd?.startsWith("/")) return { error: "This file reference has no owning workspace." };
-  const root = absolutePath(cwd), resolved = absolutePath(path.startsWith("/") ? path : `${root}/${path}`);
+  if (!cwd?.startsWith("/") && (!allowStandalone || !path.startsWith("/"))) return { error: "This file reference has no owning workspace." };
+  const root = cwd?.startsWith("/") ? absolutePath(cwd) : undefined;
+  const resolved = absolutePath(path.startsWith("/") ? path : `${root}/${path}`);
+  if (allowStandalone && (!root || root === "/" || resolved !== root && !resolved.startsWith(`${root}/`))) {
+    try { return { file: { path: parseStandaloneFilePath(resolved) } }; }
+    catch { return { error: "This native file reference has an invalid path." }; }
+  }
+  if (!root) return { error: "This file reference has no owning workspace." };
   if (resolved === root || root !== "/" && !resolved.startsWith(`${root}/`)) return { error: "This file reference is outside the owning workspace." };
   return { file: { path: resolved.slice(root === "/" ? 1 : root.length + 1) } };
 }
 
 export function TranscriptFileReference({ path, label }: TranscriptFileReferenceProps) {
   const { actions } = useContext(TranscriptMarkdownContext);
-  const target = resolveTranscriptFileReference(path, actions?.cwd), text = label?.trim() || path;
+  const target = resolveTranscriptFileReference(path, actions?.cwd, true), text = label?.trim() || path;
   if ("error" in target) return <span className="transcript-file-reference unavailable" title={target.error}>{text}<span className="sr-only"> ({target.error})</span></span>;
   return <FileReferenceControl key={`${actions?.ownerKey ?? actions?.cwd}:${path}`} file={target.file} title={path}>{text}</FileReferenceControl>;
 }
@@ -112,7 +119,7 @@ export function FileReferenceControl({ file, title, children }: { file: Workspac
     pending.current = true; setBusy(true); setError(undefined); close();
     try {
       if (save) { if (!currentActions.current?.saveFileCopy) throw new Error("Save as is unavailable."); await currentActions.current.saveFileCopy(file); }
-      else { if (!currentActions.current?.cwd) throw new Error("This file reference has no owning workspace."); await navigator.clipboard.writeText(absolutePath(`${currentActions.current.cwd}/${file.path}`)); }
+      else { if (!file.path.startsWith("/") && !currentActions.current?.cwd) throw new Error("This file reference has no owning workspace."); await navigator.clipboard.writeText(file.path.startsWith("/") ? parseStandaloneFilePath(file.path) : absolutePath(`${currentActions.current!.cwd}/${file.path}`)); }
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   };
