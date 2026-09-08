@@ -1,3 +1,4 @@
+import { FileReferenceControl } from "./TranscriptFileReference";
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -76,7 +77,7 @@ function MarkdownLink({ href, children, node: _node, ...props }: React.Component
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   }
   const content = link.kind === "unavailable" ? <span className="markdown-unavailable-link" title={link.reason}>{children}<span className="sr-only"> ({link.reason})</span></span>
-    : link.kind === "file" ? <button type="button" className="markdown-file-link" title={`Open ${link.file.path}${link.file.line ? `:${link.file.line}` : ""} on the session’s host`} onClick={() => void open()}>{children}</button>
+    : link.kind === "file" ? <FileReferenceControl key={`${actions?.ownerKey ?? actions?.cwd}:${href}`} file={link.file} title={`${link.file.path}${link.file.line ? `:${link.file.line}${link.file.column ? `:${link.file.column}` : ""}${link.file.endLine ? `-${link.file.endLine}` : ""}` : ""}`}>{children}</FileReferenceControl>
     : <a {...props} aria-describedby={describedBy} href={link.kind === "external" ? link.url : `#${link.id}`} rel="noreferrer noopener" onClick={event => { event.preventDefault(); void open(); }} onAuxClick={event => { event.preventDefault(); if (event.button === 1) void open(); }}>{children}</a>;
   return <>{content}{error && <span className="markdown-link-error" role="alert">{error}</span>}</>;
 }

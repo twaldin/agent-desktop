@@ -49,8 +49,8 @@ describe("CommonMark/GFM production renderer contracts", () => {
   });
   test("owner file links are app actions, external autolinks are sanitized, and unavailable schemes are readable", () => {
     const html = render("[File](/home/owner/project/src/a.ts:12) [relative](src/b.ts#L3C2) https://example.com/path\n\n[mail](mailto:person@example.com) [outside](/etc/passwd)");
-    expect(html.match(/class="markdown-file-link"/g)).toHaveLength(2);
-    expect(html).toContain("Open src/a.ts:12 on the session’s host"); expect(html).not.toContain('href="/home');
+    expect(html.match(/class="transcript-file-reference"/g)).toHaveLength(2);
+    expect(html).toContain('title="src/a.ts:12"'); expect(html).toContain('title="src/b.ts:3:2"'); expect(html).not.toContain('href="/home');
     expect(html).toContain('href="https://example.com/path" rel="noreferrer noopener"');
     expect(html).not.toContain('href="mailto:'); expect(html).not.toContain('href="/etc');
     expect(html).toContain("outside the session’s workspace");

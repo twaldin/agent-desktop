@@ -1,10 +1,16 @@
 # Milestone status
 
+## File-reference opening interactions
+
+Markdown file links and native OMP references now share one owner-bound control: normal/Enter/Space opening in the dock, platform-modified and middle-click opening on the file’s host, hover/focus target discovery, and a keyboard-accessible context menu with Open with, Save as, Copy path and host file-manager reveal. External opens reuse the existing durable workspace queue; failed or unresolved opens remain visible and are not replayed. An explicit reveal targets the file; external editor actions with line locations remain unavailable rather than discarding the location.
+
+28 focused tests/163 assertions pass, including actual WorkspaceState ownership and command recovery with controlled transport. Ten renderer interaction checks/seven PNG+Chromium-AX captures, Markdown/scroll regression, typecheck and build pass; evidence is described in [file editor](workspace-file-editor.md). This remains uninstalled source work: preview-tab replacement/double-click behavior, filetype icons, full conditional reference actions, actual external-editor line navigation and matched native pixels remain open. Existing Work runs and sealed bundles are unchanged.
+
 ## Native auto-read file context
 
 OMP `fileMention` records now retain their consumed text, literal paths, skipped-read reasons and image identities in the transcript. Each reference can expand its recorded snapshot; file actions use the session workspace, and image retrieval reads the original native file index rather than reopening the source path. Sources includes recorded auto-reads while excluding skipped reads and unavailable images. Pending events and reopened history keep stable identities and copied metadata without embedding image bytes.
 
-The actual pinned generator, journal and worker pass text/empty/directory/binary/image retrieval and reopen checks with zero model calls.36 focused/regression tests pass420 assertions; four renderer checks/three PNG+Chromium-AX pairs, typecheck and build pass. Evidence and scope are described in [file editor](workspace-file-editor.md). This is a separate native-context presentation, not a guessed attachment to a preceding user message. User-bubble association, filetype icons, the full reference context menu/modified-click behavior and installed/pixel acceptance remain open. No Work installation, fixture or sealed-evidence change was made.
+The actual pinned generator, journal and worker pass text/empty/directory/binary/image retrieval and reopen checks with zero model calls.36 focused/regression tests pass420 assertions; four renderer checks/three PNG+Chromium-AX pairs, typecheck and build pass. Evidence and scope are described in [file editor](workspace-file-editor.md). This is a separate native-context presentation, not a guessed attachment to a preceding user message. User-bubble association, filetype icons and installed/pixel acceptance remain open. The subsequent opening-interaction checkpoint above adds the shared control and owner menu; its remaining gaps stay explicit. No Work installation, fixture or sealed-evidence change was made.
 
 ## Selected-text history
 

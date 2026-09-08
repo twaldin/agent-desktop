@@ -1,8 +1,14 @@
+import type { WorkspaceQueryResult } from "@agent-desktop/shared";
 export interface WorkspaceFileLink { path: string; line?: number; column?: number; endLine?: number }
 export interface WorkspaceFileRequest extends WorkspaceFileLink { id: string }
 export interface TranscriptLinkActions {
   /** POSIX cwd of this session on its owning host, never the viewing machine. */
   cwd?: string;
+  /** Changes when the owner or connection changes; invalidates pending menu reads. */
+  ownerKey?: string;
+  fileOpenOptions?(file: WorkspaceFileLink): Promise<Extract<WorkspaceQueryResult, { type: "file.open-options" }>>;
+  saveFileCopy?(file: WorkspaceFileLink): Promise<void>;
+  openFileOnHost?(file: WorkspaceFileLink, targetId?: string): Promise<void>;
   openFile?(file: WorkspaceFileLink): Promise<void> | void;
   openExternal?(url: string): Promise<void>;
 }

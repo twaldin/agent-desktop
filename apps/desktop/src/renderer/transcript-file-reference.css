@@ -39,3 +39,9 @@
   color:var(--danger);
   font-size:var(--small-font-size);
 }
+
+.transcript-file-reference-menu { width:240px; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); }
+
+.transcript-file-open-with > button { display:flex;align-items:center;justify-content:space-between;width:100%;min-height:30px;padding:4px 8px;border-radius:var(--radius-small,6px);font:inherit;text-align:left; }
+.transcript-file-open-with > button:hover:not(:disabled), .transcript-file-open-with > button:focus-visible {background:var(--hover);outline:none;}
+.transcript-file-targets {width:220px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);z-index:121;}

@@ -38,6 +38,7 @@ import { PendingInteractions } from "./PendingInteractions";
 import { ComposerContext, type ComposerContextHandle } from "./ComposerContext";
 import { PendingDetachedQuestions } from "./DetachedQuestionCard";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { transcriptHostFileActions } from "./transcript-file-actions";
 import { resolveTranscriptLink, type TranscriptLinkActions, type WorkspaceFileRequest } from "./transcript-links";
 import { WorkspaceState, workspaceKey } from "./workspace-state";
 import { offlineCache } from "./offline-cache";
@@ -282,7 +283,17 @@ export function App() {
     if (!workspace) { workspace = new WorkspaceState(bridge, hostId, workspaceTarget, offlineCache, desktop.localHostId); workspaces.set(key, workspace); }
   }
   const workspaceOwner = workspaceTarget ? `${hostId}:${workspaceKey(workspaceTarget)}` : undefined;
+  useEffect(() => {
+    if (!workspace) return;
+    const release = retainWorkspace(workspace);
+    workspace.setConnected(connected);
+    void workspace.restore();
+    return release;
+  }, [workspace, connected]);
   const transcriptLinkActions: TranscriptLinkActions = {
+    ownerKey: `${workspaceOwner}:${connected}`,
+    ...(workspace ? transcriptHostFileActions(workspace) : {}),
+    saveFileCopy: workspace?.canSaveCopy ? async file => { await workspace!.saveCopy(file.path); } : undefined,
     cwd: selected?.cwd,
     openExternal: url => bridge.openExternal(url),
     openFile: file => {
