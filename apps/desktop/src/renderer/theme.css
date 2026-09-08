@@ -8,8 +8,6 @@
   --code-surface: var(--sidebar-surface); --code-text: var(--text);
   --diff-added-surface: color-mix(in srgb, #37976a 12%, transparent); --diff-removed-surface: color-mix(in srgb, var(--danger) 10%, transparent);
   --diff-added-text: color-mix(in srgb, #37976a 70%, var(--text)); --diff-removed-text: var(--danger);
-  --syntax-keyword: #b36bd3; --syntax-string: #37976a; --syntax-comment: var(--tertiary); --syntax-number: #bd8440;
-  --syntax-function: var(--accent); --syntax-type: #438ea1;
   --terminal-font: var(--code-font); --heading-font: var(--ui-font);
   --font-size: 14px; --code-font-size: 12px; --terminal-font-size: 13px; --heading-font-size: 27px; --small-font-size: 11px;
   --font-weight: 400; --heading-font-weight: 500; --code-font-weight: 400; --line-height: 1.5; --transcript-line-height: 1.625; --code-line-height: 1.65; --letter-spacing: 0px;
@@ -162,3 +160,8 @@ h2, h3 { font-family:var(--heading-font); font-weight:var(--heading-font-weight)
 :root { --markdown-code-background:color-mix(in srgb,var(--text) .5%,transparent); --markdown-code-radius:8px; --markdown-code-label-size:12px; }
 :root[data-theme="dark"] { --markdown-code-background:rgb(255 255 255 / .5%); }
 @media (prefers-color-scheme:dark) { :root:not([data-theme="light"]):not([data-theme="dark"]) { --markdown-code-background:rgb(255 255 255 / .5%); } }
+
+/* Pinned Highlight.js palette; explicit theme tokens still override these defaults. */
+:root { --syntax-comment:#4f4f4f; --syntax-keyword:#ab4f7a; --syntax-number:#ac4f23; --syntax-string:#3a843f; --syntax-function:#643cae; --syntax-attribute:#b8802b; --syntax-name:#1f4e94; --syntax-error:#ba2623; --syntax-type:var(--syntax-function); }
+:root[data-theme="dark"] { --syntax-comment:#b9b9b9; --syntax-keyword:#f8a6c8; --syntax-number:#f1a275; --syntax-string:#83d197; --syntax-function:#b897f4; --syntax-attribute:#f9dc78; --syntax-name:#63a8f8; --syntax-error:#ff8583; --syntax-type:var(--syntax-function); }
+@media(prefers-color-scheme:dark) { :root:not([data-theme="light"]):not([data-theme="dark"]) { --syntax-comment:#b9b9b9; --syntax-keyword:#f8a6c8; --syntax-number:#f1a275; --syntax-string:#83d197; --syntax-function:#b897f4; --syntax-attribute:#f9dc78; --syntax-name:#63a8f8; --syntax-error:#ff8583; --syntax-type:var(--syntax-function); } }

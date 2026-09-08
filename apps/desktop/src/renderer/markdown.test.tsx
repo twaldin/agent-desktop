@@ -25,14 +25,22 @@ describe("CommonMark/GFM production renderer contracts", () => {
     for (const part of ["<h1>Title</h1>", "<strong>strong</strong>", "<em>emphasized</em>", "<code>inline</code>", "<del>removed</del>", "<ol>", "<ul>", "Nested", 'type="checkbox"', "disabled=", "checked=", "<blockquote>", "<hr/>", '<table dir="auto">', "<thead>", "<tbody>", 'style="text-align:right"']) expect(html).toContain(part);
     expect(html).toContain('role="region" aria-label="Markdown table" tabindex="0"');
   });
+  test("unterminated fences only withhold Copy during an explicitly streaming message", () => {
+    const text="```js\nconst partial = 1";
+    const streaming=renderToStaticMarkup(<MarkdownText text={text} blockKey="stream" streaming/>);
+    expect(streaming).not.toContain('aria-label="Copy code"');
+    expect(render(text)).toContain('aria-label="Copy code"');
+  });
   test("real grammars highlight explicit languages and aliases, unknown/oversized blocks remain plain", () => {
     const js = render('```js\nconst message = "hello"; // comment\n```');
-    expect(js).toContain('data-highlighted="true"'); expect(js).toContain("hljs-keyword"); expect(js).toContain("hljs-string"); expect(js).toContain("hljs-comment");
+    expect(js).toContain('data-highlighted="false"'); // Source renders before the visibility/effect enhancement.
+    expect(highlightCode('const message = "hello"; // comment', "js").kind).toBe("highlighted");
     expect(codeText(js)).toBe('const message = "hello"; // comment');
-    expect(render("```not-a-language\nconst unchanged = 7\n```")).toContain("not-a-language · plain text");
+    const unknown=render("```MyDSL\nconst unchanged = 7\n```");
+    expect(unknown).toContain('>MyDSL</span>'); expect(unknown).not.toContain(" · plain text");
     expect(highlightCode("x".repeat(HIGHLIGHT_LIMIT + 1), "javascript")).toMatchObject({ kind: "plain", reason: "Large block displayed without highlighting" });
     expect(highlightCode("print('ok')", "python").kind).toBe("highlighted");
-    expect(highlightCode("plain <text>", "").kind).toBe("plain");
+    expect(highlightCode("plain <text>", "plaintext").kind).toBe("plain");
   });
   test("tilde, longer, indented, incomplete fences and missing final newline preserve parsed code", () => {
     for (const [source, expected] of [
@@ -40,7 +48,7 @@ describe("CommonMark/GFM production renderer contracts", () => {
       ["    indented\n    code", "indented\ncode"], ["```text\npartial", "partial"],
       ["```text\na\n\n```", "a\n"], ["```text\na\r\nb\r\n```", "a\r\nb"],
     ]) expect(codeText(render(source))).toBe(expected);
-    expect(render("```text\n\n```")).toContain('<pre tabindex="0" aria-label="text code"><code></code></pre>');
+    expect(render("```text\n\n```")).toContain('<pre tabindex="0" aria-label="Plaintext code"><code></code></pre>');
   });
   test("stream growth and closure retain code identity and wrap choice independently per block", () => {
     const views = new MarkdownViewState(), key = "native-message:block:0";

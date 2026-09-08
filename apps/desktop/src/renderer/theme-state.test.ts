@@ -10,6 +10,14 @@ function fixture() {
   return { storage, data: new ThemeEditor(storage), saves, setCurrent: (value: ThemeState) => { current = value; }, current: () => current };
 }
 describe("theme preview and saved-file revisions", () => {
+  test("additional transcript syntax colors survive save/reload and reject executable values", async () => {
+    const f = fixture(); await f.data.refresh();
+    const tokens = { "--syntax-attribute": "#f9dc78", "--syntax-name": "#63a8f8", "--syntax-error": "#ff8583" };
+    f.data.edit({ ...f.data.draft, tokens }); await f.data.save(); await f.data.refresh();
+    expect(f.data.preview.tokens).toEqual(tokens); expect(f.current().document.tokens).toEqual(tokens);
+    f.data.edit({ ...f.data.draft, tokens: { ...tokens, "--syntax-name": "url(https://invalid.example)" } });
+    expect(f.data.validationError).toBeDefined(); expect(f.data.preview.tokens).toEqual(tokens);
+  });
   test("invalid native field text is preserved while the previous valid preview remains active", async () => {
     const f = fixture(); await f.data.refresh(); f.data.edit({ ...f.data.draft, tokens: { "--radius": "18px" } });
     f.data.edit({ ...f.data.draft, tokens: { "--radius": "18" } });

@@ -50,6 +50,7 @@
         "@codemirror/state": "6.7.4",
         "@codemirror/view": "6.43.11",
         "@lezer/markdown": "1.7.2",
+        "highlight.js": "11.11.2",
         "lowlight": "3.3.0",
         "mdast-util-from-markdown": "2.0.3",
         "react-markdown": "10.1.0",

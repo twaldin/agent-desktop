@@ -44,7 +44,7 @@ export function SideChat({ controller, hostId, session, sessionId, drafts, conne
     <div className="side-chat-content" ref={content} onScroll={event => { const node = event.currentTarget; nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60; }}>
       {!snapshot ? <div className="side-chat-empty"><Icon name="sideChat"/><h2>Side chat</h2><p>Ask a side question using this conversation’s context.</p></div> : <div className="side-chat-transcript">
         <div className="side-chat-question">{snapshot.question}</div>
-        {snapshot.answer && <MarkdownText text={snapshot.answer} blockKey={`btw:${hostId}:${sessionId}:${snapshot.runId}`}/>}
+        {snapshot.answer && <MarkdownText streaming={running} text={snapshot.answer} blockKey={`btw:${hostId}:${sessionId}:${snapshot.runId}`}/>}
         {running && <div className="side-chat-working" role="status"><span/>Thinking…</div>}
         {snapshot.status === 'cancelled' && <p className="side-chat-notice">Stopped</p>}
         {snapshot.error && <p className="side-chat-notice" role="alert">{snapshot.error}</p>}

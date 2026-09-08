@@ -23,7 +23,7 @@ export class SelectableCode extends Component<CodeProps, object, SelectionSnapsh
   private element = createRef<HTMLElement>();
   getSnapshotBeforeUpdate(previous: CodeProps): SelectionSnapshot | null {
     const code = this.element.current;
-    if (!code || previous.text === this.props.text) return null;
+    if (!code || (previous.text === this.props.text && previous.children === this.props.children)) return null;
     const selection = code.ownerDocument.getSelection();
     if (!selection?.anchorNode || !selection.focusNode || selection.isCollapsed || !code.contains(selection.anchorNode) || !code.contains(selection.focusNode)) return null;
     return { anchor: offset(code, selection.anchorNode, selection.anchorOffset), focus: offset(code, selection.focusNode, selection.focusOffset), active: code.ownerDocument.activeElement };

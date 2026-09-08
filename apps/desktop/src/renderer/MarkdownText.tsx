@@ -5,32 +5,35 @@ import { createTranscriptImageResolver } from "./transcript-image-source";
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { common, createLowlight } from "lowlight";
+import { highlightCode } from "./transcript-code-highlight";
+import { useCodeHighlight } from "./use-code-highlight";
+import { useCodeCopy } from "./use-code-copy";
+import { codeFenceOpen } from "./transcript-code-fence";
+import { codeLanguageLabel } from "./transcript-code-language";
+import { transcriptMarkdownSelection } from "./transcript-markdown-copy";
+import { TranscriptCodeIcon } from "./TranscriptCodeIcons";
+export { highlightCode, HIGHLIGHT_LIMIT } from "./transcript-code-highlight";
 import { markdownScope, MarkdownViewState } from "./markdown-state";
 import { resolveTranscriptLink, type TranscriptLinkActions } from "./transcript-links";
 import { SelectableCode } from "./code-selection";
 import "./markdown.css";
 
 export const TranscriptMarkdownContext = createContext<{ actions?: TranscriptLinkActions; views?: MarkdownViewState }>({});
-const MarkdownBlockContext = createContext<{ key: string; scope: string; source: string; allowWideBlocks: boolean; root: { current: HTMLDivElement | null }; views: MarkdownViewState }>({ key: "", scope: "", source: "", allowWideBlocks: false, root: { current: null }, views: new MarkdownViewState() });
-const grammars = createLowlight(common);
-export const HIGHLIGHT_LIMIT = 100_000;
-type SyntaxNode = ReturnType<typeof grammars.highlight>["children"][number];
+const MarkdownBlockContext = createContext<{ key: string; scope: string; source: string; allowWideBlocks: boolean; streaming: boolean; root: { current: HTMLDivElement | null }; views: MarkdownViewState }>({ key: "", scope: "", source: "", allowWideBlocks: false, streaming: false, root: { current: null }, views: new MarkdownViewState() });
+type SyntaxNode = NonNullable<ReturnType<typeof highlightCode>["tree"]>["children"][number];
 type Element = NonNullable<ExtraProps["node"]>;
-export function highlightCode(code: string, language: string) {
-  if (!language || ["text", "txt", "plaintext"].includes(language)) return { kind: "plain" as const, reason: undefined };
-  if (!grammars.registered(language)) return { kind: "plain" as const, reason: "No registered grammar for this language" };
-  if (code.length > HIGHLIGHT_LIMIT) return { kind: "plain" as const, reason: "Large block displayed without highlighting" };
-  try { return { kind: "highlighted" as const, tree: grammars.highlight(language, code) }; }
-  catch { return { kind: "plain" as const, reason: "The language grammar could not highlight this block" }; }
-}
 /** No raw-HTML plugin: CommonMark HTML is displayed literally, never executed. */
-export function MarkdownText({ text, blockKey, allowWideBlocks = false }: { text: string; blockKey: string; allowWideBlocks?: boolean }) {
+export function MarkdownText({ text, blockKey, allowWideBlocks = false, streaming = false }: { text: string; blockKey: string; allowWideBlocks?: boolean; streaming?: boolean }) {
   const parent = useContext(TranscriptMarkdownContext), root = useRef<HTMLDivElement>(null);
   const localViews = useMemo(() => new MarkdownViewState(), []);
   const scope = markdownScope(blockKey);
-  const value = useMemo(() => ({ key: blockKey, scope, source: text, allowWideBlocks, root, views: parent.views ?? localViews }), [blockKey, scope, text, allowWideBlocks, parent.views, localViews]);
-  return <MarkdownBlockContext value={value}><div className="transcript-markdown" dir="auto" ref={root}>
+  const value = useMemo(() => ({ key: blockKey, scope, source: text, allowWideBlocks, streaming, root, views: parent.views ?? localViews }), [blockKey, scope, text, allowWideBlocks, streaming, parent.views, localViews]);
+  return <MarkdownBlockContext value={value}><div className="transcript-markdown" dir="auto" ref={root} onCopy={event => {
+      const payload = transcriptMarkdownSelection(event.currentTarget);
+      if (!payload) return;
+      event.clipboardData.setData("text/plain", payload.plainText); event.clipboardData.setData("text/html", payload.htmlText);
+      event.preventDefault(); event.stopPropagation();
+    }}>
     <Markdown remarkPlugins={[remarkGfm]} remarkRehypeOptions={{ clobberPrefix: scope }} components={components} urlTransform={(url, key) => key === "href" || key === "src" ? url : undefined}>{text}</Markdown>
   </div></MarkdownBlockContext>;
 }
@@ -43,21 +46,30 @@ export function HighlightedCode({ code, language }: { code: string; language: st
 }
 function textOf(node: Element["children"][number]): string { return node.type === "text" ? node.value : node.type === "element" ? node.children.map(textOf).join("") : ""; }
 function CodeBlock({ node }: ExtraProps) {
-  const context = useContext(MarkdownBlockContext), [, redraw] = useState(0);
-  const [copy, setCopy] = useState<{ text: string; status: "copied" | "failed" }>();
+  const context = useContext(MarkdownBlockContext), [, redraw] = useState(0), element = useRef<HTMLDivElement>(null);
   const codeNode = node?.children.find(child => child.type === "element" && child.tagName === "code");
   const classes = codeNode?.type === "element" && Array.isArray(codeNode.properties.className) ? codeNode.properties.className : [];
-  const language = String(classes.find(value => typeof value === "string" && value.startsWith("language-")) ?? "").slice(9).toLowerCase();
+  const language = String(classes.find(value => typeof value === "string" && value.startsWith("language-")) ?? "").slice(9);
   // mdast-to-hast appends exactly one presentation newline to nonempty code.
   const displayed = codeNode ? textOf(codeNode) : "", code = displayed.endsWith("\n") ? displayed.slice(0, -1) : displayed;
   const key = `${context.key}:code:${node?.position?.start.offset ?? 0}`, wrapped = context.views.wrapped(key);
-  const highlighted = useMemo(() => highlightCode(code, language), [code, language]);
-  return <div className="markdown-code-block" data-code-key={key} data-highlighted={highlighted.kind === "highlighted"}>
-    <div className="markdown-code-toolbar"><span className="markdown-code-language" title={highlighted.kind === "plain" ? highlighted.reason : undefined}>{language || "Text"}{highlighted.kind === "plain" && highlighted.reason ? " · plain text" : ""}</span><div>
-      <button type="button" aria-label="Wrap code lines" aria-pressed={wrapped} onClick={() => { context.views.setWrapped(key, !wrapped); redraw(value => value + 1); }}>Wrap</button>
-      <button type="button" aria-label="Copy code" onClick={async () => { try { await navigator.clipboard.writeText(code); setCopy({ text: code, status: "copied" }); } catch { setCopy({ text: code, status: "failed" }); } }}><span aria-live="polite">{copy?.text === code ? copy.status === "copied" ? "Copied" : "Copy failed · retry" : "Copy"}</span></button>
+  const raw = context.source.slice(node?.position?.start.offset ?? 0, node?.position?.end.offset ?? 0);
+  const open = context.streaming && codeFenceOpen(raw, code), title = codeLanguageLabel(language);
+  const {highlighted, tail} = useCodeHighlight(code, open && !language ? "plaintext" : language, element);
+  const copy = useCodeCopy(code), copyLabel = copy.state === "copied" ? "Copied" : copy.state === "failed" ? "Copy failed · retry" : "Copy code";
+  const wrapLabel = wrapped ? "Disable word wrap" : "Enable word wrap";
+  const tokens = useMemo(() => highlighted.kind === "highlighted" ? syntax(highlighted.tree.children) : null, [highlighted]);
+  return <div ref={element} className="markdown-code-block" data-code-key={key} data-code-open={open} data-highlighted={highlighted.kind === "highlighted"} data-markdown-copy="code-block">
+    <div className="markdown-code-toolbar" data-markdown-copy="exclude">{title && <TranscriptCodeIcon name="language_marker"/>}<span className="markdown-code-language">{title}</span><div>
+      <button type="button" aria-label={wrapLabel} title={wrapLabel} aria-pressed={wrapped} onClick={() => { context.views.setWrapped(key, !wrapped); redraw(value => value + 1); }}><TranscriptCodeIcon name={wrapped ? "wrap_on" : "wrap_off"}/></button>
+      {!open && <button type="button" className="markdown-code-copy" aria-label={copyLabel} title={copyLabel} aria-busy={copy.state === "pending"} disabled={copy.state === "pending"} onClick={() => void copy.copy()}><TranscriptCodeIcon name={copy.state === "copied" ? "copied" : "copy"}/></button>}
     </div></div>
-    <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={`${language || "Plain text"} code`}><SelectableCode text={code}>{highlighted.kind === "highlighted" ? syntax(highlighted.tree.children) : code}</SelectableCode></pre>
+    <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={`${title || "Plain text"} code`} onCopy={event => {
+      const selection = event.currentTarget.ownerDocument.getSelection();
+      if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return;
+      event.clipboardData.setData("text/plain", selection.toString()); event.preventDefault(); event.stopPropagation();
+    }}><SelectableCode text={code}>{tokens ? <>{tokens}{tail}</> : code}</SelectableCode></pre>
+    {copy.error && <p className="markdown-code-copy-error" role="alert" data-markdown-copy="exclude">{copy.error} <button type="button" onClick={() => void copy.copy()}>Retry</button></p>}
   </div>;
 }
 function MarkdownLink({ href, children, node: _node, ...props }: React.ComponentProps<"a"> & ExtraProps) {

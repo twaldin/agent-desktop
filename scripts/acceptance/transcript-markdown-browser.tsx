@@ -24,7 +24,7 @@ export async function transcriptMarkdownAcceptance() {
   let nativeClipboardDeferred = false, clipboardChanged = false;
   try {
     paint("```js\nfunction rea"); await settle();
-    const block = container.querySelector<HTMLElement>(".markdown-code-block")!, code = block.querySelector<HTMLElement>("code")!, pre = block.querySelector<HTMLElement>("pre")!, wrap = block.querySelector<HTMLButtonElement>('[aria-label="Wrap code lines"]')!;
+    const block = container.querySelector<HTMLElement>(".markdown-code-block")!, code = block.querySelector<HTMLElement>("code")!, pre = block.querySelector<HTMLElement>("pre")!, wrap = block.querySelector<HTMLButtonElement>('[aria-label="Enable word wrap"]')!;
     pre.focus({ preventScroll: true }); const anchor = point(code, 12), focus = point(code, 9);
     getSelection()!.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset); check(getSelection()!.toString() === "rea", "initial backward selection");
     const finalCode = `function read() {\n  return "${"x".repeat(220)}";\n}`;
@@ -41,15 +41,16 @@ export async function transcriptMarkdownAcceptance() {
       else throw cause;
     }
     const copy = block.querySelector<HTMLButtonElement>('[aria-label="Copy code"]')!; copy.click(); await settle();
-    if (nativeClipboardDeferred) { check(copy.textContent?.includes("Copy failed"), "actual unfocused Clipboard API rejection is visible"); checks.push("actual unfocused clipboard rejection UI; native success/readback deferred"); }
-    else { check(copy.textContent === "Copied", "native clipboard success status"); clipboardChanged = true; check(await navigator.clipboard.readText() === finalCode, "native clipboard exact parsed code readback"); checks.push("actual Clipboard API copy and exact readback"); }
+    if (nativeClipboardDeferred) { check(copy.getAttribute("aria-label")?.includes("Copy failed"), "actual unfocused Clipboard API rejection is visible"); checks.push("actual unfocused clipboard rejection UI; native success/readback deferred"); }
+    else { check(copy.getAttribute("aria-label") === "Copied", "native clipboard success status"); clipboardChanged = true; check(await navigator.clipboard.readText() === finalCode, "native clipboard exact parsed code readback"); checks.push("actual Clipboard API copy and exact readback"); }
+    if (copy.getAttribute("aria-label") === "Copied") await new Promise(resolve => setTimeout(resolve, 2100));
     const clipboard = navigator.clipboard, previousOwn = Object.getOwnPropertyDescriptor(clipboard, "writeText");
     let injectedRejections = 0;
     try {
       Object.defineProperty(clipboard, "writeText", { configurable: true, value: async () => { injectedRejections++; throw new DOMException("Explicit fixture permission rejection", "NotAllowedError"); } });
-      copy.click(); await settle(); check(injectedRejections === 1 && copy.textContent?.includes("Copy failed"), "clipboard API rejection is visible and retryable");
+      copy.click(); await settle(); check(injectedRejections === 1 && copy.getAttribute("aria-label")?.includes("Copy failed"), "clipboard API rejection is visible and retryable");
     } finally { if (previousOwn) Object.defineProperty(clipboard, "writeText", previousOwn); else delete (clipboard as unknown as { writeText?: unknown }).writeText; }
-    copy.click(); await settle(); check(nativeClipboardDeferred ? copy.textContent?.includes("Copy failed") : copy.textContent === "Copied", "copy retries through the restored native API"); checks.push(nativeClipboardDeferred ? "injected clipboard rejection and native denied retry while unfocused" : "injected clipboard rejection and native successful retry");
+    copy.click(); await settle(); check(nativeClipboardDeferred ? copy.getAttribute("aria-label")?.includes("Copy failed") : copy.getAttribute("aria-label") === "Copied", "copy retries through the restored native API"); checks.push(nativeClipboardDeferred ? "injected clipboard rejection and native denied retry while unfocused" : "injected clipboard rejection and native successful retry");
     const note = "Note[^a].\n\n[^a]: Scoped footnote.";
     paint(note + "\n\n[File](src/example.ts#L3C2) [Missing](missing.txt) [Outside](/etc/passwd) [Unsafe](javascript:alert%281%29) [Web](https://example.com/) [Missing anchor](#not-present)", note); await settle();
     const reference = container.querySelector<HTMLAnchorElement>("a[data-footnote-ref]")!, ownMarkdown = reference.closest(".transcript-markdown")!;
