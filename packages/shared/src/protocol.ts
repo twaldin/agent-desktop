@@ -1,5 +1,7 @@
 import type { SelectedTextAttachment } from "./selected-text";
+import type { WholeFileAttachment } from "./whole-file";
 export * from "./selected-text";
+export * from "./whole-file";
 export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";
@@ -123,6 +125,8 @@ export interface Draft {
   attachments?: ImageAttachmentRef[];
   /** Sticky snapshot format, including after the last selection is removed. */
   selectedTextAttachments?: SelectedTextAttachment[];
+  /** Sticky literal file-reference format, including after the last file is removed. */
+  wholeFileAttachments?: WholeFileAttachment[];
   /** Owning-host receipt, never editable draft input. */
   lastConsumption?: DraftConsumption;
   updatedAt: number;
@@ -185,6 +189,7 @@ export interface HostState {
   modelsLoading?: boolean;
   imageAttachments?: ImageAttachmentCapabilities;
   selectedText?: { commandVersion: 6; maxSerializedChars: number; ordinaryPrompt: true };
+  wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number };
   newChatExecution?: { commandVersion: 4; worktrees: true };
   localEnvironments?: { configuration: true; actions?: true; execution?: { commandVersion: 5; scriptOutput?: true; scriptCancellation?: true } };
   diagnostics?: { models?: string; preferences?: string };
@@ -200,8 +205,8 @@ export type HostCommand =
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
-  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; draft?: { id: string; revision: number } }
-  | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; draft?: { id: string; revision: number } }
+  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
+  | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.btw.start"; sessionId: string; question: string; draft?: { id: string; revision: number }; nativeCommand?: "btw" }
   | { type: "session.mcp.authorize"; hostId: string; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
@@ -218,7 +223,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6;
+  commandVersion?: 4 | 5 | 6 | 7;
 }
 
 export interface ImageAdmission {

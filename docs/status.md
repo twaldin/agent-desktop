@@ -1,5 +1,13 @@
 # Milestone status
 
+## Whole-file Add to chat
+
+File-tree Add to chat now stages a host-bound whole-file reference, deduplicates repeated selections, restores composer focus and supports removal without losing authored text. Draft cache/conflict handling and submission retries retain the exact reference. Public v7, worker32 and schema9 prevent older consumers from silently dropping this context.
+
+The pinned OMP generator reads the selected literal paths at send time with native image/hash-line/edit-store settings, then actual fileMention messages accompany the ordinary user message. Missing/unreadable paths reject the entire preflight; native explicit binary/size skip records remain visible. Durable attempt/binding metadata and the original command receipt prevent automatic replay after uncertain delivery. Authenticated HTTP and controlled local-provider tests exercise files-only input, mixed excerpts, reopen and lost-receipt preservation. No external providers or Work fixtures were used.
+
+Hidden renderer acceptance passes four checks/five PNG+Chromium-AX captures for actual right-click staging, duplicate identity, offline/reload and removal, with zero sessions. These are component checks, not installed or native pixel acceptance. Current chips occupy a separate line; Codex's editable inline mention nodes, @ picker integration, sent inline placement, file hover/open behavior, steering and native command/skill combinations remain open. Private evidence: `.data/whole-file-2026-09-07/` and `.data/whole-file-ui-2026-09-07-r3/`.
+
 ## File-tree context actions
 
 Tree files now expose Open with, Save as and Copy path for the clicked file, independently of the editor selection. Packaged Electron uses a validated native-menu bridge; browser-only rendering retains the HTML fallback. File operations reuse the owning host’s catalog, durable command receipts and copy engine.

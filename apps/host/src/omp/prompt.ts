@@ -31,14 +31,16 @@ export function beginNativePrompt(
   imageAdmission?: { matches(message: unknown): boolean; receipt(): ImageAdmission[]; readonly dispatched: boolean },
   skillAdmission?: { matchesEntry(entry: Parameters<NonNullable<SessionManager["onEntryAppended"]>>[0]): boolean; readonly name: string; readonly dispatched: boolean },
   selectedTextAdmission?: { readonly attempted: boolean; matches(message: unknown): boolean; persistBinding?(entryId: string): Promise<void> },
+  wholeFileAdmission?: { readonly attempted: boolean; matches(message: unknown): boolean; observe(entry: Parameters<NonNullable<SessionManager["onEntryAppended"]>>[0]): void; persistBinding(userEntryId: string): Promise<void> },
 ): OmpPromptRun {
   const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
   let entryObserved = false;
   let commandHandled = false;
-  const admissionFailure = (error: unknown) => imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted || commandHandled ? new OmpPromptAdmissionError(error) : error;
+  const admissionFailure = (error: unknown) => imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted || wholeFileAdmission?.attempted || commandHandled ? new OmpPromptAdmissionError(error) : error;
   const previousEntryListener = manager.onEntryAppended;
   const entryListener: NonNullable<typeof manager.onEntryAppended> = entry => {
     previousEntryListener?.(entry);
+    wholeFileAdmission?.observe(entry);
     const skillEntry = skillAdmission?.matchesEntry(entry);
     if (entryObserved || (skillAdmission ? !skillEntry : entry.type !== "message" || entry.message.role !== "user"
       || (imageAdmission && !imageAdmission.matches(entry.message))
@@ -46,7 +48,7 @@ export function beginNativePrompt(
     entryObserved = true;
     // message_end precedes persistence. onEntryAppended follows native append;
     // flush additionally checks asynchronous writes and latched disk failures.
-    void Promise.resolve().then(() => selectedTextAdmission?.persistBinding?.(entry.id)).then(() => manager.flush()).then(() => {
+    void Promise.resolve().then(() => selectedTextAdmission?.persistBinding?.(entry.id)).then(() => wholeFileAdmission?.persistBinding(entry.id)).then(() => manager.flush()).then(() => {
       receipt.resolve(skillEntry ? { kind: "skill-message", entryId: entry.id, name: skillAdmission!.name }
         : { kind: "user-message", entryId: entry.id, ...(imageAdmission ? { images: imageAdmission.receipt() } : {}) });
     }).catch(error => receipt.reject(admissionFailure(error)));
@@ -61,7 +63,7 @@ export function beginNativePrompt(
       // a message event. Check the manager's disk tail before acknowledging them.
       await manager.flush();
       if (!entryObserved) {
-        if (imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted) receipt.reject(new OmpPromptAdmissionError());
+        if (imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted || wholeFileAdmission?.attempted) receipt.reject(new OmpPromptAdmissionError());
         else receipt.resolve(result.handledCommand ? { kind: "native-command", command: result.handledCommand,
           ...(result.commandEntryId ? { entryId: result.commandEntryId } : {}), ...(result.output ? { output: result.output } : {}) } : null);
       }

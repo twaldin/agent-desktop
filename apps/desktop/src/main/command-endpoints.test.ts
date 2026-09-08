@@ -113,3 +113,11 @@ test("selected snapshots and cleared markers use only v6 without losing uncertai
       await expect(requestVersionedCommand(async () => { throw error; }, envelope)).rejects.toBe(error);
   }
 });
+
+test('whole-file and sticky cleared descriptors use v7 without fallback',async()=>{
+ const envelope:CommandEnvelope={id:'whole',command:{type:'draft.put',expectedRevision:2,draft:{id:'draft',text:'',projectId:null,model:null,wholeFileAttachments:[],selectedTextAttachments:[]}}};
+ expect(commandEndpoint(envelope)).toBe('/v7/commands');const paths:string[]=[];
+ expect(await requestVersionedCommand(async path=>{paths.push(path);throw new HostRequestError('Not found',404);},envelope)).toMatchObject({ok:false,error:{code:'WHOLE_FILE_PROTOCOL_UNSUPPORTED'}});
+ expect(paths).toEqual(['/v7/commands']);
+ const error=new Error('Lost response');await expect(requestVersionedCommand(async()=>{throw error;},envelope)).rejects.toBe(error);
+});

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { CommandEnvelope, CommandResult, Draft, SelectedTextAttachment, SessionSummary } from "../../../../packages/shared/src/protocol";
+import type { CommandEnvelope, CommandResult, Draft, SelectedTextAttachment, SessionSummary, WholeFileAttachment } from "../../../../packages/shared/src/protocol";
 import { DraftController, type DraftCache } from "./drafts";
 import { SubmissionController } from "./submissions";
 
@@ -7,6 +7,8 @@ const draft = (patch: Partial<Draft> = {}): Draft => ({ id: "new-conversation", 
 const selected = (id = "selection-one", text = "unsaved"): SelectedTextAttachment => ({ id, text,
   source: { kind: "file", hostId: "another-host", path: "/outside/project/unsaved.ts",
     range: { start: { line: 4, column: 1 }, end: { line: 4, column: text.length + 1 } } } });
+const wholeFile = (id = "file-one", path = "/outside/project/file.ts"): WholeFileAttachment => ({ id,
+  source: { kind: "file", hostId: "another-host", path } });
 function cache(): DraftCache { const values = new Map<string, string>(); return { read: key => values.get(key) ?? null, write: (key, value) => { values.set(key, value); } }; }
 function saver(calls: CommandEnvelope[]) { return async (envelope: CommandEnvelope): Promise<CommandResult> => { calls.push(envelope); if (envelope.command.type !== "draft.put") throw new Error("Unexpected command"); return { ok: true, commandId: envelope.id, value: { ...envelope.command.draft, revision: envelope.command.expectedRevision + 1, updatedAt: 2 } }; }; }
 const session: SessionSummary = { id: "session-1", hostId: "host", projectId: "project-1", cwd: "/project", title: "New conversation", status: "idle", sessionFile: "/session.jsonl", model: null, createdAt: 1, updatedAt: 1, archived: false };
@@ -21,6 +23,50 @@ test("selected snapshots survive offline cache restore with remote provenance de
     try {
       expect(restored.get("selected-offline")).toMatchObject({ status: "offline", draft: { selectedTextAttachments: [{ id: "selection-one", text: "unsaved", source: { hostId: "another-host" } }] } });
     } finally { restored.dispose(); }
+  } finally { controller.dispose(); }
+});
+
+test("whole-file references survive offline cache restore with remote provenance detached", () => {
+  const local = cache(), controller = new DraftController(saver([]), "host", local);
+  try {
+    controller.get("files-offline");
+    const attachment = wholeFile(); controller.update("files-offline", { wholeFileAttachments: [attachment] });
+    attachment.source.path = "/changed-after-update.ts";
+    const restored = new DraftController(saver([]), "host", local);
+    try {
+      expect(restored.get("files-offline")).toMatchObject({ status: "offline", draft: { wholeFileAttachments: [{ id: "file-one", source: { hostId: "another-host", path: "/outside/project/file.ts" } }] } });
+    } finally { restored.dispose(); }
+  } finally { controller.dispose(); }
+});
+
+test("missing whole-file metadata conflicts and remote resolution retains an explicit empty format", () => {
+  const controller = new DraftController(saver([]), "host");
+  try {
+    const original = draft({ wholeFileAttachments: [wholeFile()] });
+    controller.ingest(original);
+    controller.ingest({ ...original, revision: 2, wholeFileAttachments: undefined });
+    expect(controller.get(original.id)).toMatchObject({ status: "conflict", draft: { wholeFileAttachments: [{ id: "file-one" }] }, conflict: { revision: 2 } });
+    controller.resolve(original.id, "remote");
+    expect(controller.get(original.id)).toMatchObject({ status: "offline", draft: { wholeFileAttachments: [] } });
+    expect(() => controller.update(original.id, { wholeFileAttachments: undefined })).toThrow("empty array");
+  } finally { controller.dispose(); }
+});
+
+test("delayed whole-file consumption clears only the sent files and preserves a concurrent edit", async () => {
+  const calls: CommandEnvelope[] = [], controller = new DraftController(saver(calls), "host");
+  try {
+    const original = draft({ wholeFileAttachments: [wholeFile()] });
+    controller.ingest(original); controller.setConnected(true);
+    const submitted = await controller.prepareSubmission(original.id);
+    controller.beginPendingSubmission(submitted, "whole-file-command");
+    controller.update(original.id, { wholeFileAttachments: [wholeFile("file-two", "/outside/project/new.ts")] });
+    controller.finishSubmission(original.id, submitted, true, false, "whole-file-command");
+    controller.ingest({ ...original, revision: 2, text: "", wholeFileAttachments: [], lastConsumption: { commandId: "whole-file-command", submittedRevision: 1 } });
+    expect(controller.get(original.id)).toMatchObject({ status: "unsaved", draft: { text: original.text, wholeFileAttachments: [{ id: "file-two" }], revision: 1 } });
+    const saved = await controller.flush(original.id);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ commandVersion: 7, command: { expectedRevision: 2, draft: { wholeFileAttachments: [{ id: "file-two" }] } } });
+    expect(saved).toMatchObject({ revision: 3, wholeFileAttachments: [{ id: "file-two" }] });
   } finally { controller.dispose(); }
 });
 

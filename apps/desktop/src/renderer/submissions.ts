@@ -23,7 +23,7 @@ export class EnvironmentPreparationPause extends Error {
     this.name = "EnvironmentPreparationPause";
   }
 }
-const commandVersion = (draft: Draft): 4 | 5 | 6 | undefined => draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
+const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | undefined => draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
 const sameDraftReference = (value: { id: string; revision: number } | undefined, draft: Draft, required: boolean) => required
   ? value?.id === draft.id && value.revision === draft.revision
   : value === undefined;
@@ -66,15 +66,15 @@ export class SubmissionController {
           }
           if (item.send && (item.send.command.type === "session.prompt" || item.send.command.type === "session.steer")) {
             const command = item.send.command;
-            if (!sameDraftContent(captured, captureDraft({ ...captured, attachments: command.attachments, selectedTextAttachments: command.selectedTextAttachments }, hostId))
+            if (!sameDraftContent(captured, captureDraft({ ...captured, attachments: command.attachments, selectedTextAttachments: command.selectedTextAttachments, wholeFileAttachments: command.wholeFileAttachments }, hostId))
               || command.text !== captured.text || command.draft?.id !== captured.id || command.draft.revision !== captured.revision) throw new Error("Pending attachment metadata differs from its exact command.");
           }
           if (item.mode === "question") {
             if (!item.sessionId || item.create || !item.question) throw new Error("Invalid pending detached question submission.");
             const answers = parseDetachedQuestionAnswers(item.question.answers);
-            if (captured.text !== detachedAnswerDraft(answers) || captured.attachments?.length || captured.selectedTextAttachments?.length) throw new Error("Pending detached answers differ from their saved draft.");
+            if (captured.text !== detachedAnswerDraft(answers) || captured.attachments?.length || captured.selectedTextAttachments?.length || captured.wholeFileAttachments?.length) throw new Error("Pending detached answers differ from their saved draft.");
             if (item.send) {
-              if (captured.selectedTextAttachments !== undefined && item.send.commandVersion !== 6) throw new Error("Pending selected-text draft requires its original protocol.");
+              if (commandVersion(captured) !== item.send.commandVersion) throw new Error("Pending selected-text draft requires its original protocol.");
               if (item.send.command.type !== "session.question.answer") throw new Error("Invalid pending detached question command.");
               const command = item.send.command;
               if (command.sessionId !== item.sessionId || command.questionId !== item.question.questionId || command.questionEntryId !== item.question.questionEntryId
@@ -102,9 +102,9 @@ export class SubmissionController {
     try {
       result = await this.command(structuredClone(envelope));
       if (result.commandId !== envelope.id) throw new Error("The host replied with a different command identity.");
-      if (result.ok && phase === "send" && envelope.command.type === "session.prompt" && envelope.command.selectedTextAttachments?.length
+      if (result.ok && phase === "send" && envelope.command.type === "session.prompt" && (envelope.command.selectedTextAttachments?.length || envelope.command.wholeFileAttachments?.length)
         && (result.admission?.kind !== "user-message" || typeof result.admission.entryId !== "string" || !result.admission.entryId))
-        throw new Error("The host did not return the native user receipt for this selected-text submission.");
+        throw new Error("The host did not return the native user receipt for this file-context submission.");
     }
     catch (cause) {
       item.uncertain = true; this.save();
@@ -147,6 +147,7 @@ export class SubmissionController {
     snapshot = captureDraft(snapshot, this.hostId);
     let item = this.pending[snapshot.id];
     if (item?.preparation && !item.sessionId) throw new EnvironmentPreparationPause(item.preparation);
+    if (item?.uncertain ? item.mode === "steer" && item.draft.wholeFileAttachments?.length : mode === "steer" && snapshot.wholeFileAttachments?.length) throw new Error("Whole files can be sent after the current response finishes. Your draft is preserved.");
     if (item?.uncertain ? item.mode === "steer" && item.draft.selectedTextAttachments?.length : mode === "steer" && snapshot.selectedTextAttachments?.length) throw new Error("Selected text cannot be sent while the agent is running yet. Wait for the response to finish.");
     if ((item?.uncertain ? item.mode === "steer" && item.draft.attachments?.length : mode === "steer" && snapshot.attachments?.length)) throw new Error("Image attachments cannot be sent while the agent is running. Wait for the response to finish.");
     if (!item?.uncertain && !item?.preparation) {
@@ -181,6 +182,7 @@ export class SubmissionController {
     const sessionId = item.sessionId;
     if (!sessionId || item.mode === "question") throw new Error("The captured prompt is not bound to a session.");
     const attachments = { ...(saved.attachments !== undefined ? { attachments: structuredClone(saved.attachments) } : {}),
+      ...(saved.wholeFileAttachments !== undefined ? { wholeFileAttachments: structuredClone(saved.wholeFileAttachments) } : {}),
       ...(saved.selectedTextAttachments !== undefined ? { selectedTextAttachments: structuredClone(saved.selectedTextAttachments) } : {}) };
     const version = commandVersion(saved);
     item.send ??= { id: crypto.randomUUID(), ...(version ? { commandVersion: version } : {}), command: item.mode === "steer"
@@ -341,13 +343,13 @@ export class SubmissionController {
     let item = this.pending[snapshot.id];
     if (!item?.uncertain) {
       const parsed = parseDetachedQuestionAnswers(answers);
-      if (snapshot.text !== detachedAnswerDraft(parsed) || snapshot.attachments?.length || snapshot.selectedTextAttachments?.length) throw new Error("The saved question draft does not match these answers.");
+      if (snapshot.text !== detachedAnswerDraft(parsed) || snapshot.attachments?.length || snapshot.selectedTextAttachments?.length || snapshot.wholeFileAttachments?.length) throw new Error("The saved question draft does not match these answers.");
       item = { draft: snapshot, sessionId, mode: "question", question: { questionId, questionEntryId, answers: parsed }, uncertain: false };
       this.pending[snapshot.id] = item;
     }
     if (item.mode !== "question" || !item.sessionId || !item.question) throw new Error("A different pending submission already owns this draft.");
     const saved = item.draft;
-    item.send ??= { id: crypto.randomUUID(), ...(saved.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : {}), command: { type: "session.question.answer", sessionId: item.sessionId,
+    item.send ??= { id: crypto.randomUUID(), ...(commandVersion(saved) ? { commandVersion: commandVersion(saved) } : {}), command: { type: "session.question.answer", sessionId: item.sessionId,
       questionId: item.question.questionId, questionEntryId: item.question.questionEntryId, answers: structuredClone(item.question.answers),
       draft: { id: saved.id, revision: saved.revision } } };
     this.save();

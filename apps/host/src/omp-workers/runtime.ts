@@ -11,6 +11,7 @@ import type { GoalContinuationEligibility, OmpBrowserTabCreateResult, OmpDetache
 import { DetachedQuestionOutcomeUnknown } from "../omp/detached-questions";
 import { copyPreparedImages } from "../omp/images";
 import { copyNativeSelectedTextInput } from "../omp/selected-text";
+import { copyNativeWholeFileInput } from "../omp/whole-file";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
 import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation } from "./protocol";
@@ -272,12 +273,12 @@ class WorkerClient {
     if (this.failure) throw new WorkerFailureError(this.failure);
     if (this.#closing) throw new Error("OMP worker is closing");
     if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
-    if ((options?.images?.length || options?.selectedText?.attachments?.length) && (this.snapshot?.isStreaming || this.snapshot?.hasPostPromptWork || [...this.#pending.keys()].some(key => key.endsWith(":completion")))) {
+    if ((options?.images?.length || options?.selectedText?.attachments?.length || options?.wholeFiles?.attachments?.length) && (this.snapshot?.isStreaming || this.snapshot?.hasPostPromptWork || [...this.#pending.keys()].some(key => key.endsWith(":completion")))) {
       throw new Error("OMP session is busy; attached content was not dispatched");
     }
-    const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText) } : undefined;
+    const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles) } : undefined;
     const id = String(++this.#requestId);
-    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
+    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length || preparedOptions?.wholeFiles?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
     const completion = this.#promise<boolean>(`${id}:completion`);
     try { this.#send({ type: "request", id, operation: "startPrompt", args: { text, options: preparedOptions } }); }
     catch (error) {

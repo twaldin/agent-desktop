@@ -1,5 +1,17 @@
 # Workspace file editor
 
+## Whole-file references from the tree
+
+Add to chat now records `{id, source: {kind: "file", hostId, path}}` in `wholeFileAttachments`. References have canonical absolute literal paths, distinct identities/sources and a 100-file transport bound. They name file intent, not captured bytes. Only files on the draft's owning host can be submitted; a same-host file may belong to another directory. The UI does not offer a cross-host path remap. Duplicate staging retains one reference. The draft remains editable offline, and CAS conflicts preserve both versions.
+
+Command v7 and schema9 keep the format sticky after removing the final file; worker32 rejects older runtimes. Submission replay retains original identity/path/text. A verified ordinary native user receipt atomically consumes only its captured draft revision. Unsupported older hosts, steer, slash/skill input and wrong-owner paths are rejected without consuming the draft.
+
+`NativeWholeFilePrompt` calls the pinned generator with native image resizing, file display mode and edit snapshot store. Every selected path must appear in generated native records before any attempt marker is persisted; missing/unreadable files cannot silently disappear from a successful submission. Native binary/tooLarge records count as explicit context. A flushed attempt marker precedes injection of actual fileMention messages; binding metadata names the exact native user and file entries. The model receives native context, never a custom prose surrogate. Lost binding/worker replies remain uncertain and never replay automatically.
+
+Evidence is separated: authenticated HTTP + real pinned-worker/local-provider tests prove delivery, exact-once consumption, files-only and mixed context, reopen and lost replies. Hidden renderer checks use actual pointer input on the fallback tree menu and production draft/controller/chip code against an authenticated temporary host; four checks/five original PNG+Chromium-AX captures prove staging, duplicate handling, offline reload and removal only. No installed main/preload, native menu popup, external provider or Work run was exercised.
+
+Reference anchors: frozen7868 `04-panels/12-file-context-menu` and `02-composer/15-file-mention-chip` (P), with source7982 whole-file descriptor trace. These captures were inspected but are not registered to the isolated fixture. Current separate-line removable chips are an interim rendering; the native inline editor node, insertion/caret/delete behavior, @ picker wiring, hover/open behavior, sent inline placement and full visual parity remain required. Tokens inherit existing accent/secondary/focus settings. See private `.data/whole-file-2026-09-07/REPORT.md`.
+
 ## File-tree context actions
 
 Right-click or Shift-F10 on a supported file targets that row, without opening it or substituting the selected editor path. Open in/Open with use the owning host's catalog and durable mutation queue. Save as reuses the existing validated byte-copy engine and local destination chooser; Copy path uses the owning workspace's absolute path. Folder actions are not invented where the pinned target extractor accepts files only.
@@ -10,7 +22,7 @@ Evidence: `.data/tree-menu-2026-09-07-r4/result.json` passes11 checks/nine PNG+C
 
 Limitations: the fixture exercises HTML fallback and controlled launch/dialog boundaries, not installed native popup, physical Work input or matched pixels. Failed harness runs remain in `.data/tree-menu-2026-09-07/REPORT.md`; one failed attempt changed clipboard text and did not recover the original, while the corrected run restores its own starting text. Work runs and sealed bundles were untouched.
 
-Add to chat remains explicitly incomplete. Native Codex stages whole-file descriptors in the composer, and later native execution produces fileMention context. The app needs a separate durable draft/command representation, owner checks, chips and OMP admission; it must not substitute selected-text snapshots or merely insert @path into authored text.
+The later whole-file checkpoint below wires Add to chat to durable descriptors and native OMP admission. Editable inline mention nodes and matched native presentation remain incomplete; selected-text snapshots and literal @path text remain separate paths.
 
 
 ## Workspace file-tree glyphs

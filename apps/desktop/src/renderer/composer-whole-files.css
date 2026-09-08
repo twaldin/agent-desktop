@@ -1,0 +1,8 @@
+.composer-whole-files { display: flex; flex-wrap: wrap; gap: 4px 8px; font: inherit; }
+.composer-whole-file { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; gap: 4px; color: var(--accent); }
+.composer-whole-file > svg { width: 16px; height: 16px; flex: none; }
+.composer-whole-file > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-whole-file > button { border: 0; padding: 0; display: grid; place-items: center; background: transparent; color: var(--secondary); cursor: pointer; }
+.composer-whole-file > button .icon { width: 14px; height: 14px; }
+.composer-whole-file > button:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: 2px; }
+.composer-whole-file > button:disabled { opacity: .5; cursor: default; }

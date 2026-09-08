@@ -1,3 +1,5 @@
+import { ComposerWholeFiles } from "./ComposerWholeFiles";
+import { appendWholeFile, wholeFileSendIssue } from "./whole-file-composer";
 import { ComposerSelectedText } from "./ComposerSelectedText";
 import { appendSelectedText, selectedTextSendIssue } from "./selected-text-composer";
 import type { FileTextSelection } from "@agent-desktop/shared";
@@ -322,6 +324,7 @@ export function App() {
   }, [drafts, draftId, selectedId, environmentAvailable, draft.execution?.type, draft.environment, Boolean(pendingSubmission), view.conflict]);
   const pendingSessionId = pendingSubmission?.sessionId;
   const knownPendingSession = state?.sessions.find(session => session.id === pendingSessionId);
+  const wholeFileIssue = wholeFileSendIssue(draft, hostId, running, state?.wholeFiles);
   const selectedTextIssue = selectedTextSendIssue(draft, running, state?.selectedText);
   const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls);
   const imagesStaging = imageComposer.staging.length > 0;
@@ -341,7 +344,7 @@ export function App() {
     : executionBranch === workspace.status.branch || workspace.branches.some(branch => !branch.remote && !branch.symbolicTarget && branch.name === executionBranch)));
   const environmentReady = Boolean(selectedId || draft.execution?.type !== 'worktree' || (draft.environment === undefined ? !environmentAvailable : environmentAvailable && (draft.environment === null
     || environmentCatalog?.restored && !environmentCatalog.loading && !environmentCatalog.error && environmentCatalog.items.some(item => item.type === 'environment' && item.configPath === draft.environment?.configPath && item.revision === draft.environment?.revision))));
-  const canSend = connected && Boolean(state) && !busy && !missingSession && !pendingSubmission?.preparation && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !selectedTextIssue && !imagesStaging && executionReady && environmentReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
+  const canSend = connected && Boolean(state) && !busy && !missingSession && !pendingSubmission?.preparation && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !selectedTextIssue && !wholeFileIssue && !imagesStaging && executionReady && environmentReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
 
   const navigate = useCallback((id: string | null, owner = route.hostId ?? state?.host.id ?? desktop.localHostId, keepSettings = false) => {
     settingsOriginLabel.current = null; setRoute({ sessionId: id, hostId: owner }); if(!keepSettings)setPluginDirectoryOpen(false);setIntegrationSelection(undefined); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false); setAppMenuOpen(false);
@@ -546,6 +549,14 @@ export function App() {
       requestAnimationFrame(() => { if (selectedRef.current === routeKey) textarea.current?.focus(); });
     } catch (error) { setActionError(errorMessage(error)); }
   }
+  function addWholeFile(sourceHostId: string, sourcePath: string) {
+    if (selectedRef.current !== routeKey || selected?.archived || missingSession || state?.wholeFiles?.commandVersion !== 7) return;
+    try {
+      drafts.update(draftId, { wholeFileAttachments: appendWholeFile(drafts.get(draftId).draft, hostId, { hostId: sourceHostId, path: sourcePath }) });
+      requestAnimationFrame(() => { if (selectedRef.current === routeKey) textarea.current?.focus(); });
+    } catch (error) { setActionError(errorMessage(error)); }
+  }
+  const canAddWholeFile = !selected?.archived && !missingSession && state?.wholeFiles?.commandVersion === 7;
   const canAddSelection = !selected?.archived && !missingSession && state?.selectedText?.commandVersion === 6;
   function renderDockTab(tab:DockTab, active = true) {
     if (tab.kind === "skill-file") {
@@ -573,7 +584,7 @@ export function App() {
     if(!data) {data = new WorkspaceState(bridge,tab.hostId,target,offlineCache,desktop.localHostId);workspaces.set(owner,data);}
     const ownerSession = "sessionId" in target ? record?.state?.sessions.find(value => value.id === target.sessionId) : undefined;
     const ownerProject = record?.state?.projects.find(value => value.id === ("projectId" in target ? target.projectId : ownerSession?.projectId));
-    return <WorkspacePanel onFileEdit={() => dock.pinFile(tab.id)} onAddToChat={canAddSelection && (ownerSession?.cwd ?? ownerProject?.path) ? (relativePath, selection) => addSelection(tab.hostId, `${(ownerSession?.cwd ?? ownerProject?.path ?? "").replace(/\/$/, "")}/${relativePath}`, selection) : undefined} embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location, options) => { setWorkspaceFileRequest({ owner, request: { ...location, id: crypto.randomUUID(), path } }); dock.openFile(path,tab.hostId,target,"right",options?.preview ?? true); }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
+    return <WorkspacePanel onAddFile={canAddWholeFile && tab.hostId === hostId && (ownerSession?.cwd ?? ownerProject?.path) ? relativePath => addWholeFile(tab.hostId, `${(ownerSession?.cwd ?? ownerProject?.path ?? "").replace(/\/$/, "")}/${relativePath}`) : undefined} onFileEdit={() => dock.pinFile(tab.id)} onAddToChat={canAddSelection && (ownerSession?.cwd ?? ownerProject?.path) ? (relativePath, selection) => addSelection(tab.hostId, `${(ownerSession?.cwd ?? ownerProject?.path ?? "").replace(/\/$/, "")}/${relativePath}`, selection) : undefined} embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location, options) => { setWorkspaceFileRequest({ owner, request: { ...location, id: crypto.randomUUID(), path } }); dock.openFile(path,tab.hostId,target,"right",options?.preview ?? true); }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? "Workspace"} path={ownerSession?.cwd ?? ownerProject?.path ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
   }
   const shell = useRef<HTMLDivElement>(null);
   const closeStatus = useWindowClose(bridge, shell, async signal => {
@@ -664,6 +675,8 @@ export function App() {
             onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}
             onCheckout={async (branch,create) => { if (!workspace?.status || !connected) return; await workspace.mutate({type:"git.checkout",branch,expectedRevision:workspace.status.revision,...(create ? {create:true} : {})}); }}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
+            <ComposerWholeFiles attachments={draft.wholeFileAttachments} disabled={Boolean(selected?.archived)} onRemove={id => drafts.update(draftId, { wholeFileAttachments: (drafts.get(draftId).draft.wholeFileAttachments ?? []).filter(file => file.id !== id) })} onFocusComposer={() => textarea.current?.focus()}/>
+            {wholeFileIssue && <p className="attachment-notice" role="status">{wholeFileIssue}</p>}
             <ComposerSelectedText attachments={draft.selectedTextAttachments} disabled={Boolean(selected?.archived)} onRemove={ids => { const remove = new Set(ids); drafts.update(draftId, { selectedTextAttachments: (drafts.get(draftId).draft.selectedTextAttachments ?? []).filter(item => !remove.has(item.id)) }); }} onFocusComposer={() => textarea.current?.focus()}/>
             {selectedTextIssue && <p className="attachment-notice" role="status">{selectedTextIssue}</p>}
             <ComposerImages controller={imageComposer} attachments={draft.attachments} media={attachmentMedia} hostId={hostId} connected={connected} capabilities={state?.imageAttachments} disabled={Boolean(selected?.archived)}/>

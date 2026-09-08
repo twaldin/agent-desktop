@@ -4,7 +4,7 @@ import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
 import { parsePreferenceChange } from "../../../packages/shared/src/preferences";
 import { approvalMode } from "./approval";
-import { parseSelectedTextAttachments, parseImageAttachments, parseDetachedQuestionAnswers, parseNewChatExecution, parseWorktreeStartingState, parseEnvironmentSelection } from "@agent-desktop/shared";
+import { parseWholeFileAttachments, parseSelectedTextAttachments, parseImageAttachments, parseDetachedQuestionAnswers, parseNewChatExecution, parseWorktreeStartingState, parseEnvironmentSelection } from "@agent-desktop/shared";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object.");
@@ -36,8 +36,8 @@ function directory(value: unknown): string {
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
 export function parseCommandEnvelope(value: unknown): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && envelope.commandVersion !== 4 && envelope.commandVersion !== 5 && envelope.commandVersion !== 6) throw new Error('Unsupported command version.');
-  return { ...parseCommandBody(value), ...(envelope.commandVersion === undefined ? {} : { commandVersion: envelope.commandVersion as 4 | 5 | 6 }) };
+  if (envelope.commandVersion !== undefined && envelope.commandVersion !== 4 && envelope.commandVersion !== 5 && envelope.commandVersion !== 6 && envelope.commandVersion !== 7) throw new Error('Unsupported command version.');
+  return { ...parseCommandBody(value), ...(envelope.commandVersion === undefined ? {} : { commandVersion: envelope.commandVersion as 4 | 5 | 6 | 7 }) };
 }
 function parseCommandBody(value: unknown): CommandEnvelope {
   const envelope = object(value);
@@ -50,7 +50,9 @@ function parseCommandBody(value: unknown): CommandEnvelope {
   const attachments = Object.hasOwn(input, "attachments") ? parseImageAttachments(input.attachments) : undefined;
   if (Object.hasOwn(input, "selectedTextAttachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept selected text.");
   const selectedTextAttachments = Object.hasOwn(input, "selectedTextAttachments") ? parseSelectedTextAttachments(input.selectedTextAttachments) : undefined;
-  const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length);
+  if (Object.hasOwn(input, "wholeFileAttachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept whole files.");
+  const wholeFileAttachments = Object.hasOwn(input, "wholeFileAttachments") ? parseWholeFileAttachments(input.wholeFileAttachments) : undefined;
+  const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
   const promptText = () => hasContext && input.text === "" ? "" : text(input.text, "prompt", hasContext ? 500_000 : 4_000_000);
   switch (type) {
     case "skill.file.write": {
@@ -91,6 +93,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
     case "session.prompt": return { id, command: { type,
       sessionId: text(input.sessionId, "session ID"), text: promptText(),
       ...(attachments === undefined ? {} : { attachments }),
+      ...(wholeFileAttachments === undefined ? {} : { wholeFileAttachments }),
       ...(selectedTextAttachments === undefined ? {} : { selectedTextAttachments }),
       model: input.model === undefined ? undefined : model(input.model),
       thinkingLevel: input.thinkingLevel === undefined ? undefined : text(input.thinkingLevel, "thinking level"),
@@ -99,6 +102,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
     } };
     case "session.steer": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), text: promptText(), draft: draftReference(input.draft),
       ...(attachments === undefined ? {} : { attachments }),
+      ...(wholeFileAttachments === undefined ? {} : { wholeFileAttachments }),
       ...(selectedTextAttachments === undefined ? {} : { selectedTextAttachments }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
     case "session.interrupt": return { id, command: { type, sessionId: text(input.sessionId, "session ID") } };
@@ -140,6 +144,7 @@ function parseCommandBody(value: unknown): CommandEnvelope {
       if (typeof draft.text !== "string" || draft.text.length > 4_000_000) throw new Error("Invalid draft text.");
       return { id, command: { type, expectedRevision: revision(input.expectedRevision), draft: {
         id: text(draft.id, "draft ID"), text: draft.text,
+        ...(Object.hasOwn(draft, "wholeFileAttachments") ? { wholeFileAttachments: parseWholeFileAttachments(draft.wholeFileAttachments) } : {}),
         ...(Object.hasOwn(draft, "selectedTextAttachments") ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),
         ...(Object.hasOwn(draft, "attachments") ? { attachments: parseImageAttachments(draft.attachments) } : {}),
         projectId: draft.projectId === null ? null : text(draft.projectId, "project ID"),

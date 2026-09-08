@@ -557,3 +557,20 @@ test("selected-text success without native user admission remains pending for th
   const result = await restored.submit({ ...draft, selectedTextAttachments: [] }, session.id, "prompt");
   expect(result.commandId).toBe(pending.send!.id);
 });
+
+test('whole-file uncertain submissions retain exact v7 path identity across edits and restart',async()=>{
+ const storage=cache(),calls:CommandEnvelope[]=[];
+ const draft:Draft={...original,wholeFileAttachments:[{id:'whole',source:{kind:'file',hostId:'host-a',path:'/fixture/a #.ts'}}]};
+ const first=new SubmissionController(async envelope=>{calls.push(structuredClone(envelope));return unknown(envelope);},'host-a',storage);
+ await expect(first.submit(draft,session.id,'prompt')).rejects.toThrow('pending');
+ draft.wholeFileAttachments![0]!.source.path='/changed.ts';
+ const restored=new SubmissionController(async envelope=>{calls.push(structuredClone(envelope));return{ok:true,commandId:envelope.id,admission:{kind:'user-message',entryId:'native'}};},'host-a',storage);
+ const result=await restored.submit({...edited,wholeFileAttachments:[]},session.id,'prompt');
+ expect(calls[1]).toEqual(calls[0]);expect(calls[0]).toMatchObject({commandVersion:7,command:{wholeFileAttachments:[{source:{path:'/fixture/a #.ts'}}]}});
+ expect(result.submitted.wholeFileAttachments?.[0]?.source.path).toBe('/fixture/a #.ts');expect(restored.entries()).toHaveLength(0);
+});
+test('whole-file submission without attributable user receipt remains uncertain',async()=>{
+ const controller=new SubmissionController(async envelope=>({ok:true,commandId:envelope.id,admission:{kind:'native-command',command:'compact'}}),'host-a',cache());
+ const draft:Draft={...original,wholeFileAttachments:[{id:'whole',source:{kind:'file',hostId:'host-a',path:'/fixture/a.ts'}}]};
+ await expect(controller.submit(draft,session.id,'prompt')).rejects.toThrow('uncertain');expect(controller.entries()[0]?.uncertain).toBe(true);
+});
