@@ -66,6 +66,12 @@ app.whenReady().then(async () => {
     await wait('window.state().tabs?.some(tab=>tab.path==="nested/d.md"&&!tab.preview)&&!window.state().tabs?.some(tab=>tab.path==="nested/c.md")');
     checks.push('Tree navigation remains exempt; real double click replaces then pins its target');
     await capture('05-tree-double-click-pinned');
+    const treeRows=await js(`[...document.querySelectorAll('.workspace-file-tree-row')].filter(node=>node.getClientRects().length).map(node=>{const svg=node.querySelector('svg'), r=node.getBoundingClientRect(), i=svg.getBoundingClientRect();return{path:node.title,level:node.getAttribute('aria-level'),row:{x:r.x,height:r.height},icon:{x:i.x,width:i.width,height:i.height},iconCount:node.querySelectorAll('svg').length,token:svg.getAttribute('data-icon-token'),fontSize:getComputedStyle(node).fontSize}})`);
+    for(const row of treeRows)if(row.iconCount!==1||row.row.height!==28||row.icon.width!==16||row.fontSize!=='13px')throw Error('Tree row geometry or icon slot mismatch');
+    const rootRow=treeRows.find(row=>row.path==='nested'),childRow=treeRows.find(row=>row.path==='nested/d.md');
+    if(!rootRow||!childRow||childRow.icon.x-rootRow.icon.x!==17.5||childRow.token!=='markdown')throw Error('Tree indentation or file token mismatch');
+    fs.writeFileSync(path.join(output,'tree-row-observations.json'),JSON.stringify(treeRows,null,2));
+    checks.push('Production tree rows use one 16px icon, 28px height, 13px type and 17.5px depth indent');
     step='editor-edit'; await pointer('.fixture-open-c');
     await wait('window.state().tabs?.some(tab=>tab.path==="nested/c.md"&&tab.preview)');
     await pointer('.rich-markdown-file .cm-content');

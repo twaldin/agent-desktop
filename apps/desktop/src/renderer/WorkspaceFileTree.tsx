@@ -1,3 +1,4 @@
+import { TreeFileIcon } from "./TreeFileIcon";
 import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import type { WorkspaceEntry } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
@@ -224,8 +225,8 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
           className={`workspace-file-tree-row${row.entry.path === filePath ? " selected" : ""}${disabled ? " disabled" : ""}`}
           style={{ "--tree-level": row.level } as CSSProperties} title={row.entry.path}
           onFocus={() => setFocusedPath(row.entry.path)} onKeyDown={event => onRowKeyDown(event, row, index)} onClick={() => { if (!disabled) toggle(row); }} onDoubleClick={() => { if (!disabled && row.entry.kind !== "directory" && supportedFile(row.entry)) onOpenFile(row.entry.path,{preview:false}); }}>
-          <span className={`workspace-file-tree-chevron${row.expanded ? " expanded" : ""}`}>{row.entry.kind === "directory" && <Icon name="chevron"/>}</span>
-          <Icon name={row.entry.kind === "directory" ? "folder" : "compose"}/><span className="workspace-file-tree-name">{row.entry.name}</span>
+          {row.level > 1 && <span className="workspace-file-tree-spacing" aria-hidden="true">{Array.from({length:row.level-1},(_,index)=><i key={index}/>)}</span>}
+          <span className="workspace-file-tree-icon"><TreeFileIcon path={row.entry.path} folder={row.entry.kind === "directory"} expanded={row.expanded}/></span><span className="workspace-file-tree-name">{row.entry.name}</span>
           {row.loading && <span className="workspace-file-tree-progress" aria-label="Loading"/>}
         </div>;
       })}

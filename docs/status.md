@@ -1,5 +1,11 @@
 # Milestone status
 
+## Native file-tree glyphs and spacing
+
+The workspace tree now uses the separate 53-glyph native colored sprite, one chevron for folders, compound-suffix resolution and the native 28px row / 13px type / 17.5px indentation. Tree palette and geometry tokens are configurable through the shared theme document and advanced editor. Ordinary file-tab glyphs remain separate.
+
+220 static vector/raster cases match the extracted reference in light/dark; 1,263 resolver cases match, with four inherited-object failures deliberately falling back to a generic glyph. 26 tests/136 assertions, seven production-renderer interaction checks/eight captures, typecheck, strict fixture checking and build pass. These are source/renderer checks, not installed or whole-window parity. Work apps, fixtures and sealed bundles remain unchanged. Details: [file editor](workspace-file-editor.md).
+
 ## Native file-tab glyphs
 
 Ordinary file tabs now use the pinned filename/MIME resolver and all28 native SVG glyphs instead of the compose icon. Repeated office glyphs receive distinct gradient IDs. The tree uses a different native sprite system, and inline references own their children; those surfaces are deliberately tracked separately.

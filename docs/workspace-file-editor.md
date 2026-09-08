@@ -1,5 +1,18 @@
 # Workspace file editor
 
+## Workspace file-tree glyphs
+
+Tree rows now use the pinned complete, colored sprite system: 53 file glyphs and one chevron for a folder. The native exact-name map precedes compound suffixes, with complete-set overrides for JSX/TSX and Sass. Ordinary file-tab glyphs retain their distinct resolver. Each Next.js gradient has a local ID so repeated rows cannot reference another instance.
+
+Rows use the native review wrapper's 28px height, 13px type, 6px horizontal padding and 10px gap. Indentation is 17.5px per depth at default geometry, with native muted guide color and hover opacity. All 78 new tree palette, per-glyph and geometry tokens pass through the shared theme file/advanced editor validation; no new dependency or preference store is introduced.
+
+Validation: 26 tests/136 assertions, production typecheck/build and strict acceptance-fixture checking pass. An isolated renderer compares all 53 glyphs and both chevron states at 16/24px in light/dark: 220 canonical-vector/raster comparisons have zero differing channels. Independent extracted CSS produces the same computed icon colors; validated custom blue/React overrides propagate. Differential execution of the pinned pure resolver agrees on 1,263 of 1,267 cases; the four inherited-object names return a generic glyph instead of a prototype object/function. Native uppercase AUTHORS/CHANGELOG/CONTRIBUTORS/LICENSE extension-map quirks are retained.
+
+Private evidence: `.data/tree-icons-2026-09-07/REPORT.md` and `.data/tree-icons-2026-09-07-r3/result.json`. The production preview/tree regression passes seven checks/eight PNG+Chromium-AX captures in `.data/file-preview-tabs-2026-09-07-r10/`, including actual click pairs, replacement/promotion, editor input, restoration and measured row geometry. Source hashes stay stable. Earlier failed vector extraction attempts remain recorded.
+
+This supports static asset equivalence and component integration. Installed whole-App routing, native Work pointer behavior and matched frozen-window pixels remain unverified. Filter focus, row context menus, Git decorations and wider tree interactions still need their own parity checks. No Work app, host, profile or sealed evidence was changed.
+
+
 ## File-tab icon resolver and glyphs
 
 Ordinary file tabs use the pinned7982 `HV` resolver: case-insensitive exact basename (`skill.md`), then extension, then MIME-prefix fallback, then generic file. Paths remain literal; query/hash characters are not stripped. A trailing slash selects a folder. The fallback extension catalog is derived from the pinned MIME database with its original source-precedence rules, without adding a runtime dependency. Own-property lookup corrects the native resolver’s inherited-object results for `__proto__` and `constructor`; neither filename can select an arbitrary property as a component.

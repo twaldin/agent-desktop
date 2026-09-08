@@ -1,3 +1,4 @@
+import { TREE_ICON_THEME_TOKENS } from "./tree-icon-theme";
 export const PREFERENCES_VERSION = 1 as const;
 export const PREFERENCE_LIMITS = { records: 10_000, snapshotBytes: 8 * 1024 * 1024, valueBytes: 64 * 1024 } as const;
 
@@ -8,6 +9,7 @@ export type ThemeTokenDefinition =
 
 /** Shared allowlist for sync, the theme file and future settings controls. Length limits are CSS pixels (rem/em = 16px for validation). */
 export const THEME_TOKEN_DEFINITIONS = {
+  ...TREE_ICON_THEME_TOKENS,
   "--app-surface": { kind: "color" }, "--sidebar-surface": { kind: "color" },
   "--composer-surface": { kind: "color" }, "--elevated-surface": { kind: "color" },
   "--dialog-input-surface": { kind: "color" },
