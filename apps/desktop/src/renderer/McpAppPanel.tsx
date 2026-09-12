@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { CallToolResultSchema, ReadResourceResultSchema, ListResourcesResultSchema, ListResourceTemplatesResultSchema } from "@modelcontextprotocol/core";
+import { CallToolResultSchema, ReadResourceRequestSchema, ReadResourceResultSchema, ListResourcesResultSchema, ListResourceTemplatesResultSchema } from "@modelcontextprotocol/core";
 import { cloneMcpJson, type McpJson, type NativeMcpAppResource, type NativeMcpAppSelection } from "@agent-desktop/shared";
 import type { McpAppController } from "./mcp-app-controller";
 import "./mcp-app-panel.css";
@@ -30,16 +30,18 @@ function McpFrame({ controller, resource, onError }: { controller: McpAppControl
     });
     const assertCurrent = () => { if (!alive || element.contentWindow !== originalWindow) throw new Error("The original app document has retired."); };
     const call = async (method: Parameters<McpAppController["request"]>[0], params: unknown) => {
-      assertCurrent(); const result = await controller.request(method, cloneMcpJson(params, 32_768) as Record<string, McpJson>); assertCurrent(); return result;
+      assertCurrent(); const result = await controller.request(method, cloneMcpJson(params, method === "openai/resources/write" ? 2 * 1024 * 1024 : 32_768) as Record<string, McpJson>); assertCurrent(); return result;
     };
     host.oncalltool = async params => CallToolResultSchema.parse(await call("tools/call", params));
     host.onreadresource = async params => ReadResourceResultSchema.parse(await call("resources/read", params));
+    host.setRequestHandler("openai/resources/write", { params: ReadResourceRequestSchema.shape.params.passthrough() }, params => call("openai/resources/write", params));
     host.onlistresources = async params => ListResourcesResultSchema.parse(await call("resources/list", params ?? {}));
     host.onlistresourcetemplates = async params => ListResourceTemplatesResultSchema.parse(await call("resources/templates/list", params ?? {}));
     host.oninitialized = () => {
       if (!alive) return;
       void (async () => {
-        await host.sendToolInput({ arguments: {} }); assertCurrent();
+        const arguments_ = controller.initialArguments();
+        if (arguments_ !== undefined) { await host.sendToolInput({ arguments: arguments_ }); assertCurrent(); }
         const result = CallToolResultSchema.parse(await controller.initialResult()); assertCurrent();
         await host.sendToolResult(result);
       })().catch(error => { if (alive) report.current(message(error)); });

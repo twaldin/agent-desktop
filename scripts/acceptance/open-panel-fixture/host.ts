@@ -9,10 +9,16 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
   if (url.hostname !== '127.0.0.1') throw new Error('Outbound provider/network fetch forbidden in Open panel fixture.');
   return originalFetch(input, init);
 }, { preconnect: () => {} }) as typeof fetch;
-for (const path of ['data', 'agent', 'project']) await mkdir(join(fixture, path), { recursive: true });
+for (const path of ['data', 'agent', 'project', 'gates']) await mkdir(join(fixture, path), { recursive: true });
 await writeFile(join(fixture, 'project', 'README.md'), '# Open panel fixture\n');
 await writeFile(join(fixture, 'agent', 'config.yml'), 'tools:\n  approvalMode: always-ask\n');
-if (process.env.MCP_APP_FIXTURE === '1') await writeFile(join(fixture, 'agent', 'mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath,
+if (process.env.ARTIFACT_APP_FIXTURE === '1') {
+  await writeFile(join(fixture, 'project', 'sample.report.note'), 'Original file note');
+  await writeFile(join(fixture, 'agent', 'config.yml'), `tools:\n  approvalMode: always-ask\nextensions:\n  - ${JSON.stringify(resolve(import.meta.dir, '../../../apps/host/src/omp-workers/fixtures/artifact-provider.ts'))}\nretry:\n  enabled: false\n`);
+  await writeFile(join(fixture, 'agent', 'mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath,
+    args: [resolve(import.meta.dir, '../../../apps/host/src/omp/fixtures/artifact-server.ts')], env: { ARTIFACT_TEST_HTML: join(fixture, 'mcp-ui.html'), ARTIFACT_TEST_LOG: join(fixture, 'mcp-requests.jsonl') } } } }));
+}
+else if (process.env.MCP_APP_FIXTURE === '1') await writeFile(join(fixture, 'agent', 'mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath,
   args: [resolve(import.meta.dir, '../../../apps/host/src/omp/fixtures/mcp-app-server.ts')], env: { MCP_APP_TEST_HTML: join(fixture, 'mcp-ui.html'), MCP_APP_TEST_LOG: join(fixture, 'mcp-requests.jsonl') } } } }));
 const { startHost } = await import('../../../apps/host/src/server');
 const host = await startHost({ dataDirectory: join(fixture, 'data'), agentDirectory: join(fixture, 'agent'), discoveryDirectory: join(fixture, 'project'), workerPath: resolve(import.meta.dir, '../../../apps/host/src/omp-workers/fixtures/no-provider-worker.ts'), nativeTerminalBundle: process.argv[3], tailscale: false, port: 0 });

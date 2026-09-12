@@ -11,7 +11,7 @@ async function readBody(request: Request): Promise<unknown> {
       if (expired) throw new Error("Resource request timed out.");
       if (part.done) break;
       size += part.value.byteLength;
-      if (size > 32 * 1024) throw new Error("Resource request is too large.");
+      if (size > 2 * 1024 * 1024 + 4096) throw new Error("Resource request is too large.");
       chunks.push(part.value);
     }
     return JSON.parse(Buffer.concat(chunks, size).toString("utf8"));

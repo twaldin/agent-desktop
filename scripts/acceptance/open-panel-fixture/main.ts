@@ -1,4 +1,5 @@
 import { McpAppWindowChannels } from "../../../apps/desktop/src/main/mcp-app-window-channels";
+import { runArtifactFlow } from "./artifact-flow";
 import { runMcpFlow } from "./mcp-flow";
 import { requestSessionMcp } from "../../../apps/desktop/src/main/session-mcp-transport";
 import { requestSessionMcpApp } from "../../../apps/desktop/src/main/session-mcp-app-transport";
@@ -108,7 +109,8 @@ try {
   await wait('typeof window.panelState === "function"', 'fixture observation helper');
   await wait('panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
   if (context.mcp) {
-    await runMcpFlow({ window, evaluate, wait, click, key, capture, store, calls, connection, http, setConnected, terminal: context.terminal, git: context.git });
+    if (context.artifacts) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture });
+    else await runMcpFlow({ window, evaluate, wait, click, key, capture, store, calls, connection, http, setConnected, terminal: context.terminal, git: context.git });
     retireMcpDocument(); await Promise.all(mcpDrains);
     if (errors.length) throw new Error('Renderer errors: ' + JSON.stringify(errors));
     passed = true; return;

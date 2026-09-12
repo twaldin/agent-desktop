@@ -243,6 +243,26 @@ export class WorkspaceService {
     } catch (error) { await file.close(); throw error; }
   }
 
+  /** Bounded raw bytes for declared viewers, using the same opened-file identity as copying. */
+  async readBytes(path: string): Promise<{ bytes: Buffer; revision: string; writable: boolean }> {
+    const source = await this.copyFile(path);
+    try {
+      if (source.size > this.maxTextBytes) throw new WorkspaceError("FILE_TOO_LARGE", `File exceeds the ${this.maxTextBytes}-byte viewer limit.`);
+      const bytes = Buffer.alloc(source.size);
+      let count = 0;
+      while (count < bytes.length) {
+        const read = await source.file.read(bytes, count, bytes.length - count, count);
+        if (!read.bytesRead) break;
+        count += read.bytesRead;
+      }
+      if (count !== source.size || this.copyRevision(await source.file.stat({ bigint: true })) !== source.revision) throw new WorkspaceError("FILE_CHANGED", "The file changed during reading. Refresh before retrying.");
+      let writable = true;
+      try { await access(source.target, constants.W_OK); } catch { writable = false; }
+      await this.verifyCopyPath(path, source.target, source.metadata);
+      return { bytes, revision: hash(bytes), writable };
+    } finally { await source.file.close(); }
+  }
+
   async copyInfo(path: string): Promise<{ absolutePath: string; size: number; revision: string }> {
     const source = await this.copyFile(path);
     try {
@@ -444,21 +464,50 @@ export class WorkspaceService {
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   }
 
-  async writeText(path: string, input: FileWriteInput): Promise<FileWriteResult> {
-    if (typeof input.text !== "string" || (input.expectedRevision !== null && !/^[a-f0-9]{64}$/.test(input.expectedRevision))) throw new WorkspaceError("INVALID_REVISION", "A text value and its exact SHA-256 revision (or null for a new file) are required.");
+  async writeText(path: string, input: FileWriteInput, assertCurrent: () => void = () => {}): Promise<FileWriteResult> {
+    if (typeof input.text !== "string") throw new WorkspaceError("INVALID_TEXT", "A text value is required.");
+    const result = await this.updateFile(path, input.expectedRevision, current => {
+      if (current && current.kind !== "text") throw new WorkspaceError("NOT_UTF8_TEXT", "This file is not editable UTF-8 text.");
+      const bytes = Buffer.from((input.bom ?? current?.bom ? "\uFEFF" : "") + input.text, "utf8");
+      if (bytes.includes(0)) throw new WorkspaceError("BINARY_CONTENT", "Text writes cannot contain NUL bytes.");
+      return bytes;
+    }, assertCurrent);
+    if (!result.ok) return result;
+    if (result.document.kind !== "text") throw new WorkspaceError("FILE_CHANGED", "The file changed immediately after saving. Refresh its contents.");
+    return { ok: true, document: result.document };
+  }
+
+  async writeBytes(path: string, bytes: Uint8Array, expectedRevision: string, assertCurrent: () => void = () => {}): Promise<{ outcome: "saved" | "conflict"; etag: string }> {
+    // Viewers edit an existing original resource; they cannot silently create a missing file.
+    if (!/^[a-f0-9]{64}$/.test(expectedRevision)) throw new WorkspaceError("INVALID_REVISION", "The exact file revision is required before saving.");
+    const ownedBytes = Buffer.from(bytes);
+    const result = await this.updateFile(path, expectedRevision, () => ownedBytes, assertCurrent);
+    if (!result.ok) {
+      if (!result.current?.revision) throw new WorkspaceError("FILE_CHANGED", "The original file is missing or too large. Refresh before saving.");
+      return { outcome: "conflict", etag: result.current.revision };
+    }
+    if (!result.document.revision) throw new WorkspaceError("FILE_CHANGED", "The file changed immediately after saving.");
+    return { outcome: "saved", etag: result.document.revision };
+  }
+
+  private async updateFile(path: string, expectedRevision: string | null, prepare: (current: FileContent | null) => Buffer,
+    assertCurrent: () => void): Promise<{ ok: true; document: FileContent } | Extract<FileWriteResult, { ok: false }>> {
+    if (expectedRevision !== null && !/^[a-f0-9]{64}$/.test(expectedRevision)) throw new WorkspaceError("INVALID_REVISION", "An exact SHA-256 revision (or null for a new file) is required.");
+    assertCurrent();
     await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before saving a file.");
     const lexical = await this.parentOwned(path);
     let target: string;
     try { target = await this.owned(path); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { if ((await lstat(lexical).catch(() => null))?.isSymbolicLink()) throw new WorkspaceError("BROKEN_SYMLINK", "Cannot save through a broken symlink."); target = lexical; } else throw error; }
     return serialized(`file:${target}`, async () => {
+      assertCurrent();
       await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before saving a file.");
       const current = await this.currentText(relative(this.cwd, target));
-      if ((current?.revision ?? null) !== input.expectedRevision || (current !== null && input.expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current };
-      if (current && current.kind !== "text") throw new WorkspaceError("NOT_UTF8_TEXT", "This file is not editable UTF-8 text.");
-      const bytes = Buffer.from((input.bom ?? current?.bom ? "\uFEFF" : "") + input.text, "utf8");
-      if (bytes.length > this.maxTextBytes) throw new WorkspaceError("FILE_TOO_LARGE", `Text exceeds the ${this.maxTextBytes}-byte editor limit.`);
-      if (bytes.includes(0)) throw new WorkspaceError("BINARY_CONTENT", "Text writes cannot contain NUL bytes.");
+      if ((current?.revision ?? null) !== expectedRevision || (current !== null && expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current };
+      const bytes = prepare(current);
+      if (bytes.length > this.maxTextBytes) throw new WorkspaceError("FILE_TOO_LARGE", `File exceeds the ${this.maxTextBytes}-byte editor limit.`);
+      assertCurrent();
+      if (current && await this.owned(path) !== target) throw new WorkspaceError("PATH_CHANGED", "The selected file path changed. Refresh before saving.");
       const before = current ? await stat(target) : undefined;
       if (current) await access(target, constants.W_OK);
       const parent = await this.owned(relative(this.cwd, dirname(target)));
@@ -471,9 +520,11 @@ export class WorkspaceService {
         await file.sync();
         await file.close();
         const latest = await this.currentText(relative(this.cwd, target));
-        if ((latest?.revision ?? null) !== input.expectedRevision || (latest !== null && input.expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current: latest };
+        if ((latest?.revision ?? null) !== expectedRevision || (latest !== null && expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current: latest };
         if (await this.owned(relative(this.cwd, parent)) !== parent) throw new WorkspaceError("PATH_CHANGED", "The destination directory changed. Refresh before saving.");
         await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before saving a file.");
+        if (current && await this.owned(path) !== target) throw new WorkspaceError("PATH_CHANGED", "The selected file path changed. Refresh before saving.");
+        assertCurrent();
         if (current) await rename(temporary, target);
         else {
           try { await link(temporary, target); }
@@ -482,7 +533,7 @@ export class WorkspaceService {
         const directory = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY);
         try { await directory.sync(); } finally { await directory.close(); }
         const written = await this.readText(relative(this.cwd, target));
-        if (written.kind !== "text" || written.revision !== hash(bytes)) throw new WorkspaceError("FILE_CHANGED", "The file changed immediately after saving. Refresh its contents.");
+        if (written.revision !== hash(bytes)) throw new WorkspaceError("FILE_CHANGED", "The file changed immediately after saving. Refresh its contents.");
         return { ok: true, document: written };
       } finally { await file.close(); await unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }); }
     });

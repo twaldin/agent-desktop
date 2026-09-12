@@ -1,4 +1,5 @@
 import { executeMcpAppTool } from "./mcp-app-tool";
+import { McpFileResources } from "./mcp-file-resource";
 import { NativeMcpApps } from "./mcp-apps";
 import type { NativeMcpAppRequest, NativeMcpAppResponse } from "@agent-desktop/shared";
 import { projectSelectedText } from "./selected-text-history";
@@ -31,6 +32,7 @@ import { reset as resetCapabilityCache } from "@oh-my-pi/pi-coding-agent/discove
 import { reset as resetCapabilities } from "@oh-my-pi/pi-coding-agent/capability";
 import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
 import { TranscriptMirror, projectGoalCompletions } from "./transcript";
+import { nativeMcpArtifact, projectMcpArtifacts } from "./mcp-artifacts";
 import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
 import { dispatchNativePrompt } from "./commands";
 import { NativeSkillPrompt } from "./skills";
@@ -469,6 +471,7 @@ export class OmpRuntime {
             timestamp: Date.parse(entry.timestamp), lifecycle: "complete", commandOutput: { entryId: entry.id, command: data.command, output: data.output } });
         }
         projectGoalCompletions(messages, branch);
+        projectMcpArtifacts(messages, branch);
         return projectWholeFiles(projectSelectedText(messages, branch), branch).sort((left, right) => (left.nativeId ? order.get(left.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER)
           - (right.nativeId ? order.get(right.nativeId) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER));
       };
@@ -525,13 +528,17 @@ export class OmpRuntime {
       let mcpMutation: Promise<unknown> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
-      const mcpApps = new NativeMcpApps({ executeTool: async (connection, tool, args, signal, assertOwner) => {
+      const mcpFiles = new McpFileResources(manager.getCwd());
+      const mcpApps = new NativeMcpApps({ executeTool: async (connection, tool, args, signal, assertOwner, metadata) => {
         // Share the session's normal extension startup with prompt admission.
         // A closing app releases only its waiter; startup stays session-owned.
         if (ui) { extensionStartup ??= initializeDesktopExtensions(session, ui); await untilAborted(signal, () => extensionStartup!); }
         signal.throwIfAborted(); assertOwner();
-        return executeMcpAppTool(session, ui, connection, tool, args, signal, assertOwner);
-      }, manager: result.mcpManager, snapshot: () => mcp.read(), assertOwner: () => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are changing."); } });
+        return executeMcpAppTool(session, ui, connection, tool, args, signal, assertOwner, metadata);
+      }, artifact: entryId => {
+        const entry = manager.getBranch().find(entry => entry.id === entryId);
+        return entry?.type === "message" ? nativeMcpArtifact(entry.id, entry.message) : undefined;
+      }, filePath: source => path.join(mcpFiles.workspace.cwd, source.path), fileResource: (...args) => mcpFiles.request(...args), manager: result.mcpManager, snapshot: () => mcp.read(), assertOwner: () => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are changing."); } });
       const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session);
       const controls = new NativeSessionControls(session, options.approvalOverride);

@@ -8680,3 +8680,117 @@ index d647c79..6c1978f 100644
  			onStatus: onMCPStatus,
  			enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
  			// Always filter Exa - we have native integration
+diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
+index d3d4d167bc5c376e20014611530bfecec0d79e71..9ad0821533f31419ab044845a5ea13d46cc55212 100644
+--- a/dist/types/mcp/tool-bridge.d.ts
++++ b/dist/types/mcp/tool-bridge.d.ts
+@@ -28,6 +28,12 @@ export interface MCPToolDetails {
+     rawContent?: MCPContent[];
+     /** Structured metadata from the MCP response */
+     mcpMeta?: Record<string, unknown>;
++    /** Exact structured MCP response, retained separately from model-visible text. */
++    structuredContent?: Record<string, unknown>;
++    /** Tool metadata captured before this invocation, never a later catalogue lookup. */
++    mcpToolMeta?: Record<string, unknown>;
++    /** Effective protocol arguments after native input preparation. */
++    mcpArguments?: Record<string, unknown>;
+     /** Provider ID (e.g., "claude", "mcp-json") */
+     provider?: string;
+     /** Provider display name (e.g., "Claude Code", "MCP Config") */
+diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
+index 679ec59ae222397cac48056509532c0c20df24d7..2b20d899349f7383283bb1d845b38b464568a987 100644
+--- a/src/mcp/tool-bridge.ts
++++ b/src/mcp/tool-bridge.ts
+@@ -194,6 +194,12 @@ export interface MCPToolDetails {
+ 	rawContent?: MCPContent[];
+ 	/** Structured metadata from the MCP response */
+ 	mcpMeta?: Record<string, unknown>;
++	/** Exact structured MCP response, retained separately from model-visible text. */
++	structuredContent?: Record<string, unknown>;
++	/** Tool metadata captured before this invocation, never a later catalogue lookup. */
++	mcpToolMeta?: Record<string, unknown>;
++	/** Effective protocol arguments after native input preparation. */
++	mcpArguments?: Record<string, unknown>;
+ 	/** Provider ID (e.g., "claude", "mcp-json") */
+ 	provider?: string;
+ 	/** Provider display name (e.g., "Claude Code", "MCP Config") */
+@@ -282,6 +288,8 @@ function buildResult(
+ 	mcpToolName: string,
+ 	provider?: string,
+ 	providerName?: string,
++	mcpToolMeta?: Record<string, unknown>,
++	mcpArguments?: Record<string, unknown>,
+ ): CustomToolResult<MCPToolDetails> {
+ 	const content = formatMCPContent(result.content);
+ 	const details: MCPToolDetails = {
+@@ -290,6 +298,9 @@ function buildResult(
+ 		isError: result.isError,
+ 		rawContent: result.content,
+ 		mcpMeta: result._meta,
++		structuredContent: result.structuredContent,
++		mcpToolMeta,
++		mcpArguments,
+ 		provider,
+ 		providerName,
+ 	};
+@@ -587,6 +598,7 @@ export class MCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 		signal?: AbortSignal,
+ 	): Promise<CustomToolResult<MCPToolDetails>> {
+ 		throwIfAborted(signal);
++		const toolMetadata = this.tool._meta === undefined ? undefined : structuredClone(this.tool._meta);
+ 		const args = await prepareOutboundArgs(params, this.tool.inputSchema, _ctx);
+ 		const provider = this.connection._source?.provider;
+ 		const providerName = this.connection._source?.providerName;
+@@ -612,6 +624,8 @@ export class MCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 				this.tool.name,
+ 				attempt.connection._source?.provider ?? provider,
+ 				attempt.connection._source?.providerName ?? providerName,
++				toolMetadata,
++				args,
+ 			);
+ 		} catch (error) {
+ 			rethrowIfAborted(error, signal);
+@@ -624,7 +638,7 @@ export class MCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 					const retryProviderName = newConn._source?.providerName ?? providerName;
+ 					try {
+ 						const result = await callTool(newConn, this.tool.name, args, { signal });
+-						return buildResult(result, newConn.name, this.tool.name, retryProvider, retryProviderName);
++						return buildResult(result, newConn.name, this.tool.name, retryProvider, retryProviderName, toolMetadata, args);
+ 					} catch (retryError) {
+ 						rethrowIfAborted(retryError, signal);
+ 						return buildErrorResult(
+@@ -707,6 +721,7 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 		signal?: AbortSignal,
+ 	): Promise<CustomToolResult<MCPToolDetails>> {
+ 		throwIfAborted(signal);
++		const toolMetadata = this.tool._meta === undefined ? undefined : structuredClone(this.tool._meta);
+ 		const args = await prepareOutboundArgs(params, this.tool.inputSchema, _ctx);
+ 		const provider = this.#fallbackProvider;
+ 		const providerName = this.#fallbackProviderName;
+@@ -740,6 +755,8 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 					this.tool.name,
+ 					attempt.connection._source?.provider ?? provider,
+ 					attempt.connection._source?.providerName ?? providerName,
++					toolMetadata,
++					args,
+ 				);
+ 			} catch (callError) {
+ 				rethrowIfAborted(callError, signal);
+@@ -750,7 +767,7 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 						const retryProviderName = newConn._source?.providerName ?? providerName;
+ 						try {
+ 							const result = await callTool(newConn, this.tool.name, args, { signal });
+-							return buildResult(result, this.serverName, this.tool.name, retryProvider, retryProviderName);
++							return buildResult(result, this.serverName, this.tool.name, retryProvider, retryProviderName, toolMetadata, args);
+ 						} catch (retryError) {
+ 							rethrowIfAborted(retryError, signal);
+ 							return buildErrorResult(
+@@ -781,6 +798,8 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 							this.tool.name,
+ 							newConn._source?.provider ?? provider,
+ 							newConn._source?.providerName ?? providerName,
++							toolMetadata,
++							args,
+ 						);
+ 					} catch (retryError) {
+ 						rethrowIfAborted(retryError, signal);

@@ -2,7 +2,7 @@
 
 The right-hand Open panel list includes real thread entrypoints advertised by the selected session's connected native MCP servers. These actions use the provider's title and theme icon. Generic tools and resources are not invented as app rows. The built-in action order is preserved; app actions follow it and are not offered in Bottom.
 
-This flow implements standard MCP Apps HTML resources using the pinned MCP Apps SDK 2.0.0. Legacy `text/html+skybridge` and `window.openai` applications are not supported by this adapter. Tool-result artifact producers, arbitrary artifact viewers and complete historical Apps compatibility remain separate work; this feature does not complete the parity goal.
+This flow implements standard MCP Apps HTML resources using the pinned MCP Apps SDK 2.0.0. Legacy `text/html+skybridge` and `window.openai` applications are not supported by this adapter. Retained tool results and declared file viewers are described in [Artifact viewers](artifact-viewers.md). Arbitrary formats and complete historical Apps compatibility remain separate work; this feature does not complete the parity goal.
 
 ## Reference and native capability
 

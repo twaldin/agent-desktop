@@ -1,6 +1,6 @@
 import { parseNativeMcpAppResponse, type DesktopBridge, type McpJson, type NativeMcpAppRequest, type NativeMcpAppResource, type NativeMcpAppSelection } from "@agent-desktop/shared";
 import type { McpDockApp } from "./mcp-app-dock";
-interface Operation { id: string; closed: boolean; opening: Promise<NativeMcpAppResource>; closing?: Promise<void>; closeFailed?: boolean; operationErrors?: number; warningShown?: boolean; initialResult?: Promise<Record<string, McpJson>> }
+interface Operation { id: string; closed: boolean; opening: Promise<NativeMcpAppResource>; closing?: Promise<void>; closeFailed?: boolean; operationErrors?: number; warningShown?: boolean; initialResult?: Promise<Record<string, McpJson>>; initialArguments?: Record<string, McpJson> }
 export class McpAppController {
   #operation?: Operation;
   #disposed = false;
@@ -32,14 +32,16 @@ export class McpAppController {
         const snapshot = (await this.bridge.getSessionMcp!(this.sessionId, this.hostId)).value;
         this.#current(operation);
         if (!snapshot?.canOpenApps || !snapshot.servers.some(server => server.status === "connected" && server.name === this.app.serverName
-          && server.apps?.some(app => app.toolName === this.app.toolName && app.resourceUri === this.app.resourceUri))) throw new Error("This app is not available from its original server.");
+          && (this.app.source?.type === "artifact" || (this.app.source?.type === "file" ? server.fileViewers : server.apps)?.some(app => app.toolName === this.app.toolName && app.resourceUri === this.app.resourceUri)))) throw new Error("This app is not available from its original server.");
         selection = { epoch: snapshot.epoch, expectedRevision: snapshot.revision, serverName: this.app.serverName, toolName: this.app.toolName, resourceUri: this.app.resourceUri };
       }
       this.#current(operation);
-      const request = { type: "open" as const, channelId: operation.id, selection };
+      const request = { type: "open" as const, channelId: operation.id, selection, ...(this.app.source ? { source: this.app.source } : {}) };
       const response = parseNativeMcpAppResponse(await this.bridge.sessionMcpApp!(this.sessionId, request, this.hostId), request);
       this.#current(operation);
       if (response.type !== "opened") throw new Error("Invalid MCP app opening result.");
+      if (response.initialResult) operation.initialResult = Promise.resolve(response.initialResult);
+      operation.initialArguments = response.initialArguments;
       return response.resource;
     });
     void operation.opening.catch(() => { operation.closed = true; void this.#close(operation).catch(() => {}); });
@@ -49,8 +51,10 @@ export class McpAppController {
     const operation = this.#operation;
     if (!operation) return Promise.reject(new Error("Open the MCP app first."));
     this.#current(operation);
-    return operation.initialResult ??= this.request("tools/call", { name: this.app.toolName, arguments: {} });
+    if (this.app.source?.type === "artifact" && !operation.initialResult) return Promise.reject(new Error("The saved app result is unavailable. Its tool cannot be replayed."));
+    return operation.initialResult ??= this.request("tools/call", { name: this.app.toolName, arguments: operation.initialArguments ?? {} });
   }
+  initialArguments(): Record<string, McpJson> | undefined { return this.#operation?.initialArguments ?? (this.app.source?.type === "artifact" ? undefined : {}); }
   async request(method: Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: Record<string, McpJson>): Promise<Record<string, McpJson>> {
     const operation = this.#operation;
     if (!operation) throw new Error("Open the MCP app first.");

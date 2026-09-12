@@ -1,4 +1,4 @@
-import { mcpAppDescriptors } from "./mcp-apps";
+import { mcpAppDescriptors, mcpFileViewers } from "./mcp-apps";
 import { randomUUID } from "node:crypto";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability/fs";
@@ -82,7 +82,7 @@ function collectServers(manager: MCPManager, failures: ReadonlySet<string>, apps
 			limited(subscriptions, "resource subscriptions");
 			return {
 				name: identity(name, 1024, "server name"),
-				...(apps && connection ? { apps: mcpAppDescriptors(connection) } : {}),
+				...(apps && connection ? { apps: mcpAppDescriptors(connection), fileViewers: mcpFileViewers(connection) } : {}),
 				status,
 				source: sourceLabel(manager, name),
 				canAuthorize,

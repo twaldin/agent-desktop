@@ -18,6 +18,8 @@ export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";
 export * from "./session-mcp-app";
+export * from "./mcp-artifact";
+import type { McpArtifact } from "./mcp-artifact";
 export * from "./notifications";
 export * from "./queued-messages";
 export * from "./queued-submissions";
@@ -188,6 +190,9 @@ export interface TranscriptMessage {
   timestamp?: number;
   content?: TranscriptBlock[];
   lifecycle?: "streaming" | "complete";
+  /** Native persisted MCP result only; opening it never re-executes the tool. */
+  mcpArtifact?: McpArtifact;
+  mcpArtifactError?: string;
   tool?: { callId: string; name?: string; status?: "running" | "completed"; isError?: boolean; arguments?: Record<string, unknown>; intent?: string };
   assistant?: TranscriptAssistantMetadata;
   /** App-owned native command output entry. This is never a model message. */
