@@ -64,6 +64,7 @@ import { PendingMcpAuthorization } from "./SessionMcpAuthorization";
 import { EnvironmentActions, environmentActionCommands } from "./EnvironmentActions";
 import { branchCreationCommand } from "./BranchSelector";
 import { goToLineCommand } from "./GoToLine";
+import { workspaceGitBlameCommand } from "./WorkspaceGitFilePanel";
 import { GoalStrip } from "./GoalStrip";
 import { GoalPanel } from "./GoalPanel";
 import { useId, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -181,7 +182,12 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(windowRestoration.state.sidebarOpen);
   const [commandMenuMode, setCommandMenuMode] = useState<"commands" | "chats">();
   const commandMenuOrigin = useRef<Element | null>(null);
-  const openCommandMenu = (mode: "commands" | "chats") => { commandMenuOrigin.current = document.activeElement; setCommandMenuMode(mode); };
+  const commandMenuGitBlame = useRef<(() => void) | undefined>(undefined);
+  const openCommandMenu = (mode: "commands" | "chats") => {
+    commandMenuOrigin.current = document.activeElement;
+    commandMenuGitBlame.current = workbenchElement.current ? workspaceGitBlameCommand(workbenchElement.current, commandMenuOrigin.current) : undefined;
+    setCommandMenuMode(mode);
+  };
   const [fileSearchOwner, setFileSearchOwner] = useState<string>();
   const [showArchived, setShowArchived] = useState(windowRestoration.state.showArchived);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set(windowRestoration.state.expandedProjects));
@@ -885,6 +891,11 @@ export function App() {
       inputActions.push("approval-approve", "approval-decline");
       ownedSurfaceActions.push("approval-approve", "approval-decline");
     }
+    const blame = workspaceGitBlameCommand(root, origin);
+    if (blame) {
+      actions["git-toggle-blame"] = blame;
+      inputActions.push("git-toggle-blame"); ownedSurfaceActions.push("git-toggle-blame");
+    }
     const line = goToLineCommand(root, origin);
     if (line) {
       actions["go-to-line"] = line;
@@ -923,6 +934,8 @@ export function App() {
   const commandMenuActions = APPLICATION_COMMANDS.flatMap(definition => {
     const owner = APP_COMMAND_BINDING_OWNERS[definition.id as keyof typeof APP_COMMAND_BINDING_OWNERS];
     const onSelect = owner && commandMenuShortcutOptions.actions[owner];
+    const retainedBlame = owner === "git-toggle-blame" ? commandMenuGitBlame.current : undefined;
+    if (owner === "git-toggle-blame" && !retainedBlame) return [];
     // These webview commands have actual owners above. Electron-only searchFiles
     // remains the dedicated file dialog, not an invented root command-menu row.
     if (definition.id === "nextTab" || definition.id === "previousTab") return [];
@@ -931,6 +944,7 @@ export function App() {
       group: definition.group, shortcut: appCommandShortcutLabel(appCommandBindings.bindings, owner), deferUntilClose: true,
       onSelect: () => {
         if (selectedRef.current !== routeKey) return;
+        if (retainedBlame) { retainedBlame(); return; }
         const current = shortcutOptions.current;
         current.withControls(current.options, commandMenuOrigin.current).actions[owner]?.();
       } }];

@@ -52,7 +52,16 @@ async function run() {
       true;
     `);
     await until("gitFileFixtureEditor() !== null");
-    await click("Git blame and history");
+    await window.webContents.executeJavaScript("document.querySelector('[data-git-blame-toggle]').focus()");
+    window.webContents.sendInputEvent({ type: "keyDown", keyCode: "P", modifiers: ["meta", "shift"] });
+    window.webContents.sendInputEvent({ type: "keyUp", keyCode: "P", modifiers: ["meta", "shift"] });
+    await until("document.querySelector('.command-menu input') !== null");
+    await window.webContents.insertText("Toggle Git blame");
+    await until("document.querySelector('[cmdk-item][data-value=\"command:git.toggleBlame\"]') !== null");
+    window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+    window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+    await until("document.querySelector('.command-menu') === null && document.querySelector('[data-git-blame-toggle]')?.getAttribute('aria-pressed') === 'true'");
+    result.checks.push("Native command-menu invocation opens Git blame for the focused original file after menu close");
     await until("document.querySelector('.workspace-git-file-history')?.textContent.includes('Rename the selected source')");
     await until("document.querySelector('.workspace-git-file')?.dataset.repositoryWatch === 'ready'");
     await until("document.querySelector('.workspace-git-file')?.getAttribute('aria-busy') === 'false'");
