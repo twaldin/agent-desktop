@@ -279,6 +279,33 @@ describe.skipIf(!bundle)("private bundled tmux integration (actual native progra
     expect(await reopened.history(f.terminal.id)).toMatchObject({ revision: history.revision, screen: history.screen, live: false });
   }, 10_000);
 
+  test("concurrent history callers share one native snapshot", async () => {
+    const f = await fixture({ pollIntervalMs: 10_000 });
+    const internal = f.manager as unknown as { cli(command: string[], maximumBytes?: number): Promise<string> };
+    const nativeCli = internal.cli.bind(f.manager);
+    let snapshots = 0, begin!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    internal.cli = async (command, maximumBytes) => {
+      if (command[0] === "display-message" && command.at(-1) === "#{history_size}|#{alternate_on}") {
+        snapshots++;
+        if (snapshots === 1) { begin(); await held; }
+      }
+      return nativeCli(command, maximumBytes);
+    };
+    try {
+      const first = f.manager.history(f.terminal.id);
+      await started;
+      const second = f.manager.history(f.terminal.id);
+      await Bun.sleep(50);
+      const admitted = snapshots;
+      release();
+      const [one, two] = await Promise.all([first, second]);
+      expect(admitted).toBe(1);
+      expect(two).toEqual(one);
+    } finally { release(); internal.cli = nativeCli; }
+  });
+
   test("retained-pane cleanup errors stay observable without replacing the natural outcome", async () => {
     const f = await fixture();
     writeFileSync(join(f.directory, "control.json"), JSON.stringify({ id: 999, type: "exit", code: 7 }));

@@ -41,7 +41,7 @@ interface Attachment {
   replies: Map<string, string>;
   closing: boolean;
 }
-interface Entry { record: NativeTerminalRecord; process?: Process; control?: TmuxControl; closing?: Promise<NativeTerminalInfo>; finalizing?: Promise<void>; mutating: boolean }
+interface Entry { record: NativeTerminalRecord; process?: Process; control?: TmuxControl; closing?: Promise<NativeTerminalInfo>; finalizing?: Promise<void>; snapshotting?: Promise<NativeTerminalHistory>; mutating: boolean }
 interface InputStream { lastSequence: number; receipts: Map<number, { hash: string; result: Promise<NativeTerminalInputReceipt> }> }
 export interface TmuxTerminalManagerOptions {
   dataDirectory: string;
@@ -481,7 +481,14 @@ export class TmuxTerminalManager {
   }
 
   async history(terminalId: string): Promise<NativeTerminalHistory> {
-    const entry = this.find(terminalId), info = entry.record.info;
+    const entry = this.find(terminalId);
+    if (entry.snapshotting) return entry.snapshotting;
+    const snapshot = this.captureHistory(entry); entry.snapshotting = snapshot;
+    try { return await snapshot; }
+    finally { if (entry.snapshotting === snapshot) entry.snapshotting = undefined; }
+  }
+  private async captureHistory(entry: Entry): Promise<NativeTerminalHistory> {
+    const terminalId = entry.record.info.id, info = entry.record.info;
     if (!entry.record.paneId || info.serverGeneration !== this.catalog.serverGeneration || !this.server || this.server.status() !== "running") return this.store.history(terminalId) ?? { terminalId, serverGeneration: info.serverGeneration, revision: sha256(""), capturedAt: info.exitedAt ?? info.createdAt, cols: info.cols, rows: info.rows, live: false, history: "", truncated: false };
     const [historySize, alternate] = (await this.cli(["display-message", "-p", "-t", entry.record.paneId, "#{history_size}|#{alternate_on}"])).split("|").map(Number);
     let text = historySize ? await this.cli(["capture-pane", "-p", "-t", entry.record.paneId, "-S", "-", "-E", "-1"], 16 * 1024 * 1024) : "";
