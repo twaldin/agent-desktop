@@ -5,6 +5,9 @@ describe("automation recurrence", () => {
   test("rejects invalid and impossible recurrence input", () => {
     expect(() => parseAutomationSchedule("not a rule", 0)).toThrow("invalid");
     expect(() => parseAutomationSchedule("RRULE:FREQ=DAILY;INTERVAL=0", 0)).toThrow("invalid");
+    expect(() => parseAutomationSchedule("DTSTART:20260101T000000Z\nRRULE:FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=30", 0)).toThrow("invalid");
+    expect(() => parseAutomationSchedule("DTSTART:20260105T000000Z\nRRULE:FREQ=SECONDLY;INTERVAL=86400;BYHOUR=1", 0)).toThrow("invalid");
+    expect(parseAutomationSchedule("DTSTART:20260105T000000Z\nRRULE:FREQ=SECONDLY;INTERVAL=86400;BYHOUR=0", 0).first).toBeDefined();
   });
 
   test("computes an exclusive next occurrence and deterministic bounded jitter", () => {

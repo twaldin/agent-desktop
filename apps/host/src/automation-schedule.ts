@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { RRule, RRuleSet, rrulestr } from "rrule";
 
 const JITTER_SECONDS = 120;
+const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
 function safeIntegerList(value: unknown, minimum: number, maximum: number, allowZero = true): boolean {
   return value === null || value === undefined || Array.isArray(value) && value.every(item =>
@@ -10,7 +11,7 @@ function safeIntegerList(value: unknown, minimum: number, maximum: number, allow
 
 function validRule(rule: RRule): boolean {
   const options = rule.options;
-  return Number.isSafeInteger(options.interval) && options.interval > 0
+  if (!(Number.isSafeInteger(options.interval) && options.interval > 0
     && (options.count === null || Number.isSafeInteger(options.count) && options.count > 0)
     && safeIntegerList(options.byhour, 0, 23)
     && safeIntegerList(options.byminute, 0, 59)
@@ -20,7 +21,41 @@ function validRule(rule: RRule): boolean {
     && safeIntegerList(options.bymonthday, 1, 31)
     && safeIntegerList(options.bynmonthday, -31, -1)
     && safeIntegerList(options.byyearday, -366, 366, false)
-    && safeIntegerList(options.byweekno, -53, 53, false);
+    && safeIntegerList(options.byweekno, -53, 53, false))) return false;
+  const monthDays = [...options.bymonthday, ...options.bynmonthday];
+  if (monthDays.length && options.bymonth?.length) {
+    const longest = Math.max(...options.bymonth.map(month => new Date(Date.UTC(2000, month, 0)).getUTCDate()));
+    if (!monthDays.some(day => Math.abs(day) <= longest)) return false;
+  }
+  return reachableHighFrequencyRule(rule);
+}
+
+/** rrule's high-frequency iterator advances by a fixed number of seconds. A
+ * filter outside that finite weekly residue cycle can otherwise make after()
+ * loop indefinitely. Check the same weekday/time option gates before use. */
+function reachableHighFrequencyRule(rule: RRule): boolean {
+  const options = rule.options, original = rule.origOptions;
+  if (options.freq < RRule.HOURLY) return true;
+  let intervalSeconds = options.interval;
+  if (options.freq === RRule.HOURLY) intervalSeconds *= 60 * 60;
+  else if (options.freq === RRule.MINUTELY) intervalSeconds *= 60;
+  if (!Number.isSafeInteger(intervalSeconds)) return false;
+  const start = options.dtstart;
+  const initial = ((start.getUTCDay() + 6) % 7) * 24 * 60 * 60
+    + start.getUTCHours() * 60 * 60 + start.getUTCMinutes() * 60 + start.getUTCSeconds();
+  let cursor = initial;
+  do {
+    const weekday = Math.trunc(cursor / (24 * 60 * 60));
+    const hour = Math.trunc(cursor % (24 * 60 * 60) / (60 * 60));
+    const minute = Math.trunc(cursor % (60 * 60) / 60);
+    const second = cursor % 60;
+    if ((original.byweekday == null || options.byweekday.includes(weekday))
+      && (original.byhour == null || options.byhour.includes(hour))
+      && (options.freq < RRule.MINUTELY || original.byminute == null || options.byminute.includes(minute))
+      && (options.freq < RRule.SECONDLY || original.bysecond == null || options.bysecond.includes(second))) return true;
+    cursor = (cursor + intervalSeconds % WEEK_SECONDS) % WEEK_SECONDS;
+  } while (cursor !== initial);
+  return false;
 }
 
 export interface ValidAutomationSchedule {
