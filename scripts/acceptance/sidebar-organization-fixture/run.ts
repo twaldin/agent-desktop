@@ -60,6 +60,7 @@ try {
         return Response.json({type:"preferences",hostId:home.connection.hostId,sequence:home.snapshot().lastEventSequence});
       }
       if (method === "preferences") return Response.json(await fetchHost(args[0], "/v1/preferences"));
+      if (method === "preferencesV2") return Response.json(await fetchHost(args[0], "/v2/preferences"));
       if (method === "saveView") return Response.json(windowStore.saveView(args[0]));
       if (method === "failNextArchive") { failureHost = args[0]; return Response.json({}); }
       if (method === "command") {

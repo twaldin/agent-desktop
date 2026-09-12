@@ -9,6 +9,8 @@ if (process.env.AGENT_DESKTOP_MCP_TEST_MARKER) {
 	);
 }
 
+if (process.env.AGENT_DESKTOP_MCP_TEST_PID_FILE) await Bun.write(process.env.AGENT_DESKTOP_MCP_TEST_PID_FILE, String(process.pid));
+
 const send = (id: string | number, result: unknown) => {
 	process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
 };
@@ -38,6 +40,11 @@ for await (const chunk of Bun.stdin.stream()) {
 				});
 				break;
 			case "tools/list":
+                if (process.env.AGENT_DESKTOP_MCP_TEST_TOOLS_GATE) {
+                    const gate = process.env.AGENT_DESKTOP_MCP_TEST_TOOLS_GATE;
+                    for (let index = 0; index < 1000 && !await Bun.file(gate).exists(); index++) await Bun.sleep(10);
+                    if (!await Bun.file(gate).exists()) throw new Error("MCP tools gate did not release");
+                }
 				send(message.id, { tools: [{ name: process.env.AGENT_DESKTOP_MCP_TEST_TOOL ?? "fixture_tool", description: "Fixture tool", inputSchema: { type: "object" } }] });
 				break;
 			case "tools/call":

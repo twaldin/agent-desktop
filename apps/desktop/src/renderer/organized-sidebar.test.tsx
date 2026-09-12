@@ -43,6 +43,7 @@ function fixture() {
     sectionFor: (_kind: string, _id: string, hostId: string) => hostId === "work" ? "pinned" : null,
     entity: () => undefined,
     put: async (change: unknown) => { writes.push(change); },
+    putMany: async (changes: unknown[]) => { writes.push(...changes); },
   } as unknown as PreferencesState;
   const expandedProjects = new Set(["home:project"]);
   const state: unknown[] = [], refs: { current: unknown }[] = []; let cursor = 0, refCursor = 0;
@@ -243,4 +244,21 @@ test("marker trigger owns a compact native popover with all project markers", ()
   expect((html.match(/Use [a-z-]+ icon/g) ?? [])).toHaveLength(PROJECT_APPEARANCE_ICONS.length);
   expect((html.match(/Use [a-z]+ project color/g) ?? [])).toHaveLength(PROJECT_APPEARANCE_COLORS.length);
   expect((html.match(/#123456/g) ?? [])).toHaveLength(3); // trigger marker, trigger dot, and editable value; option glyphs stay neutral.
+});
+
+
+test("pinned options use their independent sort and Recents keeps new chat reachable", () => {
+  const f = fixture();
+  f.button("Pinned options").props.onClick({ currentTarget: menuTrigger() });
+  const menuRows = f.render().filter(node => node.type === "button" && ["Priority", "Last updated", "Manual order"].some(name => label(node.props.children).startsWith(name)));
+  expect(menuRows.filter(node => node.props["aria-checked"])).toHaveLength(1);
+  expect(menuRows.find(node => label(node.props.children).startsWith("Manual order"))!.props.disabled).toBe(false);
+  f.button("New chat").props.onClick();
+  expect(f.newChats).toEqual([[undefined, "home"]]);
+});
+
+test("chat options retain archived filtering after Recents uses its reference new-chat action", () => {
+  const f = fixture();
+  f.button("Chat sidebar options").props.onClick({ currentTarget: menuTrigger() });
+  expect(f.button("Show archived chats")).toBeDefined();
 });

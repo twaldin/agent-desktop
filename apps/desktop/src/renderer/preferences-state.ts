@@ -1,9 +1,10 @@
+import { parsePreferencesSnapshotV2 } from "../../../../packages/shared/src/preferences-v2";
 import type { CommandEnvelope, DesktopBridge } from "../../../../packages/shared/src/protocol";
 import { DEFAULT_SIDEBAR_ORGANIZATION, LEGACY_SIDEBAR_ORGANIZATION, comparePreferenceRevisions, parsePreferenceChange, parsePreferencesSnapshot, type PreferenceChange, type PreferenceKey, type PreferenceRecord, type PreferencesSnapshot, type PreferenceValues, type SidebarEntityPreference, type SidebarSectionPreference } from "../../../../packages/shared/src/preferences";
 import type { DraftCache } from "./drafts";
 import type { OfflineCache } from "./offline-cache";
 
-type PreferencesBridge = Pick<DesktopBridge, "getPreferences" | "command" | "subscribe">;
+type PreferencesBridge = Pick<DesktopBridge, "getPreferences" | "command" | "subscribe" | "getPreferencesV2">;
 export class PreferencesState {
   records = new Map<PreferenceKey, PreferenceRecord>();
   pending: CommandEnvelope[] = [];
@@ -36,6 +37,7 @@ export class PreferencesState {
   stop() { this.unsubscribe?.(); this.unsubscribe = undefined; }
   setConnection(hostId: string | undefined, connected: boolean) { this.localHostId = hostId; this.connected = connected; this.changed(); }
   get<K extends PreferenceKey>(key: K): PreferenceValues[K] | undefined { const record = this.records.get(key); return record && !record.deleted ? record.value as PreferenceValues[K] : undefined; }
+  pinnedSort() { return this.get("sidebar.pinnedSort") ?? "manual"; }
   sidebarOrganization() {
     return this.get("sidebar.organization") ?? ([...this.records.values()].some(record => !record.deleted && /^sidebar\.(section|project|session)\./.test(record.key)) ? LEGACY_SIDEBAR_ORGANIZATION : DEFAULT_SIDEBAR_ORGANIZATION);
   }
@@ -68,7 +70,7 @@ export class PreferencesState {
     if (this.inFlight) { this.again = true; return this.inFlight; }
     this.inFlight = (async () => {
       this.loading = true; this.changed();
-      try { await this.restore(); this.ingest(await this.bridge.getPreferences()); this.error = undefined; this.persist(); }
+      try { await this.restore(); if (this.bridge.getPreferencesV2) { const result = await this.bridge.getPreferencesV2(); if (!result.ok) { if (result.error.status !== 404 || result.error.code) throw new Error(result.error.message); this.ingest(await this.bridge.getPreferences()); } else { const snapshot = parsePreferencesSnapshotV2(result.value); this.ingest({ version: 1, records: snapshot.records.filter(record => record.key !== "general.commandKeymap") }); } } else this.ingest(await this.bridge.getPreferences()); this.error = undefined; this.persist(); }
       catch (cause) { this.error = message(cause); }
       finally { this.loading = false; this.changed(); }
     })().finally(() => { this.inFlight = undefined; if (this.again) { this.again = false; void this.refresh(); } });

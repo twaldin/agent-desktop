@@ -26,7 +26,7 @@ function readState(value: StoredPreferencesState | undefined): StoredPreferences
 
 function storedState(snapshot: PreferencesSnapshotV2, counter: number, version: 1 | 2): StoredPreferencesState {
   const parsed = parsePreferencesSnapshotV2(snapshot);
-  if (version === 1 && parsed.records.some(record => record.key === COMMAND_KEYMAP_PREFERENCE)) throw new PreferenceError("INVALID_PREFERENCES_STATE", "Newer preferences cannot be written in the legacy storage format.");
+  if (version === 1 && parsed.records.some(record => record.key === COMMAND_KEYMAP_PREFERENCE || record.key === "sidebar.pinnedSort")) throw new PreferenceError("INVALID_PREFERENCES_STATE", "Newer preferences cannot be written in the legacy storage format.");
   return { ...(version === 1 ? projectLegacyPreferences(parsed) : parsed), counter };
 }
 
@@ -74,7 +74,7 @@ export class PreferencesStore {
         revision: { counter: state.counter + index + 1, actor: this.store.host.id, opId: crypto.randomUUID() } }) as PreferenceRecord);
       const keys = new Set<string>(changes.map(change => change.key));
       const snapshot = parsePreferencesSnapshotV2({ version: 2, records: [...state.records.filter(item => !keys.has(item.key)), ...records] });
-      return { state: storedState(snapshot, state.counter + changes.length, state.version), result: records };
+      return { state: storedState(snapshot, state.counter + changes.length, state.version === 2 || changes.some(change => change.key === "sidebar.pinnedSort") ? 2 : 1), result: records };
     });
   }
 
@@ -143,7 +143,7 @@ export class PreferencesStore {
         else if (compared === 0 && fingerprint(current) !== fingerprint(record)) throw new PreferenceError("PREFERENCE_REVISION_REUSED", "A preference revision was reused with different contents.");
       }
       const snapshot = parsePreferencesSnapshotV2({ version: 2, records: [...entries.values()] });
-      const version = state.version === 2 || snapshot.records.some(record => record.key === COMMAND_KEYMAP_PREFERENCE) ? 2 : 1;
+      const version = state.version === 2 || snapshot.records.some(record => record.key === COMMAND_KEYMAP_PREFERENCE || record.key === "sidebar.pinnedSort") ? 2 : 1;
       return { state: storedState(snapshot, counter, version), result: { changedKeys, snapshot } };
     });
   }

@@ -1,10 +1,13 @@
 import { normalizeAccelerator, parseCommandBindingUpdate, type CommandBindingOverride, type CommandBindingUpdate } from "./command-keybindings";
+import type { NativeTerminalResult } from "./terminals";
 import {
   PREFERENCE_LIMITS, PreferenceError, parsePreferenceRevision, parsePreferencesSnapshot,
   type PreferenceKey, type PreferenceRecord, type PreferenceRevision, type PreferencesSnapshot,
 } from "./preferences";
 
 export const COMMAND_KEYMAP_PREFERENCE = "general.commandKeymap" as const;
+/** Pinned ordering is v2-only so legacy parsers never receive it. */
+export const PINNED_SIDEBAR_SORT_PREFERENCE = "sidebar.pinnedSort" as const;
 export type PrimaryNumberTarget = "tabs" | "sidebar";
 export type CommandKeymapPreference = {
   /** The viewing desktops are macOS, including when the owning service runs on Linux. */
@@ -21,6 +24,8 @@ export type CommandKeymapPreferenceRecord =
 export type PreferenceKeyV2 = PreferenceKey | typeof COMMAND_KEYMAP_PREFERENCE;
 export type PreferenceRecordV2 = PreferenceRecord | CommandKeymapPreferenceRecord;
 export interface PreferencesSnapshotV2 { version: 2; records: PreferenceRecordV2[] }
+/** Structured across Electron IPC so a renderer can distinguish an old host from a failed v2 read. */
+export type PreferencesV2ReadResult = NativeTerminalResult<PreferencesSnapshotV2>;
 export interface PreferenceMergeResultV2 { changedKeys: PreferenceKeyV2[]; snapshot: PreferencesSnapshotV2 }
 export interface CommandKeymapMutation {
   expectedRevision: PreferenceRevision | null;
@@ -103,7 +108,7 @@ export function parsePreferencesSnapshotV2(value: unknown): PreferencesSnapshotV
 /** This is an outgoing projection, never a replacement for the full persisted state. */
 export function projectLegacyPreferences(value: PreferencesSnapshotV2): PreferencesSnapshot {
   const snapshot = parsePreferencesSnapshotV2(value);
-  return parsePreferencesSnapshot({ version: 1, records: snapshot.records.filter(record => record.key !== COMMAND_KEYMAP_PREFERENCE) });
+  return parsePreferencesSnapshot({ version: 1, records: snapshot.records.filter(record => record.key !== COMMAND_KEYMAP_PREFERENCE && record.key !== PINNED_SIDEBAR_SORT_PREFERENCE) });
 }
 
 /** Read legacy stored bytes without rewriting them; unknown versions still fail closed. */

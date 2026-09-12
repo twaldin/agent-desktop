@@ -1,3 +1,6 @@
+import { PullRequests } from "./pull-requests";
+import { PullRequestsHttp } from "./pull-requests-http";
+import { PULL_REQUESTS_CAPABILITY } from "../../../packages/shared/src/pull-requests";
 import { isUnreadSessionEvent } from "../../../packages/shared/src/session-read";
 import { BranchQueryPeer } from "./branch-query-peer";
 import { BRANCH_QUERY_CAPABILITY } from "@agent-desktop/shared";
@@ -133,6 +136,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let goalContinuations: GoalContinuationController | undefined;
   let questionDeliveries: QuestionDeliveryController | undefined;
   let automations: AutomationService | undefined;
+  let pullRequests: PullRequests | undefined;
   let server: ReturnType<typeof Bun.serve<SocketData>> | undefined;
   let publishedConnection = false;
   let tailServer: ReturnType<typeof Bun.serve<SocketData>> | undefined;
@@ -553,13 +557,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     notify: run => { if (run.sessionId) notificationEvents.completion(run.sessionId, `automation:${run.id}`, run.status === "completed" ? "completed" : "failed", run.completedAt ?? run.updatedAt); },
     tickMs: options.automationTickMs,
   });
+  pullRequests = new PullRequests({ hostId: store.host.id });
+  const pullRequestsHttp = new PullRequestsHttp(store.host.id, pullRequests);
   const automationsHttp = new AutomationsHttp(store.host.id, automations);
   automations.start();
 
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput, sessionActivity = false): void {
@@ -1200,6 +1206,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (activityResponse) return activityResponse;
         const queuedMessagesResponse = await queuedMessages.route(request, url);
         if (queuedMessagesResponse) return queuedMessagesResponse;
+        const pullRequestsResponse = await pullRequestsHttp.route(request, url);
+        if (pullRequestsResponse) return pullRequestsResponse;
         const automationsResponse = await automationsHttp.route(request, url);
         if (automationsResponse) return automationsResponse;
         const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
@@ -1437,6 +1445,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try {
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
+        const pullRequestsDrain = pullRequests?.dispose();
+        void pullRequestsDrain?.catch(() => {});
         const terminalCreationDrain = terminalCreationHttp?.dispose();
         const browserCloseDrain = browserCloseRequests?.dispose();
         void browserCloseDrain?.catch(() => {});
@@ -1451,7 +1461,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
+        const outcomes = await Promise.allSettled([pullRequestsDrain, automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
@@ -1477,7 +1487,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([automations?.dispose(), browserObservations?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await Promise.allSettled([pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
       await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
     }
     finally {

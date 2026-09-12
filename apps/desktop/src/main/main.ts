@@ -1,3 +1,5 @@
+import { parsePullRequestReadRequest } from '../../../../packages/shared/src/pull-requests';
+import { readPullRequests } from './pull-requests-transport';
 import { McpAppWindowChannels } from "./mcp-app-window-channels";
 import { readLocalFontFaces } from "./local-fonts";
 import { registerBrowserCloseHandlers } from "./browser-close-ipc";
@@ -49,6 +51,7 @@ import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, protoco
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
 import { nativeTerminalResult, requestHost, type HostEndpoint } from "./host-transport";
+import { registerPreferencesV2Handler } from "./preferences-ipc";
 import { inspectImageAttachment, requestImageAttachmentCapabilities, requestImageAttachment, requestTranscriptImage, uploadImageAttachment } from "./attachment-transport";
 import { requestComposerCatalog } from "./composer-transport";
 import { requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
@@ -521,6 +524,15 @@ ipcMain.handle("host:queued-messages-mutate", async (event, sessionId: string,
 ipcMain.handle("host:goal-control", async (event, sessionId: string, request: import("@agent-desktop/shared").GoalMutationRequest, hostId?: string) => {
   assertTrustedSender(event); return requestGoalMutation(await endpointFor(hostId), sessionId, request);
 });
+ipcMain.handle('host:pull-requests', async (event, hostId: string, value: unknown) => {
+  assertTrustedSender(event);
+  const input = parsePullRequestReadRequest(value);
+  if (typeof hostId !== 'string' || !hostId || hostId.length > 200) throw new Error('Choose the pull request execution host.');
+  const endpoint = await endpointFor(hostId);
+  assertTrustedSender(event);
+  if (endpoint.hostId !== hostId) throw new Error('The pull request execution host changed.');
+  return readPullRequests(endpoint, input);
+});
 ipcMain.handle('host:automations', async (event, hostId: string, query: unknown) => {
   assertTrustedSender(event);
   const input = parseAutomationsQuery(query);
@@ -612,7 +624,7 @@ ipcMain.handle("host:device-access-update", async (event, input: unknown) => {
   return state;
 });
 ipcMain.handle("host:preferences", event => { assertTrustedSender(event); return request("/v1/preferences"); });
-ipcMain.handle("host:preferences-v2", event => { assertTrustedSender(event); return request("/v2/preferences"); });
+registerPreferencesV2Handler(ipcMain, assertTrustedSender, path => request(path));
 ipcMain.handle("host:theme", event => { assertTrustedSender(event); return request("/v1/theme"); });
 ipcMain.handle("host:theme-set", (event, document: ThemeDocument, expectedRevision: string) => {
   assertTrustedSender(event); return request("/v1/theme", { document, expectedRevision });

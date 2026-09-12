@@ -7,14 +7,15 @@ import { sessionUnreadKey } from "./session-read-state";
 export type SidebarItem = { kind: "project"; value: Project } | { kind: "session"; value: SessionSummary };
 export const sidebarItemKey = (item: SidebarItem) => JSON.stringify([item.kind, item.value.hostId, item.value.id]);
 
-type Organization = Pick<PreferencesState, "sections" | "sectionFor" | "entity"> & { sidebarOrganization?: () => SidebarOrganization; get?: (key: "sidebar.organization") => SidebarOrganization | undefined };
+type Organization = Pick<PreferencesState, "sections" | "sectionFor" | "entity"> & { sidebarOrganization?: () => SidebarOrganization; pinnedSort?: () => SidebarSort; get?: (key: "sidebar.organization" | "sidebar.pinnedSort") => SidebarOrganization | SidebarSort | undefined };
 export interface SidebarChatTarget { hostId: string; sessionId: string }
 
 /** One logical ordering for rendered rows and numbered chat navigation. Sidebar
  * collapse, project collapse and scroll position do not change logical slots. */
 export function sidebarLayout(data: Organization, groups: readonly { hostState: Pick<HostState, "host" | "projects" | "sessions" | "notifications"> }[],
   query: string, showArchived: boolean, expandedProjects: ReadonlySet<string>, unread: ReadonlySet<string> = new Set()) {
-  const organization = data.sidebarOrganization?.() ?? data.get?.("sidebar.organization") ?? LEGACY_SIDEBAR_ORGANIZATION;
+  const organization = data.sidebarOrganization?.() ?? data.get?.("sidebar.organization") as SidebarOrganization | undefined ?? LEGACY_SIDEBAR_ORGANIZATION;
+  const pinnedSort = data.pinnedSort?.() ?? data.get?.("sidebar.pinnedSort") as SidebarSort | undefined ?? "manual";
   const sections = data.sections();
   const projects = groups.flatMap(group => group.hostState.projects);
   const sessions = groups.flatMap(group => group.hostState.sessions)
@@ -29,7 +30,7 @@ export function sidebarLayout(data: Organization, groups: readonly { hostState: 
       .sort(positionOrder).map(row => row.item);
   };
   const grouped = (id: string) => ordered(allItems.filter(item => sectionOf(item) === id));
-  const pinned = grouped("pinned");
+  let pinned = grouped("pinned");
   const custom = sections.map(section => ({ section, items: grouped(section.id) }));
   const waiting = new Set(groups.flatMap(group => (group.hostState.notifications ?? []).filter(notice => notice.state === "open" && (notice.kind === "permission" || notice.kind === "question"))
     .map(notice => sessionUnreadKey(group.hostState.host.id, notice.sessionId))));
@@ -43,6 +44,7 @@ export function sidebarLayout(data: Organization, groups: readonly { hostState: 
     const left = metrics.get(sidebarItemKey(a))!, right = metrics.get(sidebarItemKey(b))!;
     return (mode === "priority" ? left.priority - right.priority : 0) || right.updated - left.updated;
   });
+  pinned = sorted(pinned, pinnedSort);
   const hostProjects = groups.map(group => sorted(allItems.filter(item => item.kind === "project" && item.value.hostId === group.hostState.host.id && sectionOf(item) === null), organization.projectSort));
   const defaultProjects = sorted(allItems.filter(item => item.kind === "project" && sectionOf(item) === null), organization.projectSort);
   const loose = sorted(allItems.filter(item => item.kind === "session" && sectionOf(item) === null

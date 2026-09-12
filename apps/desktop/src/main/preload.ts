@@ -1,8 +1,10 @@
+import { createPullRequestsBridge } from './pull-requests-preload';
 import { createBrowserCloseBridge } from "./browser-close-preload";
 import { createAutomationsBridge } from './automations-preload';
 import { createBrowserObservationBridge } from "./browser-observation-preload";
 import { createDraftBrowserBridge } from "./draft-browser-preload";
 import { createProjectRevealBridge } from "./project-reveal-preload";
+import { createPreferencesV2Bridge } from "./preferences-preload";
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge, DesktopEvent, DesktopTerminalEvent, NativeTerminalInvalidation } from "@agent-desktop/shared";
 
@@ -11,6 +13,7 @@ let lastNotificationNavigation: string | undefined;
 let repositoryWatchWindow: Promise<string> | undefined;
 let branchQueryWindow: Promise<string> | undefined;
 const bridge: DesktopBridge = {
+  pullRequests: createPullRequestsBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   automations: createAutomationsBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   draftBrowser: createDraftBrowserBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   browserClose: createBrowserCloseBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
@@ -104,7 +107,7 @@ const bridge: DesktopBridge = {
   },
   answerWindowClose: (id, allowed) => ipcRenderer.invoke("desktop:window-close-answer", id, allowed),
   getPreferences: () => ipcRenderer.invoke("host:preferences"),
-  getPreferencesV2: () => ipcRenderer.invoke("host:preferences-v2"),
+  getPreferencesV2: createPreferencesV2Bridge(channel => ipcRenderer.invoke(channel)),
   getTheme: () => ipcRenderer.invoke("host:theme"),
   setTheme: (document, expectedRevision) => ipcRenderer.invoke("host:theme-set", document, expectedRevision),
   getLocalFonts: () => ipcRenderer.invoke("desktop:fonts"),

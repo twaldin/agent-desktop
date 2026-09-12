@@ -78,3 +78,33 @@ test("sidebar grouping and sort modes survive the real replicated store and reje
     expect(f.native.get("sidebar.organization")).toMatchObject({ value });
   }
 });
+
+test("pinned sorting restores through the v2 snapshot without changing Recents organization", async () => {
+  const f = fixture(); await f.data.refresh();
+  await f.data.put({ key: "sidebar.organization", value: { grouping: "connection", projectSort: "manual", chatSort: "updated_at" } });
+  await f.data.put({ key: "sidebar.pinnedSort", value: "priority" });
+  expect(f.data.sidebarOrganization()).toEqual({ grouping: "connection", projectSort: "manual", chatSort: "updated_at" });
+  expect(f.data.pinnedSort()).toBe("priority");
+  const v2Bridge = { ...f.bridge, getPreferencesV2: async () => ({ ok: true as const, value: f.native.snapshotV2() }) };
+  const reopened = new PreferencesState(v2Bridge, f.cache, f.receipts); reopened.setConnection(f.host.host.id, true); await reopened.refresh();
+  expect(reopened.pinnedSort()).toBe("priority");
+  expect(reopened.sidebarOrganization().chatSort).toBe("updated_at");
+});
+
+test("a host without the v2 endpoint falls back to its legacy projection", async () => {
+  const f = fixture();
+  const bridge = { ...f.bridge, getPreferencesV2: async () => ({ ok: false as const, error: { message: "Not found", status: 404 } }) };
+  const data = new PreferencesState(bridge, f.cache, f.receipts); data.setConnection(f.host.host.id, true); await data.refresh();
+  expect(data.error).toBeUndefined();
+  expect(data.sidebarOrganization()).toEqual(expect.objectContaining({ grouping: "project" }));
+});
+
+
+test("a malformed successful response or explicit v2 failure is not silently replaced with v1 data", async () => {
+  const f = fixture();
+  for (const failure of [{ ok: true as const, value: { version: 2 as const, records: [{ key: "bad" }] } }, { ok: false as const, error: { message: "Request timed out" } }]) {
+    const bridge = { ...f.bridge, getPreferencesV2: async () => failure as never };
+    const data = new PreferencesState(bridge, f.cache, f.receipts); data.setConnection(f.host.host.id, true); await data.refresh();
+    expect(data.error).toBeDefined();
+  }
+});
