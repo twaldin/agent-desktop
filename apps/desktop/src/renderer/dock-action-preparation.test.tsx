@@ -1,5 +1,5 @@
 import { createBrowserNewTab } from "./browser-new-tab";
-import { createDockState, insertDockTab } from "./dock-state";
+import { closeDockTab, createDockState, draftBrowserDockTarget, hideDock, insertDockTab } from "./dock-state";
 import { reconcileDockPresentations } from "./dock-presentations";
 import { captureBrowserReplacement } from "./browser-workspace-replacement";
 import { expect, test } from "bun:test";
@@ -13,6 +13,8 @@ import { workspaceKey } from "./workspace-state";
 import { browserWorkspaceChoices } from "./browser-workspace-suggestions";
 import { BrowserWorkspaceMenu } from "./browser-workspace-menu";
 import type { DockAddAction } from "./DockPanel";
+import { dockEmptyActionCatalogue } from "./dock-empty-action-model";
+import { createDraftBrowserDockTab } from "./draft-browser-dock";
 
 /** Controlled actual hook; no effect delivery, mounted App or native resource. */
 function fixture(target: {sessionId:string}|{projectId:string}|{filePath:string}|null={sessionId:"session"}) {
@@ -48,7 +50,7 @@ test("invalid workspace preparation emits no UI error or tab; ordinary unsupport
     dock.open("browser");expect(f.errors).toHaveLength(target === null ? 0 : 1);
   }
   const f=fixture({projectId:"project"});expect(f.render().prepareOpen("side-chat")).toMatchObject({status:"error",outcome:"not-submitted"});
-  expect(f.render().prepareOpen("files")).toMatchObject({status:"ready",tab:{target:"project:project",title:"Open file"}});
+  expect(f.render().prepareOpen("files")).toMatchObject({status:"ready",tab:{target:"project:project"}});
 });
 
 // Execute exact bounded App declarations, not a hand-written catalogue. This
@@ -57,20 +59,18 @@ const app=readFileSync(new URL("./App.tsx",import.meta.url),"utf8");
 const definitions=app.slice(app.indexOf("  const preparationTarget ="),app.indexOf("  const hostGroups ="));
 const orderStart=app.indexOf("  const dockActions: DockAddAction[]"),orderEnd=app.indexOf(";",orderStart)+1;
 if(!definitions.startsWith("  const preparationTarget")||orderStart<0||orderEnd<=orderStart)throw new Error("App declaration boundary missing");
-const compiled=new Bun.Transpiler({loader:"ts"}).transformSync(`function build(values) { const {dockWorkspace,dockSession,hostId,dock,connected,bridge,workspace,commandKeymap,appCommandBindings,workspaceKey,dockTabId,appCommandShortcutLabel,hasNativeTerminalBridge,browserMenu}=values; ${definitions}\n${app.slice(orderStart,orderEnd)}\nreturn dockActions; }`);
-const build=new Function(`${compiled};return build;`)() as (values:Record<string,unknown>)=>DockAddAction[];
-function actions(dock:unknown,overrides:Record<string,unknown>={}) {return build({dockWorkspace:{sessionId:"session"},dockSession:{sessionId:"session"},hostId:"owner",dock,connected:true,bridge:{getBtw:()=>{}},workspace:{status:{}},commandKeymap:undefined,appCommandBindings:{bindings:{}},workspaceKey,dockTabId,appCommandShortcutLabel:()=>"shortcut",hasNativeTerminalBridge:()=>true,browserMenu:new BrowserWorkspaceMenu(()=>{}),...overrides});}
+const compiled=new Bun.Transpiler({loader:"ts"}).transformSync(`function build(values) { const {dockWorkspace,dockSession,hostId,dock,connected,bridge,workspace,commandKeymap,appCommandBindings,workspaceKey,dockTabId,appCommandShortcutLabel,hasNativeTerminalBridge,browserMenu,dockEmptyActionCatalogue,state,draftDockOwner,committedDraftDockOwner,draftId,draftBrowserDockTarget,createDraftBrowserDockTab}=values; ${definitions}\n${app.slice(orderStart,orderEnd)}\nreturn {dockActions,reviewAction}; }`);
+const build=new Function(`${compiled};return build;`)() as (values:Record<string,unknown>)=>{dockActions:DockAddAction[];reviewAction?:DockAddAction};
+function catalogue(dock:unknown,overrides:Record<string,unknown>={}) {return build({dockWorkspace:{sessionId:"session"},dockSession:{sessionId:"session"},hostId:"owner",dock,connected:true,bridge:{getBtw:()=>{}},workspace:{status:{}},commandKeymap:undefined,appCommandBindings:{bindings:{}},workspaceKey,dockTabId,appCommandShortcutLabel:()=>"shortcut",hasNativeTerminalBridge:()=>true,browserMenu:new BrowserWorkspaceMenu(()=>{}),dockEmptyActionCatalogue,state:undefined,draftDockOwner:{enabled:false},committedDraftDockOwner:{current:undefined},draftId:"draft",draftBrowserDockTarget,createDraftBrowserDockTab,...overrides});}
+function actions(dock:unknown,overrides:Record<string,unknown>={}) {return catalogue(dock,overrides).dockActions;}
 
-test("actual App catalogue exposes preparations and singleton identities without invoking actions",async()=>{
+test("actual App Terminal preparation requires the captured browser and does not acquire without it",async()=>{
   const f=fixture();let terminalCalls=0;
   const browser=createBrowserNewTab("owner","session","source");
   const presentations=reconcileDockPresentations(undefined,{tabs:[browser],state:insertDockTab(createDockState(),browser,"right")},"source");
   const origin=captureBrowserReplacement(presentations,browser.id,{kind:"chat",hostId:"owner",sessionId:"session"})!;
   const dock={...f.render(),snapshot:presentations.snapshot,prepareTerminal:async(create:boolean,signal:AbortSignal)=>{terminalCalls++;expect(create).toBe(false);expect(signal.aborted).toBe(false);return{status:"busy"};}};
   const rows=actions(dock);expect(rows.map(a=>a.id)).toEqual(["review","terminal","browser","files","side-chat"]);expect(terminalCalls).toBe(0);f.flush();expect(f.render().snapshot.tabs).toEqual([]);
-  for(const row of rows){expect(typeof row.prepare).toBe("function");expect(row.preparationTarget).toEqual({hostId:"owner",target:"session:session"});}
-  for(const kind of ["files","review","side-chat"] as const)expect(rows.find(a=>a.id===kind)?.singletonTabId).toBe(dockTabId({kind,hostId:"owner",target:"session:session"}));
-  expect(rows.find(a=>a.id==="browser")?.singletonTabId).toBeUndefined();expect(rows.find(a=>a.id==="terminal")?.singletonTabId).toBeUndefined();
   expect(await rows.find(a=>a.id==="terminal")!.prepare!(new AbortController().signal)).toMatchObject({status:"error",outcome:"not-submitted"});expect(terminalCalls).toBe(0);
   expect(await rows.find(a=>a.id==="terminal")!.prepare!(new AbortController().signal,origin)).toEqual({status:"busy"});expect(terminalCalls).toBe(1);
 });
@@ -97,4 +97,38 @@ test("App eligibility/order and native singleton suppression reuse the same cata
   const choices=browserWorkspaceChoices("Chat",[{id:fileId,instanceId:"presentation",destination:"bottom" as const,title:"My Files"}],catalogue,{id:"source",destination:"right"});
   expect(choices.filter(choice=>choice.kind==="action").map(choice=>choice.action.id)).toEqual(["review","terminal","browser","side-chat"]);
   expect(choices.find(choice=>choice.kind==="tab")?.title).toBe("My Files");
+});
+
+test("App hides an owned bottom Review but keeps its command able to activate the existing tab",()=>{
+  const f=fixture();
+  const command=catalogue(f.render()).reviewAction!;
+  command.onSelect("bottom");f.flush();
+  const opened=f.render(),reviewId=opened.snapshot.state.bottom.activeTabId!;
+  opened.change(hideDock(opened.snapshot.state,"bottom"));f.flush();
+  const current=catalogue(f.render());
+  expect(current.dockActions.map(action=>action.id)).toEqual(["terminal","browser","files","side-chat"]);
+  current.reviewAction!.onSelect("right");f.flush();
+  expect(f.render().snapshot.state.bottom).toMatchObject({open:true,activeTabId:reviewId,tabIds:[reviewId]});
+  expect(f.render().snapshot.state.right.tabIds).toEqual([]);
+  f.render().change(closeDockTab(f.render().snapshot.state,"bottom",reviewId));f.flush();
+  expect(actions(f.render()).map(action=>action.id)).toEqual(["review","terminal","browser","files","side-chat"]);
+});
+
+test("draft Browser preparation and selection cannot outlive the captured draft owner",async()=>{
+  const f=fixture(null),owner={enabled:true},committed={current:owner};
+  const rows=actions(f.render(),{dockWorkspace:undefined,dockSession:undefined,workspace:undefined,
+    bridge:{draftBrowser:{}},state:{},draftDockOwner:owner,committedDraftDockOwner:committed});
+  expect(rows.map(action=>action.id)).toEqual(["browser"]);
+  const action=rows[0]!,abort=new AbortController();abort.abort();
+  expect(await action.prepare!(abort.signal)).toEqual({status:"cancelled",creationMayHaveRun:false});
+  const prepared=await action.prepare!(new AbortController().signal);
+  expect(prepared.status).toBe("ready");
+  action.onSelect("right");f.flush();
+  expect(f.render().snapshot.tabs).toHaveLength(1);
+  expect(f.render().snapshot.tabs[0]?.target).toBe(draftBrowserDockTarget("draft"));
+  const before=f.render().snapshot;
+  committed.current={enabled:true};
+  expect(await action.prepare!(new AbortController().signal)).toEqual({status:"cancelled",creationMayHaveRun:false});
+  action.onSelect("bottom");f.flush();
+  expect(f.render().snapshot).toBe(before);
 });

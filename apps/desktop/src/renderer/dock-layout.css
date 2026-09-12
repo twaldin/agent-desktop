@@ -12,7 +12,6 @@
 .workbench[data-content-side=left]:not(.dock-narrow)>.dock-slot-right .dock-strip { padding-right:10px; }
 .sidebar-hidden .workbench[data-content-side=left][data-content-column=true]:not(.dock-narrow):not(.dock-full-width):not(.has-main-task-strip)>.dock-slot-right .dock-strip { padding-left:80px; }
 .sidebar-hidden .workbench[data-content-side=left][data-content-column=true]:not(.dock-narrow):not(.dock-full-width)>.main-panel>.main-header { padding-left:16px; }
-.workbench:not(.dock-narrow)>.dock-slot-right>.dock-empty-actions { inset:var(--main-header-height,46px) 0 0; }
 .dock-slot { min-height:0; min-width:0; position:relative; }
 .dock-slot>.dock-panel { height:100%; }
 .workspace-panel.workspace-embedded { width:100%; height:100%; border:0; border-radius:0; }
@@ -21,14 +20,6 @@
 .environment-overlay>.environment-card { max-height:100%; pointer-events:auto; }
 .workbench.dock-narrow>.dock-slot-right { grid-column:1 / -1; z-index:15; margin-top:var(--main-header-height,46px); background:var(--app-surface); }
 .workbench.dock-narrow>.main-panel { grid-column:1 / -1; }
-.dock-empty-actions { position:absolute; inset:37px 0 0; box-sizing:border-box; display:flex; min-height:0; flex-direction:column; justify-content:safe center; overflow-y:auto; overscroll-behavior:contain; max-width:576px; margin:auto; padding:12px; gap:4px; }
-.dock-slot-bottom>.dock-empty-actions { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); align-content:safe center; max-width:720px; gap:4px 8px; }
-.dock-empty-actions button { flex:0 0 auto; text-align:left; display:flex; align-items:center; min-height:40px; gap:8px; border:0; border-radius:calc(8px * var(--corner-radius-scale,1)); padding:8px 10px; font-size:var(--font-size,14px); line-height:calc(var(--font-size,14px) * 1.4285714286); background:var(--hover); color:var(--text); }
-.dock-empty-actions button>.icon { width:16px; height:16px; flex:none; color:var(--secondary); }
-.dock-empty-actions button>span { flex:1; min-width:0; }
-.dock-empty-actions kbd { font:12px var(--ui-font,system-ui); color:var(--tertiary); white-space:nowrap; }
-.dock-empty-actions button:hover { background:var(--selected); }
-.dock-empty-note { grid-column:1 / -1; margin:0; text-align:center; color:var(--secondary); font-size:calc(var(--font-size,14px) * .9285714286); line-height:1.5; }
 
 .dock-native-terminal {position:relative;}
 .dock-terminal-actions {position:absolute;right:10px;top:4px;z-index:8;}

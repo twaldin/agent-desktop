@@ -107,6 +107,8 @@ import { cssColorToRgba } from "./css-color";
 import { transcriptSources, type RecordedSource } from "./transcript-sources";
 import { ImagePreview } from "./ImagePreview";
 import { DockPanel, type DockAddAction, type DockDragTask } from "./DockPanel";
+import { DockEmptyActions } from "./DockEmptyActions";
+import { dockEmptyActionCatalogue } from "./dock-empty-action-model";
 import { useWindowClose } from "./WindowClose";
 import { useWorkspaceFileClose } from "./WorkspaceFileClose";
 import { DockTerminal } from "./DockTerminal";
@@ -874,9 +876,9 @@ export function App() {
   });
 
   // Pinned Git workspaces prioritize Review and Terminal; other workspaces retain the provider order.
-  const dockActions: DockAddAction[] = (reviewAction
+  const dockActions: DockAddAction[] = dockEmptyActionCatalogue(reviewAction
     ? [reviewAction,terminalAction,browserAction,filesAction,sideChatAction]
-    : [filesAction,sideChatAction,browserAction,terminalAction]).filter((action): action is DockAddAction => Boolean(action));
+    : [filesAction,sideChatAction,browserAction,terminalAction], dock.snapshot.state);
   function terminalRecovery(intent: TerminalWindowIntent, enabled: boolean, detached = false) {
     const requestKey = `${intent.hostId}:${intent.request.requestId}`, status = terminalRequests.status(requestKey);
     return <TerminalRequestRecovery intent={intent} state={status?.state} running={status?.running ?? false} checking={status?.checking ?? false}
@@ -1224,7 +1226,7 @@ export function App() {
           if(to!==_from && !taskDropDestinations(dock.snapshot,mainChat,dragTarget(tab)).includes(to==="right"?contentSide:"bottom")) return;
           dock.change(moveDockTab(dock.snapshot.state,id,to,index));
         }} addActions={dockActions} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
-      {!dock.snapshot.state[destination].tabIds.length && <div className="dock-empty-actions">{dockActions.length ? dockActions.map(action => <button key={action.id} onClick={() => action.onSelect(destination)}><Icon name={action.icon}/><span>{action.label}</span>{action.shortcut && <kbd>{action.shortcut}</kbd>}</button>) : <p className="dock-empty-note">Choose a project or open a conversation to add panels here.</p>}</div>}
+      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions} destination={destination}/>}
     </div>)}
     </div>
     {paneDrag && !settingsOpen && !pluginDirectoryOpen && <TaskPaneDropPreview geometry={taskDropGeometry(dock.snapshot,mainChat,paneDrag.target,dockViewport)} point={paneDrag.point}/>}

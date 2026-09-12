@@ -1,0 +1,52 @@
+/* Electron launcher: the 576px cap includes the list's 20px inline padding,
+   inside a separate 8px scroll gutter. Keep typography relative to the theme's
+   14px base; --small-font-size is 11px and is not the source's 13px label. */
+.dock-empty-panel-actions {
+  --dock-empty-label-size: calc(var(--font-size,14px) * .9285714285714286);
+  --dock-empty-keycap-size: calc(var(--font-size,14px) * .8571428571428571);
+  /* The native theme's O_a/A_a palette uses default contrast .45/.6, not
+     the stylesheet's pre-theme fallback colors. Keep local theme ink/surface
+     as inputs. Hover alpha is rounded to three decimals by native L_a. */
+  --dock-empty-foreground: light-dark(var(--text),color-mix(in srgb,var(--text) 87.45098039215686%,#000));
+  --dock-empty-secondary: color-mix(in srgb,var(--dock-empty-foreground) 65%,transparent);
+  --dock-empty-row: light-dark(color-mix(in srgb,color-mix(in srgb,var(--panel-surface,var(--app-surface)) 88.4%,#fff) 96%,transparent),color-mix(in srgb,var(--text) 3.2%,transparent));
+  --dock-empty-row-hover: light-dark(color-mix(in srgb,var(--text) 5.4%,transparent),color-mix(in srgb,var(--text) 7.8%,transparent));
+  --dock-empty-border: light-dark(color-mix(in srgb,var(--text) 7.8%,transparent),color-mix(in srgb,var(--text) 8.4%,transparent));
+  position:absolute;
+  inset:37px 0 0;
+  box-sizing:border-box;
+  display:flex;
+  min-height:0;
+  flex-direction:column;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  padding:var(--spacing-sm,8px);
+  background:var(--panel-surface,var(--app-surface));
+  user-select:none;
+}
+/* The right dock's strip shares the titlebar band with the chat header. */
+.workbench:not(.dock-narrow)>.dock-slot-right>.dock-empty-panel-actions { inset:var(--main-header-height,46px) 0 0; }
+.dock-empty-panel-content { display:flex; width:100%; flex:1; flex-direction:column; justify-content:center; }
+.dock-empty-panel-header { position:sticky; top:0; z-index:10; display:flex; flex-direction:column; gap:24px; background:var(--panel-surface,var(--app-surface)); }
+.dock-empty-panel-list { box-sizing:border-box; display:flex; width:100%; max-width:576px; flex-direction:column; gap:var(--spacing-xs,4px); margin:0 auto; padding:0 20px; list-style:none; }
+.dock-empty-panel-list>li { width:100%; min-width:0; }
+.dock-empty-panel-list button { box-sizing:border-box; display:flex; width:100%; min-height:40px; align-items:center; gap:var(--spacing-sm,8px); border:0; border-radius:var(--radius-small,6px); padding:8px var(--row-padding-x,10px); text-align:start; cursor:default; background:var(--dock-empty-row); color:var(--dock-empty-foreground); font-weight:clamp(100,calc(var(--font-weight,400) + 30),1000); }
+.dock-empty-panel-icon { display:flex; width:16px; height:16px; flex:none; align-items:center; justify-content:center; color:var(--dock-empty-secondary); }
+.dock-empty-panel-icon>.icon { width:100%; height:100%; }
+.dock-empty-panel-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--dock-empty-label-size); font-weight:var(--font-weight,400); line-height:1.4285714285714286; }
+.dock-empty-panel-shortcut { flex:none; margin-inline-start:auto; padding-inline-start:var(--spacing-sm,8px); color:var(--dock-empty-secondary); }
+.dock-empty-panel-shortcut kbd { display:inline-flex; border:0; border-radius:var(--radius-small,6px); padding:2px 6px; font:var(--dock-empty-keycap-size)/1 var(--ui-font,system-ui); font-weight:inherit; color:inherit; background:color-mix(in oklab,currentColor 10%,transparent); box-shadow:none; white-space:nowrap; }
+.dock-empty-panel-list button:enabled:hover { background:var(--dock-empty-row-hover); }
+.dock-empty-panel-list button:focus-visible { outline:2px solid currentColor; outline-offset:0; }
+.dock-empty-panel-note { box-sizing:border-box; width:100%; max-width:576px; margin:0 auto; border:var(--border-width,1px) solid var(--dock-empty-border); border-radius:calc(var(--radius-small,6px) * 1.3333333333333333); padding:var(--spacing-md,12px); color:var(--dock-empty-secondary); font-size:var(--dock-empty-label-size); font-weight:clamp(100,calc(var(--font-weight,400) + 30),1000); line-height:1.4285714285714286; }
+/* Native Electron keeps the 6px/8px radius bases but scales superellipse
+   corners when supported; the browser-only round-corner override does not apply. */
+@supports (corner-shape:superellipse(1.5)) {
+  .dock-empty-panel-list button,.dock-empty-panel-shortcut kbd { border-radius:calc(var(--radius-small,6px) * var(--corner-radius-scale,1.25)); corner-shape:superellipse(var(--corner-exponent,1.5)); }
+  .dock-empty-panel-note { border-radius:calc(var(--radius-small,6px) * 1.3333333333333333 * var(--corner-radius-scale,1.25)); corner-shape:superellipse(var(--corner-exponent,1.5)); }
+}
+/* Retain the existing bottom grid until target-specific reference geometry is
+   established; the right launcher is the source-backed vertical list. */
+.dock-slot-bottom>.dock-empty-panel-actions { max-width:720px; margin:auto; padding:var(--spacing-md,12px); }
+.dock-slot-bottom .dock-empty-panel-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); max-width:none; padding:0; gap:4px 8px; }
