@@ -96,14 +96,14 @@ function driver() {
 test("actual App callback plus queued dock rejection produces no route or frame", () => {
   const text = readFileSync(new URL("./App.tsx", import.meta.url), "utf8"), marker = "onSelectBrowserTab={tab => {";
   const start = text.indexOf(marker), end = text.indexOf("\n      }}", start); if (start < 0 || end < 0) throw new Error("Missing App callback");
-  const invoke = new Function("tab", "dock", "committedDraftSearchPages", "setActionError", "route", "settingsOpen", "pluginDirectoryOpen", "automationsOpen", "navigate", "requestAnimationFrame", "document", "CSS", "activateBrowserSearchTab", "browserSearchSelection",
+  const invoke = new Function("tab", "dock", "committedDraftSearchPages", "setActionError", "route", "settingsOpen", "pluginDirectoryOpen", "automationsOpen", "pullRequestsOpen", "navigate", "requestAnimationFrame", "document", "CSS", "activateBrowserSearchTab", "browserSearchSelection",
     new Bun.Transpiler({ loader: "tsx" }).transformSync(text.slice(start + marker.length, end)));
   const s = setup(), hooks = driver();
   const render = () => hooks.render(() => useWorkbenchDock({} as DesktopBridge, { ...defaultWindowView(), dock: s.presentations.snapshot }, "host", { sessionId: "session" }, false, () => {}));
   try {
     let dock = render(); const entry = { ...s.entry, sourceKey: browserSearchPresentationKey(dock.presentations, s.entry.id) };
     dock.change(createDockState());
-    invoke(entry, dock, { current: [] }, () => {}, s.origin.route, false, false, false, s.context.navigate, (callback: () => void) => s.frames.push(callback), undefined, undefined, activateBrowserSearchTab, s.selection);
+    invoke(entry, dock, { current: [] }, () => {}, s.origin.route, false, false, false, false, s.context.navigate, (callback: () => void) => s.frames.push(callback), undefined, undefined, activateBrowserSearchTab, s.selection);
     expect(s.navigation).toEqual([]); expect(s.frames).toEqual([]);
     dock = render(); s.selection.commit({ ...s.context, presentations: dock.presentations });
     expect(dock.snapshot.tabs).toEqual([]); expect(s.navigation).toEqual([]); expect(s.frames).toEqual([]);

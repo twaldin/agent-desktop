@@ -156,7 +156,7 @@ test("actual App selection routes to the original host draft and refuses a repla
   const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8"), marker = "onSelectBrowserTab={tab => {";
   const start = source.indexOf(marker), end = source.indexOf("\n      }}", start);
   if (start < 0 || end < 0) throw new Error("App browser selection callback missing");
-  const invoke = new Function("tab", "dock", "committedDraftSearchPages", "setActionError", "route", "settingsOpen", "pluginDirectoryOpen", "automationsOpen", "navigate", "requestAnimationFrame", "document", "CSS", "activateBrowserSearchTab", "browserSearchSelection",
+  const invoke = new Function("tab", "dock", "committedDraftSearchPages", "setActionError", "route", "settingsOpen", "pluginDirectoryOpen", "automationsOpen", "pullRequestsOpen", "navigate", "requestAnimationFrame", "document", "CSS", "activateBrowserSearchTab", "browserSearchSelection",
     new Bun.Transpiler({ loader: "tsx" }).transformSync(source.slice(start + marker.length, end)));
   const hooks = driver(), p = presentation(), original = page();
   const committed = { current: [original] }, navigation: unknown[][] = [], errors: string[] = [];
@@ -167,7 +167,7 @@ test("actual App selection routes to the original host draft and refuses a repla
   const render = () => hooks.render(() => useWorkbenchDock({} as DesktopBridge, { ...defaultWindowView(), dock: p.snapshot }, "other-host", undefined, false, () => {}));
   try {
     let dock = render(); const entry = draftBrowserSearchEntries(dock.presentations, [original])[0]!;
-    const select = () => invoke(entry, dock, committed, (message: string) => errors.push(message), route, false, false, false, navigate, () => { frames++; }, undefined, undefined, activateBrowserSearchTab, selection);
+    const select = () => invoke(entry, dock, committed, (message: string) => errors.push(message), route, false, false, false, false, navigate, () => { frames++; }, undefined, undefined, activateBrowserSearchTab, selection);
     select(); expect(navigation).toEqual([]); dock = render();
     selection.commit({ presentations: dock.presentations, pages: committed.current, route, settingsOpen: false, pluginDirectoryOpen: false, root: null, navigate });
     expect(navigation).toEqual([[null, "host", false, false]]);
@@ -181,7 +181,7 @@ test.each(["removed", "replaced", "retained"] as const)("actual App queued draft
   const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8"), marker = "onSelectBrowserTab={tab => {";
   const start = source.indexOf(marker), end = source.indexOf("\n      }}", start);
   if (start < 0 || end < 0) throw new Error("App browser selection callback missing");
-  const invoke = new Function("tab", "dock", "committedDraftSearchPages", "setActionError", "route", "settingsOpen", "pluginDirectoryOpen", "automationsOpen", "navigate", "requestAnimationFrame", "document", "CSS", "activateBrowserSearchTab", "browserSearchSelection",
+  const invoke = new Function("tab", "dock", "committedDraftSearchPages", "setActionError", "route", "settingsOpen", "pluginDirectoryOpen", "automationsOpen", "pullRequestsOpen", "navigate", "requestAnimationFrame", "document", "CSS", "activateBrowserSearchTab", "browserSearchSelection",
     new Bun.Transpiler({ loader: "tsx" }).transformSync(source.slice(start + marker.length, end)));
   const hooks = driver(), p = presentation(), original = page();
   const committed = { current: [original] }, navigation: unknown[][] = [], frames: Array<() => void> = [], errors: string[] = [];
@@ -191,7 +191,7 @@ test.each(["removed", "replaced", "retained"] as const)("actual App queued draft
     { ...defaultWindowView(), dock: { ...p.snapshot, state: hideDock(p.snapshot.state, "right") } }, "other-host", undefined, false, () => {}));
   try {
     let dock = render(); const entry = draftBrowserSearchEntries(dock.presentations, committed.current)[0]!;
-    const select = () => invoke(entry, dock, committed, (message: string) => errors.push(message), route, false, false, false,
+    const select = () => invoke(entry, dock, committed, (message: string) => errors.push(message), route, false, false, false, false,
       navigate, (callback: () => void) => frames.push(callback), undefined, undefined, activateBrowserSearchTab, selection);
     // The initial committed-page check passes. Only the page list changes before
     // the real hook drains its queued activation; the dock/presentation stays.
