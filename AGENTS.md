@@ -10,8 +10,8 @@ Follow `GOAL.md` and the agreed decisions in `docs/discovery.md`. This is an ind
 - Push completed milestones to the repository; the release workflow creates an immutable development prerelease for each successful `main` commit. Version tags `v*` create named milestone prereleases after the same checks pass.
 - Keep `.data`, `.reference`, credentials, installed dependencies and personal runtime state private. Do not force-add ignored evidence or vendor reference bundles.
 - Do not describe an unsigned or unverified build as stable. Keep release notes explicit about failed or missing acceptance gates.
-- CI packaging runs in disposable GitHub runners. It does not authorize installation, launch, provider use or changes to retained user instances. Existing physical/native acceptance holds remain in force.
-- Native CI jobs require the repository variable `ENABLE_NATIVE_RELEASE_BUILDS=true`, enabled only after explicit authorization. Until then, releases contain public source archives only.
+- Tim explicitly authorized CI dependency installation, builds and tests, and installation/runtime testing on Home and Work on September 11. Use isolated candidate app/data directories and preserve existing retained instances and recovery paths. This authorization does not claim native or physical acceptance has passed.
+- Native CI jobs require `ENABLE_NATIVE_RELEASE_BUILDS=true`; Tim has authorized enabling it. Disabling it intentionally produces source-only prereleases, which must be labeled accurately.
 
 ## Implementation
 
@@ -19,4 +19,6 @@ Follow `GOAL.md` and the agreed decisions in `docs/discovery.md`. This is an ind
 - Preserve original frozen review evidence and rejected verdicts. Corrections have their own exact scope and review evidence.
 - Run relevant controlled tests and required checks. Never conceal a failing check, substitute private `.data` inputs into a clean build, or claim a skipped test passed.
 - Use harness-native agents for concrete independent work, with clear file ownership and authored-versus-independent-review attribution.
+- Delegate routine builds, CI monitoring and straightforward build fixes to Luna or Sol, as Tim requested. Keep independent reviewer family/model requirements unchanged.
+- Regenerate dependency patches against their pinned published package and verify clean installation; follow `patches/README.md` rather than accumulating unchecked overlapping installer patches.
 - For future unfrozen work, use manageable feature batches that complete a concrete user flow. Define acceptance cases and dependencies, then obtain separate independent Standards/Spec reviews. Root owns integration; the supervisor owns review/evidence/publication. Pipeline the next disjoint implementation with frozen review work; do not restart or retroactively merge existing review pairs.

@@ -36,7 +36,7 @@ jobs:
             version="${tag#v}"
           else
             tag="dev-${GITHUB_SHA:0:12}"
-            version="0.1.0-dev.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}"
+            version="0.1.0-dev.g${GITHUB_SHA:0:12}"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -149,6 +149,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: source-release
@@ -166,10 +169,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
           NATIVE_BUILT: ${{ needs.package.result == 'success' }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release already exists; immutable assets were not replaced."
-            exit 0
-          fi
           if [[ "$NATIVE_BUILT" == true ]]; then
             artifacts="Includes the macOS ARM64 desktop and a host archive with Darwin ARM64 and Linux x64 terminal runtimes. The desktop is ad-hoc signed, not notarized. Verify binaries against SHA256SUMS."
           else
@@ -187,5 +186,4 @@ jobs:
 
           Verify source downloads against SOURCE-SHA256SUMS. Existing user installations are never updated automatically.
           EOF
-          gh release create "$RELEASE_TAG" release/* --target "$GITHUB_SHA" \
-            --title "Agent Desktop $RELEASE_VERSION" --notes-file notes.md --prerelease --latest=false
+          bash scripts/publish-release.sh release notes.md

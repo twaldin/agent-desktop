@@ -1,5 +1,13 @@
 # Milestone status
 
+## Public development release — September 11
+
+The source is now public at [twaldin/agent-desktop](https://github.com/twaldin/agent-desktop), preserving all 166 original local commits. The current development checkpoint is committed; private `.data` review packets, reference assets and installed state remain excluded. The full parity milestone is still incomplete.
+
+Tim has explicitly authorized dependency installation, builds and tests in disposable CI, plus installation/runtime testing on Home and Work. New candidate app/data directories must preserve retained instances and recovery paths. Earlier hold statements below remain historical evidence, not a current blanket prohibition. Authorization does not establish that any native, physical or first-Send acceptance gate has passed.
+
+The release workflow builds commit prereleases and named milestone tags. The first clean CI run exposed a Bun patch-parser failure in the accumulated OMP patch. A normalized installer encoding now preserves all intended file contents and permissions and passes a full isolated frozen dependency install and typecheck. The complete build/test/release pipeline is still being exercised; source review verdicts do not substitute for that result. See [releases](releases.md) and the [patch notes](../patches/README.md).
+
 ## Current checkpoint — September 9
 
 **The milestone is incomplete.** Core work remains OMP-backed Codex frontend parity; agent-system additions remain deferred. Current source, frozen source review, exercised native builds and installed artifacts are separate evidence levels. A passing source slice does not accept the whole app or its dependencies.
