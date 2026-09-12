@@ -146,7 +146,13 @@ async function run() {
     await wait(`!document.body.innerText.includes('Controlled GitHub outage')`);
     await capture("retry");
     await click('input[aria-label="Search pull requests"]');
+    await wait(
+      `document.activeElement?.getAttribute('aria-label')==='Search pull requests'`,
+    );
     await win.webContents.insertText("author:someone is:merged");
+    await wait(
+      `document.activeElement?.value==='author:someone is:merged'`,
+    );
     await wait(
       `document.body.innerText.includes('Results') && document.querySelectorAll('.pull-request-row').length===1`,
     );
