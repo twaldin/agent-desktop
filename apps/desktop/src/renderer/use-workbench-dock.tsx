@@ -142,7 +142,7 @@ export function useWorkbenchDock(
     }) : previous);
   };
   function prepareOpen(
-    kind: Exclude<DockTab["kind"], "terminal" | "skill-file" | "file">,
+    kind: Exclude<DockTab["kind"], "terminal" | "skill-file" | "file" | "mcp-app">,
     owner = hostId,
     workspace = target,
   ): TerminalPreparation {
@@ -159,7 +159,7 @@ export function useWorkbenchDock(
     return { status: "ready", tab: { ...descriptor, id: dockTabId(descriptor) } };
   }
   function open(
-    kind: Exclude<DockTab["kind"], "terminal" | "skill-file" | "file">,
+    kind: Exclude<DockTab["kind"], "terminal" | "skill-file" | "file" | "mcp-app">,
     destination: DockDestination = "right", owner = hostId, workspace = target,
   ) {
     if (!workspace || (kind === "side-chat" && !("sessionId" in workspace))) return;
@@ -448,6 +448,7 @@ export function useWorkbenchDock(
     leaveBrowserConversation,
     replaceBrowserDestination,
     acknowledgeBrowserReplacements: (ids: readonly string[]) => updatePresentations(previous => ({ ...acknowledgeBrowserAdmissions(previous, ids), browserSearchAdmission: previous.browserSearchAdmission })),
+    addMcpApp: (tab: DockTab, guard: () => boolean) => { if (tab.kind !== "mcp-app" || !tab.mcpApp) throw new Error("Invalid MCP app panel."); add(tab, "right", guard); },
     open, prepareOpen, openDraftBrowser, updateDraftBrowserAddress, updateDraftBrowserTitle,
     openFile, openHostFile, destinationForTab, pinFile, selectFile,
     openSkillFile,

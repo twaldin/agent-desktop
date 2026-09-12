@@ -1,3 +1,7 @@
+import { useMcpAppCatalogue } from "./use-mcp-app-catalogue";
+import { mcpAppDockTab } from "./mcp-app-dock";
+import { McpAppController } from "./mcp-app-controller";
+import { McpAppPanel } from "./McpAppPanel";
 import { useSessionReadState } from "./use-session-read-state";
 import { loadThemeFonts } from "./theme-fonts";
 import { QueuedMessages } from "./QueuedMessages";
@@ -941,10 +945,29 @@ export function App() {
     ],
   });
 
+  const mcpCatalogue = useMcpAppCatalogue(bridge, hostId, selected?.archived ? undefined : selected?.id, connected);
+  const mcpOpeningFocus = useRef(new Map<string, Element | null>());
+  const mcpPanels = useRef(new Map<string, McpAppController>());
+  useEffect(() => {
+    const live = new Set(dock.snapshot.tabs.filter(tab => tab.kind === "mcp-app").map(tab => tab.id));
+    for (const id of mcpOpeningFocus.current.keys()) if (!live.has(id)) mcpOpeningFocus.current.delete(id);
+    for (const [id, controller] of mcpPanels.current) if (!live.has(id)) { mcpPanels.current.delete(id); void controller.dispose().catch(error => setActionError(errorMessage(error))); }
+  }, [dock.snapshot.tabs]);
+  useEffect(() => () => { for (const controller of mcpPanels.current.values()) void controller.dispose().catch(() => {}); mcpPanels.current.clear(); }, []);
+  const mcpActions: DockAddAction[] = !selected || !mcpCatalogue.snapshot?.canOpenApps ? [] : mcpCatalogue.snapshot.servers.flatMap(server => server.status !== "connected" ? [] : (server.apps ?? []).map(app => {
+    const selection = { epoch: mcpCatalogue.snapshot!.epoch, expectedRevision: mcpCatalogue.snapshot!.revision, serverName: server.name, toolName: app.toolName, resourceUri: app.resourceUri };
+    const create = () => ({ ...mcpAppDockTab(hostId, selected.id, app, server.name), mcpAppSelection: selection });
+    return { id: JSON.stringify(["mcp-app", hostId, selected.id, server.name, app.toolName]), label: app.title, icon: "compose" as const,
+      appIcon: app.icon, destinations: ["right"] as const, requiresConnection: true, deferSelectionUntilDropdownClose: true,
+      preparationTarget: { hostId, target: `session:${selected.id}` as const },
+      prepare: async (signal: AbortSignal) => signal.aborted || !mcpCatalogue.current() ? { status: "cancelled" as const, creationMayHaveRun: false } : { status: "ready" as const, tab: create() },
+      onSelect: (destination: "right" | "bottom") => { if (destination !== "right" || !mcpCatalogue.current()) return; const tab = create(); mcpOpeningFocus.current.set(tab.id, document.activeElement); dock.addMcpApp(tab, mcpCatalogue.current); },
+    };
+  }));
   // Pinned Git workspaces prioritize Review and Terminal; other workspaces retain the provider order.
   const dockActions: DockAddAction[] = dockEmptyActionCatalogue(reviewAction
-    ? [reviewAction,terminalAction,browserAction,filesAction,sideChatAction]
-    : [filesAction,sideChatAction,browserAction,terminalAction], dock.snapshot.state);
+    ? [reviewAction,terminalAction,browserAction,filesAction,sideChatAction,...mcpActions]
+    : [filesAction,sideChatAction,browserAction,...mcpActions,terminalAction], dock.snapshot.state);
   function terminalRecovery(intent: TerminalWindowIntent, enabled: boolean, detached = false) {
     const requestKey = `${intent.hostId}:${intent.request.requestId}`, status = terminalRequests.status(requestKey);
     return <TerminalRequestRecovery intent={intent} state={status?.state} running={status?.running ?? false} checking={status?.checking ?? false}
@@ -1032,6 +1055,19 @@ export function App() {
       const publish = browserSearchRegistry.observe(tab.id, searchKey);
       return publish ? (value: Parameters<typeof publish>[0]) => { publish(value); redrawBrowserMenu(value => value + 1); } : undefined;
     };
+    if (tab.kind === "mcp-app") {
+      if (!tab.mcpApp || !tab.target.startsWith("session:")) return <p>The saved app owner is unavailable.</p>;
+      let controller = mcpPanels.current.get(tab.id);
+      if (!controller) { controller = new McpAppController(bridge, tab.hostId, tab.target.slice(8), tab.mcpApp); mcpPanels.current.set(tab.id, controller); }
+      return <McpAppPanel controller={controller} connected={Boolean(desktop.catalog.records.get(tab.hostId)?.connected)} initialSelection={tab.mcpAppSelection} focusOnMount={element => {
+        if (!mcpOpeningFocus.current.has(tab.id)) return;
+        const origin = mcpOpeningFocus.current.get(tab.id); mcpOpeningFocus.current.delete(tab.id);
+        const document = element.ownerDocument;
+        if (active && !element.closest("[inert]")) {
+          if (document.activeElement === origin || document.activeElement === document.body && !origin?.isConnected) element.focus({ preventScroll: true });
+        }
+      }}/>;
+    }
     if (tab.kind === "skill-file") {
       if (!tab.skillFile) return <p>The saved skill file identity is unavailable.</p>;
       let controller = skillFiles.get(tab.id);
@@ -1118,6 +1154,12 @@ export function App() {
   }
   const shell = useRef<HTMLDivElement>(null);
   const closeStatus = useWindowClose(bridge, shell, async signal => {
+    // The shell is inert during close preparation. Drain every app independently
+    // before the window permits native close; descriptors remain restorable.
+    const appDrains = await Promise.allSettled([...mcpPanels.current.values()].map(controller => controller.close()));
+    signal.throwIfAborted();
+    const appFailures = appDrains.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (appFailures.length) throw new AggregateError(appFailures, "MCP app cleanup could not be confirmed. Keep this window open and retry.");
     if (commandKeymap && !commandKeymap.prepareWindowClose(signal)) {
       if (signal.aborted) return false;
       throw new Error("Wait for the shortcut change to finish saving before closing this window. Pending command receipts are retained.");
@@ -1317,12 +1359,12 @@ export function App() {
           const change=placeTask(dock.snapshot,mainChat,target,side);if(change) applyPlacement(change);
         }}
         onTabContextMenu={(event,tab)=>void taskPlacementMenu(event,{kind:"content",tabId:tab.id,hostId:tab.hostId,target:tab.target})}
-        onPinTab={dock.pinFile} onBeforeClose={tab => tab.kind === "browser" ? browserCloseFocus.runClose(tab.id, dock.presentations.instances.get(tab.id), focusId => browserCloses.close(tab, dock.presentations.instances.get(tab.id), focusId)) : fileClose.onBeforeClose(tab)} destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} layoutAction={destination === "right" ? taskLayoutAction : undefined} onChange={dock.change} onTabDrop={(id,_from,to,index) => {
+        onPinTab={dock.pinFile} onBeforeClose={tab => tab.kind === "mcp-app" ? (mcpPanels.current.get(tab.id)?.close() ?? Promise.resolve()).then(() => true, error => { setActionError(errorMessage(error)); return false; }) : tab.kind === "browser" ? browserCloseFocus.runClose(tab.id, dock.presentations.instances.get(tab.id), focusId => browserCloses.close(tab, dock.presentations.instances.get(tab.id), focusId)) : fileClose.onBeforeClose(tab)} destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} layoutAction={destination === "right" ? taskLayoutAction : undefined} onChange={dock.change} onTabDrop={(id,_from,to,index) => {
           const tab=dock.snapshot.tabs.find(tab=>tab.id===id);if(!tab) return;
           if(to!==_from && !taskDropDestinations(dock.snapshot,mainChat,dragTarget(tab)).includes(to==="right"?contentSide:"bottom")) return;
           dock.change(moveDockTab(dock.snapshot.state,id,to,index));
-        }} addActions={dockActions} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
-      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions} destination={destination}/>}
+        }} addActions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
+      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination}/>}
     </div>)}
     </div>
     {paneDrag && !settingsOpen && !pluginDirectoryOpen && <TaskPaneDropPreview geometry={taskDropGeometry(dock.snapshot,mainChat,paneDrag.target,dockViewport)} point={paneDrag.point}/>}

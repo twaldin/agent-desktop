@@ -17,6 +17,7 @@ export * from "./whole-file";
 export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";
+export * from "./session-mcp-app";
 export * from "./notifications";
 export * from "./queued-messages";
 export * from "./queued-submissions";
@@ -425,6 +426,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   subscribeQueuedMessages?(listener: (event: { hostId: string; sessionId: string }) => void): () => void;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
+  sessionMcpApp?(sessionId: string, request: import("./session-mcp-app").NativeMcpAppRequest, hostId: string): Promise<import("./session-mcp-app").NativeMcpAppResponse>;
   readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;
   getSessionMcp?(sessionId: string, hostId?: string, commandId?: string): Promise<import("./session-mcp").NativeSessionMcpResponse>;
   getSessionMcpAuthorization?(sessionId: string, hostId: string, commandId?: string): Promise<import("./session-mcp-authorization").NativeMcpAuthorizationResponse>;

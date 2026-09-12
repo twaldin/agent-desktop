@@ -21,6 +21,9 @@
     "mdast-util-from-markdown": "2.0.3",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
-    "tldts": "7.4.9"
+    "tldts": "7.4.9",
+    "@modelcontextprotocol/ext-apps": "2.0.0",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0"
   }
 }

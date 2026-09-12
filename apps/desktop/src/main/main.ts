@@ -1,3 +1,4 @@
+import { McpAppWindowChannels } from "./mcp-app-window-channels";
 import { readLocalFontFaces } from "./local-fonts";
 import { registerBrowserCloseHandlers } from "./browser-close-ipc";
 import { registerBrowserObservationHandlers } from "./browser-observation-ipc";
@@ -18,6 +19,8 @@ import { parseDeviceAccessPolicy, parseDeviceAccessUpdate } from "../../../../pa
 import {showDesktopContextMenu} from "./native-context-menu";
 import { resolveWindowTheme } from "./window-theme";
 import { parseNativeSkillFileRef } from "@agent-desktop/shared";
+import { requestSessionMcpApp } from "./session-mcp-app-transport";
+import { parseNativeMcpAppRequest } from "@agent-desktop/shared";
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { closePluginAcquisitionRequest, requestMarketplaceCatalog, requestPluginAcquisitionOperations, reviewPluginAcquisition, startPluginAcquisition } from "./plugin-acquisition-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
@@ -89,11 +92,25 @@ function applyNativeWindowTheme(window: BrowserWindow) {
   if (process.platform === "darwin") window.setVibrancy(resolved.vibrancy);
   if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-theme-state", resolved.opaqueWindows);
 }
+const mcpAppDocuments = new Map<number, McpAppWindowChannels>();
+const mcpAppDocumentDrains = new Set<McpAppWindowChannels>();
+function retireMcpAppDocument(senderId: number) {
+  const owner = mcpAppDocuments.get(senderId);
+  if (!owner) return;
+  mcpAppDocuments.delete(senderId);
+  const drain = owner.retire();
+  mcpAppDocumentDrains.add(owner);
+  void drain.then(() => mcpAppDocumentDrains.delete(owner), error => console.error("MCP app document cleanup failed:", error));
+}
 const workspaceImages = new WorkspaceImageGrants();
 const workspaceImageEpochs = new Map<number, number>();
 const windowCloseGate = new WindowCloseGate({
   senderIds: () => [...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id),
-  prepareQuit: () => modifierWatches.pauseAndDrain(),
+  prepareQuit: async () => {
+    const release = await modifierWatches.pauseAndDrain();
+    try { await Promise.all([...mcpAppDocumentDrains].map(owner => owner.retire())); return release; }
+    catch (error) { release(); throw error; }
+  },
   send: (senderId, request) => {
     const window = [...windows].find(candidate => candidate.webContents.id === senderId && !candidate.isDestroyed());
     if (!window || window.webContents.isDestroyed()) throw new Error("The renderer is unavailable.");
@@ -504,6 +521,21 @@ ipcMain.handle("host:goal-control", async (event, sessionId: string, request: im
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:mcp-app", (event, sessionId: string, input: import("@agent-desktop/shared").NativeMcpAppRequest, hostId: string) => {
+  assertTrustedSender(event);
+  const request = parseNativeMcpAppRequest(input), sender = event.sender, frame = event.senderFrame;
+  let owner = mcpAppDocuments.get(sender.id);
+  if (!owner) {
+    owner = new McpAppWindowChannels({
+      current: () => !shuttingDown && !sender.isDestroyed() && sender.mainFrame === frame && mcpAppDocuments.get(sender.id) === owner,
+      connect: async host => { const endpoint = await endpointFor(host); assertTrustedSender(event); return endpoint; },
+      request: requestSessionMcpApp,
+      reportOperationErrors: count => console.error(`MCP app document retired with ${count} unconfirmed operation errors; no operations were replayed.`),
+    });
+    mcpAppDocuments.set(sender.id, owner);
+  }
+  return owner.dispatch(sessionId, hostId, request);
 });
 ipcMain.handle("host:mcp-resource", async (event, sessionId: string, request: import("@agent-desktop/shared").NativeSessionMcpResourceRequest, hostId?: string) => {
   assertTrustedSender(event); return requestSessionMcpResource(await endpointFor(hostId), sessionId, request);
@@ -938,15 +970,15 @@ async function createWindow(): Promise<void> {
   window.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
     if (!isMainFrame) return;
     modifierWatches.cancel(windowContentsId);
-    if (!_inPlace) { repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); }
+    if (!_inPlace) { retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); }
     windowCloseGate.unregister(windowContentsId);
     workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1);
     workspaceImages.releaseSender(windowContentsId);
   });
-  window.webContents.on("destroyed", () => { modifierWatches.cancel(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); });
-  window.webContents.on("render-process-gone", (_event, details) => { modifierWatches.cancel(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
+  window.webContents.on("destroyed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); });
+  window.webContents.on("render-process-gone", (_event, details) => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
   window.on("close", event => { if (!windowCloseGate.handleWindowClose(windowContentsId, () => { if (!window.isDestroyed()) window.close(); })) event.preventDefault(); });
-  window.on("closed", () => { modifierWatches.cancel(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId, true); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
+  window.on("closed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId, true); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", event => event.preventDefault());
   const development = process.env.AGENT_DESKTOP_RENDERER_URL;

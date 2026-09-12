@@ -61,6 +61,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "listQuestions" }
   | { operation: "resolveQuestion"; args: { request: ResolveDetachedQuestionRequest } }
   | { operation: "startQuestionDelivery"; args: { questionId: string } }
+  | { operation: "sessionMcpApp"; args: { request: import("@agent-desktop/shared").NativeMcpAppRequest } }
   | { operation: "readSessionMcpResource"; args: { request: import("@agent-desktop/shared").NativeSessionMcpResourceRequest } }
   | { operation: "startSessionMcpAuthorization"; args: { request: import("@agent-desktop/shared").NativeMcpAuthorizationStart } }
   | { operation: "getSessionMcpAuthorization" }

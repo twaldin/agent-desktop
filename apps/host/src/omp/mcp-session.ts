@@ -1,3 +1,4 @@
+import { mcpAppDescriptors } from "./mcp-apps";
 import { randomUUID } from "node:crypto";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability/fs";
@@ -44,7 +45,7 @@ function limited<T>(values: readonly T[], kind: string, max = MAX_ITEMS): T[] {
 	return [...values];
 }
 
-function collectServers(manager: MCPManager, failures: ReadonlySet<string>): NativeSessionMcpServer[] {
+function collectServers(manager: MCPManager, failures: ReadonlySet<string>, apps: boolean): NativeSessionMcpServer[] {
 	const tools = manager.getTools();
 	return limited(manager.getAllServerNames(), "servers")
 		.slice()
@@ -81,6 +82,7 @@ function collectServers(manager: MCPManager, failures: ReadonlySet<string>): Nat
 			limited(subscriptions, "resource subscriptions");
 			return {
 				name: identity(name, 1024, "server name"),
+				...(apps && connection ? { apps: mcpAppDescriptors(connection) } : {}),
 				status,
 				source: sourceLabel(manager, name),
 				canAuthorize,
@@ -127,6 +129,7 @@ export class NativeSessionMcp {
 	constructor(
 		private readonly session: AgentSession,
 		private readonly manager: MCPManager | undefined,
+		private readonly apps = false,
 	) {}
 
 	#value(): Omit<NativeSessionMcpSnapshot, "epoch" | "revision"> {
@@ -136,7 +139,7 @@ export class NativeSessionMcp {
 			}
 		}
 		const value = this.manager
-			? { available: true, canReconnect: true, canReadResources: true, servers: collectServers(this.manager, this.#failures) }
+			? { available: true, canReconnect: true, canReadResources: true, ...(this.apps ? { canOpenApps: true } : {}), servers: collectServers(this.manager, this.#failures, this.apps) }
 			: { available: false, reason: UNAVAILABLE, servers: [] };
 		if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES) throw new Error("Native MCP catalog exceeds its 2 MiB response limit.");
 		return value;
@@ -166,6 +169,7 @@ export class NativeSessionMcp {
 			this.session.setMCPPromptCommands([]);
 			clearFsCache();
 			const result = await this.manager.discoverAndConnect({
+				enableApps: this.apps,
 				enableProjectConfig: this.session.settings.get("mcp.enableProjectConfig") ?? true,
 				filterExa: true,
 				filterBrowser: this.session.getEvalPreludes().some(definition => definition.name === "browser"),

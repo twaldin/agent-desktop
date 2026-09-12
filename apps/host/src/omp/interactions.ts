@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExtensionFactory, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionUISelectItem } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 
 import type { OmpInteraction, OmpInteractionResponse, InteractionEndReason, OmpBridgeEvent } from "@agent-desktop/shared";
@@ -37,6 +38,11 @@ export class OmpInteractionBridge implements ExtensionUIContext {
   readonly timeoutStartsOnPresentation = false;
   #pending = new Map<string, Pending>();
   #permissionMarkers: symbol[] = [];
+  #callSignal = new AsyncLocalStorage<AbortSignal>();
+
+  runWithSignal<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+    return this.#callSignal.run(signal, work);
+  }
   #disposed = false;
   constructor(readonly sessionId: string, private emit: (event: OmpBridgeEvent) => void) {}
 
@@ -59,6 +65,8 @@ export class OmpInteractionBridge implements ExtensionUIContext {
   }
 
   #request(fields: Omit<OmpInteraction, "id" | "sessionId" | "createdAt" | "actions">, options?: ExtensionUIDialogOptions): Promise<string | boolean | undefined> {
+    const scopedSignal = this.#callSignal.getStore();
+    if (scopedSignal) options = { ...options, signal: options?.signal ? AbortSignal.any([scopedSignal, options.signal]) : scopedSignal };
     if (this.#disposed) return Promise.reject(new Error("OMP interaction bridge is disposed"));
     const cancelled = fields.method === "confirm" ? false : undefined;
     if (options?.signal?.aborted) return Promise.resolve(cancelled);

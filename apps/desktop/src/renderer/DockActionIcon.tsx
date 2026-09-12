@@ -1,8 +1,10 @@
+import { McpAppIcon } from "./McpAppIcon";
 import { Icon } from "./Icons";
 import type { DockAddAction } from "./DockPanel";
 
 /** One action glyph is shared by the empty launcher and Open panel menu. */
 export function DockActionIcon({ action }: { action: DockAddAction }) {
+  if (action.appIcon) return <McpAppIcon icon={action.appIcon}/>;
   if (action.id === "files") {
     return <svg className="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M4.67 4.67v-1c0-.92.75-1.67 1.67-1.67h1.27c.35 0 .67.1.97.31l.66.47c.29.21.61.3.97.3H13c.92 0 1.67.75 1.67 1.67V9c0 .92-.75 1.67-1.67 1.67h-1.67"/>
