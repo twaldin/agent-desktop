@@ -1,5 +1,6 @@
 export * from "./branch-query-transport";
 export * from "./browser-observation";
+export * from "./browser-continuation";
 import type { GitRepositoryChange } from "./repository-changes";
 export * from "./repository-changes";
 import type { SessionSearchRequest, SessionSearchResult } from "./session-search";
@@ -217,6 +218,7 @@ export interface HostState {
   sessionSearch?: { version: 1 };
   queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13 } };
   taskLocations?: { version: 1; commandVersion: 14 };
+  browserContinuations?: { version: 1; commandVersion: 15 };
   repositoryWatches?: { version: 1 };
   branchQueries?: { version: 1 };
   commandKeybindings?: { commandVersion: 11; snapshotVersion: 2; numberTargetVersion?: 1 };
@@ -237,7 +239,7 @@ export type HostCommand =
   | { type: "project.add"; path: string; name?: string }
   | { type: "project.rename"; projectId: string; name: string }
   | { type: "project.remove"; projectId: string }
-  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
+  | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number }; browserContinuation?: import("./browser-continuation").DraftBrowserContinuation }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
@@ -259,7 +261,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
 }
 
 export interface ImageAdmission {

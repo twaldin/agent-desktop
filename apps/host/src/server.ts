@@ -67,6 +67,7 @@ import { BrowserFrameHttp } from "./browser-frame-http";
 import { BrowserCreateHttp } from "./browser-create-http";
 import { DraftBrowserHttp } from "./draft-browser-http";
 import { DraftBrowserWorkers } from "./browser-draft-workers";
+import { BrowserFirstSend, isBrowserContinuationOutcomeUnknown } from "./browser-first-send";
 import { IntegrationsHttp } from "./integrations-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
@@ -95,6 +96,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let browserObservations: BrowserObservationHttp | undefined;
   let browserCloseRequests: BrowserCloseRequests | undefined;
   let workspaces!: HostWorkspaces;
+  let browserFirstSend!: BrowserFirstSend;
   const repositoryWatchPeers = new Set<RepositoryWatchPeer | BranchQueryPeer>();
   function retireRepositoryWatchPeer(peer: ServerWebSocket<SocketData>): void {
     const owners = [peer.data.repositoryWatches, peer.data.branchQueries];
@@ -212,7 +214,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const followUpAdmissionTails = new Map<string, Promise<unknown>>();
   const executions = new Map<string, Promise<unknown>>();
   const runtimeErrors = new Map<string, string>();
-  const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, runs: environmentRuns, reserve: reserveWorkspaceMutation,
+  const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
+  browserFirstSend = new BrowserFirstSend(store, draftBrowserWorkers);
+  const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, runs: environmentRuns, reserve: reserveWorkspaceMutation, browserFirstSend,
     signal: environmentAbort.signal, onEvent: onRuntimeEvent,
     onHandle: handle => { handles.set(handle.id, Promise.resolve(handle)); }, changed: () => publishState() });
   let models: ModelInfo[] = [];
@@ -449,7 +453,6 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try { return await pending; }
       catch { return { workerFailure: { message: "The native session worker is unavailable." }, getBrowserMetadata: async () => ({ availability: "unavailable" as const, reason: "The native session worker is unavailable." }) }; }
     } });
-  const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
   draftBrowsers = new DraftBrowserHttp(store, draftBrowserWorkers, browserControls.epoch);
   browserObservations = new BrowserObservationHttp({ hostId: store.host.id,
     sessionExists: id => !stopping && Boolean(store.getSession(id)),
@@ -513,7 +516,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput): void {
@@ -644,12 +647,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15): Promise<CommandResult> {
     const command = envelope.command;
     const remoteError = remoteWorktreeProtocolError(command, commandVersion, id => store.getDraft(id), id => store.environmentPreparations.get(id));
     if (remoteError) return fail(envelope.id, remoteError.code, remoteError.message);
     if (commandVersion < 11 && command.type === "preferences.keymap.mutate") return fail(envelope.id, "KEYBINDINGS_PROTOCOL_REQUIRED", "Keyboard shortcut changes require the current client protocol.");
     if (commandVersion < 13 && command.type === "session.follow-up") return fail(envelope.id, "FOLLOW_UP_PROTOCOL_REQUIRED", "Queued follow-ups require the current client protocol.");
+    if (commandVersion < 15 && command.type === "session.create" && command.browserContinuation) return fail(envelope.id,"BROWSER_CONTINUATION_PROTOCOL_REQUIRED","Browser continuation requires the current client protocol.");
     if (commandVersion < 14 && (command.type === "session.location.move" || command.type === "session.location.resume")) return fail(envelope.id,"TASK_LOCATION_PROTOCOL_REQUIRED","Task location changes require the current client protocol.");
     if (commandVersion < 10 && command.type === "workspace.mutate" && command.action.type.startsWith("git.submit")) return fail(envelope.id, "GIT_SUBMISSION_PROTOCOL_REQUIRED", "Git submissions require the current client protocol.");
     if(commandVersion<9 && requiresRepeatedWholeFileProtocol(command,id=>store.getDraft(id)))return fail(envelope.id,"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED","This draft repeats an inline file mention. Update the client; its content was preserved.");
@@ -763,7 +767,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       case "session.create": {
         if (command.worktree && command.draft && store.getDraft(command.draft.id)?.environment !== undefined && command.environment === undefined)
           return fail(envelope.id, "ENVIRONMENT_PROTOCOL_REQUIRED", "Send the captured environment selection with this worktree draft. Its choices were preserved.");
-        if (command.environment !== undefined) return environmentSessions.create({ ...envelope, commandVersion: 5, command });
+        if (command.environment !== undefined) return environmentSessions.create({ ...envelope, command });
         const project = command.projectId ? store.getCataloguedProject(command.projectId) : undefined;
         if (command.projectId && !project) throw new Error("The selected project is not on this host.");
         if (command.worktree && (!project || command.cwd !== undefined)) throw new Error("A worktree must belong to the selected project.");
@@ -778,12 +782,33 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           const handle = await runtime.create({ cwd, model: command.model, approvalOverride: command.approvalMode, interactions: true, onEvent: event => { if (sessionId) onRuntimeEvent(sessionId, event); } });
           sessionId = handle.id;
           handles.set(handle.id, Promise.resolve(handle));
+          let browserReceipt;
+          try { browserReceipt = await browserFirstSend.attach(envelope.id, command.draft, command.browserContinuation, handle); }
+          catch (error) {
+            if (isBrowserContinuationOutcomeUnknown(error)) {
+              const now = Date.now();
+              store.upsertSession({ id: handle.id, hostId: store.host.id, projectId: project?.id ?? null, cwd:handle.cwd, title:handle.title||"New conversation", status:"error", sessionFile:handle.sessionFile, model:handle.model, createdAt:Number.isFinite(handle.createdAt)?handle.createdAt:now, updatedAt:now, archived:false, error:errorMessage(error), approvalOverride:command.approvalMode });
+              throw error;
+            }
+            handles.delete(handle.id); await handle.dispose(); throw error;
+          }
           const now = Date.now();
-          try { return ok(store.upsertSession({ id: handle.id, hostId: store.host.id, projectId: project?.id ?? null,
+          try {
+            const session=store.upsertSession({ id: handle.id, hostId: store.host.id, projectId: project?.id ?? null,
             cwd: handle.cwd, title: handle.title || "New conversation", status: "idle", sessionFile: handle.sessionFile,
             model: handle.model, createdAt: Number.isFinite(handle.createdAt) ? handle.createdAt : now, updatedAt: now,
-            archived: false, error: handle.modelFallbackMessage, approvalOverride: command.approvalMode })); }
-          catch (error) { await handle.dispose(); handles.delete(handle.id); throw error; }
+            archived: false, error: handle.modelFallbackMessage, approvalOverride: command.approvalMode });
+            if(browserReceipt) store.recordBrowserContinuation({commandId:envelope.id,...browserReceipt});
+            return ok(session);
+          } catch (error) {
+            await handle.dispose(); handles.delete(handle.id);
+            if(browserReceipt) {
+              const current=store.getSession(handle.id);
+              if(current) store.upsertSession({...current,status:"error",error:"The browser handoff completed, but its durable receipt was not confirmed. Inspect this conversation and the original browser before retrying.",updatedAt:Date.now()});
+              throw Object.assign(new Error(`The browser was handed to the new session, but its durable receipt was not confirmed. Inspect the original command before retrying. ${errorMessage(error)}`),{code:"OUTCOME_UNKNOWN"});
+            }
+            throw error;
+          }
         } catch (error) {
           if (createdWorktree) throw Object.assign(new Error(`The worktree exists at ${createdWorktree.path}, but conversation creation did not return a receipt. Inspect it before creating another. ${errorMessage(error)}`), { code: 'OUTCOME_UNKNOWN' });
           throw error;
@@ -947,7 +972,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return operation;
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -1171,22 +1196,23 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
         }
-        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname)) {
+        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname)) {
           const value = await request.json();
-          if (url.pathname !== "/v14/commands" && (value?.commandVersion === 14 || value?.command?.type === "session.location.move" || value?.command?.type === "session.location.resume")) return Response.json({code:"TASK_LOCATION_PROTOCOL_REQUIRED",error:"Task location changes require /v14/commands. This request was not accepted."},{status:422});
-          if (!["/v13/commands","/v14/commands"].includes(url.pathname) && (value?.commandVersion === 13 || value?.command?.type === "session.follow-up")) return Response.json({ code: "FOLLOW_UP_PROTOCOL_REQUIRED", error: "Active-turn follow-ups require /v13/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && (value?.commandVersion === 12 || hasRemoteWorktreeIntent(value?.command))) return Response.json({ code: "REMOTE_WORKTREE_PROTOCOL_REQUIRED", error: "Remote worktree starting refs require /v12/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && (value?.commandVersion === 11 || value?.command?.type === "preferences.keymap.mutate")) return Response.json({ code: "KEYBINDINGS_PROTOCOL_REQUIRED", error: "Keyboard shortcut changes require /v11/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && (value?.commandVersion === 10 || value?.command?.type === "workspace.mutate" && String(value?.command?.action?.type).startsWith("git.submit"))) return Response.json({ code: "GIT_SUBMISSION_PROTOCOL_REQUIRED", error: "Git submissions require /v10/commands. This request was not accepted." }, { status: 422 });
-          if(!["/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname)&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
-          if(!["/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
-          if (!["/v7/commands","/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
+          if (url.pathname !== "/v15/commands" && (value?.commandVersion === 15 || value?.command?.browserContinuation !== undefined)) return Response.json({code:"BROWSER_CONTINUATION_PROTOCOL_REQUIRED",error:"Browser continuation requires /v15/commands. This request was not accepted."},{status:422});
+          if (!["/v14/commands","/v15/commands"].includes(url.pathname) && (value?.commandVersion === 14 || value?.command?.type === "session.location.move" || value?.command?.type === "session.location.resume")) return Response.json({code:"TASK_LOCATION_PROTOCOL_REQUIRED",error:"Task location changes require /v14/commands. This request was not accepted."},{status:422});
+          if (!["/v13/commands","/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 13 || value?.command?.type === "session.follow-up")) return Response.json({ code: "FOLLOW_UP_PROTOCOL_REQUIRED", error: "Active-turn follow-ups require /v13/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 12 || hasRemoteWorktreeIntent(value?.command))) return Response.json({ code: "REMOTE_WORKTREE_PROTOCOL_REQUIRED", error: "Remote worktree starting refs require /v12/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 11 || value?.command?.type === "preferences.keymap.mutate")) return Response.json({ code: "KEYBINDINGS_PROTOCOL_REQUIRED", error: "Keyboard shortcut changes require /v11/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 10 || value?.command?.type === "workspace.mutate" && String(value?.command?.action?.type).startsWith("git.submit"))) return Response.json({ code: "GIT_SUBMISSION_PROTOCOL_REQUIRED", error: "Git submissions require /v10/commands. This request was not accepted." }, { status: 422 });
+          if(!["/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname)&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
+          if(!["/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
+          if (!["/v7/commands","/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
           if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
-          const commandVersion = url.pathname === "/v14/commands" ? 14 : url.pathname === "/v13/commands" ? 13 : url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
+          const commandVersion = url.pathname === "/v15/commands" ? 15 : url.pathname === "/v14/commands" ? 14 : url.pathname === "/v13/commands" ? 13 : url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
           return Response.json(await dispatch(parseCommandEnvelope(value, commandVersion), commandVersion));
         }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);

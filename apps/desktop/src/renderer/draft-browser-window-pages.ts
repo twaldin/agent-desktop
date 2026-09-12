@@ -1,4 +1,4 @@
-import type { DraftBrowserBridge } from "@agent-desktop/shared";
+import { parseDraftBrowserContinuation, type DraftBrowserBridge, type DraftBrowserContinuation } from "@agent-desktop/shared";
 import { createDraftBrowserPageIntent, parseDraftBrowserPageIntent, parseDraftBrowserPageIntents, type DraftBrowserPageIntent } from "../draft-browser-page-intent";
 import type { DraftBrowserWindowIntent } from "../draft-browser-window-intent";
 import type { WindowViewState } from "../window-state";
@@ -73,6 +73,21 @@ export class DraftBrowserWindowPages implements WindowSaveObserver {
     this.context = { ...context }; this.observe();
   }
   beforeSubmission() { if (this.context) this.commit({ ...this.context, enabled: false }); }
+  /** Capture only pages whose current in-memory readiness guard still owns the
+   * exact durable creation request. The subsequent submission invalidates all
+   * of these guards, so retries reuse the saved command envelope. */
+  captureContinuation(draftId: string): DraftBrowserContinuation | undefined {
+    const pages = this.values.filter(page => page.owner.reference.draftId === draftId && page.confirmedTarget);
+    if (!pages.length) return;
+    const first = pages[0]!, owner = first.owner.reference;
+    if (pages.some(page => page.owner.reference.ownerId !== owner.ownerId || page.owner.reference.draftRevision !== owner.draftRevision
+      || !page.launcher.request || !page.confirmedTarget || !this.attachmentGuard(page.instanceId)())) {
+      throw new Error("Refresh every draft browser page before sending this conversation.");
+    }
+    return parseDraftBrowserContinuation({ version:1, owner:{ownerId:owner.ownerId,draftId:owner.draftId,draftRevision:owner.draftRevision},
+      pages:pages.map(page=>({request:page.launcher.request!,target:{workerPid:page.confirmedTarget!.workerPid,name:page.confirmedTarget!.tab.name,targetId:page.confirmedTarget!.tab.targetId},
+        backend:page.confirmedTarget!.tab.backend,kindTag:page.confirmedTarget!.tab.kindTag})) });
+  }
   /** Called after explicit owner preparation. A separate local blank launcher
    * can supply its original instance ID; this does not acquire an owner/page. */
   create(ownerId: string, instanceId?: string): DraftBrowserPageIntent {

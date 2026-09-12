@@ -117,6 +117,10 @@ export interface OmpSession {
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
   createBrowserTab(name: string, initialUrl?: string): Promise<OmpBrowserTabCreateResult>;
+  installRetainedBrowserEvaluation(input: {
+    sourceOwnerId: string; operationId: string; name: string; targetId: string; kindTag: NativeBrowserTabMetadata["kindTag"]; safeDir: string;
+    backend: "cdp" | "cmux"; descriptor?: Record<string, unknown>; state?: Record<string, unknown>;
+  }, transport: { post(frame: unknown): void; installReceiver?(receive:(frame:unknown)=>void):void; request(method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<Record<string, unknown>> }): Promise<{ receive(frame: unknown): void; dispose(): Promise<void> }>;
   subscribe(listener: OmpEventListener): () => void;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
@@ -830,6 +834,14 @@ export class OmpRuntime {
             tab: parseNativeBrowserTabMetadata({ ...value, state: "alive" }),
             targetDisposition: value.targetDisposition,
           };
+        },
+        installRetainedBrowserEvaluation: async (input, transport) => {
+          assertSessionActive();
+          const module = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as unknown as {
+            installRetainedBrowserEvaluation?: (input: Record<string, unknown>, transport: { post(frame:unknown):void; installReceiver?(receive:(frame:unknown)=>void):void; request(method:string,params:Record<string,unknown>,options?:{timeoutMs?:number}):Promise<Record<string,unknown>> }) => Promise<{ receive(frame: unknown): void; dispose(): Promise<void> }>;
+          };
+          if (typeof module.installRetainedBrowserEvaluation !== "function") throw new Error("This pinned native OMP package does not include retained browser installation.");
+          return module.installRetainedBrowserEvaluation({ ...input, ownerSessionId: session.sessionId }, transport);
         },
         subscribe: listener => {
           assertSessionActive(); listeners.add(listener);

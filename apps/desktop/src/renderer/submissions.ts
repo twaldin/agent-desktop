@@ -1,6 +1,6 @@
 import { hasRemoteExecution, sameNewChatExecution } from "../../../../packages/shared/src/new-chat";
 import { sameEnvironmentSelection } from "../../../../packages/shared/src/environment-selection";
-import type { CommandEnvelope, CommandResult, Draft, FollowUpDelivery, QueuedSubmissionReceipt } from "../../../../packages/shared/src/protocol";
+import { parseDraftBrowserContinuation, type CommandEnvelope, type CommandResult, type Draft, type DraftBrowserContinuation, type FollowUpDelivery, type QueuedSubmissionReceipt } from "../../../../packages/shared/src/protocol";
 import { parseQueuedSubmissionReceipt } from "../../../../packages/shared/src/queued-submissions";
 import type { LocalEnvironmentPreparationPublic } from "../../../../packages/shared/src/environment-preparations";
 import { detachedAnswerDraft, parseDetachedQuestionAnswers, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
@@ -60,13 +60,19 @@ export class SubmissionController {
             || item.create.command.model?.provider !== captured.model?.provider || item.create.command.approvalMode !== captured.approvalMode)) throw new Error('Pending creation differs from its captured model or permissions.');
           if (item.send && 'sessionId' in item.send.command && item.send.command.sessionId !== item.sessionId) throw new Error("Pending input belongs to a different session.");
           const expectedVersion = commandVersion(captured);
-          if (item.mode !== "question" && [item.create, item.send].some(envelope => envelope && envelope.commandVersion !== expectedVersion)) throw new Error("Pending new-chat choices require their exact original command protocol.");
+          if (item.mode !== "question" && item.send && item.send.commandVersion !== expectedVersion) throw new Error("Pending input requires its exact original command protocol.");
+          if (item.create?.command.type === "session.create") {
+            const continuation=item.create.command.browserContinuation===undefined?undefined:parseDraftBrowserContinuation(item.create.command.browserContinuation);
+            const createVersion=continuation?15:expectedVersion;
+            if(item.create.commandVersion!==createVersion||continuation&&item.create.command.draft?.id!==captured.id) throw new Error("Pending browser continuation requires its exact original command protocol.");
+          }
           if (item.create?.command.type === 'session.create' && !sameNewChatExecution(
             item.create.command.worktree ? { type: 'worktree', startingState: item.create.command.worktree } : captured.execution === undefined ? undefined : { type: 'local' }, captured.execution)) throw new Error("Pending worktree creation differs from its captured draft.");
           if (item.create?.command.type === "session.create") {
             const worktree = captured.execution?.type === "worktree";
             if (!sameEnvironmentSelection(item.create.command.environment, worktree ? captured.environment : undefined)
-              || !sameDraftReference(item.create.command.draft, captured, worktree && captured.environment !== undefined)) {
+              || !sameDraftReference(item.create.command.draft, captured,
+                (worktree && captured.environment !== undefined) || item.create.command.browserContinuation !== undefined)) {
               throw new Error("Pending environment creation differs from its captured draft.");
             }
           }
@@ -255,11 +261,13 @@ export class SubmissionController {
     return pending;
   }
 
-  submit(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer", onSendCommand?: (submitted: Draft, commandId: string) => void) {
-    return this.exclusive(snapshot.id, () => this.submitExclusive(snapshot, sessionId, mode, onSendCommand));
+  submit(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer", onSendCommand?: (submitted: Draft, commandId: string) => void,
+    browserContinuation?: DraftBrowserContinuation) {
+    return this.exclusive(snapshot.id, () => this.submitExclusive(snapshot, sessionId, mode, onSendCommand, browserContinuation));
   }
 
-  private async submitExclusive(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer", onSendCommand?: (submitted: Draft, commandId: string) => void) {
+  private async submitExclusive(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer", onSendCommand?: (submitted: Draft, commandId: string) => void,
+    browserContinuation?: DraftBrowserContinuation) {
     snapshot = captureDraft(snapshot, this.hostId);
     let item = this.pending[snapshot.id];
     if (item?.preparation && !item.sessionId) throw new EnvironmentPreparationPause(item.preparation);
@@ -271,11 +279,14 @@ export class SubmissionController {
       this.pending[snapshot.id] = item;
     }
     if (!item.sessionId) {
-      const version = commandVersion(item.draft);
+      const continuation=browserContinuation===undefined?undefined:parseDraftBrowserContinuation(browserContinuation);
+      const version = continuation ? 15 : commandVersion(item.draft);
       const worktree = item.draft.execution?.type === "worktree" ? item.draft.execution : undefined;
       item.create ??= { id: crypto.randomUUID(), ...(version ? { commandVersion: version } : {}), command: { type: "session.create", projectId: item.draft.projectId, model: item.draft.model ?? undefined, approvalMode: item.draft.approvalMode,
         ...(worktree ? { worktree: structuredClone(worktree.startingState),
-          ...(item.draft.environment !== undefined ? { environment: structuredClone(item.draft.environment), draft: { id: item.draft.id, revision: item.draft.revision } } : {}) } : {}) } };
+          ...(item.draft.environment !== undefined ? { environment: structuredClone(item.draft.environment) } : {}) } : {}),
+        ...(continuation ? { browserContinuation:structuredClone(continuation),draft:{id:item.draft.id,revision:item.draft.revision} }
+          : worktree&&item.draft.environment!==undefined ? {draft:{id:item.draft.id,revision:item.draft.revision}} : {}) } };
       this.save();
       const value = await this.deliver(item, "create");
       if (value && typeof value === "object" && "type" in value && value.type === "environment.preparation") {

@@ -1,4 +1,4 @@
-import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativeSkillFileRef } from "@agent-desktop/shared";
+import { parseDraftBrowserContinuation, parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativeSkillFileRef } from "@agent-desktop/shared";
 import { isAbsolute } from "node:path";
 import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
@@ -35,13 +35,13 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
-  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | undefined;
-  return { ...parseCommandBody(value, version ?? (transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | undefined;
+  return { ...parseCommandBody(value, version ?? (transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
 }
-function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14): CommandEnvelope {
+function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15): CommandEnvelope {
   const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
@@ -113,6 +113,10 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
         return parseEnvironmentSelection(input.environment, text(input.projectId, 'project ID'));
       })() } : {}),
       ...(input.draft === undefined ? {} : { draft: draftReference(input.draft) }),
+      ...(input.browserContinuation === undefined ? {} : { browserContinuation: (() => {
+        if ((commandVersion ?? 0) < 15) throw new Error("Browser continuation requires command version 15.");
+        return parseDraftBrowserContinuation(input.browserContinuation);
+      })() }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
     case "session.prompt": return { id, command: { type,

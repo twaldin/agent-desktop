@@ -757,6 +757,14 @@ export function App() {
   }
   async function submit(activeDelivery?: "follow-up" | "steer") {
     if (!canSend || submitting.current) return;
+    let browserContinuation;
+    try {
+      if (!selectedId && !submissions.get(draftId)?.uncertain) {
+        browserContinuation = draftBrowserPages.captureContinuation(draftId);
+        if (browserContinuation && state?.browserContinuations?.commandVersion !== 15)
+          throw new Error("Update the owning host before sending a conversation with an open draft browser. The draft and browser were retained.");
+      }
+    } catch (cause) { setActionError(errorMessage(cause)); return; }
     submitting.current = true; draftBrowserOwners.beforeSubmission(); draftBrowserPages.beforeSubmission(); for (const controller of draftBrowserDocks.values()) controller.beforeSubmission();
     setBusy(true); setActionError(null);
     const sendingDraftId = draftId; const originalRoute = selectedRef.current;
@@ -797,7 +805,7 @@ export function App() {
       if (running && (!selectedId || state?.queuedMessages?.submissions?.commandVersion !== 13)) throw new Error("Update the owning host to send active-turn follow-ups. The draft was retained.");
       const result = running
         ? await submissions.submitActive(snapshot, selectedId!, activeDelivery ?? (followUpQueueMode === "queue" ? "follow-up" : "steer"), (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId))
-        : await submissions.submit(snapshot, selectedId ?? undefined, "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId));
+        : await submissions.submit(snapshot, selectedId ?? undefined, "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId), browserContinuation);
       drafts.finishSubmission(sendingDraftId, result.submitted, true, false, result.commandId);
       await refresh(); transcript.refresh();
       // The awaited catalog is authoritative before React runs its ingest effect.

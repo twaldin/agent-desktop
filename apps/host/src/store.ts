@@ -125,7 +125,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 20) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 21) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -199,6 +199,7 @@ export class HostStore {
       this.recoverInterruptedSessions();
       this.recoverInterruptedGitSubmissions();
       this.recoverInterruptedQueuedSubmissions();
+      this.recoverInterruptedBrowserContinuations();
       this.environmentPreparationStore.reconcileInterrupted();
     } catch (error) {
       this.db.close();
@@ -484,6 +485,7 @@ export class HostStore {
       if (command && hasRemoteWorktreeIntent(command)) this.requireRemoteStartingVersion();
       if (command && hasEnvironmentIntent(command)) this.requireVersion(5);
       if (command?.type === "workspace.mutate" && command.action.type === "git.submit") this.requireVersion(12);
+      if (command?.type === "session.create" && command.browserContinuation) this.requireVersion(21);
       if (command?.type === "session.follow-up") {
         const policy = this.getDeviceAccessPolicy();
         if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
@@ -941,6 +943,26 @@ export class HostStore {
     return receipt;
   }
 
+  recordBrowserContinuation(input: { commandId: string; sessionId: string; ownerId: string; pages: readonly { name:string; targetId:string; backend:"worker"|"cmux"; operationId:string }[] }): void {
+    this.db.transaction(() => {
+      const command=this.getCommand(input.commandId);
+      if(!command||command.command?.type!=="session.create"||!command.command.browserContinuation) throw new Error("Browser continuation lost its command or session owner.");
+      this.requireVersion(21);
+      this.writeMetadata(`browser-continuation.v1:${input.sessionId}`, {version:1,hostId:this.host.id,...input,recordedAt:Date.now()});
+    }).immediate();
+  }
+
+  private recoverInterruptedBrowserContinuations(): void {
+    const rows=this.db.query<{data:string},[]>("SELECT data FROM metadata WHERE key LIKE 'browser-continuation.v1:%'").all();
+    for(const row of rows){
+      let value:{version?:unknown;hostId?:unknown;sessionId?:unknown};
+      try{value=JSON.parse(row.data);}catch{throw new Error("Invalid browser continuation recovery record.");}
+      if(value.version!==1||value.hostId!==this.host.id||typeof value.sessionId!=="string")throw new Error("Invalid browser continuation recovery owner.");
+      const session=this.getSession(value.sessionId); if(!session)continue;
+      this.db.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify({...session,status:"error",error:"The host restarted after this conversation inherited a live browser. Browser authority was not reacquired; inspect the original browser and start a new tab before continuing.",updatedAt:Date.now()}),session.id);
+    }
+  }
+
   private requireRemoteStartingVersion(): void {
     // Preserve the existing default policy before crossing the policy-required floor.
     const policy = this.getDeviceAccessPolicy();
@@ -950,9 +972,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 20) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 21) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

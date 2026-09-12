@@ -44,6 +44,24 @@ let activeRequests = 0;
 let promotionInFlight = false;
 let promotedOwnerRetired = false;
 let latestActivity: SessionSnapshot["activity"] | undefined;
+type RetainedInstall = { binding: import("../omp-browser/evaluation-wire").BrowserEvaluationBinding; native?: { receive(frame: unknown): void; dispose(): Promise<void> };
+  descriptor: import("../omp-browser/evaluation-wire").BrowserEvaluationDescriptor; kindTag: import("@agent-desktop/shared").NativeBrowserTabMetadata["kindTag"];
+  safeDir: string; receiver?: (frame: unknown) => void; pending: Map<string, ReturnType<typeof Promise.withResolvers<Record<string, unknown>>>>; frames: unknown[]; disposed: boolean; disposal?: Promise<void> };
+const retainedInstalls = new Map<string, RetainedInstall>();
+const retainedKey = (binding: import("../omp-browser/evaluation-wire").BrowserEvaluationBinding) => JSON.stringify([binding.ownerId,binding.workerPid,binding.name,binding.targetId,binding.operationId,binding.backend]);
+
+async function disposeRetainedInstall(record: RetainedInstall, reason: string): Promise<void> {
+  if (record.disposal)return record.disposal;
+  record.disposed = true;
+  for (const deferred of record.pending.values()) deferred.reject(new Error(reason));
+  record.pending.clear();
+  record.frames.length = 0;
+  const key=retainedKey(record.binding);
+  record.disposal=Promise.resolve().then(()=>record.native?.dispose()).finally(()=>{
+    if(retainedInstalls.get(key)===record)retainedInstalls.delete(key);
+  });
+  return record.disposal;
+}
 
 function snapshot(): SessionSnapshot | undefined {
   if (!session) return undefined;
@@ -117,6 +135,7 @@ function disposeNativeOwners(): Promise<void> {
     try { commitAbort?.abort(); await commitGeneration?.catch(() => {}); } catch (error) { errors.push(error); }
     await Promise.all([closeResult, observationResult]);
     const results = await Promise.allSettled([
+      ...[...retainedInstalls.values()].map(record => disposeRetainedInstall(record, "Retained browser owner was disposed.")),
       Promise.resolve().then(() => browserOwner?.dispose()),
       Promise.resolve().then(() => runtime?.dispose()),
       reservations, evaluationResult,
@@ -372,6 +391,53 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "disposeBrowserEvaluation": await browserEvaluations.close(message.args.binding); respond(true); break;
       case "reserveBrowserEvaluation": respond(true, await browserReservations.reserve(message.args.target, message.args.operationId)); break;
       case "inspectBrowserEvaluationReservation": respond(true, browserReservations.inspect(message.args.target, message.args.operationId)); break;
+      case "prepareRetainedBrowserEvaluation": {
+        requireSession(); const {binding,descriptor,kindTag,safeDir}=message.args, key = retainedKey(binding);
+        if (retainedInstalls.has(key) || binding.backend !== descriptor.backend || binding.name.length > 200 || binding.targetId.length > 200) throw new Error("Invalid retained browser installation identity.");
+        const pending = new Map<string, ReturnType<typeof Promise.withResolvers<Record<string, unknown>>>>();
+        const record: RetainedInstall = { binding,descriptor,kindTag,safeDir,pending,frames:[],disposed:false };
+        retainedInstalls.set(key, record);
+        respond(true,{prepared:true});
+        break;
+      }
+      case "activateRetainedBrowserEvaluation": {
+        const active=requireSession(), binding=message.args.binding, key=retainedKey(binding), record=retainedInstalls.get(key);
+        if(!record||record.disposed||record.native)throw new Error("Retained browser installation was not prepared.");
+        const {descriptor}=record;
+        let sequence = 0;
+        try {
+          const native = await active.installRetainedBrowserEvaluation({ sourceOwnerId: binding.ownerId, operationId: binding.operationId,
+            name: binding.name, targetId: binding.targetId, kindTag: record.kindTag, safeDir: record.safeDir, backend: binding.backend,
+            ...(descriptor.backend === "cdp" ? { descriptor: descriptor.descriptor as unknown as Record<string, unknown> }
+              : { state: descriptor.state as unknown as Record<string, unknown> }) }, {
+            post: frame => send({ type: "retainedBrowserFrame", binding, frame: frame as import("../omp-browser/evaluation-wire").BrowserEvaluationFrame }),
+            installReceiver: receive => {
+              if (record.disposed || record.receiver) throw new Error("Retained browser receiver changed.");
+              record.receiver = receive;
+              for (const frame of record.frames.splice(0)) receive(frame);
+            },
+            request: (method, params, options) => {
+              if (record.disposed || record.pending.size >= 64) return Promise.reject(new Error("Retained cmux request is unavailable."));
+              const id = String(++sequence), deferred = Promise.withResolvers<Record<string, unknown>>(); record.pending.set(id, deferred);
+              try { send({ type: "retainedBrowserRequest", binding, id, method, params, options }); }
+              catch (error) { record.pending.delete(id); deferred.reject(error); }
+              return deferred.promise.finally(() => { record.pending.delete(id); });
+            },
+          });
+          record.native = native;
+          for (const frame of record.frames.splice(0)) native.receive(frame);
+        } catch (error) {
+          await disposeRetainedInstall(record, "Retained browser installation failed.");
+          throw error;
+        }
+        respond(true, { installed: true, sessionId: active.id, sourceOwnerId: binding.ownerId, operationId: binding.operationId, name: binding.name, targetId: binding.targetId, backend: binding.backend });
+        break;
+      }
+      case "disposeRetainedBrowserEvaluation": {
+        const record=retainedInstalls.get(retainedKey(message.args.binding));
+        if(record)await disposeRetainedInstall(record,"Retained browser installation was cancelled.");
+        respond(true,null);break;
+      }
       case "getBrowserFrame": {
         const owner = browserOwnerId(), target = message.args.target;
         if (!validBrowserFrameTarget(target) || target.workerPid !== process.pid) throw new Error("The selected browser frame belongs to a stale or invalid worker target.");
@@ -452,6 +518,19 @@ process.on("message", (value: unknown) => {
     // Native channel sequencing owns ACKs. Terminal frames remain routed while
     // stopping; a bad channel frame does not recreate or kill its resource.
     try { browserEvaluations.receive(message.binding, message.frame); } catch { /* Matched-channel failures are retained by its drain. */ }
+  } else if (message.type === "retainedBrowserFrame") {
+    try {
+      const record = retainedInstalls.get(retainedKey(message.binding));
+      if (!record) return;
+      if (record.receiver) record.receiver(message.frame);
+      else if(record.disposed)return;
+      else if (record.native) record.native.receive(message.frame);
+      else if (record.frames.length < 256) record.frames.push(message.frame);
+      else throw new Error("Retained browser startup frame capacity reached.");
+    } catch { /* Native retained cleanup owns failure. */ }
+  } else if (message.type === "retainedBrowserResponse") {
+    const pending = retainedInstalls.get(retainedKey(message.binding))?.pending.get(message.id);
+    if (pending) message.ok ? pending.resolve(message.value ?? {}) : pending.reject(Object.assign(new Error(message.error?.message ?? "Retained cmux request failed."), { name: message.error?.name ?? "Error" }));
   } else if (message.type === "browserEvaluationAck") {
     try { browserEvaluations.acknowledge(message.binding, message.sequence); } catch { /* No lookup or allocation on foreign receipts. */ }
   } else if (message.type === "disposeAck") {

@@ -9,6 +9,7 @@ import { detachedAnswerDraft, type DetachedQuestionAnswer } from "../../../../pa
 import { HostStore } from "../../../host/src/store";
 import { DraftController, type DraftCache } from "./drafts";
 import { EnvironmentPreparationPause, SubmissionController } from "./submissions";
+import type { DraftBrowserContinuation } from "../../../../packages/shared/src/browser-continuation";
 
 const original: Draft = { id: "new-conversation", revision: 7, text: "Original submitted input", projectId: "project-a", model: { provider: "fixture", id: "original" }, thinkingLevel: "low", updatedAt: 10 };
 const edited: Draft = { ...original, revision: 8, text: "Newer local edit", projectId: "project-b", model: { provider: "fixture", id: "edited" }, thinkingLevel: "high" };
@@ -28,6 +29,18 @@ const preparation = (id: string, phase: LocalEnvironmentPreparationPublic["phase
   createdAt: 10, updatedAt: 20 + revision, ...overrides,
 });
 const environmentSession: SessionSummary = { ...session, cwd: "/fixture/worktrees/environment" };
+
+test("a lost first-send browser receipt restores the exact captured v15 envelope without recapture",async()=>{
+  const storage=cache(),calls:CommandEnvelope[]=[];
+  const continuation:DraftBrowserContinuation={version:1,owner:{ownerId:"draft-owner",draftId:original.id,draftRevision:original.revision},pages:[{request:{requestId:"page",controlEpoch:"epoch",observedAt:1},target:{workerPid:42,name:"desktop-page",targetId:"target"},backend:"worker",kindTag:"headless"}]};
+  const first=new SubmissionController(async envelope=>{calls.push(structuredClone(envelope));return unknown(envelope);},"host-a",storage);
+  await expect(first.submit(original,undefined,"prompt",undefined,continuation)).rejects.toThrow("pending");
+  const restored=new SubmissionController(async envelope=>{calls.push(structuredClone(envelope));return {ok:true,commandId:envelope.id,value:session};},"host-a",storage);
+  expect(restored.cacheWarning).toBeUndefined();
+  await restored.submit(edited,undefined,"prompt");
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[0]).toMatchObject({commandVersion:15,command:{type:"session.create",draft:{id:original.id,revision:original.revision},browserContinuation:continuation}});
+});
 
 test('worktree creation and subsequent prompt retain their captured starting state across a lost receipt, edits and restart', async () => {
   const storage = cache(), calls: CommandEnvelope[] = [];

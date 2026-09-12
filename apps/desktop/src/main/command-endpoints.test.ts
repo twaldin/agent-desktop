@@ -3,6 +3,14 @@ import type { CommandEnvelope } from "@agent-desktop/shared";
 import { commandEndpoint, requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
 import { HostRequestError, requestHost } from "./host-transport";
 
+test("browser first-send creation uses only v15 and preserves unsupported or uncertain delivery",async()=>{
+  const envelope:CommandEnvelope={id:"browser-first-send",commandVersion:15,command:{type:"session.create",projectId:null,draft:{id:"draft",revision:1},browserContinuation:{version:1,owner:{ownerId:"owner",draftId:"draft",draftRevision:1},pages:[{request:{requestId:"page",controlEpoch:"epoch",observedAt:1},target:{workerPid:42,name:"desktop-page",targetId:"target"},backend:"worker",kindTag:"headless"}]}}};
+  expect(commandEndpoint(envelope)).toBe("/v15/commands");const paths:string[]=[];
+  expect(await requestVersionedCommand(async path=>{paths.push(path);throw new HostRequestError("Not found",404);},envelope)).toMatchObject({ok:false,error:{code:"BROWSER_CONTINUATION_PROTOCOL_UNSUPPORTED"}});
+  expect(paths).toEqual(["/v15/commands"]);
+  const lost=new Error("response lost after browser reservation");await expect(requestVersionedCommand(async()=>{throw lost;},envelope)).rejects.toBe(lost);
+});
+
 test('environment-aware drafts and consumption never downgrade to an older endpoint', async () => {
   const envelopes: CommandEnvelope[] = [
     { id: 'select-action-config', command: { type: 'workspace.mutate', target: {projectId: 'p'}, action: {type: 'environment.select', configPath: null, expectedRevision: 0} } },

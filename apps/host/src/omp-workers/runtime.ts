@@ -20,7 +20,7 @@ import { copyNativeSelectedTextInput } from "../omp/selected-text";
 import { copyNativeWholeFileInput } from "../omp/whole-file";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
-import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation, type CommitGenerationInput } from "./protocol";
+import { WORKER_PROTOCOL_VERSION, remoteError, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation, type CommitGenerationInput } from "./protocol";
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
@@ -40,7 +40,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -62,6 +62,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   mutateQueuedMessages(mutation: import("../../../../packages/shared/src/queued-messages").NativeQueuedMessageMutation): Promise<import("../../../../packages/shared/src/queued-messages").NativeQueuedMessageMutationReceipt>;
   assertTaskLocationReady(): Promise<void>;
   moveSession(cwd: string): Promise<{ id: string; cwd: string; sessionFile: string }>;
+  installBrowserContinuation(input: { sourceOwnerId: string; operationId: string; target: BrowserFrameTarget; kindTag: import("@agent-desktop/shared").NativeBrowserTabMetadata["kindTag"] }, evaluation: WorkerBrowserEvaluation): Promise<void>;
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
   cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
@@ -121,6 +122,7 @@ export class WorkerClient {
   #failures = new Set<(failure: WorkerFailure) => void>();
   #evaluationRoutes = new Map<string, { post: (frame: BrowserEvaluationFrame) => void; lost: (error: unknown) => void }>();
   #evaluationDisposals = new Map<string, Promise<unknown>>();
+  #retainedEvaluations = new Map<string, { binding: BrowserEvaluationBinding; evaluation: WorkerBrowserEvaluation }>();
   snapshot?: SessionSnapshot;
   failure?: WorkerFailure;
 
@@ -192,6 +194,8 @@ export class WorkerClient {
       try { route.lost(error); } catch { /* The original process is already lost. */ }
     }
     this.#evaluationRoutes.clear();
+    for (const record of this.#retainedEvaluations.values()) void record.evaluation.dispose().catch(() => {});
+    this.#retainedEvaluations.clear();
   }
 
   #transportFailure(pending: Pending | undefined, error: unknown): unknown {
@@ -240,6 +244,26 @@ export class WorkerClient {
         // A channel callback failure must not kill the original browser owner.
         route?.lost(error);
       }
+      return;
+    }
+    if (message.type === "retainedBrowserFrame") {
+      try {
+        const binding = copyEvaluationBinding(message.binding), record = this.#retainedEvaluations.get(evaluationKey(binding));
+        if (!record || record.evaluation.backend !== "cdp") throw new Error("Retained CDP source is unavailable.");
+        record.evaluation.receive(copyEvaluationFrame(message.frame));
+      } catch { /* Destination cleanup observes terminal channel failure. */ }
+      return;
+    }
+    if (message.type === "retainedBrowserRequest") {
+      const binding = copyEvaluationBinding(message.binding), record = this.#retainedEvaluations.get(evaluationKey(binding));
+      if (!record || record.evaluation.backend !== "cmux") {
+        try { this.#send({ type: "retainedBrowserResponse", binding, id: message.id, ok: false, error: { name: "Error", message: "Retained cmux source is unavailable." } }); } catch {}
+        return;
+      }
+      void record.evaluation.request(message.method, copyEvaluationValue(message.params), message.options).then(
+        value => this.#send({ type: "retainedBrowserResponse", binding, id: message.id, ok: true, value: copyEvaluationValue(value) }),
+        error => this.#send({ type: "retainedBrowserResponse", binding, id: message.id, ok: false, error: remoteError(error) }),
+      ).catch(() => {});
       return;
     }
     if (message.type === "commitProgress") {
@@ -380,6 +404,26 @@ export class WorkerClient {
     if (captured.workerPid !== this.pid || !this.#evaluationRoutes.has(evaluationKey(captured))) throw new Error("Original browser evaluation route is unavailable.");
     // Native ACKs are forwarded unchanged. Closing retains terminal/control delivery.
     this.#send({ type: "browserEvaluationFrame", binding: captured, frame: copyEvaluationFrame(frame) });
+  }
+
+  async installRetainedBrowserEvaluation(input: { binding: BrowserEvaluationBinding; kindTag: import("@agent-desktop/shared").NativeBrowserTabMetadata["kindTag"]; safeDir: string }, evaluation: WorkerBrowserEvaluation): Promise<void> {
+    const binding = copyEvaluationBinding(input.binding), key = evaluationKey(binding);
+    if (this.#retainedEvaluations.has(key) || evaluation.backend !== binding.backend) throw new Error("Invalid retained browser evaluator installation.");
+    const record = { binding, evaluation }; this.#retainedEvaluations.set(key, record);
+    try {
+      await this.request({ operation: "prepareRetainedBrowserEvaluation", args: { binding, kindTag: input.kindTag, safeDir: input.safeDir,
+        descriptor: evaluation.backend === "cdp" ? { binding, backend: "cdp", descriptor: { ...evaluation.descriptor } }
+          : { binding, backend: "cmux", state: copyEvaluationValue(evaluation.state) } } }, 30_000);
+      if (evaluation.backend === "cdp") await evaluation.start(frame => {
+        if (this.#retainedEvaluations.get(key) === record) this.#send({ type: "retainedBrowserFrame", binding, frame: copyEvaluationFrame(frame) });
+      });
+      await this.request({ operation: "activateRetainedBrowserEvaluation", args: { binding } }, 60_000);
+    } catch (error) {
+      if (this.#retainedEvaluations.get(key) === record) this.#retainedEvaluations.delete(key);
+      await this.request({operation:"disposeRetainedBrowserEvaluation",args:{binding}},30_000).catch(()=>{});
+      await evaluation.dispose().catch(() => {});
+      throw error;
+    }
   }
 
   startPrompt(text: string, options?: Parameters<OmpSession["startPrompt"]>[1]): OmpPromptRun {
@@ -727,6 +771,10 @@ export class WorkerRuntime {
       mutateQueuedMessages: mutation => client.request({ operation: "mutateQueuedMessages", args: { mutation } }),
       assertTaskLocationReady: () => client.request({ operation: "assertTaskLocationReady" }),
       moveSession: cwd => client.request({ operation: "moveSession", args: { cwd } }, 60_000),
+      installBrowserContinuation: async (input, evaluation) => {
+        const binding: BrowserEvaluationBinding = { ...input.target, ownerId: input.sourceOwnerId, operationId: input.operationId, backend: evaluation.backend };
+        await client.installRetainedBrowserEvaluation({ binding, kindTag: input.kindTag, safeDir: state().cwd }, evaluation);
+      },
       abort: () => client.request({ operation: "abort" }),
       setModel: model => client.request({ operation: "setModel", args: { model } }),
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),

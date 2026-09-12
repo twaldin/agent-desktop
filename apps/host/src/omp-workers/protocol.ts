@@ -1,4 +1,4 @@
-import type { BrowserEvaluationBinding, BrowserEvaluationFrame, BrowserEvaluationOperation } from "../omp-browser/evaluation-wire";
+import type { BrowserEvaluationBinding, BrowserEvaluationDescriptor, BrowserEvaluationFrame, BrowserEvaluationOperation } from "../omp-browser/evaluation-wire";
 import type { NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
 import type { NativePluginMutation, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserFrameTarget, BrowserMetadataAvailability, ComposerCompletionQuery, GoalMutationRequest, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
@@ -8,7 +8,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 48;
+export const WORKER_PROTOCOL_VERSION = 49;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -79,6 +79,9 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "inspectBrowserTab"; args: { target: BrowserFrameTarget } }
   | { operation: "reserveBrowserEvaluation"; args: { target: BrowserFrameTarget; operationId: string } }
   | { operation: "inspectBrowserEvaluationReservation"; args: { target: BrowserFrameTarget; operationId: string } }
+  | { operation: "prepareRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding; kindTag: import("@agent-desktop/shared").NativeBrowserTabMetadata["kindTag"]; safeDir: string; descriptor: BrowserEvaluationDescriptor } }
+  | { operation: "activateRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
+  | { operation: "disposeRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "getBrowserFrame"; args: { target: BrowserFrameTarget } }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
@@ -102,6 +105,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "dispose" };
 export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
+  | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
+  | { type: "retainedBrowserResponse"; binding: BrowserEvaluationBinding; id: string; ok: boolean; value?: Record<string, unknown>; error?: RemoteError }
   | { type: "browserEvaluationAck"; binding: BrowserEvaluationBinding; sequence: number }
   | { type: "eventAck"; sequence: number }
   /** The child exits only after its disposal result has reached the owner. */
@@ -109,6 +114,8 @@ export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
 export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" }
 export type ChildMessage =
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
+  | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
+  | { type: "retainedBrowserRequest"; binding: BrowserEvaluationBinding; id: string; method: string; params: Record<string, unknown>; options?: { timeoutMs?: number } }
   | { type: "ready"; version: number }
   | { type: "commitProgress"; id: string; message: string }
   | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; evaluation?: { binding: BrowserEvaluationBinding; sequence: number }; snapshot?: SessionSnapshot }

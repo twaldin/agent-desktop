@@ -14,6 +14,7 @@ import type { HostStore } from "./store";
 import type { HostWorkspaces } from "./workspace-http";
 import type { WorkerRuntime, WorkerSession } from "./omp-workers/runtime";
 import type { WorkerEvent } from "./omp-workers/events";
+import { isBrowserContinuationOutcomeUnknown, type BrowserFirstSend } from "./browser-first-send";
 import {
   WorktreeEnvironmentLifecycle,
 } from "./local-environments/lifecycle";
@@ -34,6 +35,7 @@ export interface EnvironmentSessionsOptions {
   workspaces: HostWorkspaces;
   runtime: WorkerRuntime;
   reserve: (path: string) => () => void;
+  browserFirstSend?: BrowserFirstSend;
   onEvent: (sessionId: string, event: unknown) => void;
   onHandle: (handle: WorkerSession) => void;
   changed: () => void;
@@ -56,6 +58,7 @@ export class EnvironmentSessions {
   private readonly workspaces: HostWorkspaces;
   private readonly runtime: WorkerRuntime;
   private readonly reserve: (path: string) => () => void;
+  private readonly browserFirstSend?: BrowserFirstSend;
   private readonly onEvent: (sessionId: string, event: unknown) => void;
   private readonly onHandle: (handle: WorkerSession) => void;
   private readonly changed: () => void;
@@ -67,6 +70,7 @@ export class EnvironmentSessions {
     this.workspaces = options.workspaces;
     this.runtime = options.runtime;
     this.reserve = options.reserve;
+    this.browserFirstSend = options.browserFirstSend;
     this.onEvent = options.onEvent;
     this.onHandle = options.onHandle;
     this.changed = options.changed;
@@ -194,8 +198,8 @@ export class EnvironmentSessions {
 
   private validateCreate(envelope: EnvironmentSessionCreateEnvelope): void {
     const command = envelope.command;
-    if (envelope.commandVersion !== 5) {
-      throw new Error("Environment session creation requires command version 5");
+    if (command.browserContinuation ? envelope.commandVersion !== 15 : envelope.commandVersion !== 5) {
+      throw new Error(command.browserContinuation ? "Environment browser continuation requires command version 15" : "Environment session creation requires command version 5");
     }
     if (
       !command.projectId ||
@@ -297,6 +301,11 @@ export class EnvironmentSessions {
           : undefined,
       );
       sessionId = handle.id;
+      const command=this.store.getCommand(commandId)?.command;
+      if(command?.type!=="session.create")throw new Error("Environment session lost its original creation command.");
+      const browserReceipt=command.browserContinuation ? await this.browserFirstSend?.attach(commandId,command.draft,command.browserContinuation,handle) : undefined;
+      if(command.browserContinuation&&!browserReceipt)throw new Error("Browser continuation service is unavailable.");
+      if(browserReceipt)this.store.recordBrowserContinuation({commandId,...browserReceipt});
       const session = this.toSessionSummary(handle, started);
       const result = this.store.finishEnvironmentSessionCreation(
         commandId,
@@ -309,6 +318,11 @@ export class EnvironmentSessions {
       this.changed();
       return result;
     } catch (error) {
+      const uncertain=isBrowserContinuationOutcomeUnknown(error);
+      if(handle&&!durable&&uncertain){
+        const retained={...this.toSessionSummary(handle,started),status:"error" as const,error:error instanceof Error?error.message:"Browser continuation outcome is unknown."};
+        this.store.upsertSession(retained); this.onHandle(handle); durable=true;
+      }
       if (handle && !durable) {
         await handle.dispose().catch(() => undefined);
       }
