@@ -3,6 +3,7 @@ import type { BrowserNewTabState } from "./browser-new-tab";
 export type ContentSide = "left" | "right";
 export type DockDestination = "right" | "bottom";
 export type DockTabKind =
+  | "mcp-app"
   | "side-chat"
   | "goal"
   | "review"
@@ -20,6 +21,9 @@ export interface DockTab {
   kind: DockTabKind;
   hostId: string;
   target: DockTarget;
+  mcpApp?: import("./mcp-app-dock").McpDockApp;
+  /** Live admission only; the window parser deliberately omits this ticket. */
+  mcpAppSelection?: import("@agent-desktop/shared").NativeMcpAppSelection;
   skillFile?: NativeSkillFileRef;
   filePath?: string;
   /** A replaceable file view; pinning never changes the owner-qualified identity. */
@@ -109,10 +113,11 @@ const clone = (state: DockState): DockState => ({
 export const dockTabId = (
   tab: Pick<
     DockTab,
-    "hostId" | "target" | "kind" | "terminalId" | "browserTarget" | "browserInstanceId" | "skillFile" | "filePath"
+    "hostId" | "target" | "kind" | "terminalId" | "browserTarget" | "browserInstanceId" | "mcpApp" | "skillFile" | "filePath"
   >,
 ) => {
   const base = `${tab.hostId}:${tab.target}:${tab.kind}`;
+  if (tab.kind === "mcp-app" && tab.mcpApp) return `${base}:instance=${tab.mcpApp.instanceId}`;
   if (tab.kind === "skill-file" && tab.skillFile) return `${base}:${encodeURIComponent(tab.skillFile.skillId)}:${encodeURIComponent(tab.skillFile.sourcePath)}:${tab.skillFile.inventory ? "inventory" : "composer"}`;
   if (tab.kind === "file" && tab.filePath) return `${base}:${encodeURIComponent(tab.filePath)}`;
   if (tab.kind === "browser" && tab.browserInstanceId) return `${base}:instance=${tab.browserInstanceId}`;

@@ -3,7 +3,7 @@ import { WorkerBrowserObservations } from "../omp-browser/observation";
 import { WorkerBrowserReservations } from "../omp-browser/reservation";
 import { WorkerBrowserCloses } from "../omp-browser/close";
 import { parseNativeMcpAuthorizationId, parseNativeMcpAuthorizationReply, parseNativeMcpAuthorizationStart } from "@agent-desktop/shared";
-import { parseNativeSessionMcpResourceRequest } from "@agent-desktop/shared";
+import { parseNativeMcpAppRequest, parseNativeSessionMcpResourceRequest } from "@agent-desktop/shared";
 import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { parseBrowserControlRequest, parseBrowserNavigationUrl, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import { serialize } from "node:v8";
@@ -340,6 +340,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         ]);
         break;
       }
+      case "sessionMcpApp": respond(true, await requireSession().sessionMcpApp(parseNativeMcpAppRequest(message.args.request))); break;
       case "readSessionMcpResource": respond(true, await requireSession().readSessionMcpResource(parseNativeSessionMcpResourceRequest(message.args.request))); break;
       case "startSessionMcpAuthorization": respond(true, requireSession().startSessionMcpAuthorization(parseNativeMcpAuthorizationStart(message.args.request))); break;
       case "getSessionMcpAuthorization": respond(true, requireSession().getSessionMcpAuthorization()); break;

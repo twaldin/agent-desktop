@@ -13,6 +13,7 @@ import { hasSelectedTextIntent, requiresSelectedTextProtocol } from "./selected-
 import { PluginAcquisitionOperations } from "./integrations/acquisition-operations";
 import { PluginAcquisitionHttp } from "./integrations/acquisition-http";
 import { SessionMcpAuthorizationHttp } from "./session-mcp-authorization-http";
+import { SessionMcpAppHttp } from "./session-mcp-app-http";
 import { SessionMcpResourceHttp } from "./session-mcp-resource-http";
 import { SessionMcpHttp } from "./session-mcp-http";
 import { BtwPromotionService } from "./btw-promotion";
@@ -425,6 +426,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       if (value && "type" in value && value.type === "session.mcp.authorization") return {commandId,state:"succeeded",authorizationId:value.authorizationId};
       return {commandId,state:result && !result.ok && result.error.code !== "OUTCOME_UNKNOWN" ? "failed" : "unknown"};
     },
+  });
+  const sessionMcpApps = new SessionMcpAppHttp({ hostId: store.host.id,
+    sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    existing: async id => handles.get(id)?.catch(() => undefined),
   });
   const sessionMcpResources = new SessionMcpResourceHttp({ hostId: store.host.id,
     sessionExists: id => !stopping && Boolean(store.getSession(id)),
@@ -1105,6 +1110,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (queuedMessagesResponse) return queuedMessagesResponse;
         const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
         if (mcpAuthorizationResponse) return mcpAuthorizationResponse;
+        const mcpAppResponse = await sessionMcpApps.route(request, url);
+        if (mcpAppResponse) return mcpAppResponse;
         const mcpResourceResponse = await sessionMcpResources.route(request, url);
         if (mcpResourceResponse) return mcpResourceResponse;
         const mcpStateResponse = await sessionMcpHttp.route(request, url);

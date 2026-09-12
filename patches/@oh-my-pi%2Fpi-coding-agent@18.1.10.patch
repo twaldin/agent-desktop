@@ -8439,3 +8439,240 @@ index cfd026f2c443df9761787f61b7adbdc094f7975f..7e6d9583fc4cf2887d8526bf67426dcf
  	assertTabNotReserved(target.name);
  	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
  	if (humanActions.has(target.name)) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
+diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
+index fb43dfe..fe34b47 100644
+--- a/dist/types/mcp/client.d.ts
++++ b/dist/types/mcp/client.d.ts
+@@ -11,6 +11,7 @@ export declare class MCPConnectionTimeoutError extends Error {
+  * Set OMP_MCP_TIMEOUT_MS=0 to disable MCP client-side timeouts.
+  */
+ export declare function connectToServer(name: string, config: MCPServerConfig, options?: {
++    enableApps?: boolean;
+     signal?: AbortSignal;
+     onNotification?: (method: string, params: unknown) => void;
+     onRequest?: (method: string, params: unknown) => Promise<unknown>;
+diff --git a/dist/types/mcp/loader.d.ts b/dist/types/mcp/loader.d.ts
+index 88cb17b..083b2f7 100644
+--- a/dist/types/mcp/loader.d.ts
++++ b/dist/types/mcp/loader.d.ts
+@@ -21,6 +21,7 @@ export interface MCPToolsLoadResult {
+ }
+ /** Options for loading MCP tools */
+ export interface MCPToolsLoadOptions {
++    enableApps?: boolean;
+     /** Called when MCP server connection state changes. */
+     onStatus?: (event: McpConnectionStatusEvent) => void;
+     /** Whether to load project-level config (default: true) */
+diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
+index d1fd2fc..523ea1b 100644
+--- a/dist/types/mcp/manager.d.ts
++++ b/dist/types/mcp/manager.d.ts
+@@ -39,6 +39,7 @@ export interface MCPLoadResult {
+ }
+ /** Options for discovering and connecting to MCP servers */
+ export interface MCPDiscoverOptions {
++    enableApps?: boolean;
+     /** Whether to load project-level config (default: true) */
+     enableProjectConfig?: boolean;
+     /** Whether to filter out Exa MCP servers (default: true) */
+diff --git a/dist/types/mcp/types.d.ts b/dist/types/mcp/types.d.ts
+index 8b623f5..90dfda5 100644
+--- a/dist/types/mcp/types.d.ts
++++ b/dist/types/mcp/types.d.ts
+@@ -155,6 +155,7 @@ export interface MCPImplementation {
+ }
+ /** MCP client capabilities */
+ export interface MCPClientCapabilities {
++    extensions?: Record<string, unknown>;
+     roots?: {
+         listChanged?: boolean;
+     };
+diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
+index e3b75c2..0a306d7 100644
+--- a/dist/types/sdk.d.ts
++++ b/dist/types/sdk.d.ts
+@@ -191,6 +191,7 @@ export interface CreateAgentSessionOptions {
+      * true.
+      */
+     enableMCP?: boolean;
++    enableMcpApps?: boolean;
+     /** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
+     mcpManager?: MCPManager;
+     /** Enable LSP integration (tool, formatting, diagnostics, warmup). Default: true */
+diff --git a/src/mcp/client.ts b/src/mcp/client.ts
+index 262ed35..9f107a5 100644
+--- a/src/mcp/client.ts
++++ b/src/mcp/client.ts
+@@ -91,6 +91,8 @@ async function createTransport(config: MCPServerConfig, signal?: AbortSignal): P
+ async function initializeConnection(
+ 	transport: MCPTransport,
+ 	options?: {
++		/** Advertise the UI protocol only for a caller that supplies its host. */
++		enableApps?: boolean;
+ 		signal?: AbortSignal;
+ 		/** Called after notifications/initialized succeeds. */
+ 		onInitialized?: () => void | Promise<void>;
+@@ -100,6 +102,7 @@ async function initializeConnection(
+ 		protocolVersion: MCP_PROTOCOL_VERSION,
+ 		capabilities: {
+ 			roots: { listChanged: false },
++			...(options?.enableApps === true ? { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } } : {}),
+ 		},
+ 		clientInfo: CLIENT_INFO,
+ 	};
+@@ -151,6 +154,8 @@ export async function connectToServer(
+ 	name: string,
+ 	config: MCPServerConfig,
+ 	options?: {
++		/** Advertise the UI protocol only for a caller that supplies its host. */
++		enableApps?: boolean;
+ 		signal?: AbortSignal;
+ 		onNotification?: (method: string, params: unknown) => void;
+ 		onRequest?: (method: string, params: unknown) => Promise<unknown>;
+@@ -173,6 +178,7 @@ export async function connectToServer(
+ 
+ 		try {
+ 			const initResult = await initializeConnection(transport, {
++				enableApps: options?.enableApps,
+ 				signal: options?.signal,
+ 				async onInitialized() {
+ 					// Open the optional GET SSE stream only after the initialized
+diff --git a/src/mcp/loader.ts b/src/mcp/loader.ts
+index 135a0c5..81aa537 100644
+--- a/src/mcp/loader.ts
++++ b/src/mcp/loader.ts
+@@ -27,6 +27,7 @@ export interface MCPToolsLoadResult {
+ 
+ /** Options for loading MCP tools */
+ export interface MCPToolsLoadOptions {
++	enableApps?: boolean;
+ 	/** Called when MCP server connection state changes. */
+ 	onStatus?: (event: McpConnectionStatusEvent) => void;
+ 	/** Whether to load project-level config (default: true) */
+@@ -69,6 +70,7 @@ export async function discoverAndLoadMCPTools(cwd: string, options?: MCPToolsLoa
+ 	let result: MCPLoadResult;
+ 	try {
+ 		result = await manager.discoverAndConnect({
++			enableApps: options?.enableApps,
+ 			onStatus: options?.onStatus,
+ 			enableProjectConfig: options?.enableProjectConfig,
+ 			filterExa: options?.filterExa,
+diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
+index dc226ea..cd08466 100644
+--- a/src/mcp/manager.ts
++++ b/src/mcp/manager.ts
+@@ -175,8 +175,20 @@ export interface MCPLoadResult {
+ 	exaApiKeys: string[];
+ }
+ 
++/** App-only tools remain callable through their captured UI connection, never
++ * model wrappers (including deferred cached wrappers from an Apps session). */
++function modelVisibleTools(tools: MCPToolDefinition[]): MCPToolDefinition[] {
++	return tools.filter(tool => {
++		const ui = tool._meta?.ui;
++		const visibility = ui && typeof ui === "object" && !Array.isArray(ui) ? (ui as Record<string, unknown>).visibility : undefined;
++		return !Array.isArray(visibility) || visibility.includes("model");
++	});
++}
++
+ /** Options for discovering and connecting to MCP servers */
+ export interface MCPDiscoverOptions {
++	/** Owning host implements the MCP Apps UI protocol. Disabled by default. */
++	enableApps?: boolean;
+ 	/** Whether to load project-level config (default: true) */
+ 	enableProjectConfig?: boolean;
+ 	/** Whether to filter out Exa MCP servers (default: true) */
+@@ -621,6 +633,7 @@ export class MCPManager {
+ 			const connectionPromise = (async () => {
+ 				const resolvedConfig = await this.#resolveAuthConfig(config);
+ 				return connectToServer(name, resolvedConfig, {
++					enableApps: this.#discoverOptions?.enableApps,
+ 					onNotification: (method, params) => {
+ 						this.#handleServerNotification(name, method, params);
+ 					},
+@@ -709,7 +722,7 @@ export class MCPManager {
+ 					this.#pendingToolLoads.delete(name);
+ 					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
+ 						this.reconnectServer(name, options);
+-					const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
++					const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
+ 					this.#replaceServerTools(name, customTools);
+ 					void this.#onToolsChanged?.(this.#tools);
+ 					void this.toolCache?.set(name, config, serverTools);
+@@ -786,7 +799,7 @@ export class MCPManager {
+ 					connectedServers.add(name);
+ 					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
+ 						this.reconnectServer(name, options);
+-					this.#replaceServerTools(name, MCPTool.fromTools(connection, serverTools, reconnect));
++					this.#replaceServerTools(name, MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect));
+ 				} else if (task.tracked.status === "rejected") {
+ 					const message =
+ 						task.tracked.reason instanceof Error ? task.tracked.reason.message : String(task.tracked.reason);
+@@ -800,7 +813,7 @@ export class MCPManager {
+ 							this.reconnectServer(name, options);
+ 						this.#replaceServerTools(
+ 							name,
+-							DeferredMCPTool.fromTools(name, cached, () => this.waitForConnection(name), source, reconnect),
++							DeferredMCPTool.fromTools(name, modelVisibleTools(cached), () => this.waitForConnection(name), source, reconnect),
+ 						);
+ 					}
+ 				}
+@@ -1309,6 +1322,7 @@ export class MCPManager {
+ 	): Promise<MCPServerConnection> {
+ 		const resolvedConfig = await this.#resolveAuthConfig(config);
+ 		const connection = await connectToServer(name, resolvedConfig, {
++			enableApps: this.#discoverOptions?.enableApps,
+ 			signal,
+ 			onNotification: (method, params) => {
+ 				this.#handleServerNotification(name, method, params);
+@@ -1350,7 +1364,7 @@ export class MCPManager {
+ 		try {
+ 			const serverTools = await listTools(connection, { signal });
+ 			const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
+-			const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
++			const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
+ 			void this.toolCache?.set(name, config, serverTools);
+ 			this.#replaceServerTools(name, customTools);
+ 			void this.#onToolsChanged?.(this.#tools);
+@@ -1400,7 +1414,7 @@ export class MCPManager {
+ 		// Reload tools
+ 		const serverTools = await listTools(connection);
+ 		const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
+-		const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
++		const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
+ 		void this.toolCache?.set(name, connection.config, serverTools);
+ 
+ 		// Replace tools from this server
+diff --git a/src/mcp/types.ts b/src/mcp/types.ts
+index 7a600a6..19e6282 100644
+--- a/src/mcp/types.ts
++++ b/src/mcp/types.ts
+@@ -187,6 +187,7 @@ export interface MCPImplementation {
+ 
+ /** MCP client capabilities */
+ export interface MCPClientCapabilities {
++	extensions?: Record<string, unknown>;
+ 	roots?: { listChanged?: boolean };
+ 	sampling?: Record<string, never>;
+ 	experimental?: Record<string, unknown>;
+diff --git a/src/sdk.ts b/src/sdk.ts
+index d647c79..6c1978f 100644
+--- a/src/sdk.ts
++++ b/src/sdk.ts
+@@ -540,6 +540,8 @@ export interface CreateAgentSessionOptions {
+ 	 * true.
+ 	 */
+ 	enableMCP?: boolean;
++	/** Opt in only when the session owner provides an MCP Apps host. */
++	enableMcpApps?: boolean;
+ 	/** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
+ 	mcpManager?: MCPManager;
+ 
+@@ -2005,6 +2007,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 				configuredLevel: settings.extensionsSourceLevel(),
+ 			}));
+ 		const mcpDiscoverOptions = {
++			enableApps: options.enableMcpApps === true,
+ 			onStatus: onMCPStatus,
+ 			enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
+ 			// Always filter Exa - we have native integration

@@ -26,7 +26,8 @@ function sourceEnabled(context:BrowserWorkspaceMenuContext,origin:BrowserReplace
     && isCurrentDockPresentation(context.presentations,origin.presentation) && current?.state===origin.state && current.title===origin.title;
 }
 function preparationMatches(action:DockAddAction,origin:BrowserReplacementOrigin):boolean {
-  return action.preparationTarget?.hostId===origin.presentation.hostId
+  return (!action.destinations || action.destinations.includes(origin.presentation.destination))
+    && action.preparationTarget?.hostId===origin.presentation.hostId
     && action.preparationTarget.target===origin.presentation.target;
 }
 /** Render-only inventory. Every selection carries its original source and tab

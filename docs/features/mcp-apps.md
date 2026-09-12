@@ -1,0 +1,37 @@
+# MCP Apps in Open panel
+
+The right-hand Open panel list includes real thread entrypoints advertised by the selected session's connected native MCP servers. These actions use the provider's title and theme icon. Generic tools and resources are not invented as app rows. The built-in action order is preserved; app actions follow it and are not offered in Bottom.
+
+This flow implements standard MCP Apps HTML resources using the pinned MCP Apps SDK 2.0.0. Legacy `text/html+skybridge` and `window.openai` applications are not supported by this adapter. Tool-result artifact producers, arbitrary artifact viewers and complete historical Apps compatibility remain separate work; this feature does not complete the parity goal.
+
+## Reference and native capability
+
+The pinned Codex 7982 source (archive `077cc65356aeae34c5d8b4de0b4cc383f6fb137ed1d69a9b3dfe69ffafa058ab`) projects `_meta["openai/ui"].entrypoints` with `type: "thread"` in `thread-app-shell-chrome-cb4a05d7bec7.js` (`Ya`), reads the selected server/tool resource in `app-initial-86767c3d23e5.js` (`kzi`, `Azi`, `Mzi`), and creates a fresh right-panel presentation in `Jxo`. The lazy `mcp-extension-view-frame-22cedad19dd2.js` runs the selected entrypoint with its default empty arguments and sends its tool result into the app. Opening here therefore includes that real tool call; it is not merely an HTML preview. The older 7868 helper is not substituted as the reference.
+
+The OMP 18.1.10 installer patch adds an explicit `enableMcpApps` option through SDK, loader, manager and client, with matching public declarations. Only the opted-in desktop runtime advertises `io.modelcontextprotocol/ui` and `text/html;profile=mcp-app`. The default initialization payload is unchanged. App-only tools remain on their original native server connection but are excluded from model tools. Installation must be verified against the complete published package as described in `patches/README.md`.
+
+## Ownership and permission
+
+An opening captures the selected host, session, native catalogue epoch/revision, server, tool and resource. Each document has fresh channel IDs; each operation has a separate ID and exact input binding. The host captures the original native MCP connection and checks it again around operations. Reconnection, session retirement or a replaced tool invalidates that channel. No app operation automatically creates a worker, reconnects a provider or replays an unconfirmed mutation.
+
+App tools pass the real session's `ExtensionToolWrapper`, tool policy and native permission interaction. Native `tool_call` hooks may deny or rewrite input before approval. The final call uses the original captured connection rather than MCPTool's reconnecting model adapter. Native `tool_result` replacement wins over the original provider result, including its structured content. Extension startup is the existing session-owned startup promise; cancelling one app cancels its interaction/waiter without replacing the session owner. JSON app arguments are not model-generated file-rewriting arguments.
+
+A main-process document owner reserves opens before endpoint lookup. Navigation or renderer loss retires that original owner, waits for dispatched opening to settle, then sends idempotent close to its captured endpoint/session/channel. The replacement document receives another owner. Normal window close drains all app controllers before the existing close gate permits closure. Endpoint/cleanup failures remain visible and can retry only the original close. Document cleanup failures are retained for quit preparation and logging.
+
+Close confirms channel retirement separately from an in-flight operation error. An exact closed receipt can contain an operation-error count; the first user close/reopen reports that warning, and a later deliberate action may acknowledge it. It never converts an unconfirmed operation into success or retries it. The host retains those operational failures for its session cleanup. Errors from already-settled operations do not poison an unrelated later close.
+
+## Rendering and recovery
+
+Resources are limited to one matching UI document, 2 MiB of HTML, and validated declarative CSP domains. Each app runs in an opaque-origin `allow-scripts` iframe without host DOM, same-origin access, preload, forms or automatic popup permission. Declared unsupported browser permissions fail explicitly. The SDK bridge is bound to the original iframe window; observed subsequent navigation retires it. This is not a claim about pre-load navigation timing or physical browser isolation beyond Chromium's sandbox/CSP implementation.
+
+Tool/resource results are bounded JSON. A session admits at most 32 live channels and 4096 channel identities; a channel retains at most 1024 operation identities and admits eight concurrent operations. Requests have a 30-second operation deadline and bounded host/desktop transport reads. Limits are application safety bounds, not native performance claims.
+
+External links require a separate user decision and allow only HTTP(S). Cancel and Escape reject the request without opening a browser. Hide retains the original app and state. Explicit close drains the original channel. Connection loss removes the live iframe and disables opening; reconnect requires a new deliberate Open. Saved window state contains the original descriptor and presentation ID, never a live channel or admission ticket. Document reload restores that descriptor without executing the entrypoint until the user opens it again.
+
+## Acceptance and limits
+
+The maintained worker test launches the real WorkerRuntime and a disposable stdio MCP provider without a model or personal credentials. It exercises native capability negotiation, raw entrypoint discovery, app-only model filtering, approval/denial/cancellation, configured denial, extension blocking/input revision/result replacement, exact request deduplication and reconnect invalidation.
+
+The Open panel acceptance runner's `--mcp` mode mounts the actual App in Electron and uses a real authenticated disposable host, native worker, stdio provider, WindowStateStore and the production app transport/document owner. Trusted Chromium input reaches both parent controls and the out-of-process SDK iframe. Fourteen captures cover opening, mutation, denial, resource read, link cancellation, hide/reopen, close/fresh presentation, offline/explicit recovery, document reload and pending-permission cancellation. The provider log independently checks that denied/cancelled increments did not execute. Read-only frame inspection supplies assertions; it never activates DOM handlers. This is Chromium input and rendered behavior, not an OS mouse/physical-focus claim.
+
+The fixture's IPC registration and connection-loss delivery are disposable adapters; production main/preload registrations are typechecked and source-reviewed. It does not contact a personal MCP server, perform OAuth, launch an external browser, exercise all declared remote CSP endpoints, prove power-loss/restart durability, or establish complete native/visual/whole-goal acceptance. Keep failed runs, installation provenance, exact final source maps and both independent review reports outside the maintained source tree.

@@ -1,3 +1,6 @@
+import { executeMcpAppTool } from "./mcp-app-tool";
+import { NativeMcpApps } from "./mcp-apps";
+import type { NativeMcpAppRequest, NativeMcpAppResponse } from "@agent-desktop/shared";
 import { projectSelectedText } from "./selected-text-history";
 import { lookupFileMentionImage } from "./file-mentions";
 import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
@@ -18,7 +21,7 @@ import {
 import { applyProviderGlobalsFromSettings } from "@oh-my-pi/pi-coding-agent/config/provider-globals";
 import { clearClaudePluginRootsCache } from "@oh-my-pi/pi-coding-agent/discovery/helpers";
 import { discoverTitleSystemPromptFile, resolvePromptInput } from "@oh-my-pi/pi-coding-agent/system-prompt";
-import { setProjectDir } from "@oh-my-pi/pi-utils";
+import { setProjectDir, untilAborted } from "@oh-my-pi/pi-utils";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { AUTO_THINKING, parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import { initThemeSync } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
@@ -101,6 +104,7 @@ export interface OmpSession {
   listQuestions(): Promise<DetachedQuestionSnapshot[]>;
   resolveQuestion(request: ResolveDetachedQuestionRequest): Promise<ResolveDetachedQuestionReceipt>;
   startQuestionDelivery(questionId: string): OmpDetachedQuestionDeliveryRun;
+  sessionMcpApp(request: NativeMcpAppRequest): Promise<NativeMcpAppResponse>;
   readSessionMcpResource(request: NativeSessionMcpResourceRequest): Promise<NativeSessionMcpResourceResult>;
   getSessionMcp(): NativeSessionMcpSnapshot;
   startSessionMcpAuthorization(request: NativeMcpAuthorizationStart): NativeMcpAuthorizationSnapshot;
@@ -428,7 +432,7 @@ export class OmpRuntime {
         agentRegistry, sessionManager: manager, model, thinkingLevel,
         preloadedExtensions,
         // Tools cannot run until create finishes and installs the bridge below.
-        hasUI: false, interactivePrompts: options.interactions === true,
+        hasUI: false, enableMcpApps: true, interactivePrompts: options.interactions === true,
         deferUsageReserveConfirmation: true,
         extensions: [detachedQuestions.extension, approvalClassification],
       });
@@ -445,7 +449,7 @@ export class OmpRuntime {
       await manager.ensureOnDisk();
       const session = native;
       const btw = new NativeBtwController(session);
-      const mcp = new NativeSessionMcp(session, result.mcpManager);
+      const mcp = new NativeSessionMcp(session, result.mcpManager, true);
       const steering = new NativeSteerAdmission(session, manager);
       const queuedMessages = new NativeQueuedMessages(session, steering);
       const auth = context.auth;
@@ -521,6 +525,13 @@ export class OmpRuntime {
       let mcpMutation: Promise<unknown> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
+      const mcpApps = new NativeMcpApps({ executeTool: async (connection, tool, args, signal, assertOwner) => {
+        // Share the session's normal extension startup with prompt admission.
+        // A closing app releases only its waiter; startup stays session-owned.
+        if (ui) { extensionStartup ??= initializeDesktopExtensions(session, ui); await untilAborted(signal, () => extensionStartup!); }
+        signal.throwIfAborted(); assertOwner();
+        return executeMcpAppTool(session, ui, connection, tool, args, signal, assertOwner);
+      }, manager: result.mcpManager, snapshot: () => mcp.read(), assertOwner: () => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are changing."); } });
       const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session);
       const controls = new NativeSessionControls(session, options.approvalOverride);
@@ -534,7 +545,7 @@ export class OmpRuntime {
       };
       const assertTaskLocationReady = () => {
         assertIdle();
-        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size) throw new Error("Resolve queued messages, questions, side answers, MCP reads, and interrupts before moving this task.");
+        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || mcpApps.pending) throw new Error("Resolve queued messages, questions, side answers, MCP reads, and interrupts before moving this task.");
       };
       const taskLocationOutcomeUnknown = (message: string) => Object.assign(new Error(message), { name: "TaskLocationOutcomeUnknown", code: "OUTCOME_UNKNOWN" });
       const trackMcpMutation = <T>(run: Promise<T>) => {
@@ -689,6 +700,7 @@ export class OmpRuntime {
             throw new Error("Resolve pending native work before reloading MCP servers.");
           return trackMcpMutation(mcp.reload(request));
         },
+        sessionMcpApp: request => mcpApps.request(request),
         readSessionMcpResource: request => {
           assertSessionActive();
           if (mcpReads.size >= 8) throw new Error("Wait for pending MCP resource reads.");
@@ -1059,7 +1071,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
-          const mcpDisposal = mcp.dispose();
+          const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose()]);
           btw.dispose();
           detachedQuestions.dispose();
           admissionAbort?.abort();
@@ -1069,19 +1081,21 @@ export class OmpRuntime {
             // Resolving/cancelling UI above releases native branch hooks. A branch
             // already in flight still owns both files until it settles.
             await promotionCall?.catch(() => {});
-            await mcpDisposal;
+            const mcpDrains = await mcpDisposal;
+            await extensionStartup?.catch(() => {});
             await mcpMutation?.catch(() => {});
             await Promise.allSettled([...mcpReads]);
-            session.beginDispose();
-            try { await session.dispose(); }
-            finally {
-              await steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified");
-              await detachedQuestions.settle();
-              unsubscribeQueuedMessages(); queuedMessages.close();
-              steering.close();
-              unsubscribe(); listeners.clear(); auth.close();
-              this.#sessions.delete(handle); for (const file of reservedPaths) this.#reservedFiles.delete(file);
-            }
+            const cleanupErrors = mcpDrains.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+            const clean = async (work: () => unknown) => { try { await work(); } catch (error) { cleanupErrors.push(error); } };
+            await clean(() => session.beginDispose());
+            await clean(() => session.dispose());
+            await clean(() => steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified"));
+            await clean(() => detachedQuestions.settle());
+            await clean(unsubscribeQueuedMessages); await clean(() => queuedMessages.close());
+            await clean(() => steering.close()); await clean(unsubscribe);
+            listeners.clear(); await clean(() => auth.close());
+            this.#sessions.delete(handle); for (const file of reservedPaths) this.#reservedFiles.delete(file);
+            if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Native session cleanup failed.");
           })();
           return disposeCall;
         },

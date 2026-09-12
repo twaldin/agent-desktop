@@ -1,3 +1,4 @@
+import { parseMcpDockApp } from "./renderer/mcp-app-dock";
 import { isPreferenceId } from "../../../packages/shared/src/preferences";
 import { parseBrowserCloseWindowIntents, type BrowserCloseWindowIntent } from "./browser-close-window-intent";
 import { parseSessionBrowserObservations, matchesSessionBrowserObservation, type SessionBrowserObservation } from "./session-browser-observation";
@@ -220,13 +221,16 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) || standalonePath !== undefined || draftId !== undefined) ||
       typeof item.title !== "string" ||
       item.title.length > 1000 ||
-      !["review", "file", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file"].includes(
+      !["review", "file", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file", "mcp-app"].includes(
         String(item.kind),
       ) ||
       (item.terminalId !== undefined && !id(item.terminalId))
     )
       return;
     if (draftId !== undefined && item.kind !== "browser") return;
+    let mcpApp;
+    if (item.mcpApp !== undefined) { try { mcpApp = parseMcpDockApp(item.mcpApp); } catch { return; } }
+    if ((item.kind === "mcp-app") !== Boolean(mcpApp) || mcpApp && !item.target.startsWith("session:")) return;
     let skillFile;
     if (item.skillFile !== undefined) {
       try { skillFile = parseNativeSkillFileRef(item.skillFile); } catch { return; }
@@ -280,6 +284,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       title: item.title,
       ...(item.unread === true ? { unread: true } : {}),
       ...(skillFile ? {skillFile} : {}),
+      ...(mcpApp ? {mcpApp} : {}),
       ...(fileScroll ? {fileScroll} : {}),
       ...(filePath === undefined ? {} : { filePath }),
       ...((filePath !== undefined || skillFile !== undefined) && (item.fileMode === "markdown" || item.fileMode === "source") ? { fileMode: item.fileMode } : {}),

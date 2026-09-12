@@ -1,3 +1,7 @@
+import { McpAppWindowChannels } from "../../../apps/desktop/src/main/mcp-app-window-channels";
+import { runMcpFlow } from "./mcp-flow";
+import { requestSessionMcp } from "../../../apps/desktop/src/main/session-mcp-transport";
+import { requestSessionMcpApp } from "../../../apps/desktop/src/main/session-mcp-app-transport";
 import { app, BrowserWindow, Menu, ipcMain } from 'electron';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,14 +26,31 @@ const window = new BrowserWindow({ show: false, width: 1250, height: 950, webPre
 window.setContentSize(1250, 950);
 const calls: unknown[] = [], errors: unknown[] = [], inputs: unknown[] = [], captures: unknown[] = [];
 window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message); });
+let online = true;
+let mcpDocument: McpAppWindowChannels | undefined;
+const mcpDrains: Promise<void>[] = [];
+const retireMcpDocument = () => { const owner = mcpDocument; mcpDocument = undefined; if (owner) { const drain = owner.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } };
+window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) retireMcpDocument(); });
+const setConnected = (value: boolean) => { online = value; window.webContents.send('panel-event', { type: 'connection', hostId: connection.hostId, connected: value }); };
 const http = (path: string, body?: unknown) => requestHost(connection, path, body);
 ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) => {
   calls.push({ method, args });
-  const hostIndex: Record<string, number> = { getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
+  const hostIndex: Record<string, number> = { getSessionMcp: 1, sessionMcpApp: 2, respondInteraction: 3, getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
   const requestedHost = args[hostIndex[method] ?? -1];
   if (requestedHost !== undefined && requestedHost !== connection.hostId) throw new Error('The fixture cannot route to a foreign host.');
   switch (method) {
-    case 'features': return { terminal: context.terminal };
+    case 'features': return { terminal: context.terminal, mcp: context.mcp };
+    case 'getSessionMcp': if (!online) throw new Error('Disposable host transport is offline.'); return requestSessionMcp(connection, args[0]);
+    case 'sessionMcpApp': {
+      if (!online) throw new Error('Disposable host transport is offline.');
+      if (!mcpDocument) {
+        const owner = new McpAppWindowChannels({ current: () => mcpDocument === owner,
+          connect: async () => connection, request: requestSessionMcpApp });
+        mcpDocument = owner;
+      }
+      return mcpDocument.dispatch(args[0], args[2], args[1]);
+    }
+    case 'openExternal': throw new Error('The fixture requires external-link cancellation; no external browser is launched.');
     case 'getNativeTerminalCapabilities': return nativeTerminalResult(() => http('/v2/terminals/capabilities'));
     case 'nativeTerminalQuery': return nativeTerminalResult(() => http('/v2/terminals/query', args[0]));
     case 'nativeTerminalAction': return nativeTerminalResult(() => http('/v2/terminals/action', args[0]));
@@ -39,12 +60,13 @@ ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) =>
     case 'observeTerminalCreation': return nativeTerminalResult(() => requestTerminalCreationStatus(connection, args[0]));
     case 'bootstrap': return store.bootstrap();
     case 'save': return store.saveView(args[0]);
-    case 'getState': return http('/v1/state');
+    case 'getState': if (!online) throw new Error('Disposable host transport is offline.'); return http('/v1/state');
     case 'getHosts': return http('/v1/peers');
     case 'getPreferences': return http('/v1/preferences');
     case 'getTheme': return http('/v1/theme');
     case 'getComposerCatalog': return http('/v1/models/composer', { target: args[0], refresh: args[1] });
     case 'getMessages': return http(`/v1/sessions/${encodeURIComponent(args[0])}/messages`);
+    case 'respondInteraction': return http(`/v1/sessions/${encodeURIComponent(args[0])}/interactions`, { interactionId: args[1], response: args[2] });
     case 'getInteractions': return http(`/v1/sessions/${encodeURIComponent(args[0])}/interactions`);
     case 'getSessionControls': return http(`/v1/sessions/${encodeURIComponent(args[0])}/controls`);
     case 'getBtw': return requestBtw(connection, args[0]);
@@ -54,10 +76,30 @@ ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) =>
   }
 });
 const socket = new WebSocket(connection.origin.replace('http:', 'ws:') + '/v1/events?after=0', ['agent-desktop', connection.token]);
-socket.addEventListener('message', event => { if (window.isDestroyed()) return; const frame = JSON.parse(String(event.data)); if (frame.type === 'native-terminal') window.webContents.send('panel-native', { ...frame.event, hostId: connection.hostId }); else window.webContents.send('panel-event', frame); });
+socket.addEventListener('message', event => { if (window.isDestroyed() || !online) return; const frame = JSON.parse(String(event.data)); if (frame.type === 'native-terminal') window.webContents.send('panel-native', { ...frame.event, hostId: connection.hostId }); else window.webContents.send('panel-event', frame); });
 const evaluate = (script: string) => window.webContents.executeJavaScript(script, true);
 const wait = async (expression: string, label: string) => { const start = Date.now(); while (Date.now() - start < 20_000) { if (await evaluate(expression)) return; await delay(50); } throw new Error(`Timed out: ${label}`); };
-const click = async (selector: string, text?: string) => { const p = await evaluate(`panelTarget(${JSON.stringify(selector)},${JSON.stringify(text)})`); window.webContents.sendInputEvent({ type: 'mouseMove', ...p }); window.webContents.sendInputEvent({ type: 'mouseDown', ...p, button: 'left', clickCount: 1 }); window.webContents.sendInputEvent({ type: 'mouseUp', ...p, button: 'left', clickCount: 1 }); inputs.push({ type: 'pointer', selector, text, p }); await delay(150); };
+const click = async (selector: string, text?: string) => {
+  const target = () => evaluate(`panelTarget(${JSON.stringify(selector)},${JSON.stringify(text)})`);
+  let p = await target();
+  if (context.mcp) {
+    let stable = 0;
+    for (let i = 0; i < 40 && stable < 3; i++) {
+      await delay(100); const next = await target();
+      stable = Math.abs(next.x - p.x) < 0.5 && Math.abs(next.y - p.y) < 0.5 ? stable + 1 : 0; p = next;
+    }
+    if (stable < 3) throw new Error('Pointer target did not settle: ' + selector);
+  }
+  if (context.mcp) {
+    if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach('1.3');
+    await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...p });
+    await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...p, button: 'left', clickCount: 1 });
+    await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...p, button: 'left', clickCount: 1 });
+  } else {
+    window.webContents.sendInputEvent({ type: 'mouseMove', ...p }); window.webContents.sendInputEvent({ type: 'mouseDown', ...p, button: 'left', clickCount: 1 }); window.webContents.sendInputEvent({ type: 'mouseUp', ...p, button: 'left', clickCount: 1 });
+  }
+  inputs.push({ type: context.mcp ? 'chromium-pointer' : 'pointer', selector, text, p }); await delay(150);
+};
 const key = async (keyCode: string, modifiers: NonNullable<Electron.KeyboardInputEvent['modifiers']> = []) => { window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); inputs.push({ type: 'key', keyCode, modifiers }); await delay(150); };
 const capture = async (name: string) => { await delay(250); const state = await evaluate('panelState()'); const image = await window.webContents.capturePage(); writeFileSync(join(output, `${name}.png`), image.toPNG()); captures.push({ name, state, contentBounds: window.getContentBounds(), raster: image.getSize() }); };
 let passed = false, error: string | undefined;
@@ -65,6 +107,12 @@ try {
   await window.loadFile(join(output, 'web/index.html')); window.webContents.focus();
   await wait('typeof window.panelState === "function"', 'fixture observation helper');
   await wait('panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
+  if (context.mcp) {
+    await runMcpFlow({ window, evaluate, wait, click, key, capture, store, calls, connection, http, setConnected });
+    retireMcpDocument(); await Promise.all(mcpDrains);
+    if (errors.length) throw new Error('Renderer errors: ' + JSON.stringify(errors));
+    passed = true; return;
+  }
   if (context.git) await wait('panelState().actions.includes("Review")', 'Git Review availability');
   const expectedActions = context.git ? ['Review', ...(context.terminal ? ['Terminal'] : []), 'Browser', 'Files', 'Side chat'] : ['Files', 'Side chat', 'Browser', ...(context.terminal ? ['Terminal'] : [])];
   const originalActions = await evaluate('panelState().actions');

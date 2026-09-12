@@ -736,6 +736,7 @@ export class WorkerRuntime {
       listQuestions: () => client.request<DetachedQuestionSnapshot[]>({ operation: "listQuestions" }, 15_000),
       resolveQuestion: request => client.request<ResolveDetachedQuestionReceipt>({ operation: "resolveQuestion", args: { request } }, 15_000, "question-resolution"),
       startQuestionDelivery: questionId => client.startQuestionDelivery(questionId),
+      sessionMcpApp: request => client.request({ operation: "sessionMcpApp", args: { request } }, 40_000),
       readSessionMcpResource: request => client.request({ operation: "readSessionMcpResource", args: { request } }, 35_000),
       getSessionMcp: () => client.request({ operation: "getSessionMcp" }, 15_000),
       startSessionMcpAuthorization: request => client.request({ operation: "startSessionMcpAuthorization", args: { request } }, 15_000, "mcp-authorization"),

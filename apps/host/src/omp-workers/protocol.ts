@@ -8,7 +8,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 49;
+export const WORKER_PROTOCOL_VERSION = 50;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -60,6 +60,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "listQuestions" }
   | { operation: "resolveQuestion"; args: { request: ResolveDetachedQuestionRequest } }
   | { operation: "startQuestionDelivery"; args: { questionId: string } }
+  | { operation: "sessionMcpApp"; args: { request: import("@agent-desktop/shared").NativeMcpAppRequest } }
   | { operation: "readSessionMcpResource"; args: { request: import("@agent-desktop/shared").NativeSessionMcpResourceRequest } }
   | { operation: "startSessionMcpAuthorization"; args: { request: import("@agent-desktop/shared").NativeMcpAuthorizationStart } }
   | { operation: "getSessionMcpAuthorization" }
