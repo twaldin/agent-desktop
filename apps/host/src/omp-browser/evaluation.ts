@@ -19,6 +19,17 @@ interface ChannelRecord {
   pending: Set<Promise<void>>;
   sequence: number;
   deliveries: Map<number, { failed: boolean; delivered: boolean; error?: unknown }>;
+  cdpRequests: Set<string>;
+}
+
+function cdpRequestIds(data:string):string[]{
+  const value=JSON.parse(data) as {id?:unknown;sessionId?:unknown;params?:{sessionId?:unknown;message?:unknown}};const result:string[]=[];
+  if(typeof value.id==="string"||Number.isSafeInteger(value.id))result.push(JSON.stringify(["top",typeof value.sessionId==="string"?value.sessionId:null,value.id]));
+  if(typeof value.params?.message==="string"){
+    const inner=JSON.parse(value.params.message) as {id?:unknown};
+    if(typeof inner.id==="string"||Number.isSafeInteger(inner.id))result.push(JSON.stringify(["nested",typeof value.params.sessionId==="string"?value.params.sessionId:null,inner.id]));
+  }
+  return result;
 }
 
 /** Original child only. Receipt slots survive failure/retirement. Disposing a
@@ -67,7 +78,7 @@ export class WorkerBrowserEvaluationChannels {
       if (this.reservations.assertReady(binding, binding.operationId, binding.ownerId) !== owner) throw new Error("Original ready browser reservation is required.");
       const ready = Promise.withResolvers<BrowserEvaluationDescriptor>();
       const record: ChannelRecord = { binding, key, owner, opening: ready.promise, post: frame => this.#post(record, frame),
-        started: false, retiring: false, failures: [], pending: new Set(), sequence: 0, deliveries: new Map() };
+        started: false, retiring: false, failures: [], pending: new Set(), sequence: 0, deliveries: new Map(),cdpRequests:new Set() };
       this.#records.set(binding.operationId, record); // Publish before native callbacks.
       void ready.promise.catch(() => {});
       void Promise.resolve().then(async () => {
@@ -103,6 +114,7 @@ export class WorkerBrowserEvaluationChannels {
     try {
       if (record.descriptor?.backend !== "cdp") throw new Error("CDP frame preceded its original descriptor.");
       const copied = copyEvaluationFrame(frame, record.descriptor.descriptor.channel);
+      if(copied.kind==="data")for(const id of cdpRequestIds(copied.data))record.cdpRequests.delete(id);
       if (copied.kind === "data" || copied.kind === "ack") this.#current(record);
       else {
         for (const error of copied.errors ?? []) this.#remember(record, new Error(error));
@@ -133,6 +145,7 @@ export class WorkerBrowserEvaluationChannels {
       // not reopen or destroy the original resource. No host-generated ACK.
       if (record.descriptor?.backend !== "cdp" || !record.started) throw new Error("Original CDP channel has not started.");
       const copied = copyEvaluationFrame(frame, record.descriptor.descriptor.channel);
+      if(copied.kind==="data")for(const id of cdpRequestIds(copied.data))record.cdpRequests.add(id);
       if (copied.kind === "close") {
         for (const error of copied.errors ?? []) this.#remember(record, new Error(error));
         void this.#dispose(record).catch(() => {});
@@ -205,6 +218,12 @@ export class WorkerBrowserEvaluationChannels {
     return done.promise;
   }
   close(binding: BrowserEvaluationBinding): Promise<void> { return this.#dispose(this.#lookup(binding)); }
+  inspect(binding: BrowserEvaluationBinding): Readonly<{ descriptor: BrowserEvaluationDescriptor; started: boolean; sequence: number; pending: number; unacknowledged: number }> {
+    const record = this.#lookup(binding); this.#current(record);
+    if (!record.descriptor) throw new Error("Original browser evaluation descriptor is unavailable.");
+    return Object.freeze({ descriptor: copyEvaluationValue(record.descriptor), started: record.started,
+      sequence: record.sequence, pending: record.pending.size+record.cdpRequests.size, unacknowledged: record.deliveries.size });
+  }
   dispose(): Promise<void> {
     if (this.#closing) return this.#closing;
     const done = Promise.withResolvers<void>(); this.#closing = done.promise;

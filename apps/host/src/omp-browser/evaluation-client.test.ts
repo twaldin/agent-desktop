@@ -53,6 +53,8 @@ function model(backend: "cdp" | "cmux") {
           if (started) { post(control("close")); post(control("drained")); }
           return Promise.resolve(undefined as T);
         }
+        case "inspectOpenBrowserEvaluation":
+        case "inspectRetainedBrowserEvaluation": throw new Error("Unexpected inspection in ordinary evaluation fixture");
       }
     },
     destroyOwner() { ownerDestructions++; },

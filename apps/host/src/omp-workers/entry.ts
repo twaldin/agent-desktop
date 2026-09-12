@@ -12,6 +12,7 @@ import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeB
 import { projectNativeBrowserFrame } from "../omp-browser/frame";
 import { remoteError, WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot } from "./protocol";
 import { projectWorkerEvent } from "./events";
+import { WorkerReconnectServer } from "./reconnect-wire";
 
 // All SDK imports are deferred until the child has received its explicit native
 // directory. The daemon never imports/initializes OMP through this boundary.
@@ -39,6 +40,7 @@ let initializing = false;
 let stopping = false;
 let shuttingDown: Promise<void> | undefined;
 let pendingDispose: { id: string; exitCode: number; deadline: ReturnType<typeof setTimeout> } | undefined;
+let reconnect: WorkerReconnectServer | undefined;
 let snapshotRevision = 0;
 let activeRequests = 0;
 let promotionInFlight = false;
@@ -83,8 +85,9 @@ function snapshot(): SessionSnapshot | undefined {
 }
 
 function send(message: ChildMessage): void {
-  if (!process.connected || !process.send) throw new Error("OMP worker lost its owning daemon");
-  process.send(message);
+  if (process.connected && process.send) process.send(message);
+  else if (reconnect) reconnect.send(message);
+  else throw new Error("OMP worker lost its owning daemon");
 }
 
 // Acknowledged event delivery bounds the child's native-event backlog. Exceeding
@@ -228,6 +231,14 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         if (init.mode === "create") session = await runtime.create({ ...init.options, onEvent: emit });
         if (init.mode === "open") session = await runtime.open({ ...init.options, onEvent: emit });
         respond(true, snapshot());
+        break;
+      }
+      case "enableReconnect": {
+        if (reconnect) throw new Error("OMP worker reconnect endpoint is already enabled.");
+        reconnect = await WorkerReconnectServer.listen(message.args, receiveParent,
+          () => ({ type: "recovered", version: WORKER_PROTOCOL_VERSION, pid: process.pid,
+            instanceId: reconnect!.endpoint.instanceId, snapshot: snapshot() } satisfies ChildMessage));
+        respond(true, reconnect.endpoint);
         break;
       }
       case "generateCommit": {
@@ -389,6 +400,12 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "startBrowserEvaluation": await browserEvaluations.start(message.args.binding); respond(true); break;
       case "requestBrowserEvaluation": await browserEvaluations.request(message.args.binding, message.args.sequence, message.args.method, message.args.params, message.args.options, respond); break;
       case "disposeBrowserEvaluation": await browserEvaluations.close(message.args.binding); respond(true); break;
+      case "inspectOpenBrowserEvaluation": respond(true, browserEvaluations.inspect(message.args.binding)); break;
+      case "inspectRetainedBrowserEvaluation": {
+        const record=retainedInstalls.get(retainedKey(message.args.binding));
+        if(!record||record.disposed||!record.native)throw new Error("Retained browser installation is unavailable.");
+        respond(true,{pending:record.pending.size,bufferedFrames:record.frames.length});break;
+      }
       case "reserveBrowserEvaluation": respond(true, await browserReservations.reserve(message.args.target, message.args.operationId)); break;
       case "inspectBrowserEvaluationReservation": respond(true, browserReservations.inspect(message.args.target, message.args.operationId)); break;
       case "prepareRetainedBrowserEvaluation": {
@@ -511,7 +528,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
   }
 }
 
-process.on("message", (value: unknown) => {
+function receiveParent(value: unknown): void {
   if (!value || typeof value !== "object" || !("type" in value)) return;
   const message = value as ParentMessage;
   if (message.type === "browserEvaluationFrame") {
@@ -547,8 +564,9 @@ process.on("message", (value: unknown) => {
   } else if (message.type === "request" && typeof message.id === "string") {
     void request(message).catch(fatal);
   }
-});
-process.on("disconnect", () => { void shutdown(1); });
+}
+process.on("message", receiveParent);
+process.on("disconnect", () => { if (!reconnect) void shutdown(1); });
 process.on("SIGTERM", () => { void shutdown(0); });
 process.on("SIGINT", () => { void shutdown(0); });
 process.on("uncaughtException", error => { void fatal(error); });

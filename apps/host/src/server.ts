@@ -69,6 +69,7 @@ import { BrowserCreateHttp } from "./browser-create-http";
 import { DraftBrowserHttp } from "./draft-browser-http";
 import { DraftBrowserWorkers } from "./browser-draft-workers";
 import { BrowserFirstSend, isBrowserContinuationOutcomeUnknown } from "./browser-first-send";
+import type { BrowserRecoveryRecord } from "./browser-recovery-record";
 import { IntegrationsHttp } from "./integrations-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
@@ -216,7 +217,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const executions = new Map<string, Promise<unknown>>();
   const runtimeErrors = new Map<string, string>();
   const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
-  browserFirstSend = new BrowserFirstSend(store, draftBrowserWorkers);
+  browserFirstSend = new BrowserFirstSend(store, draftBrowserWorkers,join(dataDirectory,"browser-recovery"));
   const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, runs: environmentRuns, reserve: reserveWorkspaceMutation, browserFirstSend,
     signal: environmentAbort.signal, onEvent: onRuntimeEvent,
     onHandle: handle => { handles.set(handle.id, Promise.resolve(handle)); }, changed: () => publishState() });
@@ -449,7 +450,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const browserMetadata = new BrowserMetadataHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     creationTicket: () => ({ controlEpoch: browserControls.epoch, observedAt: Date.now() }),
     getExistingHandle: async id => {
-      const pending = handles.get(id);
+      const pending = handles.get(id)??(store.listBrowserRecoveries().some(record=>record.sessionId===id)?getHandle(id):undefined);
       if (!pending) return undefined;
       try { return await pending; }
       catch { return { workerFailure: { message: "The native session worker is unavailable." }, getBrowserMetadata: async () => ({ availability: "unavailable" as const, reason: "The native session worker is unavailable." }) }; }
@@ -566,6 +567,45 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (value.type === "message_end" && value.message?.errorMessage) runtimeErrors.set(sessionId, value.message.errorMessage);
     publish({ type: "runtime", sessionId, event }, isUnreadSessionEvent(event));
   }
+  async function recoverBrowserRecord(record:BrowserRecoveryRecord):Promise<WorkerSession>{
+    const recovered=await runtime.recoverBrowserContinuation({...record,onEvent:event=>onRuntimeEvent(record.sessionId,event)});
+    if(record.status==="arming")store.recordBrowserRecovery({...record,status:"ready",recordedAt:Date.now()});
+    let disposal:Promise<void>|undefined;
+    return new Proxy(recovered.session,{get(target,key){
+      if(key!=="dispose")return Reflect.get(target,key,target);
+      return ()=>disposal??=(async()=>{
+        const outcomes=await Promise.allSettled([target.dispose(),recovered.closeSource()]);
+        const errors=outcomes.flatMap(outcome=>outcome.status==="rejected"?[outcome.reason]:[]);
+        if(errors.length)throw new AggregateError(errors,"Retained browser session cleanup failed; its recovery record was preserved.");
+        store.removeBrowserRecovery(record.sessionId);
+      })();
+    }});
+  }
+
+  async function recoverPendingBrowserCreation(record:BrowserRecoveryRecord):Promise<CommandResult>{
+    const claim=store.getCommand(record.commandId),command=claim?.command;
+    if(!claim||claim.state!=="pending"||command?.type!=="session.create"||!command.browserContinuation)
+      throw new Error("Browser recovery lost its pending creation command.");
+    const handle=await handles.get(record.sessionId)?.catch(()=>undefined)??await recoverBrowserRecord(record);
+    try{
+      const now=Date.now(),session:SessionSummary={id:handle.id,hostId:store.host.id,projectId:command.projectId??null,cwd:handle.cwd,
+        title:handle.title||"New conversation",status:"idle",sessionFile:handle.sessionFile,model:handle.model,
+        createdAt:Number.isFinite(handle.createdAt)?handle.createdAt:now,updatedAt:now,archived:false,error:handle.modelFallbackMessage,
+        approvalOverride:command.approvalMode};
+      let result:CommandResult;
+      if(command.environment!==undefined){
+        const preparation=store.environmentPreparations.get(record.commandId);
+        if(!preparation||preparation.phase!=="native-creating")throw new Error("Recovered browser environment is not awaiting its original native session.");
+        result=store.finishEnvironmentSessionCreation(record.commandId,claim.requestHash,session,{id:preparation.id,expectedRevision:preparation.revision});
+      }else result=store.finishBrowserRecoveredSession(record.commandId,session);
+      handles.set(record.sessionId,Promise.resolve(handle));publishState();return result;
+    }catch(error){
+      // The exact workers are already acquired. Retain them for a same-command
+      // recovery attempt; disposal would destroy the only evidence of outcome.
+      handles.set(record.sessionId,Promise.resolve(handle));throw error;
+    }
+  }
+
   async function getHandle(sessionId: string, locationRecovery = false): Promise<WorkerSession> {
     if (stopping) throw new Error('The host is stopping. Reconnect before opening this session.');
     if (!locationRecovery && taskLocations.requiresRecovery(sessionId)) throw new Error("This task is blocked on location recovery. Review and resume its original move before running native work.");
@@ -576,7 +616,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       const session = store.getSession(sessionId);
       if (!session) throw new Error("Session does not exist on this host.");
       assertWorkspaceAvailable(session.cwd);
-      pending = runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) }, store.getSessionEnvironment(sessionId)).then(async handle => {
+      const browserRecovery=store.listBrowserRecoveries().find(record=>record.sessionId===sessionId);
+      const opened=browserRecovery
+        ? recoverBrowserRecord(browserRecovery)
+        : runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) }, store.getSessionEnvironment(sessionId));
+      pending = opened.then(async handle => {
         try {
           if (stopping) throw new Error('The host is stopping. Reconnect before opening this session.');
           const current = store.getSession(sessionId);
@@ -987,8 +1031,16 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const claim = store.claimCommand(envelope.id, hash, journalCommand);
     if (claim.kind === "conflict") return fail(envelope.id, "COMMAND_ID_REUSED", "This command ID belongs to a different request.");
     if (claim.kind === "done") return claim.record.result!;
-    if (claim.kind === "pending") return commands.get(envelope.id)
-      ?? fail(envelope.id, "OUTCOME_UNKNOWN", "The original command has no confirmed durable receipt. Inspect its outcome before issuing a new command.");
+    if (claim.kind === "pending") {
+      const active=commands.get(envelope.id);if(active)return active;
+      const recovery=store.listBrowserRecoveries().find(record=>record.commandId===envelope.id);
+      if(recovery&&envelope.command.type==="session.create"&&envelope.command.browserContinuation){
+        const pending=recoverPendingBrowserCreation(recovery).catch(error=>fail(envelope.id,"OUTCOME_UNKNOWN",
+          `The original browser session could not be reacquired. Inspect its retained recovery state before retrying. ${errorMessage(error)}`));
+        commands.set(envelope.id,pending);void pending.finally(()=>{if(commands.get(envelope.id)===pending)commands.delete(envelope.id);});return pending;
+      }
+      return fail(envelope.id, "OUTCOME_UNKNOWN", "The original command has no confirmed durable receipt. Inspect its outcome before issuing a new command.");
+    }
     const command = envelope.command;
     if (command.type === "session.follow-up") return dispatchFollowUp(envelope, hash);
     if (command.type === "workspace.mutate" && command.action.type === "git.submit") {
@@ -1350,7 +1402,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([runtime.dispose(), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
+        const outcomes = await Promise.allSettled([runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);

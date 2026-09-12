@@ -30,3 +30,37 @@ test("rejects stale durable page identity before native reservation",async()=>{c
 test("a post-reservation destination failure is unknown and never retries",async()=>{const f=fixture();let installs=0;const destination={...f.destination,installBrowserContinuation:async()=>{installs++;throw new Error("lost reply")}} as WorkerSession;const service=new BrowserFirstSend(f.store,f.workers);await expect(service.attach("same-command",{id:"draft",revision:1},f.continuation,destination)).rejects.toMatchObject({code:"OUTCOME_UNKNOWN"});await expect(service.attach("same-command",{id:"draft",revision:1},f.continuation,destination)).rejects.toMatchObject({code:"OUTCOME_UNKNOWN"});expect(installs).toBe(1);expect(f.calls.filter(x=>x==="reserve")).toHaveLength(1);});
 
 test("restart projects a retained live binding as unavailable without browser replay",()=>{const f=fixture();const command={type:"session.create" as const,projectId:null,draft:{id:"draft",revision:1},browserContinuation:f.continuation};f.store.claimCommand("command","hash",command);f.store.upsertSession({id:"session",hostId:f.store.host.id,projectId:null,cwd:f.root,title:"New conversation",status:"idle",sessionFile:join(f.root,"session.jsonl"),model:null,createdAt:1,updatedAt:1,archived:false});f.store.recordBrowserContinuation({commandId:"command",sessionId:"session",ownerId:"owner",pages:[{name:"desktop-page-one",targetId:"target",backend:"worker",operationId:"operation"}]});f.store.close();stores.splice(stores.indexOf(f.store),1);const reopened=new HostStore(f.root);stores.push(reopened);expect(reopened.getSession("session")).toMatchObject({status:"error",error:expect.stringContaining("not reacquired")});expect(reopened.getCommand("command")?.state).toBe("pending");});
+
+test("a recovery-capable handoff durably fences both exact worker instances and legacy receipt persistence cannot erase it",async()=>{
+  const f=fixture(),command={type:"session.create" as const,projectId:null,draft:{id:"draft",revision:1},browserContinuation:f.continuation};
+  f.store.claimCommand("recovery-command","hash",command);
+  const enabled:string[]=[],transferred:number[]=[];
+  const source=await f.workers.getExisting({hostId:f.store.host.id,ownerId:"owner",draftId:"draft",draftRevision:1});
+  Object.assign(source!,{enableBrowserRecovery:async(socketPath:string,token:string,instanceId:string)=>{enabled.push("source");return{version:1 as const,pid:42,socketPath,token,instanceId};}});
+  Object.assign(f.workers,{transferToRecovery:(_owner:unknown,pid:number)=>transferred.push(pid)});
+  Object.assign(f.destination,{workerPid:84,enableBrowserRecovery:async(socketPath:string,token:string,instanceId:string)=>{enabled.push("destination");return{version:1 as const,pid:84,socketPath,token,instanceId};}});
+  const receipt=await new BrowserFirstSend(f.store,f.workers,join(f.root,"recovery")).attach("recovery-command",{id:"draft",revision:1},f.continuation,f.destination);
+  expect(enabled.sort()).toEqual(["destination","source"]);expect(transferred).toEqual([42]);
+  const saved=f.store.listBrowserRecoveries()[0]!;expect(saved).toMatchObject({status:"ready",commandId:"recovery-command",sessionId:"session",source:{pid:42},destination:{pid:84}});
+  expect(saved.source.instanceId).not.toBe(saved.destination.instanceId);expect(saved.source.instanceId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(()=>f.store.recordBrowserRecovery({...saved,source:{...saved.source,instanceId:crypto.randomUUID()}})).toThrow("durable native owner");
+  expect(()=>f.store.recordBrowserRecovery({...saved,status:"arming"})).toThrow("durable native owner");
+  f.store.recordBrowserContinuation({commandId:"recovery-command",...receipt!});
+  expect(f.store.listBrowserRecoveries()[0]).toEqual(saved);
+});
+
+test("a recovered native session and its original creation receipt commit together",()=>{
+  const f=fixture(),command={type:"session.create" as const,projectId:null,draft:{id:"draft",revision:1},browserContinuation:f.continuation};
+  f.store.claimCommand("recover-create","recover-hash",command);
+  f.store.recordBrowserRecovery({version:2,hostId:f.store.host.id,commandId:"recover-create",sessionId:"recovered-session",ownerId:"owner",status:"ready",
+    source:{version:1,pid:42,instanceId:crypto.randomUUID(),socketPath:join(f.root,"source.sock"),token:"a".repeat(64)},
+    destination:{version:1,pid:84,instanceId:crypto.randomUUID(),socketPath:join(f.root,"destination.sock"),token:"b".repeat(64)},
+    bindings:[{workerPid:42,name:"desktop-page-one",targetId:"target",ownerId:"owner",operationId:"operation",backend:"cdp"}],recordedAt:1});
+  const session={id:"recovered-session",hostId:f.store.host.id,projectId:null,cwd:f.root,title:"Recovered",status:"idle" as const,
+    sessionFile:join(f.root,"recovered.jsonl"),model:null,createdAt:1,updatedAt:2,archived:false};
+  const result=f.store.finishBrowserRecoveredSession("recover-create",session);
+  expect(result).toMatchObject({ok:true,commandId:"recover-create",value:{id:"recovered-session",cwd:f.root}});
+  expect(f.store.getCommand("recover-create")).toMatchObject({state:"done",result});
+  expect(f.store.getSession("recovered-session")).toMatchObject({id:"recovered-session",status:"idle"});
+  expect(f.store.listBrowserRecoveries()).toHaveLength(1);
+});

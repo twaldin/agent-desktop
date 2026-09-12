@@ -38,6 +38,8 @@ export interface NativeCmuxEvaluation {
 export type BrowserEvaluationOperation =
   | { operation: "openBrowserEvaluation"; args: { binding: BrowserEvaluationBinding; timeoutMs: number } }
   | { operation: "startBrowserEvaluation" | "disposeBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
+  | { operation: "inspectOpenBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
+  | { operation: "inspectRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "requestBrowserEvaluation"; args: { binding: BrowserEvaluationBinding; sequence: number; method: string; params: Record<string, unknown>; options?: { timeoutMs?: number } } };
 
 const identity = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value);

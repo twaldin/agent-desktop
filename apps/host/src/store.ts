@@ -4,6 +4,7 @@ import { BrowserCloseRecords } from "./browser-close-records";
 import { BrowserCreationRecords } from "./browser-creation-records";
 import { DraftBrowserOwnerRecords } from "./browser-draft-owner-records";
 import { DraftBrowserCreationRecords } from "./draft-browser-creation-records";
+import { parseBrowserRecoveryRecord, type BrowserRecoveryRecord } from "./browser-recovery-record";
 import { TerminalCreationRecords } from "./terminals/creation-records";
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
@@ -125,7 +126,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 21) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 22) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -485,7 +486,11 @@ export class HostStore {
       if (command && hasRemoteWorktreeIntent(command)) this.requireRemoteStartingVersion();
       if (command && hasEnvironmentIntent(command)) this.requireVersion(5);
       if (command?.type === "workspace.mutate" && command.action.type === "git.submit") this.requireVersion(12);
-      if (command?.type === "session.create" && command.browserContinuation) this.requireVersion(21);
+      if (command?.type === "session.create" && command.browserContinuation) {
+        const policy=this.getDeviceAccessPolicy();
+        if(this.readMetadata("device-access.v1")===undefined)this.writeMetadata("device-access.v1",policy);
+        this.requireVersion(21);
+      }
       if (command?.type === "session.follow-up") {
         const policy = this.getDeviceAccessPolicy();
         if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
@@ -954,16 +959,70 @@ export class HostStore {
     this.db.transaction(() => {
       const command=this.getCommand(input.commandId);
       if(!command||command.command?.type!=="session.create"||!command.command.browserContinuation) throw new Error("Browser continuation lost its command or session owner.");
+      const current=this.readMetadata<unknown>(`browser-continuation.v1:${input.sessionId}`);
+      if(current&&typeof current==="object"&&(current as {version?:unknown}).version===2){
+        const recovery=parseBrowserRecoveryRecord(current);
+        if(recovery.commandId!==input.commandId||recovery.sessionId!==input.sessionId||recovery.ownerId!==input.ownerId)
+          throw new Error("Browser continuation changed its recovery owner.");
+        return;
+      }
       this.requireVersion(21);
       this.writeMetadata(`browser-continuation.v1:${input.sessionId}`, {version:1,hostId:this.host.id,...input,recordedAt:Date.now()});
     }).immediate();
   }
+
+  recordBrowserRecovery(input: BrowserRecoveryRecord): void {
+    const record=parseBrowserRecoveryRecord(input);
+    this.db.transaction(()=>{
+      const command=this.getCommand(record.commandId);
+      if(!command||command.command?.type!=="session.create"||!command.command.browserContinuation||record.hostId!==this.host.id)throw new Error("Browser recovery lost its durable command owner.");
+      const existing=this.readMetadata<unknown>(`browser-continuation.v1:${record.sessionId}`);
+      if(existing&&typeof existing==="object"&&(existing as {version?:unknown}).version===2){
+        const current=parseBrowserRecoveryRecord(existing);
+        const endpoint=(value:BrowserRecoveryRecord["source"])=>({version:value.version,pid:value.pid,instanceId:value.instanceId,socketPath:value.socketPath,token:value.token});
+        const stable=(value:BrowserRecoveryRecord)=>JSON.stringify({hostId:value.hostId,commandId:value.commandId,sessionId:value.sessionId,ownerId:value.ownerId,
+          source:endpoint(value.source),destination:endpoint(value.destination),bindings:value.bindings.map(binding=>({workerPid:binding.workerPid,name:binding.name,
+            targetId:binding.targetId,ownerId:binding.ownerId,operationId:binding.operationId,backend:binding.backend}))});
+        if(stable(current)!==stable(record)||current.status==="ready"&&record.status!=="ready")throw new Error("Browser recovery changed its durable native owner.");
+      }
+      const policy=this.getDeviceAccessPolicy();
+      if(this.readMetadata("device-access.v1")===undefined)this.writeMetadata("device-access.v1",policy);
+      this.requireVersion(22);
+      this.writeMetadata(`browser-continuation.v1:${record.sessionId}`,record);
+    }).immediate();
+  }
+
+  /** Bind a recovered native session and the original create receipt together.
+   * The browser recovery record remains until both retained workers are retired. */
+  finishBrowserRecoveredSession(commandId:string,session:SessionSummary):CommandResult{
+    return this.db.transaction(()=>{
+      const command=this.getCommand(commandId);
+      if(!command||command.state!=="pending"||command.command?.type!=="session.create"||!command.command.browserContinuation)
+        throw new Error("Browser recovery lost its pending creation command.");
+      if(session.id!==this.listBrowserRecoveries().find(record=>record.commandId===commandId)?.sessionId)
+        throw new Error("Recovered browser session differs from its durable owner.");
+      const value=this.upsertSession(session);
+      const result:CommandResult={ok:true,commandId,value};
+      this.finishCommand(commandId,command.requestHash,result);
+      return result;
+    }).immediate();
+  }
+
+  listBrowserRecoveries():readonly BrowserRecoveryRecord[]{
+    return this.db.query<{data:string},[]>("SELECT data FROM metadata WHERE key LIKE 'browser-continuation.v1:%'").all().flatMap(row=>{
+      let value:unknown;try{value=JSON.parse(row.data)}catch{throw new Error("Invalid browser recovery record.")}
+      return value&&typeof value==="object"&&(value as {version?:unknown}).version===2?[parseBrowserRecoveryRecord(value)]:[];
+    });
+  }
+
+  removeBrowserRecovery(sessionId:string):void{this.db.query("DELETE FROM metadata WHERE key = ?").run(`browser-continuation.v1:${sessionId}`);}
 
   private recoverInterruptedBrowserContinuations(): void {
     const rows=this.db.query<{data:string},[]>("SELECT data FROM metadata WHERE key LIKE 'browser-continuation.v1:%'").all();
     for(const row of rows){
       let value:{version?:unknown;hostId?:unknown;sessionId?:unknown};
       try{value=JSON.parse(row.data);}catch{throw new Error("Invalid browser continuation recovery record.");}
+      if(value.version===2)continue;
       if(value.version!==1||value.hostId!==this.host.id||typeof value.sessionId!=="string")throw new Error("Invalid browser continuation recovery owner.");
       const session=this.getSession(value.sessionId); if(!session)continue;
       this.db.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify({...session,status:"error",error:"The host restarted after this conversation inherited a live browser. Browser authority was not reacquired; inspect the original browser and start a new tab before continuing.",updatedAt:Date.now()}),session.id);
@@ -979,9 +1038,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 21) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 22) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

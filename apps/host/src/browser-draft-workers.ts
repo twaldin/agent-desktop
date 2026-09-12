@@ -5,7 +5,7 @@ import type { WorkerBrowserOwner, WorkerRuntime } from "./omp-workers";
 import { browserReservationOutcomeUnknown } from "./omp-browser/reservation";
 import type { HostStore } from "./store";
 
-export type DraftBrowserHandle = Pick<WorkerBrowserOwner, "id" | "cwd" | "workerPid" | "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "getBrowserFrame" | "closeBrowserTab" | "inspectBrowserTab" | "reserveBrowserEvaluation" | "inspectBrowserEvaluationReservation" | "openBrowserEvaluation">;
+export type DraftBrowserHandle = Pick<WorkerBrowserOwner, "id" | "cwd" | "workerPid" | "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "getBrowserFrame" | "closeBrowserTab" | "inspectBrowserTab" | "reserveBrowserEvaluation" | "inspectBrowserEvaluationReservation" | "openBrowserEvaluation" | "enableBrowserRecovery">;
 interface Entry {
   admission: DraftBrowserAdmission;
   setup: Promise<WorkerBrowserOwner>;
@@ -88,6 +88,15 @@ export class DraftBrowserWorkers {
     const handle = await entry.ready;
     this.assertCurrent(entry);
     return handle;
+  }
+
+  /** Transfers a promoted live worker out of draft lifecycle cleanup. */
+  transferToRecovery(request:DraftBrowserAdmissionRequest,workerPid:number):void{
+    const record=this.store.draftBrowserOwners.get(request.ownerId);this.match(request,record);
+    const entry=this.entries.get(request.ownerId);
+    if(!entry||entry.closing||!entry.worker||entry.worker.workerPid!==workerPid)throw new Error("Draft browser recovery owner changed before transfer.");
+    entry.unsubscribe?.();entry.unsubscribe=undefined;
+    if(this.entries.get(request.ownerId)===entry)this.entries.delete(request.ownerId);
   }
 
   /** Explicit owner retirement, not a window/client detach callback. Drain even if persistence fails. */
@@ -219,6 +228,9 @@ export class DraftBrowserWorkers {
         evaluations.set(channel, wrapped); return wrapped;
       },
       inspectBrowserEvaluationReservation: (target: Parameters<WorkerBrowserOwner["inspectBrowserEvaluationReservation"]>[0], operationId: string) => run(() => worker.inspectBrowserEvaluationReservation(target, operationId)),
+      enableBrowserRecovery: worker.enableBrowserRecovery
+        ? (socketPath: string, token: string, instanceId: string) => run(() => worker.enableBrowserRecovery!(socketPath, token, instanceId))
+        : undefined,
     });
   }
 }

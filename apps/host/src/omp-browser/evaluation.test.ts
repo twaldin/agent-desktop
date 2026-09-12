@@ -97,12 +97,12 @@ test("CDP publishes its receiver before a synchronous replay and preserves data/
   let post: (frame: BrowserEvaluationFrame) => void = () => {}, starts = 0; const received: BrowserEvaluationFrame[] = [];
   const h = fixture({ cdp: {
     descriptor: { version: 1, channel: "cdp-71", targetId: target.targetId, activateForScreenshot: true },
-    start(receiver) { starts++; post = receiver; receiver({ type: "worker-cdp", channel: "cdp-71", kind: "data", sequence: 1, data: "synchronous" }); },
+    start(receiver) { starts++; post = receiver; receiver({ type: "worker-cdp", channel: "cdp-71", kind: "data", sequence: 1, data: '{"method":"synchronous"}' }); },
     receive(frame) { received.push(frame); }, async dispose() {},
   } });
   const value = binding("cdp", "frames"); await ready(h, value);
   await h.channels.start(value); // The native callback replays while start is still on stack.
-  expect(h.frames.map(entry => entry.frame)).toEqual([{ type: "worker-cdp", channel: "cdp-71", kind: "data", sequence: 1, data: "synchronous" }]);
+  expect(h.frames.map(entry => entry.frame)).toEqual([{ type: "worker-cdp", channel: "cdp-71", kind: "data", sequence: 1, data: '{"method":"synchronous"}' }]);
   await h.channels.start(value); expect(starts).toBe(1);
   h.channels.receive(value, { type: "worker-cdp", channel: "cdp-71", kind: "ack", sequence: 1 });
   expect(received).toEqual([{ type: "worker-cdp", channel: "cdp-71", kind: "ack", sequence: 1 }]);
@@ -116,8 +116,15 @@ test("CDP publishes its receiver before a synchronous replay and preserves data/
 test("a live CDP callback delivery failure is retained through disposal", async () => {
   const h = fixture({ post: (_binding, frame) => { if (frame.kind === "data") throw new Error("post failed"); } });
   const value = binding("cdp", "post-failure"); await ready(h, value); await h.channels.start(value);
-  expect(() => h.control.cdpPost({ type: "worker-cdp", channel: "cdp-71", kind: "data", sequence: 1, data: "live" })).toThrow("post failed");
+  expect(() => h.control.cdpPost({ type: "worker-cdp", channel: "cdp-71", kind: "data", sequence: 1, data: '{"method":"live"}' })).toThrow("post failed");
   await expect(h.channels.close(value)).rejects.toThrow("post failed");
+});
+
+test("malformed CDP request data fails the exact channel and remains visible during cleanup", async () => {
+  const h = fixture(); const value = binding("cdp", "malformed-data"); await ready(h, value); await h.channels.start(value);
+  expect(() => h.channels.receive(value, { type: "worker-cdp", channel: "cdp-71", kind: "data", sequence: 1, data: "{" })).toThrow();
+  expect(h.control.cdpReceived).toEqual([]);
+  await expect(h.channels.close(value)).rejects.toThrow();
 });
 
 test("retirement drains a late native open, invalid native descriptor cleanup, and channel disposal never kills the reservation", async () => {

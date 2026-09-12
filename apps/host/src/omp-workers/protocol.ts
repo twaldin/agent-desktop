@@ -8,7 +8,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 49;
+export const WORKER_PROTOCOL_VERSION = 50;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -34,6 +34,7 @@ export type WorkerInit = { agentDir?: string } & (
 export type WorkerOperation = BrowserEvaluationOperation
 
   | { operation: "init"; args: WorkerInit }
+  | { operation: "enableReconnect"; args: { socketPath: string; token: string; instanceId: string } }
   | { operation: "generateCommit"; args: CommitGenerationInput }
   | { operation: "listModels"; args: { cwd: string; refresh?: boolean } }
   | { operation: "listModelCapabilities"; args: { cwd: string; refresh?: boolean } }
@@ -117,6 +118,7 @@ export type ChildMessage =
   | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserRequest"; binding: BrowserEvaluationBinding; id: string; method: string; params: Record<string, unknown>; options?: { timeoutMs?: number } }
   | { type: "ready"; version: number }
+  | { type: "recovered"; version: number; pid: number; instanceId: string; snapshot?: SessionSnapshot }
   | { type: "commitProgress"; id: string; message: string }
   | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; evaluation?: { binding: BrowserEvaluationBinding; sequence: number }; snapshot?: SessionSnapshot }
   | { type: "event"; sequence: number; event: WorkerEvent; snapshot?: SessionSnapshot }

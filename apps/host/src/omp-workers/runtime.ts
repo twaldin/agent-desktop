@@ -1,5 +1,5 @@
 import { requestWorkerBrowserObservation, type WorkerBrowserObservation } from "../omp-browser/observation";
-import { openWorkerBrowserEvaluation, type WorkerBrowserEvaluation } from "../omp-browser/evaluation-client";
+import { openWorkerBrowserEvaluation, recoverWorkerBrowserEvaluation, type WorkerBrowserEvaluation } from "../omp-browser/evaluation-client";
 import { copyEvaluationBinding, copyEvaluationFrame, copyEvaluationValue, evaluationKey, type BrowserEvaluationBinding, type BrowserEvaluationFrame } from "../omp-browser/evaluation-wire";
 import { requestWorkerBrowserReservation, type WorkerBrowserReservationStatus } from "../omp-browser/reservation";
 import { requestWorkerBrowserClose, type WorkerBrowserCloseResult } from "../omp-browser/close";
@@ -24,6 +24,7 @@ import { WORKER_PROTOCOL_VERSION, remoteError, type ChildMessage, type ParentMes
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
+import { connectWorkerEndpoint, type WorkerReconnectEndpoint } from "./reconnect-wire";
 
 export interface WorkerFailure {
   type: "worker_failure";
@@ -63,6 +64,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   assertTaskLocationReady(): Promise<void>;
   moveSession(cwd: string): Promise<{ id: string; cwd: string; sessionFile: string }>;
   installBrowserContinuation(input: { sourceOwnerId: string; operationId: string; target: BrowserFrameTarget; kindTag: import("@agent-desktop/shared").NativeBrowserTabMetadata["kindTag"] }, evaluation: WorkerBrowserEvaluation): Promise<void>;
+  enableBrowserRecovery?(socketPath: string, token: string, instanceId: string): Promise<WorkerReconnectEndpoint>;
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
   cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
@@ -80,6 +82,7 @@ export interface WorkerBrowserOwner extends Pick<WorkerSession, "workerPid" | "w
   reserveBrowserEvaluation(target: BrowserFrameTarget, operationId: string): Promise<WorkerBrowserReservationStatus>;
   inspectBrowserEvaluationReservation(target: BrowserFrameTarget, operationId: string): Promise<WorkerBrowserReservationStatus | null>;
   openBrowserEvaluation(target: BrowserFrameTarget, operationId: string, backend: "cdp" | "cmux", timeoutMs: number): Promise<WorkerBrowserEvaluation>;
+  enableBrowserRecovery?(socketPath: string, token: string, instanceId: string): Promise<WorkerReconnectEndpoint>;
 }
 export interface WorkerRuntimeOptions {
   agentDir?: string;
@@ -107,7 +110,14 @@ interface Pending {
 
 /** Host-internal worker lifecycle client; exported for focused transport contract tests. */
 export class WorkerClient {
-  #process: Bun.Subprocess<"ignore", "ignore", "ignore">;
+  #process?: Bun.Subprocess<"ignore", "ignore", "ignore">;
+  #socket?: { send(value: unknown): void; close(): void };
+  #socketOutbox: ParentMessage[] = [];
+  #pid = 0;
+  #reconnectEndpoint?: WorkerReconnectEndpoint;
+  #holdRetained = false;
+  #retainedInbox: ChildMessage[] = [];
+  #closed = Promise.withResolvers<{ exitCode?: number | null; signalCode?: number | null }>();
   #ready = Promise.withResolvers<void>();
   #pending = new Map<string, Pending>();
   #requestId = 0;
@@ -126,9 +136,24 @@ export class WorkerClient {
   snapshot?: SessionSnapshot;
   failure?: WorkerFailure;
 
-  constructor(options: WorkerRuntimeOptions, environment = options.environment, startupDirectory?: string) {
+  constructor(options: WorkerRuntimeOptions, environment = options.environment, startupDirectory?: string,
+    recover?: WorkerReconnectEndpoint) {
     this.#options = options;
     if (options.onWorkerFailure) this.#failures.add(options.onWorkerFailure);
+    if (recover) {
+      this.#pid = recover.pid; this.#reconnectEndpoint = recover;
+      this.#holdRetained = true;
+      this.#readyDeadline = setTimeout(() => this.#fail("OMP worker reconnect timed out", recover.pid), options.startupTimeoutMs ?? 30_000);
+      void connectWorkerEndpoint(recover, value => this.#receive(value), error => {
+        this.#closed.resolve({});
+        if (!this.#closing) this.#fail("OMP worker reconnect transport closed", recover.pid);
+      }).then(socket => {
+        this.#socket = socket;
+        for(const message of this.#socketOutbox.splice(0))socket.send(message);
+      }, error => this.#fail(`OMP worker reconnect failed: ${error instanceof Error ? error.message : String(error)}`, recover.pid));
+      void this.#ready.promise.catch(() => {});
+      return;
+    }
     const executable = options.executablePath ?? process.execPath;
     if (!path.isAbsolute(executable)) throw new Error("OMP worker requires an absolute Bun executable path");
     const bundleRoot = getBundledRuntimeRoot();
@@ -143,7 +168,7 @@ export class WorkerClient {
     const agentDir = selectedAgentDir ? path.resolve(selectedAgentDir) : undefined;
     this.#readyDeadline = setTimeout(() => {
       this.#fail("OMP worker startup timed out");
-      this.#process.kill("SIGKILL");
+      this.#process?.kill("SIGKILL");
     }, options.startupTimeoutMs ?? 30_000);
     try {
       this.#process = Bun.spawn({
@@ -155,6 +180,7 @@ export class WorkerClient {
         serialization: "advanced",
         ipc: (message: unknown) => this.#receive(message),
         onExit: (child, exitCode, signalCode) => {
+          this.#closed.resolve({ exitCode, signalCode });
           clearTimeout(this.#readyDeadline);
           if (!this.#closing) {
             this.#fail(`OMP worker exited (code ${exitCode ?? "unknown"}, signal ${signalCode ?? "none"})`, child.pid, exitCode, signalCode);
@@ -165,9 +191,9 @@ export class WorkerClient {
           // Exit notification normally follows immediately. A process that
           // disconnected without exiting must not keep owning its session.
           const check = setTimeout(() => {
-            if (!this.#closing && !this.failure) {
+            if (!this.#closing && !this.failure && !this.#reconnectEndpoint) {
               this.#fail("OMP worker IPC disconnected");
-              this.#process.kill("SIGKILL");
+              this.#process?.kill("SIGKILL");
             }
           }, 100);
           check.unref();
@@ -180,7 +206,8 @@ export class WorkerClient {
     void this.#ready.promise.catch(() => {});
   }
 
-  get pid(): number { return this.#process.pid; }
+  get pid(): number { return this.#pid || this.#process?.pid || 0; }
+  get reconnectEndpoint(): WorkerReconnectEndpoint|undefined{return this.#reconnectEndpoint;}
 
   #rejectPending(error: unknown): void {
     this.#ready.reject(error);
@@ -222,11 +249,21 @@ export class WorkerClient {
   #receive(value: unknown): void {
     if (!value || typeof value !== "object" || !("type" in value)) return;
     const message = value as ChildMessage;
+    if (this.#holdRetained && (message.type === "retainedBrowserFrame" || message.type === "retainedBrowserRequest" || message.type === "browserEvaluationFrame")) {
+      if (this.#retainedInbox.length >= 256) { this.#fail("OMP worker retained-browser reconnect backlog exceeded its bound", this.pid); return; }
+      this.#retainedInbox.push(message); return;
+    }
     if (message.type === "ready") {
       if (message.version !== WORKER_PROTOCOL_VERSION) {
         this.#fail("OMP worker protocol version mismatch");
-        this.#process.kill("SIGKILL");
+        this.#process?.kill("SIGKILL");
       } else { clearTimeout(this.#readyDeadline); this.#ready.resolve(); }
+      return;
+    }
+    if (message.type === "recovered") {
+      if (message.version !== WORKER_PROTOCOL_VERSION || message.pid !== this.pid
+        || message.instanceId !== this.#reconnectEndpoint?.instanceId) this.#fail("OMP worker reconnect identity changed", this.pid);
+      else { this.snapshot = message.snapshot; clearTimeout(this.#readyDeadline); this.#ready.resolve(); }
       return;
     }
     if (message.type === "fatal") {
@@ -272,7 +309,7 @@ export class WorkerClient {
         this.#pending.get(message.id)?.onProgress?.(message.message);
       } catch {
         this.#fail("The host could not consume commit-generation progress");
-        this.#process.kill("SIGKILL");
+        this.#process?.kill("SIGKILL");
       }
       return;
     }
@@ -288,7 +325,7 @@ export class WorkerClient {
         this.#send({ type: "eventAck", sequence: message.sequence });
       } catch {
         this.#fail("The host could not consume an OMP worker event");
-        this.#process.kill("SIGKILL");
+        this.#process?.kill("SIGKILL");
       }
       return;
     }
@@ -333,7 +370,25 @@ export class WorkerClient {
 
   #send(message: ParentMessage): void {
     if (this.failure) throw new WorkerFailureError(this.failure);
-    this.#process.send(message);
+    if (this.#socket) this.#socket.send(message);
+    else if (this.#process) this.#process.send(message);
+    else if(this.#reconnectEndpoint){if(this.#socketOutbox.length>=128)throw new Error("OMP worker reconnect command backlog exceeded its bound");this.#socketOutbox.push(message);}
+    else throw new Error("OMP worker reconnect transport is not ready.");
+  }
+
+  async enableReconnect(socketPath: string, token: string, instanceId: string): Promise<WorkerReconnectEndpoint> {
+    const endpoint = await this.request<WorkerReconnectEndpoint>({ operation: "enableReconnect", args: { socketPath, token, instanceId } }, 15_000);
+    if (endpoint.version !== 1 || endpoint.pid !== this.pid || !endpoint.instanceId
+      || endpoint.socketPath !== socketPath || endpoint.token !== token || endpoint.instanceId !== instanceId)
+      throw new Error("OMP worker reconnect endpoint changed during admission.");
+    this.#reconnectEndpoint = Object.freeze({ ...endpoint });
+    return this.#reconnectEndpoint;
+  }
+
+  static async recover(options: WorkerRuntimeOptions, endpoint: WorkerReconnectEndpoint): Promise<WorkerClient> {
+    const client = new WorkerClient(options, undefined, undefined, endpoint);
+    await client.#ready.promise;
+    return client;
   }
 
   #promise<T>(key: string, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"], evaluationDisposal = false): Promise<T> {
@@ -424,6 +479,34 @@ export class WorkerClient {
       await evaluation.dispose().catch(() => {});
       throw error;
     }
+  }
+
+  async recoverBrowserEvaluation(binding: BrowserEvaluationBinding): Promise<WorkerBrowserEvaluation> {
+    const state = await this.request<{ descriptor: import("../omp-browser/evaluation-wire").BrowserEvaluationDescriptor; started: boolean; sequence: number; pending: number; unacknowledged: number }>(
+      { operation: "inspectOpenBrowserEvaluation", args: { binding } }, 15_000);
+    if (state.pending || state.unacknowledged) throw Object.assign(new Error("A browser operation was in flight when the host disconnected; inspect before continuing."), { code: "OUTCOME_UNKNOWN" as const });
+    if (state.descriptor.backend === "cdp" && !state.started) throw new Error("Recovered CDP evaluation was not active.");
+    return recoverWorkerBrowserEvaluation(this, state.descriptor, state.sequence);
+  }
+
+  async recoverRetainedBrowserEvaluation(input: { binding: BrowserEvaluationBinding }, evaluation: WorkerBrowserEvaluation): Promise<void> {
+    const binding = copyEvaluationBinding(input.binding), key = evaluationKey(binding);
+    if (this.#retainedEvaluations.has(key) || binding.backend !== evaluation.backend) throw new Error("Recovered retained browser evaluator changed.");
+    const record = { binding, evaluation }; this.#retainedEvaluations.set(key, record);
+    if (evaluation.backend === "cdp") await evaluation.start(frame => {
+      if (this.#retainedEvaluations.get(key) === record) this.#send({ type: "retainedBrowserFrame", binding, frame: copyEvaluationFrame(frame) });
+    });
+  }
+
+  async assertRecoveredRetainedBrowserIdle(binding: BrowserEvaluationBinding): Promise<void> {
+    const state=await this.request<{pending:number;bufferedFrames:number}>({operation:"inspectRetainedBrowserEvaluation",args:{binding}},15_000);
+    if(state.pending||state.bufferedFrames)throw Object.assign(new Error("A retained browser operation was in flight when the host disconnected; its outcome is unknown."),{code:"OUTCOME_UNKNOWN" as const});
+  }
+
+  resumeRecoveredBrowserTraffic(): void {
+    this.#holdRetained = false;
+    const inbox = this.#retainedInbox.splice(0);
+    for (const message of inbox) this.#receive(message);
   }
 
   startPrompt(text: string, options?: Parameters<OmpSession["startPrompt"]>[1]): OmpPromptRun {
@@ -519,27 +602,54 @@ export class WorkerClient {
     });
     this.#closing = true;
     this.#closeCall = (async () => {
-      const deadline = setTimeout(() => { this.#process.kill("SIGKILL"); }, this.#options.shutdownTimeoutMs ?? 15_000);
+      const deadline = setTimeout(() => { if (this.#process) this.#process.kill("SIGKILL"); else { try { process.kill(this.pid, "SIGKILL"); } catch {} } }, this.#options.shutdownTimeoutMs ?? 15_000);
       try {
-        if (!this.failure && this.#process.exitCode === null) {
+        if (!this.failure && (!this.#process || this.#process.exitCode === null)) {
           await this.request({ operation: "dispose" }, this.#options.shutdownTimeoutMs ?? 15_000);
         }
-        const exitCode = await this.#process.exited;
+        const closed = this.#process ? { exitCode: await this.#process.exited, signalCode: this.#process.signalCode } : await this.#closed.promise;
+        const exitCode = closed.exitCode;
         if (this.#requireDisposeAcknowledgement && !this.#disposeAcknowledged) {
-          throw new Error(`OMP worker exited before required disposal acknowledgement (code ${exitCode}, signal ${this.#process.signalCode ?? "none"})`);
+          throw new Error(`OMP worker exited before required disposal acknowledgement (code ${exitCode ?? "unknown"}, signal ${closed.signalCode ?? "none"})`);
         }
-        if (this.#disposeAcknowledged && exitCode !== 0) {
-          throw new Error(`OMP worker exited unsuccessfully after disposal acknowledgement (code ${exitCode}, signal ${this.#process.signalCode ?? "none"})`);
+        if (this.#disposeAcknowledged && exitCode !== undefined && exitCode !== 0) {
+          throw new Error(`OMP worker exited unsuccessfully after disposal acknowledgement (code ${exitCode}, signal ${closed.signalCode ?? "none"})`);
         }
       } finally {
         clearTimeout(deadline);
         // Failed startup/disposal must not orphan a file-owning child.
-        if (this.#process.exitCode === null) { this.#process.kill("SIGKILL"); await this.#process.exited; }
+        if (this.#process?.exitCode === null) { this.#process.kill("SIGKILL"); await this.#process.exited; }
+        this.#socket?.close();
         this.#events.clear(); this.#failures.clear();
         this.#rejectPending(new Error("OMP worker closed"));
       }
     })();
     return this.#closeCall;
+  }
+
+  /** Drops only this host process's transport ownership. The promoted native
+   * worker and browser channels remain alive behind their exact endpoint. */
+  detachForRecovery():void{
+    if(!this.#reconnectEndpoint)throw new Error("OMP worker has no recovery endpoint");
+    if(this.#closing)return;
+    this.#closing=true;
+    const error=Object.assign(new Error("Host detached from the retained browser worker; request outcome is unknown."),{code:"OUTCOME_UNKNOWN" as const});
+    this.#ready.reject(error);
+    for(const pending of this.#pending.values()){clearTimeout(pending.timeout);pending.reject(this.#transportFailure(pending,error));}
+    this.#pending.clear();this.#evaluationRoutes.clear();this.#retainedEvaluations.clear();
+    this.#events.clear();this.#failures.clear();
+    this.#socket?.close();this.#socket=undefined;
+    try{(this.#process as unknown as {disconnect?():void}|undefined)?.disconnect?.();}catch{/* Process exit also closes IPC. */}
+    this.#process=undefined;
+  }
+
+  abandonRecoveryAttempt():void{
+    if(!this.#reconnectEndpoint||this.#process)throw new Error("Only a recovered worker connection can be abandoned.");
+    if(this.#closing)return;
+    this.#closing=true;this.#socket?.close();this.#socket=undefined;
+    const error=Object.assign(new Error("Browser worker recovery did not complete; native ownership was preserved."),{code:"OUTCOME_UNKNOWN" as const});
+    this.#ready.reject(error);for(const pending of this.#pending.values()){clearTimeout(pending.timeout);pending.reject(this.#transportFailure(pending,error));}
+    this.#pending.clear();this.#evaluationRoutes.clear();this.#retainedEvaluations.clear();this.#events.clear();this.#failures.clear();
   }
 }
 
@@ -663,6 +773,41 @@ export class WorkerRuntime {
     })());
   }
 
+  /** Reconnects the exact two native processes retained by a browser handoff.
+   * No session open, browser open, evaluation open, or retained install is replayed. */
+  recoverBrowserContinuation(input: { source: WorkerReconnectEndpoint; destination: WorkerReconnectEndpoint;
+    bindings: readonly BrowserEvaluationBinding[]; sessionId: string; onEvent?: WorkerEventListener }): Promise<{ session: WorkerSession; closeSource(): Promise<void> }> {
+    this.#assertActive();
+    return this.#track((async () => {
+      const attempts=await Promise.allSettled([WorkerClient.recover(this.#options,input.source),WorkerClient.recover(this.#options,input.destination)]);
+      for(const attempt of attempts)if(attempt.status==="fulfilled")this.#clients.add(attempt.value);
+      if(attempts[0]!.status==="rejected"||attempts[1]!.status==="rejected"){
+        for(const attempt of attempts)if(attempt.status==="fulfilled"){attempt.value.abandonRecoveryAttempt();this.#clients.delete(attempt.value);}
+        throw new AggregateError(attempts.flatMap(attempt=>attempt.status==="rejected"?[attempt.reason]:[]),"Browser worker recovery did not acquire both original processes.");
+      }
+      const source=attempts[0].value,destination=attempts[1].value;
+      this.#clients.add(source); this.#clients.add(destination);
+      try {
+        if (!destination.snapshot || destination.snapshot.id !== input.sessionId) throw new Error("Recovered browser session identity changed.");
+        if(destination.snapshot.isStreaming||destination.snapshot.hasPostPromptWork)
+          throw Object.assign(new Error("The retained browser session had native work in flight when its host disconnected. Inspect its original command outcome before reopening."),{code:"OUTCOME_UNKNOWN" as const});
+        if (input.onEvent) destination.subscribe(input.onEvent);
+        for (const binding of input.bindings) {
+          await destination.assertRecoveredRetainedBrowserIdle(binding);
+          const evaluation = await source.recoverBrowserEvaluation(binding);
+          await destination.recoverRetainedBrowserEvaluation({ binding }, evaluation);
+        }
+        source.resumeRecoveredBrowserTraffic(); destination.resumeRecoveredBrowserTraffic();
+        const session = this.#handle(destination);
+        let sourceClose: Promise<void> | undefined;
+        return { session, closeSource: () => sourceClose ??= source.close().finally(() => this.#clients.delete(source)) };
+      } catch (error) {
+        source.abandonRecoveryAttempt();destination.abandonRecoveryAttempt();this.#clients.delete(source);this.#clients.delete(destination);
+        throw error;
+      }
+    })());
+  }
+
   /** Internal host API. Admission and durable draft/request ownership remain with the caller. */
   createBrowserOwner(owner: { id: string; cwd: string }): Promise<WorkerBrowserOwner> {
     this.#assertActive();
@@ -683,6 +828,7 @@ export class WorkerRuntime {
         },
         inspectBrowserEvaluationReservation: (target, operationId) => requestWorkerBrowserReservation(client, input.id, target, operationId, true),
         openBrowserEvaluation: (target, operationId, backend, timeoutMs) => openWorkerBrowserEvaluation(client, input.id, target, operationId, backend, timeoutMs),
+        enableBrowserRecovery: (socketPath, token, instanceId) => client.enableReconnect(socketPath, token, instanceId),
         subscribeWorkerFailure: listener => client.subscribeFailure(listener),
         dispose: () => closing ??= client.close().finally(() => { this.#clients.delete(client); }),
       };
@@ -775,6 +921,7 @@ export class WorkerRuntime {
         const binding: BrowserEvaluationBinding = { ...input.target, ownerId: input.sourceOwnerId, operationId: input.operationId, backend: evaluation.backend };
         await client.installRetainedBrowserEvaluation({ binding, kindTag: input.kindTag, safeDir: state().cwd }, evaluation);
       },
+      enableBrowserRecovery: (socketPath, token, instanceId) => client.enableReconnect(socketPath, token, instanceId),
       abort: () => client.request({ operation: "abort" }),
       setModel: model => client.request({ operation: "setModel", args: { model } }),
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),
@@ -873,13 +1020,15 @@ export class WorkerRuntime {
     return (await this.#discoveryClient()).request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { cwd, query } }, 5_000);
   }
 
-  dispose(): Promise<void> {
+  dispose(options:{preserveReconnect?:boolean}={}): Promise<void> {
     if (this.#disposeCall) return this.#disposeCall;
     this.#disposed = true;
     this.#disposeCall = (async () => {
       // A child belongs to us before its init request completes. Begin bounded
       // shutdown now so a stuck native setup cannot defer cancellation forever.
-      const closing = Promise.allSettled([...this.#clients].map(client => client.close()));
+      const clients=[...this.#clients];
+      if(options.preserveReconnect)for(const client of clients)if(client.reconnectEndpoint)client.detachForRecovery();
+      const closing = Promise.allSettled(clients.filter(client=>!options.preserveReconnect||!client.reconnectEndpoint).map(client => client.close()));
       await Promise.allSettled([...this.#setups]);
       const results = await closing;
       this.#sessions.clear(); this.#clients.clear(); this.#openFiles.clear();

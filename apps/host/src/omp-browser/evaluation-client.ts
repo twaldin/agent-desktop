@@ -227,3 +227,37 @@ export function openWorkerBrowserEvaluation(client: BrowserEvaluationClient, own
     return record.ready.promise;
   } catch (error) { return Promise.reject(error); }
 }
+
+/** Rebinds the host relay to an already-open native evaluator. It never issues
+ * open/start. A native inspection must prove no unacknowledged cmux delivery
+ * before the caller constructs this facade. */
+export function recoverWorkerBrowserEvaluation(client: BrowserEvaluationClient, descriptor: BrowserEvaluationDescriptor,
+  lastSequence = 0): WorkerBrowserEvaluation {
+  const binding = copyEvaluationBinding(descriptor.binding);
+  if (binding.workerPid !== client.pid || !Number.isSafeInteger(lastSequence) || lastSequence < 0)
+    throw new Error("Invalid recovered browser evaluation identity.");
+  let closed = false, post: ((frame: BrowserEvaluationFrame) => void) | undefined, unsubscribe: (() => void) | undefined;
+  if (descriptor.backend === "cdp") return Object.freeze({
+    backend: "cdp" as const, descriptor: Object.freeze({ ...descriptor.descriptor }),
+    start: async (receiver: (frame: BrowserEvaluationFrame) => void) => {
+      if (closed) throw new Error("Recovered browser evaluation is closed.");
+      if (post && post !== receiver) throw new Error("Recovered browser evaluation receiver changed.");
+      post = receiver;
+      unsubscribe ??= client.subscribeBrowserEvaluation(binding, frame => post?.(copyEvaluationFrame(frame, descriptor.descriptor.channel)), error => { closed = true; unsubscribe?.(); throw error; });
+    },
+    receive: (value: BrowserEvaluationFrame) => {
+      if (closed || !unsubscribe) throw new Error("Recovered browser evaluation is not active.");
+      client.postBrowserEvaluationFrame(binding, copyEvaluationFrame(value, descriptor.descriptor.channel));
+    },
+    dispose: async () => { if (closed) return; closed = true; unsubscribe?.(); await client.request({ operation: "disposeBrowserEvaluation", args: { binding } }); },
+  });
+  let sequence = lastSequence;
+  return Object.freeze({
+    backend: "cmux" as const, state: copyEvaluationValue(descriptor.state) as BrowserCmuxState,
+    request: async (method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }) => {
+      if (closed || sequence >= Number.MAX_SAFE_INTEGER) throw new Error("Recovered browser evaluation is unavailable.");
+      return copyEvaluationValue(await client.request({ operation: "requestBrowserEvaluation", args: { binding, sequence: ++sequence, method, params: copyEvaluationValue(params), options } })) as Record<string, unknown>;
+    },
+    dispose: async () => { if (closed) return; closed = true; await client.request({ operation: "disposeBrowserEvaluation", args: { binding } }); },
+  });
+}
