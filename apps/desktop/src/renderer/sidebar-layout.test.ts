@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
-import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
+import type { HostEvent, HostState, Project, SessionSummary } from "@agent-desktop/shared";
 import { sidebarChatActions, sidebarItemKey, sidebarLayout } from "./sidebar-layout";
+
+import { parseDetachedQuestionsSnapshot } from "../../../../packages/shared/src/detached-questions";
+import { NotificationEvents } from "../../../host/src/notification-events";
+import { sessionUnreadKey } from "./session-read-state";
 
 const project = (hostId: string, id: string) => ({ hostId, id, name: id, path: `/${id}` }) as Project;
 const session = (hostId: string, id: string, projectId?: string, archived = false, updatedAt = 1) => ({ hostId, id, projectId,
@@ -114,4 +118,31 @@ test("pinned Priority rank is waiting, unread, active, idle; accepted answer del
   const hostState = { ...groups[0]!.hostState, sessions:rows, notifications:[{id:"notice",sessionId:"waiting",kind:"question" as const,state:"open" as const,createdAt:1,title:"Question",body:"Waiting"}] };
   const layout=sidebarLayout({...data,get:()=>({grouping:"list",projectSort:"priority",chatSort:"priority"})},[{hostState}],"",false,new Set(),new Set([JSON.stringify(["home","unread"])]));
   expect(layout.chatSlots.map(row=>row.sessionId)).toEqual(["waiting","unread","active","error","delivery"]);
+});
+
+test("accepted question delivery does not hide a different open permission from Priority", () => {
+  const { data } = fixture();
+  const pending = { ...session("home", "pending", undefined, false, 1), questionDeliveryPending: true };
+  const unread = session("home", "unread", undefined, false, 20);
+  const events: HostEvent[] = [];
+  const notifications = new NotificationEvents({
+    eventsAfter: (after, limit) => events.filter(event => event.sequence > after).slice(0, limit),
+    emit: event => events.push({ ...event, sequence: events.length + 1 }),
+    session: id => id === pending.id ? pending : undefined,
+  });
+  const question = { questionId: "question-a", questionEntryId: "entry-a", originRunId: "run-a", openedAt: 1,
+    questions: [{ id: "answer", multi: false, question: "Continue?", options: [{ label: "Yes" }, { label: "No" }] }], status: "open" as const, delivery: { status: "waiting" as const } };
+  notifications.reconcileDetached(pending.id, [question]);
+  notifications.interactionRequested({ id: "permission-b", sessionId: pending.id, method: "confirm", notificationKind: "permission", title: "Permission", actions: [], createdAt: 2 });
+  const accepted = parseDetachedQuestionsSnapshot({ protocolVersion: 1, hostId: "home", sessionId: pending.id, questions: [{ ...question, status: "accepted", acceptance: { commandId: "answer-a", acceptanceEntryId: "accepted-a", acceptedAt: 3, answers: [{ questionId: "answer", selectedOptions: ["Yes"] }] } }] });
+  notifications.reconcileDetached(pending.id, accepted.questions);
+  expect(notifications.current()).toMatchObject([{ id: "interaction:pending:permission-b", kind: "permission", state: "open" }]);
+  expect(events).toContainEqual(expect.objectContaining({ type: "notification", notification: expect.objectContaining({ id: "question:pending:entry-a", state: "resolved" }) }));
+  const ranked = () => sidebarLayout({ ...data, get: () => ({ grouping: "list", projectSort: "priority", chatSort: "priority" }) },
+    [{ hostState: { host: { id: "home" } as HostState["host"], projects: [], sessions: [pending, unread], notifications: notifications.current() } }], "", false, new Set(), new Set([sessionUnreadKey("home", "unread")])).loose.map(row => row.value.id);
+  expect(ranked()).toEqual(["pending", "unread"]);
+  notifications.interactionResolved(pending.id, "permission-b");
+  expect(notifications.current()).toEqual([]);
+  expect(pending.questionDeliveryPending).toBe(true);
+  expect(ranked()).toEqual(["unread", "pending"]);
 });

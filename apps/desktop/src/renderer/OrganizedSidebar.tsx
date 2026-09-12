@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { HostState, Project } from "../../../../packages/shared/src/protocol";
+import type { HostState, Project, SessionSummary } from "../../../../packages/shared/src/protocol";
 import type { PreferenceChange, ProjectAppearance, ProjectAppearanceColor, SidebarOrganization } from "../../../../packages/shared/src/preferences";
 import type { HostOption } from "./host-catalog";
 import { PreferencesState } from "./preferences-state";
 import { Icon } from "./Icons";
+import { sessionUnreadKey } from "./session-read-state";
+import { SidebarArchiveDialog, type SidebarArchiveSelection } from "./SidebarArchiveDialog";
 
 import { sidebarItemKey, type SidebarItem as Item, type SidebarLayout } from "./sidebar-layout";
 import { SidebarPinIcon } from "./sidebar-icons";
@@ -20,7 +22,7 @@ interface Props {
   expandedProjects: Set<string>; onToggleProject(key: string): void;
   onNavigate(id: string | null, hostId?: string): void; onNew(projectId?: string, hostId?: string): void;
   onArchive?(sessionId: string, hostId: string, archived: boolean): Promise<boolean>;
-  onMarkRead?(sessionId: string, hostId: string, unread: boolean): Promise<boolean>;
+  onMarkRead?(target: Pick<SessionSummary, "id" | "hostId" | "activitySequence">, unread: boolean): Promise<boolean>;
   onAddProject(): void; addingProject: boolean; connected: boolean; onToggleArchived(): void;
   localHostId: string | null;
   onRenameProject(project: Project, name: string): Promise<void>;
@@ -86,36 +88,11 @@ export function OrganizedSidebar(props: Props) {
     projectDialogOpener.current = null;
     if (opener?.isConnected) requestAnimationFrame(() => opener.focus({ preventScroll: true }));
   }, [projectDialog?.token]);
-  type ArchiveBatch = { name: string; remaining: { hostId: string; sessionId: string }[]; pending: boolean; error?: string };
-  const [archiveBatch, setArchiveBatch] = useState<ArchiveBatch>();
-  const archiveDialog = useRef<HTMLDialogElement>(null);
-  const latest = useRef(props); latest.current = props;
-  const archiveOpener = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (archiveBatch) archiveDialog.current?.showModal();
-    else { archiveDialog.current?.close(); if (archiveOpener.current?.isConnected) archiveOpener.current.focus(); archiveOpener.current = null; }
-  }, [Boolean(archiveBatch)]);
+  const [archiveSelection, setArchiveSelection] = useState<SidebarArchiveSelection>();
   function beginArchive(name: string, items: Item[]) {
     const sessions = items.flatMap(item => item.kind === "session" ? [item] : projectChildren(item.value)).filter(item => item.kind === "session" && !item.value.archived);
-    const remaining = [...new Map(sessions.map(item => [sidebarItemKey(item), { hostId: item.value.hostId, sessionId: item.value.id }])).values()];
-    archiveOpener.current = menuTrigger.current;
-    setMenu(undefined); setArchiveBatch({ name, remaining, pending: false });
-  }
-  async function archiveAll() {
-    if (!archiveBatch || archiveBatch.pending || !props.onArchive) return;
-    const captured = archiveBatch;
-    setArchiveBatch({ ...captured, pending: true, error: undefined });
-    const failed: ArchiveBatch["remaining"] = [];
-    for (const target of captured.remaining) {
-      const current = latest.current;
-      const host = current.groups.find(group => group.hostState.host.id === target.hostId);
-      const session = host?.hostState.sessions.find(session => session.id === target.sessionId);
-      if (!session || session.archived) continue;
-      if (host?.host.availability !== "available") { failed.push(target); continue; }
-      try { if (await current.onArchive?.(target.sessionId, target.hostId, true) !== true) failed.push(target); }
-      catch { failed.push(target); }
-    }
-    setArchiveBatch(failed.length ? { ...captured, remaining: failed, pending: false, error: `${failed.length} chat${failed.length === 1 ? "" : "s"} could not be archived. Reconnect or resolve the host error, then retry.` } : undefined);
+    const targets = [...new Map(sessions.map(item => [sidebarItemKey(item), { hostId: item.value.hostId, sessionId: item.value.id }])).values()];
+    setMenu(undefined); setArchiveSelection({ name, targets, opener: menuTrigger.current });
   }
   async function changeOrganization(next: SidebarOrganization, seed?: "project" | "chat") {
     if (!writable) return;
@@ -224,7 +201,7 @@ export function OrganizedSidebar(props: Props) {
     const capturedProject = menuProject?.key === key ? menuProject.project : project;
     const canReveal = capturedProject !== undefined && capturedProject.hostId === props.localHostId && groups.find(group => group.hostState.host.id === capturedProject.hostId)?.host.availability === "available";
     const busy = Boolean(projectAction && !projectAction.error) || Boolean(projectDialog?.pending);
-    return <div className="menu-anchor sidebar-item-menu">{showTrigger && <button className="icon-button small" aria-label={item.kind === "project" ? `Project actions for ${item.value.name}` : `Chat actions for ${item.value.title}`} aria-expanded={menu === key} onClick={event => toggleMenu(key, event.currentTarget, project)}><Icon name="more"/></button>}{menu === key && createPortal(<><button className="menu-dismiss" aria-label="Close organization menu" tabIndex={-1} onClick={() => setMenu(undefined)}/><div ref={menuRef} className="action-menu sidebar-organization-menu" style={menuPosition} onKeyDown={menuKeys}><button disabled={!writable || busy} onClick={() => void move(item, sectionOf(item) === "pinned" ? null : "pinned")}>{sectionOf(item) === "pinned" ? "Unpin" : "Pin"}</button>{item.kind === "session" && props.onMarkRead && <button onClick={() => { setMenu(undefined); void props.onMarkRead?.(item.value.id, item.value.hostId, !props.layout.unread.has(JSON.stringify([item.value.hostId, item.value.id]))); }}>{props.layout.unread.has(JSON.stringify([item.value.hostId, item.value.id])) ? "Mark as read" : "Mark as unread"}</button>}{capturedProject && <button disabled={busy} onClick={() => openProjectDialog("edit", capturedProject)}>Edit project</button>}<label>{capturedProject ? "Section" : "Move to"}<select aria-label={capturedProject ? "Project section" : "Move item to section"} value={sectionOf(item) ?? ""} disabled={!writable || busy} onChange={event => void move(item, event.target.value || null)}><option value="">Default location</option><option value="pinned">Pinned</option>{sections.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}</select></label>{capturedProject && canReveal && <button disabled={busy} onClick={() => void revealProject(capturedProject)}>Reveal in Finder</button>}<button disabled={!writable || busy || index <= 0} onClick={() => void reorder(item, list, -1)}>Move up</button><button disabled={!writable || busy || index < 0 || index === list.length - 1} onClick={() => void reorder(item, list, 1)}>Move down</button>{capturedProject && <button className="danger-menu-action" disabled={busy} onClick={() => openProjectDialog("remove", capturedProject)}>Remove project</button>}</div></>, document.body)}</div>;
+    return <div className="menu-anchor sidebar-item-menu">{showTrigger && <button className="icon-button small" aria-label={item.kind === "project" ? `Project actions for ${item.value.name}` : `Chat actions for ${item.value.title}`} aria-expanded={menu === key} onClick={event => toggleMenu(key, event.currentTarget, project)}><Icon name="more"/></button>}{menu === key && createPortal(<><button className="menu-dismiss" aria-label="Close organization menu" tabIndex={-1} onClick={() => setMenu(undefined)}/><div ref={menuRef} className="action-menu sidebar-organization-menu" style={menuPosition} onKeyDown={menuKeys}><button disabled={!writable || busy} onClick={() => void move(item, sectionOf(item) === "pinned" ? null : "pinned")}>{sectionOf(item) === "pinned" ? "Unpin" : "Pin"}</button>{item.kind === "session" && props.onMarkRead && <button onClick={() => { setMenu(undefined); void props.onMarkRead?.(item.value, !props.layout.unread.has(sessionUnreadKey(item.value.hostId, item.value.id))); }}>{props.layout.unread.has(sessionUnreadKey(item.value.hostId, item.value.id)) ? "Mark as read" : "Mark as unread"}</button>}{capturedProject && <button disabled={busy} onClick={() => openProjectDialog("edit", capturedProject)}>Edit project</button>}<label>{capturedProject ? "Section" : "Move to"}<select aria-label={capturedProject ? "Project section" : "Move item to section"} value={sectionOf(item) ?? ""} disabled={!writable || busy} onChange={event => void move(item, event.target.value || null)}><option value="">Default location</option><option value="pinned">Pinned</option>{sections.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}</select></label>{capturedProject && canReveal && <button disabled={busy} onClick={() => void revealProject(capturedProject)}>Reveal in Finder</button>}<button disabled={!writable || busy || index <= 0} onClick={() => void reorder(item, list, -1)}>Move up</button><button disabled={!writable || busy || index < 0 || index === list.length - 1} onClick={() => void reorder(item, list, 1)}>Move down</button>{capturedProject && <button className="danger-menu-action" disabled={busy} onClick={() => openProjectDialog("remove", capturedProject)}>Remove project</button>}</div></>, document.body)}</div>;
   }
   function menuKeys(event: React.KeyboardEvent<HTMLDivElement>) {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || event.target instanceof HTMLSelectElement) return;
@@ -240,10 +217,10 @@ export function OrganizedSidebar(props: Props) {
     const project = projects.find(project => project.id === session.projectId && project.hostId === session.hostId);
     const pinLabel = isPinned ? "Unpin chat" : "Pin chat";
     const archiveLabel = session.archived ? "Unarchive chat" : "Archive chat";
-    return <div className={`organized-session ${selected ? "selected" : ""}${props.layout.unread.has(JSON.stringify([session.hostId, session.id])) ? " unread" : ""}`} key={key} onMouseEnter={event => beginHover(item, event.currentTarget)} onMouseLeave={clearHover} onFocus={event => { if (event.target.matches(":focus-visible")) clearHover(); }} onContextMenu={event => { event.preventDefault(); const button = event.currentTarget.querySelector<HTMLButtonElement>(".session-row"); if (button) toggleMenu(key, button); }}>
+    return <div className={`organized-session ${selected ? "selected" : ""}${props.layout.unread.has(sessionUnreadKey(session.hostId, session.id)) ? " unread" : ""}`} key={key} onMouseEnter={event => beginHover(item, event.currentTarget)} onMouseLeave={clearHover} onFocus={event => { if (event.target.matches(":focus-visible")) clearHover(); }} onContextMenu={event => { event.preventDefault(); const button = event.currentTarget.querySelector<HTMLButtonElement>(".session-row"); if (button) toggleMenu(key, button); }}>
       <button data-session-id={session.id} data-host-id={session.hostId} className={`session-row ${selected ? "selected" : ""}`} onClick={() => { clearHover(); props.onNavigate(session.id, session.hostId); }} aria-current={selected ? "page" : undefined}>
         <span className="sidebar-session-title">{session.title || "Untitled conversation"}</span>
-        {props.layout.unread.has(JSON.stringify([session.hostId, session.id])) ? <span className="sidebar-session-status unread" aria-label="Unread"/> : session.status !== "idle" && <span className={`sidebar-session-status ${session.status}`} aria-label={session.status}/>}
+        {props.layout.unread.has(sessionUnreadKey(session.hostId, session.id)) ? <span className="sidebar-session-status unread" aria-label="Unread"/> : session.status !== "idle" && <span className={`sidebar-session-status ${session.status}`} aria-label={session.status}/>}
       </button>
       <div className="sidebar-chat-actions">
         <button className="icon-button small" disabled={!writable} aria-label={pinLabel} title={pinLabel} onClick={() => { clearHover(); void move(item, isPinned ? null : "pinned"); }}><SidebarPinIcon pinned={isPinned}/></button>
@@ -276,7 +253,7 @@ export function OrganizedSidebar(props: Props) {
     </section>; })}</> }
     <div className="conversation-heading">{sectionHeading("recents", showArchived ? "Archived chats" : "Recents", <div className="sidebar-section-actions">{organizationMenu("chat")}<button className={`icon-button small ${showArchived ? "active" : ""}`} onClick={props.onToggleArchived} aria-pressed={showArchived} title={showArchived ? "Show active chats" : "Show archived chats"} aria-label={showArchived ? "Show active chats" : "Show archived chats"}><Icon name="archive"/></button></div>)}</div>
     {!isCollapsed("recents") && <>{loose.map(item => render(item, loose))}{!loose.length && <p className="sidebar-empty">{query ? "No chats found." : showArchived ? "No archived chats." : "No chats"}</p>}</>}
-    <dialog ref={archiveDialog} className="app-dialog" onCancel={event => { if (archiveBatch?.pending) event.preventDefault(); else setArchiveBatch(undefined); }}><div className="dialog-header"><h2>Archive all chats?</h2></div><p>Archive {archiveBatch?.remaining.length} chats in {archiveBatch?.name}? You can reopen them from Archived chats.</p>{archiveBatch?.error && <p role="alert">{archiveBatch.error}</p>}<div className="dialog-footer"><button className="secondary-button" disabled={archiveBatch?.pending} onClick={() => setArchiveBatch(undefined)}>Cancel</button><button className="primary-button" disabled={archiveBatch?.pending || !archiveBatch?.remaining.length} onClick={() => void archiveAll()}>{archiveBatch?.pending ? "Archiving…" : archiveBatch?.error ? "Retry failed chats" : "Archive chats"}</button></div></dialog>
+    {archiveSelection && <SidebarArchiveDialog selection={archiveSelection} groups={groups} onArchive={props.onArchive} onDismiss={() => setArchiveSelection(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(undefined)}><div className="dialog-header"><h2>{dialog?.id ? "Edit section" : "New section"}</h2><button className="icon-button" aria-label="Close dialog" onClick={() => setDialog(undefined)}><Icon name="close"/></button></div>{!dialog?.id && <p className="sidebar-section-description">Group chats and projects however you like</p>}<form onSubmit={event => { event.preventDefault(); if (!dialog?.name.trim() || !writable) return; const id = dialog.id ?? crypto.randomUUID(); const name = dialog.name.trim(); void data.put({ key: `sidebar.section.${id}`, value: { name, position: sections.find(section => section.id === id)?.position ?? sections.length * 1024 } }).then(() => { if (!data.error && !data.pending.length) setDialog(current => current && current.name.trim() !== name ? { ...current, id } : undefined); }); }}><label className="field-label" htmlFor="sidebar-section-name">Section name</label><input id="sidebar-section-name" className="text-field" value={dialog?.name ?? ""} maxLength={120} onChange={event => setDialog(value => value && { ...value, name: event.target.value })}/>{data.error && <p className="inline-error">{data.error}</p>}<div className="dialog-footer"><button type="button" className="secondary-button" onClick={() => setDialog(undefined)}>Cancel</button><button className="primary-button" disabled={!dialog?.name.trim() || !writable}>{dialog?.id ? "Save section" : "Create section"}</button></div></form></dialog>
     <dialog ref={projectDialogRef} className="app-dialog sidebar-project-dialog" onCancel={event => { event.preventDefault(); if (!projectDialog?.pending) setProjectDialog(undefined); }} onClick={event => { if (event.target === event.currentTarget && !projectDialog?.pending) setProjectDialog(undefined); }}>
       <div className="dialog-header"><h2>{projectDialog?.kind === "edit" ? "Edit project" : "Remove project"}</h2><button className="icon-button" aria-label="Close project dialog" disabled={projectDialog?.pending} onClick={() => setProjectDialog(undefined)}><Icon name="close"/></button></div>

@@ -2,6 +2,8 @@ import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
 import { LEGACY_SIDEBAR_ORGANIZATION, type SidebarOrganization, type SidebarSort } from "../../../../packages/shared/src/preferences";
 import { positionOrder, type PreferencesState } from "./preferences-state";
 
+import { sessionUnreadKey } from "./session-read-state";
+
 export type SidebarItem = { kind: "project"; value: Project } | { kind: "session"; value: SessionSummary };
 export const sidebarItemKey = (item: SidebarItem) => JSON.stringify([item.kind, item.value.hostId, item.value.id]);
 
@@ -30,12 +32,12 @@ export function sidebarLayout(data: Organization, groups: readonly { hostState: 
   const pinned = grouped("pinned");
   const custom = sections.map(section => ({ section, items: grouped(section.id) }));
   const waiting = new Set(groups.flatMap(group => (group.hostState.notifications ?? []).filter(notice => notice.state === "open" && (notice.kind === "permission" || notice.kind === "question"))
-    .map(notice => JSON.stringify([group.hostState.host.id, notice.sessionId]))));
+    .map(notice => sessionUnreadKey(group.hostState.host.id, notice.sessionId))));
   const metrics = new Map<string, { updated: number; priority: number }>();
   for (const item of allItems) {
     const members = item.kind === "session" ? [item.value] : sessions.filter(session => session.hostId === item.value.hostId && session.projectId === item.value.id);
     metrics.set(sidebarItemKey(item), { updated: Math.max(0, ...members.map(session => session.updatedAt)),
-      priority: Math.min(3, ...members.map(session => waiting.has(JSON.stringify([session.hostId, session.id])) ? 0 : unread.has(JSON.stringify([session.hostId, session.id])) ? 1 : session.status === "running" ? 2 : 3)) });
+      priority: Math.min(3, ...members.map(session => waiting.has(sessionUnreadKey(session.hostId, session.id)) ? 0 : unread.has(sessionUnreadKey(session.hostId, session.id)) ? 1 : session.status === "running" ? 2 : 3)) });
   }
   const sorted = (items: SidebarItem[], mode: SidebarSort) => mode === "manual" ? ordered(items) : [...items].sort((a, b) => {
     const left = metrics.get(sidebarItemKey(a))!, right = metrics.get(sidebarItemKey(b))!;
