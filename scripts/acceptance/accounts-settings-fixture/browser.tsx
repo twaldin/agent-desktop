@@ -1,9 +1,36 @@
-import React from 'react';
-import { createRoot } from 'react-dom/client';
-import { AccountsSettings } from '../../../apps/desktop/src/renderer/AccountsSettings';
-import '../../../apps/desktop/src/renderer/styles.css';
-const unavailable={id:'native-unavailable',name:'Unavailable native provider',source:'builtin',available:false,disabledInSettings:false,loginSupported:true,visibleInNativeLoginList:false,storesCredentialsAs:'oauth',pasteCodeFlow:false,apiKeyStorageSupported:true,transportMayAuthenticateWithoutKey:false,configured:false,storedCredentialCount:0,storedApiKeyConfigured:false,disabledCredentialCount:0,modelCount:0};
-const available={...unavailable,id:'fixture-native',name:'Fixture native provider',available:true,visibleInNativeLoginList:true,configured:true};
-const fixture=(window as any).fixture;
-const bridge={getProviders:async()=>({credentialLocation:{mode:'local'},providers:[available,unavailable],sessionSelectionConnected:true,extensionProviderCoverage:'registered-in-this-process-only'}),getLogins:async()=>[],getAccounts:async(id:string)=>id==='native-unavailable'?[{credentialId:71,providerId:id,type:'oauth',disabled:false,email:'fixture@example.invalid'}]:[],getSessionAccounts:async()=>({sessionId:'session',providerId:'fixture-native',accounts:[]}),accountAction:fixture.action,subscribe:()=>()=>{},openExternal:async()=>{}};
-createRoot(document.getElementById('root')!).render(<AccountsSettings bridge={bridge as any} hostId="fixture-host" hostName="Disposable fixture host" localHostId="fixture-host" connected session={{id:'session',title:'Fixture session',model:{provider:'fixture-native'}} as any} onClose={()=>{}} onChanged={()=>{}}/>);
+import React, { useState } from "react";
+import { createRoot } from "react-dom/client";
+import { AccountsSettings } from "../../../apps/desktop/src/renderer/AccountsSettings";
+import type { DesktopBridge, DesktopEvent, SessionSummary } from "../../../packages/shared/src/protocol";
+import "../../../apps/desktop/src/renderer/styles.css";
+
+// Only disposable provider responses cross this fixture IPC boundary. The rendered
+// page, state controller, input events and action handlers are production code.
+const api = (window as unknown as { accountsFixture: {
+  invoke(method: string, args: unknown[]): Promise<unknown>;
+  subscribe(listener: (event: DesktopEvent) => void): () => void;
+} }).accountsFixture;
+const bridge = {
+  getProviders: (host: string) => api.invoke("getProviders", [host]),
+  getLogins: (host: string) => api.invoke("getLogins", [host]),
+  getAccounts: (provider: string, host: string) => api.invoke("getAccounts", [provider, host]),
+  getSessionAccounts: (session: string, host: string) => api.invoke("getSessionAccounts", [session, host]),
+  accountAction: (action: unknown, host: string) => api.invoke("accountAction", [action, host]),
+  openExternal: (url: string) => api.invoke("openExternal", [url]),
+  subscribe: api.subscribe,
+} as unknown as DesktopBridge;
+function App() {
+  const [connected, setConnected] = useState(true);
+  const [host, setHost] = useState("fixture-host");
+  const [open, setOpen] = useState(true);
+  const [changes, setChanges] = useState(0);
+  return <><nav aria-label="Fixture controls">
+    <button id="connection" onClick={() => setConnected(value => !value)}>{connected ? "Disconnect fixture" : "Reconnect fixture"}</button>
+    <button id="owner" onClick={() => setHost(value => value === "fixture-host" ? "other-host" : "fixture-host")}>Change fixture host</button>
+    <button id="reopen" onClick={() => setOpen(true)}>Open Accounts</button>
+    <output id="changes">{changes}</output>
+  </nav>{open && <AccountsSettings bridge={bridge} hostId={host} hostName={host} localHostId={host} connected={connected}
+    session={{ id: "session", title: "Fixture session", model: { provider: "fixture-native" } } as SessionSummary}
+    onClose={() => setOpen(false)} onChanged={() => setChanges(value => value + 1)}/>}</>;
+}
+createRoot(document.getElementById("root")!).render(<App/>);

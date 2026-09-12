@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { AccountAction, AccountActionResult, AccountInfo, DesktopBridge, LoginPrompt, LoginSnapshot, ProviderCatalog, ProviderInfo, SessionAccountList, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { AccountsState } from "./accounts-state";
 import { Icon } from "./Icons";
@@ -12,7 +12,7 @@ export function AccountsSettings(props: Props) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "configured" | "signin">("all");
   const [providerId, setProviderId] = useState<string | null>(null);
-  useEffect(() => { const unsubscribe = data.subscribe(redraw); data.start(); return () => { unsubscribe(); data.stop(); }; }, [data]);
+  useLayoutEffect(() => { const unsubscribe = data.subscribe(redraw); data.setConnected(connected); data.start(); return () => { unsubscribe(); data.stop(); }; }, [data, connected]);
   useEffect(() => { if (connected) void data.refresh(); }, [data, connected]);
   const runningLogin = data.logins.some(login => login.status === "running" || login.status === "cancelling");
   useEffect(() => {
@@ -42,7 +42,12 @@ export function ProviderDetails({ provider, catalog, data, ...props }: Props & {
   const [keyVisible, setKeyVisible] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
-  const pending = useRef(false);
+  const pending = useRef<object | null>(null);
+  const owner = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    owner.current = props.connected ? {} : null; pending.current = null; setBusy(false);
+    return () => { owner.current = null; };
+  }, [props.bridge, props.hostId, props.session?.id, props.connected, data]);
   const [error, setError] = useState<string | null>(null);
   const [activeLoginId, setActiveLoginId] = useState<string | null>(null);
   const [selection, setSelection] = useState<SessionAccountList | null>(null);
@@ -56,29 +61,32 @@ export function ProviderDetails({ provider, catalog, data, ...props }: Props & {
   const canPin = catalog.sessionSelectionConnected && props.session?.model?.provider === provider.id;
   const writable = props.connected && !busy;
   useEffect(() => {
-    let current = true; const version = selectionVersion.current;
+    let current = true; const version = selectionVersion.current; const admittedOwner = owner.current;
     if (!canPin || !props.connected || !props.session) return;
     void (async () => {
       try {
         if (!props.bridge.getSessionAccounts) throw new Error("Session account details require the current desktop bridge.");
         const next = await props.bridge.getSessionAccounts(props.session!.id, props.hostId);
-        if (current && selectionVersion.current === version) { setSelection(next); setSelectionError(null); }
-      } catch (cause) { if (current) setSelectionError(errorMessage(cause)); }
+        if (current && owner.current === admittedOwner && selectionVersion.current === version) { setSelection(next); setSelectionError(null); }
+      } catch (cause) { if (current && owner.current === admittedOwner) setSelectionError(errorMessage(cause)); }
     })();
     return () => { current = false; };
   }, [props.bridge, props.hostId, props.session?.id, props.connected, canPin, data.revision]);
   async function act(action: AccountAction): Promise<AccountActionResult | undefined> {
-    if (!props.connected || pending.current) return;
-    pending.current = true; setBusy(true); setError(null);
+    const admittedOwner = owner.current;
+    if (!admittedOwner || pending.current) return;
+    pending.current = admittedOwner; setBusy(true); setError(null);
     try {
       if (!props.bridge.accountAction) throw new Error("Account actions require the current desktop bridge. Restart the app after updating.");
       const result = await props.bridge.accountAction(action, props.hostId);
+      if (owner.current !== admittedOwner) return;
       if (result.login) data.acceptLogin(result.login);
       if (result.selection) { selectionVersion.current++; setSelection(result.selection); setSelectionError(null); }
       await Promise.allSettled([data.refresh(), data.loadAccounts(provider.id)]);
+      if (owner.current !== admittedOwner) return;
       props.onChanged(); return result;
-    } catch (cause) { setError(errorMessage(cause)); return undefined; }
-    finally { pending.current = false; setBusy(false); }
+    } catch (cause) { if (owner.current === admittedOwner) setError(errorMessage(cause)); return undefined; }
+    finally { if (pending.current === admittedOwner) { pending.current = null; setBusy(false); } }
   }
   async function startLogin() {
     const result = await act({ type: "login.start", providerId: provider.id });

@@ -62,3 +62,33 @@ describe("live account metadata", () => {
     expect(data.catalogError).toBe("Disconnected");
   });
 });
+
+test("disconnect and reconnect retire in-flight metadata without erasing fresh results", async () => {
+  const oldCatalog = Promise.withResolvers<ProviderCatalog>();
+  const oldLogins = Promise.withResolvers<LoginSnapshot[]>();
+  const oldAccounts = Promise.withResolvers<import("../../../../packages/shared/src/protocol").AccountInfo[]>();
+  let reads = 0, loginReads = 0, accountReads = 0;
+  const freshCatalog = { ...catalog, providers: [provider("fresh")] };
+  const data = new AccountsState(bridge({
+    getProviders: async () => ++reads === 1 ? oldCatalog.promise : freshCatalog,
+    getLogins: async () => ++loginReads === 1 ? oldLogins.promise : [],
+    getAccounts: async () => ++accountReads === 1 ? oldAccounts.promise : [],
+  }), "work");
+  const initial = data.refresh(); const loadingAccounts = data.loadAccounts("builtin");
+  data.setConnected(false); await data.refresh(); await data.loadAccounts("builtin");
+  expect([reads, loginReads, accountReads]).toEqual([1, 1, 1]);
+  data.setConnected(true); await data.refresh(); await data.loadAccounts("builtin");
+  oldCatalog.resolve(catalog); oldLogins.resolve([login]);
+  oldAccounts.resolve([{ providerId: "builtin", credentialId: 1, type: "oauth", disabled: false }]);
+  await Promise.all([initial, loadingAccounts]);
+  expect(data.catalog?.providers.map(item => item.id)).toEqual(["fresh"]);
+  expect(data.logins).toEqual([]); expect(data.accounts.get("builtin")).toEqual([]);
+  expect(data.loading).toBe(false); expect(data.loadingAccounts.size).toBe(0);
+});
+
+test("stopping an Accounts owner ignores late read errors", async () => {
+  const response = Promise.withResolvers<ProviderCatalog>();
+  const data = new AccountsState(bridge({ getProviders: () => response.promise }), "work");
+  const reading = data.refresh(); data.stop(); response.reject(new Error("retired host error")); await reading;
+  expect(data.catalogError).toBeUndefined(); expect(data.loading).toBe(false);
+});
