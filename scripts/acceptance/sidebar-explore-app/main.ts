@@ -86,7 +86,7 @@ async function run() {
   let passed = false, failure: string | undefined;
   try {
     await makeWindow();
-    await wait('document.querySelector(".sidebar-explore") && document.querySelector(".nav-action[aria-label=\"Pull requests\"]")');
+    await wait(`document.querySelector('.sidebar-explore') && document.querySelector('.nav-action[aria-label="Pull requests"]')`);
     const navigation = await evaluate('sidebarExploreState().navigation');
     if (navigation.slice(1).join("|") !== "Pull requests|Scheduled|Plugins|Explore") throw new Error(`Unexpected default order: ${navigation}`);
     if (await evaluate('document.querySelector(".sidebar").getBoundingClientRect().width') !== 275) throw new Error("Sidebar width changed");
@@ -105,8 +105,12 @@ async function run() {
     await click('.project-new'); await wait('document.querySelector(".header-breadcrumb") && !document.querySelector(".header-breadcrumb").textContent.includes("Unread sidebar activity fixture")');
     checkpoints.push("local unread activity navigates to original session; project folder idle/hover and functioning new-chat control");
     await click('.sidebar-explore'); await key("ArrowDown"); await key("Enter");
-    await wait('document.querySelector(".nav-action[aria-label=\"Archive\"][aria-current=\"page\"]")', "actual Archive route");
+    await wait(`document.querySelector('.nav-action[aria-label="Archive"][aria-current="page"]')`, "actual Archive route");
     await capture("002-archive-promoted");
+    await click('.sidebar-navigation > .nav-action');
+    await wait(`!document.querySelector('.nav-action[aria-label="Archive"][aria-current="page"]')`, "New chat exits Archive");
+    await click('.sidebar-explore'); await key("ArrowDown"); await key("Enter");
+    await wait(`document.querySelector('.nav-action[aria-label="Archive"][aria-current="page"]')`);
     await click('.sidebar-navigation-pin[aria-label="Pin Archive to sidebar"]');
     await customize(); await saved();
     await click('.sidebar-reorder[aria-label="Reorder Plugins"]'); await key("Space"); await key("ArrowUp"); await key("ArrowUp"); await key("Space"); await saved();
@@ -122,13 +126,13 @@ async function run() {
     if (await evaluate('sidebarExploreState().documentId') === firstDocument) throw new Error("Window did not reopen");
     await customize(); await saved();
     if ((await evaluate('sidebarExploreState().rows')).join("|") !== reordered.join("|")) throw new Error("Order lost on reopen");
-    if (await evaluate('document.querySelector(".sidebar-visibility[aria-label=\"Pull requests\"]").getAttribute("aria-checked")') !== "false") throw new Error("Visibility lost on reopen");
+    if (await evaluate(`document.querySelector('.sidebar-visibility[aria-label="Pull requests"]').getAttribute("aria-checked")`) !== "false") throw new Error("Visibility lost on reopen");
     await capture("005-reopened-customization"); checkpoints.push("archive route/promote/pin; keyboard reorder/drop/cancel; hide persists on actual window reopen");
-    capability = false; await invalidate(); await wait('!document.querySelector("[data-sidebar-destination=\"pull-requests\"]")');
+    capability = false; await invalidate(); await wait(`!document.querySelector('[data-sidebar-destination="pull-requests"]')`);
     await click('.sidebar-reorder[aria-label="Reorder Archive"]'); await key("Space"); await key("ArrowUp"); await key("Space"); await saved();
     preferenceCapability = false; await invalidate(); await wait('document.querySelector(".sidebar-customization-reset")?.disabled'); await capture("006-capability-loss");
-    preferenceCapability = true; capability = true; await invalidate(); await wait('document.querySelector("[data-sidebar-destination=\"pull-requests\"]") && !document.querySelector(".sidebar-customization-reset").disabled');
-    if (await evaluate('document.querySelector(".sidebar-visibility[aria-label=\"Pull requests\"]").getAttribute("aria-checked")') !== "false") throw new Error("Unavailable intent erased");
+    preferenceCapability = true; capability = true; await invalidate(); await wait(`document.querySelector('[data-sidebar-destination="pull-requests"]') && !document.querySelector(".sidebar-customization-reset").disabled`);
+    if (await evaluate(`document.querySelector('.sidebar-visibility[aria-label="Pull requests"]').getAttribute("aria-checked")`) !== "false") throw new Error("Unavailable intent erased");
     await capture("007-capability-recovery"); checkpoints.push("availability projection and preference capability loss/recovery retain unavailable intent and ordering");
     writeFailure = "rejected"; await click('.sidebar-visibility[aria-label="Plugins"]'); await wait('document.body.innerText.includes("Controlled sidebar write rejection")'); await capture("008-rejected-write-retained");
     await click('.sidebar-navigation-notice button'); await saved();

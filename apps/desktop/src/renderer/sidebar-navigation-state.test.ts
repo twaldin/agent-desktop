@@ -101,3 +101,18 @@ test("schema rejects incomplete, duplicate and unsupported destinations before p
   }
   expect(f.store.get("sidebar.navigation")).toBeUndefined();
 });
+
+test("a mismatched successful receipt cannot discard sidebar intent and recovery checks the original command", async () => {
+  const f = fixture();
+  const data = new SidebarNavigationState(f.host.host.id, { ...f.bridge, command: async (envelope, owner) => {
+    await f.bridge.command(envelope, owner);
+    return { ok: true, commandId: envelope.id, value: { type: "preferences.put", preference: f.store.put({ key: "general.reduceMotion", value: true }) } };
+  } }, f.cache, f.receipts);
+  data.setConnection(f.host.host.id, true, true); await data.refresh();
+  const value = setSidebarDestinationHidden(DEFAULT_SIDEBAR_NAVIGATION, "plugins", true);
+  await data.save(value);
+  expect(data.unsaved).toBe(true); expect(data.error).toContain("did not confirm");
+  const reopened = f.reopen(); await reopened.refresh(); await reopened.retry();
+  expect(reopened.unsaved).toBe(false); expect(reopened.value).toEqual(value);
+  expect(f.deliveries[1]!.envelope.id).toBe(f.deliveries[0]!.envelope.id);
+});

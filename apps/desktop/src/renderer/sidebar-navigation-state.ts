@@ -24,9 +24,16 @@ export class SidebarNavigationState {
     this.preferences = new PreferencesState({
       getPreferences: async () => { checkOwner(); const value = await bridge.getPreferences(); checkOwner(); return value; },
       ...(bridge.getPreferencesV2 ? { getPreferencesV2: async () => { checkOwner(); const value = await bridge.getPreferencesV2!(); checkOwner(); return value; } } : {}),
-      command: (envelope, hostId) => {
+      command: async (envelope, hostId) => {
         if (!this.active || !this.supported || hostId !== owner) throw new Error("Reconnect to the original local host with sidebar customization support to save changes.");
-        return bridge.command(envelope, owner);
+        if (envelope.command.type !== "preferences.put" || envelope.command.change.key !== SIDEBAR_NAVIGATION_PREFERENCE || envelope.command.change.deleted) throw new Error("Invalid saved sidebar navigation command.");
+        const result = await bridge.command(envelope, owner);
+        if (result.ok) {
+          const receipt = result.value;
+          if (!receipt || !("type" in receipt) || receipt.type !== "preferences.put" || receipt.preference.key !== SIDEBAR_NAVIGATION_PREFERENCE || receipt.preference.deleted
+            || JSON.stringify(parseSidebarNavigation(receipt.preference.value)) !== JSON.stringify(parseSidebarNavigation(envelope.command.change.value))) throw new Error("The host did not confirm the requested sidebar customization. Retry checks its original command.");
+        }
+        return result;
       },
       subscribe: bridge.subscribe.bind(bridge),
     }, { read: key => cache.read(prefix + key), write: (key, value) => cache.write(prefix + key, value) },

@@ -582,6 +582,7 @@ export function App() {
     route, settingsOpen, pluginDirectoryOpen: pluginDirectoryOpen || automationsOpen || pullRequestsOpen, root: workbenchElement.current, navigate }); });
   useEffect(() => () => browserSearchSelection.cancel(), [browserSearchSelection]);
   const newConversation = useCallback((projectId?: string, owner = route.hostId ?? state?.host.id ?? desktop.localHostId) => {
+    setShowArchived(false); setSidebarActivityOpen(false);
     navigate(null, owner);
     if (projectId !== undefined && owner) {
       const pair = controllers(owner), capabilities = desktop.catalog.records.get(owner)?.state?.newChatExecution;
