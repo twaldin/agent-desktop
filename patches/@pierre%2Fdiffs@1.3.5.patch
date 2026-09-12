@@ -1,5 +1,5 @@
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index b7b6997..1b79304 100644
+index b7b6997..1bdde8a 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
 @@ -94,6 +94,7 @@ var Editor = class {
@@ -10,15 +10,18 @@ index b7b6997..1b79304 100644
  	#suppressNativeSelectionSync = false;
  	#contentHasFocus = false;
  	#replacementFocusRequest;
-@@ -1736,6 +1737,7 @@ var Editor = class {
+@@ -1735,7 +1736,10 @@ var Editor = class {
+ 	}
  	#focus(position, preventScroll = true, shouldFocus) {
  		this.#contentHasFocus = true;
++		if (this.#selections?.some(selection => !isCollapsedSelection(selection)) && !this.#isContentMouseDown && !this.#isGutterMouseDown)
++			this.#suppressNativeSelectionSync = true;
  		if (position !== void 0) {
 +			const generation = ++this.#selectionFocusGeneration;
  			this.#shouldIgnoreSelectionChange = true;
  			this.#setWindowSelection({
  				start: position,
-@@ -1743,12 +1745,14 @@ var Editor = class {
+@@ -1743,12 +1747,14 @@ var Editor = class {
  				direction: 0
  			});
  			queueRender(() => {
