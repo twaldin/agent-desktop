@@ -1,4 +1,5 @@
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import type { OmpAdvancedStreamControls, OmpSessionControlMutation, OmpStreamSelection } from "@agent-desktop/shared";
 import { OmpSettingsError, validateSettingValue } from "./schema";
 
@@ -13,11 +14,16 @@ function record(value: unknown): value is Record<string, unknown> {
 function sameModel(left: { provider: string; id: string; api: string }, right: { provider: string; id: string; api: string }) {
   return left.provider === right.provider && left.id === right.id && left.api === right.api;
 }
-/** Source-scoped support, not a claim that arbitrary custom endpoints accept these options. */
+/** Native registry IDs are not provenance: models.yml can replace their endpoints.
+ * Only the pinned bundled Gemini identity and unchanged API/endpoint/transport
+ * establish this bounded contract. Account headers and configured limits remain native.
+ */
 function supported(model: NativeModel): boolean {
-  return model.transport !== "pi-native" && model.id.startsWith("gemini-")
-    && (model.provider === "google" && model.api === "google-generative-ai"
-      || model.provider === "google-vertex" && model.api === "google-vertex");
+  if (model.transport === "pi-native" || model.provider !== "google" && model.provider !== "google-vertex") return false;
+  if (model.provider === "google" ? model.api !== "google-generative-ai" : model.api !== "google-vertex") return false;
+  const bundled = getBundledModel(model.provider, model.id);
+  return !!bundled && bundled.identity?.class === "gemini"
+    && model.api === bundled.api && model.baseUrl === bundled.baseUrl && model.transport === bundled.transport;
 }
 function validate(field: typeof fields[number], value: unknown, model: NativeModel): void {
   if (value === null && field !== "maxTokens") return;
@@ -78,8 +84,8 @@ export class NativeAdvancedStreamControls {
     return {
       supported: available,
       reason: available
-        ? "Direct Gemini sampling and output limit. Applies only to this session branch and exact model/API; provider acceptance is not verified."
-        : "This bounded section supports native Gemini models on google-generative-ai and google-vertex only. Other providers, models and stream fields remain required coverage.",
+        ? "Bundled native Gemini sampling and output limit with its unchanged API and endpoint. Applies only to this session branch and exact model/API; live provider acceptance is not verified."
+        : "This bounded section requires a bundled native Gemini identity with its unchanged google-generative-ai or google-vertex API, endpoint and transport. Custom endpoints/models and other stream fields remain required coverage.",
       model: model ? { provider: model.provider, id: model.id, api: model.api } : null,
       selection: model ? this.selection(model) : {},
       native: { temperature: this.session.agent.temperature ?? null, topP: this.session.agent.topP ?? null, maxTokens: model?.maxTokens ?? null },

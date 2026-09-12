@@ -943,9 +943,17 @@
         "api": "google-vertex"
       }
     ],
-    "modelScope": "Native registry gemini-* ids, excluding pi-native transport; no claim of remote provider acceptance for arbitrary custom endpoints/models",
+    "modelScope": "Pinned native bundled Gemini identity via getBundledModel(provider,id), with exact bundled API/baseUrl/transport equality and no pi-native transport. A matching provider/id or gemini-* prefix alone is not provenance; custom endpoints and unlisted IDs are unsupported. Native account headers and configured output limits are preserved. No live provider acceptance claim.",
     "persistence": "native custom receipt agent-desktop.advanced-stream.v1 on owning session branch, model/API-bound; inherit returns original native Agent/SDK options; sampling null explicitly omits the parameter",
     "precedence": "native Agent/SDK options -> model-bound desktop selection -> unchanged native streamSimple mapper -> provider builder; native auth/model settings never changed",
+    "catalogBoundary": {
+      "lookup": "@oh-my-pi/pi-catalog/models getBundledModel at exact 18.1.10; static native catalog, not runtime or on-disk model overlays",
+      "sources": [
+        "packages/catalog/src/models.ts:5-11,38-40",
+        "packages/coding-agent/src/config/model-registry.ts:893-909,926-943,2035-2056"
+      ],
+      "reason": "Native ModelRegistry permits provider-level endpoint overrides, same-ID custom transport replacement, and new custom IDs. Compare against bundled provenance rather than treating registry membership or a name prefix as proof."
+    },
     "implementation": [
       "apps/host/src/omp-settings/advanced-stream.ts",
       "apps/desktop/src/renderer/AdvancedStreamControls.tsx",
@@ -955,12 +963,33 @@
   },
   "complete": false,
   "verification": {
-    "sourceTrace": "18 consumption files byte-identical to exact pinned upstream; installed native package reports 18.1.10",
-    "nativeRequest": "prepared fixture; not run (Main owns gates)",
+    "sourceTrace": "21 source/catalog files byte-identical to exact pinned upstream, including the bundled model lookup, bundled model data and configurable ModelRegistry composition; installed native packages remain 18.1.10",
+    "nativeRequest": "Main proved 12 controlled native Google/Vertex requests on historical 52208e9. A subsequent real ModelRegistry negative fixture reproduced the prefix-only boundary failure; the bundled catalog correction requires Main green gates. Neither result establishes actual App UI or live provider acceptance.",
     "appUi": "blocked on Root-owned outside-form App mount, Main build and explicit native lease",
     "independentReviews": "pending one dedicated different-family Standards/Spec pair"
   },
   "sourceProvenance": [
+    {
+      "upstreamPath": "packages/catalog/src/models.ts",
+      "observedSha256": "2f2df6ae9c88467106c31d31c19f20faef02062d3b137188bb6a1a448427ccf1",
+      "pinnedUpstreamSha256": "2f2df6ae9c88467106c31d31c19f20faef02062d3b137188bb6a1a448427ccf1",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "Main-installed exact pi-catalog18.1.10"
+    },
+    {
+      "upstreamPath": "packages/catalog/src/models.json",
+      "observedSha256": "4f609bf5d4f786c3164c77333ac9962dd2c8b0382291a82815667e558ebc04d0",
+      "pinnedUpstreamSha256": "4f609bf5d4f786c3164c77333ac9962dd2c8b0382291a82815667e558ebc04d0",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "Main-installed exact pi-catalog18.1.10"
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/config/model-registry.ts",
+      "observedSha256": "4da19ce09635d47171a63605faaa350ce3235806b6c3cc94d655a1bd1c3a487d",
+      "pinnedUpstreamSha256": "4da19ce09635d47171a63605faaa350ce3235806b6c3cc94d655a1bd1c3a487d",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "selected-SSH exact pinned ModelRegistry source snapshot"
+    },
     {
       "upstreamPath": "packages/coding-agent/src/sdk.ts",
       "observedSha256": "5591dfd741439b7620bc42ee9c3755e72030129cc510c6f4259f6c53ce551767",

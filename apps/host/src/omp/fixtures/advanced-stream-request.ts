@@ -37,6 +37,7 @@ const auth = await discoverAuthStorage(agentDir);
 const settings = await Settings.loadReadOnly({ agentDir, cwd });
 const registry = new ModelRegistry(auth, path.join(agentDir, "models.yml"), { settings });
 const evidence: Array<Record<string, unknown>> = [];
+const boundaryEvidence: Array<{ provider: string; case: string; supported: boolean; mutation: "unsupported" }> = [];
 try {
   for (const target of [{ provider: "google", api: "google-generative-ai" }, { provider: "google-vertex", api: "google-vertex" }] as const) {
     const model = registry.find(target.provider, "gemini-2.5-flash");
@@ -73,6 +74,27 @@ try {
     try {
       const baseline = await request("native-startup-defaults");
       assert.equal(baseline.temperature, 0.35); assert.equal(baseline.topP, 0.8); assert.equal(baseline.maxOutputTokens, model.maxTokens);
+      // Exercise real native models.yml overlays, not fabricated in-memory Models.
+      // No request is dispatched while an unverified endpoint/model is selected.
+      for (const boundary of [
+        { label: "provider-endpoint-override", id: model.id, configuration: { baseUrl: "https://native-stream-custom.invalid/v1beta" } },
+        { label: "same-id-model-endpoint-override", id: model.id, configuration: { api: model.api, baseUrl: model.baseUrl,
+          models: [{ id: model.id, baseUrl: "https://native-stream-custom.invalid/v1beta" }] } },
+        { label: "unlisted-gemini-id-official-endpoint", id: "gemini-native-stream-unlisted", configuration: { api: model.api, baseUrl: model.baseUrl,
+          models: [{ id: "gemini-native-stream-unlisted", name: "Owned unlisted model" }] } },
+      ]) {
+        const modelConfigPath = path.join(agentDir, `${target.provider}-${boundary.label}.yml`);
+        await writeFile(modelConfigPath, JSON.stringify({ providers: { [target.provider]: boundary.configuration } }), { flag: "wx" });
+        const overlayRegistry = new ModelRegistry(auth, modelConfigPath, { settings });
+        const overlayModel = overlayRegistry.find(target.provider, boundary.id);
+        assert.ok(overlayModel, "The actual pinned ModelRegistry must admit the controlled overlay.");
+        native.session.agent.setModel(overlayModel);
+        const snapshot = native.controls.read();
+        assert.equal(snapshot.advancedStream!.supported, false, `${boundary.label} must not advertise bundled native stream support.`);
+        await assert.rejects(mutate("temperature", "set", 0.4), { code: "unsupported" });
+        boundaryEvidence.push({ provider: target.provider, case: boundary.label, supported: snapshot.advancedStream!.supported, mutation: "unsupported" });
+        native.session.agent.setModel(model);
+      }
       const stale = native.controls.read();
       await mutate("temperature", "set", 0); await mutate("topP", "set", 0.4); await mutate("maxTokens", "set", 256);
       const custom = await request("explicit-zero-sampling-and-output");
@@ -102,5 +124,5 @@ try {
     } finally { await native.session.dispose(); }
   }
   assert.equal(await readFile(configPath, "utf8"), config);
-  console.log(JSON.stringify({ sourceCommit: "f241301c83726afe75a847e919b89977a54dafbe", version: "18.1.10", evidenceClass: "real-native-agent-loop-and-request-builder-controlled-fetch; not-App-UI-or-live-provider", accountWrites: 0, externalNetworkRequests: 0, rejectedFetches, evidence }, null, 2));
+  console.log(JSON.stringify({ sourceCommit: "f241301c83726afe75a847e919b89977a54dafbe", version: "18.1.10", evidenceClass: "real-native-agent-loop-and-request-builder-controlled-fetch; not-App-UI-or-live-provider", accountWrites: 0, externalNetworkRequests: 0, rejectedFetches, evidence, boundaryEvidence }, null, 2));
 } finally { auth.close(); }

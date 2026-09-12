@@ -670,7 +670,7 @@
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
       "status": "bounded-source-awaiting-integration-and-proof",
       "settingsPaths": [],
-      "note": "Typed session/model-bound advanced sampling source exists for native Gemini models on google-generative-ai/google-vertex only. App integration, actual native request/UI proof and all other provider/model scopes remain required; see native-stream-control-coverage.json."
+      "note": "Typed session/model-bound sampling source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
     },
     {
       "interface": "StreamOptions",
@@ -679,7 +679,7 @@
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
       "status": "bounded-source-awaiting-integration-and-proof",
       "settingsPaths": [],
-      "note": "Typed session/model-bound advanced sampling source exists for native Gemini models on google-generative-ai/google-vertex only. App integration, actual native request/UI proof and all other provider/model scopes remain required; see native-stream-control-coverage.json."
+      "note": "Typed session/model-bound sampling source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
     },
     {
       "interface": "StreamOptions",
@@ -742,7 +742,7 @@
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
       "status": "bounded-source-awaiting-integration-and-proof",
       "settingsPaths": [],
-      "note": "Typed session/model-bound output-limit source exists for native Gemini models on google-generative-ai/google-vertex only; clear preserves native model fallback. App integration, actual native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
+      "note": "Typed session/model-bound output-limit source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex; clear preserves native model fallback. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
     },
     {
       "interface": "StreamOptions",
