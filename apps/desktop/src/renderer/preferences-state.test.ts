@@ -30,6 +30,15 @@ describe("replicated sidebar renderer", () => {
     await f.data.put({ key: `sidebar.section.${section}`, deleted: true });
     expect(f.data.sections()).toEqual([]); expect(f.data.sectionFor("project", project, f.host.host.id)).toBeNull(); expect(f.data.entity("project", project, f.host.host.id)?.hostId).toBe(f.host.host.id);
   });
+  test("project appearance round-trips through shared preferences without crossing host identity", async () => {
+    const f = fixture(); const project = crypto.randomUUID(); const otherHost = crypto.randomUUID(); await f.data.refresh();
+    const appearance = { marker: { kind: "icon" as const, icon: "desk-globe" as const }, color: "#3B82F6" as const };
+    await f.data.put({ key: `sidebar.project.${project}`, value: { hostId: f.host.host.id, sectionId: "pinned", position: 2_048, appearance } });
+    expect(f.data.entity("project", project, f.host.host.id)).toEqual({ hostId: f.host.host.id, sectionId: "pinned", position: 2_048, appearance });
+    expect(f.data.entity("project", project, otherHost)).toBeUndefined();
+    const reopened = new PreferencesState(f.bridge, f.cache, f.receipts); reopened.setConnection(f.host.host.id, true); await reopened.refresh();
+    expect(reopened.entity("project", project, f.host.host.id)).toEqual(expect.objectContaining({ appearance }));
+  });
   test("an older snapshot cannot undo current sidebar deletion or a newer cached preference", async () => {
     const f = fixture(); const section = crypto.randomUUID(); const original = f.native.put({ key: `sidebar.section.${section}`, value: { name: "Old", position: 0 } }); const deleted = f.native.put({ key: `sidebar.section.${section}`, deleted: true });
     f.data.ingest({ version: 1, records: [deleted] }); f.data.ingest({ version: 1, records: [original] }); expect(f.data.sections()).toEqual([]);

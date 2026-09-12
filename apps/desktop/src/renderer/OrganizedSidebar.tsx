@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { HostState, Project } from "../../../../packages/shared/src/protocol";
-import type { PreferenceChange } from "../../../../packages/shared/src/preferences";
+import type { PreferenceChange, ProjectAppearance, ProjectAppearanceColor } from "../../../../packages/shared/src/preferences";
 import type { HostOption } from "./host-catalog";
 import { PreferencesState } from "./preferences-state";
 import { Icon } from "./Icons";
 
 import { sidebarItemKey, type SidebarItem as Item, type SidebarLayout } from "./sidebar-layout";
 import { SidebarPinIcon } from "./sidebar-icons";
+import { PROJECT_APPEARANCE_COLORS, PROJECT_APPEARANCE_ICONS, ProjectMarker, projectColor } from "./project-appearance";
 import "./organized-sidebar.css";
 import type { SidebarSectionKey } from "../window-state";
 interface Props {
@@ -48,7 +49,7 @@ export function OrganizedSidebar(props: Props) {
   function toggleMenu(id: string, button: HTMLButtonElement, project?: Project) { clearHover(); menuTrigger.current = button; const bounds = button.getBoundingClientRect(); setMenuPosition({left: Math.min(bounds.right + 4, window.innerWidth - 216), top: Math.max(8, Math.min(bounds.top, window.innerHeight - 248))}); const opening = menu !== id; setMenu(opening ? id : undefined); setMenuProject(opening && project ? { key: id, project: { ...project } } : undefined); }
   const [dialog, setDialog] = useState<{ id?: string; name: string }>();
   const dialogRef = useRef<HTMLDialogElement>(null);
-  type ProjectDialog = { token: number; kind: "edit" | "remove"; project: Project; name: string; pending: boolean; error?: string };
+  type ProjectDialog = { token: number; kind: "edit" | "remove"; project: Project; defaultPosition: number; name: string; appearance?: ProjectAppearance; color?: ProjectAppearanceColor; customColor: string; emoji: string; pending: boolean; error?: string };
   const [projectDialog, setProjectDialog] = useState<ProjectDialog>();
   const projectDialogRef = useRef<HTMLDialogElement>(null);
   const projectDialogOpener = useRef<HTMLElement | null>(null);
@@ -74,15 +75,27 @@ export function OrganizedSidebar(props: Props) {
     projectDialogOpener.current = menuTrigger.current;
     const token = ++projectDialogToken.current;
     setMenu(undefined);
-    setProjectDialog({ token, kind, project: { ...project }, name: project.name, pending: false });
+    const appearance = data.entity("project", project.id, project.hostId)?.appearance;
+    const ownerProjects = (groups.find(group => group.hostState.host.id === project.hostId)?.hostState.projects ?? [])
+      .filter(candidate => data.sectionFor("project", candidate.id, project.hostId) === null);
+    setProjectDialog({ token, kind, project: { ...project }, defaultPosition: Math.max(0, ownerProjects.findIndex(candidate => candidate.id === project.id)) * 1024, name: project.name, appearance, color: appearance?.color, customColor: appearance?.color.startsWith("#") ? appearance.color : "", emoji: appearance?.marker.kind === "emoji" ? appearance.marker.emoji : "", pending: false });
   }
   function projectError(error: unknown) { return error instanceof Error ? error.message : "The project action could not be completed."; }
-  async function renameProject(event: React.FormEvent<HTMLFormElement>) {
+  async function saveProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const current = projectDialog;
     if (!current || current.kind !== "edit" || current.pending || !current.name.trim()) return;
     const name = current.name.trim();
+    const appearance = current.appearance as ProjectAppearance | undefined;
     setProjectDialog(value => value?.token === current.token ? { ...value, pending: true, error: undefined } : value);
-    try { await props.onRenameProject(current.project, name); setProjectDialog(value => value?.token === current.token ? undefined : value); }
+    try {
+      if (name !== current.project.name) await props.onRenameProject(current.project, name);
+      const present = data.entity("project", current.project.id, current.project.hostId);
+      if (appearance || present) {
+        await data.put({ key: `sidebar.project.${current.project.id}`, value: { hostId: current.project.hostId, sectionId: present?.sectionId ?? null, position: present?.position ?? current.defaultPosition, ...(appearance ? { appearance } : {}) } });
+        if (data.error || data.pending.length) throw new Error(data.error ?? "The appearance change is saved locally and will retry when shared preferences reconnect.");
+      }
+      setProjectDialog(value => value?.token === current.token ? undefined : value);
+    }
     catch (error) { setProjectDialog(value => value?.token === current.token ? { ...value, pending: false, error: projectError(error) } : value); }
   }
   async function removeProject() {
@@ -104,13 +117,14 @@ export function OrganizedSidebar(props: Props) {
     setMenu(undefined);
     const target = allItems.filter(candidate => sectionOf(candidate) === sectionId);
     const next = Math.min(1e12, Math.max(-1024, ...target.map(position)) + 1024);
-    await data.put({ key: `sidebar.${item.kind}.${item.value.id}`, value: { hostId: item.value.hostId, sectionId, position: next } });
+    const current = data.entity(item.kind, item.value.id, item.value.hostId);
+    await data.put({ key: `sidebar.${item.kind}.${item.value.id}`, value: { hostId: item.value.hostId, sectionId, position: next, ...(current?.appearance ? { appearance: current.appearance } : {}) } });
   }
   async function reorder(item: Item, list: Item[], direction: -1 | 1) {
     setMenu(undefined); const index = list.findIndex(row => sidebarItemKey(row) === sidebarItemKey(item)); const other = index + direction;
     if (index < 0 || other < 0 || other >= list.length) return;
     const next = [...list]; [next[index], next[other]] = [next[other]!, next[index]!];
-    await data.putMany(next.map((row, index): PreferenceChange => ({ key: `sidebar.${row.kind}.${row.value.id}`, value: { hostId: row.value.hostId, sectionId: sectionOf(row), position: index * 1024 } })));
+    await data.putMany(next.map((row, index): PreferenceChange => { const current = data.entity(row.kind, row.value.id, row.value.hostId); return { key: `sidebar.${row.kind}.${row.value.id}`, value: { hostId: row.value.hostId, sectionId: sectionOf(row), position: index * 1024, ...(current?.appearance ? { appearance: current.appearance } : {}) } }; }));
   }
   async function reorderSection(id: string, direction: -1 | 1) {
     setMenu(undefined); const index = sections.findIndex(section => section.id === id); const other = index + direction;
@@ -159,7 +173,8 @@ export function OrganizedSidebar(props: Props) {
     const children = projectChildren(project);
     const expanded = projectExpanded(project);
     const host = groups.find(group => group.hostState.host.id === project.hostId)?.host;
-    return <div className="project-group" data-project-id={project.id} data-host-id={project.hostId} key={sidebarItemKey(item)}><div className={`project-row ${selected ? "selected" : ""}`}><button className="project-label" aria-current={selected ? "page" : undefined} title={`${project.path}\n${host?.name ?? project.hostId}`} onClick={() => props.onToggleProject(key)} aria-expanded={expanded}><span className="sidebar-project-glyph"><Icon name="folder"/><Icon name="chevron" className={expanded ? "rotated" : ""}/></span><span className="truncate">{project.name}</span></button>{itemMenu(item, list)}<button className="icon-button small project-new" disabled={host?.availability !== "available"} aria-label={`Start new chat in ${project.name}`} title={`Start new chat in ${project.name}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="compose"/></button></div>{expanded && <div className="project-sessions">{children.map(child => child.kind === "session" && sessionRow(child, children))}{!children.length && <p className="sidebar-empty nested">{query ? "No matching conversations" : showArchived ? "No archived conversations" : "No chats"}</p>}</div>}</div>;
+    const appearance = data.entity("project", project.id, project.hostId)?.appearance;
+    return <div className="project-group" data-project-id={project.id} data-host-id={project.hostId} key={sidebarItemKey(item)}><div className={`project-row ${selected ? "selected" : ""}`}><button className="project-label" aria-current={selected ? "page" : undefined} title={`${project.path}\n${host?.name ?? project.hostId}`} onClick={() => props.onToggleProject(key)} aria-expanded={expanded}><span className="sidebar-project-glyph"><ProjectMarker appearance={appearance}/><Icon name="chevron" className={expanded ? "rotated" : ""}/></span><span className="truncate">{project.name}</span></button>{itemMenu(item, list)}<button className="icon-button small project-new" disabled={host?.availability !== "available"} aria-label={`Start new chat in ${project.name}`} title={`Start new chat in ${project.name}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="compose"/></button></div>{expanded && <div className="project-sessions">{children.map(child => child.kind === "session" && sessionRow(child, children))}{!children.length && <p className="sidebar-empty nested">{query ? "No matching conversations" : showArchived ? "No archived conversations" : "No chats"}</p>}</div>}</div>;
   }
   const render = (item: Item, list: Item[]) => item.kind === "project" ? projectRow(item, list) : sessionRow(item, list);
   return <div className="organized-sidebar">
@@ -178,7 +193,7 @@ export function OrganizedSidebar(props: Props) {
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(undefined)}><div className="dialog-header"><h2>{dialog?.id ? "Edit section" : "New section"}</h2><button className="icon-button" aria-label="Close dialog" onClick={() => setDialog(undefined)}><Icon name="close"/></button></div>{!dialog?.id && <p className="sidebar-section-description">Group chats and projects however you like</p>}<form onSubmit={event => { event.preventDefault(); if (!dialog?.name.trim() || !writable) return; const id = dialog.id ?? crypto.randomUUID(); const name = dialog.name.trim(); void data.put({ key: `sidebar.section.${id}`, value: { name, position: sections.find(section => section.id === id)?.position ?? sections.length * 1024 } }).then(() => { if (!data.error && !data.pending.length) setDialog(current => current && current.name.trim() !== name ? { ...current, id } : undefined); }); }}><label className="field-label" htmlFor="sidebar-section-name">Section name</label><input id="sidebar-section-name" className="text-field" value={dialog?.name ?? ""} maxLength={120} onChange={event => setDialog(value => value && { ...value, name: event.target.value })}/>{data.error && <p className="inline-error">{data.error}</p>}<div className="dialog-footer"><button type="button" className="secondary-button" onClick={() => setDialog(undefined)}>Cancel</button><button className="primary-button" disabled={!dialog?.name.trim() || !writable}>{dialog?.id ? "Save section" : "Create section"}</button></div></form></dialog>
     <dialog ref={projectDialogRef} className="app-dialog sidebar-project-dialog" onCancel={event => { event.preventDefault(); if (!projectDialog?.pending) setProjectDialog(undefined); }} onClick={event => { if (event.target === event.currentTarget && !projectDialog?.pending) setProjectDialog(undefined); }}>
       <div className="dialog-header"><h2>{projectDialog?.kind === "edit" ? "Edit project" : "Remove project"}</h2><button className="icon-button" aria-label="Close project dialog" disabled={projectDialog?.pending} onClick={() => setProjectDialog(undefined)}><Icon name="close"/></button></div>
-      {projectDialog?.kind === "edit" ? <form onSubmit={renameProject}><label className="field-label" htmlFor="sidebar-project-name">Project name</label><input id="sidebar-project-name" className="text-field" value={projectDialog.name} maxLength={120} disabled={projectDialog.pending} onChange={event => setProjectDialog(value => value?.token === projectDialog.token ? { ...value, name: event.target.value } : value)}/>{projectDialog.error && <p className="inline-error" role="alert">{projectDialog.error}</p>}<div className="dialog-footer"><button type="button" className="secondary-button" disabled={projectDialog.pending} onClick={() => setProjectDialog(undefined)}>Cancel</button><button className="primary-button" disabled={projectDialog.pending || !projectDialog.name.trim()}>{projectDialog.pending ? "Saving…" : "Save project"}</button></div></form> : projectDialog && <><p className="sidebar-project-dialog-copy">Remove <strong>{projectDialog.project.name}</strong> from the project catalog?</p><p className="sidebar-project-dialog-copy">This removes project metadata only. Files and existing chats are not deleted.</p>{projectDialog.error && <p className="inline-error" role="alert">{projectDialog.error}</p>}<div className="dialog-footer"><button type="button" className="secondary-button" disabled={projectDialog.pending} onClick={() => setProjectDialog(undefined)}>Cancel</button><button className="primary-button danger-button" disabled={projectDialog.pending} onClick={() => void removeProject()}>{projectDialog.pending ? "Removing…" : "Remove project"}</button></div></>}
+      {projectDialog?.kind === "edit" ? <form onSubmit={saveProject}><label className="field-label" htmlFor="sidebar-project-name">Project name</label><input id="sidebar-project-name" className="text-field" value={projectDialog.name} maxLength={120} disabled={projectDialog.pending} onChange={event => setProjectDialog(value => value?.token === projectDialog.token ? { ...value, name: event.target.value } : value)}/><fieldset className="project-appearance-picker" disabled={projectDialog.pending}><legend>Project icon and color</legend><div className="project-appearance-colors" aria-label="Project color">{PROJECT_APPEARANCE_COLORS.map(color => <button type="button" key={color} aria-label={`Use ${color} project color`} aria-pressed={projectDialog.color === color} className="project-color-swatch" style={{ backgroundColor: projectColor(color) }} onClick={() => setProjectDialog(value => value?.token === projectDialog.token ? { ...value, color, customColor: "", appearance: { marker: value.appearance?.marker ?? { kind: "icon", icon: "folder" }, color } } : value)}/>)}</div><label className="field-label" htmlFor="sidebar-project-custom-color">Custom hex color</label><input id="sidebar-project-custom-color" className="text-field" value={projectDialog.customColor} placeholder="#3B82F6" maxLength={7} onChange={event => { const customColor = event.target.value.toUpperCase(); setProjectDialog(value => { if (!value || value.token !== projectDialog.token) return value; if (!/^#(?:[0-9A-F]{3}){1,2}$/.test(customColor)) return { ...value, customColor }; const color = customColor as ProjectAppearanceColor; return { ...value, customColor, color, appearance: { marker: value.appearance?.marker ?? { kind: "icon", icon: "folder" }, color } }; }); }}/><div className="project-appearance-icons" aria-label="Project icon">{PROJECT_APPEARANCE_ICONS.map(icon => <button type="button" key={icon} aria-label={`Use ${icon} icon`} aria-pressed={projectDialog.appearance?.marker.kind === "icon" && projectDialog.appearance.marker.icon === icon} onClick={() => setProjectDialog(value => value?.token === projectDialog.token ? { ...value, emoji: "", appearance: { marker: { kind: "icon", icon }, color: value.color ?? "black" } } : value)}><ProjectMarker appearance={{ marker: { kind: "icon", icon }, color: projectDialog.color ?? "black" }}/></button>)}</div><label className="field-label" htmlFor="sidebar-project-emoji">Emoji</label><input id="sidebar-project-emoji" className="text-field" value={projectDialog.emoji} maxLength={32} onChange={event => { const emoji = event.target.value; setProjectDialog(value => value?.token === projectDialog.token ? { ...value, emoji, appearance: emoji ? { marker: { kind: "emoji", emoji }, color: value.color ?? "black" } : value.appearance } : value); }}/><button type="button" className="secondary-button" onClick={() => setProjectDialog(value => value?.token === projectDialog.token ? { ...value, appearance: undefined, emoji: "", color: undefined, customColor: "" } : value)}>Reset icon and color</button></fieldset>{projectDialog.error && <p className="inline-error" role="alert">{projectDialog.error}</p>}<div className="dialog-footer"><button type="button" className="secondary-button" disabled={projectDialog.pending} onClick={() => setProjectDialog(undefined)}>Cancel</button><button className="primary-button" disabled={projectDialog.pending || !projectDialog.name.trim()}>{projectDialog.pending ? "Saving…" : "Save project"}</button></div></form> : projectDialog && <><p className="sidebar-project-dialog-copy">Remove <strong>{projectDialog.project.name}</strong> from the project catalog?</p><p className="sidebar-project-dialog-copy">This removes project metadata only. Files and existing chats are not deleted.</p>{projectDialog.error && <p className="inline-error" role="alert">{projectDialog.error}</p>}<div className="dialog-footer"><button type="button" className="secondary-button" disabled={projectDialog.pending} onClick={() => setProjectDialog(undefined)}>Cancel</button><button className="primary-button danger-button" disabled={projectDialog.pending} onClick={() => void removeProject()}>{projectDialog.pending ? "Removing…" : "Remove project"}</button></div></>}
     </dialog>
   </div>;
 }

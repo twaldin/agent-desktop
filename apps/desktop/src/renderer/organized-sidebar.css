@@ -43,8 +43,11 @@
 .organized-sidebar .project-label { padding-left:10px; }
 .organized-sidebar .sidebar-project-glyph { position:relative; display:flex; width:17px; height:17px; flex-shrink:0; }
 .organized-sidebar .sidebar-project-glyph > .icon:last-child { position:absolute; inset:0; width:12px; height:12px; margin:auto; opacity:0; }
-.organized-sidebar .project-row:hover .sidebar-project-glyph > .icon:first-child,
-.organized-sidebar .project-row:focus-within .sidebar-project-glyph > .icon:first-child { opacity:0; }
+.organized-sidebar .project-marker { display:flex; align-items:center; justify-content:center; width:17px; height:17px; color:var(--secondary); }
+.organized-sidebar .project-marker svg { width:16px; height:16px; }
+.organized-sidebar .project-marker-emoji { font-size:15px; line-height:1; }
+.organized-sidebar .project-row:hover .project-marker,
+.organized-sidebar .project-row:focus-within .project-marker { opacity:0; }
 .organized-sidebar .project-row:hover .sidebar-project-glyph > .icon:last-child,
 .organized-sidebar .project-row:focus-within .sidebar-project-glyph > .icon:last-child { opacity:1; }
 .sidebar-chat-card .sidebar-chat-card-title { align-items:flex-start; margin-bottom:6px; color:var(--text); }
@@ -55,3 +58,13 @@
 .sidebar-project-action-error .icon-button { flex-shrink:0; }
 .sidebar-project-dialog-copy { margin:0 0 12px; color:var(--secondary); line-height:1.45; }
 .sidebar-project-dialog-copy strong { color:var(--text); overflow-wrap:anywhere; }
+.project-appearance-picker { display:grid; gap:8px; margin:16px 0; padding:0; border:0; }
+.project-appearance-picker legend { margin-bottom:8px; font-weight:600; }
+.project-appearance-colors, .project-appearance-icons { display:flex; flex-wrap:wrap; gap:6px; }
+.project-color-swatch { width:22px; height:22px; border:2px solid transparent; border-radius:50%; box-shadow:inset 0 0 0 1px #0003; }
+.project-color-swatch[aria-pressed="true"], .project-appearance-icons button[aria-pressed="true"] { outline:2px solid var(--accent); outline-offset:2px; }
+.project-appearance-icons button { display:grid; place-items:center; width:28px; height:28px; border-radius:6px; color:var(--secondary); }
+.project-appearance-icons .project-marker { color:inherit; }
+.organized-sidebar { --project-appearance-blue:#0285ff; --project-appearance-green:#04b84c; --project-appearance-orange:#fb6a22; --project-appearance-pink:#ff66ad; --project-appearance-purple:#924ff7; --project-appearance-red:#fa423e; --project-appearance-yellow:#ffc300; }
+:root[data-theme="dark"] .organized-sidebar { --project-appearance-blue:#339cff; --project-appearance-green:#40c977; --project-appearance-orange:#ff8549; --project-appearance-pink:#ff8cc1; --project-appearance-purple:#ad7bf9; --project-appearance-red:#ff6764; --project-appearance-yellow:#ffd240; }
+@media (prefers-color-scheme:dark) { :root:not([data-theme="light"]):not([data-theme="dark"]) .organized-sidebar { --project-appearance-blue:#339cff; --project-appearance-green:#40c977; --project-appearance-orange:#ff8549; --project-appearance-pink:#ff8cc1; --project-appearance-purple:#ad7bf9; --project-appearance-red:#ff6764; --project-appearance-yellow:#ffd240; } }

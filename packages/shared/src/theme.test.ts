@@ -16,4 +16,10 @@ test("v2 themes require an explicit opaqueWindows boolean", () => {
   expect(() => parseThemeDocument({ version: 2, material: "none", opaqueWindows: "false", ...base })).toThrow();
   expect(parsePreferenceChange({ key: "theme.opaqueWindows", value: true })).toMatchObject({ value: true });
   expect(() => parsePreferenceChange({ key: "theme.opaqueWindows", value: 1 })).toThrow();
+
+  const project = crypto.randomUUID();
+  const value = { hostId: crypto.randomUUID(), sectionId: "pinned", position: 12, appearance: { marker: { kind: "emoji", emoji: "🧪" }, color: "#3B82F6" } };
+  expect(parsePreferenceChange({ key: `sidebar.project.${project}`, value })).toMatchObject({ value });
+  expect(() => parsePreferenceChange({ key: `sidebar.project.${project}`, value: { ...value, appearance: { marker: { kind: "icon", icon: "not-an-icon" }, color: "blue" } } })).toThrow();
+  expect(() => parsePreferenceChange({ key: `sidebar.session.${project}`, value })).toThrow();
 });

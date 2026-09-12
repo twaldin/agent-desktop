@@ -105,7 +105,12 @@ export type ThemeBackground =
   | { kind: "gradient"; angle: number; stops: { color: string; position: number }[] }
   | { kind: "asset"; sha256: string; fit: "cover" | "contain" | "tile"; opacity: number; blur: number };
 export interface SidebarSectionPreference { name: string; position: number }
-export interface SidebarEntityPreference { hostId: string; sectionId: string | "pinned" | null; position: number }
+export const PROJECT_APPEARANCE_ICONS = ["folder", "currency-dollar", "book", "graduation-cap", "edit", "writing", "function", "terminal", "music", "popcorn", "customize", "palette", "stethoscope", "health", "lotus", "suitcase", "bar-chart", "kettlebell", "dumbbell", "logs", "scale", "desk-globe", "plane", "globe", "wrench", "paw", "flask", "brain", "heart", "plant"] as const;
+export type ProjectAppearanceIcon = typeof PROJECT_APPEARANCE_ICONS[number];
+export const PROJECT_APPEARANCE_COLORS = ["black", "red", "orange", "yellow", "green", "blue", "purple", "pink"] as const;
+export type ProjectAppearanceColor = typeof PROJECT_APPEARANCE_COLORS[number] | `#${string}`;
+export type ProjectAppearance = { marker: { kind: "icon"; icon: ProjectAppearanceIcon } | { kind: "emoji"; emoji: string }; color: ProjectAppearanceColor };
+export interface SidebarEntityPreference { hostId: string; sectionId: string | "pinned" | null; position: number; appearance?: ProjectAppearance }
 export type CompletionNotificationPolicy = "never" | "unfocused" | "always";
 export interface NotificationPreferences {
   turnComplete: boolean;
@@ -274,9 +279,26 @@ function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[P
     const item = object(value, ["name", "position"]);
     return { name: boundedText(item.name, 120), position: finite(item.position, -1e12, 1e12) };
   }
-  const item = object(value, ["hostId", "sectionId", "position"]);
+  const project = key.startsWith("sidebar.project.");
+  const item = object(value, project ? ["hostId", "sectionId", "position", "appearance"] : ["hostId", "sectionId", "position"]);
   if (!isPreferenceId(item.hostId) || !(item.sectionId === null || item.sectionId === "pinned" || isPreferenceId(item.sectionId))) return invalid("Sidebar entities require host and section identities, not paths.");
-  return { hostId: item.hostId, sectionId: item.sectionId, position: finite(item.position, -1e12, 1e12) };
+  const appearance = project && item.appearance !== undefined ? projectAppearance(item.appearance) : undefined;
+  return { hostId: item.hostId, sectionId: item.sectionId, position: finite(item.position, -1e12, 1e12), ...(appearance === undefined ? {} : { appearance }) };
+}
+
+function projectAppearance(value: unknown): ProjectAppearance {
+  const item = object(value, ["marker", "color"]);
+  const marker = object(item.marker, ["kind", "icon", "emoji"]);
+  let parsedMarker: ProjectAppearance["marker"];
+  if (marker.kind === "icon") {
+    if (typeof marker.icon !== "string" || !PROJECT_APPEARANCE_ICONS.includes(marker.icon as ProjectAppearanceIcon) || Object.hasOwn(marker, "emoji")) return invalid("A project marker icon must be one of the supported icons.");
+    parsedMarker = { kind: "icon", icon: marker.icon as ProjectAppearanceIcon };
+  } else if (marker.kind === "emoji") {
+    if (typeof marker.emoji !== "string" || marker.emoji.length < 1 || marker.emoji.length > 32 || /[\u0000-\u001f\u007f]/.test(marker.emoji) || Object.hasOwn(marker, "icon")) return invalid("A project emoji marker is invalid.");
+    parsedMarker = { kind: "emoji", emoji: marker.emoji };
+  } else return invalid("A project marker kind is required.");
+  if (typeof item.color !== "string" || !([...(PROJECT_APPEARANCE_COLORS as readonly string[])].includes(item.color) || /^#(?:[0-9a-f]{3}){1,2}$/i.test(item.color))) return invalid("A project color must be a preset or hexadecimal color.");
+  return { marker: parsedMarker, color: item.color as ProjectAppearanceColor };
 }
 
 /** Produces new schema-owned objects, rejecting unknown fields instead of carrying them through. */
