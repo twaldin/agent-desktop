@@ -2,7 +2,7 @@ import { parsePullRequestWriteRequest } from '../../../../packages/shared/src/pu
 import { requestPullRequestWrite } from './pull-request-write-transport';
 import { parsePullRequestReadRequest } from '../../../../packages/shared/src/pull-requests';
 import { readPullRequests } from './pull-requests-transport';
-import { McpOwnerWindow } from "./mcp-owner-windows";
+import { McpOwnerMainChannels } from "./mcp-owner-main-channels";
 import { requestMcpOwner } from "./mcp-owner-transport";
 import { McpAppWindowChannels } from "./mcp-app-window-channels";
 import { readLocalFontFaces } from "./local-fonts";
@@ -101,9 +101,18 @@ function applyNativeWindowTheme(window: BrowserWindow) {
   if (process.platform === "darwin") window.setVibrancy(resolved.vibrancy);
   if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-theme-state", resolved.opaqueWindows);
 }
+const mcpOwnerDocuments = new McpOwnerMainChannels({
+  ipcMain,
+  available: () => !shuttingDown,
+  assertTrusted: assertTrustedSender,
+  connect: endpointFor,
+  request: requestMcpOwner,
+  reportCleanupError: error => console.error("MCP directory owner cleanup failed:", error),
+});
 const mcpAppDocuments = new Map<number, McpAppWindowChannels>();
 const mcpAppDocumentDrains = new Set<McpAppWindowChannels>();
 function retireMcpAppDocument(senderId: number) {
+  mcpOwnerDocuments.retireDocument(senderId);
   const owner = mcpAppDocuments.get(senderId);
   if (!owner) return;
   mcpAppDocuments.delete(senderId);
@@ -117,7 +126,7 @@ const windowCloseGate = new WindowCloseGate({
   senderIds: () => [...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id),
   prepareQuit: async () => {
     const release = await modifierWatches.pauseAndDrain();
-    try { await Promise.all([...mcpAppDocumentDrains].map(owner => owner.retire())); return release; }
+    try { await Promise.all([...mcpAppDocumentDrains].map(owner => owner.retire()).concat(mcpOwnerDocuments.drain())); return release; }
     catch (error) { release(); throw error; }
   },
   send: (senderId, request) => {
