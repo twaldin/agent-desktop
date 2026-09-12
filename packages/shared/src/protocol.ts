@@ -181,6 +181,24 @@ export interface TranscriptFileReference {
   skippedReason?: "tooLarge" | "binary";
   image?: { blockIndex: number; mimeType: string; bytes?: number; sha256?: string; error?: string };
 }
+/** Allowlisted native output provenance; absence does not establish full output. */
+export interface TranscriptToolOutput {
+  truncation?: {
+    truncated: boolean;
+    direction?: "head" | "tail" | "middle";
+    truncatedBy?: "lines" | "bytes" | "middle";
+    totalLines?: number; totalBytes?: number; outputLines?: number; outputBytes?: number;
+    elidedLines?: number; elidedBytes?: number;
+    shownRange?: { start: number; end: number };
+    headRange?: { start: number; end: number }; tailRange?: { start: number; end: number };
+    partialLine?: boolean;
+    artifactId?: string;
+    nextOffset?: number;
+  };
+  source?: { type: "path" | "url" | "internal"; value: string };
+  columnTruncated?: number;
+  summary?: { lines: number; elidedSpans: number; elidedLines: number };
+}
 export interface TranscriptMessage {
   /** Stable display identity; native entry identity remains separate. */
   id: string;
@@ -193,7 +211,7 @@ export interface TranscriptMessage {
   /** Native persisted MCP result only; opening it never re-executes the tool. */
   mcpArtifact?: McpArtifact;
   mcpArtifactError?: string;
-  tool?: { callId: string; name?: string; status?: "running" | "completed"; isError?: boolean; arguments?: Record<string, unknown>; intent?: string };
+  tool?: { callId: string; name?: string; status?: "running" | "completed"; isError?: boolean; arguments?: Record<string, unknown>; intent?: string; output?: TranscriptToolOutput };
   assistant?: TranscriptAssistantMetadata;
   /** App-owned native command output entry. This is never a model message. */
   commandOutput?: { entryId: string; command: string; output: string };

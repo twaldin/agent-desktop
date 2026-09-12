@@ -12,6 +12,35 @@ import type { TranscriptMessage } from '@agent-desktop/shared';
 const native = (messages: unknown[]) => messages.map((message, index) => ({ id: `entry-${index}`, message }));
 function messageEvent(mirror: TranscriptMirror, type: "message_start" | "message_update" | "message_end", message: unknown) { mirror.accept({ type, message } as AgentSessionEvent); }
 
+test("native truncation provenance survives progress, persistence and reopen without leaking arbitrary details", () => {
+  const mirror = new TranscriptMirror();
+  const details = { meta: { truncation: { direction: "tail", truncatedBy: "lines", totalLines: 500, totalBytes: 9000, outputLines: 10, outputBytes: 180, shownRange: { start: 491, end: 500 }, artifactId: "actual-output" }, source: { type: "internal", value: "artifact://actual-output" } }, privatePayload: "do-not-project" };
+  mirror.accept({ type: "tool_execution_start", toolCallId: "native-call", toolName: "bash", args: {} });
+  mirror.accept({ type: "tool_execution_update", toolCallId: "native-call", toolName: "bash", args: {}, partialResult: { content: [{ type: "text", text: "last lines\n" }], details } });
+  const [running] = mirror.snapshot([], []);
+  expect(running!.tool!.output!.truncation).toMatchObject({ truncated: true, artifactId: "actual-output", shownRange: { start: 491, end: 500 } });
+  const message = { role: "toolResult", toolCallId: "native-call", toolName: "bash", timestamp: 50, isError: true, content: [{ type: "text", text: "last lines\n" }], details };
+  mirror.accept({ type: "tool_execution_end", toolCallId: "native-call", toolName: "bash", result: { content: message.content, details }, isError: true });
+  messageEvent(mirror, "message_start", message); messageEvent(mirror, "message_end", message);
+  expect(mirror.snapshot([], [])[0]!.tool!.output).toEqual(running!.tool!.output);
+  const [saved] = mirror.snapshot([message], native([message]));
+  expect(saved).toMatchObject({ id: running!.id, nativeId: "entry-0", text: "last lines\n", tool: { status: "completed", isError: true, output: running!.tool!.output } });
+  expect(new TranscriptMirror().snapshot([message], native([message]))[0]!.tool!.output).toEqual(saved!.tool!.output);
+  expect(JSON.stringify(saved)).not.toContain("do-not-project");
+});
+
+test("completed full output cannot inherit a truncated progress preview", () => {
+  const mirror = new TranscriptMirror();
+  mirror.accept({ type: "tool_execution_start", toolCallId: "call", toolName: "read", args: {} });
+  mirror.accept({ type: "tool_execution_update", toolCallId: "call", toolName: "read", args: {}, partialResult: { content: [{ type: "text", text: "partial" }], details: { truncation: { truncated: true, totalLines: 100, totalBytes: 1000 } } } });
+  mirror.accept({ type: "tool_execution_end", toolCallId: "call", toolName: "read", result: { content: [{ type: "text", text: "all content" }], details: { truncation: { truncated: false, totalLines: 100, totalBytes: 1000 } } }, isError: false });
+  expect(mirror.snapshot([], [])[0]!.tool!.output!.truncation!.truncated).toBe(false);
+  mirror.accept({ type: "tool_execution_start", toolCallId: "unknown", toolName: "read", args: {} });
+  mirror.accept({ type: "tool_execution_update", toolCallId: "unknown", toolName: "read", args: {}, partialResult: { content: [], details: { truncation: { truncated: true } } } });
+  mirror.accept({ type: "tool_execution_end", toolCallId: "unknown", toolName: "read", result: { content: [] }, isError: false });
+  expect(mirror.snapshot([], []).find(message => message.tool?.callId === "unknown")!.tool!.output).toBeUndefined();
+});
+
 test('native display:false continuation stays hidden both during events and reopened history', () => {
   const mirror = new TranscriptMirror();
   const hidden = { role: 'custom', customType: 'goal-continuation', display: false, timestamp: 1, content: 'Private native continuation prompt' };

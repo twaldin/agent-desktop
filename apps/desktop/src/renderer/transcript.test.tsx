@@ -74,6 +74,16 @@ describe("ordered transcript renderer", () => {
     expect(html).toContain("Last observed running");
   });
 
+  test("native output remains literal and complete across separate blocks, including trailing whitespace", () => {
+    const source = "  <script>literal()</script>\n```js\nnotMarkdown()\n```\n\tfinal  \n";
+    const messages = project([{ role: "toolResult", toolCallId: "literal", toolName: "read", isError: false, content: [{ type: "text", text: source }, { type: "text", text: "second output block\n" }] }]);
+    const html = render(messages);
+    expect(html).toContain("&lt;script&gt;literal()&lt;/script&gt;\n```js\nnotMarkdown()\n```\n\tfinal  \n");
+    expect(html).toContain("second output block\n");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain('aria-label="Copy output"');
+  });
+
   test("explicit disclosure choices survive durable IDs and reconnect row remounts", () => {
     const mirror = new TranscriptMirror(), state = new TranscriptDisclosureState();
     mirror.accept({ type: "tool_execution_start", toolCallId: "a", toolName: "read", args: {} });
