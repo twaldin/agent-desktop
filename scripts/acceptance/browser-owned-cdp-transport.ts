@@ -192,6 +192,19 @@ await scenario("retired child auto-resume rejection does not fail parent cleanup
   const result = await disposal.done(); report({ result, childDetached: child.detached });
   assert.equal(child.detached, true); assert.equal(result.ok, true);
 });
+await scenario("dispose closes a suspended child before joining its auto-resume request", async (h, report) => {
+  const transport = await h.capture(); const root = h.root(), child = h.child("dispose-suspended", root);
+  const read = h.gate({}); h.setRead(async () => await read.promise);
+  h.setClosedEffect(session => { if (session === child) read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed")); });
+  transport.send(request(1, "Runtime.runIfWaitingForDebugger", child.id())); await ticks();
+  const disposal = tracked(transport.dispose()); await ticks(); const settled = !disposal.pending();
+  // The old teardown order is deliberately released after this observation so
+  // its counterexample fails without a timeout or retained hung promise.
+  if (!settled) child.onClosed();
+  const result = await disposal.done(); report({ settled, result, childDetached: child.detached, rootDetached: root.detached });
+  assert.equal(settled, true, "cleanup joined the suspended child request before closing its child session");
+  assert.equal(child.detached, true); assert.equal(root.detached, true); assert.equal(result.ok, true);
+});
 await scenario("child disconnect observed from parent detach precedes its auto-resume rejection", async (h, report) => {
   const transport = await h.capture(); const root = h.root(), child = h.child("cleanup-transient", root);
   const read = h.gate({}); h.setRead(async () => await read.promise);
@@ -200,24 +213,31 @@ await scenario("child disconnect observed from parent detach precedes its auto-r
   const result = await tracked(transport.dispose()).done(); report({ result, childDetached: child.detached });
   assert.equal(child.detached, true); assert.equal(result.ok, true);
 });
-await scenario("current child target-close rejection remains a cleanup failure", async (h, report) => {
-  const transport = await h.capture(); const child = h.child("current", h.root());
+await scenario("current child resume target-close remains a correlated failure before disposal", async (h, report) => {
+  const transport = await h.capture(), child = h.child("current", h.root());
   const read = h.gate({}); h.setRead(async () => await read.promise);
-  transport.send(request(1, "Runtime.runIfWaitingForDebugger", child.id()));
-  const disposal = tracked(transport.dispose()); await ticks();
-  read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed"));
-  const result = await disposal.done(); report(result);
-  assertFailure(result, /Target closed/);
+  const delivered: Record<string, unknown>[] = []; transport.onmessage = raw => delivered.push(JSON.parse(raw));
+  transport.send(request(1, "Runtime.runIfWaitingForDebugger", child.id())); await ticks();
+  read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed")); await ticks();
+  const result = await tracked(transport.dispose()).done(); report({ delivered, result });
+  assert.equal(delivered[0]?.id, 1); assert.match(String((delivered[0] as { error?: { message?: unknown } } | undefined)?.error?.message), /Target closed/); assert.equal(result.ok, true);
 });
-await scenario("same-id replacement cannot inherit a retired child's auto-resume allowance", async (h, report) => {
-  const transport = await h.capture(); const root = h.root(), retired = h.child("same-id", root);
+await scenario("same-id replacement does not inherit a retired child resume allowance before disposal", async (h, report) => {
+  const transport = await h.capture(), root = h.root(), retired = h.child("same-id", root);
   retired.onClosed(); const replacement = h.child("same-id", root);
   const read = h.gate({}); h.setRead(async () => await read.promise);
-  transport.send(request(1, "Runtime.runIfWaitingForDebugger", replacement.id()));
-  const disposal = tracked(transport.dispose()); await ticks();
-  read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed"));
-  const result = await disposal.done(); report({ result, retired: retired.detached, replacement: replacement.detached });
-  assert.equal(retired.detached, true); assertFailure(result, /Target closed/);
+  const delivered: Record<string, unknown>[] = []; transport.onmessage = raw => delivered.push(JSON.parse(raw));
+  transport.send(request(1, "Runtime.runIfWaitingForDebugger", replacement.id())); await ticks();
+  read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed")); await ticks();
+  const result = await tracked(transport.dispose()).done(); report({ delivered, result, retired: retired.detached, replacement: replacement.detached });
+  assert.equal(retired.detached, true); assert.equal(delivered[0]?.id, 1); assert.match(String((delivered[0] as { error?: { message?: unknown } } | undefined)?.error?.message), /Target closed/); assert.equal(result.ok, true);
+});
+await scenario("current child non-resume target-close remains a cleanup failure", async (h, report) => {
+  const transport = await h.capture(), child = h.child("current-non-resume", h.root());
+  const read = h.gate({}); h.setRead(async () => await read.promise);
+  transport.send(request(1, "Runtime.evaluate", child.id())); const disposal = tracked(transport.dispose()); await ticks();
+  read.reject(new TargetCloseError("Protocol error (Runtime.evaluate): Target closed"));
+  assertFailure(await disposal.done(), /Target closed/);
 });
 await scenario("retired child non-resume rejection remains a cleanup failure", async (h, report) => {
   const transport = await h.capture(); const child = h.child("retired-other", h.root());
