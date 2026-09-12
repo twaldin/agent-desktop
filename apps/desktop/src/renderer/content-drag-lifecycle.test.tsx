@@ -20,11 +20,13 @@ type EffectSlot={deps?:readonly unknown[];cleanup?:()=>void};
 function hookCommits() {
   const slots:any[]=[];let cursor=0;let pending:Array<()=>void>=[];
   const internals=(React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+  const assignRef=(ref:React.Ref<unknown>|undefined,value:unknown)=>{if(typeof ref==="function")ref(value);else if(ref)ref.current=value;};
   const dispatcher={
     useRef(value:unknown){const index=cursor++;return slots[index]??(slots[index]={current:value});},
     useState(value:unknown){const index=cursor++;if(!(index in slots))slots[index]=typeof value==="function"?(value as ()=>unknown)():value;return [slots[index],(next:unknown)=>{slots[index]=typeof next==="function"?(next as (old:unknown)=>unknown)(slots[index]):next;}];},
     useId(){const index=cursor++;return `drag-test-${index}`;},
     useEffect(effect:()=>void|(()=>void),deps?:readonly unknown[]){const index=cursor++;const old=slots[index] as EffectSlot|undefined;if(!old || !deps || deps.some((v,i)=>!Object.is(v,old.deps?.[i]))){pending.push(()=>{old?.cleanup?.();slots[index]={deps,cleanup:effect()};});}},
+    useImperativeHandle(ref:React.Ref<unknown>|undefined,create:()=>unknown){const index=cursor++;const old=slots[index] as EffectSlot|undefined;pending.push(()=>{old?.cleanup?.();assignRef(ref,create());slots[index]={cleanup:()=>assignRef(ref,null)};});},
   };
   return {
     render<T>(callback:()=>T){cursor=0;pending=[];const previous=internals.H;internals.H=dispatcher;try{const result=callback();for(const effect of pending)effect();return result;}finally{internals.H=previous;}},

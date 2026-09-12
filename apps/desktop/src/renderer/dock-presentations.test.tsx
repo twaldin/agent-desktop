@@ -80,12 +80,15 @@ test("reexecuting a transition with its allocated seed produces identical keys w
 function driver() {
   const slots: unknown[] = [], queue: Array<() => void> = []; let cursor = 0;
   const internals = (React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+  const assignRef = (ref: React.Ref<unknown> | undefined, value: unknown) => { if (typeof ref === "function") ref(value); else if (ref) ref.current = value; };
   const dispatcher = {
     useState(initial: any) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial;
       return [slots[i], (next: any) => queue.push(() => { slots[i] = typeof next === "function" ? next(slots[i]) : next; })]; },
     useRef(initial: unknown) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
     useId() { return `controlled-${cursor++}`; },
     useEffect() {},
+    useImperativeHandle(ref: React.Ref<unknown> | undefined, create: () => unknown) { const i = cursor++, previous = slots[i] as { cleanup?(): void } | undefined;
+      previous?.cleanup?.(); assignRef(ref, create()); slots[i] = { cleanup: () => assignRef(ref, null) }; },
   };
   return { flush() { while (queue.length) queue.shift()!(); }, render<T>(run: () => T): T {
     cursor = 0; const previous = internals.H; internals.H = dispatcher;

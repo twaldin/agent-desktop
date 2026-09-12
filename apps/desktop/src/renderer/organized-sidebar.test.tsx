@@ -3,7 +3,7 @@ import { createElement, Fragment, type ReactElement, type ReactNode } from "reac
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
-import { sidebarItemKey, sidebarLayout } from "./sidebar-layout";
+import { moveSidebarItem, sidebarItemKey, sidebarLayout } from "./sidebar-layout";
 import type { PreferencesState } from "./preferences-state";
 import type { SidebarSectionKey } from "../window-state";
 import type { HostOption } from "./host-catalog";
@@ -49,8 +49,8 @@ function fixture() {
   const state: unknown[] = [], refs: { current: unknown }[] = []; let cursor = 0, refCursor = 0;
   const useState = (initial: any) => { const slot = cursor++; if (!(slot in state)) state[slot] = typeof initial === "function" ? initial() : initial; return [state[slot], (next: any) => { state[slot] = typeof next === "function" ? next(state[slot]) : next; }]; };
   const useRef = (initial: unknown) => refs[refCursor++] ??= { current: initial };
-  const Component = new Function("sessionUnreadKey", "SidebarArchiveDialog", "createElement", "Fragment", "useState", "useRef", "useEffect", "useLayoutEffect", "createPortal", "sidebarItemKey", "Icon", "SidebarPinIcon", "ProjectMarker", "projectColor", "PROJECT_APPEARANCE_COLORS", "PROJECT_APPEARANCE_ICONS", "ProjectMarkerPicker", `${compiled}; return OrganizedSidebar;`)
-    ((host: string, id: string) => JSON.stringify([host, id]), () => null, createElement, Fragment, useState, useRef, () => {}, () => {}, (node: ReactNode) => node, sidebarItemKey, () => null, () => null, () => null, () => "#000", PROJECT_APPEARANCE_COLORS, PROJECT_APPEARANCE_ICONS, ProjectMarkerPicker);
+  const Component = new Function("sessionUnreadKey", "SidebarArchiveDialog", "createElement", "Fragment", "useState", "useRef", "useEffect", "useLayoutEffect", "createPortal", "moveSidebarItem", "sidebarItemKey", "Icon", "SidebarPinIcon", "ProjectMarker", "projectColor", "PROJECT_APPEARANCE_COLORS", "PROJECT_APPEARANCE_ICONS", "ProjectMarkerPicker", `${compiled}; return OrganizedSidebar;`)
+    ((host: string, id: string) => JSON.stringify([host, id]), () => null, createElement, Fragment, useState, useRef, () => {}, () => {}, (node: ReactNode) => node, moveSidebarItem, sidebarItemKey, () => null, () => null, () => null, () => "#000", PROJECT_APPEARANCE_COLORS, PROJECT_APPEARANCE_ICONS, ProjectMarkerPicker);
   const props = { preferences, groups, activeHostId: "home", selectedId: "same" as string | null, activeProjectId: undefined as string | undefined, query: "", showArchived: false, expandedProjects,
     onNavigate: (...args: unknown[]) => navigations.push(args), onNew: (...args: unknown[]) => newChats.push(args), onArchive: (...args: unknown[]) => archives.push(args),
     collapsedSections: new Set<SidebarSectionKey>(["recents"]), onToggleSection: (key: SidebarSectionKey) => { const next = new Set(props.collapsedSections); next.has(key) ? next.delete(key) : next.add(key); props.collapsedSections = next; },
