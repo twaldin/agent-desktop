@@ -135,6 +135,7 @@ export function notificationPreferences(value?: NotificationPreferences): Requir
 }
 export interface PreferenceValues {
   "sidebar.organization": SidebarOrganization;
+  "sidebar.pinnedSort": SidebarSort;
   [key: `session.read.${string}.${string}`]: SessionReadMark;
   "connections.keepAwakeWhilePluggedIn": boolean;
   "git.branchPrefix": string;
@@ -254,7 +255,7 @@ function background(value: unknown): ThemeBackground {
 
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
-  if (["sidebar.organization", "connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.appearance", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
+  if (["sidebar.organization", "sidebar.pinnedSort", "connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.appearance", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
   if (isSessionReadKey(value)) return value;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
   if (!match || !isPreferenceId(match[1])) return invalid("Only allowlisted app preferences and UUID sidebar entities can be shared.");
@@ -262,6 +263,7 @@ export function parsePreferenceKey(value: unknown): PreferenceKey {
 }
 
 function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[PreferenceKey] {
+  if (key === "sidebar.pinnedSort") return enumeration(value, ["priority", "updated_at", "manual"] as const);
   if (key === "sidebar.organization") {
     const item = object(value, ["grouping", "projectSort", "chatSort"]);
     return { grouping: enumeration(item.grouping, ["project", "connection", "list"] as const),
