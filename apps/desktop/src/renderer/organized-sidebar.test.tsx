@@ -7,6 +7,9 @@ import type { PreferencesState } from "./preferences-state";
 import type { SidebarSectionKey } from "../window-state";
 import type { HostOption } from "./host-catalog";
 
+(globalThis as { window?: unknown; document?: unknown }).window = { innerWidth: 1_024, innerHeight: 768 };
+(globalThis as { document?: unknown }).document = { body: {} };
+
 // Whole maintained component with controlled React hook storage. Events below are
 // the actual element callbacks; DOM effects, pointer timing and pixels need Electron.
 const source = readFileSync(new URL("./OrganizedSidebar.tsx", import.meta.url), "utf8");
@@ -30,7 +33,7 @@ function fixture() {
     { host: { hostId: "home", key: "home", name: "Home", availability: "available", local: true }, hostState: { host: { id: "home" }, projects: [project], sessions: [chat("home", "project", "running")] } },
     { host: { hostId: "work", key: "work", name: "Work", availability: "available", local: false }, hostState: { host: { id: "work" }, projects: [], sessions: [chat("work", null)] } },
   ] as { host: HostOption; hostState: HostState }[];
-  const writes: unknown[] = [], navigations: unknown[] = [], archives: unknown[] = [], newChats: unknown[] = [], toggles: string[] = [];
+  const writes: unknown[] = [], navigations: unknown[] = [], archives: unknown[] = [], newChats: unknown[] = [], toggles: string[] = [], renamed: unknown[] = [], removed: unknown[] = [], revealed: unknown[] = [];
   const preferences = {
     connected: true, busy: false, pending: [],
     sections: () => [],
@@ -47,12 +50,17 @@ function fixture() {
   const props = { preferences, groups, activeHostId: "home", selectedId: "same", query: "", showArchived: false, expandedProjects,
     onNavigate: (...args: unknown[]) => navigations.push(args), onNew: (...args: unknown[]) => newChats.push(args), onArchive: (...args: unknown[]) => archives.push(args),
     collapsedSections: new Set<SidebarSectionKey>(["recents"]), onToggleSection: (key: SidebarSectionKey) => { const next = new Set(props.collapsedSections); next.has(key) ? next.delete(key) : next.add(key); props.collapsedSections = next; },
-    onToggleProject: (key: string) => toggles.push(key), onAddProject() {}, addingProject: false, connected: true, onToggleArchived() {},
+    onToggleProject: (key: string) => toggles.push(key), onAddProject() {}, addingProject: false, connected: true, onToggleArchived() {}, localHostId: "home",
+    onRenameProject: async (...args: unknown[]) => { renamed.push(args); }, onRemoveProject: async (...args: unknown[]) => { removed.push(args); }, onRevealProject: async (...args: unknown[]) => { revealed.push(args); },
   };
   const render = () => { cursor = refCursor = 0; return nodes(Component({ ...props, layout: sidebarLayout(preferences, groups, props.query, props.showArchived, expandedProjects) })); };
   const button = (name: string) => render().find(node => node.type === "button" && (node.props["aria-label"] ?? label(node.props.children)) === name)!;
-  return { render, button, props, groups, writes, navigations, archives, newChats, toggles };
+  return { render, button, props, groups, writes, navigations, archives, newChats, toggles, renamed, removed, revealed };
 }
+
+function menuTrigger() { return { getBoundingClientRect: () => ({ right: 100, top: 20 }) } as unknown as DOMRect; }
+function projectMenu(f: ReturnType<typeof fixture>) { f.button(`Project actions for ${f.groups[0]!.hostState.projects[0]!.name}`).props.onClick({ currentTarget: menuTrigger() }); }
+function projectForm(f: ReturnType<typeof fixture>) { return f.render().find(node => node.type === "form" && nodes(node).some(child => child.props.id === "sidebar-project-name"))!; }
 
 test("unselected remote chat archive keeps the exact owner and does not navigate", () => {
   const f = fixture(), tree = f.render();
@@ -134,4 +142,33 @@ test("row structure keeps age out of the idle row and exposes a trailing running
   expect(f.render().filter(node => node.props.className === "sidebar-session-status running")).toHaveLength(1);
   expect(f.render().filter(node => node.props["aria-label"] === "Pin chat")).toHaveLength(1);
   expect(f.render().filter(node => node.props["aria-label"] === "Unpin chat")).toHaveLength(1);
+});
+
+test("project menu keeps pinned action order and captures the original owner for rename and removal", async () => {
+  const f = fixture(); projectMenu(f);
+  const labels = f.render().filter(node => node.type === "button").map(node => node.props["aria-label"] ?? label(node.props.children));
+  expect(labels.indexOf("Pin")).toBeLessThan(labels.indexOf("Edit project"));
+  expect(labels.indexOf("Edit project")).toBeLessThan(labels.indexOf("Reveal in Finder"));
+  expect(labels.indexOf("Reveal in Finder")).toBeLessThan(labels.indexOf("Remove project"));
+  f.groups[0]!.hostState.projects[0] = { ...f.groups[0]!.hostState.projects[0]!, name: "Replacement", path: "/replacement" };
+  f.button("Edit project").props.onClick();
+  f.render().find(node => node.props.id === "sidebar-project-name")!.props.onChange({ target: { value: "Renamed" } });
+  await projectForm(f).props.onSubmit({ preventDefault() {} });
+  expect(f.renamed).toEqual([[expect.objectContaining({ id: "project", hostId: "home", name: "Example" }), "Renamed"]]);
+  projectMenu(f); f.button("Remove project").props.onClick();
+  expect(f.render().filter(node => node.props.className === "sidebar-project-dialog-copy").map(node => label(node.props.children)).join(" ")).toContain("metadata only");
+  await f.button("Remove project").props.onClick();
+  expect(f.removed).toEqual([[expect.objectContaining({ id: "project", hostId: "home", name: "Replacement", path: "/replacement" })]]);
+});
+
+test("reveal is offered only for the local available host and rejected callbacks remain visible", async () => {
+  const f = fixture(); projectMenu(f); await f.button("Reveal in Finder").props.onClick();
+  expect(f.revealed).toEqual([[expect.objectContaining({ id: "project", hostId: "home" })]]);
+  f.props.localHostId = "work"; projectMenu(f);
+  expect(f.render().some(node => label(node.props.children) === "Reveal in Finder")).toBe(false);
+  f.button("Project actions for Example").props.onClick({ currentTarget: menuTrigger() });
+  f.props.localHostId = "home";
+  f.props.onRevealProject = async () => { throw new Error("Finder is unavailable"); };
+  projectMenu(f); await f.button("Reveal in Finder").props.onClick();
+  expect(label(f.render().find(node => node.props.className === "sidebar-project-action-error")!.props.children)).toContain("Finder is unavailable");
 });

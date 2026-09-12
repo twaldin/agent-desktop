@@ -832,6 +832,33 @@ export function App() {
     try { await command({ type: "session.archive", sessionId: selected.id, archived: !selected.archived }); await refresh(); }
     catch (cause) { setActionError(errorMessage(cause)); }
   }
+  function currentSidebarProject(original: Project) {
+    const owner = desktop.catalog.records.get(original.hostId);
+    const current = owner?.state?.projects.find(item => item.id === original.id && item.hostId === original.hostId);
+    if (!bridge || !owner?.connected || !current || current.path !== original.path) {
+      throw new Error("Reconnect to this project’s original host before changing it.");
+    }
+    return current;
+  }
+  async function renameSidebarProject(original: Project, name: string) {
+    currentSidebarProject(original);
+    const { id: projectId, hostId: ownerHostId } = original;
+    const result = await bridge.command({ id: crypto.randomUUID(), command: { type: "project.rename", projectId, name } }, ownerHostId);
+    if (!result.ok) throw new Error(result.error.message);
+    await desktop.catalog.refreshHost(ownerHostId);
+  }
+  async function removeSidebarProject(original: Project) {
+    currentSidebarProject(original);
+    const { id: projectId, hostId: ownerHostId } = original;
+    const result = await bridge.command({ id: crypto.randomUUID(), command: { type: "project.remove", projectId } }, ownerHostId);
+    if (!result.ok) throw new Error(result.error.message);
+    await desktop.catalog.refreshHost(ownerHostId);
+  }
+  async function revealSidebarProject(original: Project) {
+    currentSidebarProject(original);
+    if (original.hostId !== desktop.localHostId || !bridge.revealProjectDirectory) throw new Error("This project can only be revealed on its owning desktop.");
+    await bridge.revealProjectDirectory(original.id, original.hostId);
+  }
   async function archiveSidebarSession(sessionId: string, ownerHostId: string, archived: boolean) {
     setActionError(null);
     try {
@@ -1072,7 +1099,7 @@ export function App() {
         <button className="nav-action" onClick={() => newConversation()}><Icon name="compose"/><span>New chat</span><kbd>⌘ N</kbd></button>
         <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setPluginDirectoryOpen(true);setSettingsOpen(false);}}><Icon name="folder"/><span>Plugins</span></button>
       </nav>
-      <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession}/></div>
+      <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession} localHostId={desktop.localHostId ?? null} onRenameProject={renameSidebarProject} onRemoveProject={removeSidebarProject} onRevealProject={revealSidebarProject}/></div>
       <footer className="sidebar-footer">{profileMenu()}</footer>
     </aside>}
     <div ref={workbenchElement} data-browser-current-owner={browserAddressOwner} data-content-side={contentSide} data-content-column={rightDockColumn} onFocusCapture={event => {

@@ -50,3 +50,7 @@
 .sidebar-chat-card-title strong { margin:0; }
 .sidebar-chat-card-title > span { margin-top:2px; flex-shrink:0; }
 .sidebar-chat-card-title time { padding-left:8px; color:var(--tertiary); }
+.sidebar-project-action-error { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 8px 8px; padding:8px 10px; color:var(--danger); background:var(--error-surface); border:1px solid color-mix(in srgb, var(--danger) 15%, transparent); border-radius:8px; font-size:12px; overflow-wrap:anywhere; }
+.sidebar-project-action-error .icon-button { flex-shrink:0; }
+.sidebar-project-dialog-copy { margin:0 0 12px; color:var(--secondary); line-height:1.45; }
+.sidebar-project-dialog-copy strong { color:var(--text); overflow-wrap:anywhere; }
