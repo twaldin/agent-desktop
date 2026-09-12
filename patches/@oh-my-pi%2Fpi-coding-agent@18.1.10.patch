@@ -1,5 +1,5 @@
 diff --git a/dist/types/commit/conventional/service.d.ts b/dist/types/commit/conventional/service.d.ts
-index bd6991c..e5fb07a 100644
+index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e1882c5df 100644
 --- a/dist/types/commit/conventional/service.d.ts
 +++ b/dist/types/commit/conventional/service.d.ts
 @@ -8,6 +8,12 @@ export interface GenerateGitCommitOptions {
@@ -22,7 +22,7 @@ index bd6991c..e5fb07a 100644
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
 diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/types/extensibility/plugins/marketplace/cache.d.ts
-index 244fb84..c268062 100644
+index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b4da5d976 100644
 --- a/dist/types/extensibility/plugins/marketplace/cache.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/cache.d.ts
 @@ -22,7 +22,7 @@ export declare function getCachedPluginPath(cacheDir: string, marketplace: strin
@@ -35,7 +35,7 @@ index 244fb84..c268062 100644
   * Synchronous check — true when the cache directory exists on disk.
   * Uses `existsSync` because callers may need to run this check inline without async.
 diff --git a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
-index 54f6204..a1c142d 100644
+index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f5363c3a0c52 100644
 --- a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 @@ -3,7 +3,7 @@
@@ -65,7 +65,7 @@ index 54f6204..a1c142d 100644
   * Promote a temporary clone directory to its final cache location.
   *
 diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
-index 85d413a..21dbcd8 100644
+index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013cf45b464 100644
 --- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
 @@ -5,7 +5,7 @@
@@ -103,7 +103,7 @@ index 85d413a..21dbcd8 100644
      listInstalledPlugins(): Promise<InstalledPluginSummary[]>;
      setPluginEnabled(pluginId: string, enabled: boolean, scope?: "user" | "project"): Promise<void>;
 diff --git a/dist/types/extensibility/plugins/marketplace/types.d.ts b/dist/types/extensibility/plugins/marketplace/types.d.ts
-index 6d66e30..d8a6893 100644
+index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67738aec06 100644
 --- a/dist/types/extensibility/plugins/marketplace/types.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/types.d.ts
 @@ -88,10 +88,15 @@ export interface MarketplacesRegistry {
@@ -123,7 +123,7 @@ index 6d66e30..d8a6893 100644
      addedAt: string;
      updatedAt: string;
 diff --git a/dist/types/mcp/errors.d.ts b/dist/types/mcp/errors.d.ts
-index 35c2750..31df5e7 100644
+index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6af7beb0ed 100644
 --- a/dist/types/mcp/errors.d.ts
 +++ b/dist/types/mcp/errors.d.ts
 @@ -15,6 +15,11 @@ interface MCPTransportErrorOptions {
@@ -148,7 +148,7 @@ index 35c2750..31df5e7 100644
  export declare function mcpTraceIdFromHeaders(headers: Headers): string | undefined;
  /** Preserve a server-provided JSON-RPC error without exposing credential-shaped data. */
 diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index 9933dc7..d1fd2fc 100644
+index 9933dc7374a3560fb62f234463a714a332863a78..d1fd2fc36a9fd54600476147f8351c27c41d6c3f 100644
 --- a/dist/types/mcp/manager.d.ts
 +++ b/dist/types/mcp/manager.d.ts
 @@ -50,8 +50,14 @@ export interface MCPDiscoverOptions {
@@ -176,7 +176,7 @@ index 9933dc7..d1fd2fc 100644
      /**
       * Refresh tools from a specific server.
 diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
-index 7a53726..d3d4d16 100644
+index 7a53726f6d1b0c309fadb168ea698b68135b7e42..d3d4d167bc5c376e20014611530bfecec0d79e71 100644
 --- a/dist/types/mcp/tool-bridge.d.ts
 +++ b/dist/types/mcp/tool-bridge.d.ts
 @@ -13,6 +13,7 @@ import type { MCPAuthChallenge, MCPContent, MCPServerConnection, MCPToolDefiniti
@@ -188,7 +188,7 @@ index 7a53726..d3d4d16 100644
  export declare function isRetriableConnectionError(error: unknown): boolean;
  /** Details included in MCP tool results for rendering */
 diff --git a/dist/types/mcp/transports/sse.d.ts b/dist/types/mcp/transports/sse.d.ts
-index e448695..61c7a8a 100644
+index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110b6be85eb 100644
 --- a/dist/types/mcp/transports/sse.d.ts
 +++ b/dist/types/mcp/transports/sse.d.ts
 @@ -15,10 +15,10 @@ export declare class LegacySseTransport implements MCPTransport {
@@ -204,9 +204,55 @@ index e448695..61c7a8a 100644
  /** Create and connect a legacy HTTP+SSE transport. */
 -export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
 +export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;
+diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
+index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
+--- a/dist/types/tools/browser.d.ts
++++ b/dist/types/tools/browser.d.ts
+@@ -1,3 +1,5 @@
++import type { AgentSession } from "../session/agent-session.js";
++import type { BrowserKindTag } from "./browser/registry.js";
+ import type { EvalPreludeDefinition } from "../eval/preludes.js";
+ import type { ToolSession } from "../sdk.js";
+ export { type AriaSnapshotOptions, buildAriaSnapshotScript, parseAriaRefSelector } from "./browser/aria/aria-snapshot.js";
+@@ -10,3 +12,35 @@ export type { Observation, ObservationEntry } from "./browser/tab-protocol.js";
+ export declare function createBrowserPrelude(session: ToolSession): EvalPreludeDefinition;
+ /** Drop headless tabs so a browser mode change applies to the next open. */
+ export declare function restartBrowserForModeChange(): Promise<void>;
++
++/** Supports an initial URL within the existing acquisition deadline. */
++export declare const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
++
++/** Explicit browser resource owner; no AgentSession is constructed by acquisition. */
++export interface BrowserTabCreationOwner {
++    readonly id: string;
++    readonly cwd: string;
++    readonly settings: ToolSession["settings"];
++    readonly signal: AbortSignal;
++}
++export declare const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
++export interface SessionBrowserTabCreateRequest {
++    readonly name: string;
++    readonly initialUrl?: string;
++}
++export interface SessionBrowserTabCreateResult {
++    readonly created: true;
++    readonly name: string;
++    readonly ownerSessionId: string;
++    readonly targetId: string;
++    readonly backend: "worker" | "cmux";
++    readonly kindTag: BrowserKindTag;
++    readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++    readonly url: string;
++    readonly title: string;
++    readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++export declare function createBrowserTabForOwner(owner: BrowserTabCreationOwner, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
++export declare function createBrowserTabForSession(session: AgentSession, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
++
++export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 new file mode 100755
-index 0000000..caed131
+index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ace39556d1
 --- /dev/null
 +++ b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 @@ -0,0 +1,37 @@
@@ -248,7 +294,7 @@ index 0000000..caed131
 +    assertCurrent(): void;
 +}): Readonly<CdpEvaluationOpening>;
 diff --git a/dist/types/tools/browser/cmux/cmux-tab.d.ts b/dist/types/tools/browser/cmux/cmux-tab.d.ts
-index f5d460b..75aae00 100644
+index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45e1a08493 100644
 --- a/dist/types/tools/browser/cmux/cmux-tab.d.ts
 +++ b/dist/types/tools/browser/cmux/cmux-tab.d.ts
 @@ -56,7 +56,7 @@ export interface RunCmuxCodeOptions {
@@ -287,7 +333,7 @@ index f5d460b..75aae00 100644
 +export declare function createRetainedCmuxTab(state: CmuxRetainedState, client: Pick<CmuxSocketClient, "request">): CmuxTab;
 diff --git a/dist/types/tools/browser/cmux/evaluation-channel.d.ts b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 new file mode 100755
-index 0000000..e6d2440
+index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f123e704b5
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 @@ -0,0 +1,8 @@
@@ -300,7 +346,7 @@ index 0000000..e6d2440
 +}
 +export declare function createCmuxEvaluationChannel(tab: CmuxTab, source: Pick<CmuxSocketClient, "request"> & { assertCurrent(): void }): Readonly<CmuxEvaluationChannel>;
 diff --git a/dist/types/tools/browser/cmux/socket-client.d.ts b/dist/types/tools/browser/cmux/socket-client.d.ts
-index e94d47c..e8f5c5c 100644
+index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9b15ebca6 100644
 --- a/dist/types/tools/browser/cmux/socket-client.d.ts
 +++ b/dist/types/tools/browser/cmux/socket-client.d.ts
 @@ -1,9 +1,17 @@
@@ -337,7 +383,7 @@ index e94d47c..e8f5c5c 100644
  }
 diff --git a/dist/types/tools/browser/cmux/surface-observation.d.ts b/dist/types/tools/browser/cmux/surface-observation.d.ts
 new file mode 100755
-index 0000000..6ebb03b
+index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b17305183
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/surface-observation.d.ts
 @@ -0,0 +1,14 @@
@@ -356,7 +402,7 @@ index 0000000..6ebb03b
 +/** Capture before creation/adoption. Does not connect, lease, or establish server incarnation. */
 +export declare function captureCmuxSurfaceObservation(client: CmuxSocketClient, timeoutMs: number): CmuxSurfaceObservation;
 diff --git a/dist/types/tools/browser/relay/protocol.d.ts b/dist/types/tools/browser/relay/protocol.d.ts
-index 6fd1252..58a7c0b 100644
+index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491ffac07771 100644
 --- a/dist/types/tools/browser/relay/protocol.d.ts
 +++ b/dist/types/tools/browser/relay/protocol.d.ts
 @@ -19,6 +19,9 @@ export interface TabSnapshot {
@@ -380,7 +426,7 @@ index 6fd1252..58a7c0b 100644
      tabs: TabSnapshot[];
 diff --git a/dist/types/tools/browser/run-context.d.ts b/dist/types/tools/browser/run-context.d.ts
 new file mode 100755
-index 0000000..8e4fc00
+index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc09ce3bcb
 --- /dev/null
 +++ b/dist/types/tools/browser/run-context.d.ts
 @@ -0,0 +1,9 @@
@@ -394,7 +440,7 @@ index 0000000..8e4fc00
 +}
 +export declare function createBrowserRunContext(session: ToolSession, snapshot?: SessionSnapshot): BrowserRunContext;
 diff --git a/dist/types/tools/browser/tab-protocol.d.ts b/dist/types/tools/browser/tab-protocol.d.ts
-index 4411a20..0d51ece 100644
+index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f5350b08b95 100644
 --- a/dist/types/tools/browser/tab-protocol.d.ts
 +++ b/dist/types/tools/browser/tab-protocol.d.ts
 @@ -40,7 +40,20 @@ export interface SessionSnapshot {
@@ -420,7 +466,7 @@ index 4411a20..0d51ece 100644
      browserWSEndpoint: string;
      safeDir: string;
 diff --git a/dist/types/tools/browser/tab-supervisor.d.ts b/dist/types/tools/browser/tab-supervisor.d.ts
-index a822a71..d613600 100644
+index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba2266bde73f7 100644
 --- a/dist/types/tools/browser/tab-supervisor.d.ts
 +++ b/dist/types/tools/browser/tab-supervisor.d.ts
 @@ -1,4 +1,5 @@
@@ -481,7 +527,7 @@ index a822a71..d613600 100644
 +export declare function openReservedCdpEvaluation(ownerSessionId: string, target: OwnerTabViewportTarget, operationId: string, timeoutMs: number): Promise<Readonly<import("./cdp-evaluation-channel.js").CdpEvaluationChannel>>;
 diff --git a/dist/types/tools/browser/target-observation.d.ts b/dist/types/tools/browser/target-observation.d.ts
 new file mode 100755
-index 0000000..0328314
+index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb421abd75
 --- /dev/null
 +++ b/dist/types/tools/browser/target-observation.d.ts
 @@ -0,0 +1,8 @@
@@ -493,54 +539,8 @@ index 0000000..0328314
 +}
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
-diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
-index 67ab2e0..28b1ef2 100644
---- a/dist/types/tools/browser.d.ts
-+++ b/dist/types/tools/browser.d.ts
-@@ -1,3 +1,5 @@
-+import type { AgentSession } from "../session/agent-session.js";
-+import type { BrowserKindTag } from "./browser/registry.js";
- import type { EvalPreludeDefinition } from "../eval/preludes.js";
- import type { ToolSession } from "../sdk.js";
- export { type AriaSnapshotOptions, buildAriaSnapshotScript, parseAriaRefSelector } from "./browser/aria/aria-snapshot.js";
-@@ -10,3 +12,35 @@ export type { Observation, ObservationEntry } from "./browser/tab-protocol.js";
- export declare function createBrowserPrelude(session: ToolSession): EvalPreludeDefinition;
- /** Drop headless tabs so a browser mode change applies to the next open. */
- export declare function restartBrowserForModeChange(): Promise<void>;
-+
-+/** Supports an initial URL within the existing acquisition deadline. */
-+export declare const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
-+
-+/** Explicit browser resource owner; no AgentSession is constructed by acquisition. */
-+export interface BrowserTabCreationOwner {
-+    readonly id: string;
-+    readonly cwd: string;
-+    readonly settings: ToolSession["settings"];
-+    readonly signal: AbortSignal;
-+}
-+export declare const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
-+export interface SessionBrowserTabCreateRequest {
-+    readonly name: string;
-+    readonly initialUrl?: string;
-+}
-+export interface SessionBrowserTabCreateResult {
-+    readonly created: true;
-+    readonly name: string;
-+    readonly ownerSessionId: string;
-+    readonly targetId: string;
-+    readonly backend: "worker" | "cmux";
-+    readonly kindTag: BrowserKindTag;
-+    readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
-+    readonly url: string;
-+    readonly title: string;
-+    readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-+}
-+export declare function createBrowserTabForOwner(owner: BrowserTabCreationOwner, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
-+export declare function createBrowserTabForSession(session: AgentSession, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
-+
-+export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/src/blob-broker/uploaders-object-storage.ts b/src/blob-broker/uploaders-object-storage.ts
-index 3ff2d47..8865e1b 100644
+index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906beeee2f0e 100644
 --- a/src/blob-broker/uploaders-object-storage.ts
 +++ b/src/blob-broker/uploaders-object-storage.ts
 @@ -254,7 +254,7 @@ function createS3Uploader(destination: BlobDestinationId, config: DestinationRun
@@ -553,7 +553,7 @@ index 3ff2d47..8865e1b 100644
  	for (const part of parts) length += part.byteLength;
  	const result = new Uint8Array(length);
 diff --git a/src/collab/protocol.ts b/src/collab/protocol.ts
-index 92e904f..4d14b74 100644
+index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959dd061c94 100644
 --- a/src/collab/protocol.ts
 +++ b/src/collab/protocol.ts
 @@ -111,7 +111,7 @@ export type CollabFrame =
@@ -566,7 +566,7 @@ index 92e904f..4d14b74 100644
  	new DataView(out.buffer).setUint32(0, peerId, false);
  	out.set(sealed, ENVELOPE_HEADER_LENGTH);
 diff --git a/src/collab/relay-client.ts b/src/collab/relay-client.ts
-index 8f2ea5c..3270855 100644
+index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11c80bb580 100644
 --- a/src/collab/relay-client.ts
 +++ b/src/collab/relay-client.ts
 @@ -52,7 +52,7 @@ export class CollabSocket {
@@ -588,7 +588,7 @@ index 8f2ea5c..3270855 100644
  			logger.debug("collab: dropping frame, reconnect buffer full", { t: frameType });
  			return;
 diff --git a/src/commit/conventional/service.ts b/src/commit/conventional/service.ts
-index de01f53..6e98843 100644
+index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f16816c4faa67 100644
 --- a/src/commit/conventional/service.ts
 +++ b/src/commit/conventional/service.ts
 @@ -29,6 +29,13 @@ export interface GenerateGitCommitOptions {
@@ -642,7 +642,7 @@ index de01f53..6e98843 100644
  	} finally {
  		await inference.dispose();
 diff --git a/src/export/share.ts b/src/export/share.ts
-index 1d1ed9e..6f9fbb8 100644
+index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2c980a559 100644
 --- a/src/export/share.ts
 +++ b/src/export/share.ts
 @@ -663,7 +663,7 @@ async function shareViaServer(
@@ -655,7 +655,7 @@ index 1d1ed9e..6f9fbb8 100644
  	try {
  		res = await fetch(base, {
 diff --git a/src/extensibility/plugins/marketplace/cache.ts b/src/extensibility/plugins/marketplace/cache.ts
-index 6745cc7..c919217 100644
+index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d172813bc57 100644
 --- a/src/extensibility/plugins/marketplace/cache.ts
 +++ b/src/extensibility/plugins/marketplace/cache.ts
 @@ -54,11 +54,56 @@ export function getCachedPluginPath(
@@ -752,7 +752,7 @@ index 6745cc7..c919217 100644
  	} catch (err) {
  		// Clean up staging dir on any failure; leave existing targetPath intact
 diff --git a/src/extensibility/plugins/marketplace/fetcher.ts b/src/extensibility/plugins/marketplace/fetcher.ts
-index 389da79..75a3c78 100644
+index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb922d4f009 100644
 --- a/src/extensibility/plugins/marketplace/fetcher.ts
 +++ b/src/extensibility/plugins/marketplace/fetcher.ts
 @@ -5,14 +5,80 @@
@@ -885,7 +885,7 @@ index 389da79..75a3c78 100644
  		const catalog = parseMarketplaceCatalog(content, displayPath);
  		return { catalog, clonePath: tmpDir };
 diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibility/plugins/marketplace/manager.ts
-index 72733e9..4e51c57 100644
+index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757a4a6f1f0 100644
 --- a/src/extensibility/plugins/marketplace/manager.ts
 +++ b/src/extensibility/plugins/marketplace/manager.ts
 @@ -16,7 +16,7 @@ import { normalizePluginRuntimeConfig } from "../runtime-config";
@@ -992,7 +992,7 @@ index 72733e9..4e51c57 100644
  			}
  		}
 diff --git a/src/extensibility/plugins/marketplace/types.ts b/src/extensibility/plugins/marketplace/types.ts
-index fd101ff..109e85f 100644
+index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d554741226d8fa67 100644
 --- a/src/extensibility/plugins/marketplace/types.ts
 +++ b/src/extensibility/plugins/marketplace/types.ts
 @@ -142,10 +142,16 @@ export interface MarketplacesRegistry {
@@ -1013,7 +1013,7 @@ index fd101ff..109e85f 100644
  	addedAt: string;
  	updatedAt: string;
 diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index fc71d73..262ed35 100644
+index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..262ed35508f2094ca2e920bad93cec7c0f1e02bb 100644
 --- a/src/mcp/client.ts
 +++ b/src/mcp/client.ts
 @@ -70,7 +70,7 @@ async function defaultRequestHandler(method: string, _params: unknown): Promise<
@@ -1044,7 +1044,7 @@ index fc71d73..262ed35 100644
  			transport.onNotification = options.onNotification;
  		}
 diff --git a/src/mcp/errors.ts b/src/mcp/errors.ts
-index b779975..6d26911 100644
+index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6dab5207bb 100644
 --- a/src/mcp/errors.ts
 +++ b/src/mcp/errors.ts
 @@ -29,6 +29,12 @@ interface MCPTransportErrorOptions {
@@ -1102,7 +1102,7 @@ index b779975..6d26911 100644
  
  function errorCode(error: unknown): string | number | undefined {
 diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index ffccf8e..dc226ea 100644
+index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac0b7d7fac 100644
 --- a/src/mcp/manager.ts
 +++ b/src/mcp/manager.ts
 @@ -7,7 +7,7 @@
@@ -1400,7 +1400,7 @@ index ffccf8e..dc226ea 100644
  		void this.toolCache?.set(name, connection.config, serverTools);
  
 diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
-index 955b724..679ec59 100644
+index 955b72489bcae7bb44723fd42a7075141311f40c..679ec59ae222397cac48056509532c0c20df24d7 100644
 --- a/src/mcp/tool-bridge.ts
 +++ b/src/mcp/tool-bridge.ts
 @@ -33,7 +33,7 @@ import type {
@@ -1426,7 +1426,7 @@ index 955b724..679ec59 100644
  		rethrowIfAborted(error, signal);
  		return null;
 diff --git a/src/mcp/transports/http.ts b/src/mcp/transports/http.ts
-index 9d12523..9f399a6 100644
+index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd14ad42e4 100644
 --- a/src/mcp/transports/http.ts
 +++ b/src/mcp/transports/http.ts
 @@ -486,6 +486,10 @@ export class HttpTransport implements MCPTransport {
@@ -1452,7 +1452,7 @@ index 9d12523..9f399a6 100644
  			}
  
 diff --git a/src/mcp/transports/sse.ts b/src/mcp/transports/sse.ts
-index a4d71ea..29d1697 100644
+index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73e71a1c4f 100644
 --- a/src/mcp/transports/sse.ts
 +++ b/src/mcp/transports/sse.ts
 @@ -10,6 +10,7 @@ import type {
@@ -1542,9 +1542,254 @@ index a4d71ea..29d1697 100644
 +	await transport.connect(signal);
  	return transport;
  }
+diff --git a/src/tools/browser.ts b/src/tools/browser.ts
+index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
+--- a/src/tools/browser.ts
++++ b/src/tools/browser.ts
+@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
+ import { untilAborted } from "@oh-my-pi/pi-utils";
+ import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
+ import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
++import type { AgentSession } from "../session/agent-session";
+ import type { ToolSession } from "../sdk";
+ import { enforceInlineByteCap } from "../session/streaming-output";
+ // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
+@@ -25,11 +26,13 @@ import type { OutputMeta } from "./output-meta";
+ import {
+ 	type AcquireTabResult,
+ 	acquireTab,
++	BrowserTabCreateRejected,
+ 	dropHeadlessTabs,
+ 	getTab,
+ 	releaseAllTabs,
+ 	releaseTab,
+ 	runInTab,
++	type TabSession,
+ } from "./browser/tab-supervisor";
+ import { renderTabCall } from "./browser/tab-call";
+ import { resolveToCwd } from "./path-utils";
+@@ -44,6 +47,7 @@ export { CmuxSocketClient } from "./browser/cmux/socket-client";
+ export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
+ export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
+ export type { Observation, ObservationEntry } from "./browser/tab-protocol";
++export { BrowserTabCreateRejected, BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor";
+ 
+ const DEFAULT_TAB_NAME = "main";
+ const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
+@@ -97,7 +101,43 @@ interface BrowserPreludeDetails {
+ 	value?: unknown;
+ }
+ 
+-function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
++type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
++
++/** Supports an initial URL within the existing acquisition deadline. */
++export const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
++
++/** Explicit native browser resource ownership, independent of AgentSession.
++ * The owning host retires this lifetime by aborting signal. */
++export interface BrowserTabCreationOwner {
++	readonly id: string;
++	readonly cwd: string;
++	readonly settings: ToolSession["settings"];
++	readonly signal: AbortSignal;
++}
++
++export const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
++
++export interface SessionBrowserTabCreateRequest {
++	/** New managed OMP tab name. Existing names are rejected atomically. */
++	readonly name: string;
++	readonly initialUrl?: string;
++}
++
++export interface SessionBrowserTabCreateResult {
++	readonly created: true;
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly targetId: string;
++	readonly backend: TabSession["backend"];
++	readonly kindTag: BrowserKindTag;
++	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
++	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++	readonly url: string;
++	readonly title: string;
++	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++
++function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
+ 	const app = params.app;
+ 	if (app?.cdp_url) {
+ 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
+@@ -201,11 +241,35 @@ async function openBrowser(
+ 	timeoutMs: number,
+ 	signal?: AbortSignal,
+ ): Promise<AgentToolResult<unknown>> {
++	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
++	details.browser = browser.kind.kind;
++	const tab = result.tab;
++	const url = tab.info.url;
++	const title = tab.info.title ?? "";
++	details.url = url;
++	details.viewport = tab.info.viewport;
++	const verb = result.created ? "Opened" : "Reused";
++	const lines = [
++		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
++		`URL: ${url}`,
++		title ? `Title: ${title}` : null,
++	].filter((line): line is string => typeof line === "string");
++	return toolResult(details).text(lines.join("\n")).done();
++}
++
++async function acquireBrowserTab(
++	session: BrowserOpenSession,
++	name: string,
++	params: BrowserParams,
++	timeoutMs: number,
++	signal?: AbortSignal,
++	createOnly = false,
++): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
+ 	const kind = resolveBrowserKind(params, session);
+-	details.browser = kind.kind;
+ 
+ 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
+ 	const existing = getTab(name);
++	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
+ 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
+ 		throw new ToolError(
+ 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
+@@ -267,6 +331,7 @@ async function openBrowser(
+ 					dialogs: params.dialogs,
+ 					signal: openSignal,
+ 					ownerSessionId: session.getSessionId?.() ?? undefined,
++					createOnly,
+ 				}),
+ 			);
+ 		} catch (error) {
+@@ -277,18 +342,7 @@ async function openBrowser(
+ 		}
+ 		await releaseBrowser(browser, { kill: false });
+ 
+-		const tab = result.tab;
+-		const url = tab.info.url;
+-		const title = tab.info.title ?? "";
+-		details.url = url;
+-		details.viewport = tab.info.viewport;
+-		const verb = result.created ? "Opened" : "Reused";
+-		const lines = [
+-			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
+-			`URL: ${url}`,
+-			title ? `Title: ${title}` : null,
+-		].filter((line): line is string => typeof line === "string");
+-		return toolResult(details).text(lines.join("\n")).done();
++		return { browser, result };
+ 	} catch (error) {
+ 		// Caller cancellation stays a ToolAbortError; the requested timeout
+ 		// becomes a timeout ToolError; anything else passes through unchanged.
+@@ -298,6 +352,100 @@ async function openBrowser(
+ 	}
+ }
+ 
++/**
++ * Create one managed browser tab directly for an actual AgentSession. This is
++ * an explicit human resource action: it reads the live native browser settings
++ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
++ * conversation transcript.
++ */
++export async function createBrowserTabForSession(
++	session: AgentSession,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	validateBrowserTabCreateRequest(request);
++	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
++	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
++	const ownerSessionId = session.sessionManager.getSessionId();
++	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
++	return createOwnedBrowserTab({
++		cwd: session.sessionManager.getCwd(), settings: session.settings, getSessionId: () => ownerSessionId,
++	}, ownerSessionId, request, () => !session.isDisposed && session.sessionManager.getSessionId() === ownerSessionId,
++		"The native session changed while creating its browser tab");
++}
++
++/** Acquire through the configured native backend without constructing a session.
++ * This does not allocate, transfer or persist an owner; the host owns that lifecycle. */
++export async function createBrowserTabForOwner(
++	owner: BrowserTabCreationOwner,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	validateBrowserTabCreateRequest(request);
++	if (!owner || typeof owner.id !== "string" || !owner.id || owner.id.length > 200
++		|| /[\u0000-\u001f\u007f]/.test(owner.id) || typeof owner.cwd !== "string" || !owner.cwd
++		|| !(owner.signal instanceof AbortSignal)) {
++		throw new BrowserTabCreateRejected("Native browser creation requires an explicit owner and lifetime");
++	}
++	const { id, cwd, settings, signal } = owner;
++	if (signal.aborted) throw new BrowserTabCreateRejected("The native browser owner is retired");
++	if (!settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled for this owner");
++	return createOwnedBrowserTab({ cwd, settings, getSessionId: () => id }, id, request, () => !signal.aborted,
++		"The native browser owner retired while creating its browser tab", signal);
++}
++
++function validateBrowserTabCreateRequest(request: SessionBrowserTabCreateRequest): void {
++	if (
++		!request ||
++		typeof request.name !== "string" ||
++		request.name.length === 0 ||
++		request.name.length > 200 ||
++		/[\u0000-\u001f\u007f]/.test(request.name)
++	) {
++		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
++	}
++	if (request.initialUrl !== undefined) {
++		try {
++			if (typeof request.initialUrl !== "string" || request.initialUrl.length > 8192 || /[\u0000-\u0020]/.test(request.initialUrl)) throw new Error();
++			const url = new URL(request.initialUrl);
++			if (!["http:", "https:"].includes(url.protocol) && request.initialUrl !== "about:blank") throw new Error();
++		} catch { throw new BrowserTabCreateRejected("Invalid initial browser address"); }
++	}
++}
++
++async function createOwnedBrowserTab(
++	nativeSession: BrowserOpenSession,
++	ownerSessionId: string,
++	request: SessionBrowserTabCreateRequest,
++	isCurrent: () => boolean,
++	changedMessage: string,
++	signal?: AbortSignal,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	const timeoutMs = clampTimeout("browser", undefined, nativeSession.settings.get("tools.maxTimeout")) * 1_000;
++	const params = { action: "open", name: request.name, ...(request.initialUrl === undefined ? {} : { url: request.initialUrl }) } as BrowserParams;
++	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, signal, true);
++	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
++	if (!isCurrent()) {
++		// Only the exact tab returned by this acquisition may be cleaned up. A
++		// same-name replacement belongs to its own caller, even after retirement.
++		if (getTab(result.tab.name) === result.tab) await releaseTab(result.tab.name, { kill: true, timeoutMs });
++		throw new ToolError(changedMessage);
++	}
++	const tab = result.tab;
++	const targetDisposition = tab.kindTag === "headless" ? "created-page"
++		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
++	return Object.freeze({
++		created: true,
++		name: tab.name,
++		ownerSessionId,
++		targetId: tab.targetId,
++		backend: tab.backend,
++		kindTag: tab.kindTag,
++		targetDisposition,
++		url: tab.info.url,
++		title: tab.info.title ?? "",
++		viewport: Object.freeze({ ...tab.info.viewport }),
++	});
++}
++
+ async function closeBrowser(
+ 	name: string,
+ 	params: BrowserParams,
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts
 new file mode 100755
-index 0000000..1fc2ad5
+index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd781508d8205f5
 --- /dev/null
 +++ b/src/tools/browser/cdp-evaluation-channel.ts
 @@ -0,0 +1,117 @@
@@ -1666,7 +1911,7 @@ index 0000000..1fc2ad5
 +	return Object.freeze({ ready, dispose });
 +}
 diff --git a/src/tools/browser/cmux/cmux-tab.ts b/src/tools/browser/cmux/cmux-tab.ts
-index eabba18..f2fb122 100644
+index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6683dfe3d 100644
 --- a/src/tools/browser/cmux/cmux-tab.ts
 +++ b/src/tools/browser/cmux/cmux-tab.ts
 @@ -2,8 +2,8 @@ import * as fs from "node:fs";
@@ -2140,7 +2385,7 @@ index eabba18..f2fb122 100644
  
 diff --git a/src/tools/browser/cmux/evaluation-channel.ts b/src/tools/browser/cmux/evaluation-channel.ts
 new file mode 100755
-index 0000000..34d7f21
+index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcafb236cb08
 --- /dev/null
 +++ b/src/tools/browser/cmux/evaluation-channel.ts
 @@ -0,0 +1,130 @@
@@ -2275,7 +2520,7 @@ index 0000000..34d7f21
 +	});
 +}
 diff --git a/src/tools/browser/cmux/socket-client.ts b/src/tools/browser/cmux/socket-client.ts
-index 1741739..71e79d2 100644
+index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c078f1299 100644
 --- a/src/tools/browser/cmux/socket-client.ts
 +++ b/src/tools/browser/cmux/socket-client.ts
 @@ -12,6 +12,8 @@ type RequestJob = {
@@ -2592,7 +2837,7 @@ index 1741739..71e79d2 100644
  	#rejectAll(err: ToolError): void {
 diff --git a/src/tools/browser/cmux/surface-observation.ts b/src/tools/browser/cmux/surface-observation.ts
 new file mode 100755
-index 0000000..b6b4128
+index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da08d9aeefa
 --- /dev/null
 +++ b/src/tools/browser/cmux/surface-observation.ts
 @@ -0,0 +1,83 @@
@@ -2681,7 +2926,7 @@ index 0000000..b6b4128
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000..c10e635
+index 0000000000000000000000000000000000000000..c10e6354ec308a2fe20210127c79ccc5369ccd06
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
 @@ -0,0 +1,294 @@
@@ -2980,7 +3225,7 @@ index 0000000..c10e635
 +	return { message: typeof value.message === "string" ? value.message : "Browser protocol request failed", code: typeof value.code === "number" ? value.code : -32000, data: value.data ?? value.originalMessage };
 +}
 diff --git a/src/tools/browser/registry.ts b/src/tools/browser/registry.ts
-index 1b1bf38..69c255e 100644
+index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993c48e980a 100644
 --- a/src/tools/browser/registry.ts
 +++ b/src/tools/browser/registry.ts
 @@ -77,6 +77,21 @@ export interface ReleaseBrowserOptions {
@@ -3075,7 +3320,7 @@ index 1b1bf38..69c255e 100644
  		handle.client.close();
  		return;
 diff --git a/src/tools/browser/relay/bridge.ts b/src/tools/browser/relay/bridge.ts
-index dededcc..486d572 100644
+index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d436e1d9de 100644
 --- a/src/tools/browser/relay/bridge.ts
 +++ b/src/tools/browser/relay/bridge.ts
 @@ -18,8 +18,8 @@
@@ -4137,7 +4382,7 @@ index dededcc..486d572 100644
  	}
  }
 diff --git a/src/tools/browser/relay/extension-assets/background.js.txt b/src/tools/browser/relay/extension-assets/background.js.txt
-index 560da85..85e7d1a 100644
+index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e841a8b1445 100644
 --- a/src/tools/browser/relay/extension-assets/background.js.txt
 +++ b/src/tools/browser/relay/extension-assets/background.js.txt
 @@ -7,6 +7,7 @@ var ws = null;
@@ -4242,7 +4487,7 @@ index 560da85..85e7d1a 100644
    socket.onclose = () => {
      if (ws !== socket)
 diff --git a/src/tools/browser/relay/protocol.ts b/src/tools/browser/relay/protocol.ts
-index baef431..f573512 100644
+index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a2203ff24 100644
 --- a/src/tools/browser/relay/protocol.ts
 +++ b/src/tools/browser/relay/protocol.ts
 @@ -21,6 +21,7 @@ export interface TabSnapshot {
@@ -4264,7 +4509,7 @@ index baef431..f573512 100644
  			tabs: TabSnapshot[];
 diff --git a/src/tools/browser/run-context.ts b/src/tools/browser/run-context.ts
 new file mode 100755
-index 0000000..4b24343
+index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0bef346f0
 --- /dev/null
 +++ b/src/tools/browser/run-context.ts
 @@ -0,0 +1,33 @@
@@ -4302,7 +4547,7 @@ index 0000000..4b24343
 +	};
 +}
 diff --git a/src/tools/browser/tab-protocol.ts b/src/tools/browser/tab-protocol.ts
-index 98cbe21..8a85cf0 100644
+index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c813f49b18f 100644
 --- a/src/tools/browser/tab-protocol.ts
 +++ b/src/tools/browser/tab-protocol.ts
 @@ -1,4 +1,5 @@
@@ -4387,7 +4632,7 @@ index 98cbe21..8a85cf0 100644
  export interface Transport {
  	send(msg: WorkerOutbound | WorkerInbound, transferList?: Transferable[]): void;
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5..7e6d958 100644
+index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcfb54c90aa 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
 @@ -5,18 +5,23 @@ import {
@@ -6724,7 +6969,7 @@ index c6b8dd5..7e6d958 100644
  }
  /**
 diff --git a/src/tools/browser/tab-worker-entry.ts b/src/tools/browser/tab-worker-entry.ts
-index 9c572c8..fbc9340 100644
+index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267ffe33f470 100644
 --- a/src/tools/browser/tab-worker-entry.ts
 +++ b/src/tools/browser/tab-worker-entry.ts
 @@ -6,6 +6,15 @@ import { WorkerCore } from "./tab-worker";
@@ -6773,7 +7018,7 @@ index 9c572c8..fbc9340 100644
 +}
 diff --git a/src/tools/browser/tab-worker-host.ts b/src/tools/browser/tab-worker-host.ts
 new file mode 100755
-index 0000000..c3045c8
+index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cca94d5352
 --- /dev/null
 +++ b/src/tools/browser/tab-worker-host.ts
 @@ -0,0 +1,296 @@
@@ -7074,7 +7319,7 @@ index 0000000..c3045c8
 +	return attempt;
 +}
 diff --git a/src/tools/browser/tab-worker.ts b/src/tools/browser/tab-worker.ts
-index 6e8281a..30c12d3 100644
+index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76cdd29b4b 100644
 --- a/src/tools/browser/tab-worker.ts
 +++ b/src/tools/browser/tab-worker.ts
 @@ -3,13 +3,13 @@ import * as os from "node:os";
@@ -7689,7 +7934,7 @@ index 6e8281a..30c12d3 100644
  }
 diff --git a/src/tools/browser/target-observation.ts b/src/tools/browser/target-observation.ts
 new file mode 100755
-index 0000000..d0148a7
+index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902d24582f4
 --- /dev/null
 +++ b/src/tools/browser/target-observation.ts
 @@ -0,0 +1,91 @@
@@ -7786,7 +8031,7 @@ index 0000000..d0148a7
 +}
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 new file mode 100755
-index 0000000..870b940
+index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8be412636
 --- /dev/null
 +++ b/src/tools/browser/worker-cdp-channel.ts
 @@ -0,0 +1,249 @@
@@ -8039,253 +8284,8 @@ index 0000000..870b940
 +	}
 +	dispose(): Promise<void> { this.close(); return this.#done.promise; }
 +}
-diff --git a/src/tools/browser.ts b/src/tools/browser.ts
-index b191f31..50c0be1 100644
---- a/src/tools/browser.ts
-+++ b/src/tools/browser.ts
-@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
- import { untilAborted } from "@oh-my-pi/pi-utils";
- import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
- import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
-+import type { AgentSession } from "../session/agent-session";
- import type { ToolSession } from "../sdk";
- import { enforceInlineByteCap } from "../session/streaming-output";
- // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
-@@ -25,11 +26,13 @@ import type { OutputMeta } from "./output-meta";
- import {
- 	type AcquireTabResult,
- 	acquireTab,
-+	BrowserTabCreateRejected,
- 	dropHeadlessTabs,
- 	getTab,
- 	releaseAllTabs,
- 	releaseTab,
- 	runInTab,
-+	type TabSession,
- } from "./browser/tab-supervisor";
- import { renderTabCall } from "./browser/tab-call";
- import { resolveToCwd } from "./path-utils";
-@@ -44,6 +47,7 @@ export { CmuxSocketClient } from "./browser/cmux/socket-client";
- export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
- export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
- export type { Observation, ObservationEntry } from "./browser/tab-protocol";
-+export { BrowserTabCreateRejected, BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor";
- 
- const DEFAULT_TAB_NAME = "main";
- const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
-@@ -97,7 +101,43 @@ interface BrowserPreludeDetails {
- 	value?: unknown;
- }
- 
--function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
-+type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
-+
-+/** Supports an initial URL within the existing acquisition deadline. */
-+export const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
-+
-+/** Explicit native browser resource ownership, independent of AgentSession.
-+ * The owning host retires this lifetime by aborting signal. */
-+export interface BrowserTabCreationOwner {
-+	readonly id: string;
-+	readonly cwd: string;
-+	readonly settings: ToolSession["settings"];
-+	readonly signal: AbortSignal;
-+}
-+
-+export const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
-+
-+export interface SessionBrowserTabCreateRequest {
-+	/** New managed OMP tab name. Existing names are rejected atomically. */
-+	readonly name: string;
-+	readonly initialUrl?: string;
-+}
-+
-+export interface SessionBrowserTabCreateResult {
-+	readonly created: true;
-+	readonly name: string;
-+	readonly ownerSessionId: string;
-+	readonly targetId: string;
-+	readonly backend: TabSession["backend"];
-+	readonly kindTag: BrowserKindTag;
-+	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
-+	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
-+	readonly url: string;
-+	readonly title: string;
-+	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-+}
-+
-+function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
- 	const app = params.app;
- 	if (app?.cdp_url) {
- 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
-@@ -201,11 +241,35 @@ async function openBrowser(
- 	timeoutMs: number,
- 	signal?: AbortSignal,
- ): Promise<AgentToolResult<unknown>> {
-+	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
-+	details.browser = browser.kind.kind;
-+	const tab = result.tab;
-+	const url = tab.info.url;
-+	const title = tab.info.title ?? "";
-+	details.url = url;
-+	details.viewport = tab.info.viewport;
-+	const verb = result.created ? "Opened" : "Reused";
-+	const lines = [
-+		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
-+		`URL: ${url}`,
-+		title ? `Title: ${title}` : null,
-+	].filter((line): line is string => typeof line === "string");
-+	return toolResult(details).text(lines.join("\n")).done();
-+}
-+
-+async function acquireBrowserTab(
-+	session: BrowserOpenSession,
-+	name: string,
-+	params: BrowserParams,
-+	timeoutMs: number,
-+	signal?: AbortSignal,
-+	createOnly = false,
-+): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
- 	const kind = resolveBrowserKind(params, session);
--	details.browser = kind.kind;
- 
- 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
- 	const existing = getTab(name);
-+	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
- 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
- 		throw new ToolError(
- 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
-@@ -267,6 +331,7 @@ async function openBrowser(
- 					dialogs: params.dialogs,
- 					signal: openSignal,
- 					ownerSessionId: session.getSessionId?.() ?? undefined,
-+					createOnly,
- 				}),
- 			);
- 		} catch (error) {
-@@ -277,18 +342,7 @@ async function openBrowser(
- 		}
- 		await releaseBrowser(browser, { kill: false });
- 
--		const tab = result.tab;
--		const url = tab.info.url;
--		const title = tab.info.title ?? "";
--		details.url = url;
--		details.viewport = tab.info.viewport;
--		const verb = result.created ? "Opened" : "Reused";
--		const lines = [
--			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
--			`URL: ${url}`,
--			title ? `Title: ${title}` : null,
--		].filter((line): line is string => typeof line === "string");
--		return toolResult(details).text(lines.join("\n")).done();
-+		return { browser, result };
- 	} catch (error) {
- 		// Caller cancellation stays a ToolAbortError; the requested timeout
- 		// becomes a timeout ToolError; anything else passes through unchanged.
-@@ -298,6 +352,100 @@ async function openBrowser(
- 	}
- }
- 
-+/**
-+ * Create one managed browser tab directly for an actual AgentSession. This is
-+ * an explicit human resource action: it reads the live native browser settings
-+ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
-+ * conversation transcript.
-+ */
-+export async function createBrowserTabForSession(
-+	session: AgentSession,
-+	request: SessionBrowserTabCreateRequest,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	validateBrowserTabCreateRequest(request);
-+	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
-+	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
-+	const ownerSessionId = session.sessionManager.getSessionId();
-+	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
-+	return createOwnedBrowserTab({
-+		cwd: session.sessionManager.getCwd(), settings: session.settings, getSessionId: () => ownerSessionId,
-+	}, ownerSessionId, request, () => !session.isDisposed && session.sessionManager.getSessionId() === ownerSessionId,
-+		"The native session changed while creating its browser tab");
-+}
-+
-+/** Acquire through the configured native backend without constructing a session.
-+ * This does not allocate, transfer or persist an owner; the host owns that lifecycle. */
-+export async function createBrowserTabForOwner(
-+	owner: BrowserTabCreationOwner,
-+	request: SessionBrowserTabCreateRequest,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	validateBrowserTabCreateRequest(request);
-+	if (!owner || typeof owner.id !== "string" || !owner.id || owner.id.length > 200
-+		|| /[\u0000-\u001f\u007f]/.test(owner.id) || typeof owner.cwd !== "string" || !owner.cwd
-+		|| !(owner.signal instanceof AbortSignal)) {
-+		throw new BrowserTabCreateRejected("Native browser creation requires an explicit owner and lifetime");
-+	}
-+	const { id, cwd, settings, signal } = owner;
-+	if (signal.aborted) throw new BrowserTabCreateRejected("The native browser owner is retired");
-+	if (!settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled for this owner");
-+	return createOwnedBrowserTab({ cwd, settings, getSessionId: () => id }, id, request, () => !signal.aborted,
-+		"The native browser owner retired while creating its browser tab", signal);
-+}
-+
-+function validateBrowserTabCreateRequest(request: SessionBrowserTabCreateRequest): void {
-+	if (
-+		!request ||
-+		typeof request.name !== "string" ||
-+		request.name.length === 0 ||
-+		request.name.length > 200 ||
-+		/[\u0000-\u001f\u007f]/.test(request.name)
-+	) {
-+		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
-+	}
-+	if (request.initialUrl !== undefined) {
-+		try {
-+			if (typeof request.initialUrl !== "string" || request.initialUrl.length > 8192 || /[\u0000-\u0020]/.test(request.initialUrl)) throw new Error();
-+			const url = new URL(request.initialUrl);
-+			if (!["http:", "https:"].includes(url.protocol) && request.initialUrl !== "about:blank") throw new Error();
-+		} catch { throw new BrowserTabCreateRejected("Invalid initial browser address"); }
-+	}
-+}
-+
-+async function createOwnedBrowserTab(
-+	nativeSession: BrowserOpenSession,
-+	ownerSessionId: string,
-+	request: SessionBrowserTabCreateRequest,
-+	isCurrent: () => boolean,
-+	changedMessage: string,
-+	signal?: AbortSignal,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	const timeoutMs = clampTimeout("browser", undefined, nativeSession.settings.get("tools.maxTimeout")) * 1_000;
-+	const params = { action: "open", name: request.name, ...(request.initialUrl === undefined ? {} : { url: request.initialUrl }) } as BrowserParams;
-+	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, signal, true);
-+	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
-+	if (!isCurrent()) {
-+		// Only the exact tab returned by this acquisition may be cleaned up. A
-+		// same-name replacement belongs to its own caller, even after retirement.
-+		if (getTab(result.tab.name) === result.tab) await releaseTab(result.tab.name, { kill: true, timeoutMs });
-+		throw new ToolError(changedMessage);
-+	}
-+	const tab = result.tab;
-+	const targetDisposition = tab.kindTag === "headless" ? "created-page"
-+		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
-+	return Object.freeze({
-+		created: true,
-+		name: tab.name,
-+		ownerSessionId,
-+		targetId: tab.targetId,
-+		backend: tab.backend,
-+		kindTag: tab.kindTag,
-+		targetDisposition,
-+		url: tab.info.url,
-+		title: tab.info.title ?? "",
-+		viewport: Object.freeze({ ...tab.info.viewport }),
-+	});
-+}
-+
- async function closeBrowser(
- 	name: string,
- 	params: BrowserParams,
 diff --git a/src/tools/computer/worker-entry.ts b/src/tools/computer/worker-entry.ts
-index 14a0b4e..619e0a0 100644
+index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d589ce816a 100644
 --- a/src/tools/computer/worker-entry.ts
 +++ b/src/tools/computer/worker-entry.ts
 @@ -10,10 +10,11 @@ export function startComputerWorker(): void {
