@@ -5,6 +5,7 @@ import type { CommandEnvelope,DraftBrowserContinuation } from "@agent-desktop/sh
 import { HostStore } from "../../store";
 import { startHost } from "../../server";
 import { WorkerRuntime } from "../runtime";
+import { remoteError } from "../protocol";
 
 const [root,dataDirectory,agentDir,cwd,url,output]=process.argv.slice(2);
 if(!root||!dataDirectory||!agentDir||!cwd||!url||!output)throw new Error("Missing browser recovery host fixture arguments");
@@ -17,7 +18,9 @@ await source.createBrowserTab("desktop-restart-http",url);
 const metadata=await source.getBrowserMetadata();if(metadata.availability!=="running")throw new Error("Native browser unavailable");
 const tab=metadata.tabs[0]!,target={workerPid:source.workerPid,name:tab.name,targetId:tab.targetId},operationId=randomUUID();
 await source.reserveBrowserEvaluation(target,operationId);
-const evaluation=await source.openBrowserEvaluation(target,operationId,"cdp",30_000);
+let evaluation:Awaited<ReturnType<typeof source.openBrowserEvaluation>>;
+try{evaluation=await source.openBrowserEvaluation(target,operationId,"cdp",30_000);}
+catch(error){await writeFile(output,JSON.stringify({failure:remoteError(error)}));throw error;}
 const destination=await runtime.create({cwd,interactions:true});
 await destination.installBrowserContinuation({sourceOwnerId:ownerId,operationId,target,kindTag:tab.kindTag},evaluation);
 const reconnectRoot=`${dataDirectory}/browser-recovery/http-command`;

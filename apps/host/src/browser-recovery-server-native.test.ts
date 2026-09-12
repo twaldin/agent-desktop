@@ -23,7 +23,10 @@ test("an authenticated retry after host loss commits the exact arming browser se
   const pageRequests:string[]=[];const page=Bun.serve({hostname:"127.0.0.1",port:0,fetch(request){pageRequests.push(new URL(request.url).pathname);return new Response("<!doctype html><title>HTTP restart</title><script>document.cookie='restartHttp=kept';globalThis.restartHttp={count:17}</script>",{headers:{"content-type":"text/html"}});}});
   const output=join(root,"owner.json"),owner=Bun.spawn({cmd:[process.execPath,"--no-env-file",fileURLToPath(new URL("./omp-workers/fixtures/browser-recovery-host-owner.ts",import.meta.url)),root,dataDirectory,agentDir,cwd,`http://127.0.0.1:${page.port}/page`,output],cwd:process.cwd(),env:{...process.env,PI_DISABLE_DOTENV:"1",PUPPETEER_EXECUTABLE_PATH:await chrome()},stdout:"pipe",stderr:"pipe"});pids.add(owner.pid);
   type Saved={envelope:CommandEnvelope;sourcePid:number;destinationPid:number;sessionId:string;tab:{name:string;targetId:string};url:string;source:WorkerReconnectEndpoint;destination:WorkerReconnectEndpoint;binding:BrowserEvaluationBinding};
-  const saved=await until(async()=>{try{return JSON.parse(await readFile(output,"utf8")) as Saved}catch{return undefined}}).catch(async error=>{console.error(await new Response(owner.stderr).text());throw error;});pids.add(saved.sourcePid);pids.add(saved.destinationPid);
+  type SetupFailure={failure:{name:string;message:string;code?:string}};
+  const prepared=await until(async()=>{try{return JSON.parse(await readFile(output,"utf8")) as Saved|SetupFailure}catch{return undefined}}).catch(async error=>{console.error(await new Response(owner.stderr).text());throw error;});
+  if("failure" in prepared)throw new Error(`Browser recovery owner setup failed (${prepared.failure.name}): ${prepared.failure.message}`);
+  const saved=prepared;pids.add(saved.sourcePid);pids.add(saved.destinationPid);
   owner.kill("SIGKILL");await owner.exited;pids.delete(owner.pid);
   const host=await startHost({dataDirectory,agentDirectory:agentDir,discoveryDirectory:cwd,port:0,tailscale:false,workerPath:fileURLToPath(new URL("./omp-workers/fixtures/local-browser-worker.ts",import.meta.url))});hosts.add(host);
   const finish=host.store.finishBrowserRecoveredSession.bind(host.store);let failDurable=true;
