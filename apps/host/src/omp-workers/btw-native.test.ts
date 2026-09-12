@@ -19,10 +19,11 @@ async function waitBtw(session: Awaited<ReturnType<WorkerRuntime["create"]>>, st
   expect(snapshot?.status).toBe(status);
   return snapshot!;
 }
-async function waitEvent(events: WorkerEvent[], after: number, type: WorkerEvent["type"]) {
+async function waitAssistantUpdate(events: WorkerEvent[], after: number) {
+  const observed = () => events.slice(after).some(event => event.type === "message_update" && "message" in event && event.message?.role === "assistant");
   const deadline = Date.now() + 7_000;
-  while (!events.slice(after).some(event => event.type === type) && Date.now() < deadline) await Bun.sleep(5);
-  expect(events.slice(after).some(event => event.type === type)).toBe(true);
+  while (!observed() && Date.now() < deadline) await Bun.sleep(5);
+  expect(observed()).toBe(true);
 }
 
 test("real native ephemeral turns inherit in-flight context without mutating or aborting the main lineage", async () => {
@@ -42,7 +43,7 @@ test("real native ephemeral turns inherit in-flight context without mutating or 
 
     const parentEventStart = events.length;
     const parent = session.startPrompt("Parent remains in flight", { model });
-    await parent.accepted; await waitFile(path.join(gates, "2.started")); await waitEvent(events, parentEventStart, "message_update");
+    await parent.accepted; await waitFile(path.join(gates, "2.started")); await waitAssistantUpdate(events, parentEventStart);
     expect(session.isStreaming).toBe(true);
     const journalBeforeSide = await readFile(session.sessionFile, "utf8");
 
