@@ -28,6 +28,10 @@ const sourcePaths = [
   "apps/desktop/src/renderer/sidebar-navigation-state.ts",
   "apps/desktop/src/renderer/use-sidebar-navigation.ts",
   "apps/desktop/src/renderer/sidebar-navigation.css",
+  "apps/desktop/src/renderer/SidebarActivity.tsx",
+  "apps/desktop/src/renderer/sidebar-activity.ts",
+  "apps/desktop/src/renderer/OrganizedSidebar.tsx",
+  "apps/desktop/src/renderer/organized-sidebar.css",
   "packages/shared/src/sidebar-navigation.ts",
   "packages/shared/src/preferences.ts",
   "apps/desktop/src/renderer/preferences-state.ts",
@@ -115,9 +119,12 @@ try {
     }),
     session = await command({ type: "session.create", projectId: project.id });
   await command({ type: "session.archive", sessionId: session.id, archived: true });
+  const activitySession = await command({ type: "session.create", projectId: project.id });
+  await command({ type: "session.rename", sessionId: activitySession.id, title: "Unread sidebar activity fixture" });
+  await command({ type: "preferences.put", change: { key: `session.read.${connection.hostId}.${activitySession.id}`, value: { sequence: 0, unread: true } } });
   await writeFile(
     join(fixture, "context.json"),
-    JSON.stringify({ projectId: project.id, sessionId: session.id }),
+    JSON.stringify({ projectId: project.id, sessionId: session.id, activitySessionId: activitySession.id }),
   );
   await writeFile(
     join(output, "index.html"),

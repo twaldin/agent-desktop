@@ -3,6 +3,7 @@ import * as Menu from "@radix-ui/react-dropdown-menu";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_SIDEBAR_NAVIGATION, reorderSidebarDestinations, resetSidebarNavigation, setSidebarDestinationHidden, sidebarNavigationLayout, type SidebarDestinationId } from "../../../../packages/shared/src/sidebar-navigation";
 import type { SidebarNavigationState } from "./sidebar-navigation-state";
+import type { SidebarNavigationPreference } from "../../../../packages/shared/src/sidebar-navigation";
 import { Icon } from "./Icons";
 import { SidebarNavigationIcon } from "./SidebarNavigationIcon";
 import { SidebarPinIcon } from "./sidebar-icons";
@@ -29,9 +30,18 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
   useEffect(() => { if (data && !data.writable) setDrag(undefined); }, [data?.writable]);
   const closeCustomize = () => { setDrag(undefined); setCustomizing(false); requestAnimationFrame(() => exploreButton.current?.focus()); };
   const startCustomize = () => { setContext(undefined); setExplore(false); setCustomizing(true); };
+  const saveFromControl = async (next: SidebarNavigationPreference) => {
+    const origin = document.activeElement;
+    await data?.save(next);
+    requestAnimationFrame(() => {
+      if (document.activeElement !== document.body) return;
+      if (origin instanceof HTMLButtonElement && origin.isConnected && !origin.disabled) origin.focus();
+      else done.current?.focus();
+    });
+  };
   const saveVisibility = (item: SidebarDestination) => {
     if (!data?.writable) return;
-    void data.save(setSidebarDestinationHidden(value, item.id, !value.hidden.includes(item.id)));
+    void saveFromControl(setSidebarDestinationHidden(value, item.id, !value.hidden.includes(item.id)));
   };
   const move = (over: SidebarDestinationId) => {
     if (!drag || drag.id === over) return;
@@ -46,7 +56,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
     const next = reorderSidebarDestinations(value, drag.order);
     setAnnouncement(`${destinations.find(item => item.id === drag.id)?.label} dropped at position ${drag.order.indexOf(drag.id) + 1} of ${drag.order.length}`);
     setDrag(undefined);
-    if (next.order.some((id, index) => id !== value.order[index])) void data.save(next);
+    if (next.order.some((id, index) => id !== value.order[index])) void saveFromControl(next);
   };
   const contextMenu = (x: number, y: number) => { setExplore(false); setContext({ x, y }); };
   const closeHover = () => { clearTimeout(hoverTimer.current); if (hoverOpen.current) hoverTimer.current = setTimeout(() => setExplore(false), 100); };
@@ -83,7 +93,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
       <Menu.Trigger asChild><button ref={exploreButton} className="nav-action sidebar-explore" aria-label="Explore" onPointerDown={() => { hoverOpen.current = false; }} onKeyDown={() => { hoverOpen.current = false; }} onPointerEnter={event => {
         if (event.pointerType === "mouse") { clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => { hoverOpen.current = true; setExplore(true); }, 200); }
       }} onPointerLeave={closeHover}><Icon name="more"/><span>Explore</span></button></Menu.Trigger>
-      <Menu.Portal><Menu.Content className="sidebar-navigation-menu" aria-label="Explore" side="right" align="start" alignOffset={-11} sideOffset={4} collisionPadding={8} onPointerEnter={() => clearTimeout(hoverTimer.current)} onPointerLeave={closeHover} onEntryFocus={event => { if (hoverOpen.current) event.preventDefault(); }} onCloseAutoFocus={event => {
+      <Menu.Portal><Menu.Content className="sidebar-navigation-menu" aria-label="Explore" side="right" align="start" alignOffset={-11} sideOffset={4} collisionPadding={8} onPointerEnter={() => clearTimeout(hoverTimer.current)} onPointerLeave={closeHover} onCloseAutoFocus={event => {
         const action = deferred.current; deferred.current = undefined;
         if (action) { event.preventDefault(); action(); } else if (hoverOpen.current) event.preventDefault();
       }}>

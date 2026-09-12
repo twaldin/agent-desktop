@@ -1,6 +1,6 @@
 /* 7982 navigation: 30px token rows with 1px gaps and 8px horizontal insets.
  * Saved 7868 captures qualify structure only; no display/vibrancy RGB compensation. */
-.sidebar-actions.sidebar-navigation { display:flex; flex-direction:column; flex-shrink:0; gap:1px; padding:0 8px 20px; }
+.sidebar-actions.sidebar-navigation { display:flex; flex-direction:column; flex-shrink:0; gap:1px; padding:0 8px 10px; }
 .sidebar-navigation .nav-action { min-height:30px; height:30px; padding:5px 8px; gap:8px; border-radius:8px; }
 .sidebar-navigation .nav-action > svg { width:20px; height:20px; flex:none; }
 .sidebar-navigation .nav-action > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -34,3 +34,8 @@
 .sidebar-navigation-notice { font-size:12px; margin:8px; overflow-wrap:anywhere; color:var(--secondary); }
 .sidebar-navigation-notice button { display:block; text-decoration:underline; }
 .sidebar-customization button:focus-visible { outline:2px solid var(--accent); outline-offset:0; }
+.sidebar-brand-actions { display:flex; align-items:center; gap:4px; flex:none; }
+.sidebar-brand strong { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sidebar-activity-copy { min-width:0; display:flex; flex-direction:column; }
+.organized-sidebar .sidebar-activity-row { height:auto; min-height:48px; }
+.sidebar-activity-detail { color:var(--tertiary); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
