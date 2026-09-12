@@ -4,7 +4,7 @@ import { parsePullRequestReadRequest } from '../../../../packages/shared/src/pul
 import { readPullRequests } from './pull-requests-transport';
 import { HtmlPreviewDocument } from './html-preview-document';
 import { requestHtmlPreview } from './html-preview-transport';
-import { McpOwnerWindow } from "./mcp-owner-windows";
+import { McpOwnerMainChannels } from "./mcp-owner-main-channels";
 import { requestMcpOwner } from "./mcp-owner-transport";
 import { McpAppWindowChannels } from "./mcp-app-window-channels";
 import { readLocalFontFaces } from "./local-fonts";
@@ -108,9 +108,18 @@ function applyNativeWindowTheme(window: BrowserWindow) {
 }
 const htmlPreviewDocuments = new Map<number, HtmlPreviewDocument>();
 const htmlPreviewDrains = new Set<HtmlPreviewDocument>();
+const mcpOwnerDocuments = new McpOwnerMainChannels({
+  ipcMain,
+  available: () => !shuttingDown,
+  assertTrusted: assertTrustedSender,
+  connect: endpointFor,
+  request: requestMcpOwner,
+  reportCleanupError: error => console.error("MCP directory owner cleanup failed:", error),
+});
 const mcpAppDocuments = new Map<number, McpAppWindowChannels>();
 const mcpAppDocumentDrains = new Set<McpAppWindowChannels>();
 function retireMcpAppDocument(senderId: number) {
+  mcpOwnerDocuments.retireDocument(senderId);
   const html = htmlPreviewDocuments.get(senderId);
   if (html) { htmlPreviewDocuments.delete(senderId); htmlPreviewDrains.add(html); void html.retire().then(() => htmlPreviewDrains.delete(html), error => console.error("HTML preview cleanup failed:", error)); }
   const owner = mcpAppDocuments.get(senderId);
@@ -126,7 +135,7 @@ const windowCloseGate = new WindowCloseGate({
   senderIds: () => [...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id),
   prepareQuit: async () => {
     const release = await modifierWatches.pauseAndDrain();
-    try { await Promise.all([...mcpAppDocumentDrains, ...htmlPreviewDrains].map(owner => owner.retire())); return release; }
+    try { await Promise.all([...mcpAppDocumentDrains, ...htmlPreviewDrains].map(owner => owner.retire()).concat(mcpOwnerDocuments.drain())); return release; }
     catch (error) { release(); throw error; }
   },
   send: (senderId, request) => {
