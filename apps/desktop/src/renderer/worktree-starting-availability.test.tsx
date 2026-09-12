@@ -75,7 +75,7 @@ test("actual App submit rechecks the owning host after the saved-draft await", a
       submissions: { get() { return undefined; }, queuedEntries() { return []; }, async submit(snapshot: Draft) { dispatched++; return { submitted: snapshot, sessionId: "new-session", commandId: "send-id" }; } },
       drafts: { async prepareSubmission() { return saved; }, beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: remote }; }, ingest() {} },
       hasDraftContent, hasRemoteExecution, remoteWorktreeIssue, desktop: { catalog: { records } }, selectedId: null, running: false, nativeBtwQuestion() { return undefined; },
-      draftBrowserOwners: { beforeSubmission() { beforeSubmission.owners++; } }, draftBrowserPages: { beforeSubmission() { beforeSubmission.pages++; } },
+      draftBrowserOwners: { beforeSubmission() { beforeSubmission.owners++; } }, draftBrowserPages: { captureContinuation() { return undefined; }, beforeSubmission() { beforeSubmission.pages++; } },
       draftBrowserDocks: new Map([["fixture", { beforeSubmission() { beforeSubmission.docks++; } }]]),
       async refresh() {}, transcript: { refresh() {} }, navigate() {}, textarea: { current: { focus() {} } }, EnvironmentPreparationPause, errorMessage: String,
     };

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   serializeLocalEnvironment,
+  type DraftBrowserContinuation,
   type CommandEnvelope,
   type HostCommand,
 } from "@agent-desktop/shared";
@@ -16,6 +17,7 @@ import { LocalEnvironmentStore } from "./local-environments";
 import { WorkerRuntime, type WorkerSession } from "./omp-workers/runtime";
 import { HostStore } from "./store";
 import { HostWorkspaces } from "./workspace-http";
+import type { BrowserFirstSend } from "./browser-first-send";
 
 const exec = promisify(execFile);
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -26,7 +28,7 @@ afterEach(async () => {
 const hash = (command: HostCommand) =>
   createHash("sha256").update(JSON.stringify(command)).digest("hex");
 
-async function fixture(setupScript: string, nestedProject = false) {
+async function fixture(setupScript: string, nestedProject = false, withBrowserContinuation = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "agent-environment-session-")));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const source = join(root, "source");
@@ -82,16 +84,23 @@ async function fixture(setupScript: string, nestedProject = false) {
     0,
   );
   if (!draftWrite.ok) throw new Error("Could not save fixture draft");
+  const browserContinuation: DraftBrowserContinuation | undefined = withBrowserContinuation ? {
+    version: 1,
+    owner: { ownerId: "original-browser-owner", draftId: draftWrite.draft.id, draftRevision: draftWrite.draft.revision },
+    pages: [{ request: { requestId: "page", controlEpoch: "epoch", observedAt: 1 },
+      target: { workerPid: 42, name: "desktop-page", targetId: "target" }, backend: "worker", kindTag: "headless" }],
+  } : undefined;
   const command: Extract<HostCommand, { type: "session.create" }> = {
     type: "session.create",
     projectId: project.id,
     worktree: execution.startingState,
     environment,
     draft: { id: draftWrite.draft.id, revision: draftWrite.draft.revision },
+    ...(browserContinuation ? { browserContinuation } : {}),
   };
   const envelope: CommandEnvelope & { command: typeof command } = {
     id: crypto.randomUUID(),
-    commandVersion: 5,
+    commandVersion: browserContinuation ? 15 : 5,
     command,
   };
   store.claimCommand(envelope.id, hash(command), command);
@@ -114,6 +123,15 @@ async function fixture(setupScript: string, nestedProject = false) {
   const handles: WorkerSession[] = [];
   const reserved = new Set<string>();
   let changed = 0;
+  const browserAttachments: Array<{ commandId: string; draft: unknown; continuation: unknown; destinationId: string }> = [];
+  const browserFirstSend = browserContinuation ? {
+    async attach(commandId: string, draft: unknown, continuation: DraftBrowserContinuation, destination: WorkerSession) {
+      browserAttachments.push({ commandId, draft, continuation, destinationId: destination.id });
+      return { version: 1 as const, ownerId: continuation.owner.ownerId, sessionId: destination.id,
+        pages: continuation.pages.map(page => ({ name: page.target.name, targetId: page.target.targetId,
+          backend: page.backend, operationId: "fixture-browser-operation" })) };
+    },
+  } as unknown as BrowserFirstSend : undefined;
   const workspaces = new HostWorkspaces(store, data, () => () => {});
   const sessions = new EnvironmentSessions({
     store,
@@ -127,8 +145,10 @@ async function fixture(setupScript: string, nestedProject = false) {
     onEvent: () => {},
     onHandle: (handle) => handles.push(handle),
     changed: () => { changed++; },
+    browserFirstSend,
   });
-  return { root, source, data, saved, store, project, command, envelope, runtime, handles, reserved, sessions, workspaces, changed: () => changed };
+  return { root, source, data, saved, store, project, command, envelope, runtime, handles, reserved, sessions, workspaces,
+    browserAttachments, changed: () => changed };
 }
 
 test("real Git, setup exports, native creation, and receipt commit keep exact ownership", async () => {
@@ -188,7 +208,7 @@ test("native OMP creation keeps a nested session cwd and duplicate receipt after
 }, 30_000);
 
 test("failed setup preserves one worktree and only an exact explicit resume reaches native creation", async () => {
-  const f = await fixture('printf "attempt\\n" >> setup-count\n[ -f allow-setup ]');
+  const f = await fixture('printf "attempt\\n" >> setup-count\n[ -f allow-setup ]', false, true);
   const failedResult = await f.sessions.create(f.envelope);
   expect(failedResult).toMatchObject({ ok: true, value: {
     type: "environment.preparation",
@@ -221,10 +241,13 @@ test("failed setup preserves one worktree and only an exact explicit resume reac
   f.store.claimCommand("resume", hash(resumeCommand), resumeCommand);
   const resumed = await f.sessions.resume("resume", failed.id, failed.revision);
   expect(resumed).toMatchObject({ ok: true, value: { projectId: f.project.id, status: "idle" } });
+  if (!resumed.ok || !resumed.value || !("id" in resumed.value)) throw new Error("Native resumed session missing");
   expect(await readFile(join(failed.worktreePath, "setup-count"), "utf8")).toBe("attempt\nattempt\n");
   expect(f.handles).toHaveLength(1);
   expect(f.store.environmentPreparations.list()).toHaveLength(1);
   expect(f.store.environmentPreparations.get(failed.id)?.phase).toBe("session-created");
+  expect(f.browserAttachments).toEqual([{ commandId: f.envelope.id, draft: f.command.draft,
+    continuation: f.command.browserContinuation, destinationId: resumed.value.id }]);
   await f.handles[0]!.dispose();
 }, 30_000);
 

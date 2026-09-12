@@ -301,11 +301,11 @@ export class EnvironmentSessions {
           : undefined,
       );
       sessionId = handle.id;
-      const command=this.store.getCommand(commandId)?.command;
+      const command=this.store.getCommand(record.id)?.command;
       if(command?.type!=="session.create")throw new Error("Environment session lost its original creation command.");
-      const browserReceipt=command.browserContinuation ? await this.browserFirstSend?.attach(commandId,command.draft,command.browserContinuation,handle) : undefined;
+      const browserReceipt=command.browserContinuation ? await this.browserFirstSend?.attach(record.id,command.draft,command.browserContinuation,handle) : undefined;
       if(command.browserContinuation&&!browserReceipt)throw new Error("Browser continuation service is unavailable.");
-      if(browserReceipt)this.store.recordBrowserContinuation({commandId,...browserReceipt});
+      if(browserReceipt)this.store.recordBrowserContinuation({commandId:record.id,...browserReceipt});
       const session = this.toSessionSummary(handle, started);
       const result = this.store.finishEnvironmentSessionCreation(
         commandId,
