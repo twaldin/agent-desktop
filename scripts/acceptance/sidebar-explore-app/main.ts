@@ -8,6 +8,8 @@ import { listAutomations } from "../../../apps/desktop/src/main/automations-tran
 import { requestMarketplaceCatalog } from "../../../apps/desktop/src/main/plugin-acquisition-transport";
 import { WindowStateStore } from "../../../apps/desktop/src/main/window-state";
 import { defaultWindowView } from "../../../apps/desktop/src/window-state";
+import type { CommandEnvelope } from "../../../packages/shared/src/protocol";
+import { parsePreferencesSnapshotV2 } from "../../../packages/shared/src/preferences-v2";
 const [output, fixture] = process.argv.slice(2) as [string, string];
 const connection = JSON.parse(readFileSync(join(fixture, "connection.json"), "utf8"));
 const context = JSON.parse(readFileSync(join(fixture, "context.json"), "utf8"));
@@ -15,6 +17,7 @@ app.setPath("userData", join(fixture, "sidebar-explore-electron"));
 app.setName("Sidebar Explore Isolated Acceptance");
 app.on("window-all-closed", () => { /* This acceptance deliberately reopens its owned window. */ });
 const store = new WindowStateStore(join(fixture, "sidebar-explore-window"), "sidebar-explore-app");
+const navigationCommands: { envelope: CommandEnvelope; owner: string }[] = [];
 if (!store.bootstrap().state) store.saveView({ ...defaultWindowView(), route: { hostId: connection.hostId, sessionId: null }, workspaceOpen: false });
 const calls: unknown[] = [], inputs: unknown[] = [], captures: unknown[] = [], errors: unknown[] = [], checkpoints: string[] = [];
 let window: BrowserWindow, capability = true, preferenceCapability = true, writeFailure: "rejected" | "lost" | undefined;
@@ -50,6 +53,7 @@ ipcMain.handle("sidebar-explore-app-call", async (_event, method: string, args: 
       if (args[1] !== connection.hostId) throw new Error("Foreign command owner");
       if (envelope.command.type === "session.prompt") throw new Error("Provider prompts are forbidden.");
       if (envelope.command.type === "preferences.put" && envelope.command.change.key === "sidebar.navigation") {
+        navigationCommands.push({ envelope, owner: args[1] });
         if (writeFailure === "rejected") { writeFailure = undefined; return { ok: false, commandId: envelope.id, error: { code: "DENIED", message: "Controlled sidebar write rejection" } }; }
         const result = await requestVersionedCommand(http, envelope);
         if (writeFailure === "lost") { writeFailure = undefined; throw new Error("Controlled lost sidebar receipt"); }
@@ -149,10 +153,21 @@ async function run() {
     preferenceCapability = true; capability = true; await invalidate(); await wait(`document.querySelector('[data-sidebar-destination="pull-requests"]') && !document.querySelector(".sidebar-customization-reset").disabled`);
     if (await evaluate(`document.querySelector('.sidebar-visibility[aria-label="Pull requests"]').getAttribute("aria-checked")`) !== "false") throw new Error("Unavailable intent erased");
     await capture("007-capability-recovery"); checkpoints.push("availability projection and preference capability loss/recovery retain unavailable intent and ordering");
-    writeFailure = "rejected"; await click('.sidebar-visibility[aria-label="Plugins"]'); await wait('document.body.innerText.includes("Controlled sidebar write rejection")'); await capture("008-rejected-write-retained");
+    const readNavigation = async () => parsePreferencesSnapshotV2(await http("/v2/preferences")).records.find(record => record.key === "sidebar.navigation");
+    const beforeRejection = await readNavigation();
+    writeFailure = "rejected"; await click('.sidebar-visibility[aria-label="Plugins"]');
+    await wait('document.querySelector(".sidebar-navigation-notice button:not(:disabled)")', "failed mutation exposes recovery");
+    if (JSON.stringify(await readNavigation()) !== JSON.stringify(beforeRejection)) throw new Error("Rejected mutation changed the host preference");
+    await capture("008-rejected-write-retained");
     await click('.sidebar-navigation-notice button'); await saved();
-    writeFailure = "lost"; await click('.sidebar-visibility[aria-label="Scheduled"]'); await wait('document.body.innerText.includes("Controlled lost sidebar receipt")'); await capture("009-lost-receipt-retained");
+    writeFailure = "lost"; await click('.sidebar-visibility[aria-label="Scheduled"]');
+    await wait('document.querySelector(".sidebar-navigation-notice button:not(:disabled)")', "uncertain mutation exposes recovery");
+    const uncertainCommand = navigationCommands.at(-1)!, uncertainRecord = await readNavigation();
+    if (!uncertainRecord || uncertainRecord.deleted || uncertainRecord.key !== "sidebar.navigation" || !uncertainRecord.value.hidden.includes("scheduled")) throw new Error("Lost receipt did not leave a committed host preference");
+    await capture("009-lost-receipt-retained");
     window.destroy(); await makeWindow(); await wait('document.querySelector(".sidebar-explore")'); await customize(); await click('.sidebar-navigation-notice button'); await saved();
+    const recoveredCommand = navigationCommands.at(-1)!;
+    if (recoveredCommand.envelope.id !== uncertainCommand.envelope.id || recoveredCommand.owner !== uncertainCommand.owner || JSON.stringify(await readNavigation()) !== JSON.stringify(uncertainRecord)) throw new Error("Uncertain recovery changed command owner/id or reapplied the saved write");
     for (const label of ["Pull requests", "Scheduled", "Plugins", "Archive"]) { if (await evaluate(`document.querySelector('.sidebar-visibility[aria-label="${label}"]').getAttribute('aria-checked') === 'true'`)) { await click(`.sidebar-visibility[aria-label="${label}"]`); await saved(); } }
     await click('[aria-label="Finish customizing sidebar"]'); await capture("010-all-hidden-recovery"); await customize();
     await click('.sidebar-customization-reset'); await saved(); await capture("011-reset");
