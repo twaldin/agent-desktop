@@ -5,6 +5,21 @@ import type { PullRequestWritesBridge, PullRequestWriteAction, PullRequestInline
 import { pullRequestComposerKey, type PullRequestComposer } from "../pull-request-composer-state";
 import type { PullRequestComposers } from "./pull-request-composers";
 
+interface ComposerPresentation { label: string; trigger: string; textareaLabel: string; bodyless: boolean }
+const COMPOSER_PRESENTATION: Record<PullRequestWriteAction | "review", ComposerPresentation> = {
+  comment: { label: "Post comment", trigger: "Post comment", textareaLabel: "Pull request comment", bodyless: false },
+  review: { label: "Submit review", trigger: "Submit review", textareaLabel: "Review comment", bodyless: false },
+  review_comment: { label: "Submit review", trigger: "Submit review", textareaLabel: "Review comment", bodyless: false },
+  approve: { label: "Submit review", trigger: "Submit review", textareaLabel: "Review comment", bodyless: false },
+  request_changes: { label: "Submit review", trigger: "Submit review", textareaLabel: "Review comment", bodyless: false },
+  inline_comment: { label: "Add inline comment", trigger: "Add inline comment", textareaLabel: "Inline pull request comment", bodyless: false },
+  reply: { label: "Post reply", trigger: "Reply", textareaLabel: "Pull request reply", bodyless: false },
+  update: { label: "Save changes", trigger: "Edit", textareaLabel: "Edit pull request comment", bodyless: false },
+  delete: { label: "Delete comment", trigger: "Delete comment", textareaLabel: "", bodyless: true },
+  resolve: { label: "Resolve conversation", trigger: "Resolve conversation", textareaLabel: "", bodyless: true },
+  unresolve: { label: "Unresolve conversation", trigger: "Unresolve conversation", textareaLabel: "", bodyless: true },
+};
+
 const message = (error: unknown) => error instanceof Error ? error.message : "The submission could not be confirmed. Your text is preserved.";
 export function PullRequestComposerForm({ hostId, detail, mode, enabled, bridge, composers, onSubmitted, openExternal, action, target, inline, initialBody = "", savedDraft, recoveryEnabled = enabled }: {
   hostId: string; detail: PullRequestDetailResult; mode: PullRequestComposer["mode"]; enabled: boolean;
@@ -13,10 +28,7 @@ export function PullRequestComposerForm({ hostId, detail, mode, enabled, bridge,
 }) {
   const initial: PullRequestComposer = savedDraft ?? { hostId, accountId: detail.account.id, pullRequest: detail.summary.pullRequest,
     mode, action: action ?? (mode === "review" ? "review_comment" : "comment"), body: initialBody, ...(target ? { target } : {}), ...(inline ? { inline, expectedHeadOid: detail.summary.headOid } : {}) };
-  const label = action === "reply" ? "Post reply" : action === "update" ? "Save changes" : action === "delete" ? "Delete comment" : action === "resolve" ? "Resolve conversation" : action === "unresolve" ? "Unresolve conversation" : mode === "inline" ? "Add inline comment" : mode === "review" ? "Submit review" : "Post comment";
-  const trigger = action === "reply" ? "Reply" : action === "update" ? "Edit" : label;
-  const bodyless = action === "delete" || action === "resolve" || action === "unresolve";
-  const textareaLabel = action === "reply" ? "Pull request reply" : action === "update" ? "Edit pull request comment" : mode === "inline" ? "Inline pull request comment" : mode === "comment" ? "Pull request comment" : "Review comment";
+  const { label, trigger, bodyless, textareaLabel } = COMPOSER_PRESENTATION[mode === "review" ? "review" : initial.action];
   const revision = mode === "discussion" || mode === "inline" ? detail.revision : detail.summary.headOid;
   const key = pullRequestComposerKey(initial), entry = composers.get(key) ?? initial;
   const busy = composers.busy(key), unresolved = Boolean(entry.request && entry.receipt?.outcome !== "succeeded");

@@ -1050,13 +1050,18 @@ function PullRequestFilters({
   );
 }
 
+function activeDraftForDetail(entry: PullRequestComposer, hostId: string, detail: PullRequestDetailResult): boolean {
+  return entry.hostId === hostId && entry.accountId === detail.account.id && pullRequestKey(entry.pullRequest) === pullRequestKey(detail.summary.pullRequest) &&
+    Boolean(entry.body || entry.request && entry.receipt?.outcome !== "succeeded");
+}
+
 function PullRequestDiscussion({ detail, hostId, composers, bridge, enabled, recoveryEnabled, onSubmitted, openExternal }: {
   detail: PullRequestDetailResult; hostId: string; composers?: PullRequestComposers; bridge: DesktopBridge; enabled: boolean; recoveryEnabled: boolean; onSubmitted(): void; openExternal(url: string): Promise<void>;
 }) {
   const groups = new Map<string, PullRequestDiscussionItem[]>();
   for (const item of detail.discussion.items) { const key = item.thread ? `thread:${item.thread.id}` : `${item.kind}:${item.id}`; groups.set(key, [...(groups.get(key) ?? []), item]); }
   const common = { hostId, detail, composers: composers!, bridge: bridge.pullRequestWrites, onSubmitted, openExternal, recoveryEnabled };
-  const saved = (id: string, action: string) => composers?.drafts.some(entry => entry.hostId === hostId && entry.accountId === detail.account.id && pullRequestKey(entry.pullRequest) === pullRequestKey(detail.summary.pullRequest) && entry.target?.id === id && entry.action === action && (entry.body || entry.request && entry.receipt?.outcome !== "succeeded"));
+  const saved = (id: string, action: string) => composers?.drafts.some(entry => activeDraftForDetail(entry, hostId, detail) && entry.target?.id === id && entry.action === action);
   if (!groups.size) return <p>No comments</p>;
   return <>{[...groups].map(([key, items]) => {
     const first = items[0]!, thread = first.thread;
@@ -1082,8 +1087,7 @@ function PullRequestDiscussion({ detail, hostId, composers, bridge, enabled, rec
 }
 
 function SavedDiscussionDrafts({ excludeKey, hostId, detail, composers, bridge, recoveryEnabled, onSubmitted, openExternal }: { excludeKey?: string; hostId: string; detail: PullRequestDetailResult; composers: PullRequestComposers; bridge: DesktopBridge; recoveryEnabled: boolean; onSubmitted(): void; openExternal(url: string): Promise<void> }) {
-  const drafts = composers.drafts.filter(entry => pullRequestComposerKey(entry) !== excludeKey && entry.hostId === hostId && entry.accountId === detail.account.id && pullRequestKey(entry.pullRequest) === pullRequestKey(detail.summary.pullRequest) &&
-    (entry.body || entry.request && entry.receipt?.outcome !== "succeeded") && (entry.mode === "inline" || entry.mode === "discussion" && !detail.discussion.items.some(item => entry.target?.id === item.id || entry.target?.id === item.thread?.id)));
+  const drafts = composers.drafts.filter(entry => pullRequestComposerKey(entry) !== excludeKey && activeDraftForDetail(entry, hostId, detail) && (entry.mode === "inline" || entry.mode === "discussion" && !detail.discussion.items.some(item => entry.target?.id === item.id || entry.target?.id === item.thread?.id)));
   if (!drafts.length) return null;
   return <section className="pull-request-saved-discussion"><h2>Saved discussion drafts</h2><p>These drafts keep their original selection. Checking status never posts them again.</p>
     {drafts.map(entry => <PullRequestComposerForm key={pullRequestComposerKey(entry)} hostId={hostId} detail={detail} mode={entry.mode} action={entry.action} inline={entry.inline} target={entry.target} savedDraft={entry} composers={composers} bridge={bridge.pullRequestWrites}

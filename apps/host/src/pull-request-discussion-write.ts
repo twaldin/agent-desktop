@@ -3,6 +3,12 @@ import type { PullRequestWriteRequest, PullRequestInlineSelection } from "../../
 type Json = Record<string, unknown>;
 export class PullRequestDiscussionError extends Error {}
 const object = (value: unknown): Json => value && typeof value === "object" && !Array.isArray(value) ? value as Json : {};
+const COMMENT_NODES = {
+  comment: { type: "IssueComment", field: "issueComment", updateId: "id" },
+  review: { type: "PullRequestReview", field: "pullRequestReview", updateId: "pullRequestReviewId" },
+  review_comment: { type: "PullRequestReviewComment", field: "pullRequestReviewComment", updateId: "pullRequestReviewCommentId" },
+} as const;
+const PERMISSION = { reply: "viewerCanReply", update: "viewerCanUpdate", delete: "viewerCanDelete", resolve: "viewerCanResolve", unresolve: "viewerCanUnresolve" } as const;
 const parentFields = `number url repository{name owner{login}}`;
 export const DISCUSSION_NODE_QUERY = `query($id:ID!){viewer{login}node(id:$id){__typename ... on IssueComment{id url viewerCanUpdate viewerCanDelete pullRequest{${parentFields}}} ... on PullRequestReview{id url viewerCanUpdate pullRequest{${parentFields}}} ... on PullRequestReviewComment{id url viewerCanUpdate viewerCanDelete pullRequest{${parentFields}}} ... on PullRequestReviewThread{id isResolved viewerCanReply viewerCanResolve viewerCanUnresolve pullRequest{${parentFields}}}}}`;
 
@@ -10,14 +16,15 @@ export const DISCUSSION_NODE_QUERY = `query($id:ID!){viewer{login}node(id:$id){_
 export function discussionMutation(request: PullRequestWriteRequest, response: Json, login: string) {
   const data = object(response.data), node = object(data.node), target = request.target, pr = request.pullRequest;
   if (!target || String(object(data.viewer).login).toLowerCase() !== login.toLowerCase()) throw new PullRequestDiscussionError("The GitHub discussion viewer changed.");
-  const expectedType = { comment: "IssueComment", review: "PullRequestReview", review_comment: "PullRequestReviewComment", thread: "PullRequestReviewThread" }[target.kind];
+  const commentNode = target.kind === "thread" ? undefined : COMMENT_NODES[target.kind];
+  const expectedType = commentNode?.type ?? "PullRequestReviewThread";
   const parent = object(node.pullRequest), repository = object(parent.repository);
   const parentUrl = `https://${pr.hostname}/${pr.owner}/${pr.repository}/pull/${pr.number}`;
   if (node.__typename !== expectedType || node.id !== target.id || parent.number !== pr.number ||
       String(repository.name).toLowerCase() !== pr.repository.toLowerCase() || String(object(repository.owner).login).toLowerCase() !== pr.owner.toLowerCase() ||
       String(parent.url).toLowerCase() !== parentUrl.toLowerCase()) throw new PullRequestDiscussionError("The original GitHub discussion is no longer available.");
-  const permission = request.action === "reply" ? "viewerCanReply" : request.action === "update" ? "viewerCanUpdate" : request.action === "delete" ? "viewerCanDelete" : request.action === "resolve" ? "viewerCanResolve" : "viewerCanUnresolve";
-  if (node[permission] !== true) throw new PullRequestDiscussionError("GitHub does not permit this action on the original discussion.");
+  const permission = request.action in PERMISSION ? PERMISSION[request.action as keyof typeof PERMISSION] : undefined;
+  if (!permission || node[permission] !== true) throw new PullRequestDiscussionError("GitHub does not permit this action on the original discussion.");
   const input: Json = { clientMutationId: request.requestId };
   let method: string, output: string;
   if (request.action === "reply") {
@@ -26,11 +33,12 @@ export function discussionMutation(request: PullRequestWriteRequest, response: J
   } else if (request.action === "resolve" || request.action === "unresolve") {
     method = request.action === "resolve" ? "resolveReviewThread" : "unresolveReviewThread"; input.threadId = target.id; output = "thread{id isResolved}";
   } else {
-    const suffix = target.kind === "comment" ? "IssueComment" : target.kind === "review" ? "PullRequestReview" : "PullRequestReviewComment";
-    method = `${request.action === "update" ? "update" : "delete"}${suffix}`;
-    input[request.action === "delete" || target.kind === "comment" ? "id" : target.kind === "review" ? "pullRequestReviewId" : "pullRequestReviewCommentId"] = target.id;
-    if (request.action === "update") input.body = request.body;
-    output = request.action === "delete" ? "" : `${target.kind === "comment" ? "issueComment" : target.kind === "review" ? "pullRequestReview" : "pullRequestReviewComment"}{id url body}`;
+    if (!commentNode) throw new PullRequestDiscussionError("Choose an original comment for this action.");
+    const deleting = request.action === "delete";
+    method = `${deleting ? "delete" : "update"}${commentNode.type}`;
+    input[deleting ? "id" : commentNode.updateId] = target.id;
+    if (!deleting) input.body = request.body;
+    output = deleting ? "" : `${commentNode.field}{id url body}`;
   }
   const type = method[0]!.toUpperCase() + method.slice(1) + "Input";
   return { method, payload: { query: `mutation($input:${type}!){${method}(input:$input){clientMutationId ${output}}}`, input },
@@ -43,7 +51,7 @@ export function discussionMutation(request: PullRequestWriteRequest, response: J
         if (thread.id !== target.id || thread.isResolved !== (request.action === "resolve")) throw new PullRequestDiscussionError("GitHub did not confirm the original thread state.");
         return parentUrl;
       }
-      const item = object(result[request.action === "reply" ? "comment" : target.kind === "comment" ? "issueComment" : target.kind === "review" ? "pullRequestReview" : "pullRequestReviewComment"]);
+      const item = object(result[request.action === "reply" ? "comment" : commentNode!.field]);
       if (typeof item.id !== "string" || !item.id || item.body !== request.body || (request.action === "update" && item.id !== target.id)) throw new PullRequestDiscussionError("GitHub did not confirm the original comment.");
       if (request.action === "reply" && (String(object(item.author).login).toLowerCase() !== login.toLowerCase() || object(item.pullRequest).url !== parent.url)) throw new PullRequestDiscussionError("GitHub returned a foreign reply.");
       if (typeof item.url !== "string") throw new PullRequestDiscussionError("GitHub did not return the comment URL.");
