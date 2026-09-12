@@ -103,6 +103,8 @@ async function run() {
     let data: unknown;
     const intercepted = (_event: Electron.Event, method: string, params: { data?: unknown }) => { if (method === "Input.dragIntercepted") data = params.data; };
     const start = await evaluate(`sidebarExploreTarget(${JSON.stringify(source)})`), end = await evaluate(`sidebarExploreTarget(${JSON.stringify(target)})`);
+    const steps: unknown[] = [];
+    const observe = async (phase: string) => { steps.push({ phase, observation: await evaluate(`(() => { const state = sidebarExploreState(), target = document.elementFromPoint(${end.x}, ${end.y})?.closest("[data-sidebar-destination]"); return { target: target?.getAttribute("data-sidebar-destination"), source: state.dragSource, drags: state.receivedDrags, rows: Array.from(document.querySelectorAll("[data-sidebar-destination]")).map(row => ({ id: row.getAttribute("data-sidebar-destination"), top: row.getBoundingClientRect().top, order: getComputedStyle(row).order, pressed: row.querySelector(".sidebar-reorder")?.getAttribute("aria-pressed") })) }; })()`) }); };
     driver.attach("1.3"); driver.on("message", intercepted);
     try {
       await driver.sendCommand("Input.setInterceptDrags", { enabled: true });
@@ -112,12 +114,16 @@ async function run() {
       const deadline = Date.now() + 5_000;
       while (!data && Date.now() < deadline) await delay(25);
       if (!data) throw new Error("The real draggable did not supply Chromium drag data");
-      for (const type of ["dragEnter", "dragOver", "drop"]) { await driver.sendCommand("Input.dispatchDragEvent", { type, ...end, data }); await delay(100); }
+      await observe("intercepted");
+      // Reflow can put a different row under the pointer; deliver its real dragover before dropping.
+      for (const [index, type] of ["dragEnter", "dragOver", "dragOver", "drop"].entries()) { await driver.sendCommand("Input.dispatchDragEvent", { type, ...end, data }); await delay(100); await observe(`${index}-${type}`); }
       await driver.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", ...end, button: "left", buttons: 0, clickCount: 1 });
-      inputs.push({ source, target, transport: "Chromium pointer drag with intercepted real drag data", start, end, data });
+      await observe("mouse-released");
     } finally {
+      await observe("before-cleanup");
       await driver.sendCommand("Input.cancelDragging").catch(() => {});
       await driver.sendCommand("Input.setInterceptDrags", { enabled: false }).catch(() => {});
+      inputs.push({ source, target, transport: "Chromium pointer drag with intercepted real drag data", start, end, data, steps });
       driver.removeListener("message", intercepted); driver.detach();
     }
   };

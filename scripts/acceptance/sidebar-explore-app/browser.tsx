@@ -26,10 +26,14 @@ window.agentDesktop = bridge as DesktopBridge;
 createRoot(document.getElementById("root")!).render(<App/>);
 const receivedKeys: { key: string; code: string; target: string | null }[] = [];
 document.addEventListener("keydown", event => { receivedKeys.push({ key: event.key, code: event.code, target: event.target instanceof HTMLElement ? event.target.getAttribute("aria-label") ?? event.target.className : null }); }, true);
-const receivedDrags: { type: string; trusted: boolean; destination?: string; text: string }[] = [];
-for (const type of ["dragstart", "dragover", "drop", "dragend"]) document.addEventListener(type, event => {
+let sidebarExploreDragSource: Element | null = null;
+const receivedDrags: { type: string; trusted: boolean; destination?: string; text: string; prevented: boolean; sourceConnected: boolean }[] = [];
+for (const type of ["dragstart", "dragenter", "dragover", "dragleave", "drop", "dragend"]) document.addEventListener(type, event => {
   const drag = event as DragEvent;
-  receivedDrags.push({ type, trusted: event.isTrusted, destination: event.target instanceof Element ? event.target.closest<HTMLElement>("[data-sidebar-destination]")?.dataset.sidebarDestination : undefined, text: drag.dataTransfer?.getData("text/plain") ?? "" });
+  if (type === "dragstart") sidebarExploreDragSource = event.target instanceof Element ? event.target.closest("[draggable]") : null;
+  const entry = { type, trusted: event.isTrusted, destination: event.target instanceof Element ? event.target.closest<HTMLElement>("[data-sidebar-destination]")?.dataset.sidebarDestination : undefined, text: drag.dataTransfer?.getData("text/plain") ?? "", prevented: event.defaultPrevented, sourceConnected: sidebarExploreDragSource?.isConnected ?? false };
+  receivedDrags.push(entry);
+  queueMicrotask(() => { entry.prevented = event.defaultPrevented; entry.sourceConnected = sidebarExploreDragSource?.isConnected ?? false; });
 }, true);
 Object.assign(window, {
   sidebarExploreTarget(selector: string) {
@@ -42,6 +46,7 @@ Object.assign(window, {
     return { documentId, active: document.activeElement?.getAttribute("aria-label"), body: document.body.innerText,
       receivedKeys: [...receivedKeys],
       receivedDrags: [...receivedDrags],
+      dragSource: { connected: sidebarExploreDragSource?.isConnected ?? false, retained: sidebarExploreDragSource !== null && Array.from(document.querySelectorAll(".sidebar-reorder")).includes(sidebarExploreDragSource) },
       activeElement: document.activeElement instanceof HTMLElement ? { tag: document.activeElement.tagName, className: document.activeElement.className, focusVisible: document.activeElement.matches(":focus-visible") } : null,
       projectActions: [...document.querySelectorAll<HTMLElement>(".project-row")].map(row => ({ hovered: row.matches(":hover"), focusWithin: row.matches(":focus-within"), focusVisible: !!row.querySelector(":focus-visible"), menuOpen: !!row.querySelector('.icon-button[aria-expanded="true"]'), newChatOpacity: getComputedStyle(row.querySelector(".project-new")!).opacity, markerOpacity: getComputedStyle(row.querySelector(".project-marker")!).opacity })),
       navigation: [...document.querySelectorAll('.sidebar-navigation .nav-action')].map(node => node.textContent?.trim()),
