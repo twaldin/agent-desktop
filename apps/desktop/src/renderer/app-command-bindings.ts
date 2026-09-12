@@ -30,6 +30,7 @@ export const APP_COMMAND_BINDING_OWNERS = {
   "composer.decreaseReasoningEffort": "composer-decrease-reasoning-effort",
   "composer.cycleReasoningEffort": "composer-cycle-reasoning-effort",
   "composer.toggleWorktreeMode": "composer-toggle-worktree-mode",
+  "git.toggleBlame": "git-toggle-blame",
   "git.commit": "git-commit", focusMainChat: "focus-main-chat",
   previousThread: "previous-thread", nextThread: "next-thread",
   nextThreadNeedingAttention: "next-thread-needing-attention",

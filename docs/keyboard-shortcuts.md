@@ -1,6 +1,6 @@
 # App shortcut ownership
 
-`App.tsx` connects the window-owned keymap controller to 90 installed command IDs from the 148-command catalogue. The remaining 51 IDs are required feature-lane dependencies; seven voice/avatar/account commands are explicit goal exclusions. This is not full keyboard parity. Settings shows installed support independently of current route availability; dispatch still requires an eligible live owner. Configured keys replace defaults once the local cache is resolved. See [stored chat search](session-search.md) for the command menu's backend contract.
+`App.tsx` connects the window-owned keymap controller to 91 installed command IDs from the 148-command catalogue. The remaining 50 IDs are required feature-lane dependencies; seven voice/avatar/account commands are explicit goal exclusions. This is not full keyboard parity. Settings shows installed support independently of current route availability; dispatch still requires an eligible live owner. Configured keys replace defaults once the local cache is resolved. See [stored chat search](session-search.md) for the command menu's backend contract.
 
 | macOS binding | Action | Availability |
 | --- | --- | --- |
@@ -132,3 +132,5 @@ Header and Dock options capture modifier and document focus before changing layo
 ### Interrupted application quit
 
 Modifier helpers pause admission and drain inside collective window-close preparation, before a quit permit is granted. The gate revalidates renderer generations and the live window set after that await. It retains the reversible pause through the permitted close sequence; a renderer loss/navigation or an unprepared window's veto releases the pause and cancels surviving prepared windows. Only an actual `closed` event for a permitted window is treated as an expected departure. Permanent watch disposal occurs at `will-quit`, with no persistent ready flag bypassing a future collective preparation. This source correction has controlled lifecycle/event-shape tests; native Electron quit ordering, recovery and helper cleanup remain unexercised under the launch hold.
+
+Git blame now has a focused file owner for the command menu and configured keys, with no default binding. The original General packet's 90-row count remains historical; this one-command follow-up does not establish native coverage for the other registered IDs.

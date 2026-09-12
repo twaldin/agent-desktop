@@ -1,26 +1,44 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { PierreSourceEditor } from "./PierreSourceEditor";
 import { gitFileBlameUnavailableText, type GitFileHistoryState } from "./git-file-history-state";
 import "./workspace-git-file.css";
 
 const changeLabels: Record<string, string> = { A: "Added", M: "Modified", D: "Deleted", T: "File type changed", U: "Unmerged", X: "Unknown change", B: "Pairing broken", R: "Renamed", C: "Copied" };
 
-/** Command-menu adapter: caller supplies its captured originating file surface, never a global fallback. */
-export function toggleWorkspaceGitBlame(surface: HTMLElement): boolean {
-  const buttons = [...surface.querySelectorAll<HTMLButtonElement>("[data-git-blame-toggle]")].filter(button => button.getClientRects().length && !button.closest("[hidden]"));
-  if (buttons.length !== 1 || buttons[0]!.disabled) return false;
-  buttons[0]!.click();
-  return true;
+const blameCommands = new WeakMap<HTMLButtonElement, () => void>();
+
+/** Only the captured focused dock can supply this command; never another visible file. */
+export function workspaceGitBlameCommand(root: HTMLElement, origin: Element | null): (() => void) | undefined {
+  const panel = origin?.closest<HTMLElement>("[data-dock-content-id]");
+  if (!panel || !root.contains(panel)) return;
+  const buttons = [...panel.querySelectorAll<HTMLButtonElement>("[data-git-blame-toggle]")]
+    .filter(button => blameCommands.has(button) && button.isConnected && !button.disabled && button.getClientRects().length && !button.closest("[hidden], [inert]"));
+  if (buttons.length !== 1) return;
+  const button = buttons[0]!, command = blameCommands.get(button)!;
+  return () => {
+    if (root.contains(panel) && panel.contains(button) && blameCommands.get(button) === command) command();
+  };
 }
 
 /** Lives inside the original file host; immutable content is never a working editor document. */
 export function WorkspaceGitFilePanel({ state, active }: { state: GitFileHistoryState; active: boolean }) {
   const [expression, setExpression] = useState("HEAD");
+  const toggleButton = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const button = toggleButton.current;
+    if (!button || !active) return;
+    const command = () => {
+      if (blameCommands.get(button) !== command || !button.isConnected || button.disabled || button.closest("[hidden], [inert]") || !button.getClientRects().length) return;
+      state.toggle();
+    };
+    blameCommands.set(button, command);
+    return () => { if (blameCommands.get(button) === command) blameCommands.delete(button); };
+  }, [state, active]);
   const selected = state.selected, inspection = state.inspection, origin = inspection?.origin;
   const source = selected?.content;
   return <section className="workspace-git-file" aria-label={`Git history for ${state.path}`} aria-busy={state.busy} data-repository-watch={state.data.repositoryWatchView?.phase} hidden={!active}>
     <div className="workspace-git-file-actions">
-      <button type="button" data-git-blame-toggle aria-pressed={state.enabled} onClick={() => state.toggle()}>{state.enabled ? "Hide Git blame and history" : "Git blame and history"}</button>
+      <button ref={toggleButton} type="button" data-git-blame-toggle aria-pressed={state.enabled} onClick={() => state.toggle()}>{state.enabled ? "Hide Git blame and history" : "Git blame and history"}</button>
       {state.enabled && <form onSubmit={event => { event.preventDefault(); void state.refresh(expression.trim()); }}>
         <label>Revision<input aria-label="Git file revision" value={expression} maxLength={512} onChange={event => setExpression(event.target.value)} /></label>
         <button disabled={!state.data.connected || state.busy || !expression.trim()}>Refresh</button>
