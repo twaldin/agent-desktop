@@ -85,7 +85,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
         </div>)}</div>
         <button className="sidebar-customization-reset" disabled={!data?.writable || !!drag} onClick={() => void data?.save(resetSidebarNavigation(value, destinations.map(item => item.id)))}>Reset customization</button>
         {data?.unavailable && <p className="sidebar-navigation-notice" role="status">{data.unavailable}</p>}
-        {data?.unsaved && <p className="sidebar-navigation-notice" role="status">{data.busy ? "Saving sidebar changes…" : "Sidebar changes are not yet saved."}</p>}
+        {data?.unsaved && <p className="sidebar-navigation-notice" role="status">{data.busy ? "Saving sidebar changes…" : "Sidebar changes are not yet saved."}{!data.busy && !data.error && <button disabled={!data.canRetry} onClick={() => void data.retry()}>Retry sidebar changes</button>}</p>}
         {data?.error && <div className="sidebar-navigation-notice" role="alert">{data.error}<button disabled={!data.canRetry} onClick={() => void data.retry()}>Retry sidebar changes</button></div>}
       </Dialog.Content>}
     </Dialog.Root>
