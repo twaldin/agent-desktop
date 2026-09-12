@@ -30,7 +30,7 @@ function fixture() {
   const original = workspace();
   let props: BranchSelectorProps = { workspace: original.value, connected: true, variant: "environment", branchPrefix: "codex/", onOpenGitSettings() { throw new Error("No settings action"); } };
   const slots: any[] = [], cleanups = new Map<number, () => void>(), effectDeps = new Map<number, readonly unknown[]>();
-  let cursor = 0, effects: Array<() => void> = [], tree: React.ReactNode;
+  let cursor = 0, effects: Array<() => void> = [], tree: React.ReactNode, mounted = false;
   const internals = (React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
   const dispatcher = {
     useRef(initial: unknown) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
@@ -54,7 +54,15 @@ function fixture() {
   function render(change: Partial<BranchSelectorProps> = {}) {
     props = { ...props, ...change }; cursor = 0; effects = [];
     const previous = internals.H; internals.H = dispatcher;
-    try { tree = BranchSelector(props); } finally { internals.H = previous; }
+    try {
+      const selector = BranchSelector(props);
+      if (!React.isValidElement(selector) || typeof selector.type !== "function") {
+        if (mounted) { for (const cleanup of cleanups.values()) cleanup(); cleanups.clear(); effectDeps.clear(); slots.length = 0; }
+        mounted = false; tree = selector;
+      } else {
+        mounted = true; tree = (selector.type as (props: BranchSelectorProps) => React.ReactNode)(selector.props as BranchSelectorProps);
+      }
+    } finally { internals.H = previous; }
     for (const effect of effects) effect();
   }
   const menus: { items: DesktopMenuItem[]; result: ReturnType<typeof deferred<string | null>> }[] = [], copied: string[] = [];
@@ -86,6 +94,19 @@ test("environment branch context action copies the literal branch once and prese
     f.menus[0]!.result.resolve("copy-branch-name"); await opened.result;
     expect(f.copied).toEqual(["feature/λ-exact"]); expect(f.alerts()).toEqual([]);
     f.trigger().props.onClick(); expect(f.original.calls).toEqual(["git", "worktrees"]);
+  } finally { f.dispose(); }
+});
+
+test("repository loss unmounts the controlled selector and retires its open native menu", async () => {
+  const f = fixture();
+  try {
+    const opened = f.open();
+    f.original.value.gitAvailability = "not-repository"; f.render();
+    expect(() => f.trigger()).toThrow("Branch trigger missing");
+    f.menus[0]!.result.resolve("copy-branch-name"); await opened.result;
+    expect(f.copied).toEqual([]);
+    f.original.value.gitAvailability = "repository"; f.render();
+    expect(f.trigger().props["aria-label"]).toBe("Switch branch");
   } finally { f.dispose(); }
 });
 

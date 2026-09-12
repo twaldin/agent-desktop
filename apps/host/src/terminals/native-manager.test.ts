@@ -128,7 +128,7 @@ describe.skipIf(!bundle)("private bundled tmux integration (actual native progra
     const terminal = await manager.create({ cwd: managed, target }, environment, { actionKey: key, actionRoot: managed });
     const result = join(managed, "nested-action.json");
     await manager.restartAction(terminal.id,
-      `printf '{"cwd":"%s","worktree":"%s","agent":"%s","source":"%s","value":"%s"}' "$PWD" "$CODEX_WORKTREE_PATH" "$AGENT_WORKTREE_PATH" "$CODEX_SOURCE_TREE_PATH" "$NESTED_ACTION_VALUE" > ${quote(result)}`,
+      `printf '{"cwd":"%s","worktree":"%s","agent":"%s","source":"%s","value":"%s"}' "$PWD" "$CODEX_WORKTREE_PATH" "$AGENT_WORKTREE_PATH" "$CODEX_SOURCE_TREE_PATH" "$NESTED_ACTION_VALUE" > ${quote(`${result}.pending`)} && mv ${quote(`${result}.pending`)} ${quote(result)}`,
       environment, { actionRoot: managed });
     await until(() => existsSync(result), "nested action environment");
     expect(JSON.parse(readFileSync(result, "utf8"))).toEqual({ cwd: managed, worktree: nested, agent: nested, source, value: "private-nested" });

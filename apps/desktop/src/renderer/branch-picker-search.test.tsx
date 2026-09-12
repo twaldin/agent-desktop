@@ -57,7 +57,7 @@ function fixture() {
     mutateCommand: async (action: WorkspaceMutation) => { mutations.push(action); return "checkout-command"; },
   } as unknown as WorkspaceState;
   let props: BranchSelectorProps = { workspace, connected: true, variant: "environment", branchPrefix: "codex/", onOpenGitSettings() {} };
-  let cursor = 0, tree: React.ReactNode, dirty = false, effects: Array<() => void> = [];
+  let cursor = 0, tree: React.ReactNode, dirty = false, effects: Array<() => void> = [], mounted = false;
   const slots: any[] = [], cleanup = new Map<number, () => void>(), deps = new Map<number, readonly unknown[]>();
   const internals = (React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
   const dispatcher = {
@@ -79,7 +79,16 @@ function fixture() {
     for (let pass = 0; pass < 10; pass++) {
       cursor = 0; effects = []; dirty = false;
       const previous = internals.H; internals.H = dispatcher;
-      try { tree = BranchSelector(props); } finally { internals.H = previous; }
+      try {
+        const selector = BranchSelector(props);
+        if (!React.isValidElement(selector) || typeof selector.type !== "function") {
+          if (mounted) { for (const fn of cleanup.values()) fn(); cleanup.clear(); deps.clear(); slots.length = 0; }
+          mounted = false; tree = selector;
+        } else {
+          mounted = true; tree = (selector.type as (props: BranchSelectorProps) => React.ReactNode)(selector.props as BranchSelectorProps);
+        }
+      } finally { internals.H = previous; }
+      if (!mounted) return;
       for (const node of nodes(tree)) if (node.props.ref && typeof node.props.ref === "object" && !node.props.ref.current) node.props.ref.current = {
         open: false, showModal() { this.open = true; }, close() { this.open = false; }, focus() {}, contains: () => false,
         getBoundingClientRect: () => ({ left: 650, right: 850, top: 650, bottom: 678 }), querySelector: () => undefined,
@@ -101,6 +110,17 @@ function fixture() {
     dispose() { for (const fn of cleanup.values()) fn(); for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } },
   };
 }
+
+test("repository loss unmounts the controlled picker and a return starts closed", () => {
+  const f = fixture();
+  try {
+    f.open(); expect(f.nodes().some(node => node.props["aria-label"] === "Search branches")).toBe(true);
+    f.workspace.gitAvailability = "not-repository"; f.render(); expect(f.nodes()).toEqual([]);
+    f.workspace.gitAvailability = "repository"; f.render();
+    expect(f.nodes().some(node => node.props["aria-label"] === "Switch branch")).toBe(true);
+    expect(f.nodes().some(node => node.props["aria-label"] === "Search branches")).toBe(false);
+  } finally { f.dispose(); }
+});
 
 test("idle component uses independent default current recent inventory without cached catalog rows", async () => {
   const f = fixture();
