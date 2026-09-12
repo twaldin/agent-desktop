@@ -257,6 +257,15 @@ async function run() {
     await key("ArrowDown"); await key("Enter"); await saved();
     await wait(`sidebarExploreState().rows.join("|") === "pull-requests|scheduled|plugins|archive" && document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"`, "in-panel context Reset restores defaults and focus");
     await capture("019-in-panel-reset"); checkpoints.push("trusted Chromium pointer drag/drop persists on real host; in-panel context Reset works inside the modal and restores Done focus");
+    await click('.sidebar-visibility[aria-label="Plugins"]'); await saved();
+    const beforePointerReset = await readNavigation();
+    if (!beforePointerReset || beforePointerReset.deleted || beforePointerReset.key !== "sidebar.navigation" || !beforePointerReset.value.hidden.includes("plugins")) throw new Error("Pointer Reset prerequisite was not persisted");
+    await click('.sidebar-reorder[aria-label="Reorder Plugins"]', "right"); await wait(`document.querySelector('[role="menu"][aria-label="Sidebar navigation options"]')`);
+    await click('[role="menu"][aria-label="Sidebar navigation options"] [role="menuitem"]'); await saved();
+    await wait(`document.querySelector(".sidebar-customization") && !document.querySelector('[role="menu"][aria-label="Sidebar navigation options"]') && document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"`, "pointer menu Reset keeps its modal and restores Done focus");
+    const afterPointerReset = await readNavigation();
+    if (!afterPointerReset || afterPointerReset.deleted || afterPointerReset.key !== "sidebar.navigation" || afterPointerReset.value.hidden.includes("plugins")) throw new Error("Pointer menu Reset did not restore persisted visibility");
+    await capture("020-pointer-context-reset"); checkpoints.push("actual pointer MenuItem Reset restores a changed host preference without dismissing its owning modal");
     writeFileSync(join(output, "confirmed-preferences.json"), JSON.stringify(await http("/v2/preferences"), null, 2));
     passed = true;
   } catch (cause) { failure = String(cause); errors.push(failure); if (window && !window.isDestroyed()) await capture("failure").catch(error => errors.push(String(error))); }
