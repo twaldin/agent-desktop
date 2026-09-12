@@ -38,7 +38,7 @@ export function AccountsSettings(props: Props) {
   </section>;
 }
 
-function ProviderDetails({ provider, catalog, data, ...props }: Props & { provider: ProviderInfo; catalog: ProviderCatalog; data: AccountsState }) {
+export function ProviderDetails({ provider, catalog, data, ...props }: Props & { provider: ProviderInfo; catalog: ProviderCatalog; data: AccountsState }) {
   const [keyVisible, setKeyVisible] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,6 +52,7 @@ function ProviderDetails({ provider, catalog, data, ...props }: Props & { provid
   const accounts = data.accounts.get(provider.id);
   const login = data.logins.find(login => login.loginId === activeLoginId) ?? data.logins.find(login => login.providerId === provider.id && ["running", "cancelling"].includes(login.status)) ?? data.logins.find(login => login.providerId === provider.id);
   const running = login?.status === "running" || login?.status === "cancelling";
+  const loginUnavailable = provider.loginSupported && !provider.available;
   const canPin = catalog.sessionSelectionConnected && props.session?.model?.provider === provider.id;
   const writable = props.connected && !busy;
   useEffect(() => {
@@ -94,7 +95,7 @@ function ProviderDetails({ provider, catalog, data, ...props }: Props & { provid
     <div className="provider-title"><h2>{provider.name}</h2><code>{provider.id}</code></div>
     <p className="settings-description">{authDescription(provider)}{provider.disabledInSettings ? " This provider is disabled in the host’s settings." : ""}</p>
     {error && <div className="inline-error" role="alert">{error}</div>}
-    <section className="settings-card" aria-label="Add an account"><h3>Connect an account</h3><div className="account-action-row">{provider.loginSupported && <button className="primary-button" disabled={!writable || running} onClick={() => void startLogin()}>{running ? "Sign-in in progress" : "Sign in"}</button>}<button className="secondary-button" disabled={!writable} aria-expanded={keyVisible} onClick={() => { setKeyVisible(value => !value); setApiKey(""); }}>{keyVisible ? "Cancel API key entry" : provider.storedApiKeyConfigured ? "Replace API key" : "Add API key"}</button></div>{!provider.loginSupported && <p className="settings-description">This registry entry does not expose a native sign-in flow.</p>}
+    <section className="settings-card" aria-label="Add an account"><h3>Connect an account</h3><div className="account-action-row">{provider.loginSupported && <button className="primary-button" disabled={!writable || running || loginUnavailable} onClick={() => void startLogin()}>{loginUnavailable ? "Sign-in unavailable" : running ? "Sign-in in progress" : "Sign in"}</button>}<button className="secondary-button" disabled={!writable} aria-expanded={keyVisible} onClick={() => { setKeyVisible(value => !value); setApiKey(""); }}>{keyVisible ? "Cancel API key entry" : provider.storedApiKeyConfigured ? "Replace API key" : "Add API key"}</button></div>{loginUnavailable ? <p className="settings-description">Native sign-in is unavailable for this provider on this host.</p> : !provider.loginSupported && <p className="settings-description">This registry entry does not expose a native sign-in flow.</p>}
       {keyVisible && <form className="secret-form" onSubmit={saveKey}><label className="field-label" htmlFor="provider-key">API key</label><input id="provider-key" className="text-field" type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} autoComplete="new-password" spellCheck={false} autoCapitalize="none" data-1p-ignore data-lpignore="true" autoFocus/><p className="settings-description">Write-only entry. Saved through {catalog.credentialLocation.mode === "broker" ? "the configured broker" : props.hostName}; existing key values are never read back into this field.</p><button type="submit" className="primary-button" disabled={!writable || !apiKey.trim()}>Save API key</button></form>}
     </section>
     {login && <LoginCard key={login.loginId} login={login} provider={provider} hostName={props.hostName} remote={props.hostId !== props.localHostId} writable={writable} act={act} openExternal={url => props.bridge.openExternal(url)}/>}
