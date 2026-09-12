@@ -40,3 +40,31 @@ export async function createGitFileFixture() {
     refs: fixtureGit(cwd, ["for-each-ref", "--format=%(refname)%00%(objectname)"]), text: await readFile(join(cwd, "src/renamed.ts"), "utf8") });
   return { root, cwd, first, edited, renamed, head, originalText, changedText, snapshot };
 }
+
+/** Additional immutable refs for production-App error/merge states; restore the original working branch. */
+export async function createGitFileAppCases(fixture: { cwd: string; head: string; changedText: string }) {
+  const { cwd, head, changedText } = fixture, path = join(cwd, "src/renamed.ts");
+  const revisions: Record<string, string> = {};
+  fixtureGit(cwd, ["checkout", "-b", "app-error-cases"]);
+  for (const [name, content] of [
+    ["binary", Buffer.from([255, 0, 128, 1])],
+    ["encoding", Buffer.from([255, 254, 65, 0])],
+    ["oversized", Buffer.alloc(2 * 1024 * 1024 + 1, 65)],
+  ] as const) {
+    await writeFile(path, content);
+    fixtureGit(cwd, ["add", "src/renamed.ts"]); fixtureGit(cwd, ["commit", "-m", `App ${name} snapshot`]);
+    revisions[name] = fixtureGit(cwd, ["rev-parse", "HEAD"]);
+  }
+  fixtureGit(cwd, ["checkout", "-b", "app-side", head]);
+  await writeFile(path, `${changedText}export const mergedSide = true;\n`);
+  fixtureGit(cwd, ["commit", "-am", "App merged side change"]);
+  revisions.side = fixtureGit(cwd, ["rev-parse", "HEAD"]);
+  fixtureGit(cwd, ["checkout", "-b", "app-merge", head]);
+  fixtureGit(cwd, ["merge", "--no-ff", "app-side", "-m", "App merge"]);
+  revisions.merge = fixtureGit(cwd, ["rev-parse", "HEAD"]);
+  fixtureGit(cwd, ["checkout", "-b", "app-sparse", head]);
+  for (let index = 0; index < 105; index++) fixtureGit(cwd, ["commit", "--allow-empty", "-m", `App unrelated ${index}`]);
+  revisions.sparse = fixtureGit(cwd, ["rev-parse", "HEAD"]);
+  fixtureGit(cwd, ["checkout", "main"]);
+  return revisions;
+}

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WorkspaceService, WorkspaceError } from "./service";
 import { HostWorkspaces, parseWorkspaceQuery } from "../workspace-http";
@@ -38,7 +38,7 @@ test("nested owner paths, deleted parent content, staged renames and unusual fil
   const staged = await nested.inspectGitFile("staged-name.ts", "HEAD");
   expect(staged.origin).toMatchObject({ workspacePath: "staged-name.ts", path: "src/staged-name.ts" });
   expect(staged.revision?.location).toEqual({ commit: f.head, path: "src/renamed.ts" });
-  expect(staged.history?.start.path).toBe("src/renamed.ts");
+  expect(staged.history?.start.pending[0]?.path).toBe("src/renamed.ts");
   const unusual = await nested.inspectGitFile("tab\tquote\"line\n.ts", "HEAD");
   expect(unusual.revision?.blame[0]?.path).toBe("src/tab\tquote\"line\n.ts");
   expect(unusual.history?.commits[0]?.path).toBe("src/tab\tquote\"line\n.ts");
@@ -59,15 +59,20 @@ test("empty, binary, untracked, absent reference and unborn repository are disti
 
 test("older history pages continue before their boundary without losing original path or duplicating commits", async () => {
   const f = await fixture();
+  let path = "src/paged.ts";
   for (let index = 0; index < 103; index++) {
-    await writeFile(join(f.cwd, "src/paged.ts"), `revision ${index}\n`);
-    fixtureGit(f.cwd, ["add", "src/paged.ts"]); fixtureGit(f.cwd, ["commit", "-m", `Page ${index}`]);
+    if (index === 50) {
+      fixtureGit(f.cwd, ["mv", path, "src/paged-renamed.ts"]); path = "src/paged-renamed.ts";
+    }
+    await writeFile(join(f.cwd, path), `${f.changedText}// revision ${index}\n`);
+    fixtureGit(f.cwd, ["add", "."]); fixtureGit(f.cwd, ["commit", "-m", `Page ${index}`]);
   }
-  const inspection = await f.service.inspectGitFile("src/paged.ts", "HEAD"), page = inspection.history!;
+  const inspection = await f.service.inspectGitFile(path, "HEAD"), page = inspection.history!;
   expect(page.commits[0]?.summary).toBe("Page 102"); expect(page.commits.at(-1)?.summary).toBe("Page 3");
   const older = await f.service.gitFileHistory(inspection.origin!, page.next!);
   expect(older.commits.map(row => row.summary)).toEqual(["Page 2", "Page 1", "Page 0"]); expect(older.next).toBeNull();
   expect(older.origin).toEqual(inspection.origin!);
+  expect(older.commits.every(row => row.path === "src/paged.ts")).toBe(true);
 });
 
 test("protocol and repository identity reject path escape, mutable locations and replaced owners", async () => {
@@ -114,4 +119,97 @@ test("blame reads original Git blobs without executing repository-configured tex
   const inspection = await f.service.inspectGitFile("src/renamed.ts", "HEAD");
   expect(inspection.revision?.content).toMatchObject({ kind: "text", text: f.changedText });
   expect(inspection.revision?.blame[59]).toMatchObject({ commit: f.edited, originalLine: 60 });
+});
+
+test("history crosses a re-add page boundary and retains the earlier file lifetime", async () => {
+  const f = await fixture(), path = "src/lifetimes.ts";
+  await writeFile(join(f.cwd, path), "old lifetime\n");
+  fixtureGit(f.cwd, ["add", path]); fixtureGit(f.cwd, ["commit", "-m", "Old lifetime"]);
+  const old = fixtureGit(f.cwd, ["rev-parse", "HEAD"]);
+  fixtureGit(f.cwd, ["rm", path]); fixtureGit(f.cwd, ["commit", "-m", "Delete old lifetime"]);
+  for (let index = 0; index < 100; index++) {
+    await writeFile(join(f.cwd, path), `new lifetime ${index}\n`);
+    fixtureGit(f.cwd, ["add", path]); fixtureGit(f.cwd, ["commit", "-m", `New lifetime ${index}`]);
+  }
+  const inspection = await f.service.inspectGitFile(path, "HEAD");
+  expect(inspection.history!.commits.at(-1)?.summary).toBe("New lifetime 0");
+  expect(inspection.history!.next).not.toBeNull();
+  const older = await f.service.gitFileHistory(inspection.origin!, inspection.history!.next!);
+  expect(older.commits.some(row => row.commit === old)).toBe(true);
+});
+
+test("merged side history retains rename ancestry and blame-origin immutable contents", async () => {
+  const f = await fixture();
+  fixtureGit(f.cwd, ["checkout", "-b", "side"]);
+  fixtureGit(f.cwd, ["mv", "src/renamed.ts", "src/merged.ts"]);
+  fixtureGit(f.cwd, ["commit", "-m", "Side rename"]);
+  const renamed = fixtureGit(f.cwd, ["rev-parse", "HEAD"]);
+  await writeFile(join(f.cwd, "src/merged.ts"), `${f.changedText}export const side = true;\n`);
+  fixtureGit(f.cwd, ["add", "src/merged.ts"]); fixtureGit(f.cwd, ["commit", "-m", "Side edit"]);
+  const side = fixtureGit(f.cwd, ["rev-parse", "HEAD"]);
+  fixtureGit(f.cwd, ["checkout", "main"]);
+  await writeFile(join(f.cwd, "unrelated.txt"), "main\n");
+  fixtureGit(f.cwd, ["add", "unrelated.txt"]); fixtureGit(f.cwd, ["commit", "-m", "Main edit"]);
+  fixtureGit(f.cwd, ["merge", "--no-ff", "side", "-m", "Merge side"]);
+  const inspection = await f.service.inspectGitFile("src/merged.ts", "HEAD");
+  expect(inspection.history!.commits.map(row => row.commit)).toContain(side);
+  expect(inspection.history!.commits.map(row => row.commit)).toContain(renamed);
+  expect(inspection.history!.commits.some(row => row.commit === f.first && row.path === "src/original.ts")).toBe(true);
+  const blame = inspection.revision!.blame.at(-1)!;
+  expect(blame.commit).toBe(side);
+  expect((await f.service.gitFileRevision(inspection.origin!, blame)).content).toMatchObject({ kind: "text", text: `${f.changedText}export const side = true;\n` });
+});
+
+test("denied working text does not hide readable committed history", async () => {
+  const f = await fixture(), path = join(f.cwd, "src/renamed.ts");
+  await chmod(path, 0);
+  try {
+    const inspection = await f.service.inspectGitFile("src/renamed.ts", "HEAD");
+    expect(inspection).toMatchObject({ working: null, workingUnavailable: "denied" });
+    expect(inspection.revision?.content).toMatchObject({ kind: "text", text: f.changedText });
+    expect(inspection.history!.commits.map(row => row.commit)).toContain(f.first);
+  } finally { await chmod(path, 0o644); }
+});
+
+test("bounded empty history pages continue to real file changes", async () => {
+  const f = await fixture();
+  for (let index = 0; index < 105; index++) fixtureGit(f.cwd, ["commit", "--allow-empty", "-m", `Unrelated ${index}`]);
+  const inspection = await f.service.inspectGitFile("src/renamed.ts", "HEAD");
+  expect(inspection.history!.commits).toEqual([]);
+  expect(inspection.history!.next).not.toBeNull();
+  const page = await f.service.gitFileHistory(inspection.origin!, inspection.history!.next!);
+  expect(page.commits.map(row => row.commit)).toEqual([f.renamed, f.edited, f.first]);
+  expect(page.next).toBeNull();
+});
+
+test("merge change labels and parent links describe the same differing edge", async () => {
+  const f = await fixture();
+  fixtureGit(f.cwd, ["checkout", "-b", "other-edge"]);
+  await writeFile(join(f.cwd, "src/renamed.ts"), `${f.changedText}export const other = true;\n`);
+  fixtureGit(f.cwd, ["commit", "-am", "Other edge changes file"]);
+  const side = fixtureGit(f.cwd, ["rev-parse", "HEAD"]);
+  fixtureGit(f.cwd, ["checkout", "main"]);
+  fixtureGit(f.cwd, ["merge", "--no-ff", "-s", "ours", "other-edge", "-m", "Keep first parent"]);
+  const merged = fixtureGit(f.cwd, ["rev-parse", "HEAD"]);
+  const inspection = await f.service.inspectGitFile("src/renamed.ts", "HEAD");
+  const row = inspection.history!.commits.find(value => value.commit === merged)!;
+  expect(row).toMatchObject({ change: "M", previous: { commit: side, path: "src/renamed.ts" } });
+  expect((await f.service.gitFileRevision(inspection.origin!, row.previous!)).content).toMatchObject({ kind: "text", text: `${f.changedText}export const other = true;\n` });
+  expect((await f.service.gitFileRevision(inspection.origin!, row)).content).toMatchObject({ kind: "text", text: f.changedText });
+});
+
+test("configured rename limits cannot silently truncate modified-rename ancestry", async () => {
+  const f = await fixture();
+  for (let index = 0; index < 3; index++) await writeFile(join(f.cwd, `src/before-${index}.ts`), Array.from({ length: 100 }, (_, line) => `export const item${index}Line${line} = ${line};`).join("\n") + "\n");
+  fixtureGit(f.cwd, ["add", "."]); fixtureGit(f.cwd, ["commit", "-m", "Distinct originals"]);
+  const original = fixtureGit(f.cwd, ["rev-parse", "HEAD"]);
+  for (let index = 0; index < 3; index++) {
+    fixtureGit(f.cwd, ["mv", `src/before-${index}.ts`, `src/after-${index}.ts`]);
+    await writeFile(join(f.cwd, `src/after-${index}.ts`), Array.from({ length: 100 }, (_, line) => `export const item${index}Line${line} = ${line};`).join("\n") + "\n// modified during rename\n");
+  }
+  fixtureGit(f.cwd, ["add", "."]); fixtureGit(f.cwd, ["commit", "-m", "Several modified renames"]);
+  fixtureGit(f.cwd, ["config", "diff.renameLimit", "1"]);
+  const inspection = await f.service.inspectGitFile("src/after-1.ts", "HEAD");
+  expect(inspection.history!.commits.some(row => row.commit === original && row.path === "src/before-1.ts")).toBe(true);
+  expect(inspection.history!.commits[0]?.previous?.path).toBe("src/before-1.ts");
 });

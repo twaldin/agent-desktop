@@ -1,4 +1,4 @@
-import type { GitFileOrigin, GitFileLocation, GitFileInspection, GitFileHistoryPage, GitFileRevision } from "./git-file-history";
+import type { GitFileOrigin, GitFileLocation, GitFileHistoryCursor, GitFileInspection, GitFileHistoryPage, GitFileRevision } from "./git-file-history";
 export * from "./git-file-history";
 import type { NativeTerminalInfo } from "./terminals";
 import type { GitSelectionSummary, GitSubmissionIntent, GitSubmissionReceipt } from "./git-submissions";
@@ -90,7 +90,7 @@ export type WorkspaceQuery =
   | { type: "file.copy-info"; path: string }
   | { type: "file.copy-chunk"; path: string; revision: string; offset: number }
   | { type: "git.file-inspect"; path: string; expression: string }
-  | { type: "git.file-history"; origin: GitFileOrigin; start: GitFileLocation }
+  | { type: "git.file-history"; origin: GitFileOrigin; start: GitFileHistoryCursor }
   | { type: "git.file-revision"; origin: GitFileOrigin; location: GitFileLocation }
   | { type: "git.status" }
   | { type: "git.action-context" }

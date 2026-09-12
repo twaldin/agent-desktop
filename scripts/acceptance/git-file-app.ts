@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createGitFileFixture } from "./git-file-fixture";
+import { createGitFileAppCases, createGitFileFixture } from "./git-file-fixture";
 import { createDockState, dockTabId, insertDockTab, type DockTab } from "../../apps/desktop/src/renderer/dock-state";
 import { defaultWindowView } from "../../apps/desktop/src/window-state";
 import { WindowStateStore } from "../../apps/desktop/src/main/window-state";
@@ -10,7 +10,7 @@ const repo = resolve(import.meta.dir, "../.."), output = resolve(process.argv[2]
 if (!await Bun.file(join(repo, "apps/desktop/dist/main.cjs")).exists()) throw new Error("Main must build the integrated production desktop before this acceptance entry runs: bun run build");
 await mkdir(output, { recursive: true, mode: 0o700 });
 if ((await readdir(output)).length) throw new Error("Acceptance output must be a new empty private directory.");
-const fixture = await createGitFileFixture(), before = await fixture.snapshot();
+const fixture = await createGitFileFixture(), cases = await createGitFileAppCases(fixture), before = await fixture.snapshot();
 await writeFile(join(output, "fixture.json"), JSON.stringify({ root: fixture.root, scope: "Owned disposable Git/native fixture; connection files remain private." }), { mode: 0o600 });
 const sourceFiles = ["packages/shared/src/git-file-history.ts", "packages/shared/src/workspace-protocol.ts", "apps/host/src/workspace/git-file-history.ts", "apps/host/src/workspace/service.ts", "apps/host/src/workspace-http.ts", "apps/desktop/src/renderer/git-file-history-state.ts", "apps/desktop/src/renderer/WorkspaceGitFilePanel.tsx", "apps/desktop/src/renderer/PierreGitBlame.tsx", "apps/desktop/src/renderer/WorkspacePanel.tsx", "apps/desktop/src/renderer/PierreSourceEditor.tsx", "apps/desktop/src/renderer/workspace-git-file.css", "apps/desktop/src/renderer/App.tsx", "apps/desktop/dist/main.cjs"];
 const hashes = async () => Object.fromEntries(await Promise.all(sourceFiles.map(async path => [path, createHash("sha256").update(await readFile(join(repo, path))).digest("hex")])));
@@ -35,7 +35,7 @@ try {
   const dock = insertDockTab(createDockState(), tab, "right");
   const saved = new WindowStateStore(isolated.AGENT_DESKTOP_PROFILE_DIR, "primary").saveView({ ...defaultWindowView(), route: { hostId: ready.connection.hostId, sessionId: null }, dock: { state: dock, tabs: [tab] } });
   if (saved.error) throw new Error(saved.error);
-  await writeFile(join(output, "launch.json"), JSON.stringify({ first: fixture.first }), { mode: 0o600 });
+  await writeFile(join(output, "launch.json"), JSON.stringify({ first: fixture.first, cwd: fixture.cwd, cases }), { mode: 0o600 });
   electron = Bun.spawn([process.execPath, join(repo, "node_modules/electron/cli.js"), join(import.meta.dir, "git-file-app-electron.cjs"), output, repo], { cwd: repo, env: isolated,
     stdout: Bun.file(join(output, "electron.log")), stderr: Bun.file(join(output, "electron-errors.log")) });
   const timer = setTimeout(() => electron?.kill("SIGTERM"), 120000);

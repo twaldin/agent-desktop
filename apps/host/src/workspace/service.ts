@@ -1,5 +1,5 @@
 import { GitFileReader } from "./git-file-history";
-import { parseGitFileOrigin, parseGitFilePath, type GitFileOrigin, type GitFileLocation, type GitFileInspection } from "../../../../packages/shared/src/git-file-history";
+import { parseGitFileOrigin, parseGitFilePath, type GitFileHistoryCursor, type GitFileOrigin, type GitFileLocation, type GitFileInspection } from "../../../../packages/shared/src/git-file-history";
 import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitReviewSummary, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
 export type * from "../../../../packages/shared/src/workspace";
 
@@ -413,16 +413,22 @@ export class WorkspaceService {
     });
   }
 
-  private async git(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; validExitCodes?: number[]; timeoutMs?: number; signal?: AbortSignal; assertCurrent?: () => void } = {}): Promise<{ stdout: string; exitCode: number }> {
+  private async git(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string; validExitCodes?: number[]; timeoutMs?: number; signal?: AbortSignal; assertCurrent?: () => void } = {}): Promise<{ stdout: string; exitCode: number }> {
     const result = await this.gitOutput(args, options);
     return { stdout: decode(result.stdout), exitCode: result.exitCode };
   }
 
-  private async gitOutput(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; validExitCodes?: number[]; timeoutMs?: number; signal?: AbortSignal; assertCurrent?: () => void } = {}): Promise<{ stdout: Buffer; exitCode: number }> {
+  private async gitOutput(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string; validExitCodes?: number[]; timeoutMs?: number; signal?: AbortSignal; assertCurrent?: () => void } = {}): Promise<{ stdout: Buffer; exitCode: number }> {
     options.assertCurrent?.();
     const command = ["--no-pager", "--literal-pathspecs", "-c", "color.ui=false", "-C", options.cwd ?? this.cwd, ...args];
     try {
-      const result = await execute("git", command, { encoding: "buffer", timeout: Math.min(this.gitTimeoutMs, options.timeoutMs ?? this.gitTimeoutMs), maxBuffer: 8 * 1024 * 1024, signal: options.signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", ...options.env } });
+      const execution = execute("git", command, { encoding: "buffer", timeout: Math.min(this.gitTimeoutMs, options.timeoutMs ?? this.gitTimeoutMs), maxBuffer: 8 * 1024 * 1024, signal: options.signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", ...options.env } });
+      const inputWritten = options.input === undefined ? undefined : new Promise<void>((resolve, reject) => {
+        const stream = execution.child.stdin;
+        if (!stream) { reject(new Error("Git batch input is unavailable.")); return; }
+        stream.once("error", reject); stream.end(options.input, resolve);
+      });
+      const [result] = await Promise.all([execution, inputWritten]);
       options.signal?.throwIfAborted();
       options.assertCurrent?.();
       return { stdout: result.stdout, exitCode: 0 };
@@ -472,13 +478,13 @@ export class WorkspaceService {
   }
 
   private async gitFileContext() {
-    const context = await this.repositoryReadContext();
-    const workspace = { gitRoot: context.context.root, workspaceRelativePath: relative(context.context.root, this.cwd) };
-    const repositoryId = hash(Buffer.from(context.identity));
+    const { context: repository, identity } = await this.repositoryReadContext();
+    const workspace = { gitRoot: repository.root, workspaceRelativePath: relative(repository.root, this.cwd) };
+    const repositoryId = hash(Buffer.from(identity));
     const options = { cwd: workspace.gitRoot, env: { GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" } };
     const flags = ["--no-lazy-fetch", "--no-replace-objects"];
     const reader = new GitFileReader({
-      text: async args => (await this.git([...flags, ...args], options)).stdout,
+      text: async (args, input) => (await this.git([...flags, ...args], { ...options, input })).stdout,
       bytes: async args => (await this.gitOutput([...flags, ...args], options)).stdout,
       maximumBytes: this.maxTextBytes,
     });
@@ -489,17 +495,27 @@ export class WorkspaceService {
     if (hash(Buffer.from((await this.repositoryReadContext()).identity)) !== repositoryId) throw new WorkspaceError("WORKSPACE_CHANGED", "The repository changed during the file history read.");
   }
 
+  private async gitFileWorking(path: string): Promise<Pick<GitFileInspection, "working" | "workingUnavailable">> {
+    try { return { working: await this.currentText(path) }; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EACCES" || code === "EPERM") return { working: null, workingUnavailable: "denied" };
+      if (code === "EISDIR" || code === "NOT_REGULAR_FILE") return { working: null, workingUnavailable: "not-regular-file" };
+      throw error;
+    }
+  }
+
   /** Paths enter relative to the selected workspace, never silently relative to its containing repository. */
   async inspectGitFile(inputPath: string, inputExpression: string): Promise<GitFileInspection> {
     const path = parseGitFilePath(inputPath), expression = parseGitRevisionExpression(inputExpression);
     const context = await this.gitFileContext();
     const repositoryPath = context.workspace.workspaceRelativePath ? `${context.workspace.workspaceRelativePath}/${path}` : path;
-    const working = await this.currentText(path);
+    const working = await this.gitFileWorking(path);
     const root = await this.gitRootService(), resolved = await root.resolveRevision(expression);
     if (!resolved) {
       const unborn = expression === "HEAD" && (await root.indexState()).head === null;
       await this.assertGitFileRepository(context.repositoryId);
-      return { requested: { path, expression }, origin: null, unavailable: unborn ? "unborn-head" : "revision-not-found", working, revision: null, history: null };
+      return { requested: { path, expression }, origin: null, unavailable: unborn ? "unborn-head" : "revision-not-found", ...working, revision: null, history: null };
     }
     const origin: GitFileOrigin = { repositoryId: context.repositoryId, workspacePath: path, path: repositoryPath, expression, commit: resolved.commit };
     let revision = await context.reader.revision(origin, origin);
@@ -512,14 +528,14 @@ export class WorkspaceService {
         revision = await context.reader.revision(origin, { commit: origin.commit, path: renamed.originalPath });
       }
     }
-    const history = await context.reader.history(origin, revision.location);
+    const history = await context.reader.history(origin, { ...revision.location, offset: 0, pending: [revision.location] });
     if (renameRevision !== undefined) await root.checkIndexRevision(renameRevision);
     await this.assertGitFileRepository(context.repositoryId);
-    const latestWorking = await this.currentText(path);
-    if (latestWorking?.revision !== working?.revision || latestWorking?.kind !== working?.kind) throw new WorkspaceError("FILE_CHANGED", "The working file changed while reading blame. Refresh the file history.");
+    const latestWorking = await this.gitFileWorking(path);
+    if (latestWorking.working?.revision !== working.working?.revision || latestWorking.working?.kind !== working.working?.kind || latestWorking.workingUnavailable !== working.workingUnavailable) throw new WorkspaceError("FILE_CHANGED", "The working file changed while reading blame. Refresh the file history.");
     const latestRef = await root.resolveRevision(expression);
     if (latestRef?.commit !== resolved.commit) throw new WorkspaceError("REVISION_CHANGED", "The selected reference moved while reading file history. Refresh.");
-    return { requested: { path, expression }, origin, working, revision, history };
+    return { requested: { path, expression }, origin, ...working, revision, history };
   }
 
   private async gitFileOrigin(input: GitFileOrigin) {
@@ -529,7 +545,7 @@ export class WorkspaceService {
     return { ...context, origin };
   }
 
-  async gitFileHistory(origin: GitFileOrigin, start: GitFileLocation) {
+  async gitFileHistory(origin: GitFileOrigin, start: GitFileHistoryCursor) {
     const context = await this.gitFileOrigin(origin);
     const result = await context.reader.history(context.origin, start);
     await this.assertGitFileRepository(context.repositoryId);
