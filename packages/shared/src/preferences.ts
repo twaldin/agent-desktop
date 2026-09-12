@@ -104,6 +104,12 @@ export type ThemeBackground =
   | { kind: "color"; color: string }
   | { kind: "gradient"; angle: number; stops: { color: string; position: number }[] }
   | { kind: "asset"; sha256: string; fit: "cover" | "contain" | "tile"; opacity: number; blur: number };
+export type SidebarGrouping = "project" | "connection" | "list";
+export type SidebarSort = "priority" | "updated_at" | "manual";
+export interface SidebarOrganization { grouping: SidebarGrouping; projectSort: SidebarSort; chatSort: SidebarSort }
+export const DEFAULT_SIDEBAR_ORGANIZATION: SidebarOrganization = { grouping: "project", projectSort: "updated_at", chatSort: "updated_at" };
+// Existing explicit sidebar positions retain their previous interpretation.
+export const LEGACY_SIDEBAR_ORGANIZATION: SidebarOrganization = { grouping: "connection", projectSort: "manual", chatSort: "manual" };
 export interface SidebarSectionPreference { name: string; position: number }
 export const PROJECT_APPEARANCE_ICONS = ["folder", "currency-dollar", "book", "graduation-cap", "edit", "writing", "function", "terminal", "music", "popcorn", "customize", "palette", "stethoscope", "health", "lotus", "suitcase", "bar-chart", "kettlebell", "dumbbell", "logs", "scale", "desk-globe", "plane", "globe", "wrench", "paw", "flask", "brain", "heart", "plant"] as const;
 export type ProjectAppearanceIcon = typeof PROJECT_APPEARANCE_ICONS[number];
@@ -126,6 +132,7 @@ export function notificationPreferences(value?: NotificationPreferences): Requir
     approvalRequired: value?.approvalRequired ?? true, questionRequired: value?.questionRequired ?? true, sound: value?.sound ?? false };
 }
 export interface PreferenceValues {
+  "sidebar.organization": SidebarOrganization;
   "connections.keepAwakeWhilePluggedIn": boolean;
   "git.branchPrefix": string;
   "theme.material": "none" | "sidebar" | "under-window" | "hud";
@@ -243,13 +250,19 @@ function background(value: unknown): ThemeBackground {
 
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
-  if (["connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
+  if (["sidebar.organization", "connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
   if (!match || !isPreferenceId(match[1])) return invalid("Only allowlisted app preferences and UUID sidebar entities can be shared.");
   return value as PreferenceKey;
 }
 
 function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[PreferenceKey] {
+  if (key === "sidebar.organization") {
+    const item = object(value, ["grouping", "projectSort", "chatSort"]);
+    return { grouping: enumeration(item.grouping, ["project", "connection", "list"] as const),
+      projectSort: enumeration(item.projectSort, ["priority", "updated_at", "manual"] as const),
+      chatSort: enumeration(item.chatSort, ["priority", "updated_at", "manual"] as const) };
+  }
   if (key === "git.branchPrefix") {
     if (typeof value !== "string" || value.length > 120 || /[\u0000-\u001f\u007f]/.test(value)) return invalid("A branch prefix is too long or contains control characters.");
     const text = value.trim();

@@ -90,6 +90,7 @@ import { CommandKeymapState } from "./command-keymap-state";
 import { observeCommandKeymap } from "./command-keymap-observer";
 import { readAppCommandBindings, appCommandShortcutLabel, APP_COMMAND_BINDING_OWNERS } from "./app-command-bindings";
 import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
+import { SidebarNavigationIcon } from "./SidebarNavigationIcon";
 import { OrganizedSidebar } from "./OrganizedSidebar";
 import { sidebarLayout, sidebarChatActions } from "./sidebar-layout";
 import { NativeSettings } from "./NativeSettings";
@@ -894,7 +895,8 @@ export function App() {
       const result = await bridge.command({ id: crypto.randomUUID(), command: { type: "session.archive", sessionId, archived } }, ownerHostId);
       if (!result.ok) throw new Error(result.error.message);
       await desktop.catalog.refreshHost(ownerHostId);
-    } catch (cause) { setActionError(errorMessage(cause)); }
+      return true;
+    } catch (cause) { setActionError(errorMessage(cause)); return false; }
   }
   async function rename(event: React.FormEvent) {
     event.preventDefault(); if (!selected || !renameTitle.trim()) return;
@@ -1121,10 +1123,10 @@ export function App() {
   return <><div ref={shell} className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
     {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={profileMenu("settings-host")}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
-      <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search" title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} aria-expanded={commandMenuMode === "chats"} onClick={() => openCommandMenu("chats")}><Icon name="search"/></button></div>
+      <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search" title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} aria-expanded={commandMenuMode === "chats"} onClick={() => openCommandMenu("chats")}><SidebarNavigationIcon name="search"/></button></div>
       <nav className="sidebar-actions" aria-label="Main navigation">
-        <button className="nav-action" onClick={() => newConversation()}><Icon name="compose"/><span>New chat</span><kbd>⌘ N</kbd></button>
-        <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setPluginDirectoryOpen(true);setSettingsOpen(false);}}><Icon name="folder"/><span>Plugins</span></button>
+        <button className="nav-action" onClick={() => newConversation()}><SidebarNavigationIcon name="new-chat"/><span>New chat</span><kbd>⌘ N</kbd></button>
+        <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setPluginDirectoryOpen(true);setSettingsOpen(false);}}><SidebarNavigationIcon name="plugins"/><span>Plugins</span></button>
       </nav>
       <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} activeProjectId={!settingsOpen && !pluginDirectoryOpen && selectedId === null ? project?.id : undefined} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession} localHostId={desktop.localHostId ?? null} onRenameProject={renameSidebarProject} onRemoveProject={removeSidebarProject} onRevealProject={revealSidebarProject}/></div>
       <footer className="sidebar-footer">{profileMenu()}</footer>

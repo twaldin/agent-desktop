@@ -47,7 +47,7 @@ describe("replicated sidebar renderer", () => {
   test("a lost receipt preserves a reorder batch across restart and retries the same command IDs", async () => {
     const f = fixture(); await f.data.refresh(); const one = crypto.randomUUID(); const two = crypto.randomUUID(); f.drop();
     await f.data.putMany([{ key: `sidebar.section.${one}`, value: { name: "One", position: 1024 } }, { key: `sidebar.section.${two}`, value: { name: "Two", position: 0 } }]);
-    expect(f.data.pending).toHaveLength(2); const original = f.deliveries[0]!.id;
+    expect(f.data.pending.map(envelope => envelope.command.type === "preferences.put" && envelope.command.change.key)).toEqual(["sidebar.organization", `sidebar.section.${one}`, `sidebar.section.${two}`]); const original = f.deliveries[0]!.id;
     const next = new PreferencesState(f.bridge, f.cache, f.receipts); next.setConnection(f.host.host.id, true); await next.refresh(); expect(f.deliveries).toHaveLength(1); await next.retry();
     expect(f.deliveries[1]!.id).toBe(original); expect(next.pending).toHaveLength(0); expect(next.sections().map(section => section.name)).toEqual(["Two", "One"]); expect(f.native.snapshot().records.map(record => record.revision.counter)).toEqual(expect.arrayContaining([1, 2]));
   });
@@ -65,4 +65,16 @@ describe("replicated sidebar renderer", () => {
     await next.put({ key: "general.reduceMotion", value: true });
     expect(f.deliveries).toHaveLength(0); expect(f.receipts.read(next.pendingKey)).toBe(malformed); expect(next.error).toContain("Saved command receipts have been retained");
   });
+});
+
+test("sidebar grouping and sort modes survive the real replicated store and reject unsupported values", async () => {
+  const f = fixture(); await f.data.refresh();
+  const value = { grouping: "list", projectSort: "priority", chatSort: "updated_at" } as const;
+  await f.data.put({ key: "sidebar.organization", value });
+  const reopened = new PreferencesState(f.bridge, f.cache, f.receipts); reopened.setConnection(f.host.host.id, true); await reopened.refresh();
+  expect(reopened.get("sidebar.organization")).toEqual(value);
+  for (const invalid of [{ ...value, grouping: "unknown" }, { ...value, chatSort: "created_at" }, { ...value, path: "/private" }]) {
+    expect(() => f.native.put({ key: "sidebar.organization", value: invalid } as never)).toThrow();
+    expect(f.native.get("sidebar.organization")).toMatchObject({ value });
+  }
 });

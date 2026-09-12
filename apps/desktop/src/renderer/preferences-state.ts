@@ -1,5 +1,5 @@
 import type { CommandEnvelope, DesktopBridge } from "../../../../packages/shared/src/protocol";
-import { comparePreferenceRevisions, parsePreferenceChange, parsePreferencesSnapshot, type PreferenceChange, type PreferenceKey, type PreferenceRecord, type PreferencesSnapshot, type PreferenceValues, type SidebarEntityPreference, type SidebarSectionPreference } from "../../../../packages/shared/src/preferences";
+import { DEFAULT_SIDEBAR_ORGANIZATION, LEGACY_SIDEBAR_ORGANIZATION, comparePreferenceRevisions, parsePreferenceChange, parsePreferencesSnapshot, type PreferenceChange, type PreferenceKey, type PreferenceRecord, type PreferencesSnapshot, type PreferenceValues, type SidebarEntityPreference, type SidebarSectionPreference } from "../../../../packages/shared/src/preferences";
 import type { DraftCache } from "./drafts";
 import type { OfflineCache } from "./offline-cache";
 
@@ -36,6 +36,9 @@ export class PreferencesState {
   stop() { this.unsubscribe?.(); this.unsubscribe = undefined; }
   setConnection(hostId: string | undefined, connected: boolean) { this.localHostId = hostId; this.connected = connected; this.changed(); }
   get<K extends PreferenceKey>(key: K): PreferenceValues[K] | undefined { const record = this.records.get(key); return record && !record.deleted ? record.value as PreferenceValues[K] : undefined; }
+  sidebarOrganization() {
+    return this.get("sidebar.organization") ?? ([...this.records.values()].some(record => !record.deleted && /^sidebar\.(section|project|session)\./.test(record.key)) ? LEGACY_SIDEBAR_ORGANIZATION : DEFAULT_SIDEBAR_ORGANIZATION);
+  }
   sections() { return [...this.records.values()].flatMap(record => record.key.startsWith("sidebar.section.") && !record.deleted ? [{ id: record.key.slice("sidebar.section.".length), ...record.value as SidebarSectionPreference }] : []).sort(positionOrder); }
   entity(kind: "project" | "session", id: string, hostId: string): SidebarEntityPreference | undefined { const value = this.get(`sidebar.${kind}.${id}`); return value?.hostId === hostId ? value : undefined; }
   sectionFor(kind: "project" | "session", id: string, hostId: string): string | null {
@@ -77,7 +80,9 @@ export class PreferencesState {
     try {
       if (this.receiptRecoveryError) throw new Error(this.receiptRecoveryError);
       if (!this.connected || !this.localHostId) throw new Error("Reconnect to this device’s host before changing shared organization.");
-      this.pending = changes.map(change => ({ id: crypto.randomUUID(), command: { type: "preferences.put", change: parsePreferenceChange(change) } }));
+      const writes = !this.get("sidebar.organization") && !changes.some(change => change.key === "sidebar.organization") && changes.some(change => /^sidebar\.(section|project|session)\./.test(change.key))
+        ? [{ key: "sidebar.organization", value: this.sidebarOrganization() } as PreferenceChange, ...changes] : changes;
+      this.pending = writes.map(change => ({ id: crypto.randomUUID(), command: { type: "preferences.put", change: parsePreferenceChange(change) } }));
       await this.retry();
     } catch (cause) { this.error = message(cause); this.changed(); }
   }

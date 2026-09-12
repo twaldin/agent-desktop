@@ -71,3 +71,47 @@ test("same-named entities on different hosts keep distinct component and organiz
   expect(new Set([first, remote, projectItem].map(sidebarItemKey)).size).toBe(3);
   expect(sidebarItemKey({ ...first, value: { ...first.value, title: "Renamed" } })).toBe(sidebarItemKey(first));
 });
+
+test("grouping changes visible placement and numbered navigation without losing owners or duplicating pinned project children", () => {
+  const { data, groups } = fixture();
+  const modes = ["project", "connection", "list"] as const;
+  for (const grouping of modes) {
+    const layout = sidebarLayout({ ...data, get: () => ({ grouping, projectSort: "updated_at", chatSort: "updated_at" }) }, groups, "", false, new Set());
+    expect(layout.chatSlots).toHaveLength(5);
+    expect(new Set(layout.chatSlots.map(row => JSON.stringify([row.hostId, row.sessionId]))).size).toBe(5);
+    expect(layout.loose.map(row => row.value.id)).toEqual(grouping === "list" ? ["loose", "same"] : ["loose"]);
+    expect(layout.pinned.map(row => row.value.id)).toEqual(["home-project", "pin"]);
+  }
+});
+
+test("priority uses owned unread and attention while manual order remains recoverable", () => {
+  const { data, groups, organization } = fixture();
+  groups[0]!.hostState.projects = []; groups[1]!.hostState.projects = [];
+  groups[0]!.hostState.sessions = [session("home", "old", undefined, false, 1), session("home", "new", undefined, false, 100)];
+  groups[1]!.hostState.sessions = [session("work", "old", undefined, false, 2)];
+  organization.set("session:home:new", { sectionId: null, position: 0 });
+  organization.set("session:work:old", { sectionId: null, position: 1024 });
+  organization.set("session:home:old", { sectionId: null, position: 2048 });
+  const unread = new Set([JSON.stringify(["home", "old"])]);
+  const ordered = (chatSort: "priority" | "updated_at" | "manual") => sidebarLayout({ ...data, get: () => ({ grouping: "list", projectSort: "manual", chatSort }) }, groups, "", false, new Set(), unread).chatSlots.map(row => `${row.hostId}:${row.sessionId}`);
+  expect(ordered("priority")).toEqual(["home:old", "home:new", "work:old"]);
+  expect(ordered("updated_at")).toEqual(["home:new", "work:old", "home:old"]);
+  expect(ordered("manual")).toEqual(["home:new", "work:old", "home:old"]);
+});
+
+test("new unsorted items append after explicit manual positions instead of displacing the saved order", () => {
+  const { data, groups, organization } = fixture();
+  groups[0]!.hostState.projects = []; groups[1]!.hostState.sessions = [];
+  groups[0]!.hostState.sessions = [session("home", "saved", undefined, false, 1), session("home", "new", undefined, false, 100)];
+  organization.set("session:home:saved", { sectionId: null, position: 8000 });
+  expect(sidebarLayout(data, groups, "", false, new Set()).loose.map(item => item.value.id)).toEqual(["saved", "new"]);
+});
+
+test("pinned Priority rank is waiting, unread, active, idle; accepted answer delivery and errors do not invent waiting", () => {
+  const { data, groups } = fixture();
+  groups[0]!.hostState.projects = []; groups[1]!.hostState.sessions = [];
+  const rows = ["error", "delivery", "active", "unread", "waiting"].map((id,index) => ({ ...session("home",id,undefined,false,100-index), status: id === "active" ? "running" : id === "error" ? "error" : "idle", questionDeliveryPending: id === "delivery" })) as SessionSummary[];
+  const hostState = { ...groups[0]!.hostState, sessions:rows, notifications:[{id:"notice",sessionId:"waiting",kind:"question" as const,state:"open" as const,createdAt:1,title:"Question",body:"Waiting"}] };
+  const layout=sidebarLayout({...data,get:()=>({grouping:"list",projectSort:"priority",chatSort:"priority"})},[{hostState}],"",false,new Set(),new Set([JSON.stringify(["home","unread"])]));
+  expect(layout.chatSlots.map(row=>row.sessionId)).toEqual(["waiting","unread","active","error","delivery"]);
+});

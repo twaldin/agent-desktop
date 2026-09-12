@@ -1,16 +1,18 @@
 import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
+import { LEGACY_SIDEBAR_ORGANIZATION, type SidebarOrganization, type SidebarSort } from "../../../../packages/shared/src/preferences";
 import { positionOrder, type PreferencesState } from "./preferences-state";
 
 export type SidebarItem = { kind: "project"; value: Project } | { kind: "session"; value: SessionSummary };
 export const sidebarItemKey = (item: SidebarItem) => JSON.stringify([item.kind, item.value.hostId, item.value.id]);
 
-type Organization = Pick<PreferencesState, "sections" | "sectionFor" | "entity">;
+type Organization = Pick<PreferencesState, "sections" | "sectionFor" | "entity"> & { sidebarOrganization?: () => SidebarOrganization; get?: (key: "sidebar.organization") => SidebarOrganization | undefined };
 export interface SidebarChatTarget { hostId: string; sessionId: string }
 
 /** One logical ordering for rendered rows and numbered chat navigation. Sidebar
  * collapse, project collapse and scroll position do not change logical slots. */
-export function sidebarLayout(data: Organization, groups: readonly { hostState: Pick<HostState, "host" | "projects" | "sessions"> }[],
-  query: string, showArchived: boolean, expandedProjects: ReadonlySet<string>) {
+export function sidebarLayout(data: Organization, groups: readonly { hostState: Pick<HostState, "host" | "projects" | "sessions" | "notifications"> }[],
+  query: string, showArchived: boolean, expandedProjects: ReadonlySet<string>, unread: ReadonlySet<string> = new Set()) {
+  const organization = data.sidebarOrganization?.() ?? data.get?.("sidebar.organization") ?? LEGACY_SIDEBAR_ORGANIZATION;
   const sections = data.sections();
   const projects = groups.flatMap(group => group.hostState.projects);
   const sessions = groups.flatMap(group => group.hostState.sessions)
@@ -19,16 +21,33 @@ export function sidebarLayout(data: Organization, groups: readonly { hostState: 
   const allItems: SidebarItem[] = [...projects.map(value => ({ kind: "project" as const, value })), ...sessions.map(value => ({ kind: "session" as const, value }))];
   const sectionOf = (item: SidebarItem) => data.sectionFor(item.kind, item.value.id, item.value.hostId);
   const position = (item: SidebarItem) => data.entity(item.kind, item.value.id, item.value.hostId)?.position ?? allItems.indexOf(item) * 1024;
-  const ordered = (items: SidebarItem[]) => items.map((item, index) => ({ item, id: item.value.id, position: data.entity(item.kind, item.value.id, item.value.hostId)?.position ?? index * 1024 }))
-    .sort(positionOrder).map(row => row.item);
+  const ordered = (items: SidebarItem[]) => {
+    const lastSaved = Math.max(-1024, ...items.map(item => data.entity(item.kind, item.value.id, item.value.hostId)?.position ?? -1024));
+    return items.map((item, index) => ({ item, id: sidebarItemKey(item), position: data.entity(item.kind, item.value.id, item.value.hostId)?.position ?? lastSaved + (index + 1) * 1024 }))
+      .sort(positionOrder).map(row => row.item);
+  };
   const grouped = (id: string) => ordered(allItems.filter(item => sectionOf(item) === id));
   const pinned = grouped("pinned");
   const custom = sections.map(section => ({ section, items: grouped(section.id) }));
-  const hostProjects = groups.map(group => ordered(allItems.filter(item => item.kind === "project" && item.value.hostId === group.hostState.host.id && sectionOf(item) === null)));
-  const loose = ordered(allItems.filter(item => item.kind === "session" && sectionOf(item) === null
-    && (!item.value.projectId || !projects.some(project => project.id === item.value.projectId && project.hostId === item.value.hostId))));
-  const projectChildren = (project: Project) => ordered(allItems.filter(item => item.kind === "session" && item.value.hostId === project.hostId
-    && item.value.projectId === project.id && sectionOf(item) === null));
+  const waiting = new Set(groups.flatMap(group => (group.hostState.notifications ?? []).filter(notice => notice.state === "open" && (notice.kind === "permission" || notice.kind === "question"))
+    .map(notice => JSON.stringify([group.hostState.host.id, notice.sessionId]))));
+  const metrics = new Map<string, { updated: number; priority: number }>();
+  for (const item of allItems) {
+    const members = item.kind === "session" ? [item.value] : sessions.filter(session => session.hostId === item.value.hostId && session.projectId === item.value.id);
+    metrics.set(sidebarItemKey(item), { updated: Math.max(0, ...members.map(session => session.updatedAt)),
+      priority: Math.min(3, ...members.map(session => waiting.has(JSON.stringify([session.hostId, session.id])) ? 0 : unread.has(JSON.stringify([session.hostId, session.id])) ? 1 : session.status === "running" ? 2 : 3)) });
+  }
+  const sorted = (items: SidebarItem[], mode: SidebarSort) => mode === "manual" ? ordered(items) : [...items].sort((a, b) => {
+    const left = metrics.get(sidebarItemKey(a))!, right = metrics.get(sidebarItemKey(b))!;
+    return (mode === "priority" ? left.priority - right.priority : 0) || right.updated - left.updated;
+  });
+  const hostProjects = groups.map(group => sorted(allItems.filter(item => item.kind === "project" && item.value.hostId === group.hostState.host.id && sectionOf(item) === null), organization.projectSort));
+  const defaultProjects = sorted(allItems.filter(item => item.kind === "project" && sectionOf(item) === null), organization.projectSort);
+  const loose = sorted(allItems.filter(item => item.kind === "session" && sectionOf(item) === null
+    && (!item.value.projectId || !projects.some(project => project.id === item.value.projectId && project.hostId === item.value.hostId)
+      || organization.grouping === "list" && projects.some(project => project.id === item.value.projectId && project.hostId === item.value.hostId && data.sectionFor("project", project.id, project.hostId) === null))), organization.chatSort);
+  const projectChildren = (project: Project) => sorted(allItems.filter(item => item.kind === "session" && item.value.hostId === project.hostId
+    && item.value.projectId === project.id && sectionOf(item) === null), organization.projectSort);
   const projectExpanded = (project: Project) => expandedProjects.has(`${project.hostId}:${project.id}`) || Boolean(query);
   const chatSlots: SidebarChatTarget[] = [];
   const visit = (items: SidebarItem[]) => {
@@ -39,9 +58,10 @@ export function sidebarLayout(data: Organization, groups: readonly { hostState: 
   };
   visit(pinned);
   for (const group of custom) visit(group.items);
-  for (const items of hostProjects) visit(items);
+  if (organization.grouping === "connection") for (const items of hostProjects) visit(items);
+  else if (organization.grouping === "project") visit(defaultProjects);
   visit(loose);
-  return { sections, projects, sessions, allItems, sectionOf, position, ordered, pinned, custom, hostProjects, loose,
+  return { unread, organization, defaultProjects, sections, projects, sessions, allItems, sectionOf, position, ordered, pinned, custom, hostProjects, loose,
     projectChildren, projectExpanded, chatSlots: chatSlots.slice(0, 9) };
 }
 

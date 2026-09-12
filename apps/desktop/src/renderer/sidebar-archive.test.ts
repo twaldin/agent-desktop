@@ -21,13 +21,13 @@ function harness(connected = true, failure?: string) {
   } };
   const archive = new Function("desktop", "bridge", "setActionError", "errorMessage", `${compiled}; return archiveSidebarSession;`)(
     desktop, bridge, (message: string | null) => errors.push(message), (error: Error) => error.message,
-  ) as (session: string, host: string, archived: boolean) => Promise<void>;
+  ) as (session: string, host: string, archived: boolean) => Promise<boolean>;
   return { archive, calls, refreshes, errors };
 }
 
 test("App archives the clicked row on its owner even when another host has the same session ID", async () => {
   const h = harness();
-  await h.archive("same-id", "row-host", true);
+  expect(await h.archive("same-id", "row-host", true)).toBe(true);
   expect(h.calls).toEqual([{ host: "row-host", envelope: {
     id: expect.any(String), command: { type: "session.archive", sessionId: "same-id", archived: true },
   } }]);
@@ -38,7 +38,7 @@ test("App archives the clicked row on its owner even when another host has the s
 test("a disconnected or missing row owner cannot dispatch an archive", async () => {
   for (const host of ["row-host", "missing-host"]) {
     const h = harness(false);
-    await h.archive("same-id", host, true);
+    expect(await h.archive("same-id", host, true)).toBe(false);
     expect(h.calls).toEqual([]);
     expect(h.refreshes).toEqual([]);
     expect(h.errors.at(-1)).toContain("Reconnect");
@@ -47,7 +47,7 @@ test("a disconnected or missing row owner cannot dispatch an archive", async () 
 
 test("an unsuccessful unarchive is surfaced without refreshing as if it succeeded", async () => {
   const h = harness(true, "Archive update refused");
-  await h.archive("same-id", "row-host", false);
+  expect(await h.archive("same-id", "row-host", false)).toBe(false);
   expect(h.calls).toEqual([{ host: "row-host", envelope: {
     id: expect.any(String), command: { type: "session.archive", sessionId: "same-id", archived: false },
   } }]);

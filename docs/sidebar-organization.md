@@ -1,0 +1,15 @@
+# Sidebar organization
+
+Projects, chats, pinned items and named sections retain their owning host. The sidebar offers By project, By connection and In one list. List mode moves ordinary project chats into Recents; chats in pinned or custom projects stay with those projects. The same model provides numbered-chat targets, independent of disclosure and scrolling.
+
+Project and chat sorting are independently persisted through the existing replicated preferences. The pinned source's Priority order is waiting for a permission/question, unread, active, then idle, with newest activity first within a class. Error and interrupted states alone do not imply a pending question. The read owner supplies unread state from actual session activity and durable read marks. Pinned/custom item positions remain manually ordered.
+
+Fresh organization uses the reference's project grouping and Last updated sorts. Older explicit sidebar records retain connection grouping and manual positions until deliberately changed. The first new sidebar write persists that inferred mode before changing membership, so adding the first section cannot reinterpret the previous layout. Switching to Manual order captures the current displayed order; newly discovered unordered items append after saved positions. Existing explicit moves preserve section and project appearance.
+
+Archive all chats captures the section's current host/chat targets and asks for confirmation. It uses the existing session archive command on each owner. It does not delete projects, session history or files, and does not stop a running agent. Successful chats leave the active list; refused or offline targets remain available for deliberate retry. Cancel before confirmation sends no commands. Archived chats can be reopened with their original IDs.
+
+Section/project collapse and the selected route remain window-local and use the existing window store. Shared membership, ordering and appearance use host-backed preference receipts. The current window does not overwrite another window's disclosure state.
+
+The navigation glyphs reproduce the initial vector frame of the pinned 7982 New chat, Plugins and Search assets. The Plugins glyph is a plug, not a project folder. Hover animation, full reference pixels, full App composition and cross-machine physical acceptance require separate evidence. Helper screenshots are build7868 and are contextual rather than proof of matching 7982 behavior.
+
+The acceptance fixture mounts the production sidebar and preference/read owners in Electron with an isolated profile. Two disposable real host services handle authenticated preference and archive requests; a temporary window store acknowledges and reopens disclosure/navigation state. Controlled native event inputs and a deliberate host refusal exercise unread and error behavior without personal providers, external sign-in or live Codex UI. Fixture controls are not product controls. Supplied checkpoints distinguish this mounted surface from full installed-App and provider acceptance.
