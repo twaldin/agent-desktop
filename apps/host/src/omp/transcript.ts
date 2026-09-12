@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { projectFileMentions } from "./file-mentions";
-import type { TranscriptAssistantMetadata, TranscriptBlock, TranscriptMessage } from "@agent-desktop/shared";
+import type { TranscriptAssistantMetadata, TranscriptBlock, TranscriptMessage, TranscriptToolOutput } from "@agent-desktop/shared";
 import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent";
 import { readNativeImage } from "./images";
 
 type MessageRecord = Record<string, unknown> & { role: string };
 export interface NativeTranscriptEntry { id: string; message: unknown }
-interface Pending { key: string; occurrence: number; message: MessageRecord; complete: boolean; order: number; fileReferences?: TranscriptMessage["fileReferences"] }
-interface ToolProgress { message: MessageRecord; status: "running" | "completed"; occurrence: number; order: number }
+interface Pending { key: string; occurrence: number; message: MessageRecord; complete: boolean; order: number; fileReferences?: TranscriptMessage["fileReferences"]; output?: TranscriptToolOutput }
+interface ToolProgress { message: MessageRecord; status: "running" | "completed"; occurrence: number; order: number; output?: TranscriptToolOutput }
 function record(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
 function messageRecord(value: unknown): MessageRecord | undefined { const object = record(value); return object && typeof object.role === "string" ? object as MessageRecord : undefined; }
 function hidden(message: MessageRecord): boolean { return message.role === 'custom' && message.display === false; }
@@ -20,6 +20,33 @@ function messageKey(message: MessageRecord): string {
 function displayId(key: string, occurrence = 0) { return `message-${createHash("sha256").update(key).digest("hex").slice(0, 24)}-${occurrence}`; }
 function finite(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value) && value >= 0; }
 function numeric(source: Record<string, unknown>, names: string[]) { return Object.fromEntries(names.filter(name => finite(source[name])).map(name => [name, source[name] as number])); }
+function toolOutput(details: unknown): TranscriptToolOutput | undefined {
+  const source = record(details); if (!source) return;
+  const meta = record(source.meta), nativeTruncation = record(meta?.truncation), legacy = record(source.truncation);
+  const truncation = nativeTruncation ?? legacy, output: TranscriptToolOutput = {};
+  if (truncation && (nativeTruncation || typeof truncation.truncated === "boolean")) {
+    const value: NonNullable<TranscriptToolOutput["truncation"]> = {
+      truncated: nativeTruncation ? true : truncation.truncated === true,
+      ...numeric(truncation, ["totalLines", "totalBytes", "outputLines", "outputBytes", "elidedLines", "elidedBytes", "nextOffset"]),
+    };
+    if (["head", "tail", "middle"].includes(String(truncation.direction))) value.direction = truncation.direction as typeof value.direction;
+    if (["lines", "bytes", "middle"].includes(String(truncation.truncatedBy))) value.truncatedBy = truncation.truncatedBy as typeof value.truncatedBy;
+    for (const key of ["shownRange", "headRange", "tailRange"] as const) {
+      const range = record(truncation[key]);
+      if (range && Number.isSafeInteger(range.start) && Number.isSafeInteger(range.end) && Number(range.start) > 0 && Number(range.end) >= Number(range.start)) value[key] = { start: Number(range.start), end: Number(range.end) };
+    }
+    if (typeof truncation.partialLine === "boolean") value.partialLine = truncation.partialLine;
+    if (typeof truncation.artifactId === "string" && /^\d+$/.test(truncation.artifactId)) value.artifactId = truncation.artifactId;
+    output.truncation = value;
+  }
+  const origin = record(meta?.source);
+  if (origin && ["path", "url", "internal"].includes(String(origin.type)) && typeof origin.value === "string") output.source = { type: origin.type as NonNullable<TranscriptToolOutput["source"]>["type"], value: origin.value };
+  const columns = record(record(meta?.limits)?.columnTruncated);
+  if (columns && finite(columns.maxColumn)) output.columnTruncated = columns.maxColumn;
+  const summary = record(source.summary);
+  if (summary && finite(summary.lines) && finite(summary.elidedSpans) && finite(summary.elidedLines)) output.summary = { lines: summary.lines, elidedSpans: summary.elidedSpans, elidedLines: summary.elidedLines };
+  return Object.keys(output).length ? output : undefined;
+}
 function content(message: MessageRecord): TranscriptBlock[] {
   if (typeof message.content === "string") return [{ type: "text", text: message.content }];
   if (!Array.isArray(message.content)) return typeof message.output === "string" ? [{ type: "text", text: message.output }] : [];
@@ -57,7 +84,7 @@ function assistant(message: MessageRecord): TranscriptAssistantMetadata {
   const usage = record(message.usage); if (usage) { value.usage = numeric(usage, ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]); const cost = record(usage.cost); if (cost) value.usage.cost = numeric(cost, ["input", "output", "cacheRead", "cacheWrite", "total"]); }
   return value;
 }
-function project(message: MessageRecord, id: string, nativeId?: string, lifecycle?: TranscriptMessage["lifecycle"], progress?: ToolProgress, fileReferences?: TranscriptMessage["fileReferences"]): TranscriptMessage {
+function project(message: MessageRecord, id: string, nativeId?: string, lifecycle?: TranscriptMessage["lifecycle"], progress?: ToolProgress, fileReferences?: TranscriptMessage["fileReferences"], pendingOutput?: TranscriptToolOutput): TranscriptMessage {
   const blocks = content(message);
   const value: TranscriptMessage = { id, role: message.role, text: blocks.filter(block => block.type === "text").map(block => block.text).join("\n"), content: blocks, blocks, ...(nativeId ? { nativeId } : {}), ...(lifecycle ? { lifecycle } : {}), ...(finite(message.timestamp) ? { timestamp: message.timestamp } : {}) };
   if (message.role === "fileMention") value.fileReferences = fileReferences ?? projectFileMentions(message);
@@ -66,6 +93,8 @@ function project(message: MessageRecord, id: string, nativeId?: string, lifecycl
     value.tool = { callId: message.toolCallId, ...(typeof message.toolName === "string" ? { name: message.toolName } : {}), ...(typeof message.isError === "boolean" ? { isError: message.isError } : typeof progress?.message.isError === "boolean" ? { isError: progress.message.isError } : {}), ...(lifecycle === "complete" ? { status: "completed" } : progress ? { status: progress.status } : {}) };
     if (record(progress?.message.arguments)) value.tool.arguments = structuredClone(progress!.message.arguments as Record<string, unknown>);
     if (typeof progress?.message.intent === "string") value.tool.intent = progress.message.intent;
+    const output = toolOutput(message.details) ?? pendingOutput ?? progress?.output;
+    if (output) value.tool.output = output;
   }
   return value;
 }
@@ -90,6 +119,7 @@ export class TranscriptMirror {
         this.#active.set(key, pending);
       }
       pending.fileReferences = message.role === "fileMention" ? projectFileMentions(message) : undefined;
+      pending.output = message.role === "toolResult" ? toolOutput(message.details) : undefined;
       pending.message = pendingMessage(message); pending.complete = event.type === "message_end";
       this.#pending.set(displayId(key, pending.occurrence), pending);
     }
@@ -100,6 +130,7 @@ export class TranscriptMirror {
       const occurrence = previous?.occurrence ?? this.#occurrences.get(key) ?? 0;
       this.#occurrences.set(key, Math.max(this.#occurrences.get(key) ?? 0, occurrence + 1));
       this.#tools.set(event.toolCallId, { occurrence, order: previous?.order ?? this.#order++, status: event.type === "tool_execution_end" ? "completed" : "running", message: { ...previous?.message, role: "toolResult", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.type !== "tool_execution_end" && record(event.args) ? { arguments: structuredClone(event.args) } : {}), ...(event.type === "tool_execution_start" && event.intent ? { intent: event.intent } : {}), content: Array.isArray(result?.content) ? content({ role: "toolResult", content: result.content }) : previous?.message.content ?? [], ...(event.type === "tool_execution_end" && typeof event.isError === "boolean" ? { isError: event.isError } : {}) } });
+      this.#tools.get(event.toolCallId)!.output = toolOutput(result?.details) ?? (event.type === "tool_execution_update" ? previous?.output : undefined);
     }
   }
   snapshot(displayMessages: readonly unknown[], entries: readonly NativeTranscriptEntry[]): TranscriptMessage[] {
@@ -119,7 +150,7 @@ export class TranscriptMirror {
         if (tool) this.#tools.delete(String(message.toolCallId));
       }
     }
-    const rest = [...this.#pending].filter(([id]) => !displayed.has(id)).map(([id, pending]) => ({ order: pending.order, message: project(pending.message, id, undefined, pending.complete ? "complete" : "streaming", this.#tools.get(String(pending.message.toolCallId)), pending.fileReferences) }));
+    const rest = [...this.#pending].filter(([id]) => !displayed.has(id)).map(([id, pending]) => ({ order: pending.order, message: project(pending.message, id, undefined, pending.complete ? "complete" : "streaming", this.#tools.get(String(pending.message.toolCallId)), pending.fileReferences, pending.output) }));
     for (const [callId, tool] of this.#tools) {
       const id = displayId(messageKey(tool.message), tool.occurrence); if (displayed.has(id) || rest.some(item => item.message.id === id)) continue;
       rest.push({ order: tool.order, message: project(tool.message, id, undefined, tool.status === "completed" ? "complete" : undefined, tool) });

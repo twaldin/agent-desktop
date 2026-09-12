@@ -46,25 +46,32 @@ export function HighlightedCode({ code, language }: { code: string; language: st
 }
 function textOf(node: Element["children"][number]): string { return node.type === "text" ? node.value : node.type === "element" ? node.children.map(textOf).join("") : ""; }
 function CodeBlock({ node }: ExtraProps) {
-  const context = useContext(MarkdownBlockContext), [, redraw] = useState(0), element = useRef<HTMLDivElement>(null);
+  const context = useContext(MarkdownBlockContext);
   const codeNode = node?.children.find(child => child.type === "element" && child.tagName === "code");
   const classes = codeNode?.type === "element" && Array.isArray(codeNode.properties.className) ? codeNode.properties.className : [];
   const language = String(classes.find(value => typeof value === "string" && value.startsWith("language-")) ?? "").slice(9);
   // mdast-to-hast appends exactly one presentation newline to nonempty code.
   const displayed = codeNode ? textOf(codeNode) : "", code = displayed.endsWith("\n") ? displayed.slice(0, -1) : displayed;
-  const key = `${context.key}:code:${node?.position?.start.offset ?? 0}`, wrapped = context.views.wrapped(key);
+  const key = `${context.key}:code:${node?.position?.start.offset ?? 0}`;
   const raw = context.source.slice(node?.position?.start.offset ?? 0, node?.position?.end.offset ?? 0);
-  const open = context.streaming && codeFenceOpen(raw, code), title = codeLanguageLabel(language);
+  return <TranscriptCode code={code} language={language} blockKey={key} open={context.streaming && codeFenceOpen(raw, code)} views={context.views}/>;
+}
+/** Native output is literal text, never Markdown; the same code surface owns
+ * selection, wrapping, highlighting and acknowledged clipboard writes. */
+export function TranscriptCode({ code, language = "plaintext", blockKey, open = false, output = false, title: suppliedTitle, copyAction, views: suppliedViews }: { code: string; language?: string; blockKey: string; open?: boolean; output?: boolean; title?: string; copyAction?: string; views?: MarkdownViewState }) {
+  const parent = useContext(TranscriptMarkdownContext), localViews = useMemo(() => new MarkdownViewState(), []);
+  const views = suppliedViews ?? parent.views ?? localViews, [, redraw] = useState(0), element = useRef<HTMLDivElement>(null);
+  const wrapped = views.wrapped(blockKey), title = suppliedTitle ?? codeLanguageLabel(language);
   const {highlighted, tail} = useCodeHighlight(code, open && !language ? "plaintext" : language, element);
-  const copy = useCodeCopy(code), copyLabel = copy.state === "copied" ? "Copied" : copy.state === "failed" ? "Copy failed · retry" : "Copy code";
+  const copy = useCodeCopy(code), copyLabel = copy.state === "copied" ? "Copied" : copy.state === "failed" ? "Copy failed · retry" : copyAction ?? (output ? "Copy output" : "Copy code");
   const wrapLabel = wrapped ? "Disable word wrap" : "Enable word wrap";
   const tokens = useMemo(() => highlighted.kind === "highlighted" ? syntax(highlighted.tree.children) : null, [highlighted]);
-  return <div ref={element} className="markdown-code-block" data-code-key={key} data-code-open={open} data-highlighted={highlighted.kind === "highlighted"} data-markdown-copy="code-block">
-    <div className="markdown-code-toolbar" data-markdown-copy="exclude">{title && <TranscriptCodeIcon name="language_marker"/>}<span className="markdown-code-language">{title}</span><div>
-      <button type="button" aria-label={wrapLabel} title={wrapLabel} aria-pressed={wrapped} onClick={() => { context.views.setWrapped(key, !wrapped); redraw(value => value + 1); }}><TranscriptCodeIcon name={wrapped ? "wrap_on" : "wrap_off"}/></button>
-      {!open && <button type="button" className="markdown-code-copy" aria-label={copyLabel} title={copyLabel} aria-busy={copy.state === "pending"} disabled={copy.state === "pending"} onClick={() => void copy.copy()}><TranscriptCodeIcon name={copy.state === "copied" ? "copied" : "copy"}/></button>}
+  return <div ref={element} className={`markdown-code-block${output ? " transcript-code-output" : ""}`} data-code-key={blockKey} data-code-open={open} data-highlighted={highlighted.kind === "highlighted"} data-markdown-copy="code-block">
+    <div className="markdown-code-toolbar" data-markdown-copy="exclude">{title && !output && <TranscriptCodeIcon name="language_marker"/>}<span className="markdown-code-language">{title}</span><div>
+      <button type="button" aria-label={wrapLabel} title={wrapLabel} aria-pressed={wrapped} onClick={() => { views.setWrapped(blockKey, !wrapped); redraw(value => value + 1); }}><TranscriptCodeIcon name={wrapped ? "wrap_on" : "wrap_off"}/></button>
+      {(!open || output) && <button type="button" className="markdown-code-copy" aria-label={copyLabel} title={copyLabel} aria-busy={copy.state === "pending"} disabled={copy.state === "pending"} onClick={() => void copy.copy()}><TranscriptCodeIcon name={copy.state === "copied" ? "copied" : "copy"}/></button>}
     </div></div>
-    <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={`${title || "Plain text"} code`} onCopy={event => {
+    <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={output ? title || "Output" : `${title || "Plain text"} code`} onCopy={event => {
       const selection = event.currentTarget.ownerDocument.getSelection();
       if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return;
       event.clipboardData.setData("text/plain", selection.toString()); event.preventDefault(); event.stopPropagation();
