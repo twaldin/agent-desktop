@@ -22,10 +22,12 @@ function mainWiring(sourceText: string): string {
     else if (kind === SyntaxKind.OpenParenToken) parens++; else if (kind === SyntaxKind.CloseParenToken) parens--;
     else if (kind === SyntaxKind.OpenBracketToken) brackets++; else if (kind === SyntaxKind.CloseBracketToken) brackets--;
   }
-  const variable = (name: string) => { const start = tokens.findIndex((token, index) => token.kind === SyntaxKind.ConstKeyword && !token.braces && !token.parens && !token.brackets && tokens[index + 1]?.kind === SyntaxKind.Identifier && tokens[index + 1]?.text === name);
-    if (start < 0) return undefined; const end = tokens.findIndex((token, index) => index > start && token.kind === SyntaxKind.SemicolonToken && !token.braces && !token.parens && !token.brackets);
+  const topLevel = (token: (typeof tokens)[number]) => !token.braces && !token.parens && !token.brackets;
+  const declarationStart = (declarationKind: SyntaxKind, name: string) => tokens.findIndex((token, index) => token.kind === declarationKind && topLevel(token) && tokens[index + 1]?.kind === SyntaxKind.Identifier && tokens[index + 1]?.text === name);
+  const variable = (name: string) => { const start = declarationStart(SyntaxKind.ConstKeyword, name);
+    if (start < 0) return undefined; const end = tokens.findIndex((token, index) => index > start && token.kind === SyntaxKind.SemicolonToken && topLevel(token));
     if (end < 0) throw new Error(`The ${name} main declaration changed.`); return sourceText.slice(tokens[start]!.start, tokens[end]!.end); };
-  const functionDeclaration = (name: string) => { const start = tokens.findIndex((token, index) => token.kind === SyntaxKind.FunctionKeyword && !token.braces && !token.parens && !token.brackets && tokens[index + 1]?.text === name);
+  const functionDeclaration = (name: string) => { const start = declarationStart(SyntaxKind.FunctionKeyword, name);
     if (start < 0) throw new Error(`The ${name} main function changed.`); const open = tokens.findIndex((token, index) => index > start && token.kind === SyntaxKind.OpenBraceToken && !token.braces);
     const end = tokens.findIndex((token, index) => index > open && token.kind === SyntaxKind.CloseBraceToken && token.braces === 1);
     if (open < 0 || end < 0) throw new Error(`The ${name} main function is incomplete.`); return sourceText.slice(tokens[start]!.start, tokens[end]!.end); };
