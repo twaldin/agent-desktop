@@ -14,8 +14,7 @@ export type BrowserAutocompleteRequest =
   | (BrowserAutocompleteIdentity & { action: "start"; query: string; cursorPosition: number; preventInlineAutocomplete: boolean })
   | (BrowserAutocompleteIdentity & { action: "stop" })
   | (BrowserAutocompleteIdentity & { action: "accept"; acceptToken: string })
-  | (BrowserAutocompleteIdentity & { action: "delete"; deleteToken: string })
-  | (BrowserAutocompleteIdentity & { action: "record-navigation" });
+  | (BrowserAutocompleteIdentity & { action: "delete"; deleteToken: string });
 
 export interface BrowserAutocompleteMatch {
   id: string;
@@ -39,7 +38,7 @@ export interface BrowserAutocompleteResult {
   editingSessionId: string;
   requestId: string;
   target: BrowserFrameTarget;
-  state: "matches" | "stopped" | "accepted" | "deleted" | "recorded";
+  state: "matches" | "stopped" | "accepted" | "deleted";
   revision: string;
   matches?: BrowserAutocompleteMatch[];
 }
@@ -74,7 +73,7 @@ export function parseBrowserAutocompleteRequest(value: unknown): BrowserAutocomp
     if (!text(input.deleteToken, 200) || input.query !== undefined || input.cursorPosition !== undefined || input.preventInlineAutocomplete !== undefined || input.acceptToken !== undefined) throw new Error("Invalid browser autocomplete deletion.");
     return { ...identity, action: "delete", deleteToken: input.deleteToken };
   }
-  if (input.action === "stop" || input.action === "record-navigation") {
+  if (input.action === "stop") {
     if ([input.query, input.cursorPosition, input.preventInlineAutocomplete, input.acceptToken, input.deleteToken].some(item => item !== undefined)) throw new Error("Invalid browser autocomplete lifecycle request.");
     return { ...identity, action: input.action };
   }
@@ -98,11 +97,11 @@ export function parseBrowserAutocompleteResult(value: unknown, hostId: string, o
   const receivedOwner = exact(input.owner, ["kind", "id"], "browser autocomplete owner");
   if (input.protocolVersion !== BROWSER_AUTOCOMPLETE_PROTOCOL_VERSION || input.hostId !== hostId || receivedOwner.kind !== owner.kind || receivedOwner.id !== owner.id
     || input.editingSessionId !== request.editingSessionId || input.requestId !== request.requestId || JSON.stringify(target(input.target)) !== JSON.stringify(request.target)
-    || !["matches", "stopped", "accepted", "deleted", "recorded"].includes(String(input.state)) || !text(input.revision, 128))
+    || !["matches", "stopped", "accepted", "deleted"].includes(String(input.state)) || !text(input.revision, 128))
     throw new Error("Browser autocomplete result changed its owner, request, or target.");
   const rawMatches = Array.isArray(input.matches) ? input.matches : undefined;
   if ((input.state === "matches") !== Boolean(rawMatches) || rawMatches && rawMatches.length > 8) throw new Error("Invalid browser autocomplete result state.");
-  const expectedState = request.action === "start" ? "matches" : request.action === "record-navigation" ? "recorded" : request.action === "stop" ? "stopped" : request.action === "accept" ? "accepted" : "deleted";
+  const expectedState = request.action === "start" ? "matches" : request.action === "stop" ? "stopped" : request.action === "accept" ? "accepted" : "deleted";
   if (input.state !== expectedState) throw new Error("Browser autocomplete result changed its requested action.");
   const matches = rawMatches ? Array.from({ length: rawMatches.length }, (_, index) => parseMatch(rawMatches[index])) : undefined;
   if (matches && new Set(matches.map(match => match.id)).size !== matches.length) throw new Error("Browser autocomplete returned duplicate matches.");

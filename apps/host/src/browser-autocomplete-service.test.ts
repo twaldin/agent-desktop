@@ -14,14 +14,6 @@ test("replacement fences the old native read and tokens bind the active request"
   await expect(service.execute(owner,{action:"delete",editingSessionId:"edit",requestId:"one",target,deleteToken:match.deleteToken!},handle,()=>true)).rejects.toThrow("no longer active");
   expect((await service.execute(owner,{action:"delete",editingSessionId:"edit",requestId:"two",target,deleteToken:match.deleteToken!},handle,()=>true)).state).toBe("deleted");
 });
-test("record navigation rereads exact native history and rejects owner replacement after await",async()=>{
-  const store=records(),service=new BrowserAutocompleteService("host",store),gate=Promise.withResolvers<any[]>();let reads=0,current=true;
-  const handle={workerPid:42,getBrowserHistory:()=>++reads===1?Promise.resolve([]):gate.promise};
-  await service.execute(owner,request("one","search words"),handle,()=>current);
-  const record=service.execute(owner,{action:"record-navigation",editingSessionId:"edit",requestId:"one",target},handle,()=>current);
-  current=false;gate.resolve([{id:"2",url:"https://result.example/",title:"Result",current:true}]);await expect(record).rejects.toThrow("owner changed");
-  expect(store.matches("result",()=>"opaque").map(row=>row.type)).toEqual(["search-what-you-typed"]);
-});
 test("completed host navigation records native current history without a prior autocomplete request",async()=>{
   const store=records(),service=new BrowserAutocompleteService("host",store);
   const handle={workerPid:42,getBrowserHistory:async()=>[{id:"native-2",url:"https://navigated.example/path",title:"Navigated",current:true}]};

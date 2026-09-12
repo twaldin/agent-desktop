@@ -64,10 +64,7 @@ export class BrowserAutocompleteService {
       if (!token || token.kind !== "delete") throw new Error("The browser suggestion changed.");
       const revision = this.records.delete(token.id); this.active.delete(key); return base("deleted", revision);
     }
-    const history = await handle.getBrowserHistory(request.target);
-    if (!await isCurrent() || handle.workerFailure || this.active.get(key) !== active) throw new Error("The browser autocomplete owner changed during navigation recording.");
-    const observed = history.map(entry => ({ sourceKey: browserAutocompleteSourceKey(owner, request.target, entry.id), entry }));
-    const revision = this.records.observe(observed, true); this.active.delete(key); return base("recorded", revision);
+    throw new Error("Invalid browser autocomplete action.");
   }
 
   /** Records only the history read back from the same native target after a
