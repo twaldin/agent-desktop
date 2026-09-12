@@ -38,6 +38,7 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
           <p>{snapshot.reason}</p>
           {snapshot.model && <p className="advanced-stream-model">{snapshot.model.provider} / {snapshot.model.id} · {snapshot.model.api}</p>}
           <p>Saved for this session’s current model, not a pending draft model selection. Native accounts and host/project settings are unchanged.</p>
+          {snapshot.outputLimitConflict && <p role="alert">Saved output limit {snapshot.outputLimitConflict.saved} exceeds the current native model limit of {snapshot.outputLimitConflict.maximum}. Your saved value is retained. Change the output limit or choose Follow native session and save before sending.</p>}
           {disabled && <p role="status">Controls are read-only while a turn is running or the session is archived.</p>}
           {snapshot.supported && fields.map(field => {
             const edit = data?.edits.get(field);

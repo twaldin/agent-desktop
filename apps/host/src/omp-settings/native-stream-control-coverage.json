@@ -287,7 +287,7 @@
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
       "status": "bounded-source-awaiting-integration-and-proof",
       "settingsPaths": [],
-      "note": "No native sampling setting/Agent public maxTokens setter found. Model maxTokens supplies mapper fallback; model-bound wrapper supplies explicit SimpleStreamOptions.maxTokens before native mapper. Direct Google APIs do not inflate this limit for thinking; CCA does and is outside subset.",
+      "note": "No native sampling setting/Agent public maxTokens setter found. Model maxTokens supplies mapper fallback; model-bound wrapper supplies explicit SimpleStreamOptions.maxTokens before native mapper. Direct Google APIs do not inflate this limit for thinking; CCA does and is outside subset. A later lower native model limit preserves saved intent and exposes outputLimitConflict; revisioned explicit inherit/set remains reachable while excessive writes and dispatch are rejected.",
       "consumptionWindows": [
         {
           "file": "packages/ai/src/stream.ts",
@@ -945,6 +945,7 @@
     ],
     "modelScope": "Pinned native bundled Gemini identity via getBundledModel(provider,id), with exact bundled API/baseUrl/transport equality and no pi-native transport. A matching provider/id or gemini-* prefix alone is not provenance; custom endpoints and unlisted IDs are unsupported. Native account headers and configured output limits are preserved. No live provider acceptance claim.",
     "persistence": "native custom receipt agent-desktop.advanced-stream.v1 on owning session branch, model/API-bound; inherit returns original native Agent/SDK options; sampling null explicitly omits the parameter",
+    "limitRecovery": "Persisted values retain intrinsic validation independently of a later native model limit. Snapshot outputLimitConflict:{saved,maximum} exposes excessive retained intent without making reads/revisions or other controls unavailable. Users explicitly inherit or replace the value; no clamp/drop occurs. New maxTokens writes and actual dispatch still enforce the current native limit.",
     "precedence": "native Agent/SDK options -> model-bound desktop selection -> unchanged native streamSimple mapper -> provider builder; native auth/model settings never changed",
     "catalogBoundary": {
       "lookup": "@oh-my-pi/pi-catalog/models getBundledModel at exact 18.1.10; static native catalog, not runtime or on-disk model overlays",
@@ -964,7 +965,7 @@
   "complete": false,
   "verification": {
     "sourceTrace": "21 source/catalog files byte-identical to exact pinned upstream, including the bundled model lookup, bundled model data and configurable ModelRegistry composition; installed native packages remain 18.1.10",
-    "nativeRequest": "Main proved 12 controlled native Google/Vertex requests on historical 52208e9. A subsequent real ModelRegistry negative fixture reproduced the prefix-only boundary failure; the bundled catalog correction requires Main green gates. Neither result establishes actual App UI or live provider acceptance.",
+    "nativeRequest": "Main proved 12 controlled native Google/Vertex requests and six valid native-registry negative cases on historical ebcbac3. A subsequent valid lower-limit/reopen fixture reproduced an unreadable saved-limit recovery state. The recovery correction requires fresh Main 14-request/6-negative-case proof. Historical failures remain retained; none of these results establishes actual App UI or live provider acceptance.",
     "appUi": "blocked on Root-owned outside-form App mount, Main build and explicit native lease",
     "independentReviews": "pending one dedicated different-family Standards/Spec pair"
   },

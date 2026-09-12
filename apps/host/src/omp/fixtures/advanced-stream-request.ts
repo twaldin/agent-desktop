@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { OmpStreamField } from "@agent-desktop/shared";
 import type { Model } from "@oh-my-pi/pi-catalog/types";
+import type { ModelRegistry as NativeModelRegistry } from "@oh-my-pi/pi-coding-agent";
 
 const root = path.resolve(process.argv[2] ?? "");
 if (!process.argv[2] || process.env.HOME !== root || !root.includes("native-stream")) throw new Error("Use an explicitly owned native-stream directory as both HOME and argv[2].");
@@ -40,16 +41,17 @@ const settings = await Settings.loadReadOnly({ agentDir, cwd });
 const registry = new ModelRegistry(auth, path.join(agentDir, "models.yml"), { settings });
 const evidence: Array<Record<string, unknown>> = [];
 const boundaryEvidence: Array<{ provider: string; case: string; supported: boolean; mutation: "unsupported"; effective: { id: string; api: string; baseUrl: string; transport: string | null }; loadedWithoutErrors: true; bundledUnchanged: true }> = [];
+const recoveryEvidence: Array<{ provider: string; retained: number; maximum: number; excessiveWriteRejected: true; excessiveDispatchBlocked: true; explicitInheritRequestLimit: number }> = [];
 try {
   for (const target of [{ provider: "google", api: "google-generative-ai" }, { provider: "google-vertex", api: "google-vertex" }] as const) {
     const model = registry.find(target.provider, "gemini-2.5-flash");
     if (!model || model.api !== target.api) throw new Error("Pinned native Gemini model/API missing; do not fabricate catalog entries.");
-    const create = async (file?: string) => {
+    const create = async (file?: string, sessionModel: Model = model, sessionRegistry: NativeModelRegistry = registry) => {
       const manager = file ? await SessionManager.open(file) : SessionManager.create(cwd, path.join(agentDir, "sessions"));
       try {
-        const result = await createAgentSession({ agentDir, cwd, authStorage: auth, modelRegistry: registry,
+        const result = await createAgentSession({ agentDir, cwd, authStorage: auth, modelRegistry: sessionRegistry,
           settings: await Settings.loadReadOnly({ agentDir, cwd }), agentRegistry: new AgentRegistry(), sessionManager: manager,
-          model, thinkingLevel: "off", getApiKey: () => inertKey, hasUI: false, interactivePrompts: false,
+          model: sessionModel, thinkingLevel: "off", getApiKey: () => inertKey, hasUI: false, interactivePrompts: false,
           disableExtensionDiscovery: true, enableMCP: false, enableLsp: false, toolNames: [], restrictToolNames: true,
           skills: [], rules: [], contextFiles: [], systemPrompt: "Owned native-stream request construction proof." });
         await manager.ensureOnDisk();
@@ -137,8 +139,38 @@ try {
       assert.equal(other.temperature, 0.35); assert.equal(other.topP, 0.8); assert.equal(other.maxOutputTokens, otherModel.maxTokens);
       native.session.agent.setModel(model);
       assert.equal(native.controls.read().advancedStream!.selection.maxTokens, 512);
+      // Preserve saved intent when an actual native model override lowers the
+      // model limit. Reading its revision and explicitly clearing must remain possible.
+      const lowerLimitConfig = path.join(agentDir, `${target.provider}-lower-output-limit.yml`);
+      await writeFile(lowerLimitConfig, JSON.stringify({ providers: { [target.provider]: { modelOverrides: { [model.id]: { maxTokens: 128 } } } } }), { flag: "wx" });
+      const lowerLimitRegistry = new ModelRegistry(auth, lowerLimitConfig, { settings });
+      const lowerLimitModel = lowerLimitRegistry.find(target.provider, model.id);
+      assert.equal(lowerLimitRegistry.getError(), undefined, `Native lower-limit config must load: ${lowerLimitRegistry.getError()?.message ?? target.provider}`);
+      assert.ok(lowerLimitModel);
+      assert.equal(lowerLimitModel.maxTokens, 128);
+      assert.equal(lowerLimitModel.api, model.api);
+      assert.equal(lowerLimitModel.baseUrl, model.baseUrl);
+      assert.equal(lowerLimitModel.transport, model.transport);
+      await native.session.dispose(); native = await create(file, lowerLimitModel, lowerLimitRegistry);
+      const recovery = native.controls.read();
+      assert.equal(recovery.advancedStream!.supported, true);
+      assert.equal(recovery.advancedStream!.native.maxTokens, 128);
+      assert.equal(recovery.advancedStream!.selection.maxTokens, 512, "Saved intent must not be silently clamped or discarded when the native limit changes.");
+      assert.deepEqual(recovery.advancedStream!.outputLimitConflict, { saved: 512, maximum: 128 });
+      await assert.rejects(mutate("maxTokens", "set", 512), { code: "invalid-value" });
+      const beforeRejectedDispatch = captured.length;
+      assert.throws(() => native.session.agent.streamFn(lowerLimitModel, { messages: [] }), { code: "invalid-value" });
+      assert.equal(captured.length, beforeRejectedDispatch, "An excessive saved limit must be rejected before the provider request boundary.");
+      const cleared = await native.controls.mutate(parseSessionControlMutation({ expectedRevision: recovery.revision, operation: "advanced-stream",
+        model: recovery.advancedStream!.model, field: "maxTokens", action: "inherit" }), async () => { throw new Error("Recovery must not switch models."); });
+      assert.equal(cleared.advancedStream!.selection.maxTokens, undefined);
+      assert.equal(cleared.advancedStream!.outputLimitConflict, undefined);
+      const lowerLimitRequest = await request("lowered-native-limit-explicitly-cleared-after-reopen");
+      assert.equal(lowerLimitRequest.maxOutputTokens, 128);
+      assert.equal(lowerLimitRequest.temperature, 0.6); assert.equal(lowerLimitRequest.topP, 0.55);
+      recoveryEvidence.push({ provider: target.provider, retained: 512, maximum: 128, excessiveWriteRejected: true, excessiveDispatchBlocked: true, explicitInheritRequestLimit: 128 });
     } finally { await native.session.dispose(); }
   }
   assert.equal(await readFile(configPath, "utf8"), config);
-  console.log(JSON.stringify({ sourceCommit: "f241301c83726afe75a847e919b89977a54dafbe", version: "18.1.10", evidenceClass: "real-native-agent-loop-and-request-builder-controlled-fetch; not-App-UI-or-live-provider", accountWrites: 0, externalNetworkRequests: 0, rejectedFetches, evidence, boundaryEvidence }, null, 2));
+  console.log(JSON.stringify({ sourceCommit: "f241301c83726afe75a847e919b89977a54dafbe", version: "18.1.10", evidenceClass: "real-native-agent-loop-and-request-builder-controlled-fetch; not-App-UI-or-live-provider", accountWrites: 0, externalNetworkRequests: 0, rejectedFetches, evidence, boundaryEvidence, recoveryEvidence }, null, 2));
 } finally { auth.close(); }

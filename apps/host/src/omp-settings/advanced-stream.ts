@@ -25,12 +25,14 @@ function supported(model: NativeModel): boolean {
   return !!bundled && bundled.identity?.class === "gemini"
     && model.api === bundled.api && model.baseUrl === bundled.baseUrl && model.transport === bundled.transport;
 }
-function validate(field: typeof fields[number], value: unknown, model: NativeModel): void {
+function validate(field: typeof fields[number], value: unknown, model?: NativeModel): void {
   if (value === null && field !== "maxTokens") return;
   if (typeof value !== "number" || !Number.isFinite(value)) throw new OmpSettingsError("invalid-value", "Enter a finite numeric stream value.");
   if (field === "maxTokens") {
-    if (!Number.isSafeInteger(value) || value < 1 || typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) && model.maxTokens > 0 && value > model.maxTokens)
-      throw new OmpSettingsError("invalid-value", "Output limit must be a positive integer within the native model limit.");
+    if (!Number.isSafeInteger(value) || value < 1) throw new OmpSettingsError("invalid-value", "Output limit must be a positive integer.");
+    const maximum = model?.maxTokens;
+    if (typeof maximum === "number" && Number.isFinite(maximum) && maximum > 0 && value > maximum)
+      throw new OmpSettingsError("invalid-value", "Output limit exceeds the current native model limit; change it or follow the native session.");
   } else {
     validateSettingValue(field, value);
     if (value < 0 || value > (field === "temperature" ? 2 : 1))
@@ -73,7 +75,10 @@ export class NativeAdvancedStreamControls {
       if (!sameModel(data.model as { provider: string; id: string; api: string }, model)) continue;
       if (Object.keys(data.selection).some(field => !fields.includes(field as typeof fields[number])))
         throw new OmpSettingsError("read-failed", "The native stream receipt contains unsupported options.");
-      for (const field of fields) if (Object.hasOwn(data.selection, field)) validate(field, data.selection[field], model);
+      // A later native model-limit change must not make saved intent or the
+      // revision needed to clear it unreadable. Writes and dispatch still pass
+      // the current model to validation and reject an excessive request limit.
+      for (const field of fields) if (Object.hasOwn(data.selection, field)) validate(field, data.selection[field]);
       return { ...data.selection } as OmpStreamSelection;
     }
     return {};
@@ -81,13 +86,19 @@ export class NativeAdvancedStreamControls {
   read(): OmpAdvancedStreamControls {
     const model = this.session.model;
     const available = !!model && supported(model);
+    const selection = model ? this.selection(model) : {};
+    const maximum = model?.maxTokens;
+    const outputLimitConflict = selection.maxTokens !== undefined && typeof maximum === "number"
+      && Number.isFinite(maximum) && maximum > 0 && selection.maxTokens > maximum
+      ? { saved: selection.maxTokens, maximum } : undefined;
     return {
       supported: available,
       reason: available
         ? "Bundled native Gemini sampling and output limit with its unchanged API and endpoint. Applies only to this session branch and exact model/API; live provider acceptance is not verified."
         : "This bounded section requires a bundled native Gemini identity with its unchanged google-generative-ai or google-vertex API, endpoint and transport. Custom endpoints/models and other stream fields remain required coverage.",
       model: model ? { provider: model.provider, id: model.id, api: model.api } : null,
-      selection: model ? this.selection(model) : {},
+      selection,
+      ...(outputLimitConflict ? { outputLimitConflict } : {}),
       native: { temperature: this.session.agent.temperature ?? null, topP: this.session.agent.topP ?? null, maxTokens: model?.maxTokens ?? null },
       persistence: "owning-session-branch-model-api",
     };

@@ -142,6 +142,8 @@ export interface OmpAdvancedStreamControls {
   model: { provider: string; id: string; api: string } | null;
   selection: OmpStreamSelection;
   native: { temperature: number | null; topP: number | null; maxTokens: number | null };
+  /** Retained intent needs an explicit edit after the native model limit changes. */
+  outputLimitConflict?: { saved: number; maximum: number };
   persistence: "owning-session-branch-model-api";
 }
 export interface OmpSessionControls {
