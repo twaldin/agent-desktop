@@ -1,6 +1,7 @@
 import { isSessionReadKey, parseSessionReadMark, type SessionReadMark } from "./session-read";
 import { parseAppearance, type Appearance } from "./appearance";
 import { TREE_ICON_THEME_TOKENS } from "./tree-icon-theme";
+import { parseSidebarNavigation, SIDEBAR_NAVIGATION_PREFERENCE, type SidebarNavigationPreference } from "./sidebar-navigation";
 export const PREFERENCES_VERSION = 1 as const;
 export const PREFERENCE_LIMITS = { records: 10_000, snapshotBytes: 8 * 1024 * 1024, valueBytes: 64 * 1024 } as const;
 
@@ -136,6 +137,7 @@ export function notificationPreferences(value?: NotificationPreferences): Requir
 export interface PreferenceValues {
   "sidebar.organization": SidebarOrganization;
   "sidebar.pinnedSort": SidebarSort;
+  "sidebar.navigation": SidebarNavigationPreference;
   [key: `session.read.${string}.${string}`]: SessionReadMark;
   "connections.keepAwakeWhilePluggedIn": boolean;
   "git.branchPrefix": string;
@@ -255,6 +257,7 @@ function background(value: unknown): ThemeBackground {
 
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
+  if (value === SIDEBAR_NAVIGATION_PREFERENCE) return value;
   if (["sidebar.organization", "sidebar.pinnedSort", "connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.appearance", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
   if (isSessionReadKey(value)) return value;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
@@ -263,6 +266,9 @@ export function parsePreferenceKey(value: unknown): PreferenceKey {
 }
 
 function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[PreferenceKey] {
+  if (key === SIDEBAR_NAVIGATION_PREFERENCE) {
+    try { return parseSidebarNavigation(value); } catch (cause) { return invalid(cause instanceof Error ? cause.message : String(cause)); }
+  }
   if (key === "sidebar.pinnedSort") return enumeration(value, ["priority", "updated_at", "manual"] as const);
   if (key === "sidebar.organization") {
     const item = object(value, ["grouping", "projectSort", "chatSort"]);
