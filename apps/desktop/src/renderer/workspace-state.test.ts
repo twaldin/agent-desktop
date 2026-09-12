@@ -26,12 +26,14 @@ async function fixture(standalone = false) {
     workspaceQuery: async (_target: unknown, query: Parameters<ConstructorParameters<typeof WorkspaceState>[0]["workspaceQuery"]>[1], hostId?: string): Promise<WorkspaceQueryResult> => {
       owners.push(hostId!);
       switch (query.type) {
+        case "file.operations": return {type:query.type,version:1};
         case "git.submission": throw new Error("Compound submissions are exercised through the host journal fixture.");
         case "git.selection-summary": throw new Error("Selection summaries are exercised through the owner-fenced host query fixture.");
         case "file.copy-info": case "file.copy-chunk": case "file.open-options": case "environment.actions": case "environment.output": case "environment.preparation": case "environment.read": case "environments.list": throw new Error("Environment catalog is outside this file/Git fixture.");
         case "files.list": return { type: query.type, entries: await native.list(query.path) };
         case "files.search": return { type: query.type, ...await native.searchFiles(query.query, query.limit) };
         case "file.stat": return { type: query.type, entry: await native.stat(query.path) };
+        case "file.operation-context": return { type: query.type, context: await native.pathContext(query.path) };
         case "file.read": {
           const content = await native.readText(query.path), held = heldRead; heldRead = undefined;
           if (held) { held.started.resolve(); await held.release.promise; }
@@ -65,6 +67,10 @@ async function fixture(standalone = false) {
           case "git.submit": case "git.submit.cancel": case "git.submit.acknowledge": throw new Error("Compound submissions require the real host journal.");
           case "file.open": case "environment.action": case "environment.select": case "environment.save": throw new Error("Environment editing is outside this file/Git fixture.");
           case "file.write": value = { type: action.type, result: await native.writeText(action.path, action) }; break;
+          case "file.create": value = { type: action.type, context: await native.createFile(action.path) }; break;
+          case "directory.create": value = { type: action.type, context: await native.createDirectory(action.path) }; break;
+          case "path.rename": value = { type: action.type, previousPath: action.path, context: await native.renamePath(action.path, action.destination, action.expectedRevision) }; break;
+          case "path.delete": await native.deletePath(action.path, action.expectedRevision); value = { type: action.type, deletedPath: action.path }; break;
           case "git.stage": value = { type: action.type, status: await native.stage(action.paths) }; break;
           case "git.unstage": value = { type: action.type, status: await native.unstage(action.paths, action.expectedRevision) }; break;
           case "git.checkout-revision": value = { type: action.type, status: await native.checkoutRevision(action.revision, action.expectedRevision) }; break;
@@ -88,6 +94,34 @@ async function fixture(standalone = false) {
 }
 
 describe("workspace renderer against actual file and Git services", () => {
+test("path operations use the owning host revision and update caches only after receipts", async () => {
+  const f=await fixture();
+  try {
+    const context=await f.data.fileOperationContext("sample.txt");
+    expect(await f.data.renamePath("sample.txt","renamed.txt",context.revision)).toBe(true);
+    expect(await readFile(join(f.path,"renamed.txt"),"utf8")).toBe("original\n");
+    const renamed=await f.data.fileOperationContext("renamed.txt");
+    expect(await f.data.deletePath("renamed.txt",renamed.revision)).toBe(true);
+    expect(await f.data.createPath("folder","directory")).toBe(true);
+    expect(await f.data.createPath("folder/new.txt","file")).toBe(true);
+    expect(new Set(f.owners)).toEqual(new Set(["home"]));
+    expect(f.deliveries.map(item=>(item.command.type==="workspace.mutate"?item.command.action.type:"other"))).toEqual(["path.rename","path.delete","directory.create","file.create"]);
+  } finally {f.data.stop()}
+});
+
+test("lost file-operation receipt retries the exact command once without repeating the filesystem mutation", async () => {
+  const f=await fixture();
+  try {
+    f.dropNextReceipt();
+    expect(await f.data.createPath("once.txt","file")).toBe(false);
+    expect(f.data.pending?.uncertain).toBe(true);
+    const original=f.deliveries[0]!;
+    await f.data.retry();
+    expect(f.deliveries).toEqual([original,original]);
+    expect(f.data.pending).toBeUndefined();
+    expect(await readFile(join(f.path,"once.txt"),"utf8")).toBe("");
+  } finally {f.data.stop()}
+});
   test("offline file-link reads preserve cached edits and reconnect checks the real host revision", async () => {
     const { path, data, owners, deliveries } = await fixture(true);
     try {

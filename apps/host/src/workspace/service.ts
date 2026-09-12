@@ -1,10 +1,10 @@
-import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitReviewSummary, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
+import type { ContentMetadata, WorkspaceEntry, WorkspacePathContext, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitReviewSummary, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
 export type * from "../../../../packages/shared/src/workspace";
 
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, realpathSync, statSync } from "node:fs";
-import { access, copyFile, link, lstat, mkdir, mkdtemp, open, readdir, readlink, realpath, rename, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { access, copyFile, link, lstat, mkdir, mkdtemp, open, readdir, readlink, realpath, rename, rm, rmdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -294,6 +294,80 @@ export class WorkspaceService {
     return entries.sort((a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name));
   }
 
+  private async pathRevision(target: string): Promise<string> {
+    const metadata = await lstat(target, { bigint: true });
+    const linkTarget = metadata.isSymbolicLink() ? await readlink(target) : "";
+    return hash(Buffer.from(JSON.stringify({ dev: String(metadata.dev), ino: String(metadata.ino), mode: String(metadata.mode), size: String(metadata.size), mtimeNs: String(metadata.mtimeNs), ctimeNs: String(metadata.ctimeNs), linkTarget })));
+  }
+
+  /** Reviewable identity for a later rename/delete. Contents are never supplied by the client. */
+  async pathContext(path: string): Promise<WorkspacePathContext> {
+    if (relativePath(path) === ".") throw new WorkspaceError("WORKSPACE_ROOT", "The workspace root cannot be renamed or deleted.");
+    await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before changing files.");
+    const target = await this.parentOwned(path);
+    const entry = await this.stat(path);
+    await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before changing files.");
+    return { entry, revision: await this.pathRevision(target) };
+  }
+
+  private async assertPathRevision(path: string, expectedRevision: string): Promise<string> {
+    if (!/^[a-f0-9]{64}$/.test(expectedRevision)) throw new WorkspaceError("INVALID_REVISION", "An exact path revision is required.");
+    const target = await this.parentOwned(path);
+    if (await this.pathRevision(target) !== expectedRevision) throw new WorkspaceError("REVISION_CONFLICT", "The selected path changed. Refresh before trying again.");
+    return target;
+  }
+
+  async createFile(path: string): Promise<WorkspacePathContext> {
+    await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before creating a file.");
+    const result = await this.writeText(path, { text: "", expectedRevision: null });
+    if (!result.ok) throw new WorkspaceError("ALREADY_EXISTS", "A file or folder already exists at that path.");
+    return this.pathContext(path);
+  }
+
+  async createDirectory(path: string): Promise<WorkspacePathContext> {
+    await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before creating a folder.");
+    const target = await this.parentOwned(path);
+    return serialized(`file:${dirname(target)}`, async () => {
+      await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before creating a folder.");
+      const parent = await this.owned(relative(this.cwd, dirname(target)));
+      if (parent !== dirname(target)) throw new WorkspaceError("PATH_CHANGED", "The destination folder changed. Refresh before trying again.");
+      try { await mkdir(target, { mode: 0o755 }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new WorkspaceError("ALREADY_EXISTS", "A file or folder already exists at that path."); throw error; }
+      return this.pathContext(path);
+    });
+  }
+
+  async renamePath(path: string, destination: string, expectedRevision: string): Promise<WorkspacePathContext> {
+    await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before renaming a path.");
+    if (relativePath(destination) === ".") throw new WorkspaceError("WORKSPACE_ROOT", "Choose a name within the workspace.");
+    await this.assertPathRevision(path, expectedRevision);
+    const target = await this.parentOwned(destination);
+    return serialized(`file:${this.cwd}`, async () => {
+      await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before renaming a path.");
+      const source = await this.assertPathRevision(path, expectedRevision);
+      if (await lstat(target).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; })) throw new WorkspaceError("ALREADY_EXISTS", "A file or folder already exists at the destination.");
+      const parent = await this.owned(relative(this.cwd, dirname(target)));
+      if (parent !== dirname(target)) throw new WorkspaceError("PATH_CHANGED", "The destination folder changed. Refresh before trying again.");
+      await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before renaming a path.");
+      await rename(source, target);
+      return this.pathContext(destination);
+    });
+  }
+
+  async deletePath(path: string, expectedRevision: string): Promise<void> {
+    await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before deleting a path.");
+    await serialized(`file:${this.cwd}`, async () => {
+      await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before deleting a path.");
+      const target = await this.assertPathRevision(path, expectedRevision), metadata = await lstat(target);
+      if (metadata.isDirectory()) {
+        try { await rmdir(target); }
+        catch (error) { if (["ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) throw new WorkspaceError("DIRECTORY_NOT_EMPTY", "This folder is not empty. Remove its contents before deleting it."); throw error; }
+      }
+      else if (metadata.isFile() || metadata.isSymbolicLink()) await unlink(target);
+      else throw new WorkspaceError("UNSUPPORTED_PATH", "Only files, links, and empty folders can be deleted here.");
+    });
+  }
+
   /** Bounded, owner-confined filename search for the command-menu Files action. */
   async searchFiles(query: string, limit = 50): Promise<{ entries: Array<WorkspaceEntry & { score: number }>; nativeTotalMatches: number; status: "complete" | "truncated" }> {
     if (typeof query !== "string" || !query.trim() || query.length > 512 || /[\0\r\n]/.test(query)) throw new WorkspaceError("INVALID_SEARCH", "A nonempty file search query of at most 512 characters is required.");
@@ -372,11 +446,13 @@ export class WorkspaceService {
 
   async writeText(path: string, input: FileWriteInput): Promise<FileWriteResult> {
     if (typeof input.text !== "string" || (input.expectedRevision !== null && !/^[a-f0-9]{64}$/.test(input.expectedRevision))) throw new WorkspaceError("INVALID_REVISION", "A text value and its exact SHA-256 revision (or null for a new file) are required.");
+    await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before saving a file.");
     const lexical = await this.parentOwned(path);
     let target: string;
     try { target = await this.owned(path); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { if ((await lstat(lexical).catch(() => null))?.isSymbolicLink()) throw new WorkspaceError("BROKEN_SYMLINK", "Cannot save through a broken symlink."); target = lexical; } else throw error; }
     return serialized(`file:${target}`, async () => {
+      await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before saving a file.");
       const current = await this.currentText(relative(this.cwd, target));
       if ((current?.revision ?? null) !== input.expectedRevision || (current !== null && input.expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current };
       if (current && current.kind !== "text") throw new WorkspaceError("NOT_UTF8_TEXT", "This file is not editable UTF-8 text.");
@@ -397,6 +473,7 @@ export class WorkspaceService {
         const latest = await this.currentText(relative(this.cwd, target));
         if ((latest?.revision ?? null) !== input.expectedRevision || (latest !== null && input.expectedRevision === null)) return { ok: false, code: "REVISION_CONFLICT", current: latest };
         if (await this.owned(relative(this.cwd, parent)) !== parent) throw new WorkspaceError("PATH_CHANGED", "The destination directory changed. Refresh before saving.");
+        await this.assertWorkspaceIdentity("The selected workspace changed. Reopen it before saving a file.");
         if (current) await rename(temporary, target);
         else {
           try { await link(temporary, target); }

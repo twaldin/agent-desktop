@@ -87,7 +87,8 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
     case "git.resolve-revision": return { type: query.type, expression: parseGitRevisionExpression(query.expression) };
     case "git.search-branches":
     case "git.search-starting-branches": return { type: query.type, ...parseGitBranchSearch(query.query, query.limit) };
-    case "file.stat": case "file.read": case "file.open-options": case "file.copy-info": return { type: query.type, path: text(query.path) };
+    case "file.operations": return { type: query.type };
+    case "file.stat": case "file.operation-context": case "file.read": case "file.open-options": case "file.copy-info": return { type: query.type, path: text(query.path) };
     case "file.copy-chunk": {
       if (typeof query.revision !== "string" || !/^[a-f0-9]{64}$/.test(query.revision)
         || !Number.isSafeInteger(query.offset) || (query.offset as number) < 0) throw new Error("Invalid file copy revision or offset.");
@@ -133,6 +134,15 @@ export function parseWorkspaceMutation(value: unknown): WorkspaceMutation {
       if (typeof action.text !== "string" || action.text.length > 2 * 1024 * 1024) throw new Error("Invalid file contents or file too large.");
       if (action.expectedRevision !== null && (typeof action.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.expectedRevision))) throw new Error("The exact file revision is required.");
       return { type: action.type, path: text(action.path), text: action.text, expectedRevision: action.expectedRevision, bom: optionalBoolean(action.bom) };
+    }
+    case "file.create": case "directory.create": return { type: action.type, path: text(action.path) };
+    case "path.rename": {
+      if (typeof action.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.expectedRevision)) throw new Error("The exact path revision is required.");
+      return { type: action.type, path: text(action.path), destination: text(action.destination), expectedRevision: action.expectedRevision };
+    }
+    case "path.delete": {
+      if (typeof action.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(action.expectedRevision)) throw new Error("The exact path revision is required.");
+      return { type: action.type, path: text(action.path), expectedRevision: action.expectedRevision };
     }
     case "file.open": return { type: action.type, path: text(action.path), targetId: text(action.targetId, 200) };
     case "git.stage": case "git.unstage": {
@@ -436,6 +446,8 @@ export class HostWorkspaces {
       case "files.list": return { type: query.type, entries: await workspace.list(query.path) };
       case "files.search": return { type: query.type, ...await workspace.searchFiles(query.query, query.limit) };
       case "file.stat": return { type: query.type, entry: await workspace.stat(query.path) };
+      case "file.operations": return { type: query.type, version: 1 };
+      case "file.operation-context": return { type: query.type, context: await workspace.pathContext(query.path) };
       case "file.read": return { type: query.type, content: await workspace.readText(query.path) };
       case "file.open-options": {
         await workspace.externalFilePath(query.path);
@@ -541,6 +553,10 @@ export class HostWorkspaces {
       }
       case "environment.save": return { type: action.type, result: await new LocalEnvironmentStore(workspace.cwd).save(action) };
       case "file.write": return { type: action.type, result: await workspace.writeText(action.path, action) };
+      case "file.create": return { type: action.type, context: await workspace.createFile(action.path) };
+      case "directory.create": return { type: action.type, context: await workspace.createDirectory(action.path) };
+      case "path.rename": return { type: action.type, previousPath: action.path, context: await workspace.renamePath(action.path, action.destination, action.expectedRevision) };
+      case "path.delete": await workspace.deletePath(action.path, action.expectedRevision); return { type: action.type, deletedPath: action.path };
       case "file.open": return this.fileOpen.open(workspace.cwd, action.targetId, () => workspace.externalFilePath(action.path));
       case "git.stage": return { type: action.type, status: await workspace.stage(action.paths) };
       case "git.unstage": return { type: action.type, status: await workspace.unstage(action.paths, action.expectedRevision) };

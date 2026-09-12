@@ -29,7 +29,7 @@ export function WorkspaceFileTree({ data, filePath = "", active, initialDirector
   const [context,setContext]=useState<TreeMenuTarget>();
   const closeContext=(restore=true)=>{if(restore&&context?.anchor.isConnected)context.anchor.focus({preventScroll:true});setContext(undefined)};
   useEffect(()=>{setContext(undefined)},[active,data,cwd]);
-  const showContext=(anchor:HTMLElement,path:string,x?:number,y?:number)=>{const r=anchor.getBoundingClientRect();setContext({anchor,path,x:x??r.left+16,y:y??r.bottom});};
+  const showContext=(anchor:HTMLElement,path:string,kind:TreeMenuTarget["kind"],x?:number,y?:number)=>{const r=anchor.getBoundingClientRect();setContext({anchor,path,kind,x:x??r.left+16,y:y??r.bottom});};
   const safeInitialDirectory = initialDirectory === "." || isWorkspaceFilePath(initialDirectory) ? initialDirectory : ".";
   const [revision, changed] = useReducer((value: number) => value + 1, 0);
   const state = useMemo(() => getWorkspaceFileTreeState(data, cwd ?? "."), [data, cwd]);
@@ -147,7 +147,7 @@ export function WorkspaceFileTree({ data, filePath = "", active, initialDirector
     });
   };
   const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>, row: TreeRow, index: number) => {
-    if((event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey)&&cwd&&supportedFile(row.entry)){event.preventDefault();event.stopPropagation();showContext(event.currentTarget,row.entry.path);return;}
+    if((event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey)&&cwd&&row.entry.kind!=="other"){event.preventDefault();event.stopPropagation();showContext(event.currentTarget,row.entry.path,row.entry.kind);return;}
     let destination: TreeRow | undefined;
     if (event.key === "ArrowDown") destination = rows[index + 1];
     else if (event.key === "ArrowUp") destination = rows[index - 1];
@@ -172,11 +172,11 @@ export function WorkspaceFileTree({ data, filePath = "", active, initialDirector
     ? rows.find(row => row.entry.kind === "directory" && row.expanded && !data.directories.has(row.entry.path))
     : undefined;
   return <section data-tab-preview-pin-exempt className="workspace-file-tree-shell" aria-label="Workspace files">
-    {showFilter && <label className="workspace-file-tree-filter">
+    {showFilter && <div className="workspace-file-tree-toolbar"><label className="workspace-file-tree-filter">
       <span className="sr-only">Filter files</span><Icon name="search"/>
       <input ref={filterInput} value={filter} disabled={!active} placeholder="Filter files…" maxLength={512} onChange={event => state.setQuery(view, event.target.value)} />
       {filter && <button type="button" aria-label="Clear file filter" disabled={!active} onClick={() => state.setQuery(view, "")}><Icon name="close"/></button>}
-    </label>}
+    </label>{cwd&&<button type="button" className="workspace-file-tree-actions" aria-label="Workspace file actions" disabled={!active} onClick={event=>showContext(event.currentTarget,".","root")}><Icon name="more"/></button>}</div>}
     <div ref={scroller} className="workspace-file-tree" role="tree" aria-label="Files" aria-busy={query ? searching : data.loading.has("files:.") || !data.directories.has(".") && data.connected && !rootError} tabIndex={active ? 0 : -1}
       onScroll={event => {
         if (!active || !state.isActive(view)) return;
@@ -200,7 +200,7 @@ export function WorkspaceFileTree({ data, filePath = "", active, initialDirector
           aria-disabled={disabled || undefined} tabIndex={-1}
           className={`workspace-file-tree-row${row.entry.path === snapshot.selectedPath ? " selected" : ""}${disabled ? " disabled" : ""}`}
           style={{ "--tree-level": row.level } as CSSProperties} title={row.entry.path}
-          onContextMenu={event=>{if(cwd&&supportedFile(row.entry)){event.preventDefault();event.stopPropagation();showContext(event.currentTarget,row.entry.path,event.clientX,event.clientY)}}}
+          onContextMenu={event=>{if(cwd&&row.entry.kind!=="other"){event.preventDefault();event.stopPropagation();showContext(event.currentTarget,row.entry.path,row.entry.kind,event.clientX,event.clientY)}}}
           onKeyDown={event => onRowKeyDown(event, row, index)} onClick={() => { if (!disabled) toggle(row); }} onDoubleClick={() => { if (active && state.isActive(view) && !disabled && row.entry.kind !== "directory" && supportedFile(row.entry)) onOpenFile(row.entry.path,{preview:false}); }}>
           {row.level > 1 && <span className="workspace-file-tree-spacing" aria-hidden="true">{Array.from({length:row.level-1},(_,index)=><i key={index}/>)}</span>}
           <span className="workspace-file-tree-icon"><TreeFileIcon path={row.entry.path} folder={row.entry.kind === "directory"} expanded={row.expanded}/></span><span className="workspace-file-tree-name"><WorkspaceFileName name={row.entry.name}/></span>
@@ -217,7 +217,7 @@ export function WorkspaceFileTree({ data, filePath = "", active, initialDirector
       if (rootError) void data.readDirectory(".");
       else { const failed = rows.find(row => row.error); if (failed) void data.readDirectory(failed.entry.path); }
     }}>Retry</button>}</div>}
-    {context&&cwd&&active&&<WorkspaceTreeMenu key={`${data.cacheKey}:${context.path}:${context.x}:${context.y}`} data={data} cwd={cwd} target={context} onClose={closeContext} onAddFile={onAddFile}/>}
+    {context&&cwd&&active&&<WorkspaceTreeMenu key={`${data.cacheKey}:${context.path}:${context.x}:${context.y}`} data={data} cwd={cwd} target={context} onClose={closeContext} onAddFile={onAddFile} onOpenFile={onOpenFile}/>}
   </section>;
 }
 

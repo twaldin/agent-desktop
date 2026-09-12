@@ -3,7 +3,7 @@ import type { GitSelectionSummary, GitSubmissionIntent, GitSubmissionReceipt } f
 export type * from "./git-submissions";
 import type { LocalEnvironmentActionsState, LocalEnvironmentCatalogItem, LocalEnvironmentSaveResult } from "./local-environments";
 import type { LocalEnvironmentPreparationPublic, LocalEnvironmentExecutionOutput } from "./environment-preparations";
-import type { CreateWorktreeOptions, FileContent, FileWriteResult, GitActionContext, GitBranch, GitDiff, GitReviewSummary, GitStatus, GitWorktree, WorkspaceEntry } from "./workspace";
+import type { CreateWorktreeOptions, FileContent, FileWriteResult, GitActionContext, GitBranch, GitDiff, GitReviewSummary, GitStatus, GitWorktree, WorkspaceEntry, WorkspacePathContext } from "./workspace";
 
 export type { WorkspaceTarget } from "./workspace";
 export const WORKSPACE_OWNER_HEADER = "X-Agent-Host-Id";
@@ -75,6 +75,7 @@ export interface WorkspaceOpenTarget {
   kind: "editor" | "terminal" | "file-manager";
 }
 export type WorkspaceQuery =
+  | { type: "file.operations" }
   | { type: "environment.actions" }
   | { type: "environment.output"; preparationId: string }
   | { type: "environment.preparation"; preparationId: string }
@@ -83,6 +84,7 @@ export type WorkspaceQuery =
   | { type: "files.list"; path?: string }
   | { type: "files.search"; query: string; limit?: number }
   | { type: "file.stat"; path: string }
+  | { type: "file.operation-context"; path: string }
   | { type: "file.read"; path: string }
   | { type: "file.open-options"; path: string }
   | { type: "file.copy-info"; path: string }
@@ -103,6 +105,7 @@ export type WorkspaceQuery =
   | { type: "git.review-summary"; source: GitReviewSummary["source"] }
   | { type: "git.worktrees" };
 export type WorkspaceQueryResult =
+  | { type: "file.operations"; version: 1 }
   | { type: "environment.actions"; state: LocalEnvironmentActionsState }
   | { type: "environment.output"; output: LocalEnvironmentExecutionOutput | null }
   | { type: "environment.preparation"; preparation: LocalEnvironmentPreparationPublic }
@@ -111,6 +114,7 @@ export type WorkspaceQueryResult =
   | { type: "files.list"; entries: WorkspaceEntry[] }
   | { type: "files.search"; entries: Array<WorkspaceEntry & { score: number }>; nativeTotalMatches: number; status: "complete" | "truncated" }
   | { type: "file.stat"; entry: WorkspaceEntry }
+  | { type: "file.operation-context"; context: WorkspacePathContext }
   | { type: "file.read"; content: FileContent }
   | { type: "file.open-options"; path: string; targets: WorkspaceOpenTarget[]; preferredTargetId?: string; availabilityReason?: string }
   | { type: "file.copy-info"; path: string; absolutePath: string; size: number; revision: string }
@@ -139,6 +143,10 @@ export type WorkspaceMutation =
   | { type: "environment.action"; configPath: string; configRevision: string; selectionRevision: number; actionIndex: number }
   | { type: "environment.save"; configPath?: string | null; expectedRevision: string | null; raw: string }
   | { type: "file.write"; path: string; text: string; expectedRevision: string | null; bom?: boolean }
+  | { type: "file.create"; path: string }
+  | { type: "directory.create"; path: string }
+  | { type: "path.rename"; path: string; destination: string; expectedRevision: string }
+  | { type: "path.delete"; path: string; expectedRevision: string }
   | { type: "file.open"; path: string; targetId: string }
   | { type: "git.stage"; paths: string[] }
   | { type: "git.unstage"; paths: string[]; expectedRevision?: string }
@@ -156,6 +164,9 @@ export type WorkspaceMutationResult =
   | { type: "environment.action"; terminal: NativeTerminalInfo }
   | { type: "environment.save"; result: LocalEnvironmentSaveResult }
   | { type: "file.write"; result: FileWriteResult }
+  | { type: "file.create" | "directory.create"; context: WorkspacePathContext }
+  | { type: "path.rename"; previousPath: string; context: WorkspacePathContext }
+  | { type: "path.delete"; deletedPath: string }
   | { type: "file.open"; targetId: string }
   | { type: "git.stage" | "git.unstage"; status: GitStatus }
   | { type: "git.commit"; commit: string; summary: string }

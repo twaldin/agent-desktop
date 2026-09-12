@@ -1071,7 +1071,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const workspaceAction = envelope.command.type === "workspace.mutate" ? envelope.command.action : undefined;
     // Action references contain no script bodies. Retain their version gate and owner
     // so an older artifact cannot adopt a terminal with newer restart semantics.
-    const journalCommand = envelope.command.type === "skill.file.write" ? undefined : workspaceAction && workspaceAction.type !== "environment.action" && workspaceAction.type !== "environment.select" && !workspaceAction.type.startsWith("git.submit") ? undefined : envelope.command;
+    const durableFileOperation = workspaceAction && ["file.create", "directory.create", "path.rename", "path.delete"].includes(workspaceAction.type);
+    const journalCommand = envelope.command.type === "skill.file.write" ? undefined : workspaceAction && !durableFileOperation && workspaceAction.type !== "environment.action" && workspaceAction.type !== "environment.select" && !workspaceAction.type.startsWith("git.submit") ? undefined : envelope.command;
     const claim = store.claimCommand(envelope.id, hash, journalCommand);
     if (claim.kind === "conflict") return fail(envelope.id, "COMMAND_ID_REUSED", "This command ID belongs to a different request.");
     if (claim.kind === "done") return claim.record.result!;

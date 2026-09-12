@@ -27,6 +27,7 @@ export interface WorkspaceEntry {
   linkTarget?: string;
   linkState?: "inside" | "outside" | "missing";
 }
+export interface WorkspacePathContext { entry: WorkspaceEntry; revision: string }
 
 export interface ContentMetadata { path: string; size: number; modifiedAt: number; mode: number }
 export interface TextDocument extends ContentMetadata { kind: "text"; text: string; revision: string; bom: boolean; encoding: "utf8" }

@@ -1,5 +1,9 @@
 .workspace-file-tree-shell { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; color:var(--text); background:transparent; font:var(--font-weight,400) var(--font-size,14px) var(--ui-font); }
-.workspace-file-tree-filter { display:flex; align-items:center; flex:none; height:28px; margin:8px 8px 0; padding:0 7px; gap:6px; border:var(--border-width,1px) solid var(--border); border-radius:var(--radius-small,6px); color:var(--tertiary); background:var(--app-surface); }
+.workspace-file-tree-toolbar{display:flex;align-items:center;gap:4px;margin:8px 8px 0;}
+.workspace-file-tree-filter { display:flex; align-items:center; flex:1; min-width:0; height:28px; margin:0; padding:0 7px; gap:6px; border:var(--border-width,1px) solid var(--border); border-radius:var(--radius-small,6px); color:var(--tertiary); background:var(--app-surface); }
+.workspace-file-tree-actions{display:grid;place-items:center;flex:none;width:28px;height:28px;border-radius:var(--radius-small,6px);color:var(--secondary)}
+.workspace-file-tree-actions:hover:not(:disabled){background:var(--hover);color:var(--text)}
+.workspace-file-tree-actions>.icon{width:16px;height:16px}
 .workspace-file-tree-filter>.icon { width:14px; height:14px; flex:none; }
 .workspace-file-tree-filter input { width:0; min-width:0; flex:1; padding:0; border:0; outline:0; color:var(--text); background:transparent; font:inherit; font-size:12px; }
 .workspace-file-tree-filter input::placeholder { color:var(--tertiary); }

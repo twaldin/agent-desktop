@@ -6,7 +6,7 @@ import type { RepositoryWatchView } from "@agent-desktop/shared";
 import type { CommandEnvelope, DesktopBridge, LocalEnvironmentActionsState } from "../../../../packages/shared/src/protocol";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "../../../../packages/shared/src/workspace-protocol";
 import { parseStandaloneFilePath } from "../../../../packages/shared/src/workspace";
-import type { FileContent, GitActionContext, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "../../../../packages/shared/src/workspace";
+import type { FileContent, GitActionContext, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry, WorkspacePathContext } from "../../../../packages/shared/src/workspace";
 import type { GitSubmissionIntent, GitSubmissionReceipt } from "../../../../packages/shared/src/git-submissions";
 import { isGitCheckoutAction, readGitCheckoutRefusal, type GitCheckoutRefusal } from "../../../../packages/shared/src/checkout-refusal";
 import type { OfflineCache } from "./offline-cache";
@@ -210,6 +210,20 @@ export class WorkspaceState {
   readDirectory(path: string) {
     return this.load(`files:${path}`, async () => { const result = await this.query({ type: "files.list", path }); if (result.type !== "files.list") throw new Error("The host returned the wrong directory response."); this.directories.set(path, result.entries); this.saveSoon(); });
   }
+  async fileOperationContext(path:string):Promise<WorkspacePathContext>{
+    const result=await this.query({type:"file.operation-context",path});
+    if(result.type!=="file.operation-context")throw new Error("The host returned the wrong file operation response.");
+    return result.context;
+  }
+  hasDirtyPath(path:string){return [...this.documents].some(([name,item])=>(name===path||name.startsWith(`${path}/`))&&item.dirty)}
+  hasOpenPath(path:string){return this.hasDirtyPath(path)||Boolean(this.opened&&(this.opened===path||this.opened.startsWith(`${path}/`)))}
+  private async pathMutation(action:Extract<WorkspaceMutation,{type:"file.create"|"directory.create"|"path.rename"|"path.delete"}>){
+    const id=await this.mutateCommand(action);
+    return Boolean(id&&!this.pending&&this.mutationReceipt?.commandId===id);
+  }
+  createPath(path:string,kind:"file"|"directory"){return this.pathMutation({type:kind==="file"?"file.create":"directory.create",path})}
+  renamePath(path:string,destination:string,expectedRevision:string){return this.pathMutation({type:"path.rename",path,destination,expectedRevision})}
+  deletePath(path:string,expectedRevision:string){return this.pathMutation({type:"path.delete",path,expectedRevision})}
   open(path: string) { this.opened = path; this.changed(); this.saveSoon(); return this.read(path); }
   read(path: string) {
     return this.load(`file:${path}`, async () => {
@@ -507,6 +521,23 @@ export class WorkspaceState {
       if (!newer) item.text = value.result.document.text;
       item.dirty = item.text !== value.result.document.text;
       this.notice = newer ? "Saved the submitted version. Your newer edits remain unsaved." : "File saved on the owning host.";
+    } else if (value.type === "file.create" || value.type === "directory.create") {
+      this.directories.clear(); this.notice=value.type==="file.create"?"File created.":"Folder created.";
+      if(value.type==="file.create")void this.read(value.context.entry.path);
+    } else if (value.type === "path.rename" && action.type === "path.rename") {
+      const remap=(path:string)=>path===action.path?action.destination:path.startsWith(`${action.path}/`)?`${action.destination}${path.slice(action.path.length)}`:path;
+      const moved=[...this.documents].filter(([path])=>remap(path)!==path);
+      for(const [path,document] of moved){this.documents.delete(path);this.documents.set(remap(path),document)}
+      for(const [path,epoch] of [...this.documentEpochs])if(remap(path)!==path){this.documentEpochs.delete(path);this.documentEpochs.set(remap(path),epoch)}
+      for(const [path,due] of [...this.autosaveDue])if(remap(path)!==path){this.autosaveDue.delete(path);this.autosaveDue.set(remap(path),due)}
+      if(this.opened)this.opened=remap(this.opened);
+      this.directories.clear();this.notice=`Renamed to ${action.destination.split("/").at(-1)}.`;
+    } else if (value.type === "path.delete" && action.type === "path.delete") {
+      for(const path of [...this.documents.keys()])if(path===action.path||path.startsWith(`${action.path}/`))this.documents.delete(path);
+      for(const path of [...this.documentEpochs.keys()])if(path===action.path||path.startsWith(`${action.path}/`))this.documentEpochs.delete(path);
+      for(const path of [...this.autosaveDue.keys()])if(path===action.path||path.startsWith(`${action.path}/`))this.autosaveDue.delete(path);
+      if(this.opened&&(this.opened===action.path||this.opened.startsWith(`${action.path}/`)))this.opened=undefined;
+      this.directories.clear();this.notice=`Deleted ${action.path.split("/").at(-1)}.`;
     } else if ((value.type === "git.checkout" || value.type === "git.checkout-ref" || value.type === "git.checkout-revision")) { this.status = value.status; this.notice = `Switched to ${value.status.branch ?? "detached HEAD"}.`; void this.loadWorktrees(); }
     else if (value.type === "git.stage" || value.type === "git.unstage") { this.status = value.status; this.notice = value.type === "git.stage" ? "Selected paths staged." : "Selected paths unstaged."; }
     else if (value.type === "git.commit" && action.type === "git.commit") { if (this.commitMessage === action.message) this.commitMessage = ""; this.notice = value.summary || `Committed ${value.commit}`; }
