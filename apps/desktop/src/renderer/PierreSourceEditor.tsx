@@ -1,3 +1,6 @@
+import { SymbolNavigationControls } from "./SymbolNavigationControls";
+import type { SymbolEditorNavigation, SymbolEditorSnapshot } from "./symbol-navigation";
+import { symbolOffset, type SymbolSelection } from "../../../../packages/shared/src/symbol-navigation";
 import { useEditorScroll } from "./use-editor-scroll";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { File } from "@pierre/diffs";
@@ -20,16 +23,17 @@ export interface PierreSourceEditorProps {
   documentKey: string; name: string; value: string; onChange(text: string): void;
   onSave(): void; label: string; readOnly?: boolean; active?: boolean;
   initialScrollTop?: number; onScrollChange?(top: number): void;
-  revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
+  revealRequest?: { id: string; line?: number; column?: number; endLine?: number; selections?: SymbolSelection[]; text?: string };
   onReveal?(id: string, error?: string): void;
   onAddToChat?(selection: FileTextSelection): void;
+  symbolNavigation?: SymbolEditorNavigation;
 }
 
 /** Pierre owns its document and history. Parent echoes must never reinitialize it. */
 export function PierreSourceEditor(props: PierreSourceEditorProps) {
   const frame = useRef<HTMLDivElement>(null), container = useRef<HTMLDivElement>(null), current = useRef(props);
   current.current = props;
-  const instance = useRef<{ file: File; editor: Editor<undefined>; sync(): void; label(): void; reveal(): void;
+  const instance = useRef<{ file: File; editor: Editor<undefined>; sync(): void; label(): void; reveal(): void; captureSymbol(): SymbolEditorSnapshot | undefined;
     setTheme(themes: { light: string; dark: string }, type: "light" | "dark"): void;
     openLine(): boolean; goToLine(line: number, focus: boolean): void; closeLine(cancel: boolean, focus: boolean): void } | null>(null);
   const { themeType, themes } = useCodeTheme();
@@ -75,6 +79,21 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
       if (!alive || !attached || current.current.active === false || !request || request.id === appliedReveal) return;
       appliedReveal = request.id;
       editor.focus({ preventScroll: true });
+      if (request.selections) {
+        try {
+          const text = editor.getText();
+          if (request.text !== text) throw new Error("This symbol location belongs to a changed document. Run Go to definition again.");
+          for (const selection of request.selections) { symbolOffset(text, selection.start); symbolOffset(text, selection.end); }
+          editor.setSelections(request.selections.map(selection => ({
+            start: { line: selection.start.line - 1, character: selection.start.column - 1 },
+            end: { line: selection.end.line - 1, character: selection.end.column - 1 },
+            direction: selection.direction,
+          })));
+          pendingLine = { line: request.selections[0]!.start.line, focus: true }; positionLine();
+          current.current.onReveal?.(request.id);
+        } catch (error) { current.current.onReveal?.(request.id, error instanceof Error ? error.message : String(error)); }
+        return;
+      }
       if (request.line !== undefined) {
         const location = fileLocation(editor.getText(), request.line, request.column, request.endLine);
         if ("error" in location) { current.current.onReveal?.(request.id, location.error); return; }
@@ -93,8 +112,24 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
         if (input.getAttribute("aria-readonly") !== "false") input.setAttribute("aria-readonly", "false");
       }
     };
+    const captureSymbol = (): SymbolEditorSnapshot | undefined => {
+      if (!alive || !attached || current.current.readOnly) return;
+      const selections = editor.getState().selections;
+      if (!selections?.length) return;
+      return { text: editor.getText(), selections: selections.map(selection => ({
+        start: { line: selection.start.line + 1, column: selection.start.character + 1 },
+        end: { line: selection.end.line + 1, column: selection.end.character + 1 },
+        direction: selection.direction === -1 ? "backward" : "forward",
+      })) };
+    };
     const fileOptions = { theme: themes, themeType, overflow: "scroll", disableFileHeader: true, unsafeCSS: SOURCE_SHADOW_CSS,
       onPostRender: () => queueMicrotask(() => { label(); reveal(); positionLine(); }),
+      onTokenClick: props.symbolNavigation ? (token: { lineNumber: number; lineCharStart: number }, event: MouseEvent) => {
+        const binding = current.current.symbolNavigation, snapshot = captureSymbol();
+        if (!binding || !snapshot || current.current.active === false || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+        event.preventDefault(); event.stopPropagation();
+        void binding.navigation.define(binding.path, { ...snapshot, position: { line: token.lineNumber, column: token.lineCharStart + 1 } }, binding.open);
+      } : undefined,
     } as const;
     const file = new File(fileOptions);
     const sync = () => {
@@ -122,7 +157,7 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
     const observer = new MutationObserver(label), shadow = element.querySelector("diffs-container")?.shadowRoot;
     if (shadow) observer.observe(shadow, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "contenteditable"] });
     const detach = props.readOnly ? undefined : editor.edit(file);
-    instance.current = { file, editor, sync, label, reveal, openLine, goToLine, closeLine,
+    instance.current = { file, editor, sync, label, reveal, openLine, goToLine, closeLine, captureSymbol,
       setTheme: (theme, type) => { file.setOptions({ ...fileOptions, theme, themeType: type }); file.onThemeChange(); label(); } };
     const save = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -162,7 +197,8 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
     container.current?.addEventListener("scroll", onScroll, { passive: true });
     return () => { cancelAnimationFrame(frameId); document.removeEventListener("selectionchange", onSelection); document.removeEventListener("pointerdown", onPointerDown, true); document.removeEventListener("keydown", onKeyDown, true); container.current?.removeEventListener("scroll", onScroll); };
   }, [props.documentKey, props.onAddToChat, props.readOnly]);
-  return <div ref={frame} className="pierre-source-editor-frame" hidden={props.active === false} data-app-shortcuts="off">
+  return <div ref={frame} className="pierre-source-editor-frame" hidden={props.active === false} data-app-shortcuts="off" data-symbol-owner={props.symbolNavigation ? props.documentKey : undefined}>
+    {props.symbolNavigation && <SymbolNavigationControls binding={props.symbolNavigation} frame={frame} active={props.active !== false && !props.readOnly} capture={() => instance.current?.captureSymbol()}/>}
     <div ref={container} className="pierre-source-editor" hidden={props.active === false} data-read-only={Boolean(props.readOnly)}/>
     <GoToLine frame={frame} active={props.active !== false && !props.readOnly} value={props.value}
       onOpen={() => instance.current?.openLine() ?? false} onPreview={line => instance.current?.goToLine(line, false)}

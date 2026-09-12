@@ -1,3 +1,5 @@
+import { readSymbolDefinitions } from "./symbol-definitions";
+import type { SymbolDefinitionRequest } from "../../../../packages/shared/src/symbol-navigation";
 import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitReviewSummary, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
 export type * from "../../../../packages/shared/src/workspace";
 
@@ -328,6 +330,17 @@ export class WorkspaceService {
     await this.assertWorkspaceIdentity("The selected workspace changed during file search. Reopen it before using results.");
     return { entries, nativeTotalMatches: result.totalMatches, status: result.totalMatches > result.matches.length ? "truncated" : "complete" };
   }
+  async symbolDefinitions(request: SymbolDefinitionRequest) {
+    await this.assertWorkspaceIdentity("The symbol workspace changed identity. Reopen the workspace before retrying.");
+    const result = await readSymbolDefinitions(this, request);
+    await this.assertWorkspaceIdentity("The symbol workspace changed identity during analysis. Reopen the workspace before retrying.");
+    return result;
+  }
+  async symbolContext(): Promise<string> {
+    await this.assertWorkspaceIdentity("The symbol workspace changed identity. Reopen it before navigating.");
+    return createHash("sha256").update(JSON.stringify([this.cwd, this.cwdIdentity.dev, this.cwdIdentity.ino])).digest("hex");
+  }
+
 
   async readText(path: string): Promise<FileContent> {
     const target = await this.owned(path);

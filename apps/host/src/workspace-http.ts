@@ -1,3 +1,4 @@
+import { parseSymbolDefinitionRequest } from "../../../packages/shared/src/symbol-navigation";
 import { createHash } from "node:crypto";
 import type { LocalEnvironmentActions } from "./local-environments/actions";
 import { LocalEnvironmentStore } from "./local-environments";
@@ -75,6 +76,8 @@ export function parseWorkspaceTarget(value: unknown): WorkspaceTarget {
 export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
   const query = object(value);
   switch (query.type) {
+    case "file.definitions": return { type: query.type, request: parseSymbolDefinitionRequest(query.request) };
+    case "file.symbol-context": return { type: query.type };
     case "environment.output":
     case "environment.preparation": return { type: query.type, preparationId: text(query.preparationId, 200) };
     case "environment.read": return { type: query.type, configPath: text(query.configPath) };
@@ -418,6 +421,19 @@ export class HostWorkspaces {
     // Git controls intentionally address the containing repository; file controls stay project-confined.
     const workspace = query.type.startsWith("git.") && query.type !== "git.status" ? await owner.gitRootService() : owner;
     switch (query.type) {
+      case "file.symbol-context": {
+        if ("filePath" in target) throw new Error("Open a project workspace to navigate semantic definitions.");
+        const stamp = this.ownerStamp(target), workspaceIdentity = await workspace.symbolContext();
+        if (stamp !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The symbol workspace owner changed.");
+        return { type: query.type, workspaceIdentity };
+      }
+      case "file.definitions": {
+        if ("filePath" in target) throw new Error("Open a project workspace to navigate semantic definitions.");
+        const stamp = this.ownerStamp(target);
+        const result = await workspace.symbolDefinitions(query.request), workspaceIdentity = await workspace.symbolContext();
+        if (stamp !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The symbol workspace owner changed. Reopen the file before retrying.");
+        return { type: query.type, workspaceIdentity, result };
+      }
       case "environment.actions": {
         if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");
         return { type: query.type, state: await this.actions.catalog(target) };

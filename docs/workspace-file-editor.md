@@ -1,5 +1,19 @@
 # Workspace file editor
 
+## Semantic symbol navigation
+
+Working-tree JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`) and TypeScript (`.ts`, `.tsx`, `.mts`, `.cts`, including declarations) use the pinned TypeScript 7.0.2 compiler API for Go to definition. Toolbar actions and Pierre modifier-click resolve actual bindings, imports, aliases and merged declarations; comments, strings and unresolved symbols never fall back to word search. Multiple declarations offer explicit locations. The compiler is a runtime dependency, not an OMP provider request or shared language-server session.
+
+Each lookup belongs to the authenticated project/session workspace on its owning host. The canonical directory identity, source revision, unsaved existing-file overlays and captured compiler dependencies are checked before locations are accepted. Configuration and dependencies outside that directory, standalone files, historical Git content, other languages, unsaved new files, conflicted buffers and unsaved JSON configuration are unsupported. Invalid compiler configuration or source syntax produces an actionable error; correcting the input requires an explicit retry. No lookup emits code, runs plugins, saves buffers or reads through an outside-owner symlink.
+
+Back/Forward history is window-local and workspace-owned, separate from Pierre edit undo. Locations retain exact revisions, text hashes, full selections and direction. History advances only after the real editor acknowledges reveal. New navigation removes the forward branch; changed/missing targets, replaced workspace identities, offline owners and failed reveals leave history unmoved and retain editor buffers. A saved revision may invalidate an old location even if the text is unchanged: resolve the symbol again rather than silently clamping an obsolete range.
+
+Bounds are explicit: 32 dirty overlays/2 MiB combined; 1,000 captured files/32 MiB combined/2 MiB each; 100 declarations and 100 remembered locations; a 20-second compiler deadline and 10-second reveal deadline. Historical Git views and application-wide keyboard bindings remain separately owned integrations. The exported exact-frame dispatcher handles the three symbol commands without installing global shortcuts.
+
+Actual production App acceptance uses the ordinary Files opener, authenticated disposable host, real WorkspacePanel/Pierre and Chromium pointer/keyboard input. The passing driver covers imported declaration selection, exact source cursor restoration, Forward and branching, merged-definition choices, comment rejection, modifier-click and a dirty target retained across Back/Forward with native Undo. Additional App captures show unsupported-language refusal and invalid configuration followed by explicit successful retry. The initial driver failure remains preserved: Pierre intentionally collapses the DOM caret while retaining its own selection overlays/state, so the corrected observer reads the existing read-only `Editor.getState` capture rather than mistaking DOM selection for editor selection. No production test hook was added.
+
+Private source traces, initial failures, native-state snapshots and page captures are under `.data/symbol-navigation-flow/`. These are real isolated App interaction results, not installed-artifact, physical-keyboard, cross-device or matched-reference pixel certification.
+
 ## Composer file activation
 
 Clicking an existing inline file now opens its owner-workspace file panel without changing the draft or sending a prompt. The node uses its current PM identity and the latest composer callback; foreign-host and outside-workspace paths are not remapped. This matches the pinned composer's ordinary pointer callback. Separate keyboard focus, native tooltip and hover-preview behavior belong to other reference surfaces and are not added here.

@@ -1,3 +1,5 @@
+import type { SymbolDefinitionRequest, SymbolDefinitionResult } from "./symbol-navigation";
+export type * from "./symbol-navigation";
 import type { NativeTerminalInfo } from "./terminals";
 import type { GitSelectionSummary, GitSubmissionIntent, GitSubmissionReceipt } from "./git-submissions";
 export type * from "./git-submissions";
@@ -84,6 +86,8 @@ export type WorkspaceQuery =
   | { type: "files.search"; query: string; limit?: number }
   | { type: "file.stat"; path: string }
   | { type: "file.read"; path: string }
+  | { type: "file.definitions"; request: SymbolDefinitionRequest }
+  | { type: "file.symbol-context" }
   | { type: "file.open-options"; path: string }
   | { type: "file.copy-info"; path: string }
   | { type: "file.copy-chunk"; path: string; revision: string; offset: number }
@@ -112,6 +116,8 @@ export type WorkspaceQueryResult =
   | { type: "files.search"; entries: Array<WorkspaceEntry & { score: number }>; nativeTotalMatches: number; status: "complete" | "truncated" }
   | { type: "file.stat"; entry: WorkspaceEntry }
   | { type: "file.read"; content: FileContent }
+  | { type: "file.definitions"; workspaceIdentity: string; result: SymbolDefinitionResult }
+  | { type: "file.symbol-context"; workspaceIdentity: string }
   | { type: "file.open-options"; path: string; targets: WorkspaceOpenTarget[]; preferredTargetId?: string; availabilityReason?: string }
   | { type: "file.copy-info"; path: string; absolutePath: string; size: number; revision: string }
   | { type: "file.copy-chunk"; path: string; size: number; revision: string; offset: number; dataBase64: string }

@@ -28,6 +28,7 @@ async function fixture(standalone = false) {
       switch (query.type) {
         case "git.submission": throw new Error("Compound submissions are exercised through the host journal fixture.");
         case "git.selection-summary": throw new Error("Selection summaries are exercised through the owner-fenced host query fixture.");
+        case "file.definitions": case "file.symbol-context": throw new Error("Semantic definitions are exercised through the owner-scoped symbol navigation fixture.");
         case "file.copy-info": case "file.copy-chunk": case "file.open-options": case "environment.actions": case "environment.output": case "environment.preparation": case "environment.read": case "environments.list": throw new Error("Environment catalog is outside this file/Git fixture.");
         case "files.list": return { type: query.type, entries: await native.list(query.path) };
         case "files.search": return { type: query.type, ...await native.searchFiles(query.query, query.limit) };
