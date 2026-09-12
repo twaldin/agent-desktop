@@ -1,0 +1,14 @@
+import {mkdir,writeFile} from "node:fs/promises";
+import {join,resolve} from "node:path";
+import {NotificationEvents} from "../../../apps/host/src/notification-events";
+const fixture=resolve(process.argv[2]!);if(process.env.HOME!==fixture)throw Error("Isolated HOME required.");
+for(const path of ["data","agent","project"])await mkdir(join(fixture,path),{recursive:true});
+const {startHost}=await import("../../../apps/host/src/server");
+const host=await startHost({dataDirectory:join(fixture,"data"),agentDirectory:join(fixture,"agent"),discoveryDirectory:join(fixture,"project"),workerPath:resolve(import.meta.dir,"../../../apps/host/src/omp-workers/fixtures/no-provider-worker.ts"),tailscale:false,port:0});
+const project=host.store.addProject({path:join(fixture,"project"),name:"Notification fixture"});
+const make=async(title:string)=>{const response=await fetch(`${host.connection.origin}/v1/commands`,{method:"POST",headers:{authorization:`Bearer ${host.connection.token}`,"content-type":"application/json"},body:JSON.stringify({id:crypto.randomUUID(),command:{type:"session.create",projectId:project.id}})});const result=await response.json() as any;if(!response.ok||!result.ok)throw Error("Could not create fixture session");return host.store.upsertSession({...result.value,title})};
+const initial=await make("Initial conversation"),target=await make("Completed conversation");
+const notices=new NotificationEvents({eventsAfter:(sequence,limit)=>host.store.eventsAfter(sequence,limit),session:id=>host.store.getSession(id),emit:event=>host.store.appendEvent(event,true)});
+await writeFile(join(fixture,"connection.json"),JSON.stringify(host.connection),{mode:0o600});await writeFile(join(fixture,"context.json"),JSON.stringify({initial:initial.id,target:target.id,projectId:project.id}));
+const control=Bun.serve({hostname:"127.0.0.1",port:0,async fetch(request){const input=await request.json() as {method:string};if(input.method==="complete"){const activity=host.store.appendEvent({type:"runtime",sessionId:target.id,event:{type:"agent_end"},sessionActivity:true},true);notices.completion(target.id,"completion:fixture","completed");return Response.json({activity,events:host.store.eventsAfter(activity.sequence-1,20)});}return Response.json({error:"Unknown control"},{status:400});}});
+await writeFile(join(fixture,"control.json"),JSON.stringify({url:control.url.toString()}));let stopping=false;async function stop(){if(stopping)return;stopping=true;control.stop(true);await host.stop();process.exit(0)}process.on("SIGTERM",()=>void stop());for await(const chunk of process.stdin)if(String(chunk).trim()==="stop")await stop();

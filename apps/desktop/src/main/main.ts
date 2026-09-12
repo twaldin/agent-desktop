@@ -49,7 +49,8 @@ import { requestTerminalCreationCapabilities, requestTerminalCreate, requestTerm
 import type { TerminalCreationRequest } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserCreateRequest, BrowserFrameTarget } from "@agent-desktop/shared";
 import type { ComposerCompletionQuery, NativeSkillFileRef } from "@agent-desktop/shared";
-import { NotificationDelivery, type NotificationTarget } from "./notification-delivery";
+import { NotificationDelivery } from "./notification-delivery";
+import { NotificationNavigation } from "./notification-navigation";
 import { parsePreferencesSnapshot, type NotificationPreferences } from "../../../../packages/shared/src/preferences";
 import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, protocol, screen, shell, powerMonitor, powerSaveBlocker } from "electron";
 import { captureDesktop } from "./capture";
@@ -190,8 +191,7 @@ let keepAwakeRefresh: ReturnType<typeof setInterval> | undefined;
 let notificationPrefs: NotificationPreferences | undefined;
 let notificationPreferencesLoaded = false;
 let notificationQueue = Promise.resolve();
-const notificationReady = new Set<number>();
-let pendingNotificationNavigation: {id:string;target:NotificationTarget} | undefined;
+const notificationNavigation = new NotificationNavigation();
 const notificationDelivery = new NotificationDelivery(join(app.getPath("userData"), "notification-delivery-v1.json"), {
   preferences: () => notificationPrefs,
   focused: () => [...windows].some(window => !window.isDestroyed() && window.isFocused()),
@@ -212,16 +212,13 @@ async function refreshNotificationPreferences() {
   notificationDelivery.preferenceStatus();
   notificationDelivery.preferencesChanged();
 }
-async function openNotificationTarget(target: NotificationTarget) {
-  pendingNotificationNavigation = {id:crypto.randomUUID(),target};
+async function openNotificationTarget(target: import("@agent-desktop/shared").NotificationNavigationTarget) {
+  let window = [...windows].find(window => !window.isDestroyed());
+  notificationNavigation.open(target, window?.webContents.id);
   try {
-    let window = [...windows].find(window => !window.isDestroyed());
     if (!window) { await createWindow(); window = [...windows].find(window => !window.isDestroyed()); }
     if (!window) return;
     if (window.isMinimized()) window.restore(); window.show(); window.focus();
-    if (notificationReady.has(window.webContents.id) && pendingNotificationNavigation) {
-      window.webContents.send("desktop:notification-navigate", pendingNotificationNavigation);
-    }
   } catch { /* Retain the target for the next successfully opened window. */ }
 }
 
@@ -446,13 +443,13 @@ ipcMain.handle("desktop:modifier-release-cancel", (event, id: unknown) => {
 ipcMain.handle("desktop:context-menu",(event,items:unknown)=>{assertTrustedSender(event);const owner=BrowserWindow.fromWebContents(event.sender);if(!owner)throw new Error("The menu window is unavailable.");return showDesktopContextMenu(owner,items)});
 ipcMain.handle("desktop:notification-status", event => { assertTrustedSender(event); return notificationDelivery.status(); });
 ipcMain.handle("desktop:notification-ready", event => {
-  assertTrustedSender(event); notificationReady.add(event.sender.id);
-  if (pendingNotificationNavigation) event.sender.send("desktop:notification-navigate", pendingNotificationNavigation);
+  assertTrustedSender(event);
+  notificationNavigation.ready({ id: event.sender.id, send: request => event.sender.send("desktop:notification-navigate", request) });
 });
 ipcMain.on("desktop:notification-ack", (event, id: string) => {
-  assertTrustedSender(event); if (id === pendingNotificationNavigation?.id) pendingNotificationNavigation = undefined;
+  assertTrustedSender(event); notificationNavigation.acknowledge(event.sender.id, id);
 });
-ipcMain.on("desktop:notification-unready", event => { assertTrustedSender(event); notificationReady.delete(event.sender.id); });
+ipcMain.on("desktop:notification-unready", event => { assertTrustedSender(event); notificationNavigation.unready(event.sender.id); });
 ipcMain.on("desktop:window-close-ready", event => { assertTrustedSender(event); windowCloseGate.register(event.sender.id); });
 ipcMain.on("desktop:window-close-unready", event => { assertTrustedSender(event); windowCloseGate.unregister(event.sender.id); });
 ipcMain.handle("desktop:window-close-answer", (event, id: string, allowed: boolean) => {
@@ -1012,7 +1009,7 @@ async function createWindow(): Promise<void> {
   if (geometry.maximized && !process.env.AGENT_DESKTOP_CAPTURE) window.maximize();
   trackWindowGeometry(window, localState, status => { if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-state:status", status); });
   window.webContents.on("preload-error", (_event, _path, error) => console.error("Desktop preload failed:", error.message));
-  window.webContents.on("did-start-loading", () => notificationReady.delete(windowContentsId));
+  window.webContents.on("did-start-loading", () => notificationNavigation.unready(windowContentsId));
   window.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
     if (!isMainFrame) return;
     modifierWatches.cancel(windowContentsId);
@@ -1021,10 +1018,10 @@ async function createWindow(): Promise<void> {
     workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1);
     workspaceImages.releaseSender(windowContentsId);
   });
-  window.webContents.on("destroyed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); });
-  window.webContents.on("render-process-gone", (_event, details) => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
+  window.webContents.on("destroyed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationNavigation.unready(windowContentsId); });
+  window.webContents.on("render-process-gone", (_event, details) => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationNavigation.unready(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
   window.on("close", event => { if (!windowCloseGate.handleWindowClose(windowContentsId, () => { if (!window.isDestroyed()) window.close(); })) event.preventDefault(); });
-  window.on("closed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId, true); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
+  window.on("closed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); windows.delete(window); windowStates.delete(windowContentsId); notificationNavigation.unready(windowContentsId); windowCloseGate.destroy(windowContentsId, true); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", event => event.preventDefault());
   const development = process.env.AGENT_DESKTOP_RENDERER_URL;

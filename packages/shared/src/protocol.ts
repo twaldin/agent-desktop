@@ -354,7 +354,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   answerWindowClose?(id: string, allowed: boolean): Promise<void>;
   getNotificationStatus?(): Promise<{supported:boolean; error?:string}>;
   subscribeNotificationStatus?(listener:()=>void):()=>void;
-  subscribeNotificationNavigation?(listener:(target:{hostId:string;sessionId:string})=>void):()=>void;
+  subscribeNotificationNavigation?(listener:(request:import("./notifications").NotificationNavigationRequest)=>void):()=>void;
+  acknowledgeNotificationNavigation?(requestId:string):void;
   getComposerActions?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<ComposerActionsCatalog | null>;
   getSkillInventory?(target?: WorkspaceTarget, refresh?: boolean, hostId?: string): Promise<NativeSkillInventory | null>;
   getSkillDetail?(target: WorkspaceTarget | undefined, skillId: string, catalogRevision: string, hostId?: string, inventory?: boolean): Promise<ComposerSkillDetail>;

@@ -1,9 +1,8 @@
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { notificationPreferences, type NotificationPreferences } from '../../../../packages/shared/src/preferences';
-import type { HostNotification } from '@agent-desktop/shared';
+import type { HostNotification, NotificationNavigationTarget } from '@agent-desktop/shared';
 
-export interface NotificationTarget { hostId:string; sessionId:string }
 export interface DeliveredNotification { close():void }
 interface HostLedger { sequence:number; seen:string[]; pending?:string[] }
 interface DeliveryLedger { version:1; hosts:Record<string,HostLedger> }
@@ -12,7 +11,7 @@ export interface NotificationDeliveryAdapter {
   focused():boolean;
   supported():boolean;
   show(notice:HostNotification, options:{silent:boolean;onClick():void;onFailed():void;onClosed():void}):DeliveredNotification;
-  navigate(target:NotificationTarget):void;
+  navigate(target:NotificationNavigationTarget):void;
   statusChanged():void;
 }
 /** Single main-process delivery owner, independent of the number of renderer windows.
