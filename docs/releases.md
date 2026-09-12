@@ -12,6 +12,10 @@ Those native build jobs are gated by `ENABLE_NATIVE_RELEASE_BUILDS=true`, explic
 
 Successful native builds include the desktop ZIP, host archive, build commit metadata and SHA256SUMS. Source archives have separate SOURCE-SHA256SUMS. The desktop is ad-hoc signed, not notarized. Packaging does not constitute physical-device, provider, native-browser, visual parity or full-GOAL acceptance. See [status](status.md).
 
+## Current named milestone
+
+[v0.1.0-alpha.2](https://github.com/twaldin/agent-desktop/releases/tag/v0.1.0-alpha.2) points to `9208455`. Both platform suites, desktop/host packaging and packaged startup checks passed. The earlier failed `v0.1.0-alpha.1` remains unchanged.
+
 ## Publish a milestone
 
 After reviewing and validating the milestone, commit the intended changes and push `main`. Tim has authorized milestone commits and pushes. Preserve Git author configuration, existing history and unrelated working changes; never force-push or include private evidence.
@@ -19,8 +23,8 @@ After reviewing and validating the milestone, commit the intended changes and pu
 For a named milestone:
 
 ```sh
-git tag -a v0.1.0-alpha.2 -m "Describe the completed milestone"
-git push origin main v0.1.0-alpha.2
+git tag -a v0.1.0-alpha.3 -m "Describe the completed milestone"
+git push origin main v0.1.0-alpha.3
 ```
 
 Use a new version for each milestone. Tags must point to commits in `main`. With native CI enabled, the workflow publishes only after checks pass. Interrupted uploads resume through a draft; existing tags and asset bytes are verified and never silently replaced. GitHub source archives remain available alongside built assets.
