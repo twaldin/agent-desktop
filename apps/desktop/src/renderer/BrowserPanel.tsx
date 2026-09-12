@@ -64,6 +64,18 @@ interface AddressRow extends BrowserAddressSuggestion {
   subtitle?: string;
 }
 
+export function browserBackendCapabilities(backend: NativeBrowserTabMetadata["backend"] | undefined, context?: PreviewFrame["context"]) {
+  const opaque = context?.opaqueHistoryTraversal === true;
+  return {
+    historyEntries: backend !== "cmux",
+    stop: backend !== "cmux",
+    pageInput: backend === "worker",
+    resize: backend === "worker" && Boolean(context?.navigation),
+    back: Boolean(context?.navigation?.canGoBack || opaque),
+    forward: Boolean(context?.navigation?.canGoForward || opaque),
+  };
+}
+
 export function BrowserPanel(props: Props) {
   const draft = props.draftOwner;
   const source = useMemo(() => browserPreviewSource(props.bridge, draft ?? { kind: "session", hostId: props.hostId!, sessionId: props.sessionId! }),
@@ -125,6 +137,10 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   const textInput = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const skipInput = useRef(false);
+  const selectedBackend = metadata?.availability === "running"
+    ? metadata.tabs.find(tab => tab.state === "alive" && selected && tab.name === selected.name && tab.targetId === selected.targetId)?.backend
+    : undefined;
+  const nativeHistoryAvailable = browserBackendCapabilities(selectedBackend).historyEntries;
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   activeRef.current = active;
@@ -137,7 +153,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   useLayoutEffect(() => { if (addressFocused && !addressDirty.current) addressInput.current?.select(); }, [addressFocused]);
 
   useEffect(() => {
-    if (!addressFocused || !selected || !source.canHistory || !source.current()) {
+    if (!addressFocused || !selected || !source.current()) {
       setAddressSuggestions([]);
       return;
     }
@@ -145,6 +161,22 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     const target = { ...selected };
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
+    const localSearchRow = (): AddressRow[] => {
+      try {
+        const parsed = parseBrowserAddress(query);
+        return parsed.kind === "search" ? [{
+          id: `search:${query}`,
+          title: `Search for ${query.trim()}`,
+          address: parsed.address,
+          canBeDefault: true,
+          icon: <Icon name="search" />,
+        }] : [];
+      } catch { return []; }
+    };
+    if (!nativeHistoryAvailable || !source.canHistory) {
+      setAddressSuggestions(localSearchRow());
+      return () => { disposed = true; };
+    }
     const load = (attempt: number) => {
       const requestId = crypto.randomUUID();
       void source.history({ requestId, target, query }).then(
@@ -153,21 +185,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           const needle = query.trim().toLocaleLowerCase();
           const seen = new Set<string>();
           const rows: AddressRow[] = [];
-          let parsed: ReturnType<typeof parseBrowserAddress> | undefined;
-          try {
-            parsed = parseBrowserAddress(query);
-          } catch {
-            // The user can keep editing an incomplete address.
-          }
-          if (parsed?.kind === "search") {
-            rows.push({
-              id: `search:${query}`,
-              title: `Search for ${query.trim()}`,
-              address: parsed.address,
-              canBeDefault: true,
-              icon: <Icon name="search" />,
-            });
-          }
+          rows.push(...localSearchRow());
           for (const item of [...result.entries].reverse()) {
             const label = `${item.title}\n${item.url}`.toLocaleLowerCase();
             if (seen.has(item.url) || item.url === "about:blank" || (needle && !label.includes(needle))) continue;
@@ -196,7 +214,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       disposed = true;
       clearTimeout(timer);
     };
-  }, [address, addressFocused, selected?.workerPid, selected?.name, selected?.targetId, source]);
+  }, [address, addressFocused, selected?.workerPid, selected?.name, selected?.targetId, source, nativeHistoryAvailable]);
 
   const holdInput = (extra?: BrowserHumanAction) => {
     const waiting = [...(extra ? [extra] : []), ...textQueue.current];
@@ -294,13 +312,6 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           setFrame(undefined);
           saveSelection(selectionKey, target);
         }
-        if (tab.backend !== "worker") {
-          setFrame(undefined);
-          setError(
-            "This native browser backend does not support viewport previews yet.",
-          );
-          return;
-        }
         const image = await source.frame(target);
         if (!current()) return;
         frameSource.current = source;
@@ -373,6 +384,8 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     same(frame, selected),
   );
   const controlsReady = frameReady && !pending;
+  const capabilities = browserBackendCapabilities(selectedBackend, frame?.context);
+  const pageInputReady = controlsReady && capabilities.pageInput;
   const blankPage = frame?.url === "about:blank";
   useEffect(() => {
     if (blankPage && controlsReady && !blankPageFocused.current) { blankPageFocused.current = true; addressInput.current?.focus(); }
@@ -571,7 +584,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     } catch (cause) { setToolbarError(cause instanceof Error ? cause.message : 'The page address could not be opened.'); }
   };
   const pointer = (event: React.MouseEvent<HTMLImageElement>) => {
-    if (!controlsReady || !frame?.context) return;
+    if (!pageInputReady || !frame?.context) return;
     const point = framePoint(
       event.currentTarget.getBoundingClientRect(),
       frame.context,
@@ -583,7 +596,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     void control({ type: "click", ...point });
   };
   const wheel = (event: React.WheelEvent<HTMLImageElement>) => {
-    if (!controlsReady || !frame?.context) return;
+    if (!pageInputReady || !frame?.context) return;
     const point = framePoint(
       event.currentTarget.getBoundingClientRect(),
       frame.context,
@@ -618,7 +631,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       "PageDown",
     ];
     if (
-      !frameReady ||
+      !pageInputReady ||
       event.nativeEvent.isComposing ||
       !supported.includes(event.key)
     )
@@ -678,7 +691,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
             title={tab.url}
           >
             {tab.title || tab.url || tab.name}
-            {tab.backend !== "worker" ? " · unavailable" : ""}
+            {tab.backend === "cmux" ? " · limited controls" : ""}
           </button>
         ))}
       </div>}
@@ -686,7 +699,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
         <button
           aria-label="Back"
           title="Back"
-          disabled={!controlsReady || !frame?.context?.navigation?.canGoBack}
+          disabled={!controlsReady || !capabilities.back}
           onClick={() => void control({ type: "back" })}
         >
           <Icon name="browserBack" />
@@ -694,18 +707,18 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
         <button
           aria-label="Forward"
           title="Forward"
-          disabled={!controlsReady || !frame?.context?.navigation?.canGoForward}
+          disabled={!controlsReady || !capabilities.forward}
           onClick={() => void control({ type: "forward" })}
         >
           <Icon name="browserBack" className="browser-forward-icon" />
         </button>
         <button
-          aria-label={pendingNavigation ? "Stop loading" : "Reload page"}
-          title={pendingNavigation ? "Stop loading" : "Reload page"}
-          disabled={pendingNavigation ? !source.canControl : !controlsReady}
-          onClick={() => pendingNavigation ? void stopNavigation() : void control({ type: "reload" })}
+          aria-label={pendingNavigation && capabilities.stop ? "Stop loading" : "Reload page"}
+          title={pendingNavigation && !capabilities.stop ? "Navigation in progress; Stop is unavailable for cmux" : pendingNavigation ? "Stop loading" : "Reload page"}
+          disabled={pendingNavigation && capabilities.stop ? !source.canControl : !controlsReady}
+          onClick={() => pendingNavigation && capabilities.stop ? void stopNavigation() : void control({ type: "reload" })}
         >
-          <Icon name={pendingNavigation ? "stop" : "browserReload"} />
+          <Icon name={pendingNavigation && capabilities.stop ? "stop" : "browserReload"} />
         </button>
         <form ref={addressForm} onSubmit={submitAddress}>
           <BrowserAddressInput inputRef={addressInput} anchorRef={addressForm} owner={source.focusOwner}
@@ -756,7 +769,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
               if (optionsMenu.current) optionsMenu.current.open = false;
               lastFit.current = undefined; setFitPage(value => !value);
             }}><span>Fit page to panel</span>{fitPage && <Icon name="check"/>}</button>
-            <button role="menuitem" disabled={!controlsReady || !frame?.context?.navigation} onClick={() => {
+            <button role="menuitem" disabled={!controlsReady || !capabilities.resize} onClick={() => {
               const rect = viewport.current?.getBoundingClientRect();
               if (!rect || rect.width < 1 || rect.height < 1) return;
               if (optionsMenu.current) optionsMenu.current.open = false;
@@ -791,7 +804,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           {blankPage && <div className="browser-blank-page"><Icon name="globe"/><strong>Start browsing</strong><span>Enter a URL to open a page</span></div>}
           <div
             ref={viewport}
-            className={`browser-viewport${controlsReady ? " browser-viewport-live" : ""}${blankPage ? " browser-blank-viewport" : ""}`}
+            className={`browser-viewport${pageInputReady ? " browser-viewport-live" : ""}${blankPage ? " browser-blank-viewport" : ""}`}
           >
             <img
               src={`data:${frame.mimeType};base64,${frame.data}`}
@@ -810,7 +823,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
               maxLength={16384}
               className="browser-input-capture"
               aria-label="Browser page keyboard input"
-              disabled={!frameReady}
+              disabled={!pageInputReady}
               onKeyDown={frameKey}
               onInput={captureInput}
               onCompositionStart={() => {
@@ -821,6 +834,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           </div>
           <figcaption className={stale ? "browser-stale" : "browser-preview-caption"}>
             Viewport preview · {frame.title || frame.url}
+            {selectedBackend === "cmux" ? " · History, Stop, and page input unavailable" : ""}
             {stale ? " · stale preview" : ""}
           </figcaption>
         </figure>
