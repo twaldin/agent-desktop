@@ -32,6 +32,7 @@ import { useCommandBrowserTabs } from "./use-command-browser-tabs";
 import { APPLICATION_COMMANDS } from "../../../../packages/shared/src/application-commands";
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import { useHeaderContextMenu } from "./use-header-context-menu";
+import { followUpDeliveryForEnter } from "./follow-up-submit";
 import { createTranscriptImageResolver } from "./transcript-image-source";
 import { remapFileOffsets } from "./composer-document";
 import { appendWholeFile, wholeFileSendIssue, wholeFileOpenTarget } from "./whole-file-composer";
@@ -262,6 +263,7 @@ export function App() {
     return () => { cancelled = true; systemScheme.removeEventListener("change", apply); };
   }, [bridge, appliedTheme]);
   const sendBehavior = preferences.get("general.sendBehavior") ?? "enter";
+  const followUpQueueMode = preferences.get("general.followUpQueueMode") ?? "steer";
   const reduceMotion = preferences.get("general.reduceMotion") ?? false;
   useEffect(() => { document.documentElement.dataset.reduceMotion = reduceMotion ? "true" : "false"; }, [reduceMotion]);
   const hostId = route.hostId ?? state?.host.id ?? desktop.localHostId ?? "unconnected";
@@ -305,6 +307,10 @@ export function App() {
   const { drafts, submissions } = controllers(hostId);
   useEffect(() => drafts.subscribe(redraw), [drafts]);
   useEffect(() => submissions.subscribe(redraw), [submissions]);
+  useEffect(() => {
+    if (!connected || state?.queuedMessages?.submissions?.commandVersion !== 13) return;
+    void submissions.reconcileQueuedSubmissions().catch(cause => setActionError(errorMessage(cause)));
+  }, [submissions, connected, state?.lastEventSequence, state?.queuedMessages?.submissions?.commandVersion]);
   useEffect(() => {
     for (const [owner, pair] of stores) {
       const record = desktop.catalog.records.get(owner);
@@ -492,6 +498,8 @@ export function App() {
   const transcriptReading = useTranscriptScroll(selectedId ? `${hostId}:${selectedId}` : undefined);
   const running = selected?.status === "running";
   const pendingSubmission = submissions.get(draftId);
+  const queuedSubmissionRecoveries = selectedId ? submissions.queuedEntries().filter(item => item.sessionId === selectedId
+    && item.receipt?.phase === "settled" && item.receipt.outcome !== "succeeded") : [];
   useEffect(() => {
     if (!selectedId && environmentAvailable && draft.execution?.type === 'worktree' && draft.environment === undefined && !pendingSubmission && !view.conflict)
       drafts.update(draftId, { environment: null });
@@ -745,7 +753,7 @@ export function App() {
     } catch (cause) { setActionError(errorMessage(cause)); }
     finally { setAddingProject(false); }
   }
-  async function submit() {
+  async function submit(activeDelivery?: "follow-up" | "steer") {
     if (!canSend || submitting.current) return;
     submitting.current = true; draftBrowserOwners.beforeSubmission(); draftBrowserPages.beforeSubmission(); for (const controller of draftBrowserDocks.values()) controller.beforeSubmission();
     setBusy(true); setActionError(null);
@@ -784,7 +792,10 @@ export function App() {
         }
       }
       drafts.beginPendingSubmission(snapshot);
-      const result = await submissions.submit(snapshot, selectedId ?? undefined, running ? "steer" : "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId));
+      if (running && (!selectedId || state?.queuedMessages?.submissions?.commandVersion !== 13)) throw new Error("Update the owning host to send active-turn follow-ups. The draft was retained.");
+      const result = running
+        ? await submissions.submitActive(snapshot, selectedId!, activeDelivery ?? (followUpQueueMode === "queue" ? "follow-up" : "steer"), (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId))
+        : await submissions.submit(snapshot, selectedId ?? undefined, "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId));
       drafts.finishSubmission(sendingDraftId, result.submitted, true, false, result.commandId);
       await refresh(); transcript.refresh();
       // The awaited catalog is authoritative before React runs its ingest effect.
@@ -793,7 +804,10 @@ export function App() {
       if (savedDraft) drafts.ingest(savedDraft);
       if (selectedRef.current === originalRoute && !hasDraftContent(drafts.get(sendingDraftId).draft)) navigate(result.sessionId);
     } catch (cause) {
-      if (snapshot && !sideHandled) drafts.finishSubmission(sendingDraftId, snapshot, false, submissions.get(sendingDraftId)?.uncertain, submissions.get(sendingDraftId)?.send?.id);
+      if (snapshot && !sideHandled) {
+        const queued = submissions.queuedEntries().find(item => item.draft.id === sendingDraftId && item.draft.revision === snapshot!.revision);
+        drafts.finishSubmission(sendingDraftId, snapshot, false, queued?.uncertain ?? submissions.get(sendingDraftId)?.uncertain, queued?.send.id ?? submissions.get(sendingDraftId)?.send?.id);
+      }
       if (!(cause instanceof EnvironmentPreparationPause)) setActionError(errorMessage(cause));
     } finally { submitting.current = false; setBusy(false); if (!sideHandled) textarea.current?.focus(); }
   }
@@ -1189,6 +1203,15 @@ export function App() {
             branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }}
             onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}/>}
           {selected && state?.queuedMessages?.version === 1 && bridge.getQueuedMessages && bridge.mutateQueuedMessages && <QueuedMessages key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} connected={connected} archived={Boolean(selected.archived)}/>}
+          {queuedSubmissionRecoveries.map(item => <div className="inline-error" role="alert" key={item.send.id}><span>{item.receipt?.outcome === "unknown"
+            ? `Delivery of an earlier message is unknown. Inspect command ${item.send.id} before sending it again.`
+            : item.receipt?.message ?? "An earlier queued message was not recorded."}</span>{item.receipt?.outcome === "not-recorded"
+              ? <button type="button" disabled={hasDraftContent(draft) || item.draft.id !== draftId} onClick={() => { try {
+                  submissions.restoreQueuedSubmission(item.send.id, restored => drafts.update(draftId, { text: restored.text })); textarea.current?.focus();
+                } catch (cause) { setActionError(errorMessage(cause)); } }}>Restore message</button>
+              : <button type="button" disabled={!connected} onClick={() => void submissions.reconcileQueuedSubmission(item.send.id).then(receipt => {
+                  if (receipt.outcome === "unknown") setActionError(receipt.message ?? `Delivery of command ${item.send.id} remains unknown.`);
+                }).catch(cause => setActionError(errorMessage(cause)))}>Check receipt</button>}</div>)}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
             {remoteExecutionIssue && <p className="attachment-notice" role="status">{remoteExecutionIssue}</p>}
             {wholeFileIssue && <p className="attachment-notice" role="status">{wholeFileIssue}</p>}
@@ -1198,7 +1221,9 @@ export function App() {
             {imageIssue && <p className="attachment-notice" role="status">{imageIssue}</p>}
             {imagesStaging && <p className="attachment-notice" role="status">Finish adding or remove the pending images before sending.</p>}
             <label className="sr-only" htmlFor="prompt">Message</label>
-            <span id="prompt-keyboard-hint" className="sr-only">{`${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${running ? "steer" : "send"}. Shift Enter for a new line.`}</span>
+            <span id="prompt-keyboard-hint" className="sr-only">{running
+              ? `${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${followUpQueueMode === "queue" ? "queue a follow-up" : "steer"}; ${sendBehavior === "mod-enter" ? "Command Shift Enter" : "Command Enter"} does the opposite for one message.`
+              : `${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to send. Shift Enter for a new line.`}</span>
             <ComposerEditor inputRef={textarea} scope={routeKey+':'+draftId} text={draft.text} files={draft.wholeFileAttachments}
               clipboardHostId={hostId} canPasteFiles={state?.wholeFiles?.inlineMentions?.commandVersion===8} allowRepeatedFiles={state?.wholeFiles?.inlineMentions?.repeatedSources?.commandVersion===9} onPasteError={error=>setActionError(error.message)}
               onOpenFile={source=>{try {
@@ -1211,13 +1236,19 @@ export function App() {
               onCompositionStart={autocomplete.inputProps.onCompositionStart} onCompositionEnd={autocomplete.inputProps.onCompositionEnd}
               ariaControls={autocomplete.inputProps['aria-controls']} ariaExpanded={autocomplete.inputProps['aria-expanded']} ariaActiveDescendant={autocomplete.inputProps['aria-activedescendant']}
               placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)}
-              onKeyDown={event => { if (autocomplete.onKeyDown(event)) return; if (event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing && !autocomplete.composing.current && event.keyCode !== 229) { event.preventDefault(); void submit(); } }}/>
+              onKeyDown={event => { if (autocomplete.onKeyDown(event)) return;
+                const selectedDelivery = followUpQueueMode === "queue" ? "follow-up" : "steer";
+                const activeDelivery = running ? followUpDeliveryForEnter({ key: event.key, altKey: event.altKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey,
+                  shiftKey: event.shiftKey, keyCode: event.keyCode, isComposing: event.nativeEvent.isComposing || autocomplete.composing.current }, sendBehavior, selectedDelivery) : null;
+                const ordinary = !running && event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey)
+                  && !event.nativeEvent.isComposing && !autocomplete.composing.current && event.keyCode !== 229;
+                if (activeDelivery || ordinary) { event.preventDefault(); void submit(activeDelivery ?? undefined); } }}/>
             {autocomplete.popup}
             <div className="composer-toolbar">
               <div className="composer-selections">
                 <ComposerSelections data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)}/>
               </div>
-              <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running ? "Steer agent" : "Send (Enter)" : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
+              <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send (Enter)" : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
             </div>
           </form>
           <div className="composer-footnote" aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : null}</div>

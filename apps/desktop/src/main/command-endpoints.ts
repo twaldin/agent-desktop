@@ -3,8 +3,9 @@ import type { CommandEnvelope, CommandResult, OmpSessionControlMutation } from "
 import { HostRequestError } from "./host-transport";
 
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
-export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" {
+export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" {
   const command = envelope.command;
+  if (envelope.commandVersion === 13 || command.type === "session.follow-up") return "/v13/commands";
   if (envelope.commandVersion === 12 || hasRemoteWorktreeIntent(command)) return "/v12/commands";
   if (envelope.commandVersion === 11 || command.type === "preferences.keymap.mutate") return "/v11/commands";
   if (envelope.commandVersion === 10 || command.type === "workspace.mutate" && ["git.submit", "git.submit.cancel", "git.submit.acknowledge"].includes(command.action.type)) return "/v10/commands";
@@ -34,6 +35,7 @@ export async function requestVersionedCommand(request: (path: string, body: unkn
   catch (error) {
     // A missing endpoint establishes that this versioned request was rejected.
     // A timeout or any other failure retains ordinary uncertain-delivery rules.
+    if (endpoint === '/v13/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return { ok: false, commandId: envelope.id, error: { code: 'FOLLOW_UP_PROTOCOL_UNSUPPORTED', message: 'Update the owning host to queue active-turn follow-ups. This request was not accepted.' } } satisfies CommandResult;
     if (endpoint === '/v12/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return { ok: false, commandId: envelope.id, error: { code: 'REMOTE_WORKTREE_PROTOCOL_UNSUPPORTED', message: 'Update the owning host to retain remote worktree starting refs. This request was not accepted.' } } satisfies CommandResult;
     if (endpoint === '/v11/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:'KEYBINDINGS_PROTOCOL_UNSUPPORTED',message:'Update the owning host to change keyboard shortcuts. This request was not accepted.'}} satisfies CommandResult;
     if (endpoint === '/v10/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:'GIT_SUBMISSION_PROTOCOL_UNSUPPORTED',message:'Update the owning host to submit Git changes. This request was not accepted.'}} satisfies CommandResult;

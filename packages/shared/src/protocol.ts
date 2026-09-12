@@ -18,6 +18,7 @@ export * from "./session-mcp-resource";
 export * from "./session-mcp";
 export * from "./notifications";
 export * from "./queued-messages";
+export * from "./queued-submissions";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from './integrations';
 import type { NativeMarketplaceCatalog, NativePluginAcquisition, NativePluginAcquisitionReceipt, NativePluginAcquisitionRequest } from './plugin-acquisition';
 export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation, NativeMcpServer } from './integrations';
@@ -213,7 +214,7 @@ export interface HostState {
   wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number; inlineMentions?: { commandVersion: 8; repeatedSources?: { commandVersion: 9 } } };
   gitSubmissions?: { commandVersion: 10 };
   sessionSearch?: { version: 1 };
-  queuedMessages?: { version: 1 };
+  queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13 } };
   repositoryWatches?: { version: 1 };
   branchQueries?: { version: 1 };
   commandKeybindings?: { commandVersion: 11; snapshotVersion: 2; numberTargetVersion?: 1 };
@@ -237,6 +238,7 @@ export type HostCommand =
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
+  | { type: "session.follow-up"; sessionId: string; text: string; delivery: import("./queued-submissions").FollowUpDelivery; approvalMode?: OmpApprovalMode; draft: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.btw.start"; sessionId: string; question: string; draft?: { id: string; revision: number }; nativeCommand?: "btw" }
   | { type: "session.mcp.authorize"; hostId: string; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
@@ -253,7 +255,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
 }
 
 export interface ImageAdmission {
@@ -269,7 +271,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult }
   | { ok: false; commandId: string; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
 
 export type HostEvent =

@@ -7,9 +7,15 @@ export type OmpSteerReceipt =
   | { kind: "user-message"; entryId: string }
   | { kind: "not-recorded"; reason: string }
   | { kind: "outcome-unknown"; reason: string };
+export interface OmpQueuedSubmissionRun {
+  accepted: Promise<{ kind: "queued"; delivery: "follow-up" | "steer" }>;
+  completion: Promise<OmpSteerReceipt>;
+}
 type NativeMessage = Parameters<AgentSession["agent"]["steer"]>[0];
 interface Pending {
   result: ReturnType<typeof Promise.withResolvers<OmpSteerReceipt>>;
+  accepted: ReturnType<typeof Promise.withResolvers<{ kind: "queued"; delivery: "follow-up" | "steer" }>>;
+  acceptedSettled: boolean;
   message?: NativeMessage;
   dispatched: boolean;
   cancelled?: string;
@@ -89,12 +95,19 @@ export class NativeSteerAdmission {
   }
 
   async submit(text: string): Promise<OmpSteerReceipt> {
-    return this.#submit(() => this.session.steer(text));
+    return this.start(text, "steer").completion;
   }
 
   /** Queue an ordinary user follow-up and verify its exact native entry. */
   async submitFollowUp(text: string): Promise<OmpSteerReceipt> {
-    return this.#submit(() => this.session.followUp(text, undefined, { expandPromptTemplates: false }));
+    return this.start(text, "follow-up").completion;
+  }
+
+  /** Separate exact native enqueue acknowledgement from durable entry settlement. */
+  start(text: string, delivery: "follow-up" | "steer"): OmpQueuedSubmissionRun {
+    return this.#start(delivery, () => delivery === "steer"
+      ? this.session.steer(text)
+      : this.session.followUp(text, undefined, { expandPromptTemplates: false }));
   }
 
   ownsQueuedMessage(message: NativeMessage): boolean {
@@ -115,9 +128,13 @@ export class NativeSteerAdmission {
     return true;
   }
 
-  async #submit(dispatch: () => Promise<void>): Promise<OmpSteerReceipt> {
-    if (this.#closed) return { kind: "not-recorded", reason: "OMP steer admission is closed" };
-    const pending: Pending = { result: Promise.withResolvers<OmpSteerReceipt>(), dispatched: false, settled: false };
+  #start(delivery: "follow-up" | "steer", dispatch: () => Promise<void>): OmpQueuedSubmissionRun {
+    if (this.#closed) {
+      const failure = Promise.reject(new Error("OMP steer admission is closed"));
+      void failure.catch(() => {});
+      return { accepted: failure, completion: Promise.resolve({ kind: "not-recorded", reason: "OMP steer admission is closed" }) };
+    }
+    const pending: Pending = { result: Promise.withResolvers<OmpSteerReceipt>(), accepted: Promise.withResolvers(), acceptedSettled: false, dispatched: false, settled: false };
     this.#pending.add(pending);
     this.#timer ??= setInterval(() => {
       if (this.session.isStreaming || this.session.hasPostPromptWork) return;
@@ -126,16 +143,19 @@ export class NativeSteerAdmission {
       }
     }, 25);
     this.#timer.unref();
-    try {
-      await this.#scope.run(pending, dispatch);
+    void this.#scope.run(pending, dispatch).then(() => {
       pending.dispatched = true;
-      if (!pending.message) this.#finish(pending, { kind: "not-recorded", reason: "Native steer did not enqueue a user message" });
-    } catch (error) {
+      if (!pending.message) this.#finish(pending, { kind: "not-recorded", reason: "Native submission did not enqueue a user message" });
+      else { pending.acceptedSettled = true; pending.accepted.resolve({ kind: "queued", delivery }); }
+    }, async error => {
       pending.dispatched = true;
+      if (!pending.acceptedSettled) { pending.acceptedSettled = true; pending.accepted.reject(error); }
       if (!pending.message || this.#removeQueued(pending)) this.#finish(pending, { kind: "not-recorded", reason: String(error) });
-      else await this.#check(pending, `Native steer failed after leaving its queue: ${String(error)}`);
-    }
-    return pending.result.promise;
+      else await this.#check(pending, `Native submission failed after leaving its queue: ${String(error)}`);
+    });
+    void pending.accepted.promise.catch(() => {});
+    void pending.result.promise.catch(() => {});
+    return { accepted: pending.accepted.promise, completion: pending.result.promise };
   }
 
   /** Synchronous removal precedes abort/dispose, preventing native auto-resume. */
@@ -203,6 +223,10 @@ export class NativeSteerAdmission {
     this.#pending.delete(pending);
     if (pending.message) this.#messages.delete(pending.message);
     if (!this.#pending.size && this.#timer) { clearInterval(this.#timer); this.#timer = undefined; }
+    if (!pending.acceptedSettled) {
+      pending.acceptedSettled = true;
+      pending.accepted.reject(new Error(receipt.kind === "user-message" ? "Native submission settled before queue acknowledgement" : receipt.reason));
+    }
     pending.result.resolve(receipt);
   }
 }

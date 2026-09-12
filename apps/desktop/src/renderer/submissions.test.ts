@@ -7,7 +7,7 @@ import type { CommandEnvelope, CommandResult, Draft, SessionSummary } from "../.
 import type { LocalEnvironmentPreparationPublic } from "../../../../packages/shared/src/environment-preparations";
 import { detachedAnswerDraft, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { HostStore } from "../../../host/src/store";
-import type { DraftCache } from "./drafts";
+import { DraftController, type DraftCache } from "./drafts";
 import { EnvironmentPreparationPause, SubmissionController } from "./submissions";
 
 const original: Draft = { id: "new-conversation", revision: 7, text: "Original submitted input", projectId: "project-a", model: { provider: "fixture", id: "original" }, thinkingLevel: "low", updatedAt: 10 };
@@ -584,4 +584,104 @@ test('repeated inline file submissions retain exact v9 envelopes across restart'
  const result=await restored.submit({...draft,wholeFileAttachments:[]},session.id,'prompt');
  expect(calls[1]).toEqual(calls[0]);expect(calls[0]).toMatchObject({commandVersion:9,command:{wholeFileAttachments:[{id:'first'},{id:'second'}]}});
  expect(result.submitted.wholeFileAttachments).toHaveLength(2);
+});
+
+test("active-turn retry after a lost response reuses the exact v13 command and original delivery", async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  const first = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); throw new Error("lost response"); }, "host-a", storage);
+  await expect(first.submitActive(original, session.id, "follow-up")).rejects.toThrow("uncertain");
+  const retained = first.queuedEntries()[0]!;
+  expect(retained).toMatchObject({ delivery: "follow-up", send: { commandVersion: 13, command: { type: "session.follow-up", text: original.text, draft: { id: original.id, revision: original.revision } } } });
+
+  const restored = new SubmissionController(async envelope => {
+    calls.push(structuredClone(envelope));
+    return { ok: true, commandId: envelope.id, value: { type: "session.follow-up", receipt: { version: 1, commandId: envelope.id,
+      hostId: "host-a", sessionId: session.id, delivery: "follow-up", phase: "queued", outcome: "pending", revision: 2, createdAt: 1, updatedAt: 2 } } };
+  }, "host-a", storage);
+  const result = await restored.submitActive({ ...original }, session.id, "steer");
+  expect(result.commandId).toBe(retained.send.id);
+  expect(calls[1]).toEqual(calls[0]);
+  expect(restored.queuedEntries()).toHaveLength(1);
+});
+
+test("active-turn settlements clear only the exact command and allow the next captured revision", async () => {
+  const calls: CommandEnvelope[] = [];
+  const controller = new SubmissionController(async envelope => {
+    calls.push(structuredClone(envelope));
+    if (envelope.command.type !== "session.follow-up") throw new Error("fixture command");
+    return { ok: true, commandId: envelope.id, value: { type: "session.follow-up", receipt: { version: 1, commandId: envelope.id,
+      hostId: "host-a", sessionId: session.id, delivery: envelope.command.delivery, phase: "settled", outcome: "succeeded",
+      entryId: `entry-${calls.length}`, revision: 3, createdAt: 1, updatedAt: 3 } } };
+  }, "host-a", cache());
+  const a = await controller.submitActive(original, session.id, "follow-up");
+  const b = await controller.submitActive({ ...original, revision: 8, text: "second captured input" }, session.id, "steer");
+  expect(a.commandId).not.toBe(b.commandId);
+  expect(calls.map(item => item.command)).toMatchObject([
+    { type: "session.follow-up", delivery: "follow-up", text: original.text },
+    { type: "session.follow-up", delivery: "steer", text: "second captured input" },
+  ]);
+  expect(controller.queuedEntries()).toEqual([]);
+});
+
+test("confirmed unrecorded active input remains recoverable while unknown delivery cannot be restored or replayed", async () => {
+  const storage = cache(); let outcome: "not-recorded" | "unknown" = "not-recorded", calls = 0;
+  const controller = new SubmissionController(async envelope => {
+    calls++;
+    if (envelope.command.type !== "session.follow-up") throw new Error("fixture command");
+    return { ok: true, commandId: envelope.id, value: { type: "session.follow-up", receipt: { version: 1, commandId: envelope.id,
+      hostId: "host-a", sessionId: session.id, delivery: envelope.command.delivery, phase: "settled", outcome,
+      message: outcome === "not-recorded" ? "removed before delivery" : "restart boundary", revision: 3, createdAt: 1, updatedAt: 3 } } };
+  }, "host-a", storage);
+  await expect(controller.submitActive(original, session.id, "follow-up")).rejects.toThrow("removed");
+  const retained = controller.queuedEntries()[0]!;
+  expect(() => controller.restoreQueuedSubmission(retained.send.id, () => { throw new Error("draft write failed"); })).toThrow("draft write failed");
+  expect(controller.queuedEntries()).toHaveLength(1);
+  let recovered: Draft | undefined;
+  controller.restoreQueuedSubmission(retained.send.id, draft => { recovered = draft; });
+  expect(recovered).toEqual(original);
+  expect(controller.queuedEntries()).toEqual([]);
+
+  outcome = "unknown";
+  await expect(controller.submitActive({ ...original, revision: 8 }, session.id, "steer")).rejects.toThrow("restart boundary");
+  const unknown = controller.queuedEntries()[0]!;
+  expect(() => controller.restoreQueuedSubmission(unknown.send.id, () => {})).toThrow("confirmed unrecorded");
+  const same = await controller.reconcileQueuedSubmission(unknown.send.id);
+  expect(same.outcome).toBe("unknown"); expect(calls).toBe(3);
+});
+
+test("definite unsupported follow-up rejection releases the retained command without treating it as ambiguous", async () => {
+  const storage = cache();
+  const controller = new SubmissionController(async envelope => ({ ok: false, commandId: envelope.id,
+    error: { code: "FOLLOW_UP_PROTOCOL_UNSUPPORTED", message: "Update the owning host." } }), "host-a", storage);
+  await expect(controller.submitActive({ ...original, id: "draft-active-unsupported", revision: 3, text: "still editable" }, session.id, "follow-up"))
+    .rejects.toThrow("Update the owning host");
+  expect(controller.queuedEntries()).toEqual([]);
+});
+
+test("malformed active-turn receipts retain uncertainty, the draft guard and the original command across restart", async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  const controller = new SubmissionController(async envelope => {
+    calls.push(structuredClone(envelope));
+    return { ok: true, commandId: envelope.id, value: { type: "session.follow-up", receipt: { version: 1 } } } as CommandResult;
+  }, "host-a", storage);
+  const drafts = new DraftController(async () => { throw new Error("unexpected draft write"); }, "host-a");
+  try {
+    drafts.beginPendingSubmission(original);
+    await expect(controller.submitActive(original, session.id, "follow-up")).rejects.toThrow();
+    const pending = controller.queuedEntries()[0]!;
+    expect(pending.uncertain).toBe(true);
+    drafts.finishSubmission(original.id, original, false, pending.uncertain, pending.send.id);
+    await expect(drafts.prepareSubmission(original.id)).rejects.toThrow("confirm consumption");
+    expect(() => controller.restoreQueuedSubmission(pending.send.id, () => {})).toThrow("confirmed unrecorded");
+    const restored = new SubmissionController(async envelope => {
+      calls.push(structuredClone(envelope));
+      return { ok: true, commandId: envelope.id, value: { type: "session.follow-up", receipt: { version: 1, commandId: envelope.id,
+        hostId: "host-a", sessionId: session.id, delivery: "follow-up", phase: "queued", outcome: "pending", revision: 2, createdAt: 1, updatedAt: 2 } } };
+    }, "host-a", storage);
+    expect(restored.queuedEntries()[0]?.uncertain).toBe(true);
+    await restored.submitActive(original, session.id, "steer");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(restored.queuedEntries()[0]?.uncertain).toBe(false);
+  } finally { drafts.dispose(); }
 });

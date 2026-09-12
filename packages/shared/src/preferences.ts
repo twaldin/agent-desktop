@@ -131,6 +131,7 @@ export interface PreferenceValues {
   "general.notifications": NotificationPreferences;
   "general.reduceMotion": boolean;
   "general.sendBehavior": "enter" | "mod-enter";
+  "general.followUpQueueMode": "queue" | "steer";
   "general.bottomPanel": boolean;
   "general.defaultTerminalLocation": "bottom" | "right";
   [key: `sidebar.section.${string}`]: SidebarSectionPreference;
@@ -237,7 +238,7 @@ function background(value: unknown): ThemeBackground {
 
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
-  if (["connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
+  if (["connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
   if (!match || !isPreferenceId(match[1])) return invalid("Only allowlisted app preferences and UUID sidebar entities can be shared.");
   return value as PreferenceKey;
@@ -259,6 +260,7 @@ function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[P
   if (key === "general.reduceMotion" || key === "general.bottomPanel") return bool(value);
   if (key === "general.defaultTerminalLocation") return enumeration(value, ["bottom", "right"] as const);
   if (key === "general.sendBehavior") return enumeration(value, ["enter", "mod-enter"] as const);
+  if (key === "general.followUpQueueMode") return enumeration(value, ["queue", "steer"] as const);
   if (key === "general.notifications") {
     const item = object(value, ["turnComplete", "approvalRequired", "sound", "completionPolicy", "questionRequired"]);
     const policy = item.completionPolicy === undefined ? undefined : enumeration(item.completionPolicy, ["never", "unfocused", "always"] as const);

@@ -1,6 +1,7 @@
 import { hasRemoteExecution, sameNewChatExecution } from "../../../../packages/shared/src/new-chat";
 import { sameEnvironmentSelection } from "../../../../packages/shared/src/environment-selection";
-import type { CommandEnvelope, CommandResult, Draft } from "../../../../packages/shared/src/protocol";
+import type { CommandEnvelope, CommandResult, Draft, FollowUpDelivery, QueuedSubmissionReceipt } from "../../../../packages/shared/src/protocol";
+import { parseQueuedSubmissionReceipt } from "../../../../packages/shared/src/queued-submissions";
 import type { LocalEnvironmentPreparationPublic } from "../../../../packages/shared/src/environment-preparations";
 import { detachedAnswerDraft, parseDetachedQuestionAnswers, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { hasRepeatedWholeFileSources } from "../../../../packages/shared/src/whole-file";
@@ -17,6 +18,14 @@ export interface PendingSubmission {
   send?: CommandEnvelope;
   uncertain: boolean;
 }
+export interface PendingQueuedSubmission {
+  draft: Draft;
+  sessionId: string;
+  delivery: FollowUpDelivery;
+  send: CommandEnvelope & { command: Extract<CommandEnvelope["command"], { type: "session.follow-up" }> };
+  receipt?: QueuedSubmissionReceipt;
+  uncertain: boolean;
+}
 export class EnvironmentPreparationPause extends Error {
   readonly code = "ENVIRONMENT_PREPARATION_PAUSED" as const;
   constructor(readonly preparation: LocalEnvironmentPreparationPublic) {
@@ -31,12 +40,15 @@ const sameDraftReference = (value: { id: string; revision: number } | undefined,
 /** Persist envelopes before delivery so an explicit retry uses the original command identity. */
 export class SubmissionController {
   private pending: Record<string, PendingSubmission> = {};
+  private queued: Record<string, PendingQueuedSubmission> = {};
   private flights = new Map<string, Promise<unknown>>();
   private listeners = new Set<() => void>();
   readonly cacheKey: string;
+  readonly queuedCacheKey: string;
   cacheWarning: string | undefined;
   constructor(private command: (envelope: CommandEnvelope) => Promise<CommandResult>, private hostId: string, private cache?: DraftCache) {
     this.cacheKey = `agent-desktop:submissions:v1:${hostId}`;
+    this.queuedCacheKey = `agent-desktop:queued-submissions:v1:${hostId}`;
     try {
       const cached = JSON.parse(cache?.read(this.cacheKey) ?? "{}");
       for (const [id, value] of Object.entries(cached)) {
@@ -88,13 +100,116 @@ export class SubmissionController {
         }
       }
     } catch { this.cacheWarning = "Pending submission storage could not be read. Check conversation history before resending an earlier prompt."; }
+    try {
+      const cached = JSON.parse(cache?.read(this.queuedCacheKey) ?? "{}");
+      for (const [id, value] of Object.entries(cached)) {
+        const item = value as PendingQueuedSubmission;
+        if (!item || item.send?.id !== id || item.send.commandVersion !== 13 || item.send.command.type !== "session.follow-up"
+          || item.send.command.sessionId !== item.sessionId || item.send.command.delivery !== item.delivery
+          || item.send.command.draft.id !== item.draft?.id || item.send.command.draft.revision !== item.draft.revision
+          || item.send.command.text !== item.draft.text) throw new Error("Invalid queued submission cache");
+        const receipt = item.receipt === undefined ? undefined : parseQueuedSubmissionReceipt(item.receipt);
+        if (receipt && (receipt.commandId !== id || receipt.hostId !== hostId || receipt.sessionId !== item.sessionId || receipt.delivery !== item.delivery))
+          throw new Error("Queued submission receipt owner changed");
+        this.queued[id] = { ...structuredClone(item), draft: captureDraft(item.draft, hostId), receipt, uncertain: Boolean(item.uncertain) };
+      }
+    } catch { this.cacheWarning = "Queued submission storage could not be read. Inspect the conversation before resending an active-turn message."; }
   }
   get(id: string) { return this.pending[id] ? structuredClone(this.pending[id]) : undefined; }
   entries() { return Object.values(this.pending).map(item => structuredClone(item)); }
+  queuedEntries() { return Object.values(this.queued).map(item => structuredClone(item)); }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private save() {
     this.cache?.write(this.cacheKey, JSON.stringify(this.pending));
     for (const listener of this.listeners) listener();
+  }
+  private saveQueued() {
+    this.cache?.write(this.queuedCacheKey, JSON.stringify(this.queued));
+    for (const listener of this.listeners) listener();
+  }
+
+  submitActive(snapshot: Draft, sessionId: string, delivery: FollowUpDelivery,
+    onSendCommand?: (submitted: Draft, commandId: string) => void) {
+    return this.exclusive(snapshot.id, () => this.submitActiveExclusive(snapshot, sessionId, delivery, onSendCommand));
+  }
+
+  private async submitActiveExclusive(snapshot: Draft, sessionId: string, delivery: FollowUpDelivery,
+    onSendCommand?: (submitted: Draft, commandId: string) => void) {
+    const captured = captureDraft(snapshot, this.hostId);
+    if (captured.attachments?.length || captured.selectedTextAttachments?.length || captured.wholeFileAttachments?.length)
+      throw new Error("Attached content cannot be sent during an active turn yet. The draft was retained.");
+    const retained = Object.values(this.queued).find(item => item.sessionId === sessionId
+      && item.draft.id === captured.id && item.draft.revision === captured.revision && item.draft.text === captured.text);
+    if (retained) {
+      const receipt = await this.exclusive(retained.send.id, () => this.inspectQueued(retained));
+      if (receipt.phase === "queued" || receipt.outcome === "succeeded")
+        return { sessionId, submitted: captureDraft(retained.draft, this.hostId), commandId: retained.send.id, receipt };
+      throw new Error(receipt.message ?? "The original active-turn message was not queued. Its draft was retained.");
+    }
+    const id = crypto.randomUUID();
+    const send = { id, commandVersion: 13 as const, command: { type: "session.follow-up" as const, sessionId,
+      text: captured.text, delivery, approvalMode: captured.approvalMode, draft: { id: captured.id, revision: captured.revision } } };
+    const item: PendingQueuedSubmission = { draft: captured, sessionId, delivery, send, uncertain: false };
+    this.queued[id] = item;
+    this.saveQueued();
+    onSendCommand?.(captureDraft(captured, this.hostId), id);
+    const receipt = await this.exclusive(item.send.id, () => this.inspectQueued(item));
+    if (receipt.phase === "queued" || receipt.outcome === "succeeded")
+      return { sessionId, submitted: captureDraft(captured, this.hostId), commandId: id, receipt };
+    throw new Error(receipt.message ?? "The active-turn message was not queued. Its draft was retained.");
+  }
+
+  async reconcileQueuedSubmissions(): Promise<void> {
+    await Promise.all(Object.values(this.queued).map(item => this.exclusive(item.send.id, async () => { await this.inspectQueued(item); })));
+  }
+
+  reconcileQueuedSubmission(id: string): Promise<QueuedSubmissionReceipt> {
+    const item = this.queued[id];
+    if (!item) return Promise.reject(new Error("The queued submission is no longer pending review."));
+    return this.exclusive(item.send.id, () => this.inspectQueued(item));
+  }
+
+  restoreQueuedSubmission(id: string, restore: (draft: Draft) => void): void {
+    const item = this.queued[id];
+    if (!item || item.receipt?.outcome !== "not-recorded") throw new Error("Only a confirmed unrecorded message can be restored safely.");
+    const draft = captureDraft(item.draft, this.hostId);
+    restore(draft);
+    delete this.queued[id]; this.saveQueued();
+  }
+
+  private async inspectQueued(item: PendingQueuedSubmission): Promise<QueuedSubmissionReceipt> {
+    let result: CommandResult;
+    try { result = await this.command(structuredClone(item.send)); }
+    catch (cause) {
+      item.uncertain = true; this.saveQueued();
+      throw new Error(`Queued delivery is uncertain. Retry checks command ${item.send.id} without sending another copy. ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+    if (result.commandId !== item.send.id) {
+      item.uncertain = true; this.saveQueued();
+      throw new Error("The host returned a different queued-submission command identity.");
+    }
+    if (!result.ok) {
+      if (["OUTCOME_UNKNOWN", "HOST_STOPPING", "COMMAND_ID_REUSED"].includes(result.error.code)) item.uncertain = true;
+      else delete this.queued[item.send.id];
+      this.saveQueued();
+      throw new Error(result.error.message);
+    }
+    if (!result.value || !("type" in result.value) || result.value.type !== "session.follow-up") {
+      item.uncertain = true; this.saveQueued();
+      throw new Error("The host returned a different queued-submission receipt.");
+    }
+    let receipt: QueuedSubmissionReceipt;
+    try { receipt = parseQueuedSubmissionReceipt(result.value.receipt); }
+    catch (cause) { item.uncertain = true; this.saveQueued(); throw cause; }
+    if (receipt.commandId !== item.send.id || receipt.hostId !== this.hostId || receipt.sessionId !== item.sessionId || receipt.delivery !== item.delivery) {
+      item.uncertain = true; this.saveQueued();
+      throw new Error("The queued-submission receipt belongs to a different command or owner.");
+    }
+    item.receipt = receipt;
+    item.uncertain = receipt.outcome === "unknown";
+    if (receipt.outcome === "succeeded") delete this.queued[item.send.id];
+    this.saveQueued();
+    return receipt;
   }
   private async deliver(item: PendingSubmission, phase: "create" | "resume" | "send") {
     const envelope = item[phase];

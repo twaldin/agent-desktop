@@ -29,6 +29,7 @@ import { parseNewChatExecution, hasRemoteExecution, hasRemoteStartingState } fro
 import { hasNewChatIntent, hasRemoteWorktreeIntent } from './new-chat-protocol';
 import { hasEnvironmentIntent } from './environment-protocol';
 import { parseEnvironmentSelection } from '../../../packages/shared/src/environment-selection';
+import type { QueuedSubmissionReceipt } from '../../../packages/shared/src/queued-submissions';
 import {
   initializeLocalEnvironmentPreparations,
   LocalEnvironmentPreparations,
@@ -197,6 +198,7 @@ export class HostStore {
       this.getDeviceAccessPolicy(); // Refuse corrupt or missing restrictions before serving any connection.
       this.recoverInterruptedSessions();
       this.recoverInterruptedGitSubmissions();
+      this.recoverInterruptedQueuedSubmissions();
       this.environmentPreparationStore.reconcileInterrupted();
     } catch (error) {
       this.db.close();
@@ -482,6 +484,11 @@ export class HostStore {
       if (command && hasRemoteWorktreeIntent(command)) this.requireRemoteStartingVersion();
       if (command && hasEnvironmentIntent(command)) this.requireVersion(5);
       if (command?.type === "workspace.mutate" && command.action.type === "git.submit") this.requireVersion(12);
+      if (command?.type === "session.follow-up") {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(13);
+      }
       const now = Date.now();
       const record: CommandRecord = {
         id, requestHash, ...(command === undefined ? {} : { command }),
@@ -518,6 +525,56 @@ export class HostStore {
       this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify(finished), id);
       return finished;
     }).immediate();
+  }
+
+  beginQueuedSubmission(id: string, requestHash: string): QueuedSubmissionReceipt {
+    return this.db.transaction(() => {
+      const record = this.getCommand(id);
+      if (!record || record.requestHash !== requestHash || record.command?.type !== "session.follow-up")
+        throw new Error("Queued submission requires its retained command.");
+      const existing = this.queuedSubmissionReceipt(record);
+      if (existing) return existing;
+      if (record.state !== "pending") throw new Error("Queued submission command is already finished without a receipt.");
+      const now = Date.now();
+      const receipt: QueuedSubmissionReceipt = { version: 1, commandId: id, hostId: this.host.id,
+        sessionId: record.command.sessionId, delivery: record.command.delivery, phase: "admitting", outcome: "pending",
+        revision: 1, createdAt: now, updatedAt: now };
+      const next: CommandRecord = { ...record, state: "done", result: { ok: true, commandId: id,
+        value: { type: "session.follow-up", receipt } }, updatedAt: now };
+      this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify(next), id);
+      return receipt;
+    }).immediate();
+  }
+
+  advanceQueuedSubmission(id: string, requestHash: string, update:
+    | { phase: "queued" }
+    | { phase: "settled"; outcome: "succeeded"; entryId: string }
+    | { phase: "settled"; outcome: "not-recorded" | "unknown"; message: string }): QueuedSubmissionReceipt {
+    return this.db.transaction(() => {
+      const record = this.getCommand(id);
+      if (!record || record.requestHash !== requestHash || record.command?.type !== "session.follow-up")
+        throw new Error("Queued submission owner changed.");
+      const current = this.queuedSubmissionReceipt(record);
+      if (!current) throw new Error("Queued submission has no durable admission receipt.");
+      if (current.phase === "settled") return current;
+      if (update.phase === "queued" && current.phase !== "admitting") return current;
+      const now = Date.now();
+      const receipt: QueuedSubmissionReceipt = { ...current, phase: update.phase,
+        outcome: update.phase === "queued" ? "pending" : update.outcome,
+        revision: current.revision + 1, updatedAt: now,
+        ...(update.phase === "settled" && update.outcome === "succeeded" ? { entryId: update.entryId } : {}),
+        ...(update.phase === "settled" && update.outcome !== "succeeded" ? { message: update.message.slice(0, 4096) } : {}) };
+      if (update.phase === "queued" || update.outcome === "succeeded") this.consumeDraft(record.command.draft, id);
+      const next: CommandRecord = { ...record, state: "done", result: { ok: true, commandId: id,
+        value: { type: "session.follow-up", receipt } }, updatedAt: now };
+      this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify(next), id);
+      return receipt;
+    }).immediate();
+  }
+
+  getQueuedSubmission(id: string): QueuedSubmissionReceipt | undefined {
+    const record = this.getCommand(id);
+    return record ? this.queuedSubmissionReceipt(record) : undefined;
   }
 
   beginGitSubmission(id: string, requestHash: string): GitSubmissionReceipt {
@@ -843,6 +900,30 @@ export class HostStore {
         this.finishCommand(command.id, command.requestHash, { ok: true, commandId: command.id, value: { type: "git.submit", receipt } });
       }
     }).immediate();
+  }
+
+  private recoverInterruptedQueuedSubmissions(): void {
+    this.db.transaction(() => {
+      for (const { data } of this.db.query<JsonRow, []>("SELECT data FROM commands").all()) {
+        const record = JSON.parse(data) as CommandRecord;
+        if (record.command?.type !== "session.follow-up") continue;
+        const receipt = this.queuedSubmissionReceipt(record);
+        if (receipt && receipt.outcome !== "pending") continue;
+        const now = Date.now();
+        const recovered: QueuedSubmissionReceipt = { version: 1, commandId: record.id, hostId: this.host.id,
+          sessionId: record.command.sessionId, delivery: record.command.delivery, phase: "settled", outcome: "unknown",
+          revision: (receipt?.revision ?? 0) + 1, createdAt: receipt?.createdAt ?? record.createdAt, updatedAt: now,
+          message: "The host restarted before this queued submission reached a verified native entry. Retry checks this original command and never enqueues it again." };
+        const next: CommandRecord = { ...record, state: "done", updatedAt: now,
+          result: { ok: true, commandId: record.id, value: { type: "session.follow-up", receipt: recovered } } };
+        this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify(next), record.id);
+      }
+    }).immediate();
+  }
+
+  private queuedSubmissionReceipt(record: CommandRecord): QueuedSubmissionReceipt | undefined {
+    const value = record.result?.ok ? record.result.value : undefined;
+    return value && "type" in value && value.type === "session.follow-up" ? value.receipt : undefined;
   }
 
   private gitSubmissionTarget(target: WorkspaceTarget): GitSubmissionTarget {

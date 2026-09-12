@@ -97,7 +97,7 @@ interface Pending {
   reject(error: unknown): void;
   timeout?: ReturnType<typeof setTimeout>;
   onProgress?: (message: string) => void;
-  uncertainTransport?: "prompt-admission" | "question-resolution" | "mcp-authorization";
+  uncertainTransport?: "prompt-admission" | "queued-submission" | "question-resolution" | "mcp-authorization";
   evaluationDisposal?: boolean;
   evaluation?: { binding: BrowserEvaluationBinding; sequence: number };
 }
@@ -196,6 +196,7 @@ export class WorkerClient {
     if (pending?.evaluation) return Object.assign(new Error("Original cmux request delivery is unknown; do not replay the operation.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
     if (pending?.uncertainTransport === "mcp-authorization") return Object.assign(new Error("MCP authorization delivery is unknown. Inspect its current state before acting again."), {code:"OUTCOME_UNKNOWN"});
     if (pending?.uncertainTransport === "prompt-admission") return new OmpPromptAdmissionError(error);
+    if (pending?.uncertainTransport === "queued-submission") return Object.assign(new Error("Queued submission delivery is unknown. Inspect its durable receipt before retrying.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
     if (pending?.uncertainTransport === "question-resolution") return new DetachedQuestionOutcomeUnknown(error);
     return error;
   }
@@ -397,6 +398,24 @@ export class WorkerClient {
         const pending = this.#pending.get(key);
         pending?.reject(this.#transportFailure(pending, error));
         this.#pending.delete(key);
+      }
+    }
+    return { accepted, completion };
+  }
+
+  startFollowUp(text: string, delivery: import("@agent-desktop/shared").FollowUpDelivery,
+    expectedApprovalMode?: import("@agent-desktop/shared").OmpApprovalMode): import("../omp/steer").OmpQueuedSubmissionRun {
+    if (this.failure) throw new WorkerFailureError(this.failure);
+    if (this.#closing) throw new Error("OMP worker is closing");
+    if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
+    const id = String(++this.#requestId);
+    const accepted = this.#promise<{ kind: "queued"; delivery: import("@agent-desktop/shared").FollowUpDelivery }>(`${id}:accepted`, undefined, "queued-submission");
+    const completion = this.#promise<import("../omp/steer").OmpSteerReceipt>(`${id}:completion`);
+    try { this.#send({ type: "request", id, operation: "startFollowUp", args: { text, delivery, expectedApprovalMode } }); }
+    catch (error) {
+      for (const phase of ["accepted", "completion"] as const) {
+        const key = `${id}:${phase}`, pending = this.#pending.get(key);
+        pending?.reject(this.#transportFailure(pending, error)); this.#pending.delete(key);
       }
     }
     return { accepted, completion };
@@ -701,6 +720,7 @@ export class WorkerRuntime {
         if (options?.images?.length) return Promise.reject(new Error("Image attachments are not supported on steering input yet; no input was queued"));
         return client.request({ operation: "steer", args: { text, expectedApprovalMode, options } });
       },
+      startFollowUp: (text, delivery, expectedApprovalMode) => client.startFollowUp(text, delivery, expectedApprovalMode),
       getQueuedMessages: () => client.request({ operation: "getQueuedMessages" }),
       mutateQueuedMessages: mutation => client.request({ operation: "mutateQueuedMessages", args: { mutation } }),
       abort: () => client.request({ operation: "abort" }),

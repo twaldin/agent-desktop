@@ -32,7 +32,7 @@ import { projectWholeFiles } from "./whole-file-history";
 import { hasRepeatedWholeFileSources, serializeRepeatedWholeFilePrompt, serializeWholeFilePrompt } from "@agent-desktop/shared";
 import { discoverComposerActions, discoverSkillInventory, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions, type NativeSkillInventoryCatalog } from "./composer-actions";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
-import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
+import { NativeSteerAdmission, type OmpQueuedSubmissionRun, type OmpSteerReceipt } from "./steer";
 import { NativeQueuedMessages } from "./queued-messages";
 import type { NativeQueuedMessageMutation, NativeQueuedMessageMutationReceipt, NativeQueuedMessagesSnapshot } from "../../../../packages/shared/src/queued-messages";
 import { createNativeAccountSelectionBridge } from "../omp-accounts/session-selection";
@@ -116,6 +116,7 @@ export interface OmpSession {
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
   steer(text: string, expectedApprovalMode?: OmpApprovalMode, options?: { images?: PreparedPromptImage[] }): Promise<OmpSteerReceipt>;
+  startFollowUp(text: string, delivery: "follow-up" | "steer", expectedApprovalMode?: OmpApprovalMode): OmpQueuedSubmissionRun;
   getQueuedMessages(): NativeQueuedMessagesSnapshot;
   mutateQueuedMessages(mutation: NativeQueuedMessageMutation): NativeQueuedMessageMutationReceipt;
   abort(): Promise<void>;
@@ -944,6 +945,14 @@ export class OmpRuntime {
           if (interruptsInFlight || !session.isStreaming) return { kind: "not-recorded", reason: "There is no running native turn accepting steering input" };
           if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode")) return { kind: "not-recorded", reason: "The running turn uses a different native permission mode. Stop it before changing permissions." };
           return steering.submit(text);
+        },
+        startFollowUp: (text, delivery, expectedApprovalMode) => {
+          assertSessionActive();
+          if (admissionPending || mcpMutation) throw new Error("OMP is still accepting a prompt or reloading MCP servers");
+          if (interruptsInFlight || !session.isStreaming) throw new Error("There is no running native turn accepting a follow-up");
+          if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode"))
+            throw new Error("The running turn uses a different native permission mode. Stop it before changing permissions.");
+          return steering.start(text, delivery);
         },
         getQueuedMessages: () => { assertSessionActive(); return queuedMessages.snapshot(); },
         mutateQueuedMessages: mutation => { assertSessionActive(); return queuedMessages.mutate(mutation); },

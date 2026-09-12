@@ -394,6 +394,14 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
       }
       case "steer": respond(true, await requireSession().steer(message.args.text, message.args.expectedApprovalMode, message.args.options)); break;
+      case "startFollowUp": {
+        const run = requireSession().startFollowUp(message.args.text, message.args.delivery, message.args.expectedApprovalMode);
+        await Promise.all([
+          run.accepted.then(value => respond(true, value, undefined, "accepted"), error => respond(false, undefined, error, "accepted")),
+          run.completion.then(value => respond(true, value, undefined, "completion"), error => respond(false, undefined, error, "completion")),
+        ]);
+        break;
+      }
       case "getQueuedMessages": respond(true, requireSession().getQueuedMessages()); break;
       case "mutateQueuedMessages": respond(true, requireSession().mutateQueuedMessages(message.args.mutation)); break;
       case "abort": await requireSession().abort(); respond(true); break;
@@ -425,7 +433,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
     }
   } catch (error) {
-    if (message.operation === "startPrompt" || message.operation === "startGoalContinuation" || message.operation === "startQuestionDelivery") {
+    if (message.operation === "startPrompt" || message.operation === "startGoalContinuation" || message.operation === "startQuestionDelivery" || message.operation === "startFollowUp") {
       respond(false, undefined, error, "accepted");
       respond(false, undefined, error, "completion");
     } else respond(false, undefined, error);
