@@ -90,11 +90,31 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
   };
   try {
     await wait(value => value.label === "Edit symbol-source.ts");
+    // A retained target misses the first-render focus race. Close the clean
+    // disposable target, and require its actual editor to be unmounted.
+    const targetClose = await page.evaluate(() => {
+      const button = document.querySelector<HTMLElement>('button[aria-label="Close symbol-target.ts tab"]');
+      if (!button) return null;
+      const rect = button.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    });
+    if (targetClose) await page.mouse.click(targetClose.x, targetClose.y);
+    await page.waitForFunction(() => ![...document.querySelectorAll('.pierre-source-editor-frame[data-symbol-owner]')]
+      .some(frame => frame.querySelector('diffs-container')?.shadowRoot?.querySelector('[aria-label="Edit symbol-target.ts"]')));
     await goTo(2, 3); const origin = await snapshot();
     if (!origin.selection.anchor || !origin.selection.focus) throw new Error("The real native cursor could not be observed.");
     await click("Go to definition");
     await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "first");
     await capture("01-definition"); checks.push("Real compiler request opens imported declaration in the actual App/Pierre editor.");
+    // Let Chromium deliver the queued render/focus/selection events. An initial
+    // correct selection is insufficient if the next paint collapses it.
+    for (let frame = 0; frame < 8; frame++) {
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+      const selected = await snapshot();
+      if (selected.label !== "Edit symbol-target.ts" || selected.selection.text !== "first")
+        throw new Error("First-mounted symbol selection collapsed after render: " + JSON.stringify(selected.selection));
+    }
+    checks.push("First-mounted declaration selection survives queued editor focus and selection events.");
     await click("Back to symbol");
     await wait(value => value.label === "Edit symbol-source.ts" && !value.buttons.find(button => button.text === "Forward to symbol")?.disabled && JSON.stringify(value.selection) === JSON.stringify(origin.selection));
     checks.push("Back restores the exact original native cursor and selection.");
