@@ -1,6 +1,7 @@
 import { mcpViewerExtension, parseNativeMcpAppDescriptor, parseNativeMcpAppSource, type McpArtifact, type NativeMcpAppDescriptor, type NativeMcpAppSource, type NativeSessionMcpSnapshot, type NativeMcpFileViewer } from "@agent-desktop/shared";
 import { dockTabId, type DockTab } from "./dock-state";
-export interface McpDockApp extends NativeMcpAppDescriptor { instanceId: string; serverName: string; source?: NativeMcpAppSource; directory?: { projectId: string | null; cwd: string } }
+export interface McpDockDirectory { projectId: string | null; cwd: string }
+export interface McpDockApp extends NativeMcpAppDescriptor { instanceId: string; serverName: string; source?: NativeMcpAppSource; directory?: McpDockDirectory }
 export function parseMcpDockApp(value: unknown): McpDockApp {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid saved MCP app.");
   const { instanceId, serverName, source, directory, ...descriptor } = value as Record<string, unknown>;
@@ -48,13 +49,13 @@ export function mcpFileViewerDockTab(hostId: string, sessionId: string, path: st
   return tab;
 }
 
-export function mcpDirectoryAppDockTab(hostId: string, directory: { projectId: string | null; cwd: string }, app: NativeMcpAppDescriptor, serverName: string): DockTab {
+export function mcpDirectoryAppDockTab(hostId: string, directory: McpDockDirectory, app: NativeMcpAppDescriptor, serverName: string): DockTab {
   const mcpApp = parseMcpDockApp({ ...app, serverName, directory, instanceId: crypto.randomUUID() });
   const value = { kind: "mcp-app" as const, hostId, target: directory.projectId === null ? "host" as const : `project:${directory.projectId}` as const, title: app.title, mcpApp };
   return { ...value, id: dockTabId(value) };
 }
 
-export function mcpDirectoryFileViewerDockTab(hostId: string, directory: { projectId: string | null; cwd: string }, path: string, viewer: NativeMcpFileViewer, serverName: string): DockTab {
+export function mcpDirectoryFileViewerDockTab(hostId: string, directory: McpDockDirectory, path: string, viewer: NativeMcpFileViewer, serverName: string): DockTab {
   const { extensions: _extensions, ...app } = viewer;
   const tab = mcpDirectoryAppDockTab(hostId, directory, { ...app, title: path.split("/").at(-1)! }, serverName);
   tab.mcpApp = parseMcpDockApp({ ...tab.mcpApp, source: { type: "file", path, resourceUri: `codex-resource://${crypto.randomUUID()}` } });

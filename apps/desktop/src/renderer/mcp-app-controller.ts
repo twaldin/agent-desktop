@@ -73,25 +73,26 @@ export class McpAppController {
     return operation.initialResult ??= this.request("tools/call", { name: this.app.toolName, arguments: operation.initialArguments ?? {} });
   }
   initialArguments(): Record<string, McpJson> | undefined { return this.#operation?.initialArguments ?? (this.app.source?.type === "artifact" ? undefined : {}); }
-  async request(method: Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: Record<string, McpJson>): Promise<Record<string, McpJson>> {
+  async #dispatch<Result>(requestForChannel: (channelId: string) => Extract<NativeMcpAppRequest, { type: "request" | "events" }>, accept: (response: NativeMcpAppResponse) => Result): Promise<Result> {
     const operation = this.#operation;
     if (!operation) throw new Error("Open the MCP app first.");
     this.#current(operation); await operation.opening; this.#current(operation);
-    const request = { type: "request" as const, channelId: operation.id, requestId: crypto.randomUUID(), method, params };
+    const request = requestForChannel(operation.id);
     const response = parseNativeMcpAppResponse(await this.#request(request), request);
     this.#current(operation);
-    if (response.type !== "result") throw new Error("Invalid MCP app response.");
-    return response.value;
+    return accept(response);
   }
-  async events(after: number): Promise<Extract<NativeMcpAppResponse, { type: "events" }>> {
-    const operation = this.#operation;
-    if (!operation) throw new Error("Open the MCP app first.");
-    this.#current(operation); await operation.opening; this.#current(operation);
-    const request = { type: "events" as const, channelId: operation.id, after };
-    const response = parseNativeMcpAppResponse(await this.#request(request), request);
-    this.#current(operation);
-    if (response.type !== "events") throw new Error("Invalid MCP resource events.");
-    return response;
+  request(method: Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: Record<string, McpJson>): Promise<Record<string, McpJson>> {
+    return this.#dispatch(channelId => ({ type: "request", channelId, requestId: crypto.randomUUID(), method, params }), response => {
+      if (response.type !== "result") throw new Error("Invalid MCP app response.");
+      return response.value;
+    });
+  }
+  events(after: number): Promise<Extract<NativeMcpAppResponse, { type: "events" }>> {
+    return this.#dispatch(channelId => ({ type: "events", channelId, after }), response => {
+      if (response.type !== "events") throw new Error("Invalid MCP resource events.");
+      return response;
+    });
   }
   async close(): Promise<void> {
     const operation = this.#operation;

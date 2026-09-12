@@ -18,9 +18,9 @@ export class McpOwnerWindow {
   #retired = false;
   #drain?: Promise<void>;
   constructor(private readonly options: { current(): boolean; connect(hostId: string): Promise<HostEndpoint>; request(endpoint: HostEndpoint, request: McpOwnerRequest): Promise<McpOwnerResult> }) {}
-  #current(): void { if (this.#retired || !this.options.current()) throw new Error("The original MCP document is no longer available."); }
+  #assertCurrent(): void { if (this.#retired || !this.options.current()) throw new Error("The original MCP document is no longer available."); }
   dispatch(hostId: string, raw: McpOwnerRequest): Promise<McpOwnerResult> {
-    const request = parseMcpOwnerRequest(raw); this.#current();
+    const request = parseMcpOwnerRequest(raw); this.#assertCurrent();
     if (!hostId || hostId.length > 200 || /[\0-\x1f\x7f]/.test(hostId)) throw new Error("Invalid MCP host.");
     const existing = this.#owners.get(request.ownerId);
     if (existing && existing.hostId !== hostId) throw new Error("MCP owner belongs to another host.");
@@ -34,11 +34,11 @@ export class McpOwnerWindow {
       const owner = { hostId, acquisition: request, sent: false, retired: false } as Owner;
       this.#owners.set(request.ownerId, owner);
       owner.ready = Promise.resolve().then(async () => {
-        this.#current();
-        const endpoint = await this.options.connect(hostId); this.#current();
+        this.#assertCurrent();
+        const endpoint = await this.options.connect(hostId); this.#assertCurrent();
         if (owner.retired || endpoint.hostId !== hostId) throw new Error("The original MCP acquisition was cancelled.");
         owner.endpoint = { ...endpoint }; owner.sent = true;
-        const result = await this.options.request(owner.endpoint, request); this.#current();
+        const result = await this.options.request(owner.endpoint, request); this.#assertCurrent();
         if (owner.retired) throw new Error("The original MCP acquisition was cancelled.");
         return result;
       });
@@ -63,9 +63,9 @@ export class McpOwnerWindow {
       return this.#close(existing);
     }
     return (async () => {
-      const snapshot = await existing.ready; this.#current();
+      const snapshot = await existing.ready; this.#assertCurrent();
       if (existing.retired || !existing.endpoint || !("epoch" in snapshot) || snapshot.epoch !== request.epoch) throw new Error("The original MCP owner has retired.");
-      const value = await this.options.request(existing.endpoint, request); this.#current();
+      const value = await this.options.request(existing.endpoint, request); this.#assertCurrent();
       if (existing.retired) throw new Error("The original MCP owner has retired.");
       return value;
     })();

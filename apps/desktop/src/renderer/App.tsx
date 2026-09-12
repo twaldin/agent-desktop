@@ -994,9 +994,7 @@ export function App() {
     const owner = directoryOwner(ownerHost, projectId), snapshot = owner?.snapshot;
     const selectedViewer = mcpFileViewerForPath(snapshot?.catalogue, path);
     if (!owner || !snapshot || !selectedViewer || committedArtifactOwner.current.hostId !== ownerHost) return false;
-    const current = (presentations = committedArtifactOwner.current.presentations) => owner.current()
-      && owner.snapshot?.ownerId === snapshot.ownerId && owner.snapshot.epoch === snapshot.epoch
-      && owner.snapshot.catalogue.epoch === snapshot.catalogue.epoch && owner.snapshot.catalogue.revision === snapshot.catalogue.revision
+    const current = (presentations = committedArtifactOwner.current.presentations) => owner.isCurrentSnapshot(snapshot)
       && committedArtifactOwner.current.enabled && committedArtifactOwner.current.hostId === ownerHost && isCurrentDockPresentation(presentations, origin);
     if (!current()) return true;
     const tab = mcpDirectoryFileViewerDockTab(ownerHost, { projectId, cwd: snapshot.cwd }, path, selectedViewer.viewer, selectedViewer.serverName);
@@ -1025,8 +1023,7 @@ export function App() {
   const directoryAppEntries: DockAddAction[] = !directoryMcp ? [] : directoryMcp.current() && directoryMcp.snapshot?.catalogue.canOpenApps
     ? directoryMcp.snapshot.catalogue.servers.flatMap(server => server.status !== "connected" ? [] : (server.apps ?? []).map(app => {
       const owner = directoryMcp, snapshot = owner.snapshot!, catalogue = snapshot.catalogue;
-      const current = () => owner.current() && owner.snapshot?.ownerId === snapshot.ownerId && owner.snapshot?.epoch === snapshot.epoch
-        && owner.snapshot?.catalogue.epoch === catalogue.epoch && owner.snapshot?.catalogue.revision === catalogue.revision;
+      const current = () => owner.isCurrentSnapshot(snapshot);
       const create = () => ({ ...mcpDirectoryAppDockTab(hostId, { projectId: snapshot.projectId, cwd: snapshot.cwd }, app, server.name),
         mcpAppSelection: { epoch: catalogue.epoch, expectedRevision: catalogue.revision, serverName: server.name, toolName: app.toolName, resourceUri: app.resourceUri } });
       return { id: mcpAppActionId(hostId, `directory:${snapshot.cwd}`, server.name, app.toolName), label: app.title, icon: "compose" as const,

@@ -30,7 +30,7 @@ export class NativeMcpOwner {
   readonly #manager: MCPManager;
   readonly #ui: OmpInteractionBridge;
   readonly #epoch = crypto.randomUUID();
-  readonly #failures = new Set<string>();
+  readonly #failedServers = new Set<string>();
   readonly #ready: Promise<void>;
   #directory?: { device: bigint; inode: bigint };
   #runner?: ExtensionRunner;
@@ -128,10 +128,10 @@ export class NativeMcpOwner {
       // This owner has no replacement Exa/browser tools; retain configured servers.
       filterExa: false, filterBrowser: false,
       extensionRoots: { mode: "merge", explicit: [], configured: settings.get("extensions") ?? [], configuredLevel: settings.extensionsSourceLevel() },
-      onStatus: event => { if (event.type === "failed") this.#failures.add(event.serverName); },
+      onStatus: event => { if (event.type === "failed") this.#failedServers.add(event.serverName); },
     });
     this.#current();
-    for (const [serverName] of discovery.errors) this.#failures.add(serverName);
+    for (const [serverName] of discovery.errors) this.#failedServers.add(serverName);
     const files = new McpFileResources(cwd);
     this.#apps = new NativeMcpApps({ manager: this.#manager, snapshot: () => this.read(), assertOwner: () => this.#current(),
       filePath: source => path.join(cwd, source.path), fileResource: (...args) => files.request(...args), watchFile: (...args) => files.watch(...args),
@@ -143,8 +143,8 @@ export class NativeMcpOwner {
     this.#current();
     if (this.#initializationFailure !== undefined) throw this.#initializationFailure;
     if (!this.#apps) return { epoch: this.#epoch, revision: this.#revision, available: false, reason: "Connecting native apps…", servers: [] };
-    for (const name of this.#failures) if (this.#manager.getConnectionStatus(name) === "connected") this.#failures.delete(name);
-    const value = { available: true, canOpenApps: true, canReadResources: true, servers: collectMcpServers(this.#manager, this.#failures, true) };
+    for (const name of this.#failedServers) if (this.#manager.getConnectionStatus(name) === "connected") this.#failedServers.delete(name);
+    const value = { available: true, canOpenApps: true, canReadResources: true, servers: collectMcpServers(this.#manager, this.#failedServers, true) };
     const fingerprint = JSON.stringify(value);
     if (Buffer.byteLength(fingerprint) > 2 * 1024 * 1024) throw new Error("Native MCP owner catalogue exceeds its limit.");
     if (fingerprint !== this.#fingerprint) { this.#fingerprint = fingerprint; this.#revision++; }
