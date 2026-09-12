@@ -7,17 +7,20 @@ import { build } from "vite";
 const root = resolve(import.meta.dir, "../.."), output = resolve(process.argv[2] ?? `.data/composer-ui-acceptance/${Date.now()}`);
 await mkdir(output, { recursive: true, mode: 0o700 });
 const profile = await mkdtemp(join(tmpdir(), "agent-composer-ui-"));
-const sources = ["apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/Transcript.tsx", "apps/desktop/src/renderer/transcript.css", "apps/desktop/src/renderer/ComposerAutocomplete.tsx", "apps/desktop/src/renderer/composer-autocomplete.ts", "apps/desktop/src/renderer/composer-autocomplete.css", "scripts/acceptance/composer-ui-browser.tsx", "apps/desktop/src/renderer/styles.css"];
+const sources = ["apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/Transcript.tsx", "apps/desktop/src/renderer/transcript.css", "apps/desktop/src/renderer/ComposerEditor.tsx", "apps/desktop/src/renderer/composer-editor.css", "apps/desktop/src/renderer/ComposerAutocomplete.tsx", "apps/desktop/src/renderer/composer-autocomplete.ts", "apps/desktop/src/renderer/composer-autocomplete.css", "scripts/acceptance/composer-ui.ts", "scripts/acceptance/composer-ui-browser.tsx", "apps/desktop/src/renderer/styles.css"];
 const hashes = () => Promise.all(sources.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])).then(Object.fromEntries);
 const before = await hashes();
 try {
   await writeFile(join(output, "index.html"), `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'"><title>Isolated composer renderer acceptance</title><div id="root"></div><script type="module" src="${relative(output, join(import.meta.dir, "composer-ui-browser.tsx"))}"></script>`);
-  await build({ configFile: join(root, "apps/desktop/vite.config.ts"), root: output, logLevel: "warn", build: { outDir: join(output, "web"), emptyOutDir: true, rollupOptions: { input: join(output, "index.html") } } });
+  // Source snapshots are restored during parity work and can retain timestamps.
+  // A run-local transform cache ensures the bundle is built from the fenced bytes.
+  await build({ configFile: join(root, "apps/desktop/vite.config.ts"), cacheDir: join(output, ".vite-cache"), root: output, logLevel: "warn", build: { outDir: join(output, "web"), emptyOutDir: true, rollupOptions: { input: join(output, "index.html") } } });
   await writeFile(join(output, "main.cjs"), `
 const {app,BrowserWindow,ipcMain}=require('electron');const fs=require('node:fs');const path=require('node:path');
 app.setPath('userData',${JSON.stringify(profile)});
 app.whenReady().then(async()=>{
  const win=new BrowserWindow({show:false,width:1200,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+ const consoleMessages=[];win.webContents.on('console-message',(...args)=>consoleMessages.push(args.slice(1).map(String).join(' | ')));
  try{
   await win.loadFile(path.join(__dirname,'web/index.html'));
   const result=await win.webContents.executeJavaScript('runComposerUIAcceptance()');result.captures=[];
@@ -26,9 +29,9 @@ app.whenReady().then(async()=>{
    const geometry=await win.webContents.executeJavaScript('composerUIGeometry()');
    fs.writeFileSync(path.join(__dirname,scene.name+'.png'),(await win.webContents.capturePage()).toPNG());result.captures.push({...scene,...geometry});
   }
-  result.hidden=true;result.electron=process.versions.electron;result.passed=result.passed&&result.captures.every(scene=>scene.fitting);
+  result.hidden=true;result.electron=process.versions.electron;result.consoleMessages=consoleMessages;result.passed=result.passed&&result.captures.every(scene=>scene.fitting);
   fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(result,null,2));win.destroy();app.exit(result.passed?0:1);
- }catch(error){const progress=await win.webContents.executeJavaScript('composerUIProgress()').catch(()=>null);fs.writeFileSync(path.join(__dirname,'failure.png'),(await win.webContents.capturePage()).toPNG());fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify({passed:false,error:String(error),progress},null,2));console.error(error);app.exit(1);}
+ }catch(error){const progress=await win.webContents.executeJavaScript('composerUIProgress()').catch(()=>null);fs.writeFileSync(path.join(__dirname,'failure.png'),(await win.webContents.capturePage()).toPNG());fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify({passed:false,error:String(error),progress,consoleMessages},null,2));console.error(error);app.exit(1);}
 });`);
   const child = Bun.spawn([process.execPath, join(root, "node_modules/electron/cli.js"), join(output, "main.cjs")], { stdout: Bun.file(join(output, "electron.log")), stderr: Bun.file(join(output, "electron-errors.log")) });
   const timer = setTimeout(() => child.kill("SIGTERM"), 60_000); const code = await child.exited; clearTimeout(timer);

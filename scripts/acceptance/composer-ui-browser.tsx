@@ -9,25 +9,32 @@ import "../../apps/desktop/src/renderer/theme.css";
 
 
 const owner = "composer-fixture-owner", checks: string[] = [], calls: CommandEnvelope[] = [];
+const runtimeErrors: string[] = [];
+addEventListener("error", event => runtimeErrors.push(event.error?.stack ?? event.message));
+addEventListener("unhandledrejection", event => runtimeErrors.push(event.reason?.stack ?? String(event.reason)));
 const caps = { protocolVersion: 1 as const, commandVersion: 3 as const, maxImages: 4, maxImageBytes: 20 * 1024 * 1024, maxBatchBytes: 20 * 1024 * 1024, maxImagePixels: 16_777_216, mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] as const };
 const model = { provider: "controlled", id: "text-model", name: "Controlled model", input: ["text", "image"], contextWindow: 1000, maxTokens: 1000, reasoning: false, authenticated: true, available: true };
 const session = (id: string): SessionSummary => ({ id, hostId: owner, projectId: null, cwd: "/isolated/controlled", title: id === "existing" ? "Existing controlled conversation" : "Controlled command admission", sessionFile: "/isolated/controlled/session.jsonl", status: "idle", model, archived: false, createdAt: Date.now(), updatedAt: Date.now() });
 let state: HostState = { protocolVersion: 1, host: { id: owner, name: "Isolated fixture", platform: "darwin", architecture: "arm64" }, projects: [], sessions: [session("existing")], models: [model], drafts: [], lastEventSequence: 1, imageAttachments: caps };
-const listeners = new Set<(event: DesktopEvent) => void>(); let connected = true, catalogGate: ReturnType<typeof Promise.withResolvers<void>> | undefined, archiveFailure = false, gatedCatalogs = 0;
-let windowState = defaultWindowView();
+const listeners = new Set<(event: DesktopEvent) => void>(); let connected = true, catalogGate: ReturnType<typeof Promise.withResolvers<void>> | undefined, archiveFailure = false, gatedCatalogs = 0, composerCatalogReads = 0;
+let windowState = { ...defaultWindowView(), route: { sessionId: "existing" } };
 window.agentDesktopWindow = { initial: { state: windowState }, save: next => { windowState = structuredClone(next); return {}; } };
 const publish = () => { state = { ...state, lastEventSequence: state.lastEventSequence + 1 }; for (const listener of listeners) listener({ type: "state", sequence: state.lastEventSequence, hostId: owner, state: structuredClone(state) }); };
 const methods: Partial<DesktopBridge> = {
   subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   getState: async () => { if (!connected) throw new Error("Controlled offline owner"); return structuredClone(state); },
-  getHosts: async () => ({ status: "connected", ownNodeId: "fixture", checkedAt: 1, hosts: [] }),
+  getHosts: async () => ({ status: "connected", ownNodeId: owner, checkedAt: 1, hosts: [] }),
   getPreferences: async () => ({ version: 1, records: [] }),
   getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "controlled-theme", filePath: "/isolated/fixture/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {},
+  subscribeWindowTheme: () => () => {}, subscribeNotificationNavigation: () => () => {},
+  subscribeWindowClose: () => () => {}, answerWindowClose: async () => {},
+  getDetachedQuestions: async () => null,
   getComposerCatalog: async () => ({ models: [model], cwd: "/isolated/controlled", default: { model, approvalMode: "always-ask", source: "configured-role" }, resolution: "native-registry-preview" } as OmpComposerCatalog),
   getSessionControls: async () => ({ sessionId: "existing", revision: "fixture", model, capabilities: { ...model, api: "controlled", thinkingSelectors: [], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
   getInteractions: async () => [], getMessages: async () => [{ id: "operator-entry", nativeId: "operator-entry", role: "commandOutput", text: "", content: [], lifecycle: "complete", commandOutput: { entryId: "operator-entry", command: "help", output: "Controlled native operator output\n<literal>" } }],
   getComposerActions: async target => {
+    composerCatalogReads++;
     if (catalogGate) { gatedCatalogs++; await catalogGate.promise; }
     return { protocolVersion: 1, hostId: owner, target, cwd: "/isolated/controlled", revision: "catalog-v1", referenceSchemes: ["skill"], diagnostics: [], commands: [
       { id: "mode", name: "mode", description: "Choose native mode", insertText: "/mode ", source: { kind: "builtin", label: "OMP" }, availability: "executable", argumentCompletions: true },
@@ -63,13 +70,20 @@ const root = createRoot(document.getElementById("root")!); root.render(<StrictMo
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 const wait = async (read: () => unknown, label: string, timeout = 8000) => { const start = performance.now(); while (performance.now() - start < timeout) { if (read()) return; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error(`Timed out: ${label}`); };
 const settle = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-const prompt = () => document.querySelector<HTMLTextAreaElement>("#prompt")!;
+const prompt = () => document.querySelector<HTMLElement>("#prompt")!;
+const promptText = () => prompt()?.textContent ?? "";
 const popup = () => document.querySelector<HTMLElement>(".composer-autocomplete");
 const options = () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-async function setText(value: string) { const target = prompt(); target.focus(); target.dispatchEvent(new FocusEvent("focusin", { bubbles: true })); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(target, value); target.setSelectionRange(value.length, value.length); target.dispatchEvent(new InputEvent("input", { bubbles: true })); target.dispatchEvent(new Event("select", { bubbles: true })); await settle(); }
+async function setText(value: string) {
+  const target = prompt(); target.focus(); target.dispatchEvent(new FocusEvent("focus"));
+  const selection = getSelection(), range = document.createRange(); range.selectNodeContents(target);
+  selection?.removeAllRanges(); selection?.addRange(range);
+  assert(document.execCommand("insertText", false, value), "production contenteditable accepted text");
+  await settle();
+}
 async function key(value: string, extra: KeyboardEventInit = {}) { const event = new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true, ...extra }); prompt().dispatchEvent(event); await settle(); return event.defaultPrevented; }
 Object.assign(window, {
-  composerUIProgress: () => ({ checks, input: prompt()?.value, caret: prompt()?.selectionStart, expanded: prompt()?.getAttribute("aria-expanded"), focused: document.activeElement?.id, popup: popup()?.textContent, calls: calls.map(item => item.command.type), errors: [...document.querySelectorAll('[role="alert"]')].map(item => item.textContent) }),
+  composerUIProgress: () => ({ checks, input: prompt()?.textContent, disabled: prompt()?.getAttribute("aria-disabled"), expanded: prompt()?.getAttribute("aria-expanded"), focused: document.activeElement?.id, popup: popup()?.textContent, composerCatalogReads, calls: calls.map(item => item.command.type), errors: [...document.querySelectorAll('[role="alert"]')].map(item => item.textContent), runtimeErrors }),
   runComposerUIAcceptance: async () => {
     await wait(() => prompt() && document.querySelector<HTMLButtonElement>(".attach-image-button")?.disabled === false, "production App ready");
     await setText("/"); await wait(() => options().some(item => item.textContent?.includes("Choose native mode")), "catalog popup");
@@ -78,14 +92,14 @@ Object.assign(window, {
     assert(await key("ArrowDown"), "popup owns arrows"); assert(await key("Escape"), "popup owns Escape"); assert(!popup(), "Escape closes popup");
     checks.push("real App combines native commands and app actions; keyboard navigation and explicit unavailable command");
     await setText("$rev"); await wait(() => options().some(item => item.textContent?.includes("Review the source")), "skills");
-    await key("Tab"); assert(prompt().value === "/skill:review ", "Tab inserts exact native skill invocation");
+    await key("Tab"); assert(promptText() === "/skill:review ", "Tab inserts exact native skill invocation");
     assert(!calls.some(item => item.command.type === "session.prompt"), "completion does not send");
     await setText("Read @source"); await wait(() => options().some(item => item.textContent?.includes("source file.ts")), "file lookup");
-    await key("Enter"); assert(prompt().value === 'Read @"source file.ts" ', "file completion quoting");
+    await key("Enter"); assert(promptText() === 'Read @"source file.ts" ', "file completion quoting");
     await setText("/mode "); await wait(() => options().some(item => item.textContent?.includes("Native plan mode")), "native args");
-    await key("Tab"); assert(prompt().value === "/mode plan", "native arguments replaced");
+    await key("Tab"); assert(promptText() === "/mode plan", "native arguments replaced");
     await setText("skill://rev"); await wait(() => options().some(item => item.textContent?.includes("review")), "native URI lookup");
-    await key("Enter"); assert(prompt().value === "skill://review ", "native URI preserved");
+    await key("Enter"); assert(promptText() === "skill://review ", "native URI preserved");
     checks.push("native skill, quoted file and native argument insertion; no accidental prompt execution");
     await setText("/mode"); await wait(() => popup(), "IME menu");
     prompt().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })); await settle();
@@ -93,9 +107,14 @@ Object.assign(window, {
     assert(!calls.some(item => item.command.type === "session.prompt"), "IME Enter does not send");
     prompt().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })); await settle();
     checks.push("IME composition never submits or selects completion");
-    await setText(""); prompt().dispatchEvent(new FocusEvent("focusout", { bubbles: true })); await settle(); catalogGate = Promise.withResolvers<void>(); await setText("/"); await wait(() => gatedCatalogs > 0, "actual pending catalog"); await key("Enter");
+    await setText(""); prompt().blur(); await settle(); catalogGate = Promise.withResolvers<void>();
+    [...document.querySelectorAll<HTMLButtonElement>(".nav-action")].find(item => item.textContent?.includes("New chat"))!.click();
+    await wait(() => windowState.route.sessionId === null, "switch to new draft scope");
+    await setText("/"); await wait(() => gatedCatalogs > 0, "actual pending catalog"); await key("Enter");
     assert(!calls.some(item => item.command.type === "session.prompt"), "loading Enter does not send");
-    document.querySelector<HTMLButtonElement>('[data-session-id="existing"]')!.click(); await wait(() => windowState.route.sessionId === "existing", "switch owner scope");
+    const existingRow = () => document.querySelector<HTMLButtonElement>('[data-session-id="existing"]');
+    if (!existingRow()) [...document.querySelectorAll<HTMLButtonElement>(".sidebar-section-toggle")].find(item => item.textContent?.includes("Recents"))?.click();
+    await wait(existingRow, "existing conversation row"); existingRow()!.click(); await wait(() => windowState.route.sessionId === "existing", "leave pending draft scope");
     catalogGate.resolve(); catalogGate = undefined; await settle(); assert(!popup(), "late old menu not published after session navigation");
     checks.push("pending catalog and navigation cannot submit or publish into another draft");
     await wait(() => document.querySelector(".transcript-command-output"), "command output projection");
@@ -104,7 +123,7 @@ Object.assign(window, {
     checks.push("native command-output metadata renders separately with exact literal content");
     archiveFailure = true; await setText("/archive"); await wait(() => options().some(item => item.textContent?.includes("Archive")), "archive app action");
     await key("Enter"); await wait(() => popup()?.textContent?.includes("Controlled archive failure"), "archive rejection visible");
-    assert(prompt().value === "/archive", "failed action preserves draft");
+    assert(promptText() === "/archive", "failed action preserves draft");
     checks.push("actual App archive bridge error is visible and preserves input");
     await setText("$"); await wait(() => options().length > 0, "final visual scene");
     return { passed: true, checks, providerRequests: 0, scope: "Production App and autocomplete in isolated Electron; controlled owner bridge, no real native commands or providers" };

@@ -20,10 +20,13 @@ const publish = () => { state = { ...state, lastEventSequence: state.lastEventSe
 const methods: Partial<DesktopBridge> = {
   subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   getState: async () => { if (!connected) throw new Error("Controlled offline owner"); return structuredClone(state); },
-  getHosts: async () => ({ status: "connected", ownNodeId: "fixture", checkedAt: 1, hosts: [] }),
+  getHosts: async () => ({ status: "connected", ownNodeId: owner, checkedAt: 1, hosts: [] }),
   getPreferences: async () => ({ version: 1, records: [] }),
   getTheme: async () => ({ document: { ...DEFAULT_THEME, mode: "dark" }, revision: "controlled-theme", filePath: "/isolated/fixture/theme.json" }),
   getLocalFonts: async () => [], applyWindowTheme: async () => {},
+  subscribeWindowTheme: () => () => {}, subscribeNotificationNavigation: () => () => {},
+  subscribeWindowClose: () => () => {}, answerWindowClose: async () => {},
+  getDetachedQuestions: async () => null,
   getComposerCatalog: async () => ({ models: [model], cwd: "/isolated/controlled", default: { model, approvalMode: "always-ask", source: "configured-role" }, resolution: "native-registry-preview" } as OmpComposerCatalog),
   getSessionControls: async () => ({ sessionId: "existing", revision: "fixture", model, capabilities: { ...model, api: "controlled", thinkingSelectors: [], serviceTierOptions: {}, supportsTools: false, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }, settings: [], overrides: [], serviceTiers: {}, runtimeMutablePaths: [], persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose" }),
   getInteractions: async () => [], getMessages: async () => [],
@@ -57,10 +60,11 @@ let root = createRoot(document.getElementById("root")!); root.render(<StrictMode
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 const wait = async (read: () => unknown, label: string, timeout = 8000) => { const start = performance.now(); while (performance.now() - start < timeout) { if (read()) return; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error(`Timed out: ${label}`); };
 const settle = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-const prompt = () => document.querySelector<HTMLTextAreaElement>("#prompt")!;
+const prompt = () => document.querySelector<HTMLElement>("#prompt")!;
+const promptText = () => prompt()?.textContent ?? "";
 const form = () => document.querySelector<HTMLFormElement>("form.composer")!;
 const chips = () => [...document.querySelectorAll<HTMLElement>(".composer-image-chip")];
-const setText = (value: string) => { const target = prompt(); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(target, value); target.dispatchEvent(new InputEvent("input", { bubbles: true })); };
+const setText = (value: string) => { const target = prompt(); target.focus(); target.dispatchEvent(new FocusEvent("focus")); const selection = getSelection(), range = document.createRange(); range.selectNodeContents(target); selection?.removeAllRanges(); selection?.addRange(range); assert(document.execCommand("insertText", false, value), "production contenteditable accepted text"); };
 const click = (label: string) => { const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === label || item.getAttribute("aria-label") === label || item.querySelector(":scope > span")?.textContent === label); assert(button, `Missing button ${label}`); button.click(); };
 async function png(name: string, color: string) { const canvas = document.createElement("canvas"); canvas.width = 160; canvas.height = 100; const ctx = canvas.getContext("2d")!; ctx.fillStyle = color; ctx.fillRect(0, 0, 160, 100); ctx.fillStyle = "white"; ctx.font = "18px sans-serif"; ctx.fillText(name.slice(0, 10), 8, 54); return new File([await new Promise<Blob>(resolve => canvas.toBlob(blob => resolve(blob!), "image/png"))], name, { type: "image/png" }); }
 function transfer(files: File[]) { const data = new DataTransfer(); for (const file of files) data.items.add(file); return data; }
@@ -80,12 +84,15 @@ Object.assign(window, {
     const first = await png("Architecture.png", "#395db8"), second = await png("Layout.png", "#347766"), third = await png("Paste.png", "#864785");
     await addFile(first, "picker"); await wait(() => chips().length === 1 && chips()[0]?.querySelector("img")?.complete, "actual IDB and decoded image after StrictMode replay");
     await addFile(second, "drop"); await wait(() => chips().length === 2, "drop"); await addFile(third, "paste"); await wait(() => chips().length === 3, "paste");
-    assert(!prompt().value, "image-only draft should have no authored text"); checks.push("production App StrictMode; picker-equivalent File event, actual drop/paste handlers, header IPC, browser decode and real IndexedDB chips");
+    assert(!promptText(), "image-only draft should have no authored text"); checks.push("production App StrictMode; picker-equivalent File event, actual drop/paste handlers, header IPC, browser decode and real IndexedDB chips");
     const last = chips()[2]!; last.focus(); last.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true })); await settle();
     assert(chips()[1]?.textContent?.includes("Paste.png"), "keyboard reorder"); chips()[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true })); await wait(() => chips().length === 2, "keyboard remove");
     click("Preview Architecture.png"); await wait(() => document.querySelector(".image-preview-dialog[open]"), "real native dialog open"); document.querySelector<HTMLDialogElement>(".image-preview-dialog[open]")!.dispatchEvent(new Event("cancel", { cancelable: true })); await wait(() => !document.querySelector(".image-preview-dialog[open]"), "Escape-like cancellation closes dialog"); checks.push("ordered keyboard chips, delete, actual modal preview and cancellation");
     inspectGate = Promise.withResolvers<void>(); await addFile(await png("Cancelled.png", "#aa4d31"), "drop"); click("Cancel adding Cancelled.png"); inspectGate.resolve(); inspectGate = undefined; await settle(); assert(chips().length === 2, "cancel prevented late chip");
-    inspectGate = Promise.withResolvers<void>(); await addFile(await png("Old route.png", "#725131"), "drop"); document.querySelector<HTMLButtonElement>('[data-session-id="existing"]')!.click(); await wait(() => windowState.route.sessionId === "existing", "session navigation"); inspectGate.resolve(); inspectGate = undefined; await settle(); assert(chips().length === 0, "late completion did not reach selected session"); click("New chat"); await wait(() => windowState.route.sessionId === null && chips().length === 2, "original draft preserved"); checks.push("cancel and owning-route switch prevent late image publication");
+    inspectGate = Promise.withResolvers<void>(); await addFile(await png("Old route.png", "#725131"), "drop");
+    const existingRow = () => document.querySelector<HTMLButtonElement>('[data-session-id="existing"]');
+    if (!existingRow()) [...document.querySelectorAll<HTMLButtonElement>(".sidebar-section-toggle")].find(item => item.textContent?.includes("Recents"))?.click();
+    await wait(existingRow, "existing conversation row"); existingRow()!.click(); await wait(() => windowState.route.sessionId === "existing", "session navigation"); inspectGate.resolve(); inspectGate = undefined; await settle(); assert(chips().length === 0, "late completion did not reach selected session"); click("New chat"); await wait(() => windowState.route.sessionId === null && chips().length === 2, "original draft preserved"); checks.push("cancel and owning-route switch prevent late image publication");
     const truncated = new File([(await first.arrayBuffer()).slice(0, 33)], "Truncated.png", { type: "image/png" }); await addFile(truncated, "drop"); await wait(() => document.querySelector(".composer-image-staging [role=alert]"), "actual browser decode rejects header-only PNG"); assert(chips().length === 2, "bad compressed pixels not published"); click("Cancel adding Truncated.png");
     const originalAdd = IDBObjectStore.prototype.add; let rejected = false;
     IDBObjectStore.prototype.add = function(...args: Parameters<IDBObjectStore["add"]>) { if (this.name === "bytes" && !rejected) { rejected = true; throw new DOMException("Controlled quota failure", "QuotaExceededError"); } return originalAdd.apply(this, args); };

@@ -12,7 +12,7 @@ const hashes = () => Promise.all(sources.map(async path => [path, createHash("sh
 const before = await hashes();
 try {
   await writeFile(join(output, "index.html"), `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'"><title>Isolated attachment renderer acceptance</title><div id="root"></div><script type="module" src="${relative(output, join(import.meta.dir, "attachment-ui-browser.tsx"))}"></script>`);
-  await build({ configFile: join(root, "apps/desktop/vite.config.ts"), root: output, logLevel: "warn", build: { outDir: join(output, "web"), emptyOutDir: true, rollupOptions: { input: join(output, "index.html") } } });
+  await build({ configFile: join(root, "apps/desktop/vite.config.ts"), cacheDir: join(output, ".vite-cache"), root: output, logLevel: "warn", build: { outDir: join(output, "web"), emptyOutDir: true, rollupOptions: { input: join(output, "index.html") } } });
   const inspection = await Bun.build({ entrypoints: [join(root, "apps/desktop/src/main/attachment-transport.ts")], outdir: output, naming: "inspection.mjs", target: "node", format: "esm" });
   if (!inspection.success) throw new Error(inspection.logs.join("\n"));
   await writeFile(join(output, "preload.cjs"), `const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('attachmentFixture',{inspect:bytes=>ipcRenderer.invoke('fixture-inspect',bytes)});`);
