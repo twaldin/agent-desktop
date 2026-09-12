@@ -70,7 +70,6 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
               {edit?.error && <p role="alert">{edit.error}</p>}
             </div>;
           })}
-          <p>Stop sequences and all other unmapped stream fields remain required coverage. This section does not expose arbitrary provider options.</p>
         </> : !data?.loading && !data?.error && <p>{data?.controls ? "This host does not expose bounded advanced controls. Update the owning host; no capability is inferred." : "Native session controls have not been loaded."}</p>}
         {data?.receipt && <p role="status">{data.receipt}</p>}
       </>}
