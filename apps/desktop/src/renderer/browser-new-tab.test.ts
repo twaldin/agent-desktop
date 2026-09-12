@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, spyOn } from "bun:test";
 import React from "react";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -230,4 +230,27 @@ test("Suggested file and website queued admission rechecks the original source, 
   current = false; slots.flush(); dock = render(); expect(dock.snapshot.tabs).toEqual([]); expect(calls).toBe(0);
   current = true; dock.openOutputWebsite('http://localhost:8080/', 'owner', 'session', () => current, () => current);
   slots.flush(); dock = render(); expect(dock.snapshot.tabs).toHaveLength(1); expect(dock.snapshot.tabs[0]?.browserNewTab).toEqual({ status: 'idle', draft: 'http://localhost:8080/' }); expect(calls).toBe(0);
+});
+
+test("HTML preview refuses a replacement worker and expires while original metadata is held", async () => {
+  const state = { status: 'idle' as const, draft: 'http://127.0.0.1:1234/preview/index.html', preview: { workerPid: 42, expiresAt: Date.now() + 60_000 } };
+  const f = fixture({ state, metadata: async () => ({ ...metadata(), availability: 'running', workerPid: 43, tabs: [] } as BrowserMetadataSnapshot) });
+  await f.controller.submit(); expect(f.calls).toHaveLength(1); expect(f.materialized).toEqual([]);
+  expect(f.controller.state.message).toContain('original task worker');
+  const gate = Promise.withResolvers<BrowserMetadataSnapshot>();
+  const g = fixture({ state, metadata: () => gate.promise }); const pending = g.controller.submit();
+  const clock = spyOn(Date, "now").mockReturnValue(state.preview.expiresAt + 1);
+  try {
+    gate.resolve({ ...metadata(), availability: 'running', workerPid: 42, tabs: [] } as BrowserMetadataSnapshot);
+    await pending; expect(g.calls).toHaveLength(1); expect(g.controller.state.message).toContain('expired');
+  } finally { clock.mockRestore(); }
+  const expired = fixture({ state: { ...state, preview: { workerPid: 42, expiresAt: 1 } } });
+  await expired.controller.submit(); expect(expired.calls).toEqual([]);
+});
+test("HTML preview persisted admission keeps original worker/deadline and explicit new address drops it", () => {
+  const value = { status: 'idle', draft: 'http://127.0.0.1:1234/preview/index.html', preview: { workerPid: 42, expiresAt: 100 } };
+  const parsed = parseBrowserNewTabState(value)!; value.preview.workerPid = 43;
+  expect(parsed.preview).toEqual({ workerPid: 42, expiresAt: 100 });
+  expect(() => parseBrowserNewTabState({ ...value, preview: { workerPid: 0, expiresAt: 100 } })).toThrow('preview owner');
+  const f = fixture({ state: parsed }); f.controller.edit('https://example.invalid/new'); expect(f.controller.state.preview).toBeUndefined();
 });

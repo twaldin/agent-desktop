@@ -12,6 +12,6 @@ The Suggested heading remains sticky under the action catalogue, with a measured
 
 ## Remaining reference work
 
-The pinned R4n fallback for a single edited HTML file is not implemented here. It requires a separate original-session, host/path/revision-bound read-only preview owner and actual HTML rendering; opening HTML source does not satisfy it. Native edit/AST-edit outcome projection will be assessed with that flow rather than treating requested edit paths as successful outputs. Google Drive/app-generation producers are not invented when no corresponding saved native result exists.
+The pinned R4n fallback for a single successfully edited HTML file has a separate [original-session HTML preview flow](html-output-preview.md), including actual outcome projection and read-only saved assets. Its acceptance and limitations remain distinct from the original Suggested output batch. Google Drive/app-generation producers are not invented when no corresponding saved native result exists.
 
 The controlled/native fixtures use an isolated deterministic model, actual OMP file/image tools, a local MCP server, and a declared local website in an isolated Chrome target. They establish those exercised backends and App interactions, not all browser backends, whole-package SDK validity, physical parity or a pixel comparison against an uncaptured reference screen.

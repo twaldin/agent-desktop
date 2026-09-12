@@ -8,7 +8,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 52;
+export const WORKER_PROTOCOL_VERSION = 53;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -91,6 +91,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "activateRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "disposeRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "getBrowserFrame"; args: { target: BrowserFrameTarget } }
+  | { operation: "openHtmlPreview"; request: import("../../../../packages/shared/src/html-preview").HtmlPreviewRequest }
+  | { operation: "releaseHtmlPreview"; leaseId: string }
   | { operation: "getSessionOutputs" }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number; source?: "generated" } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }

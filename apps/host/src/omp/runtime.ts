@@ -1,4 +1,6 @@
-import { inspectSessionOutputs, recordedGeneratedImage } from "./session-outputs";
+import { HtmlPreviews } from './html-previews';
+import { parseHtmlPreviewRequest, type HtmlPreviewRequest, type HtmlPreviewLease } from '../../../../packages/shared/src/html-preview';
+import { inspectSessionOutputs, recordedGeneratedImage, sessionOutputBranch } from "./session-outputs";
 import { executeMcpAppTool } from "./mcp-app-tool";
 import { McpFileResources } from "./mcp-file-resource";
 import { NativeMcpApps } from "./mcp-apps";
@@ -122,6 +124,8 @@ export interface OmpSession {
   promoteBtw(runId: string, operationId?: string): Promise<{ cancelled: boolean; sessionId: string; sessionFile: string }>;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
+  openHtmlPreview(request: HtmlPreviewRequest): Promise<HtmlPreviewLease>;
+  releaseHtmlPreview(leaseId: string): Promise<void>;
   getSessionOutputs(): Promise<import("@agent-desktop/shared").SessionOutputs>;
   getImage(nativeEntryId: string, blockIndex: number, source?: "generated"): Promise<OmpRecordedImage>;
   createBrowserTab(name: string, initialUrl?: string): Promise<OmpBrowserTabCreateResult>;
@@ -527,6 +531,7 @@ export class OmpRuntime {
       let accountMutation = false;
       let goalMutation = false;
       const outputEpoch = crypto.randomUUID();
+      const htmlPreviews = new HtmlPreviews();
       let outputRead: Promise<import("@agent-desktop/shared").SessionOutputs> | undefined;
       const mcpReads = new Set<Promise<NativeSessionMcpResourceResult>>();
       let mcpMutation: Promise<unknown> | undefined;
@@ -556,7 +561,7 @@ export class OmpRuntime {
       };
       const assertTaskLocationReady = () => {
         assertIdle();
-        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || outputRead || mcpApps.pending) throw new Error("Resolve queued messages, questions, side answers, MCP reads, and interrupts before moving this task.");
+        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || outputRead || htmlPreviews.active || mcpApps.pending) throw new Error("Resolve queued messages, questions, side answers, MCP reads, HTML previews, and interrupts before moving this task.");
       };
       const taskLocationOutcomeUnknown = (message: string) => Object.assign(new Error(message), { name: "TaskLocationOutcomeUnknown", code: "OUTCOME_UNKNOWN" });
       const trackMcpMutation = <T>(run: Promise<T>) => {
@@ -818,6 +823,27 @@ export class OmpRuntime {
         },
         getComposerActions: async () => { assertSessionActive(); return sessionComposerActions(session, result.extensionsResult?.extensions ?? []); },
         getComposerCompletions: async query => { assertSessionActive(); return composerCompletions(sessionComposerActions(session, result.extensionsResult?.extensions ?? []), query, session, result.mcpManager); },
+        openHtmlPreview: async input => {
+          assertSessionActive();
+          const request = parseHtmlPreviewRequest(input), cwd = manager.getCwd(), branch = manager.getBranch();
+          if (request.epoch !== outputEpoch) throw new Error("The original output worker changed.");
+          if (request.output.branch !== sessionOutputBranch(branch)) throw new Error("The original output branch changed. Refresh the Suggested output.");
+          const retained = branch.map(entry => entry.id);
+          const current = async () => {
+            assertSessionActive();
+            if (cwd !== manager.getCwd()) return false;
+            const now = manager.getBranch(), ids = new Set(now.map(entry => entry.id));
+            if (retained.some(id => !ids.has(id))) return false;
+            const outputs = await inspectSessionOutputs(now, cwd, outputEpoch);
+            assertSessionActive();
+            const finalIds = new Set(manager.getBranch().map(entry => entry.id));
+            return retained.every(id => finalIds.has(id)) && cwd === manager.getCwd() && outputs.outputs.some(output => output.kind === 'html-preview'
+              && output.path === request.output.path && output.entryId === request.output.entryId && output.revision === request.output.revision);
+          };
+          if (!await current()) throw new Error("The original saved HTML changed. Refresh its output.");
+          return htmlPreviews.open(request, cwd, branch, current);
+        },
+        releaseHtmlPreview: async id => { htmlPreviews.release(id); },
         getSessionOutputs: () => {
           assertSessionActive();
           if (outputRead) return outputRead;
@@ -1100,7 +1126,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
-          const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose()]);
+          const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose(), htmlPreviews.dispose()]);
           btw.dispose();
           detachedQuestions.dispose();
           admissionAbort?.abort();

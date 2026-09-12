@@ -1,3 +1,7 @@
+import { requestBrowserControl } from '../../../apps/desktop/src/main/browser-control-transport';
+import { HtmlPreviewDocument } from '../../../apps/desktop/src/main/html-preview-document';
+import { requestHtmlPreview } from '../../../apps/desktop/src/main/html-preview-transport';
+import { runHtmlPreviewFlow } from './html-preview-flow';
 import { requestBrowserMetadata } from '../../../apps/desktop/src/main/browser-metadata-transport';
 import { requestBrowserCreate, requestBrowserCreationStatus } from '../../../apps/desktop/src/main/browser-create-transport';
 import { requestBrowserFrame } from '../../../apps/desktop/src/main/browser-frame-transport';
@@ -37,16 +41,18 @@ window.setContentSize(1250, 950);
 const calls: unknown[] = [], errors: unknown[] = [], inputs: unknown[] = [], captures: unknown[] = [];
 window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message); });
 let online = true;
+let lastBrowserFrame: any;
 let directoryDocument: McpOwnerWindow | undefined;
+let htmlDocument: HtmlPreviewDocument | undefined;
 let mcpDocument: McpAppWindowChannels | undefined;
 const mcpDrains: Promise<void>[] = [];
-const retireMcpDocument = () => { const directory = directoryDocument; directoryDocument = undefined; if (directory) { const drain = directory.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } const owner = mcpDocument; mcpDocument = undefined; if (owner) { const drain = owner.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } };
+const retireMcpDocument = () => { const html = htmlDocument; htmlDocument = undefined; if (html) { const drain = html.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } const directory = directoryDocument; directoryDocument = undefined; if (directory) { const drain = directory.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } const owner = mcpDocument; mcpDocument = undefined; if (owner) { const drain = owner.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } };
 window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) retireMcpDocument(); });
 const setConnected = (value: boolean) => { online = value; window.webContents.send('panel-event', { type: 'connection', hostId: connection.hostId, connected: value }); };
 const http = (path: string, body?: unknown) => requestHost(connection, path, body);
 ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) => {
   calls.push({ method, args });
-  const hostIndex: Record<string, number> = { getBrowserMetadata: 1, createBrowserTab: 2, getBrowserCreationStatus: 2, getBrowserFrame: 2, mcpOwner: 0, getSessionOutputs: 1, getTranscriptImage: 3, getSessionMcp: 1, sessionMcpApp: 2, respondInteraction: 3, getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
+  const hostIndex: Record<string, number> = { getBrowserMetadata: 1, createBrowserTab: 2, getBrowserCreationStatus: 2, getBrowserFrame: 2, controlBrowser: 2, mcpOwner: 0, getSessionOutputs: 1, openHtmlPreview: 2, releaseHtmlPreview: 2, getTranscriptImage: 3, getSessionMcp: 1, sessionMcpApp: 2, respondInteraction: 3, getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
   const requestedHost = args[hostIndex[method] ?? -1];
   if (requestedHost !== undefined && requestedHost !== connection.hostId) throw new Error('The fixture cannot route to a foreign host.');
   switch (method) {
@@ -59,10 +65,16 @@ ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) =>
       }
       return directoryDocument.dispatch(args[0], args[1]);
     }
+    case 'controlBrowser': if (!online) throw new Error('Offline'); return requestBrowserControl(connection, args[0], args[1]);
     case 'getBrowserMetadata': if (!online) throw new Error('Offline'); return requestBrowserMetadata(connection, args[0]);
     case 'createBrowserTab': if (!online) throw new Error('Offline'); return requestBrowserCreate(connection, args[0], args[1]);
     case 'getBrowserCreationStatus': if (!online) throw new Error('Offline'); return requestBrowserCreationStatus(connection, args[0], args[1]);
-    case 'getBrowserFrame': if (!online) throw new Error('Offline'); return requestBrowserFrame(connection, args[0], args[1]);
+    case 'getBrowserFrame': if (!online) throw new Error('Offline'); return lastBrowserFrame = await requestBrowserFrame(connection, args[0], args[1]);
+    case 'openHtmlPreview': case 'releaseHtmlPreview': {
+      if (!online && method === 'openHtmlPreview') throw new Error('Offline');
+      if (!htmlDocument) { const owner = new HtmlPreviewDocument({ current: () => htmlDocument === owner, connect: async () => connection, request: requestHtmlPreview }); htmlDocument = owner; }
+      return htmlDocument.dispatch(args[0], method === 'openHtmlPreview' ? args[1] : { leaseId: args[1] }, args[2]);
+    }
     case 'getSessionOutputs': if (!online) throw new Error('Disposable host transport is offline.'); return requestSessionOutputs(connection, args[0]);
     case 'getTranscriptImage': if (!online) throw new Error('Disposable host transport is offline.'); return requestTranscriptImage(connection, args[0], args[1], args[2], args[4]);
     case 'getSessionMcp': if (!online) throw new Error('Disposable host transport is offline.'); return requestSessionMcp(connection, args[0]);
@@ -133,7 +145,8 @@ try {
   await wait('typeof window.panelState === "function"', 'fixture observation helper');
   await wait(context.directoryOwner ? 'panelState().actions.includes("Connect apps")' : 'panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
   if (context.mcp) {
-    if (context.suggested) await runSuggestedFlow({ window, evaluate, wait, click, key, capture, store, calls, inputs, setConnected, fixture, http, prompt: (text: string) => requestVersionedCommand(http, { id: crypto.randomUUID(), command: { type: "session.prompt", sessionId: context.sessionId, text, model: { provider: "suggested-contract", id: "controlled" }, approvalMode: "yolo" } }) });
+    if (context.htmlPreview) await runHtmlPreviewFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, http, frame: () => lastBrowserFrame, outputs: () => requestSessionOutputs(connection, context.sessionId) });
+    else if (context.suggested) await runSuggestedFlow({ window, evaluate, wait, click, key, capture, store, calls, inputs, setConnected, fixture, http, prompt: (text: string) => requestVersionedCommand(http, { id: crypto.randomUUID(), command: { type: "session.prompt", sessionId: context.sessionId, text, model: { provider: "suggested-contract", id: "controlled" }, approvalMode: "yolo" } }) });
     else if (context.directoryViewer) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, directoryOwner: true, http });
     else if (context.directoryOwner) await runMcpOwnerFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, http });
     else if (context.artifacts) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture });
@@ -236,7 +249,7 @@ try {
   if (errors.length) throw new Error('Renderer reported errors: ' + JSON.stringify(errors));
   passed = true;
 } catch (cause) { error = String(cause); await capture('failure').catch(() => {}); }
-finally { writeFileSync(join(output, 'result.json'), JSON.stringify({ passed, error, errors, inputs, captures, calls, stored: store.bootstrap(), scope: 'Actual App and Electron inputs with an isolated authenticated host and real WindowStateStore; acceptance IPC adapter, no external provider or native browser acquisition.' }, null, 2)); socket.close(); app.exit(passed ? 0 : 1); }
+finally { writeFileSync(join(output, 'result.json'), JSON.stringify({ passed, error, errors, inputs, captures, calls, stored: store.bootstrap(), scope: context.htmlPreview ? 'Actual App/Electron, native OMP EditTool and original Chrome target with recorded relative assets; isolated authenticated host and deterministic provider, acceptance IPC adapter, no external account or all-backend proof.' : 'Actual App and Electron inputs with an isolated authenticated host and real WindowStateStore; acceptance IPC adapter, no external provider or native browser acquisition.' }, null, 2)); socket.close(); app.exit(passed ? 0 : 1); }
 
 }
 void run().catch(error => { console.error(error); app.exit(1); });

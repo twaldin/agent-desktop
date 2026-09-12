@@ -25,6 +25,11 @@ if (process.env.SUGGESTED_OUTPUTS_FIXTURE === '1') {
   await writeFile(join(fixture, 'project', 'input.md'), '# Input only'); await writeFile(join(fixture, 'project', 'blocked'), 'Not a directory');
   await writeFile(join(fixture, 'agent', 'config.yml'), `generate_image:\n  enabled: true\nbrowser:\n  enabled: true\n  headless: true\n  cmux: false\n  relay: false\nextensions:\n  - ${JSON.stringify(resolve(import.meta.dir, '../../../apps/host/src/omp-workers/fixtures/suggested-provider.ts'))}\nretry:\n  enabled: false\n`);
 }
+if (process.env.HTML_PREVIEW_FIXTURE === '1') {
+  await mkdir(join(fixture, 'project', 'site'));
+  await writeFile(join(fixture, 'project', 'site', 'private.json'), '{"not":"an output"}');
+  await writeFile(join(fixture, 'agent', 'config.yml'), `edit:\n  mode: replace\nbrowser:\n  enabled: true\n  headless: true\n  cmux: false\n  relay: false\nextensions:\n  - ${JSON.stringify(resolve(import.meta.dir, '../../../apps/host/src/omp-workers/fixtures/html-provider.ts'))}\nretry:\n  enabled: false\n`);
+}
 const website = process.env.SUGGESTED_OUTPUTS_FIXTURE === '1' ? Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<!doctype html><title>Original saved website</title><h1>Original saved website</h1>', { headers: { 'Content-Type': 'text/html' } }) }) : undefined;
 if (website) { process.env.SUGGESTED_WEBSITE_URL = website.url.href; await writeFile(join(fixture, 'website.json'), JSON.stringify({ url: website.url.href })); }
 const { startHost } = await import('../../../apps/host/src/server');

@@ -369,6 +369,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   uploadImageAttachment?(sha256: string, data: Uint8Array, hostId: string): Promise<UploadedImageMetadata>;
   getImageAttachment?(sha256: string, hostId: string): Promise<RecordedImageBytes>;
   getTranscriptImage?(sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string, source?: "generated"): Promise<RecordedImageBytes>;
+  openHtmlPreview?(sessionId: string, request: import("./html-preview").HtmlPreviewRequest, hostId: string): Promise<import("./html-preview").HtmlPreviewLease>;
+  releaseHtmlPreview?(sessionId: string, leaseId: string, hostId: string): Promise<void>;
   getSessionOutputs?(sessionId: string, hostId: string): Promise<import("./session-outputs").SessionOutputs>;
   getState(hostId?: string): Promise<HostState>;
   getHosts(): Promise<NetworkState>;

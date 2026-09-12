@@ -2,6 +2,7 @@ import { PULL_REQUEST_WRITES_CAPABILITY } from "../../../packages/shared/src/pul
 import { PullRequests } from "./pull-requests";
 import { PullRequestsHttp } from "./pull-requests-http";
 import { PULL_REQUESTS_CAPABILITY } from "../../../packages/shared/src/pull-requests";
+import { HtmlPreviewHttp } from './html-preview-http';
 import { McpOwnerHttp } from "./mcp-owner-http";
 import { isUnreadSessionEvent } from "../../../packages/shared/src/session-read";
 import { BranchQueryPeer } from "./branch-query-peer";
@@ -456,6 +457,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     sessionExists: id => !stopping && Boolean(store.getSession(id)),
     existing: async id => handles.get(id)?.catch(() => undefined),
   });
+  const htmlPreviews = new HtmlPreviewHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
   const sessionOutputs = new SessionOutputsHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
   const sessionMcpHttp = new SessionMcpHttp({hostId:store.host.id, sessionExists:id=>!stopping && Boolean(store.getSession(id)),
     existing:async id=>handles.get(id)?.catch(()=>undefined),
@@ -1251,6 +1253,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (mcpAppResponse) return mcpAppResponse;
         const mcpResourceResponse = await sessionMcpResources.route(request, url);
         if (mcpResourceResponse) return mcpResourceResponse;
+        const htmlResponse = await htmlPreviews.route(request, url);
+        if (htmlResponse) return htmlResponse;
         const outputsResponse = await sessionOutputs.route(request, url);
         if (outputsResponse) return outputsResponse;
         const mcpStateResponse = await sessionMcpHttp.route(request, url);

@@ -98,14 +98,14 @@ export function useWorkbenchDock(
       }
     }
   }, [snapshot]);
-  const outputWebsites = useRef(new Map<string, { tab: DockTab; retained: () => boolean }>());
+  const outputWebsites = useRef(new Map<string, { tab: DockTab; retained: () => boolean; settle(accepted: boolean): void }>());
   const browserLaunchers = useRef(new Map<string, BrowserNewTabController>());
   const browserLaunchersMounted = useRef(false);
   useEffect(() => {
     browserLaunchersMounted.current = true;
     return () => {
       browserLaunchersMounted.current = false;
-      queueMicrotask(() => { if (!browserLaunchersMounted.current) { for (const controller of browserLaunchers.current.values()) controller.dispose(); browserLaunchers.current.clear(); } });
+      queueMicrotask(() => { if (!browserLaunchersMounted.current) { for (const controller of browserLaunchers.current.values()) controller.dispose(); browserLaunchers.current.clear(); for (const output of outputWebsites.current.values()) output.settle(false); outputWebsites.current.clear(); } });
     };
   }, []);
   useEffect(() => {
@@ -137,18 +137,22 @@ export function useWorkbenchDock(
     for (const [id, output] of outputWebsites.current) {
       outputWebsites.current.delete(id);
       const tab = snapshot.tabs.find(tab => tab.id === id && tab.browserInstanceId === output.tab.browserInstanceId && tab.browserNewTab);
-      if (!tab || !snapshot.state.right.tabIds.includes(id) || !output.retained()) continue;
+      if (!tab || !snapshot.state.right.tabIds.includes(id) || !output.retained()) { output.settle(false); continue; }
+      output.settle(true);
       const controller = browserLauncher(tab, true);
       controller.observePresentation();
       void controller.submit(output.retained);
     }
   }, [snapshot]);
-  function openOutputWebsite(url: string, owner: string, sessionId: string, admitted: () => boolean, retained: () => boolean) {
+  function openOutputWebsite(url: string, owner: string, sessionId: string, admitted: () => boolean, retained: () => boolean, preview?: BrowserNewTabState["preview"]) {
     if (!admitted()) return;
     const tab = createBrowserNewTab(owner, sessionId);
-    tab.browserNewTab = { status: "idle", draft: url };
-    outputWebsites.current.set(tab.id, { tab, retained });
-    add(tab, "right", admitted);
+    tab.browserNewTab = { status: "idle", draft: url, ...(preview ? { preview } : {}) };
+    const queued = new Promise<boolean>(settle => outputWebsites.current.set(tab.id, { tab, retained, settle }));
+    setReady(previous => admitted() ? true : previous);
+    // Even a refused addition commits a receipt so a prepared preview can release its lease.
+    setSnapshot(previous => admitted() ? { tabs: [...previous.tabs, tab], state: insertDockTab(previous.state, tab, "right") } : { ...previous });
+    return { tabId: tab.id, queued };
   }
   const add = (tab: DockTab, destination: DockDestination, guard: () => boolean = () => true) => {
     setReady(previous => guard() ? true : previous);

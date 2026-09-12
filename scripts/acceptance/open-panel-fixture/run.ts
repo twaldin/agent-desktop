@@ -14,7 +14,7 @@ const hashes = async () => Object.fromEntries(await Promise.all(sourcePaths.map(
 const before = await hashes();
 await writeFile(join(output, 'source-before.json'), JSON.stringify(before, null, 2));
 const fixture = await realpath(await mkdtemp(join(tmpdir(), 'agent-desktop-open-panel-')));
-const suggested = process.argv.includes('--suggested'), directoryViewer = process.argv.includes('--mcp-owner-viewer'), directoryOwner = directoryViewer || process.argv.includes('--mcp-owner'), artifacts = suggested || process.argv.includes('--artifacts'), mcp = directoryOwner || artifacts || process.argv.includes('--mcp');
+const htmlPreview = process.argv.includes('--html-preview'), suggested = htmlPreview || process.argv.includes('--suggested'), directoryViewer = process.argv.includes('--mcp-owner-viewer'), directoryOwner = directoryViewer || process.argv.includes('--mcp-owner'), artifacts = suggested || process.argv.includes('--artifacts'), mcp = directoryOwner || artifacts || process.argv.includes('--mcp');
 if (mcp) {
   const ui = await Bun.build({ entrypoints: [join(import.meta.dir, artifacts || directoryViewer ? 'artifact-view.ts' : 'mcp-view.ts')], target: 'browser', format: 'esm' });
   if (!ui.success) throw new Error(ui.logs.join('\n'));
@@ -34,7 +34,7 @@ if (suggested) {
   }
   if (!chrome) throw new Error('Suggested website fixture requires an existing Chrome for Testing executable.');
 }
-const host = Bun.spawn([process.execPath, join(import.meta.dir, 'host.ts'), fixture, ...(terminalBundle ? [terminalBundle] : [])], { env: { HOME: fixture, PATH: process.env.PATH, TMPDIR: suggested ? join(fixture, 'tmp') : tmpdir(), ...(suggested ? { SUGGESTED_OUTPUTS_FIXTURE: '1', PUPPETEER_EXECUTABLE_PATH: chrome!, PI_BROWSER_CMUX: '0', PI_BROWSER_RELAY: '0', DEEPINFRA_API_KEY: 'isolated-suggested-fixture', SUGGESTED_PROVIDER_LOG: join(fixture, 'image-provider.jsonl') } : {}), PI_CODING_AGENT_DIR: join(fixture, 'agent'), TERM: 'dumb', AGENT_DESKTOP_NATIVE_TERMINALS: '0', ...(mcp ? { MCP_APP_FIXTURE: '1' } : {}), ...(directoryOwner ? { MCP_OWNER_FIXTURE: '1' } : {}), ...(directoryViewer ? { MCP_OWNER_VIEWER_FIXTURE: '1' } : {}), ...(artifacts ? { ARTIFACT_APP_FIXTURE: '1', ARTIFACT_CONTRACT_GATES: join(fixture, 'gates') } : {}) }, stdin: 'pipe', stdout: Bun.file(join(output, 'host.log')), stderr: Bun.file(join(output, 'host-errors.log')) });
+const host = Bun.spawn([process.execPath, join(import.meta.dir, 'host.ts'), fixture, ...(terminalBundle ? [terminalBundle] : [])], { env: { HOME: fixture, PATH: process.env.PATH, TMPDIR: suggested ? join(fixture, 'tmp') : tmpdir(), ...(suggested ? { SUGGESTED_OUTPUTS_FIXTURE: '1', ...(htmlPreview ? { HTML_PREVIEW_FIXTURE: '1', HTML_PROVIDER_LOG: join(fixture, 'html-provider.jsonl') } : {}), PUPPETEER_EXECUTABLE_PATH: chrome!, PI_BROWSER_CMUX: '0', PI_BROWSER_RELAY: '0', DEEPINFRA_API_KEY: 'isolated-suggested-fixture', SUGGESTED_PROVIDER_LOG: join(fixture, 'image-provider.jsonl') } : {}), PI_CODING_AGENT_DIR: join(fixture, 'agent'), TERM: 'dumb', AGENT_DESKTOP_NATIVE_TERMINALS: '0', ...(mcp ? { MCP_APP_FIXTURE: '1' } : {}), ...(directoryOwner ? { MCP_OWNER_FIXTURE: '1' } : {}), ...(directoryViewer ? { MCP_OWNER_VIEWER_FIXTURE: '1' } : {}), ...(artifacts ? { ARTIFACT_APP_FIXTURE: '1', ARTIFACT_CONTRACT_GATES: join(fixture, 'gates') } : {}) }, stdin: 'pipe', stdout: Bun.file(join(output, 'host.log')), stderr: Bun.file(join(output, 'host-errors.log')) });
 let electron: Bun.Subprocess | undefined;
 try {
   const deadline = Date.now() + 40_000;
@@ -46,7 +46,20 @@ try {
   if (terminalBundle) { const capability = await fetch(`${connection.origin}/v2/terminals/capabilities`, { headers: { Authorization: `Bearer ${connection.token}` } }); const value = await capability.json(); await writeFile(join(output, 'terminal-capabilities.json'), JSON.stringify(value, null, 2)); if (!capability.ok) throw new Error('The real terminal capability is unavailable.'); }
   const project = await command({ type: 'project.add', path: join(fixture, 'project'), name: 'Open panel workspace' });
   const session = directoryOwner ? { id: null } : await command({ type: 'session.create', projectId: project.id });
-  if (artifacts) {
+  if (htmlPreview) {
+    const headers = { Authorization: `Bearer ${connection.token}`, 'X-Agent-Host-Id': connection.hostId };
+    for (const text of ['html-prepare', 'html-edit']) {
+      await command({ type: 'session.prompt', sessionId: session.id, text, model: { provider: 'html-contract', id: 'controlled' }, approvalMode: 'yolo' });
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const messages = await (await fetch(`${connection.origin}/v1/sessions/${session.id}/messages`, { headers })).json() as any[];
+        const completed = messages.filter(row => row.role === 'assistant' && JSON.stringify(row).includes('The edited website is ready.')).length;
+        if (completed >= (text === 'html-prepare' ? 1 : 2)) break;
+        if (Date.now() > deadline) { await writeFile(join(output, 'html-setup-messages.json'), JSON.stringify(messages)); throw new Error('Native HTML turn did not complete.'); }
+        await Bun.sleep(100);
+      }
+    }
+  } else if (artifacts) {
     await command({ type: 'session.prompt', sessionId: session.id, text: suggested ? 'Create suggested outputs.' : 'Create the original report once.', model: { provider: suggested ? 'suggested-contract' : 'artifact-contract', id: 'controlled' }, approvalMode: 'yolo' });
     const deadline = Date.now() + 30_000;
     for (;;) {
@@ -57,7 +70,7 @@ try {
       await Bun.sleep(100);
     }
   }
-  await writeFile(join(fixture, 'context.json'), JSON.stringify({ projectId: project.id, sessionId: session.id, git, terminal: !!terminalBundle, mcp, artifacts, suggested, directoryOwner, directoryViewer }));
+  await writeFile(join(fixture, 'context.json'), JSON.stringify({ projectId: project.id, sessionId: session.id, git, terminal: !!terminalBundle, mcp, artifacts, suggested, htmlPreview, directoryOwner, directoryViewer }));
   await writeFile(join(output, 'index.html'), `<!doctype html><meta charset="utf-8"><div id="root"></div><script type="module" src="${relative(output, join(import.meta.dir, 'browser.tsx'))}"></script>`);
   await build({ configFile: join(root, 'apps/desktop/vite.config.ts'), root: output, logLevel: 'warn', build: { outDir: join(output, 'web'), emptyOutDir: true } });
   const compiled = await Bun.build({ entrypoints: [join(import.meta.dir, 'main.ts')], outdir: output, naming: 'main.mjs', target: 'node', format: 'esm', external: ['electron'] }); if (!compiled.success) throw new Error(compiled.logs.join('\n'));

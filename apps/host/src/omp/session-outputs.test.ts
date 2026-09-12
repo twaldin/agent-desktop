@@ -49,13 +49,13 @@ test('explicit document outputs exclude code/images/inputs and accept balanced/a
   ].join('\n'))];
   expect(projectSessionOutputs(entries, '/task').outputs.map(row => 'path' in row && row.path)).toEqual(['/task/report(1).pdf', '/task/report two.pdf']);
 });
-test('only one canonical declared port URL is a fallback; HTML edits are not a website substitute', () => {
+test('one declared port URL precedes a single actual HTML output fallback', () => {
   const urls = (text: string) => projectSessionOutputs([user(), final(text)], '/task').outputs;
   expect(urls('Preview http://localhost:8080 and http://localhost:8080/.')).toMatchObject([{ kind: 'website', url: 'http://localhost:8080/' }]);
   expect(urls('http://localhost:8080/a[b]')).toEqual([]);
   expect(urls('https://example.com and http://localhost:8080/')).toHaveLength(1);
   expect(urls('http://localhost:8080/ http://localhost:8081/')).toEqual([]);
-  expect(projectSessionOutputs([user(), result('html', 'write', { resolvedPath: '/task/index.html' }), final()], '/task').outputs).toEqual([]);
+  expect(projectSessionOutputs([user(), result('html', 'write', { resolvedPath: '/task/index.html' }), final()], '/task').outputs).toMatchObject([{ kind: 'html-preview', path: '/task/index.html', entryId: 'html' }]);
 });
 test('generated items reverse within a turn, upgrade same path, and only selected images are decoded', () => {
   const image = (id: string, path: string, data = Buffer.from('pixels').toString('base64')) => result(id, 'generate_image', { imagePaths: [path], images: [{ data, mimeType: 'image/png' }] });
@@ -64,4 +64,24 @@ test('generated items reverse within a turn, upgrade same path, and only selecte
   const entries = [user('old'), image('invalid-old', '/task/invalid.png', '!invalid!'), final('', 'old-final'), user('new'),
     ...Array.from({ length: 100 }, (_, i) => result(`write-${i}`, 'write', { resolvedPath: `/task/${i}.pdf` })), final()];
   const bounded = projectSessionOutputs(entries, '/task'); expect(bounded.outputs).toHaveLength(100); expect(bounded.truncated).toBe(true); expect(bounded.warnings).toEqual([]);
+});
+
+test('HTML fallback consumes successful native edit outcomes, excludes deletions/previews and requires one canonical path', () => {
+  const project = (rows: any[]) => projectSessionOutputs([user(), ...rows, final()], '/task').outputs;
+  expect(project([result('edit', 'edit', { path: 'index.html', op: 'update' })])).toMatchObject([{ kind: 'html-preview', entryId: 'edit', path: '/task/index.html' }]);
+  expect(project([result('edit', 'edit', { perFileResults: [{ path: 'index.html', op: 'create' }, { path: './index.html', op: 'update' }] })])).toHaveLength(1);
+  expect(project([result('edit', 'edit', { perFileResults: [{ path: 'index.html', op: 'update' }, { path: 'second.html', op: 'update' }] })])).toEqual([]);
+  expect(project([result('delete', 'edit', { path: 'index.html', op: 'delete' }), result('failed', 'edit', { path: 'index.html', op: 'update' }, true), result('preview', 'ast_edit', { applied: false, fileReplacements: [{ path: 'index.html', count: 1 }] })])).toEqual([]);
+  expect(project([result('ast', 'ast_edit', { applied: true, fileReplacements: [{ path: 'index.html', count: 1 }] })])).toMatchObject([{ kind: 'html-preview', entryId: 'ast' }]);
+  expect(project([result('edit', 'edit', { path: 'index.html', op: 'update' }), result('doc', 'write', { resolvedPath: '/task/report.pdf' })]).map(row => row.kind)).toEqual(['file']);
+});
+
+test('wrapped native writes retain only successful execute metadata and capture discovery branch', () => {
+  const wrapped = result('wrapped', 'write', { xdev: { mode: 'execute', tool: 'write', inner: { resolvedPath: '/task/index.html' } } });
+  const first = projectSessionOutputs([user(), wrapped, final()], '/task').outputs[0]!;
+  expect(first).toMatchObject({ kind: 'html-preview', path: '/task/index.html', entryId: 'wrapped' });
+  const changed = projectSessionOutputs([user(), wrapped, final(), { id: 'new-branch-entry' }], '/task').outputs[0]!;
+  if (first.kind !== 'html-preview' || changed.kind !== 'html-preview') throw new Error('Missing HTML output');
+  expect(changed.branch).not.toBe(first.branch);
+  expect(projectSessionOutputs([user(), result('help', 'write', { xdev: { mode: 'help', tool: 'write', inner: { resolvedPath: '/task/index.html' } } }), final()], '/task').outputs).toEqual([]);
 });
