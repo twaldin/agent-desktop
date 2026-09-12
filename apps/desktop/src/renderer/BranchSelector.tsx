@@ -26,7 +26,11 @@ export interface BranchSelectorProps {
 
 type OpenSurface = "branches" | "create-branch";
 
-export function BranchSelector({ workspace, connected, branchPrefix, onOpenGitSettings, variant, repositoryName, onOpen, destination, portalContainer, onCheckoutBlocked }: BranchSelectorProps) {
+export function BranchSelector(props: BranchSelectorProps) {
+  return props.workspace.gitAvailability === "not-repository" ? null : <BranchSelectorContent {...props}/>;
+}
+
+function BranchSelectorContent({ workspace, connected, branchPrefix, onOpenGitSettings, variant, repositoryName, onOpen, destination, portalContainer, onCheckoutBlocked }: BranchSelectorProps) {
   const [open, setOpen] = useState<OpenSurface>();
   const [query, setQuery] = useState("");
   const [newBranch, setNewBranch] = useState("");

@@ -273,6 +273,7 @@ describe("isolated host transport", () => {
     const statusResponse = await fetch(`${host.connection.origin}/v1/workspace/query`, { method: "POST", headers: headers(host),
       body: JSON.stringify({ target: { projectId: project!.id }, query: { type: "git.status" } }) });
     const reviewed = await statusResponse.json() as Extract<WorkspaceQueryResult, { type: "git.status" }>;
+    if (!("status" in reviewed)) throw new Error("Expected repository status");
     const now = Date.now();
     const active = host.store.upsertSession({ id: "active-checkout", hostId: host.connection.hostId, projectId: project!.id,
       cwd: await realpath(options.discoveryDirectory), title: "Active checkout", status: "running", sessionFile: join(options.dataDirectory, "active.jsonl"),

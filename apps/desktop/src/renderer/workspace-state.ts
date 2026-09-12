@@ -24,6 +24,8 @@ export class WorkspaceState {
   directory = ".";
   opened?: string;
   status?: GitStatus;
+  /** Set only by the host's discriminated status response; ordinary Git errors remain visible. */
+  gitAvailability: "unknown" | "repository" | "not-repository" = "unknown";
   branches: GitBranch[] = [];
   worktrees: GitWorktree[] = [];
   diff?: GitDiff;
@@ -252,6 +254,11 @@ export class WorkspaceState {
     return this.load("git", async () => {
       const result = await this.query({ type: "git.status" });
       if (result.type !== "git.status") throw new Error("The host returned the wrong Git status response.");
+      this.gitAvailability = result.availability ?? "repository";
+      if (result.availability === "not-repository") {
+        this.status = undefined; this.branches = []; this.worktrees = []; this.diff = undefined; this.diffRequested = false; this.saveSoon();
+        return;
+      }
       this.status = result.status; this.saveSoon();
       if (this.diffRequested) await this.loadDiff();
     });
@@ -316,6 +323,7 @@ export class WorkspaceState {
     finally { this.submissionControlBusy = false; this.changed(); }
   }
   loadWorktrees() {
+    if (this.gitAvailability === "not-repository") return Promise.resolve();
     return this.load("worktrees", async () => {
       const results = await Promise.all([this.query({ type: "git.worktrees" }), this.query({ type: "git.branches" })]);
       if (results[0]!.type !== "git.worktrees" || results[1]!.type !== "git.branches") throw new Error("The host returned the wrong worktree response.");

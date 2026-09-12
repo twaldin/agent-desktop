@@ -527,6 +527,36 @@ test("owning workspace forwards revision resolution without a mutation envelope"
   } finally { f.data.stop(); }
 });
 
+test("a typed non-repository status clears Git controls without a follow-up worktree query", async () => {
+  let calls = 0;
+  const bridge = {
+    workspaceQuery: async (_target: unknown, query: { type: string }): Promise<WorkspaceQueryResult> => {
+      calls++;
+      if (query.type === "git.status") return { type: "git.status", availability: "not-repository" };
+      throw new Error(`Unexpected ${query.type} query`);
+    },
+    command: async () => { throw new Error("No mutation expected"); }, subscribe: () => () => {},
+  } as ConstructorParameters<typeof WorkspaceState>[0];
+  const data = new WorkspaceState(bridge, "home", { projectId: "plain" }, storage(), "home");
+  try {
+    data.diff = { patch: "stale", binary: false, staged: false } as any;
+    data.setConnected(true); await data.restore(); await data.loadGit(); await data.loadWorktrees();
+    expect(data.gitAvailability).toBe("not-repository"); expect(data.status).toBeUndefined(); expect(data.diff).toBeUndefined(); expect(data.errors.git).toBeUndefined(); expect(calls).toBe(1);
+  } finally { data.stop(); }
+});
+
+test("a repository status failure remains an actionable Git error", async () => {
+  const bridge = {
+    workspaceQuery: async (): Promise<WorkspaceQueryResult> => { throw new Error("controlled repository failure"); },
+    command: async () => { throw new Error("No mutation expected"); }, subscribe: () => () => {},
+  } as ConstructorParameters<typeof WorkspaceState>[0];
+  const data = new WorkspaceState(bridge, "home", { projectId: "repository" }, storage(), "home");
+  try {
+    data.setConnected(true); await data.restore(); await data.loadGit();
+    expect(data.gitAvailability).toBe("unknown"); expect(data.errors.git).toContain("controlled repository failure");
+  } finally { data.stop(); }
+});
+
 
 test("revision checkout receipt retries the original envelope without a second native switch", async () => {
   const f = await fixture(); await f.data.loadGit();

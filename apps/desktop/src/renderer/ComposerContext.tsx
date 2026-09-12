@@ -53,8 +53,9 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
     workspace.setConnected(connected);
     void workspace.restore().then(() => {
       if (disposed || !workspace.connected) return;
-      void workspace.loadGit();
-      if (worktreeSelected) void workspace.loadWorktrees();
+      void workspace.loadGit().then(() => {
+        if (!disposed && workspace.connected && worktreeSelected && workspace.gitAvailability !== "not-repository") void workspace.loadWorktrees();
+      });
     });
     const timer = setInterval(() => { if (workspace.connected) void workspace.loadGit(); }, 5000);
     return () => { disposed = true; off(); release(); clearInterval(timer); };
@@ -95,7 +96,7 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
   function toggle(value:Menu, button:HTMLButtonElement, align: "start" | "center" = "start") {
     anchor.current = button; anchorAlign.current = align; setQuery(""); setOpen(open === value ? undefined : value);
     if (value === "starting-state" && workspace) setStartingInventoryOwner({ workspace, hostId, projectId });
-    if ((value === "hosts" || value === "starting-state") && connected) void workspace?.loadWorktrees();
+    if ((value === "hosts" || value === "starting-state") && connected && workspace?.gitAvailability !== "not-repository") void workspace?.loadWorktrees();
     if (value === "environments" && connected && environmentAvailable) environments?.refresh();
   }
   useImperativeHandle(ref, () => ({ openProjects(button) { toggle("projects", button, "center"); } }), [open]);
@@ -119,8 +120,8 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
     <button type="button" aria-label="Select project" aria-haspopup="menu" aria-expanded={open === "projects"} title={project?.path ?? "Choose a project on this host"} onClick={event => toggle("projects",event.currentTarget)}><Icon name="folder"/><span>{project?.name ?? (projectId ? "Unavailable project" : "No project")}</span></button>
     <button type="button" aria-label="Select where to run the chat" aria-haspopup="menu" aria-expanded={open === "hosts"} title={`${worktreeSelected ? "New local worktree" : "Local"} · ${hostName}${connected ? "" : " · Offline"}`} onClick={event => toggle("hosts",event.currentTarget)}><Icon name={worktreeSelected ? "branch" : "laptop"}/><span>{worktreeSelected ? "New local worktree" : "Local"}</span>{!connected && <span className="context-offline">Offline</span>}</button>
     {worktreeSelected && project && environmentAvailable && <button type="button" aria-label="Select a local environment" aria-haspopup="menu" aria-expanded={open === "environments"} title="Select a local environment" onClick={event => toggle("environments",event.currentTarget)}><Icon name="folder"/><span>{environment ? selectedEnvironmentName?.type === "environment" ? selectedEnvironmentName.environment.name : "Environment unavailable" : "No environment"}</span></button>}
-    {worktreeSelected && project && <button type="button" aria-label="What branch should this chat start from?" aria-haspopup="menu" aria-expanded={open === "starting-state"} disabled={disabledGit || !worktreesAvailable} title={disabledGit || !worktreesAvailable ? "Reconnect to the owning host and wait for Git status." : "What branch should this chat start from?"} onClick={event => toggle("starting-state",event.currentTarget)}><Icon name="branch"/><span>{startingStateLabel(execution.startingState, workspace?.status?.branch, startingInventory.snapshot)}</span></button>}
-    {project && !worktreeSelected && workspace && <BranchSelector onCheckoutBlocked={onCheckoutBlocked} workspace={workspace} connected={connected} branchPrefix={branchPrefix} onOpenGitSettings={onOpenGitSettings} variant="composer" repositoryName={project.name} onOpen={() => setOpen(undefined)}/>}
+    {worktreeSelected && project && workspace?.gitAvailability !== "not-repository" && <button type="button" aria-label="What branch should this chat start from?" aria-haspopup="menu" aria-expanded={open === "starting-state"} disabled={disabledGit || !worktreesAvailable} title={disabledGit || !worktreesAvailable ? "Reconnect to the owning host and wait for Git status." : "What branch should this chat start from?"} onClick={event => toggle("starting-state",event.currentTarget)}><Icon name="branch"/><span>{startingStateLabel(execution.startingState, workspace?.status?.branch, startingInventory.snapshot)}</span></button>}
+    {project && !worktreeSelected && workspace && workspace.gitAvailability !== "not-repository" && <BranchSelector onCheckoutBlocked={onCheckoutBlocked} workspace={workspace} connected={connected} branchPrefix={branchPrefix} onOpenGitSettings={onOpenGitSettings} variant="composer" repositoryName={project.name} onOpen={() => setOpen(undefined)}/>}
     {open && position && createPortal(<div ref={menu} role="menu" aria-label={label} className="composer-context-menu" style={position} onKeyDown={key}>
       {open !== "starting-state" && open !== "environments" && <label className="context-search"><Icon name="search"/><input type="search" aria-label={`Search ${open}`} placeholder={`Search ${open}`} value={query} onChange={event => setQuery(event.target.value)}/></label>}
       {open === "projects" && <><div className="context-options">{projects.filter(item => matches(`${item.name} ${item.path}`)).map(item => <button role="menuitemradio" aria-checked={item.id === projectId} key={item.id} type="button" title={item.path} onClick={() => { onProject(item.id); close(); }}><Icon name="folder"/><span>{item.name}</span>{item.id === projectId && <Icon name="check"/>}</button>)}{!projects.some(item => matches(`${item.name} ${item.path}`)) && <p>No matching projects.</p>}</div><hr/><button role="menuitem" type="button" disabled={!connected || addingProject} onClick={() => { close(); onAddProject(); }}><Icon name="plus"/><span>{addingProject ? "Adding project…" : "New project"}</span></button><button role="menuitem" type="button" onClick={() => { onProject(null); close(); }}><Icon name="close"/><span>Don’t work in a project</span></button></>}

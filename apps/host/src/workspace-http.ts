@@ -416,7 +416,7 @@ export class HostWorkspaces {
     const branchSearchOwner = (query.type === "git.search-branches" || query.type === "git.search-starting-branches" || query.type === "git.resolve-revision" || query.type === "git.recent-branches" || query.type === "git.base-branch" || query.type === "git.default-branch" || query.type === "git.resolve-checkout") && !("filePath" in target) ? this.ownerStamp(target) : undefined;
     const owner = this.#resolve(target);
     // Git controls intentionally address the containing repository; file controls stay project-confined.
-    const workspace = query.type.startsWith("git.") ? await owner.gitRootService() : owner;
+    const workspace = query.type.startsWith("git.") && query.type !== "git.status" ? await owner.gitRootService() : owner;
     switch (query.type) {
       case "environment.actions": {
         if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");
@@ -443,7 +443,10 @@ export class HostWorkspaces {
       }
       case "file.copy-info": return { type: query.type, path: query.path, ...await workspace.copyInfo(query.path) };
       case "file.copy-chunk": return { type: query.type, path: query.path, ...await workspace.copyChunk(query.path, query.revision, query.offset) };
-      case "git.status": return { type: query.type, status: await workspace.gitStatus() };
+      case "git.status": {
+        if (await owner.gitRepositoryAvailability() === "not-repository") return { type: query.type, availability: "not-repository" };
+        return { type: query.type, availability: "repository", status: await (await owner.gitRootService()).gitStatus() };
+      }
       case "git.action-context": return { type: query.type, context: await readGitActionContext(workspace) };
       case "git.selection-summary": {
         if ("filePath" in target) throw new Error("A standalone file cannot own a Git selection.");

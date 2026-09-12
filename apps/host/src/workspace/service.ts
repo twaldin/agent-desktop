@@ -554,6 +554,47 @@ export class WorkspaceService {
     return serialized(`git:${this.cwd}`, () => this.readGitStatus());
   }
 
+  /** Proves whether the selected workspace resolves to a repository without classifying Git stderr. */
+  async gitRepositoryAvailability(): Promise<"repository" | "not-repository"> {
+    try { await this.gitWorkspaceContext(); return "repository"; }
+    catch (cause) {
+      // `gitWorkspaceContext()` is the ownership proof used by status. Exit 128
+      // alone is not absence: a corrupt ancestor repository can report it too.
+      if (!(cause instanceof GitProcessError) || cause.exitCode !== 128 || !await this.canProveNoDiscoverableRepository()) throw cause;
+      return "not-repository";
+    }
+  }
+
+  /** Conservative filesystem counterpart to Git's default upward discovery. */
+  private async canProveNoDiscoverableRepository(): Promise<boolean> {
+    // Git discovery can be redirected or bounded by these process settings.
+    // Without reproducing every Git environment rule, retain the original error.
+    if (["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"]
+      .some(name => process.env[name] !== undefined)) return false;
+    let directory = this.cwd, device = (await lstat(directory)).dev;
+    for (;;) {
+      if (await this.pathExists(join(directory, ".git")) || await this.isBareRepositoryDirectory(directory)) return false;
+      const parent = dirname(directory);
+      if (parent === directory) return true;
+      const metadata = await lstat(parent);
+      // Default Git discovery stops before crossing a filesystem boundary.
+      if (metadata.dev !== device) return true;
+      directory = parent; device = metadata.dev;
+    }
+  }
+
+  private async isBareRepositoryDirectory(directory: string): Promise<boolean> {
+    return await this.pathExists(join(directory, "HEAD")) && await this.pathExists(join(directory, "objects"));
+  }
+
+  private async pathExists(path: string): Promise<boolean> {
+    try { await lstat(path); return true; }
+    catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw cause;
+    }
+  }
+
   private async readGitStatus(): Promise<GitStatus> {
     await this.requireGitRoot();
     let snapshot: { revision: string; output: string } | undefined;

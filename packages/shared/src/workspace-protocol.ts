@@ -115,7 +115,9 @@ export type WorkspaceQueryResult =
   | { type: "file.open-options"; path: string; targets: WorkspaceOpenTarget[]; preferredTargetId?: string; availabilityReason?: string }
   | { type: "file.copy-info"; path: string; absolutePath: string; size: number; revision: string }
   | { type: "file.copy-chunk"; path: string; size: number; revision: string; offset: number; dataBase64: string }
-  | { type: "git.status"; status: GitStatus }
+  /** A host-proven absence of repository metadata is distinct from a Git read failure. */
+  | { type: "git.status"; availability?: "repository"; status: GitStatus }
+  | { type: "git.status"; availability: "not-repository" }
   | { type: "git.action-context"; context: GitActionContext }
   | { type: "git.selection-summary"; contextRevision: string; summary: GitSelectionSummary }
   | { type: "git.submission"; receipt: GitSubmissionReceipt | null }
