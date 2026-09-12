@@ -27,28 +27,27 @@ export function SuggestedOutputRows({ owner, images, onOpen, onSource }: Suggest
   const opening = useRef(false);
   const [busy, setBusy] = useState<string>(), [error, setError] = useState<string>();
   const outputs = owner.snapshot?.outputs ?? [];
-  async function open(output: SessionOutput, source = false) {
+  async function open<T extends SessionOutput>(output: T, action: (output: T, current: () => boolean) => void | Promise<void>) {
     if (opening.current) return;
     opening.current = true;
     const key = sessionOutputKey(output); setBusy(key); setError(undefined);
     try {
       const current = await owner.admit(output);
       if (!current) throw new Error(owner.error ?? 'This saved output changed. Select its current row to open it.');
-      if (source && output.kind === 'html-preview' && onSource) onSource(output, current);
-      else await onOpen(output, current);
+      await action(output, current);
     } catch (error) { setError(error instanceof Error ? error.message : 'The saved output could not be opened.'); }
     finally { opening.current = false; setBusy(undefined); }
   }
   return <>
     <ul className="dock-suggested-list" aria-label="Suggested outputs">
       {outputs.map(output => <li key={sessionOutputKey(output)}>
-        <button type="button" disabled={!owner.enabled || Boolean(busy)} onClick={() => void open(output)} title={'path' in output ? output.path : output.kind === 'website' ? output.url : output.resourceUri}>
+        <button type="button" disabled={!owner.enabled || Boolean(busy)} onClick={() => void open(output, onOpen)} title={'path' in output ? output.path : output.kind === 'website' ? output.url : output.resourceUri}>
           <span className="dock-suggested-icon">{output.kind === 'generated-image' && owner.enabled
             ? <GeneratedThumbnail output={output} images={images}/>
             : output.kind === 'file' || output.kind === 'generated-image' ? <FileTypeIcon path={output.path}/> : <Icon name={output.kind === 'website' || output.kind === 'html-preview' ? 'globe' : 'compose'}/>}</span>
           <span>{output.label}</span>{busy === sessionOutputKey(output) && <span role="status">Opening…</span>}
         </button>
-        {output.kind === 'html-preview' && onSource && <button type="button" className="dock-suggested-source" aria-label={`View source of ${output.label}`} disabled={!owner.enabled || Boolean(busy)} onClick={() => void open(output, true)}><FileTypeIcon path={output.path}/></button>}
+        {output.kind === 'html-preview' && onSource && <button type="button" className="dock-suggested-source" aria-label={`View source of ${output.label}`} disabled={!owner.enabled || Boolean(busy)} onClick={() => void open(output, onSource)}><FileTypeIcon path={output.path}/></button>}
       </li>)}
     </ul>
     {(error || owner.error) && <p className="dock-suggested-message" role="alert">{error ?? owner.error} <button type="button" disabled={!owner.enabled} onClick={() => { setError(undefined); void owner.read(); }}>Refresh outputs</button></p>}
