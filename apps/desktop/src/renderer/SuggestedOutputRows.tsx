@@ -6,12 +6,11 @@ import { loadAttachmentMedia, type AttachmentMediaContext } from './attachment-m
 import type { SuggestedOutputs } from './suggested-outputs';
 export interface SuggestedOutputRowsProps {
   owner: SuggestedOutputs;
-  hostId: string;
-  sessionId: string;
-  media: AttachmentMediaContext;
+  images: { hostId: string; sessionId: string; media: AttachmentMediaContext };
   onOpen(output: SessionOutput, current: () => boolean): void | Promise<void>;
 }
-function GeneratedThumbnail({ output, hostId, sessionId, media }: Omit<SuggestedOutputRowsProps, 'owner' | 'onOpen'> & { output: Extract<SessionOutput, { kind: 'generated-image' }> }) {
+function GeneratedThumbnail({ output, images }: Pick<SuggestedOutputRowsProps, 'images'> & { output: Extract<SessionOutput, { kind: 'generated-image' }> }) {
+  const { hostId, sessionId, media } = images;
   const [url, setUrl] = useState<string>();
   useEffect(() => {
     let active = true, allocated: string | undefined;
@@ -23,7 +22,7 @@ function GeneratedThumbnail({ output, hostId, sessionId, media }: Omit<Suggested
   }, [media, hostId, sessionId, output.entryId, output.imageIndex, output.sha256]);
   return url ? <img src={url} alt=""/> : <FileTypeIcon path={output.path}/>;
 }
-export function SuggestedOutputRows({ owner, hostId, sessionId, media, onOpen }: SuggestedOutputRowsProps) {
+export function SuggestedOutputRows({ owner, images, onOpen }: SuggestedOutputRowsProps) {
   const opening = useRef(false);
   const [busy, setBusy] = useState<string>(), [error, setError] = useState<string>();
   const outputs = owner.snapshot?.outputs ?? [];
@@ -43,7 +42,7 @@ export function SuggestedOutputRows({ owner, hostId, sessionId, media, onOpen }:
       {outputs.map(output => <li key={sessionOutputKey(output)}>
         <button type="button" disabled={!owner.enabled || Boolean(busy)} onClick={() => void open(output)} title={'path' in output ? output.path : output.kind === 'website' ? output.url : output.resourceUri}>
           <span className="dock-suggested-icon">{output.kind === 'generated-image' && owner.enabled
-            ? <GeneratedThumbnail output={output} hostId={hostId} sessionId={sessionId} media={media}/>
+            ? <GeneratedThumbnail output={output} images={images}/>
             : output.kind === 'file' || output.kind === 'generated-image' ? <FileTypeIcon path={output.path}/> : <Icon name={output.kind === 'website' ? 'globe' : 'compose'}/>}</span>
           <span>{output.label}</span>{busy === sessionOutputKey(output) && <span role="status">Opening…</span>}
         </button>

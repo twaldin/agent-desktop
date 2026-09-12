@@ -1473,7 +1473,7 @@ export function App() {
           if(to!==_from && !taskDropDestinations(dock.snapshot,mainChat,dragTarget(tab)).includes(to==="right"?contentSide:"bottom")) return;
           dock.change(moveDockTab(dock.snapshot.state,id,to,index));
         }} addActions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
-      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination} suggested={destination === "right" && selected && !reviewAction ? { owner: suggestedOutputs, hostId, sessionId: selected.id, media: attachmentMedia, onOpen: openSuggestedOutput } : undefined}/>}
+      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination} suggested={destination === "right" && selected && !reviewAction ? { owner: suggestedOutputs, images: { hostId, sessionId: selected.id, media: attachmentMedia }, onOpen: openSuggestedOutput } : undefined}/>}
     </div>)}
     </div>
     {paneDrag && !settingsOpen && !pluginDirectoryOpen && <TaskPaneDropPreview geometry={taskDropGeometry(dock.snapshot,mainChat,paneDrag.target,dockViewport)} point={paneDrag.point}/>}

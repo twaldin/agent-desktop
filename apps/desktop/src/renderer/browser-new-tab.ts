@@ -71,6 +71,7 @@ export class BrowserNewTabController {
   }
   async submit(retained: () => boolean = () => true) {
     if (!this.live || this.inFlight || this.state.status === "unknown" || !this.state.draft?.trim() || !retained()) return;
+    const assertRetained = () => { if (!retained()) throw new Error("The original saved output is no longer selected."); };
     const draft = this.state.draft;
     let request: BrowserCreateRequest | undefined;
     let dispatched = false;
@@ -82,21 +83,21 @@ export class BrowserNewTabController {
       if (!this.bridge.getBrowserMetadata || !this.bridge.createBrowserTab) throw new Error("Update this desktop and host to open browser tabs.");
       const metadata = await this.bridge.getBrowserMetadata(this.sessionId, this.tab.hostId);
       if (!this.live) return;
-      if (!retained()) throw new Error("The original saved output is no longer selected.");
+      assertRetained();
       if (!this.connected) throw new Error("The owning host disconnected before browser creation.");
       if (!metadata || metadata.hostId !== this.tab.hostId || metadata.sessionId !== this.sessionId || !metadata.creationTicket) throw new Error("A current creation ticket from this browser's owner is unavailable.");
       request = parseBrowserCreateRequest({ ...metadata.creationTicket, initialUrl, requestId: crypto.randomUUID() });
       this.set({ status: "pending", draft, request });
       if (!this.live) return;
-      if (!retained()) throw new Error("The original saved output is no longer selected.");
+      assertRetained();
       await this.checkpoint(this.tab, this.state, this.saveCancellation.signal);
       if (!this.live) return;
-      if (!retained()) throw new Error("The original saved output is no longer selected.");
+      assertRetained();
       if (!this.connected) throw new Error("The owning host disconnected before browser creation.");
       dispatched = true;
       const receipt = await this.bridge.createBrowserTab(this.sessionId, request, this.tab.hostId);
       if (!this.live) return;
-      if (!retained()) throw new Error("The original saved output is no longer selected.");
+      assertRetained();
       const native = this.validateReceipt(receipt, request);
       if (receipt.outcome !== "completed") {
         this.set({ status: receipt.outcome === "rejected" ? "rejected" : "unknown", draft, request,
