@@ -144,6 +144,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let questionDeliveries: QuestionDeliveryController | undefined;
   let automations: AutomationService | undefined;
   let pullRequests: PullRequests | undefined;
+  let mcpOwners: McpOwnerHttp | undefined;
   let server: ReturnType<typeof Bun.serve<SocketData>> | undefined;
   let publishedConnection = false;
   let tailServer: ReturnType<typeof Bun.serve<SocketData>> | undefined;
@@ -234,7 +235,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const automationCommands = new WeakSet<CommandEnvelope>();
   const automationPromptCompletions = new Map<string, Promise<"completed" | "failed" | "stopped">>();
   const runtimeErrors = new Map<string, string>();
-  const mcpOwners = new McpOwnerHttp(store, options.discoveryDirectory ?? homedir(), runtime);
+  mcpOwners = new McpOwnerHttp(store, options.discoveryDirectory ?? homedir(), runtime);
   const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
   browserFirstSend = new BrowserFirstSend(store, draftBrowserWorkers,join(dataDirectory,"browser-recovery"));
   const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, runs: environmentRuns, reserve: reserveWorkspaceMutation, browserFirstSend,
@@ -1243,7 +1244,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (automationsResponse) return automationsResponse;
         const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
         if (mcpAuthorizationResponse) return mcpAuthorizationResponse;
-        const mcpOwnerResponse = await mcpOwners.route(request, url);
+        const mcpOwnerResponse = await mcpOwners!.route(request, url);
         if (mcpOwnerResponse) return mcpOwnerResponse;
         const mcpAppResponse = await sessionMcpApps.route(request, url);
         if (mcpAppResponse) return mcpAppResponse;
@@ -1487,7 +1488,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const pullRequestsDrain = pullRequests?.dispose();
         void pullRequestsDrain?.catch(() => {});
         const terminalCreationDrain = terminalCreationHttp?.dispose();
-        const mcpOwnerDrain = mcpOwners.dispose();
+        const mcpOwnerDrain = mcpOwners!.dispose();
         void mcpOwnerDrain.catch(() => {});
         const browserCloseDrain = browserCloseRequests?.dispose();
         void browserCloseDrain?.catch(() => {});
@@ -1532,7 +1533,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await Promise.allSettled([mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
       await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
     }
     finally {
