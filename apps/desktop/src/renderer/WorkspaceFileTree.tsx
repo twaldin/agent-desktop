@@ -40,14 +40,15 @@ const supportedFile = (entry: WorkspaceEntry) =>
 
 /** Owner-bound workspace navigation. It reads directories through WorkspaceState so
  * cached/offline behavior and host ownership remain identical to the editor. */
-export function WorkspaceFileTree({ data, filePath, active, initialDirectory = ".", showFilter = true, onOpenFile, cwd, onAddFile }: {
+export function WorkspaceFileTree({ data, filePath = "", active, initialDirectory = ".", showFilter = true, autoFocusSearch = false, onOpenFile, cwd, onAddFile }: {
   data: WorkspaceState;
   cwd?:string;
   onAddFile?(path:string):void;
-  filePath: string;
+  filePath?: string;
   active: boolean;
   initialDirectory?: string;
   showFilter?: boolean;
+  autoFocusSearch?: boolean;
   onOpenFile(path: string, options?: {preview?:boolean}): void;
 }) {
   const [context,setContext]=useState<TreeMenuTarget>();
@@ -65,6 +66,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
   ]));
   const [focusedPath, setFocusedPath] = useState(filePath);
   const rowElements = useRef(new Map<string, HTMLDivElement>());
+  const filterInput = useRef<HTMLInputElement>(null), autoFocusedSearch = useRef(false);
   const activeRef = useRef(active), mounted = useRef(false), focusFrame = useRef<number | undefined>(undefined);
   activeRef.current = active;
 
@@ -83,6 +85,17 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
       ...directoryAncestors(safeInitialDirectory, true),
     ]));
   }, [filePath, safeInitialDirectory]);
+  useEffect(() => {
+    if (!active || !autoFocusSearch || !showFilter || autoFocusedSearch.current) return;
+    const element = filterInput.current;
+    if (!element) return;
+    const frame = requestAnimationFrame(() => {
+      if (!element.isConnected) return;
+      autoFocusedSearch.current = true;
+      element.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, autoFocusSearch, showFilter]);
 
   useEffect(() => {
     if (!active || !data.connected) return;
@@ -213,7 +226,7 @@ export function WorkspaceFileTree({ data, filePath, active, initialDirectory = "
   return <section data-tab-preview-pin-exempt className="workspace-file-tree-shell" aria-label="Workspace files">
     {showFilter && <label className="workspace-file-tree-filter">
       <span className="sr-only">Filter files</span><Icon name="search"/>
-      <input value={filter} disabled={!active} placeholder="Filter files…" onChange={event => setFilter(event.target.value)} />
+      <input ref={filterInput} value={filter} disabled={!active} placeholder="Filter files…" onChange={event => setFilter(event.target.value)} />
       {filter && <button type="button" aria-label="Clear file filter" disabled={!active} onClick={() => setFilter("")}><Icon name="close"/></button>}
     </label>}
     <div className="workspace-file-tree" role="tree" aria-label="Files" aria-busy={scan.kind === "scanning" || data.loading.has("files:.")} tabIndex={active ? 0 : -1}

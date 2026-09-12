@@ -13,22 +13,12 @@
 .context-search{display:flex;align-items:center;gap:7px;padding:6px 8px;color:var(--secondary)}
 .context-search input{background:transparent;border:0;outline:0;min-width:0;flex:1;color:var(--text);font:inherit}
 .context-options{max-height:290px;overflow:auto}.composer-context-menu p{margin:4px 8px;color:var(--secondary);font-size:12px;overflow-wrap:anywhere}
-.composer-branch-dialog{width:min(400px,calc(100vw - 32px));padding:20px;color:var(--text);background:color-mix(in srgb,var(--dialog-surface) calc(var(--dialog-opacity,.9) * 100%),transparent);backdrop-filter:blur(var(--dialog-blur,24px));border:0;border-radius:calc(16px * var(--corner-radius-scale,1.25));corner-shape:superellipse(var(--corner-exponent));box-shadow:0 0 0 .5px var(--border),0 4px 8px -2px #0000001a;margin:auto;font:inherit}
-.composer-branch-dialog::backdrop{background:var(--dialog-backdrop-color,#00000022);backdrop-filter:none}
-.composer-branch-dialog form{display:flex;flex-direction:column;min-width:0}
-.context-dialog-header,.context-branch-label,.context-dialog-actions{display:flex;align-items:center}
-.context-dialog-header{justify-content:space-between;gap:16px;margin-bottom:12px}.context-dialog-header h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.36px;line-height:28px}
-.context-dialog-close{display:grid;place-items:center;width:28px;height:28px;margin:-5px -6px -5px 0;padding:0;color:var(--secondary);background:transparent;border:0;border-radius:8px}.context-dialog-close:hover,.context-dialog-close:focus-visible{color:var(--text);background:var(--hover);outline:0}.context-dialog-close .icon{width:16px;height:16px}
-.context-branch-label{justify-content:space-between;margin-bottom:8px;font-size:13px;line-height:calc(1.25 / .875);font-weight:500}.context-branch-label button{padding:0;color:var(--secondary);background:transparent;border:0;font:inherit;font-weight:400}.context-branch-label button:hover,.context-branch-label button:focus-visible{color:var(--text);outline:0}
-.composer-branch-dialog input{width:100%;height:36px;padding:7px 10px;color:var(--text);background:var(--dialog-input-surface,var(--elevated-surface));border:1px solid var(--border);border-radius:8px;font:inherit;font-size:13px}.composer-branch-dialog input:focus{border-color:var(--accent,#2f7cf6);outline:1px solid var(--accent,#2f7cf6)}
-.context-branch-error{margin:8px 0 0;color:var(--danger,#ef6461);font-size:12px;line-height:16px}.context-retry{align-self:flex-start;margin-top:8px;padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--hover);color:var(--text);font:inherit;font-size:12px}
-.context-dialog-actions{justify-content:flex-end;gap:12px;margin-top:12px}.context-dialog-actions .primary-button,.context-dialog-actions .secondary-button{min-height:32px;padding:6px 16px;font-size:14px;line-height:18px;border:1px solid transparent;border-radius:10px}.context-dialog-actions .primary-button{display:flex;align-items:center;gap:7px}.context-dialog-actions .spinner{width:13px;height:13px}
 @container composer-region (max-width:450px){.composer-context{gap:2px;margin-inline:4px;padding-inline:2px}.composer-context>button{padding-inline:4px}.context-offline{display:none}}
 
 .context-search input:focus-visible{outline:none}
 
-.context-branches{min-height:200px}
 .context-starting-states{height:200px}.context-menu-heading{font-weight:600;color:var(--text)!important}.composer-context>button[disabled]{opacity:.5}
 .git-settings .settings-field{display:flex;flex-direction:column;gap:6px;max-width:420px;font-size:14px;font-weight:550}.git-settings .settings-field input{height:36px;padding:7px 10px;color:var(--text);background:var(--app-surface);border:1px solid var(--border);border-radius:9px;font:inherit}.git-settings .settings-field input:focus{border-color:var(--accent,#2f7cf6);outline:1px solid var(--accent,#2f7cf6)}.git-settings .settings-success{color:var(--success,#39a96b)}
 
-.context-dialog-actions .secondary-button{background:color-mix(in srgb,var(--text) 5%,transparent)}.context-dialog-actions .secondary-button:enabled:hover{background:color-mix(in srgb,var(--text) 10%,transparent)}
+.context-starting-group+.context-starting-group{margin-top:4px}.composer-context-menu .context-starting-heading{font-size:var(--font-size,14px);font-weight:400;margin:4px 8px;color:var(--secondary)}
+.context-starting-states button>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal}

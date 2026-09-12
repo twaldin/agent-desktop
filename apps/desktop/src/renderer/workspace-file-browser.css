@@ -1,0 +1,10 @@
+.workspace-file-browser { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; background:var(--app-surface); }
+.workspace-file-browser-toolbar { flex:none; }
+.workspace-file-browser-toolbar .file-tree-toggle { margin-left:auto; }
+.workspace-file-browser .workspace-file-tree-filter input:focus-visible { outline:none; }
+.workspace-file-browser-empty { display:flex; flex:1; min-width:0; min-height:0; align-items:center; justify-content:center; padding:24px; text-align:center; }
+.workspace-file-browser-empty>div { display:flex; flex-direction:column; align-items:center; gap:12px; width:100%; max-width:288px; }
+.workspace-file-browser-empty .icon { width:32px; height:32px; color:var(--secondary); }
+.workspace-file-browser-empty>div>div { display:flex; flex-direction:column; align-items:center; gap:8px; }
+.workspace-file-browser-empty h2 { margin:0; color:var(--text); font-size:18px; font-weight:500; line-height:24px; }
+.workspace-file-browser-empty p { margin:0; color:var(--secondary); font-size:13px; line-height:1.428571; }

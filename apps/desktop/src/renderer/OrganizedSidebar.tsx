@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { HostState, Project, SessionSummary } from "../../../../packages/shared/src/protocol";
+import type { HostState } from "../../../../packages/shared/src/protocol";
 import type { PreferenceChange } from "../../../../packages/shared/src/preferences";
 import type { HostOption } from "./host-catalog";
-import { PreferencesState, positionOrder } from "./preferences-state";
+import { PreferencesState } from "./preferences-state";
 import { Icon } from "./Icons";
 
-type Item = { kind: "project"; value: Project } | { kind: "session"; value: SessionSummary };
+import type { SidebarItem as Item, SidebarLayout } from "./sidebar-layout";
 interface Props {
+  layout: SidebarLayout;
   preferences: PreferencesState; groups: { host: HostOption; hostState: HostState }[];
   activeHostId: string; selectedId: string | null; query: string; showArchived: boolean;
   expandedProjects: Set<string>; onToggleProject(key: string): void;
@@ -22,17 +23,10 @@ export function OrganizedSidebar(props: Props) {
   function toggleMenu(id: string, button: HTMLButtonElement) { menuTrigger.current = button; const bounds = button.getBoundingClientRect(); setMenuPosition({left: Math.min(bounds.right + 4, window.innerWidth - 216), top: Math.max(8, Math.min(bounds.top, window.innerHeight - 248))}); setMenu(value => value === id ? undefined : id); }
   const [dialog, setDialog] = useState<{ id?: string; name: string }>();
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const sections = data.sections();
-  const projects = groups.flatMap(group => group.hostState.projects);
-  const sessions = groups.flatMap(group => group.hostState.sessions).filter(session => session.archived === showArchived && (!query.trim() || `${session.title} ${session.cwd}`.toLowerCase().includes(query.trim().toLowerCase()))).sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
-  const allItems: Item[] = [...projects.map(value => ({ kind: "project" as const, value })), ...sessions.map(value => ({ kind: "session" as const, value }))];
+  const { sections, projects, sessions, allItems, sectionOf, position, pinned, custom, hostProjects, loose, projectChildren, projectExpanded } = props.layout;
   const writable = data.connected && !data.busy && !data.pending.length;
   useEffect(() => { if (!menu) return; const close = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setMenu(undefined); menuTrigger.current?.focus(); } }; const focus = requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".sidebar-organization-menu button:enabled")?.focus()); window.addEventListener("keydown", close); return () => { cancelAnimationFrame(focus); window.removeEventListener("keydown", close); }; }, [menu]);
   useEffect(() => { if (dialog) { if (!dialogRef.current?.open) dialogRef.current?.showModal(); dialogRef.current?.querySelector("input")?.focus(); } else dialogRef.current?.close(); }, [Boolean(dialog)]);
-  const sectionOf = (item: Item) => data.sectionFor(item.kind, item.value.id, item.value.hostId);
-  const position = (item: Item) => data.entity(item.kind, item.value.id, item.value.hostId)?.position ?? allItems.indexOf(item) * 1024;
-  const ordered = (items: Item[]) => items.map((item, index) => ({ item, id: item.value.id, position: data.entity(item.kind, item.value.id, item.value.hostId)?.position ?? index * 1024 })).sort(positionOrder).map(row => row.item);
-  const grouped = (id: string) => ordered(allItems.filter(item => sectionOf(item) === id));
   async function move(item: Item, sectionId: string | null) {
     setMenu(undefined);
     const target = allItems.filter(candidate => sectionOf(candidate) === sectionId);
@@ -61,21 +55,19 @@ export function OrganizedSidebar(props: Props) {
   }
   function projectRow(item: Extract<Item, { kind: "project" }>, list: Item[]) {
     const project = item.value; const key = `${project.hostId}:${project.id}`;
-    const children = ordered(allItems.filter((row): row is Extract<Item, { kind: "session" }> => row.kind === "session" && row.value.hostId === project.hostId && row.value.projectId === project.id && sectionOf(row) === null));
-    const expanded = props.expandedProjects.has(key) || Boolean(query);
+    const children = projectChildren(project);
+    const expanded = projectExpanded(project);
     const host = groups.find(group => group.hostState.host.id === project.hostId)?.host;
     return <div className="project-group" data-project-id={project.id} data-host-id={project.hostId} key={`project:${project.id}`}><div className="project-row"><button className="project-toggle" aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`} onClick={() => props.onToggleProject(key)}><Icon name="chevron" className={expanded ? "rotated" : ""}/></button><button className="project-label" title={`${project.path}\n${host?.name ?? project.hostId}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="folder"/><span className="truncate">{project.name}</span></button><button className="icon-button small project-new" aria-label={`New conversation in ${project.name}`} title={`New conversation in ${project.name}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="compose"/></button>{itemMenu(item, list)}</div>{expanded && <div className="project-sessions">{children.map(child => child.kind === "session" && sessionRow(child, children))}{!children.length && <p className="sidebar-empty nested">{query ? "No matching conversations" : showArchived ? "No archived conversations" : "No conversations yet"}</p>}</div>}</div>;
   }
   const render = (item: Item, list: Item[]) => item.kind === "project" ? projectRow(item, list) : sessionRow(item, list);
-  const pinned = grouped("pinned");
-  const loose = ordered(allItems.filter(item => item.kind === "session" && sectionOf(item) === null && (!item.value.projectId || !projects.some(project => project.id === item.value.projectId && project.hostId === item.value.hostId))));
   return <>
     {(data.error || data.cacheWarning || data.pending.length > 0) && <div className="sidebar-preference-error" role="status"><p>{data.error ?? data.cacheWarning ?? "Shared organization has pending changes."}</p><button disabled={!data.connected || data.busy} onClick={() => data.pending.length ? void data.retry() : void data.refresh()}>{data.pending.length ? "Retry saved changes" : "Refresh preferences"}</button></div>}
     {pinned.length > 0 && <section aria-label="Pinned"><div className="section-heading"><span>Pinned</span></div>{pinned.map(item => render(item, pinned))}</section>}
-    {sections.map((section, index) => { const items = grouped(section.id); return <section key={section.id} aria-label={section.name} className="custom-sidebar-section"><div className="section-heading"><span className="truncate">{section.name}</span><div className="menu-anchor"><button className="icon-button small" aria-label={`Organize section ${section.name}`} aria-expanded={menu === section.id} onClick={event => toggleMenu(section.id, event.currentTarget)}><Icon name="more"/></button>{menu === section.id && createPortal(<><button className="menu-dismiss" aria-label="Close section menu" tabIndex={-1} onClick={() => setMenu(undefined)}/><div className="action-menu sidebar-organization-menu" style={menuPosition}><button disabled={!writable} onClick={() => { setMenu(undefined); setDialog({ id: section.id, name: section.name }); }}>Rename section</button><button disabled={!writable || index === 0} onClick={() => void reorderSection(section.id, -1)}>Move up</button><button disabled={!writable || index === sections.length - 1} onClick={() => void reorderSection(section.id, 1)}>Move down</button><button disabled={!writable} onClick={() => { setMenu(undefined); void data.put({ key: `sidebar.section.${section.id}`, deleted: true }); }}>Delete section</button></div></>, document.body)}</div></div>{items.map(item => render(item, items))}{!items.length && <p className="sidebar-empty">Move projects or conversations here from their menus.</p>}</section>; })}
+    {custom.map(({ section, items }, index) => { return <section key={section.id} aria-label={section.name} className="custom-sidebar-section"><div className="section-heading"><span className="truncate">{section.name}</span><div className="menu-anchor"><button className="icon-button small" aria-label={`Organize section ${section.name}`} aria-expanded={menu === section.id} onClick={event => toggleMenu(section.id, event.currentTarget)}><Icon name="more"/></button>{menu === section.id && createPortal(<><button className="menu-dismiss" aria-label="Close section menu" tabIndex={-1} onClick={() => setMenu(undefined)}/><div className="action-menu sidebar-organization-menu" style={menuPosition}><button disabled={!writable} onClick={() => { setMenu(undefined); setDialog({ id: section.id, name: section.name }); }}>Rename section</button><button disabled={!writable || index === 0} onClick={() => void reorderSection(section.id, -1)}>Move up</button><button disabled={!writable || index === sections.length - 1} onClick={() => void reorderSection(section.id, 1)}>Move down</button><button disabled={!writable} onClick={() => { setMenu(undefined); void data.put({ key: `sidebar.section.${section.id}`, deleted: true }); }}>Delete section</button></div></>, document.body)}</div></div>{items.map(item => render(item, items))}{!items.length && <p className="sidebar-empty">Move projects or conversations here from their menus.</p>}</section>; })}
     <div className="section-heading"><span>Projects</span><div className="sidebar-section-actions"><button className="icon-button small" disabled={!writable} aria-label="Create sidebar section" title="Create sidebar section" onClick={() => setDialog({ name: "" })}><Icon name="compose"/></button><button className="icon-button small" onClick={props.onAddProject} disabled={!props.connected || props.addingProject} title="Add project folder" aria-label="Add project folder"><Icon name="plus"/></button></div></div>
     {!projects.length && <p className="sidebar-empty">Add a folder to start working in a project.</p>}
-    {groups.map(({ host, hostState }) => { const items = ordered(allItems.filter(item => item.kind === "project" && item.value.hostId === hostState.host.id && sectionOf(item) === null)); return <section key={host.key} className="host-projects" aria-label={`Projects on ${host.name}`}>
+    {groups.map(({ host }, index) => { const items = hostProjects[index]!; return <section key={host.key} className="host-projects" aria-label={`Projects on ${host.name}`}>
       {groups.length > 1 && <button className={`host-section-label ${props.activeHostId === host.hostId ? "current" : ""}`} onClick={() => props.onNavigate(null, host.hostId)} title={host.error ?? `${host.name} · ${host.availability}`}><span className={`connection-dot ${host.availability === "available" ? "online" : ""}`}/><span className="truncate">{host.name}</span><span>{host.local ? "Local" : host.availability === "available" ? "" : host.availability === "offline" ? "Offline" : "Unavailable"}</span></button>}{items.map(item => render(item, items))}
     </section>; })}
     <div className="section-heading conversation-heading"><span>{showArchived ? "Archived" : "Conversations"}</span><button className={`icon-button small ${showArchived ? "active" : ""}`} onClick={props.onToggleArchived} aria-pressed={showArchived} title={showArchived ? "Show active conversations" : "Show archived conversations"} aria-label={showArchived ? "Show active conversations" : "Show archived conversations"}><Icon name="archive"/></button></div>{loose.map(item => render(item, loose))}{!sessions.length && <p className="sidebar-empty">{query ? "No conversations found." : showArchived ? "Nothing archived." : "Your conversations will appear here."}</p>}

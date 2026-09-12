@@ -1,0 +1,78 @@
+/* Pinned detail pages use symmetric 20px panel padding and a stable native
+ * scrollbar gutter. The gutter follows macOS overlay/Always preference; do not
+ * simulate it with asymmetric padding. Vertical header positioning stays below. */
+.connections-scroll { overflow: auto; scrollbar-gutter: stable; scrollbar-color: var(--border) transparent; min-height: 0; flex: 1; padding: 0 20px 20px; }
+.connections-scroll:hover, .connections-scroll:active { scrollbar-color: color-mix(in oklab, var(--text) 12%, transparent) transparent; }
+.connections-column { max-width: 768px; margin: 0 auto; }
+/* Scoped above the shared .settings-header base (equal specificity, later in cascade). */
+.connections-settings .connections-header { display: block; min-height: 0; padding: 68px 0 0; }
+.connections-settings .connections-header h1 { margin: 0; line-height: 26px; }
+.connections-tabs { display: flex; gap: 4px; margin: 32px 0 49px; }
+.connections-tabs [role=tab] { height: 28px; padding: 0 10px; border: 0; border-radius: var(--button-radius, 8px); background: transparent; color: var(--secondary); font: inherit; line-height: 28px; cursor: pointer; }
+.connections-tabs [role=tab]:hover { color: var(--text); }
+.connections-tabs [aria-selected=true] { color: var(--text); background: var(--hover); }
+.connections-section { margin-bottom: 48px; }
+.connections-awake-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 12px 16px; }
+.connections-awake-row h3 { margin: 0; font-size: var(--font-size); font-weight: 500; line-height: 20px; }
+.connections-awake-row p { margin: 2px 0 0; color: var(--secondary); font-size: calc(var(--font-size) * .8571428571); line-height: 16px; text-wrap: balance; }
+.connections-awake-label { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.connections-awake-icon { width: 18px; height: 18px; flex: none; color: var(--text); }
+.connections-section-heading { display: flex; align-items: center; gap: 12px; min-height: 24px; margin-bottom: 14px; }
+.connections-section-heading h2 { flex: 1; min-width: 0; margin: 0; font-size: var(--font-size); font-weight: 500; line-height: 24px; }
+.connections-checked { color: var(--secondary); font-size: calc(var(--font-size) * .8571428571); white-space: nowrap; }
+/* Scoped 24px control keeps the heading row at 24px so the card lands at y=241; the base .icon-button.small is 26px. */
+.connections-section-heading .connections-refresh.icon-button.small { width: 24px; height: 24px; padding: 4px; margin-right: -4px; }
+.connections-section-heading .connections-refresh.icon-button.small .icon { width: 16px; height: 16px; }
+.connections-refresh .spinner { width: 14px; height: 14px; }
+.connections-card { border: var(--border-width, 1px) solid var(--border); border-radius: calc(var(--radius-large, 12px) * 1.3333333); background: var(--settings-card-surface); }
+.connections-list { list-style: none; margin: 0; padding: 0; }
+.connections-row { position: relative; display: flex; align-items: center; gap: 13px; min-height: 61px; padding: 10px 14px 10px 18px; }
+.connections-row + .connections-row::before { content: ""; position: absolute; top: 0; left: 18px; right: 18px; border-top: var(--divider-width, 1px) solid var(--border); }
+.connections-row-icon { width: 16px; height: 16px; align-self: flex-start; margin-top: 4px; color: var(--secondary); }
+.connections-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.connections-row-body strong { display: flex; align-items: center; gap: 8px; font-weight: 500; line-height: 20px; }
+.connections-badge { flex-shrink: 0; padding: 0 7px; border-radius: 999px; background: var(--selected); color: var(--secondary); font-size: calc(var(--font-size) * .7857142857); font-weight: 400; line-height: 18px; }
+.connections-row-status { display: flex; align-items: center; gap: 7px; color: var(--secondary); font-size: calc(var(--font-size) * .9285714286); line-height: 18px; }
+/* The status dot sits under the device icon column, as in the reference row. */
+.connections-row-icon ~ .connections-row-body .connections-row-status { margin-left: -29px; }
+.connections-row-status.connections-wrap { display: block; line-height: 20px; }
+.connections-row-status .connections-dot { margin: 0 10px 0 4px; }
+.connections-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tertiary); flex-shrink: 0; }
+.connections-dot.available { background: var(--success); }
+.connections-dot.unavailable { background: var(--warning); }
+.connections-row-menu { flex-shrink: 0; margin-right: 1px; }
+.connections-action-menu.action-menu { position: fixed; right: auto; top: auto; z-index: 500; }
+.connections-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 36px 24px 22px; text-align: center; color: var(--secondary); }
+.connections-empty .icon { width: 32px; height: 32px; }
+.connections-empty p { margin: 0; line-height: 20px; max-width: 520px; }
+.connections-empty .secondary-button { border-radius: 999px; }
+.connections-settings .inline-error { max-width: 768px; margin: 0 auto 20px; }
+.connections-settings .inline-error p { margin: 0; }
+
+/* Reference 08: 522x254pt sheet centred in the window (x 459.5-980, y 373-626 of 1440x1000), 25pt inset, 35pt label/value rows. */
+.connections-detail { margin: auto; width: 522px; max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 22px 25px 21px; border: var(--border-width, 1px) solid var(--border); border-radius: 20px; color: var(--text); background: var(--dialog-surface, var(--elevated-surface)); box-shadow: 0 16px 48px #0004; overflow: auto; font: inherit; }
+.connections-detail::backdrop { background: transparent; }
+.connections-detail-heading { display: flex; align-items: center; gap: 10px; }
+.connections-detail-heading h2 { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; margin: 0; font-size: calc(var(--font-size) * 1.2142857143); font-weight: 600; line-height: 22px; letter-spacing: -.3px; }
+.connections-detail-heading .icon { width: 18px; height: 18px; color: var(--secondary); flex-shrink: 0; }
+.connections-detail-status { display: inline-flex; align-items: center; gap: 7px; height: 22px; padding: 0 9px 0 8px; margin: 8px 0 20px; border-radius: 999px; background: var(--selected); color: var(--secondary); font-size: calc(var(--font-size) * .8571428571); }
+.connections-detail dl { margin: 0; border: var(--border-width, 1px) solid var(--border); border-radius: 8px; }
+.connections-detail dl > div { display: flex; justify-content: space-between; gap: 16px; min-height: 35px; padding: 7px 10px 7px 14px; font-size: calc(var(--font-size) * .9285714286); line-height: 20px; }
+.connections-detail dl > div + div { border-top: var(--divider-width, 1px) solid var(--border); }
+.connections-detail dt { margin: 0; color: var(--secondary); flex-shrink: 0; }
+.connections-detail dd { margin: 0; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.connections-detail dd.unknown { color: var(--tertiary); }
+@media (max-width: 900px) { .connections-scroll { padding: 0 20px 20px; } .connections-settings .connections-header { padding-top: 48px; } .connections-row { padding: 10px 12px 10px 14px; } }
+.connections-discovery-note { margin: 12px 0 20px; color: var(--secondary); font-size: calc(var(--font-size) * .9285714286); line-height: 20px; }
+.connections-access-button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
+.connections-access-button .spinner { width: 14px; height: 14px; }
+.connections-revoked-heading { margin-top: 24px; }
+
+.connections-access-actions { display: flex; align-items: center; gap: 8px; }
+.connections-add-button { padding: 2px 10px; min-height: 24px; border: 0; border-radius: 999px; color: var(--app-surface); background: var(--text); font: inherit; line-height: 20px; cursor: pointer; }
+.connections-add-button:disabled { opacity: .5; cursor: default; }
+.connections-access .connections-access-button { min-height: 24px; padding: 2px 10px; border: 0; border-radius: 999px; background: var(--hover); }
+.connections-access > .connections-card > .connections-list > .connections-row:first-child { min-height: 44px; }
+.connections-add-dialog { font-size: var(--font-size); }
+.connections-add-dialog > p { color: var(--secondary); line-height: 20px; }
+.connections-add-dialog .connections-row { padding-left: 0; padding-right: 0; }

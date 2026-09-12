@@ -1,3 +1,4 @@
+import type { BrowserEvaluationBinding, BrowserEvaluationFrame, BrowserEvaluationOperation } from "../omp-browser/evaluation-wire";
 import type { NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
 import type { NativePluginMutation, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserFrameTarget, BrowserMetadataAvailability, ComposerCompletionQuery, GoalMutationRequest, ModelChoice, NativeSessionActivity, OmpApprovalMode, OmpSessionControlMutation, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
@@ -7,7 +8,9 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 34;
+export const WORKER_PROTOCOL_VERSION = 44;
+export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
+export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
   revision: number;
   id: string;
@@ -26,9 +29,12 @@ export type WorkerInit = { agentDir?: string } & (
   | { mode: "create"; options: Omit<OmpSessionOptions, "onEvent"> }
   | { mode: "open"; options: Omit<OmpOpenOptions, "onEvent"> }
   | { mode: "discovery" }
+  | { mode: "browser"; owner: { id: string; cwd: string } }
 );
-export type WorkerOperation =
+export type WorkerOperation = BrowserEvaluationOperation
+
   | { operation: "init"; args: WorkerInit }
+  | { operation: "generateCommit"; args: CommitGenerationInput }
   | { operation: "listModels"; args: { cwd: string; refresh?: boolean } }
   | { operation: "listModelCapabilities"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerCatalog"; args: { cwd: string; refresh?: boolean } }
@@ -39,6 +45,10 @@ export type WorkerOperation =
   | { operation: "acquirePlugin"; args: { cwd: string; expectedRevision: string; action: NativePluginAcquisition } }
   | { operation: "getPlugins"; args: { cwd: string } }
   | { operation: "mutatePlugin"; args: { cwd: string; mutation: NativePluginMutation } }
+  | { operation: "refreshSshConfiguration" }
+  | { operation: "getSshHosts"; args: { cwd: string } }
+  | { operation: "getSshHostDetail"; args: { cwd: string; request: import("@agent-desktop/shared").NativeSshDetailRequest } }
+  | { operation: "mutateSshHost"; args: { cwd: string; mutation: import("@agent-desktop/shared").NativeSshMutation } }
   | { operation: "getMcpServers"; args: { cwd: string } }
   | { operation: "getMcpServerDetail"; args: { cwd: string; request: NativeMcpDetailRequest } }
   | { operation: "mutateMcpServer"; args: { cwd: string; mutation: NativeMcpMutation } }
@@ -63,8 +73,12 @@ export type WorkerOperation =
   | { operation: "cancelBtw"; args: { runId: string } }
   | { operation: "promoteBtw"; args: { runId: string; operationId?: string } }
   | { operation: "getBrowserMetadata" }
-  | { operation: "createBrowserTab"; args: { name: string } }
+  | { operation: "createBrowserTab"; args: { name: string; initialUrl?: string } }
   | { operation: "controlBrowser"; args: { request: BrowserControlRequest } }
+  | { operation: "closeBrowserTab"; args: { target: BrowserFrameTarget } }
+  | { operation: "inspectBrowserTab"; args: { target: BrowserFrameTarget } }
+  | { operation: "reserveBrowserEvaluation"; args: { target: BrowserFrameTarget; operationId: string } }
+  | { operation: "inspectBrowserEvaluationReservation"; args: { target: BrowserFrameTarget; operationId: string } }
   | { operation: "getBrowserFrame"; args: { target: BrowserFrameTarget } }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
@@ -82,13 +96,17 @@ export type WorkerOperation =
   | { operation: "setApprovalOverride"; args: { mode?: OmpApprovalMode; expectedRevision: string } }
   | { operation: "dispose" };
 export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
+  | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
+  | { type: "browserEvaluationAck"; binding: BrowserEvaluationBinding; sequence: number }
   | { type: "eventAck"; sequence: number }
   /** The child exits only after its disposal result has reached the owner. */
   | { type: "disposeAck"; id: string };
 export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" }
 export type ChildMessage =
+  | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "ready"; version: number }
-  | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; snapshot?: SessionSnapshot }
+  | { type: "commitProgress"; id: string; message: string }
+  | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; evaluation?: { binding: BrowserEvaluationBinding; sequence: number }; snapshot?: SessionSnapshot }
   | { type: "event"; sequence: number; event: WorkerEvent; snapshot?: SessionSnapshot }
   | { type: "fatal"; error: RemoteError };
 

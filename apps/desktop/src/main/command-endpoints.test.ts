@@ -139,3 +139,22 @@ test('repeated inline file sources use v9 without fallback',async()=>{
  expect(await requestVersionedCommand(async path=>{calls.push(path);throw new HostRequestError('Not found',404);},envelope)).toMatchObject({ok:false,error:{code:'REPEATED_WHOLE_FILE_PROTOCOL_UNSUPPORTED'}});
  expect(calls).toEqual(['/v9/commands']);
 });
+
+test("Git submissions and explicit v10 commands use only v10 without a downgrade", async () => {
+  const intent = { operation: "commit" as const, contextRevision: "a".repeat(64), selectionMode: "staged" as const, message: "commit" };
+  const envelopes: CommandEnvelope[] = [
+    { id: "submit", command: { type: "workspace.mutate", target: { projectId: "p" }, action: { type: "git.submit", intent } } },
+    { id: "cancel", command: { type: "workspace.mutate", target: { projectId: "p" }, action: { type: "git.submit.cancel", commandId: "submit" } } },
+    { id: "ack", command: { type: "workspace.mutate", target: { sessionId: "s" }, action: { type: "git.submit.acknowledge", commandId: "submit" } } },
+    { id: "explicit", commandVersion: 10, command: { type: "session.prompt", sessionId: "s", text: "keep" } },
+  ];
+  for (const envelope of envelopes) {
+    const calls: string[] = [];
+    expect(commandEndpoint(envelope)).toBe("/v10/commands");
+    expect(await requestVersionedCommand(async path => { calls.push(path); throw new HostRequestError("Not found", 404); }, envelope))
+      .toMatchObject({ ok: false, commandId: envelope.id, error: { code: "GIT_SUBMISSION_PROTOCOL_UNSUPPORTED" } });
+    expect(calls).toEqual(["/v10/commands"]);
+    const lost = new Error("lost response");
+    await expect(requestVersionedCommand(async () => { throw lost; }, envelope)).rejects.toBe(lost);
+  }
+});

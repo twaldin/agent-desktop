@@ -1,7 +1,9 @@
+import { SshToolSettings } from "./SshToolSettings";
 import { ModelPicker } from "./ModelPicker";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import type { DesktopBridge, ModelDefinitionPath, OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingDescriptor, OmpSettingOptions, OmpSettingState, OmpSettingsCatalog, OmpSettingsSnapshot, SessionSummary, SettingJson, SettingValueSchema, WorkspaceTarget } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
+import { NativeSwitch } from "./NativeSwitch";
 import "./native-settings.css";
 
 type Scope = "global" | "project" | "session";
@@ -155,7 +157,7 @@ export class NativeSettingsState {
 
 export interface NativeSettingsProps {
   bridge: DesktopBridge; hostId: string; hostName: string; connected: boolean; localHostId?: string;
-  target?: WorkspaceTarget; session?: SessionSummary | null; onClose(): void;
+  target?: WorkspaceTarget; session?: SessionSummary | null;
 }
 export function NativeSettings(props: NativeSettingsProps) {
   const { bridge, hostId, connected, session, target, localHostId } = props;
@@ -182,27 +184,32 @@ export function NativeSettings(props: NativeSettingsProps) {
   const states = new Map((scope === "session" ? data.controls?.settings : data.snapshot?.entries)?.map(state => [state.path, state]));
   const writable = connected && !data.saving && !!data.revision(scope);
   return <section className="settings-page native-settings" aria-label="Native OMP settings">
-    <header className="settings-header drag-region"><button className="icon-button no-drag" onClick={props.onClose} title="Back to conversation" aria-label="Close native settings"><Icon name="chevron" className="back-chevron"/></button><div><h1>OMP settings</h1><p>Native configuration on {props.hostName}</p></div><button className="secondary-button no-drag settings-refresh" disabled={!connected || data.loading || data.saving} onClick={() => { void data.refresh(); if (tab === "models") void data.loadModels(true); }}>{data.loading ? "Refreshing…" : "Reload saved values"}</button></header>
+    <div className="native-settings-scroll"><div className="native-settings-column">
+    <header className="native-page-header"><h1>Configuration</h1><p>OMP settings on {props.hostName}</p></header>
     {!connected && <div className="connection-banner" role="status">This machine is disconnected. Your edits stay here; saving requires reconnection.</div>}
     {data.error && <div className="inline-error settings-error" role="alert">{data.error}</div>}
     {data.saveError && <div className="inline-error settings-error" role="alert">{data.saveError}</div>}
-    <div className="native-scope-bar"><label>Scope<select aria-label="Native settings scope" value={scope} onChange={event => setScope(event.target.value as Scope)}><option value="global">Host defaults</option><option value="project" disabled={!target}>Project configuration</option><option value="session" disabled={!session}>This session</option></select></label><span>{scope === "session" ? `Session overrides for ${session?.title ?? "this session"}` : scope === "project" ? "Project values override host defaults" : "Applies to new sessions on this host"}</span><span className="native-count">{data.catalog?.settings.length ?? "…"} core settings{data.edits.size > 0 ? ` · ${data.edits.size} unsaved` : ""}</span></div>
-    <div className="native-layout"><aside className="native-sidebar" aria-label="Native settings categories"><label className="native-search"><Icon name="search"/><input type="search" aria-label="Search all native settings" placeholder="Search all settings" value={query} onChange={event => setQuery(event.target.value)}/></label><nav><button aria-current={tab === "models" ? "page" : undefined} onClick={() => { setTab("models"); setQuery(""); }}>Session & models</button><button aria-current={tab === "all" ? "page" : undefined} onClick={() => setTab("all")}>All settings</button>{tabs.map(item => <button key={item.id} aria-current={tab === item.id ? "page" : undefined} onClick={() => { setTab(item.id); setQuery(""); }}>{item.label}<span>{data.catalog?.settings.filter(setting => setting.tab === item.id).length}</span></button>)}</nav></aside>
+    <div className="native-toolbar">
+      <label className="native-category"><span className="sr-only">Native settings category</span><select aria-label="Native settings category" value={tab} onChange={event => { setTab(event.target.value); setQuery(""); }}><option value="ssh">SSH hosts</option><option value="models">Session &amp; models</option><option value="all">All settings</option>{tabs.map(item => <option key={item.id} value={item.id}>{item.label} · {data.catalog?.settings.filter(setting => setting.tab === item.id).length}</option>)}</select></label>
+      <label className="native-search"><Icon name="search"/><input type="search" aria-label="Search all native settings" placeholder="Search all settings" value={query} onChange={event => setQuery(event.target.value)}/></label>
+      <button className="icon-button native-refresh" disabled={!connected || data.loading || data.saving} onClick={() => { void data.refresh(); if (tab === "models") void data.loadModels(true); }} title={data.loading ? "Refreshing…" : "Reload saved values"} aria-label={data.loading ? "Refreshing…" : "Reload saved values"}><Icon name="refresh"/></button>
+    </div>
+    {(tab !== "ssh" || searching) && <div className="native-scope-bar"><label>Scope<select aria-label="Native settings scope" value={scope} onChange={event => setScope(event.target.value as Scope)}><option value="global">Host defaults</option><option value="project" disabled={!target}>Project configuration</option><option value="session" disabled={!session}>This session</option></select></label><span>{scope === "session" ? `Session overrides for ${session?.title ?? "this session"}` : scope === "project" ? "Project values override host defaults" : "Applies to new sessions on this host"}</span><span className="native-count">{data.catalog?.settings.length ?? "…"} core settings{data.edits.size > 0 ? ` · ${data.edits.size} unsaved` : ""}</span></div>}
       <main className="native-content" aria-busy={data.loading || data.saving}>
-        {tab === "models" && !searching ? <NativeModels data={data} session={session} connected={connected}/> : <>
+        {tab === "ssh" && !searching ? <SshToolSettings key={`${hostId}:${targetKey}`} bridge={bridge} localHostId={localHostId} hostId={hostId} hostName={props.hostName} target={target} connected={connected}/> : tab === "models" && !searching ? <NativeModels data={data} session={session} connected={connected}/> : <>
           <div className="native-section-heading"><h2>{searching ? `Results for “${query}”` : tab === "all" ? "All native settings" : tabs.find(item => item.id === tab)?.label}</h2><p>{scope === "session" ? "Model, thinking and service tiers persist in native history. Permission-mode changes persist on the owning host and require a compatible host version; other supported settings apply until this worker closes." : "Saving writes the selected native scope. Existing sessions keep their current settings; use This session for supported live overrides."}</p></div>
           {!data.catalog && <p role="status">{data.loading ? "Loading the host’s native schema…" : "Reload to read the native settings schema."}</p>}
           {groups.map(group => {
             const settings = descriptors.filter(setting => setting.group === group);
             const ordinary = settings.filter(setting => !setting.advanced), advanced = settings.filter(setting => setting.advanced);
             const rows = (items: OmpSettingDescriptor[]) => items.map(descriptor => <NativeSettingRow key={`${scope}:${descriptor.path}`} descriptor={descriptor} state={states.get(descriptor.path)} scope={scope} data={data} writable={writable} searching={searching}/>);
-            return <section className="native-group" key={group}><h3>{title(group)}</h3>{rows(ordinary)}{advanced.length > 0 && <details className="native-advanced" open={searching || undefined}><summary>Advanced · {advanced.length}</summary>{rows(advanced)}</details>}</section>;
+            return <section className="native-group" key={group}><h3>{title(group)}</h3>{ordinary.length > 0 && <div className="native-settings-card">{rows(ordinary)}</div>}{advanced.length > 0 && <details className="native-advanced" open={searching || undefined}><summary>Advanced · {advanced.length}</summary><div className="native-settings-card">{rows(advanced)}</div></details>}</section>;
           })}
           {data.catalog && !descriptors.length && <p>No native settings match this search.</p>}
         </>}
-        <details className="native-coverage"><summary>Coverage and native behavior</summary><p>All {data.catalog?.settings.length ?? 484} core schema entries are listed. Terminal controls configure the native terminal UI; they do not style this desktop. Model/provider definitions have a separate native schema editor. Extension-defined settings and custom terminal surfaces still need dedicated adapters.</p><p>Reset writes the native default at the chosen scope. It does not remove a project override. Native process overlays remain read-only effective values. Free-form fields expose typed values because upstream does not define a narrower schema.</p><p>Native handled slash commands may finish without recording a user prompt; their separate completion receipt remains an integration gap.</p></details>
+        {(tab !== "ssh" || searching) && <details className="native-coverage"><summary>Coverage and native behavior</summary><p>All {data.catalog?.settings.length ?? 484} core schema entries are listed. Terminal controls configure the native terminal UI; they do not style this desktop. Model/provider definitions have a separate native schema editor. Extension-defined settings and custom terminal surfaces still need dedicated adapters.</p><p>Reset writes the native default at the chosen scope. It does not remove a project override. Native process overlays remain read-only effective values. Free-form fields expose typed values because upstream does not define a narrower schema.</p><p>Native handled slash commands may finish without recording a user prompt; their separate completion receipt remains an integration gap.</p></details>}
       </main>
-    </div>
+    </div></div>
   </section>;
 }
 export function filterNativeSettings(settings: OmpSettingDescriptor[], query: string, tab: string): OmpSettingDescriptor[] {
@@ -225,18 +232,25 @@ export function NativeSettingRow({ descriptor: d, state, scope, data, writable, 
   const obsolete = !!edit && edit.revision !== data.revision(scope);
   const disabled = !writable || !supported;
   const change = (next: SettingJson) => data.edit(scope, d.path, next);
-  return <article className={`native-setting ${edit ? "native-dirty" : ""}`} data-setting-path={d.path}>
-    <div className="native-setting-title"><div><h4>{d.label}</h4><code>{d.path}</code></div>{edit && <span className="account-badge">Unsaved</span>}</div>
+  const compound = !["boolean", "number", "enum", "string"].includes(d.schema.kind);
+  return <article className={`native-setting ${edit ? "native-dirty" : ""} ${compound ? "native-setting-compound" : ""}`} data-setting-path={d.path}>
+    <div className="native-setting-main">
+      <div className="native-setting-summary">
+        <div className="native-setting-title"><h4>{d.label}</h4>{edit && <span className="account-badge">Unsaved</span>}</div>
     {d.description && <p>{d.description}</p>}
     {d.warning && <p className="native-warning">{d.warning}</p>}
     {d.applicability === "native-terminal" && <p className="native-note">Native terminal setting · desktop appearance is configured separately.</p>}
     {!supported && <p className="native-note">{scope === "session" ? "Configure at host or project scope for new sessions." : "This native setting supports host scope only."}</p>}
-    <div className="native-value-meta">{d.credential ? <span>Write-only · {state?.configured ? "Configured" : "Not configured"}{scope !== "session" ? ` · ${scope === "global" ? state?.globalConfigured ? "Saved at host scope" : "No saved host value" : state?.projectConfigured ? "Saved at project scope" : "No saved project value"}` : ""}</span> : <><span>{scope === "session" ? "Override" : "Saved"}: <code>{display(saved)}</code></span><span>Effective: <code>{display(state?.effective)}</code> · {state?.origin ?? "unavailable"}</span></>}</div>
-    <div className="native-editor"><NativeValueField schema={d.schema} value={value} onChange={change} label={d.label} disabled={disabled} secret={d.credential} options={options?.options ?? d.options}/></div>
+        {d.credential && <p className="native-note">Write-only · {state?.configured ? "Configured" : "Not configured"}</p>}
+      </div>
+      <div className="native-setting-controls">
+    <div className="native-editor">{d.schema.kind === "boolean" ? <NativeSwitch label={d.label} checked={value === true} disabled={disabled} onChange={change}/> : <NativeValueField schema={d.schema} value={value} onChange={change} label={d.label} disabled={disabled} secret={d.credential} options={options?.options ?? d.options}/>}</div>
+      </div>
+    </div>
     {d.dynamicOptions && <div className="native-options"><button className="secondary-button" disabled={!writable || loadingOptions} onClick={async () => { setLoadingOptions(true); setOptionError(null); try { setOptions(await data.bridge.getSettingOptions(d.path, data.target, data.hostId)); } catch (error) { setOptionError(failure(error)); } finally { setLoadingOptions(false); } }}>{loadingOptions ? "Loading choices…" : "Load native choices"}</button>{options?.extensionCoverage === "requires-session-registry" && <span>Extension choices require the session registry adapter.</span>}{optionError && <p role="alert">{optionError}</p>}</div>}
     {(edit?.error || obsolete) && <div className="native-edit-error" role="alert">{edit?.error && <p>{edit.error}</p>}{obsolete && <><p>The saved revision changed. Your edit is preserved above; compare it with the current saved value before retrying.</p><button className="secondary-button" disabled={!writable} onClick={() => data.rebase(scope, d.path)}>Use current revision for this edit</button></>}</div>}
-    <div className="native-row-actions"><button className="primary-button" disabled={disabled || !edit || obsolete} onClick={() => void data.save(scope, d)}>Save{scope === "session" ? " override" : ""}</button>{edit && <button className="secondary-button" disabled={data.saving} onClick={() => data.discard(scope, d.path)}>Discard edit</button>}<button className="native-reset" disabled={disabled || scope === "session" && !data.controls?.overrides.includes(d.path)} onClick={() => void data.save(scope, d, true)}>{scope === "session" ? "Clear session override" : "Reset to native default"}</button></div>
-    <details className="native-setting-details" open={searching && !!d.condition || undefined}><summary>Native details</summary><dl><dt>Applied</dt><dd>{d.application === "terminal-only" ? "Native terminal UI" : "New sessions; supported session overrides apply immediately"}</dd>{d.condition && <><dt>Native UI condition</dt><dd>{d.condition} · shown here so it remains configurable</dd></>}{!d.credential && <><dt>Native default</dt><dd><code>{display(d.defaultValue)}</code></dd></>}<dt>Metadata</dt><dd>{d.metadataSource === "native-ui" ? "Native UI descriptor" : "Native schema; generated label"}</dd><dt>Source</dt><dd>OMP {d.source.version} · {d.source.commit.slice(0, 12)}</dd></dl></details>
+    {edit && <div className="native-row-actions"><button className="primary-button" disabled={disabled || obsolete} onClick={() => void data.save(scope, d)}>Save{scope === "session" ? " override" : ""}</button><button className="secondary-button" disabled={data.saving} onClick={() => data.discard(scope, d.path)}>Discard edit</button></div>}
+    <details className="native-setting-details" open={obsolete || searching || undefined}><summary>Native details</summary><div className="native-value-meta">{d.credential ? <span>Write-only · {state?.configured ? "Configured" : "Not configured"}{scope !== "session" ? ` · ${scope === "global" ? state?.globalConfigured ? "Saved at host scope" : "No saved host value" : state?.projectConfigured ? "Saved at project scope" : "No saved project value"}` : ""}</span> : <><span>{scope === "session" ? "Override" : "Saved"}: <code>{display(saved)}</code></span><span>Effective: <code>{display(state?.effective)}</code> · {state?.origin ?? "unavailable"}</span></>}</div><dl><dt>Setting path</dt><dd><code>{d.path}</code></dd><dt>Applied</dt><dd>{d.application === "terminal-only" ? "Native terminal UI" : "New sessions; supported session overrides apply immediately"}</dd>{d.condition && <><dt>Native UI condition</dt><dd>{d.condition} · shown here so it remains configurable</dd></>}{!d.credential && <><dt>Native default</dt><dd><code>{display(d.defaultValue)}</code></dd></>}<dt>Metadata</dt><dd>{d.metadataSource === "native-ui" ? "Native UI descriptor" : "Native schema; generated label"}</dd><dt>Source</dt><dd>OMP {d.source.version} · {d.source.commit.slice(0, 12)}</dd></dl><div className="native-row-actions"><button className="native-reset" disabled={disabled || scope === "session" && !data.controls?.overrides.includes(d.path)} onClick={() => void data.save(scope, d, true)}>{scope === "session" ? "Clear session override" : "Reset to native default"}</button></div></details>
   </article>;
 }
 

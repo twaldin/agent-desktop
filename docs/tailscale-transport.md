@@ -19,6 +19,16 @@ Keep the existing loopback bearer endpoint. For a remote endpoint, bind only to 
 
 The return value is a point-in-time authorization result, not a permanent grant. Revalidate long-lived connections when account/pairing policy changes and periodically while they remain connected; close denied peers. Discovery does not probe the app port or claim connectivity. The server still owns protocol checks, endpoint selection, app-host identity, request limits and lifecycle cleanup.
 
+## Desktop connection controls
+
+Settings → Connections exposes local access policy, discovery results and cached host catalog in Control this Mac and Control other devices views. Refresh uses the existing catalog refresh; Details projects known host/node metadata without changing a device. Use this machine navigates to an identified owning host, including its cached view when offline; it is not a persistent connection switch or an authorization grant.
+
+An Available discovery result does not prove an authenticated owner connection. Device rows keep that distinction, while the profile-menu indicator uses the active owner's connection state. Machine switching remains available from the sidebar profile menu and the host control at the bottom of settings navigation.
+
+The source now implements host-local availability and per-node revocation on `/v1/device-access`, administered only through the authenticated local listener. A successful change stores a new policy revision and requires host schema13; older hosts must refuse this database rather than ignore restrictions. Existing same-user access is preserved until an explicit change. Re-allowing a device removes its local restriction and never overrides Tailscale identity validation. Revocation denies subsequent requests and closes event streams; it does not cancel already-admitted work or move sessions.
+
+The frozen Connections21 slice passed independent Standards and Spec review, with its controlled/native evidence limits preserved. No real tailnet grant/revocation or installed-device acceptance is claimed. SSH connection management and complete setup remain open; keep-awake passed its separate bounded implementation review, with controlled power evidence rather than real OS sleep-prevention proof.
+
 ## Evidence
 
 On 2026-09-05, read-only CLI checks verified `Running` state and mutually visible online, untagged same-user nodes on `twaldin-home`, `twaldin@twaldin-work` and `tim@deckbox`. Both Macs run Tailscale 1.98.10; Deckbox runs 1.102.2. `whois` on home resolved work; `whois` on work and Deckbox resolved home's direct IP to the same stable node/user identity shown in their status. The production `TailscaleClient` running on home also discovered both selected peers and successfully authorized each through actual status/whois calls. These checks establish CLI identity discovery; they are not app installation, remote-listener or cross-device app acceptance evidence.

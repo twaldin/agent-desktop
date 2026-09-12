@@ -1,29 +1,28 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  BROWSER_FRAME_PROTOCOL_VERSION,
   validBrowserFrameTarget,
-  type BrowserControlReceipt,
-  type BrowserFrameSnapshot,
   type BrowserFrameTarget,
   type BrowserHumanAction,
-  type BrowserMetadataSnapshot,
   type DesktopBridge,
   type NativeBrowserTabMetadata,
 } from "../../../../packages/shared/src/protocol";
+import { browserPreviewSource, type BrowserPreviewOwner, type BrowserPreviewSource, type PreviewFrame, type PreviewMetadata } from "./browser-preview-source";
 import { Icon } from "./Icons";
 import { browserAddressLabel, browserExternalAddress, browserNavigationAddress } from "./browser-address";
 import { framePoint } from "./browser-input";
 import "./browser-panel.css";
 
-interface Props {
+interface CommonProps {
   bridge: DesktopBridge;
-  hostId: string;
-  sessionId: string;
   active: boolean;
-  /** A dock page observes exactly one native target, even after host restart. */
-  nativeTarget?: BrowserFrameTarget;
   onMetadata?(tab: NativeBrowserTabMetadata): void;
+  /** Capture the original search presentation before this existing read starts. */
+  onReadMetadata?(): ((value: PreviewMetadata | null) => void) | undefined;
+  /** Offer a page key to the app before turning it into native browser input. */
+  onShortcutKeyDown?(event: KeyboardEvent): void;
 }
+type Props = CommonProps & ({ hostId: string; sessionId: string; nativeTarget?: BrowserFrameTarget; draftOwner?: never }
+  | { draftOwner: Extract<BrowserPreviewOwner, { kind: "draft" }>; hostId?: never; sessionId?: never; nativeTarget?: never });
 const same = (a: BrowserFrameTarget | undefined, b: BrowserFrameTarget) =>
   Boolean(
     a &&
@@ -31,8 +30,6 @@ const same = (a: BrowserFrameTarget | undefined, b: BrowserFrameTarget) =>
     a.name === b.name &&
     a.targetId === b.targetId,
   );
-const storageKey = (hostId: string, sessionId: string) =>
-  `browser.preview.selected.${hostId}.${sessionId}`;
 function readSelection(key: string): BrowserFrameTarget | undefined {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
@@ -47,21 +44,6 @@ function saveSelection(key: string, target: BrowserFrameTarget) {
   } catch {
     /* Selection remains usable in this window. */
   }
-}
-function receiptMatches(
-  receipt: BrowserControlReceipt,
-  requestId: string,
-  hostId: string,
-  sessionId: string,
-  target: BrowserFrameTarget,
-) {
-  return (
-    receipt.protocolVersion === 1 &&
-    receipt.requestId === requestId &&
-    receipt.hostId === hostId &&
-    receipt.sessionId === sessionId &&
-    same(receipt, target)
-  );
 }
 function modifiers(event: {
   altKey: boolean;
@@ -78,23 +60,29 @@ function modifiers(event: {
 }
 
 export function BrowserPanel(props: Props) {
+  const draft = props.draftOwner;
+  const source = useMemo(() => browserPreviewSource(props.bridge, draft ?? { kind: "session", hostId: props.hostId!, sessionId: props.sessionId! }),
+    [props.bridge, props.hostId, props.sessionId, draft?.hostId, draft?.reference.ownerId, draft?.reference.draftId, draft?.reference.draftRevision,
+      draft?.target.workerPid, draft?.target.name, draft?.target.targetId, draft?.isCurrent]);
+  const nativeTarget = draft?.target ?? props.nativeTarget;
   // Changing owners must synchronously discard pixels from the previous owner.
-  return (
-    <SessionBrowserPreview
-      key={JSON.stringify([props.hostId, props.sessionId, props.nativeTarget?.workerPid, props.nativeTarget?.name, props.nativeTarget?.targetId])}
-      {...props}
-    />
-  );
+  return <OwnedBrowserPreview key={JSON.stringify([source.key, nativeTarget?.workerPid, nativeTarget?.name, nativeTarget?.targetId])}
+    {...props} source={source} nativeTarget={nativeTarget} />;
 }
 
-function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget, onMetadata }: Props) {
-  const selectionKey = storageKey(hostId, sessionId);
-  const [metadata, setMetadata] = useState<BrowserMetadataSnapshot | null>();
+function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata, onReadMetadata, onShortcutKeyDown }: CommonProps & { source: BrowserPreviewSource; nativeTarget?: BrowserFrameTarget }) {
+  const selectionKey = source.selectionKey;
+  const committedSource = useRef(source);
+  useLayoutEffect(() => { committedSource.current = source; }, [source]);
+  const [metadata, setMetadata] = useState<PreviewMetadata | null>();
   const [selected, setSelected] = useState(() => nativeTarget ?? readSelection(selectionKey));
   const metadataCallback = useRef(onMetadata); metadataCallback.current = onMetadata;
+  const readMetadataCallback = useRef(onReadMetadata);
+  useLayoutEffect(() => { readMetadataCallback.current = onReadMetadata; }, [onReadMetadata]);
   const selectedRef = useRef(selected);
-  const [frame, setFrame] = useState<BrowserFrameSnapshot>();
+  const [frame, setFrame] = useState<PreviewFrame>();
   const frameRef = useRef(frame);
+  const frameSource = useRef<BrowserPreviewSource | undefined>(undefined);
   const [error, setError] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [toolbarError, setToolbarError] = useState<string>();
@@ -137,7 +125,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     contextRef.current = frame?.context;
   }, [frame]);
 
-  useLayoutEffect(() => { if (addressFocused) addressInput.current?.select(); }, [addressFocused]);
+  useLayoutEffect(() => { if (addressFocused && !addressDirty.current) addressInput.current?.select(); }, [addressFocused]);
 
   const holdInput = (extra?: BrowserHumanAction) => {
     const waiting = [...(extra ? [extra] : []), ...textQueue.current];
@@ -161,8 +149,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     if (
       !active ||
       paused ||
-      !bridge.getBrowserMetadata ||
-      !bridge.getBrowserFrame
+      !source.canRead
     )
       return;
     let disposed = false;
@@ -191,19 +178,14 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
       const current = () =>
         !disposed &&
         revision === selectionRevision.current &&
-        !pendingRef.current;
+        !pendingRef.current && committedSource.current === source && source.current();
+      const publishObservation = readMetadataCallback.current?.();
+      let metadataDelivered = false;
       try {
-        const next = await bridge.getBrowserMetadata!(sessionId, hostId);
+        const next = await source.metadata();
         if (!current()) return;
-        if (
-          next &&
-          (next.hostId !== hostId ||
-            next.sessionId !== sessionId ||
-            next.protocolVersion !== 1)
-        )
-          throw new Error(
-            "Browser tab metadata belongs to a different session.",
-          );
+        publishObservation?.(next);
+        metadataDelivered = true;
         setMetadata(next);
         if (!next || next.availability !== "running") {
           setFrame(undefined);
@@ -248,23 +230,15 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
           );
           return;
         }
-        const image = await bridge.getBrowserFrame!(sessionId, target, hostId);
+        const image = await source.frame(target);
         if (!current()) return;
-        if (
-          image.protocolVersion !== BROWSER_FRAME_PROTOCOL_VERSION ||
-          image.hostId !== hostId ||
-          image.sessionId !== sessionId ||
-          !same(image, target) ||
-          image.mimeType !== "image/jpeg"
-        )
-          throw new Error(
-            "The browser viewport belongs to a different session or tab.",
-          );
+        frameSource.current = source;
         setFrame(image);
         metadataCallback.current?.({ ...tab, url: image.url, title: image.title });
         if (!addressDirty.current && !addressFocusRef.current) setAddress(image.url);
         setError(undefined);
       } catch (cause) {
+        if (current() && !metadataDelivered) publishObservation?.(null);
         if (current())
           setError(
             cause instanceof Error
@@ -287,7 +261,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [active, paused, bridge, hostId, sessionId, refresh, selectionKey]);
+  }, [active, paused, source, refresh, selectionKey]);
 
   const running = metadata?.availability === "running" ? metadata : undefined;
   const tabs = running?.tabs.filter((tab) => tab.state === "alive") ?? [];
@@ -300,28 +274,28 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
       });
   };
   const unsupported =
-    !bridge.getBrowserMetadata || !bridge.getBrowserFrame
+    !source.canRead
       ? "Update this desktop to preview native browser tabs."
       : metadata === null
         ? "Update this host to preview native browser tabs."
         : undefined;
   const reason =
-    unsupported ??
+    (!source.current() ? "Return to and inspect the original draft browser page." : undefined) ?? unsupported ??
     (metadata && metadata.availability !== "running"
       ? metadata.reason
       : undefined);
-  const controlUnavailable = bridge.controlBrowser
+  const controlUnavailable = source.canControl
     ? undefined
     : "Update this desktop to control native browser tabs.";
-  const stale = Boolean(frame && (reason || error || paused || !active));
+  const stale = Boolean(frame && (reason || error || paused || !active || !source.current() || frameSource.current !== source));
   const frameReady = Boolean(
-    active &&
+    active && source.current() && frameSource.current === source &&
     !paused &&
     !error &&
     !actionError &&
     heldInput.length === 0 &&
     !reason &&
-    bridge.controlBrowser &&
+    source.canControl &&
     frame?.context &&
     frame.controlEpoch &&
     selected &&
@@ -345,10 +319,10 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     const image = frameRef.current;
     const target = selectedRef.current;
     if (
-      !frameReady || haltedRef.current ||
+      !frameReady || !source.current() || frameSource.current !== source || haltedRef.current ||
       !activeRef.current || pausedRef.current ||
       (!queued && pendingRef.current) ||
-      !bridge.controlBrowser ||
+      !source.canControl ||
       !image?.controlEpoch ||
       !target ||
       !same(image, target)
@@ -363,29 +337,10 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     panelSizeFresh.current = false;
     setPending(true);
     try {
-      const receipt = await bridge.controlBrowser(
-        sessionId,
-        {
-          requestId,
-          controlEpoch: image.controlEpoch,
-          capturedAt: image.capturedAt,
-          target,
-          context,
-          action,
-        },
-        hostId,
-      );
-      if (
-        !mounted.current ||
-        revision !== selectionRevision.current
-      )
-        return;
-      if (!receiptMatches(receipt, requestId, hostId, sessionId, target)) {
-        haltedRef.current = true; holdInput(); setActionError(
-          "The browser action receipt belongs to a different session or tab.",
-        );
-        return;
-      }
+      const receipt = await source.control({
+        requestId, controlEpoch: image.controlEpoch, capturedAt: image.capturedAt, target, context, action,
+      });
+      if (!mounted.current || revision !== selectionRevision.current || committedSource.current !== source || !source.current()) return;
       if (receipt.outcome === "unknown") {
         haltedRef.current = true; holdInput(); setActionError(
           receipt.message ||
@@ -533,6 +488,8 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
     });
   };
   const frameKey = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    onShortcutKeyDown?.(event.nativeEvent);
+    if (event.defaultPrevented || event.nativeEvent.defaultPrevented) return;
     const supported = [
       "Enter",
       "Tab",
@@ -585,7 +542,6 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
   return (
     <section className="browser-panel" aria-label="Browser preview" onKeyDown={event => {
       if (event.key === "Escape" && optionsMenu.current?.open) { optionsMenu.current.open = false; optionsMenu.current.querySelector<HTMLElement>("summary")?.focus(); }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "l") { event.preventDefault(); addressInput.current?.focus(); addressInput.current?.select(); }
     }}>
 
       {!nativeTarget && <div
@@ -642,6 +598,8 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
         <form onSubmit={submitAddress}>
           <input
             ref={addressInput}
+            data-browser-address-owner={source.focusOwner}
+            data-browser-address-draft={addressDirty.current ? "true" : undefined}
             aria-label="Page address"
             role="combobox"
             aria-expanded={false}
@@ -763,7 +721,7 @@ function SessionBrowserPreview({ bridge, hostId, sessionId, active, nativeTarget
             ? "No current preview."
             : metadata === undefined
               ? "Loading native browser tabs…"
-              : "Tabs opened by this session’s browser tool appear here."}
+              : source.kind === "draft" ? "No current native browser tab is available." : "Tabs opened by this session’s browser tool appear here."}
         </div>
       )}
     </section>

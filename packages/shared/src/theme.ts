@@ -1,25 +1,28 @@
 import { parsePreferenceChange, type ThemeBackground, type ThemeTokens } from "./preferences";
 
 export interface ThemeDocument {
-  version: 1;
+  version: 2;
   mode: "system" | "light" | "dark";
   material: "none" | "sidebar" | "under-window" | "hud";
+  opaqueWindows: boolean;
   tokens: ThemeTokens;
   background: ThemeBackground;
 }
 export interface ThemeState { document: ThemeDocument; revision: string; filePath: string; fileError?: string }
-export interface WindowThemeEffects { material: ThemeDocument["material"]; backgroundColor: string }
+export interface WindowThemeEffects { material: ThemeDocument["material"]; backgroundColor: string; opaqueWindows: boolean }
 export interface ThemeAsset { sha256: string; mimeType: "image/png" | "image/jpeg" | "image/webp"; bytes: number }
-export const DEFAULT_THEME: ThemeDocument = { version: 1, mode: "system", material: "none", tokens: {}, background: { kind: "none" } };
+export const DEFAULT_THEME: ThemeDocument = { version: 2, mode: "system", material: "none", opaqueWindows: false, tokens: {}, background: { kind: "none" } };
 
 export function parseThemeDocument(input: unknown): ThemeDocument {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("A theme document must be an object.");
   const value = input as Record<string, unknown>;
-  if (value.version !== 1 || Object.keys(value).some(key => !["version", "mode", "material", "tokens", "background"].includes(key))) throw new Error("Unsupported theme document version or field.");
+  if (![1, 2].includes(value.version as number) || Object.keys(value).some(key => !["version", "mode", "material", "opaqueWindows", "tokens", "background"].includes(key))) throw new Error("Unsupported theme document version or field.");
+  if (value.version === 1 && "opaqueWindows" in value) throw new Error("Unsupported theme document version or field.");
+  if (value.version === 2 && typeof value.opaqueWindows !== "boolean") throw new Error("A v2 theme document requires opaqueWindows to be a boolean.");
   const mode = parsePreferenceChange({ key: "theme.mode", value: value.mode });
   const material = parsePreferenceChange({ key: "theme.material", value: value.material ?? "none" });
   const tokens = parsePreferenceChange({ key: "theme.tokens", value: value.tokens });
   const background = parsePreferenceChange({ key: "theme.background", value: value.background });
   if (mode.deleted || material.deleted || tokens.deleted || background.deleted) throw new Error("Invalid theme values.");
-  return { version: 1, mode: mode.value as ThemeDocument["mode"], material: material.value as ThemeDocument["material"], tokens: tokens.value as ThemeTokens, background: background.value as ThemeBackground };
+  return { version: 2, mode: mode.value as ThemeDocument["mode"], material: material.value as ThemeDocument["material"], opaqueWindows: value.version === 1 ? material.value === "none" : value.opaqueWindows as boolean, tokens: tokens.value as ThemeTokens, background: background.value as ThemeBackground };
 }

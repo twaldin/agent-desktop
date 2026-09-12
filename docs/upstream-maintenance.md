@@ -58,6 +58,7 @@ The 2026-09-05 read-only local report found **41 unchanged, 0 changed, 6 unknown
 - Pin the OMP package and runtime versions. The initial examined pair is OMP 18.1.10 and Bun 1.3.14.
 - Maintain separate records for reference behavior, implementation coverage, test evidence, and intentional changes such as OMP controls and cross-device drafts. Unknown or untested behavior remains visible.
 - Record source provenance for visual tokens, icons, typography, menus and state transitions. CSS selector order and platform overrides must survive extraction.
+- For private dependency builds, capture package manifests and issuer-specific dependency links alongside source files. Check successful resolution traces as well as `listFiles`: TypeScript can deduplicate an externally resolved package and hide that lookup from the listed file set. Verify the staged graph from a directory outside the repository before calling it relocatable; source compilation remains separate from dependency adoption and installed-runtime acceptance.
 
 ## Review a Codex update
 

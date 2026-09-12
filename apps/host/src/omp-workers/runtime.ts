@@ -1,9 +1,15 @@
+import { requestWorkerBrowserObservation, type WorkerBrowserObservation } from "../omp-browser/observation";
+import { openWorkerBrowserEvaluation, type WorkerBrowserEvaluation } from "../omp-browser/evaluation-client";
+import { copyEvaluationBinding, copyEvaluationFrame, copyEvaluationValue, evaluationKey, type BrowserEvaluationBinding, type BrowserEvaluationFrame } from "../omp-browser/evaluation-wire";
+import { requestWorkerBrowserReservation, type WorkerBrowserReservationStatus } from "../omp-browser/reservation";
+import { requestWorkerBrowserClose, type WorkerBrowserCloseResult } from "../omp-browser/close";
 import type { NativeMarketplaceCatalog, NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
 import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions, NativeSkillInventoryCatalog } from "../omp/composer-actions";
 import { realpath } from "node:fs/promises";
+import { readSessionHeader, requireDirectory } from "../omp/session-files";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrowserFrameTarget, BrowserMetadataAvailability, ModelInfo, NativeBrowserFrame, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
@@ -14,7 +20,7 @@ import { copyNativeSelectedTextInput } from "../omp/selected-text";
 import { copyNativeWholeFileInput } from "../omp/whole-file";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
-import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation } from "./protocol";
+import { WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation, type CommitGenerationInput } from "./protocol";
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
@@ -24,6 +30,7 @@ export interface WorkerFailure {
   message: string;
   pid: number;
   sessionId?: string;
+  browserOwnerId?: string;
   exitCode?: number | null;
   signalCode?: number | null;
 }
@@ -54,11 +61,20 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
   cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
-  createBrowserTab(name: string): Promise<OmpBrowserTabCreateResult>;
+  createBrowserTab(name: string, initialUrl?: string): Promise<OmpBrowserTabCreateResult>;
   controlBrowser(request: BrowserControlRequest): Promise<{name: string; targetId: string; context: BrowserDocumentContext; url: string; title: string}>;
   getBrowserFrame(target: BrowserFrameTarget): Promise<NativeBrowserFrame>;
+  closeBrowserTab(target: BrowserFrameTarget): Promise<WorkerBrowserCloseResult>;
+  inspectBrowserTab(target: BrowserFrameTarget): Promise<WorkerBrowserObservation>;
   subscribe(listener: WorkerEventListener): () => void;
   subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
+}
+export interface WorkerBrowserOwner extends Pick<WorkerSession, "workerPid" | "workerFailure" | "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "closeBrowserTab" | "inspectBrowserTab" | "getBrowserFrame" | "subscribeWorkerFailure" | "dispose"> {
+  readonly id: string;
+  readonly cwd: string;
+  reserveBrowserEvaluation(target: BrowserFrameTarget, operationId: string): Promise<WorkerBrowserReservationStatus>;
+  inspectBrowserEvaluationReservation(target: BrowserFrameTarget, operationId: string): Promise<WorkerBrowserReservationStatus | null>;
+  openBrowserEvaluation(target: BrowserFrameTarget, operationId: string, backend: "cdp" | "cmux", timeoutMs: number): Promise<WorkerBrowserEvaluation>;
 }
 export interface WorkerRuntimeOptions {
   agentDir?: string;
@@ -78,26 +94,33 @@ interface Pending {
   resolve(value: unknown): void;
   reject(error: unknown): void;
   timeout?: ReturnType<typeof setTimeout>;
+  onProgress?: (message: string) => void;
   uncertainTransport?: "prompt-admission" | "question-resolution" | "mcp-authorization";
+  evaluationDisposal?: boolean;
+  evaluation?: { binding: BrowserEvaluationBinding; sequence: number };
 }
 
-class WorkerClient {
+/** Host-internal worker lifecycle client; exported for focused transport contract tests. */
+export class WorkerClient {
   #process: Bun.Subprocess<"ignore", "ignore", "ignore">;
   #ready = Promise.withResolvers<void>();
   #pending = new Map<string, Pending>();
   #requestId = 0;
   #disposeId?: string;
   #disposeAcknowledged = false;
+  #requireDisposeAcknowledgement = false;
   #closing = false;
   #closeCall?: Promise<void>;
   #options: WorkerRuntimeOptions;
   #readyDeadline: ReturnType<typeof setTimeout>;
   #events = new Set<WorkerEventListener>();
   #failures = new Set<(failure: WorkerFailure) => void>();
+  #evaluationRoutes = new Map<string, { post: (frame: BrowserEvaluationFrame) => void; lost: (error: unknown) => void }>();
+  #evaluationDisposals = new Map<string, Promise<unknown>>();
   snapshot?: SessionSnapshot;
   failure?: WorkerFailure;
 
-  constructor(options: WorkerRuntimeOptions, environment = options.environment) {
+  constructor(options: WorkerRuntimeOptions, environment = options.environment, startupDirectory?: string) {
     this.#options = options;
     if (options.onWorkerFailure) this.#failures.add(options.onWorkerFailure);
     const executable = options.executablePath ?? process.execPath;
@@ -110,15 +133,18 @@ class WorkerClient {
       if (options.workerPath !== undefined && options.workerPath !== workerPath)
         throw new Error("Packaged OMP workers must use the app-owned worker entrypoint.");
     }
+    const selectedAgentDir = options.agentDir || (environment ?? process.env).PI_CODING_AGENT_DIR;
+    const agentDir = selectedAgentDir ? path.resolve(selectedAgentDir) : undefined;
     this.#readyDeadline = setTimeout(() => {
       this.#fail("OMP worker startup timed out");
       this.#process.kill("SIGKILL");
     }, options.startupTimeoutMs ?? 30_000);
     try {
       this.#process = Bun.spawn({
-        cmd: [executable, ...((environment ?? process.env).PI_DISABLE_DOTENV === "1" ? ["--no-env-file"] : []), workerPath],
-        // Establish the selected native profile before transitive SDK imports run.
-        env: { ...(environment ?? process.env), ...(options.agentDir ? { PI_CODING_AGENT_DIR: options.agentDir } : {}) },
+        cmd: [executable, ...((environment ?? process.env).PI_DISABLE_DOTENV === "1" ? ["--no-env-file"] : []), path.resolve(workerPath)],
+        cwd: startupDirectory,
+        // Establish the selected directory and native profile before SDK imports run.
+        env: { ...(environment ?? process.env), ...(startupDirectory ? { PWD: startupDirectory } : {}), ...(agentDir ? { PI_CODING_AGENT_DIR: agentDir } : {}) },
         stdin: "ignore", stdout: "ignore", stderr: "ignore",
         serialization: "advanced",
         ipc: (message: unknown) => this.#receive(message),
@@ -157,9 +183,15 @@ class WorkerClient {
       pending.reject(this.#transportFailure(pending, error));
     }
     this.#pending.clear();
+    // Terminal channel loss remains visible even during an intentional worker close.
+    for (const route of [...this.#evaluationRoutes.values()]) {
+      try { route.lost(error); } catch { /* The original process is already lost. */ }
+    }
+    this.#evaluationRoutes.clear();
   }
 
   #transportFailure(pending: Pending | undefined, error: unknown): unknown {
+    if (pending?.evaluation) return Object.assign(new Error("Original cmux request delivery is unknown; do not replay the operation.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
     if (pending?.uncertainTransport === "mcp-authorization") return Object.assign(new Error("MCP authorization delivery is unknown. Inspect its current state before acting again."), {code:"OUTCOME_UNKNOWN"});
     if (pending?.uncertainTransport === "prompt-admission") return new OmpPromptAdmissionError(error);
     if (pending?.uncertainTransport === "question-resolution") return new DetachedQuestionOutcomeUnknown(error);
@@ -192,6 +224,29 @@ class WorkerClient {
       this.#fail(`OMP worker failed: ${message.error.message}`);
       return;
     }
+    if (message.type === "browserEvaluationFrame") {
+      let route: { post: (frame: BrowserEvaluationFrame) => void; lost: (error: unknown) => void } | undefined;
+      try {
+        const binding = copyEvaluationBinding(message.binding);
+        if (binding.workerPid !== this.pid) throw new Error("Browser evaluation frame belongs to a different worker.");
+        route = this.#evaluationRoutes.get(evaluationKey(binding));
+        if (route) route.post(message.frame);
+      } catch (error) {
+        // A channel callback failure must not kill the original browser owner.
+        route?.lost(error);
+      }
+      return;
+    }
+    if (message.type === "commitProgress") {
+      try {
+        if (typeof message.message !== "string" || message.message.length > 4096) throw new Error("Invalid commit progress");
+        this.#pending.get(message.id)?.onProgress?.(message.message);
+      } catch {
+        this.#fail("The host could not consume commit-generation progress");
+        this.#process.kill("SIGKILL");
+      }
+      return;
+    }
     // Buffered native events can follow a newer command response. Their raw
     // order is retained, but they must not roll cached model/status backward.
     if (message.snapshot && !this.failure && message.snapshot.revision > (this.snapshot?.revision ?? -1)) {
@@ -214,6 +269,21 @@ class WorkerClient {
       if (!pending) return;
       this.#pending.delete(key);
       clearTimeout(pending.timeout);
+      let responseValue = message.value;
+      if (pending.evaluation) {
+        try {
+          if (!message.evaluation || evaluationKey(message.evaluation.binding) !== evaluationKey(pending.evaluation.binding)
+            || message.evaluation.sequence !== pending.evaluation.sequence) throw new Error("Original cmux response receipt changed.");
+          if (typeof message.ok !== "boolean" || !message.ok && (!message.error || typeof message.error.message !== "string" || typeof message.error.name !== "string")) throw new Error("Invalid original cmux response.");
+          if (message.ok) responseValue = copyEvaluationValue(message.value);
+          // A retained, identity-checked response is now owned by this client. An
+          // orphan response never reaches this branch and receives no delivery ACK.
+          this.#send({ type: "browserEvaluationAck", ...pending.evaluation });
+        } catch (cause) {
+          pending.reject(Object.assign(new Error("Original browser evaluation response delivery is unknown.", { cause }), { code: "OUTCOME_UNKNOWN" }));
+          return;
+        }
+      }
       if (message.id === this.#disposeId) {
         // A successful process exit alone cannot prove native disposal. Receipt
         // of this exact response authorizes the child's final exit handshake.
@@ -222,7 +292,7 @@ class WorkerClient {
           this.#disposeAcknowledged = true;
         } catch (error) { pending.reject(error); return; }
       }
-      if (message.ok) pending.resolve(message.value);
+      if (message.ok) pending.resolve(responseValue);
       else {
         const error = new Error(message.error?.message ?? "OMP worker operation failed");
         error.name = message.error?.name ?? "Error";
@@ -237,11 +307,12 @@ class WorkerClient {
     this.#process.send(message);
   }
 
-  #promise<T>(key: string, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"]): Promise<T> {
-    if (this.#pending.size >= 128) throw new Error("OMP worker request limit reached");
+  #promise<T>(key: string, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"], evaluationDisposal = false): Promise<T> {
+    const regular = [...this.#pending.entries()].filter(([id, item]) => !item.evaluationDisposal && id !== this.#disposeId).length;
+    if (regular >= 128 && key !== this.#disposeId && !evaluationDisposal) throw new Error("OMP worker request limit reached");
     const deferred = Promise.withResolvers<T>();
     const pending: Pending = {
-      resolve: value => deferred.resolve(value as T), reject: deferred.reject, uncertainTransport,
+      resolve: value => deferred.resolve(value as T), reject: deferred.reject, uncertainTransport, evaluationDisposal,
     };
     if (timeoutMs) pending.timeout = setTimeout(() => {
       this.#pending.delete(key);
@@ -252,13 +323,31 @@ class WorkerClient {
     return deferred.promise;
   }
 
-  async request<T>(operation: WorkerOperation, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"]): Promise<T> {
+  async request<T>(operation: WorkerOperation, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"], onProgress?: (message: string) => void): Promise<T> {
     await this.#ready.promise;
     if (this.failure) throw new WorkerFailureError(this.failure);
-    if (this.#closing && operation.operation !== "dispose") throw new Error("OMP worker is closing");
+    const evaluationDisposal = operation.operation === "disposeBrowserEvaluation";
+    if (this.#closing && operation.operation !== "dispose" && !evaluationDisposal) throw new Error("OMP worker is closing");
+    let evaluationDisposalKey: string | undefined;
+    if (evaluationDisposal) {
+      if (operation.args.binding.workerPid !== this.pid) throw new Error("Browser evaluation disposal belongs to a different worker.");
+      evaluationDisposalKey = evaluationKey(operation.args.binding);
+      const prior = this.#evaluationDisposals.get(evaluationDisposalKey);
+      if (prior) return prior as Promise<T>;
+      if (this.#evaluationDisposals.size >= 64) throw new Error("Browser evaluation disposal limit reached.");
+    }
+    const evaluation = operation.operation === "requestBrowserEvaluation"
+      ? { binding: copyEvaluationBinding(operation.args.binding), sequence: operation.args.sequence } : undefined;
+    if (evaluation && (evaluation.binding.workerPid !== this.pid || !Number.isSafeInteger(evaluation.sequence) || evaluation.sequence < 1)) throw new Error("Invalid original cmux request identity.");
     const id = String(++this.#requestId);
-    if (operation.operation === "dispose") this.#disposeId = id;
-    const response = this.#promise<T>(id, timeoutMs, uncertainTransport);
+    if (operation.operation === "dispose") {
+      if (this.#disposeId) throw new Error("OMP worker disposal has already been requested");
+      this.#disposeId = id;
+    }
+    const response = this.#promise<T>(id, evaluationDisposal ? undefined : timeoutMs, uncertainTransport, evaluationDisposal);
+    if (evaluationDisposalKey) this.#evaluationDisposals.set(evaluationDisposalKey, response);
+    if (evaluation) this.#pending.get(id)!.evaluation = evaluation;
+    if (onProgress) this.#pending.get(id)!.onProgress = onProgress;
     try { this.#send({ type: "request", id, ...operation }); }
     catch (error) {
       const pending = this.#pending.get(id);
@@ -267,6 +356,25 @@ class WorkerClient {
       pending?.reject(this.#transportFailure(pending, error));
     }
     return response;
+  }
+
+  subscribeBrowserEvaluation(binding: BrowserEvaluationBinding, post: (frame: BrowserEvaluationFrame) => void,
+    lost: (error: unknown) => void): () => void {
+    const captured = copyEvaluationBinding(binding), key = evaluationKey(captured);
+    if (captured.workerPid !== this.pid) throw new Error("Browser evaluation belongs to a different worker.");
+    if (this.#evaluationRoutes.has(key)) throw new Error("Browser evaluation already has an IPC receiver.");
+    if (this.#evaluationRoutes.size >= 64) throw new Error("Browser evaluation receiver limit reached.");
+    const route = { post, lost };
+    this.#evaluationRoutes.set(key, route);
+    if (this.failure) lost(new WorkerFailureError(this.failure));
+    return () => { if (this.#evaluationRoutes.get(key) === route) this.#evaluationRoutes.delete(key); };
+  }
+
+  postBrowserEvaluationFrame(binding: BrowserEvaluationBinding, frame: BrowserEvaluationFrame): void {
+    const captured = copyEvaluationBinding(binding);
+    if (captured.workerPid !== this.pid || !this.#evaluationRoutes.has(evaluationKey(captured))) throw new Error("Original browser evaluation route is unavailable.");
+    // Native ACKs are forwarded unchanged. Closing retains terminal/control delivery.
+    this.#send({ type: "browserEvaluationFrame", binding: captured, frame: copyEvaluationFrame(frame) });
   }
 
   startPrompt(text: string, options?: Parameters<OmpSession["startPrompt"]>[1]): OmpPromptRun {
@@ -337,8 +445,11 @@ class WorkerClient {
     return () => { this.#failures.delete(listener); };
   }
 
-  close(): Promise<void> {
-    if (this.#closeCall) return this.#closeCall;
+  close(options: { requireAcknowledgement?: boolean } = {}): Promise<void> {
+    if (options.requireAcknowledgement) this.#requireDisposeAcknowledgement = true;
+    if (this.#closeCall) return this.#closeCall.then(() => {
+      if (options.requireAcknowledgement && !this.#disposeAcknowledged) throw new Error("OMP worker closed without required disposal acknowledgement");
+    });
     this.#closing = true;
     this.#closeCall = (async () => {
       const deadline = setTimeout(() => { this.#process.kill("SIGKILL"); }, this.#options.shutdownTimeoutMs ?? 15_000);
@@ -347,6 +458,9 @@ class WorkerClient {
           await this.request({ operation: "dispose" }, this.#options.shutdownTimeoutMs ?? 15_000);
         }
         const exitCode = await this.#process.exited;
+        if (this.#requireDisposeAcknowledgement && !this.#disposeAcknowledged) {
+          throw new Error(`OMP worker exited before required disposal acknowledgement (code ${exitCode}, signal ${this.#process.signalCode ?? "none"})`);
+        }
         if (this.#disposeAcknowledged && exitCode !== 0) {
           throw new Error(`OMP worker exited unsuccessfully after disposal acknowledgement (code ${exitCode}, signal ${this.#process.signalCode ?? "none"})`);
         }
@@ -373,7 +487,7 @@ export class WorkerRuntime {
   #disposed = false;
   #disposeCall?: Promise<void>;
 
-  constructor(options: WorkerRuntimeOptions = {}) { this.#options = options; }
+  constructor(options: WorkerRuntimeOptions = {}) { this.#options = { ...options, agentDir: options.agentDir ? path.resolve(options.agentDir) : undefined }; }
 
   #assertActive(): void { if (this.#disposed) throw new Error("OMP worker runtime is disposed"); }
 
@@ -384,28 +498,79 @@ export class WorkerRuntime {
     return pending;
   }
 
-  async #spawn(init: WorkerInit, onEvent?: WorkerEventListener, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<WorkerClient> {
+  async #spawn(init: WorkerInit, onEvent?: WorkerEventListener, localEnvironment?: LocalEnvironmentWorkerEnvironment, signal?: AbortSignal): Promise<WorkerClient> {
     this.#assertActive();
+    signal?.throwIfAborted();
+    const worktreeRoot = localEnvironment?.worktreeRoot;
     const environment = localEnvironment
       ? localEnvironmentForWorker(this.#options.environment ?? process.env, localEnvironment)
-      : this.#options.environment;
-    const client = new WorkerClient(this.#options, environment);
+      : { ...(this.#options.environment ?? process.env) };
+    const browserOwnerId = init.mode === "browser" ? init.owner.id : undefined;
+    const options = init.mode === "browser" && this.#options.onWorkerFailure
+      ? { ...this.#options, onWorkerFailure: (failure: WorkerFailure) => this.#options.onWorkerFailure?.({ ...failure, browserOwnerId }) }
+      : this.#options;
+    let startupDirectory: string | undefined;
+    if (init.mode === "create") {
+      startupDirectory = await requireDirectory(init.options.cwd);
+      init = { ...init, options: { ...init.options, cwd: startupDirectory } };
+    } else if (init.mode === "browser") startupDirectory = init.owner.cwd;
+    else if (init.mode === "open") startupDirectory = init.options.expectedIdentity?.directory;
+    if (worktreeRoot && startupDirectory && await requireDirectory(worktreeRoot) !== startupDirectory) {
+      throw new Error("OMP worker directory does not match its prepared worktree environment");
+    }
+    this.#assertActive();
+    signal?.throwIfAborted();
+    const client = new WorkerClient(options, environment, startupDirectory);
     this.#clients.add(client);
+    const cancel = () => { void client.close().catch(() => {}); };
+    signal?.addEventListener("abort", cancel, { once: true });
     if (onEvent) client.subscribe(onEvent);
     try {
-      await client.request({ operation: "init", args: init }, this.#options.startupTimeoutMs ?? 30_000);
+      const initialized = await client.request<{ ownerId?: string; cwd?: string } | undefined>({ operation: "init", args: init }, this.#options.startupTimeoutMs ?? 30_000);
+      signal?.throwIfAborted();
       this.#assertActive();
-      if (init.mode !== "discovery" && !client.snapshot) throw new Error("OMP worker did not return native session metadata");
+      if ((init.mode === "create" || init.mode === "open") && !client.snapshot) throw new Error("OMP worker did not return native session metadata");
+      if (init.mode === "create" && client.snapshot!.cwd !== init.options.cwd) throw new Error("OMP worker initialization changed working directory");
+      if (init.mode === "open" && (client.snapshot!.id !== init.options.expectedIdentity?.id || client.snapshot!.cwd !== init.options.expectedIdentity.cwd)) throw new Error("OMP worker initialization changed session identity");
+      if (init.mode === "browser" && (client.snapshot || initialized?.ownerId !== init.owner.id || initialized.cwd !== init.owner.cwd)) throw new Error("OMP browser owner initialization changed identity");
       return client;
     } catch (error) {
       try { await client.close(); } finally { this.#clients.delete(client); }
+      if (signal?.aborted) throw signal.reason;
       throw error;
-    }
+    } finally { signal?.removeEventListener("abort", cancel); }
+  }
+
+  /** One disposable owned process per generation; it never creates a chat session. */
+  generateCommit(input: CommitGenerationInput, options: { signal?: AbortSignal; onProgress?: (message: string) => void } = {}): Promise<import("./protocol").CommitGenerationResult> {
+    this.#assertActive();
+    const request = { ...input }, { signal, onProgress } = options;
+    return this.#track((async () => {
+      signal?.throwIfAborted();
+      const client = await this.#spawn({ mode: "discovery", agentDir: this.#options.agentDir }, undefined, undefined, signal);
+      const cancel = () => { void client.close().catch(() => {}); };
+      signal?.addEventListener("abort", cancel, { once: true });
+      let generationCompleted = false;
+      try {
+        signal?.throwIfAborted();
+        const result = await client.request<import("./protocol").CommitGenerationResult>({ operation: "generateCommit", args: request }, undefined, undefined, onProgress);
+        signal?.throwIfAborted();
+        generationCompleted = true;
+        return result;
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason;
+        throw error;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+        try { await client.close({ requireAcknowledgement: generationCompleted }); } finally { this.#clients.delete(client); }
+      }
+    })());
   }
 
   create(options: Omit<OmpSessionOptions, "onEvent"> & { onEvent?: WorkerEventListener }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<WorkerSession> {
     this.#assertActive();
     const { onEvent, ...nativeOptions } = options;
+    if (nativeOptions.sessionDirectory) nativeOptions.sessionDirectory = path.resolve(nativeOptions.sessionDirectory);
     return this.#track((async () => {
       const client = await this.#spawn({ mode: "create", agentDir: this.#options.agentDir, options: nativeOptions }, onEvent, localEnvironment);
       return this.#handle(client);
@@ -414,16 +579,68 @@ export class WorkerRuntime {
 
   open(options: Omit<OmpOpenOptions, "onEvent"> & { onEvent?: WorkerEventListener }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<WorkerSession> {
     this.#assertActive();
+    const { onEvent, ...capturedOptions } = options;
     return this.#track((async () => {
-      const sessionFile = await realpath(options.sessionFile);
+      const sessionFile = await realpath(capturedOptions.sessionFile);
       this.#assertActive();
       if (this.#openFiles.has(sessionFile)) throw new Error("OMP session is already open in this worker runtime");
       this.#openFiles.add(sessionFile);
       try {
-        const client = await this.#spawn({ mode: "open", agentDir: this.#options.agentDir, options: { sessionFile, interactions: options.interactions, approvalOverride: options.approvalOverride } }, options.onEvent, localEnvironment);
+        const header = await readSessionHeader(sessionFile);
+        if (!path.isAbsolute(header.cwd)) throw new Error("Native session working directory must be absolute before worker startup");
+        const directory = await requireDirectory(header.cwd);
+        const expectedIdentity = { ...header, directory };
+        const client = await this.#spawn({ mode: "open", agentDir: this.#options.agentDir, options: { sessionFile, expectedIdentity, interactions: capturedOptions.interactions, approvalOverride: capturedOptions.approvalOverride } }, onEvent, localEnvironment);
         return this.#handle(client);
       } catch (error) { this.#openFiles.delete(sessionFile); throw error; }
     })());
+  }
+
+  /** Internal host API. Admission and durable draft/request ownership remain with the caller. */
+  createBrowserOwner(owner: { id: string; cwd: string }): Promise<WorkerBrowserOwner> {
+    this.#assertActive();
+    const input = { ...owner };
+    return this.#track((async () => {
+      const cwd = await requireDirectory(input.cwd);
+      const client = await this.#spawn({ mode: "browser", owner: { id: input.id, cwd }, agentDir: this.#options.agentDir });
+      this.#assertActive();
+      let closing: Promise<void> | undefined;
+      return {
+        id: input.id, cwd,
+        get workerPid() { return client.pid; }, get workerFailure() { return client.failure; },
+        ...this.#browserControls(client, () => input.id),
+        reserveBrowserEvaluation: async (target, operationId) => {
+          const result = await requestWorkerBrowserReservation(client, input.id, target, operationId);
+          if (!result) throw new Error("Browser reservation omitted its operation receipt.");
+          return result;
+        },
+        inspectBrowserEvaluationReservation: (target, operationId) => requestWorkerBrowserReservation(client, input.id, target, operationId, true),
+        openBrowserEvaluation: (target, operationId, backend, timeoutMs) => openWorkerBrowserEvaluation(client, input.id, target, operationId, backend, timeoutMs),
+        subscribeWorkerFailure: listener => client.subscribeFailure(listener),
+        dispose: () => closing ??= client.close().finally(() => { this.#clients.delete(client); }),
+      };
+    })());
+  }
+
+  #browserControls(client: WorkerClient, readOwnerId: () => string): Pick<WorkerSession, "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "closeBrowserTab" | "inspectBrowserTab" | "getBrowserFrame"> {
+    return {
+      getBrowserMetadata: async () => {
+        const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
+        if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };
+        return metadata;
+      },
+      // Native acquisition owns its configured finite timeout. Retain the IPC
+      // request until it settles so a desktop timeout cannot release the host's
+      // in-flight bound while creation may still be running.
+      createBrowserTab: (name, initialUrl) => client.request<OmpBrowserTabCreateResult>({ operation: "createBrowserTab", args: { name, ...(initialUrl === undefined ? {} : { initialUrl }) } }),
+      closeBrowserTab: target => requestWorkerBrowserClose(client, readOwnerId(), target),
+      inspectBrowserTab: target => requestWorkerBrowserObservation(client, readOwnerId(), target),
+      controlBrowser: request => client.request({ operation: "controlBrowser", args: { request } }, 15_000),
+      getBrowserFrame: target => {
+        if (target.workerPid !== client.pid) return Promise.reject(new Error("The selected browser frame belongs to a stale worker."));
+        return client.request<NativeBrowserFrame>({ operation: "getBrowserFrame", args: { target } }, 15_000);
+      },
+    };
   }
 
   #handle(client: WorkerClient): WorkerSession {
@@ -467,20 +684,7 @@ export class WorkerRuntime {
         try { return await client.request<{ cancelled: boolean; sessionId: string; sessionFile: string }>({ operation: "promoteBtw", args: { runId, operationId } }); }
         finally { if (client.snapshot?.sessionFile) { const file = path.resolve(client.snapshot.sessionFile); this.#openFiles.add(file); reservedPaths.add(file); } }
       },
-      getBrowserMetadata: async () => {
-        const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
-        if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };
-        return metadata;
-      },
-      // Native acquisition owns its configured finite timeout. Retain the IPC
-      // request until it settles so a desktop timeout cannot release the host's
-      // in-flight bound while creation may still be running.
-      createBrowserTab: name => client.request<OmpBrowserTabCreateResult>({ operation: "createBrowserTab", args: { name } }),
-      controlBrowser: request => client.request({ operation: "controlBrowser", args: { request } }, 15_000),
-      getBrowserFrame: target => {
-        if (target.workerPid !== client.pid) return Promise.reject(new Error("The selected browser frame belongs to a stale worker."));
-        return client.request<NativeBrowserFrame>({ operation: "getBrowserFrame", args: { target } }, 15_000);
-      },
+      ...this.#browserControls(client, () => client.snapshot!.id),
       getImage: async (nativeEntryId, blockIndex) => {
         if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");
         imageReads++;
@@ -559,6 +763,19 @@ export class WorkerRuntime {
   }
   async mutatePlugin(cwd: string, mutation: NativePluginMutation): Promise<NativePluginCatalog> {
     return (await this.#discoveryClient()).request({ operation: "mutatePlugin", args: { cwd, mutation } }, 30_000);
+  }
+  async getSshHosts(cwd: string): Promise<import("@agent-desktop/shared").NativeSshCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "getSshHosts", args: { cwd } }, 30_000);
+  }
+  async getSshHostDetail(cwd: string, request: import("@agent-desktop/shared").NativeSshDetailRequest): Promise<import("@agent-desktop/shared").NativeSshDetail> {
+    return (await this.#discoveryClient()).request({ operation: "getSshHostDetail", args: { cwd, request } }, 30_000);
+  }
+  async mutateSshHost(cwd: string, mutation: import("@agent-desktop/shared").NativeSshMutation): Promise<import("@agent-desktop/shared").NativeSshCatalog> {
+    const catalog = await (await this.#discoveryClient()).request<import("@agent-desktop/shared").NativeSshCatalog>({ operation: "mutateSshHost", args: { cwd, mutation } }, 30_000);
+    const refreshed = await Promise.allSettled([...this.#clients].filter(client => client.snapshot !== undefined).map(client =>
+      client.request({ operation: "refreshSshConfiguration" }, 15_000)));
+    if (refreshed.some(result => result.status === "rejected")) catalog.warnings.push("Saved, but an existing session could not refresh its SSH configuration. Reopen that session before using the changed targets.");
+    return catalog;
   }
   async getMcpServers(cwd: string): Promise<NativeMcpCatalog> {
     return (await this.#discoveryClient()).request({ operation: "getMcpServers", args: { cwd } }, 30_000);

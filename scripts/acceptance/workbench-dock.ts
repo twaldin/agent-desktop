@@ -7,7 +7,7 @@ import { build } from "vite";
 const root = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/workbench-dock-acceptance/${Date.now()}`);
 const profile = await mkdtemp(join(tmpdir(), "agent-workbench-dock-"));
-const sources = ["apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/renderer/native-terminal-bridge.ts", "scripts/acceptance/workbench-dock-browser.tsx"];
+const sources = ["apps/desktop/src/renderer/use-workbench-dock.tsx", "apps/desktop/src/renderer/dock-state.ts", "apps/desktop/src/renderer/native-terminal-bridge.ts", "scripts/acceptance/workbench-dock-browser.tsx", "scripts/acceptance/workbench-dock.ts"];
 const hashes = () => Promise.all(sources.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])).then(Object.fromEntries);
 const before = await hashes();
 await mkdir(output, { recursive: true, mode: 0o700 });

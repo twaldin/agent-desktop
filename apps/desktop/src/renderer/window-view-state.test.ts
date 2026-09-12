@@ -11,6 +11,27 @@ function fixture(initial?: unknown, legacy: Record<string, string> = {}) {
   Object.defineProperty(globalThis, "window", { configurable: true, value: { agentDesktopWindow: { initial } } });
   Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: { getItem: (key: string) => legacy[key] ?? null } });
 }
+test("main-process window slot survives view recovery without adopting renderer or route identities", () => {
+  fixture({ ownerSlot: "primary", state: defaultWindowView() });
+  expect(readWindowRestoration().ownerSlot).toBe("primary");
+  fixture({ ownerSlot: "second-window", state: { invalid: true } }, {
+    "agent-desktop:navigation:v2": JSON.stringify({ hostId: "remote", sessionId: "chat" }),
+    "agent-desktop:window-owner": "forged-renderer-owner",
+  });
+  const recovered = readWindowRestoration();
+  expect(recovered.ownerSlot).toBe("second-window");
+  expect(recovered.state.route).toEqual({ hostId: "remote", sessionId: "chat" });
+  expect(recovered.error).toContain("invalid");
+  fixture({ ownerSlot: "primary", error: "Unreadable view" });
+  expect(readWindowRestoration()).toMatchObject({ ownerSlot: "primary", error: "Unreadable view" });
+});
+test("missing or invalid native owner never invents a shared primary slot", () => {
+  for (const ownerSlot of [undefined, "", "../primary", 42, "x".repeat(81)]) {
+    fixture({ ownerSlot, state: defaultWindowView() }, { "agent-desktop:window-owner": "primary" });
+    expect(readWindowRestoration().ownerSlot).toBeUndefined();
+    expect(readWindowRestoration().state).toEqual(defaultWindowView());
+  }
+});
 test("synchronous persisted owner wins over stale renderer tab state before any host is known", () => {
   const saved = { ...defaultWindowView(), route: { hostId: "offline-owner", sessionId: "session" }, workspaceOpen: true, workspaceTab: "changes" as const };
   fixture({ state: saved }, { "agent-desktop:navigation:v2": JSON.stringify({ hostId: "local-owner", sessionId: null }) });
@@ -35,4 +56,10 @@ test("directory navigation restores separately from conversation owner and draft
  fixture({state:saved});expect(readWindowRestoration().state).toEqual(saved);
  fixture({state:{...saved,pluginDirectoryTab:"unknown"}});expect(readWindowRestoration().error).toContain("invalid");
  fixture({state:{...saved,pluginDirectoryTab:["plugins"]}});expect(readWindowRestoration().error).toContain("invalid");
+});
+
+test("Keyboard shortcuts settings restores through the existing local window route", () => {
+  const saved = { ...defaultWindowView(), settingsOpen: true, settingsPage: "keyboard-shortcuts" as const };
+  fixture({ ownerSlot: "primary", state: saved });
+  expect(readWindowRestoration()).toEqual({ ownerSlot: "primary", state: saved, error: undefined });
 });

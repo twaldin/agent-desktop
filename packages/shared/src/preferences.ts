@@ -28,6 +28,9 @@ export const THEME_TOKEN_DEFINITIONS = {
   "--welcome-mark-hover-opacity": { kind: "number", minimum: 0, maximum: 1 },
   "--user-message-surface": { kind: "color" }, "--user-message-text": { kind: "color" },
   "--header-divider-color": { kind: "color" }, "--sidebar-divider-color": { kind: "color" },
+  "--header-inactive-icon-color": { kind: "color" },
+  "--header-inset-right": { kind: "length", minimum: 0, maximum: 100 },
+  "--header-action-gap": { kind: "length", minimum: 0, maximum: 100 },
   "--settings-card-surface": { kind: "color" },
   "--panel-surface": { kind: "color" }, "--menu-surface": { kind: "color" },
   "--editor-surface": { kind: "color" }, "--terminal-surface": { kind: "color" },
@@ -70,6 +73,7 @@ export const THEME_TOKEN_DEFINITIONS = {
   "--menu-radius": { kind: "length", minimum: 0, maximum: 64 },
   "--panel-radius": { kind: "length", minimum: 0, maximum: 64 },
   "--button-radius": { kind: "length", minimum: 0, maximum: 64 },
+  "--segmented-radius": { kind: "length", minimum: 0, maximum: 9999 },
   "--border-width": { kind: "length", minimum: 0, maximum: 8 },
   "--divider-width": { kind: "length", minimum: 0, maximum: 8 },
   "--composer-border-width": { kind: "length", minimum: 0, maximum: 8 },
@@ -117,14 +121,18 @@ export function notificationPreferences(value?: NotificationPreferences): Requir
     approvalRequired: value?.approvalRequired ?? true, questionRequired: value?.questionRequired ?? true, sound: value?.sound ?? false };
 }
 export interface PreferenceValues {
+  "connections.keepAwakeWhilePluggedIn": boolean;
   "git.branchPrefix": string;
   "theme.material": "none" | "sidebar" | "under-window" | "hud";
+  "theme.opaqueWindows": boolean;
   "theme.mode": "system" | "light" | "dark";
   "theme.tokens": ThemeTokens;
   "theme.background": ThemeBackground;
   "general.notifications": NotificationPreferences;
   "general.reduceMotion": boolean;
   "general.sendBehavior": "enter" | "mod-enter";
+  "general.bottomPanel": boolean;
+  "general.defaultTerminalLocation": "bottom" | "right";
   [key: `sidebar.section.${string}`]: SidebarSectionPreference;
   [key: `sidebar.project.${string}`]: SidebarEntityPreference;
   [key: `sidebar.session.${string}`]: SidebarEntityPreference;
@@ -229,7 +237,7 @@ function background(value: unknown): ThemeBackground {
 
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
-  if (["git.branchPrefix", "theme.mode", "theme.material", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior"].includes(value)) return value as PreferenceKey;
+  if (["connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
   if (!match || !isPreferenceId(match[1])) return invalid("Only allowlisted app preferences and UUID sidebar entities can be shared.");
   return value as PreferenceKey;
@@ -242,11 +250,14 @@ function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[P
     if (text && (!text.endsWith("/") || text.startsWith("/") || text.includes("//") || !/^[A-Za-z0-9._/-]+$/.test(text) || text.includes("..") || text.endsWith("/."))) return invalid("A branch prefix must be a safe Git path prefix ending in '/'.");
     return text;
   }
+  if (key === "connections.keepAwakeWhilePluggedIn") return bool(value);
   if (key === "theme.mode") return enumeration(value, ["system", "light", "dark"] as const);
   if (key === "theme.material") return enumeration(value, ["none", "sidebar", "under-window", "hud"] as const);
+  if (key === "theme.opaqueWindows") return bool(value);
   if (key === "theme.tokens") return parseThemeTokens(value);
   if (key === "theme.background") return background(value);
-  if (key === "general.reduceMotion") return bool(value);
+  if (key === "general.reduceMotion" || key === "general.bottomPanel") return bool(value);
+  if (key === "general.defaultTerminalLocation") return enumeration(value, ["bottom", "right"] as const);
   if (key === "general.sendBehavior") return enumeration(value, ["enter", "mod-enter"] as const);
   if (key === "general.notifications") {
     const item = object(value, ["turnComplete", "approvalRequired", "sound", "completionPolicy", "questionRequired"]);

@@ -1,19 +1,33 @@
+import { parseBrowserCloseWindowIntents, type BrowserCloseWindowIntent } from "./browser-close-window-intent";
+import { parseSessionBrowserObservations, matchesSessionBrowserObservation, type SessionBrowserObservation } from "./session-browser-observation";
+import { parseDraftBrowserPageIntents, type DraftBrowserPageIntent } from "./draft-browser-page-intent";
+import { parseDraftBrowserWindowIntents, type DraftBrowserWindowIntent } from "./draft-browser-window-intent";
 import { parseNativeSkillFileRef } from "@agent-desktop/shared";
-import { dockTabId, isWorkspaceFilePath, standaloneFilePathFromDock, type DockState, type DockTab } from "./renderer/dock-state";
+import { dockTabId, draftBrowserIdFromDock, isWorkspaceFilePath, standaloneFilePathFromDock, type DockState, type DockTab } from "./renderer/dock-state";
+import { parseBrowserNewTabState, type BrowserNewTabState } from "./renderer/browser-new-tab";
+import { parseTerminalWindowIntents, type TerminalWindowIntent } from "./terminal-window-intent";
 /** Device/profile-local presentation only. Never sent to a host or shared preferences. */
 export interface WindowNavigation {
   hostId?: string;
   sessionId: string | null;
 }
-export type SettingsPage = "general" | "accounts" | "omp" | "appearance" | "git" | "environments" | "plugins" | "mcp";
+export type SettingsPage = "keyboard-shortcuts" | "general" | "accounts" | "omp" | "appearance" | "git" | "environments" | "plugins" | "mcp" | "connections";
 export type WorkspaceTab = "files" | "changes" | "worktrees";
 export interface FileTreeView { open: boolean; width: number }
 export const defaultFileTreeView = (): FileTreeView => ({ open: false, width: 250 });
+export const environmentSectionKeys = ["environment", "side-chats", "subagents", "jobs", "sources"] as const;
+export type EnvironmentSectionKey = typeof environmentSectionKeys[number];
 export interface WindowViewState {
+  browserCloses?: BrowserCloseWindowIntent[];
+  sessionBrowserObservations?: SessionBrowserObservation[];
+  draftBrowserOwners?: DraftBrowserWindowIntent[];
+  draftBrowserPages?: DraftBrowserPageIntent[];
+  terminalCreations?: TerminalWindowIntent[];
   fileTreeOpen?: boolean;
   route: WindowNavigation;
   dock?: { state: DockState; tabs: DockTab[] };
   environmentOpen?: boolean;
+  environmentCollapsed?: EnvironmentSectionKey[];
   pluginDirectoryOpen?: boolean;
   pluginDirectoryTab?: "plugins" | "skills";
   sidebarOpen: boolean;
@@ -26,6 +40,8 @@ export interface WindowViewState {
   settingsPage: SettingsPage;
 }
 export interface WindowStateBootstrap {
+  /** Main-process local slot, independent of the selected host and renderer lifetime. */
+  ownerSlot?: string;
   state?: WindowViewState;
   error?: string;
 }
@@ -54,7 +70,7 @@ const browserIdentity = (value: unknown): value is string =>
   value.length > 0 &&
   value.length <= 200 &&
   !value.includes("\0");
-/** Explicit projection prevents arbitrary draft, credential or editor data being stored. */
+/** Explicit projection permits only known presentation fields and bounded browser drafts. */
 export function parseWindowView(value: unknown): WindowViewState | undefined {
   if (!record(value) || !record(value.route)) return;
   const route = value.route;
@@ -73,7 +89,7 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     if (typeof value[key] !== "boolean") return;
   if (
     !["files", "changes", "worktrees"].includes(String(value.workspaceTab)) ||
-    !["general", "accounts", "omp", "appearance", "git", "environments", "plugins", "mcp"].includes(String(value.settingsPage))
+    !["general", "accounts", "omp", "appearance", "git", "environments", "plugins", "mcp", "connections", "keyboard-shortcuts"].includes(String(value.settingsPage))
   )
     return;
   if (
@@ -92,8 +108,37 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
   )
     return;
   if (value.pluginDirectoryOpen !== undefined && typeof value.pluginDirectoryOpen !== "boolean") return;
+  if (value.environmentCollapsed !== undefined && (!Array.isArray(value.environmentCollapsed) || value.environmentCollapsed.length > environmentSectionKeys.length || value.environmentCollapsed.some(key => !environmentSectionKeys.includes(key)))) return;
   if (value.pluginDirectoryTab !== undefined && value.pluginDirectoryTab !== "plugins" && value.pluginDirectoryTab !== "skills") return;
   const dock = parseDockSnapshot(value.dock);
+  // New draft identities must not be acknowledged after legacy dock fallback
+  // drops their local address. Existing non-draft fallback remains unchanged.
+  if (!dock && record(value.dock) && Array.isArray(value.dock.tabs) && value.dock.tabs.some(tab =>
+    record(tab) && typeof tab.target === "string" && tab.target.startsWith("draft:"))) return;
+  let browserCloses: BrowserCloseWindowIntent[] | undefined;
+  if (value.browserCloses !== undefined) {
+    try { browserCloses = parseBrowserCloseWindowIntents(value.browserCloses); } catch { return; }
+  }
+  let sessionBrowserObservations: SessionBrowserObservation[] | undefined;
+  if (value.sessionBrowserObservations !== undefined) {
+    try {
+      sessionBrowserObservations = parseSessionBrowserObservations(value.sessionBrowserObservations);
+      const attached = new Set([...(dock?.state.right.tabIds ?? []), ...(dock?.state.bottom.tabIds ?? [])]);
+      if (sessionBrowserObservations.some(observed => !dock?.tabs.some(tab => attached.has(tab.id) && matchesSessionBrowserObservation(observed, tab)))) return;
+    } catch { return; }
+  }
+  let draftBrowserOwners: DraftBrowserWindowIntent[] | undefined;
+  if (value.draftBrowserOwners !== undefined) {
+    try { draftBrowserOwners = parseDraftBrowserWindowIntents(value.draftBrowserOwners); } catch { return; }
+  }
+  let draftBrowserPages: DraftBrowserPageIntent[] | undefined;
+  if (value.draftBrowserPages !== undefined) {
+    try { draftBrowserPages = parseDraftBrowserPageIntents(value.draftBrowserPages, draftBrowserOwners ?? []); } catch { return; }
+  }
+  let terminalCreations: TerminalWindowIntent[] | undefined;
+  if (value.terminalCreations !== undefined) {
+    try { terminalCreations = parseTerminalWindowIntents(value.terminalCreations); } catch { return; }
+  }
 
   return {
     route: {
@@ -101,10 +146,16 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
       ...(route.hostId === undefined ? {} : { hostId: route.hostId as string }),
     },
     ...(dock ? { dock } : {}),
+    ...(browserCloses === undefined ? {} : { browserCloses }),
+    ...(sessionBrowserObservations === undefined ? {} : { sessionBrowserObservations }),
+    ...(terminalCreations === undefined ? {} : { terminalCreations }),
+    ...(draftBrowserOwners === undefined ? {} : { draftBrowserOwners }),
+    ...(draftBrowserPages === undefined ? {} : { draftBrowserPages }),
     ...(typeof value.fileTreeOpen === "boolean" ? { fileTreeOpen: value.fileTreeOpen } : {}),
     ...(typeof value.environmentOpen === "boolean"
       ? { environmentOpen: value.environmentOpen }
       : {}),
+    ...(value.environmentCollapsed === undefined ? {} : { environmentCollapsed: [...new Set(value.environmentCollapsed as EnvironmentSectionKey[])] }),
     ...(typeof value.pluginDirectoryOpen === "boolean" ? {pluginDirectoryOpen:value.pluginDirectoryOpen} : {}),
     ...(value.pluginDirectoryTab === undefined ? {} : {pluginDirectoryTab:value.pluginDirectoryTab as "plugins"|"skills"}),
     sidebarOpen: value.sidebarOpen as boolean,
@@ -138,12 +189,13 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
     seen = new Set<string>();
   for (const item of value.tabs) {
     if (record(item) && item.preview === true) return; // Live snapshots must strip transient previews before saving.
+    const draftId = record(item) ? draftBrowserIdFromDock(item.target) : undefined;
     const standalonePath = record(item) ? standaloneFilePathFromDock(item.target) : undefined;
     if (
       !record(item) ||
       !id(item.hostId) ||
       typeof item.target !== "string" ||
-      !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) || standalonePath !== undefined) ||
+      !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) || standalonePath !== undefined || draftId !== undefined) ||
       typeof item.title !== "string" ||
       item.title.length > 1000 ||
       !["review", "file", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file"].includes(
@@ -152,6 +204,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       (item.terminalId !== undefined && !id(item.terminalId))
     )
       return;
+    if (draftId !== undefined && item.kind !== "browser") return;
     let skillFile;
     if (item.skillFile !== undefined) {
       try { skillFile = parseNativeSkillFileRef(item.skillFile); } catch { return; }
@@ -188,6 +241,18 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       browserIdentity(browserTarget.name) &&
       browserIdentity(browserTarget.targetId);
     if (browserTarget !== undefined && !validBrowserTarget) return;
+    const browserInstanceId = item.browserInstanceId;
+    if (browserInstanceId !== undefined && (!id(browserInstanceId) || item.kind !== "browser" || !(item.target.startsWith("session:") || draftId !== undefined))) return;
+    let browserNewTab: BrowserNewTabState | undefined;
+    if (item.browserNewTab !== undefined) {
+      if (!browserInstanceId || browserTarget !== undefined) return;
+      try { browserNewTab = parseBrowserNewTabState(item.browserNewTab); } catch { return; }
+    }
+    if (browserInstanceId && !browserNewTab && !validBrowserTarget) return;
+    // A draft dock descriptor remains a local launcher. Native requests and
+    // targets live in the separately guarded draft page/owner records.
+    if (draftId !== undefined && (typeof browserInstanceId !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(browserInstanceId) || !browserNewTab || browserNewTab.status !== "idle"
+      || browserNewTab.request !== undefined || browserTarget !== undefined || (item.browserNewTab as BrowserNewTabState).status !== "idle")) return;
     const tab: DockTab = {
       id: String(item.id),
       title: item.title,
@@ -199,6 +264,8 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       hostId: item.hostId,
       target: item.target as DockTab["target"],
       kind: item.kind as DockTab["kind"],
+      ...(browserInstanceId === undefined ? {} : { browserInstanceId: browserInstanceId as string }),
+      ...(browserNewTab ? { browserNewTab } : {}),
       ...(item.terminalId === undefined
         ? {}
         : { terminalId: item.terminalId as string }),
@@ -257,9 +324,15 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
     bottom = region(value.state.bottom);
   const ratio = value.state.rightWidthRatio,
     height = value.state.bottomHeight;
+  const layout = value.state.rightLayout;
+  const contentSide = value.state.contentSide;
   if (
     !right ||
     !bottom ||
+    (contentSide !== undefined && contentSide !== "left" && contentSide !== "right") ||
+    (layout !== undefined && layout !== "full" && layout !== "restore-full") ||
+    (layout === "full" && !right?.open) ||
+    (layout === "restore-full" && right?.open) ||
     typeof ratio !== "number" ||
     !Number.isFinite(ratio) ||
     ratio < 0 ||
@@ -273,6 +346,6 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
     return;
   return {
     tabs,
-    state: { right, bottom, rightWidthRatio: ratio, bottomHeight: height },
+    state: { right, bottom, ...(contentSide === undefined ? {} : { contentSide }), rightWidthRatio: ratio, bottomHeight: height, ...(layout === undefined ? {} : { rightLayout: layout }) },
   };
 }

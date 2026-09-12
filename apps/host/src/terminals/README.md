@@ -46,3 +46,15 @@ Run `bun test apps/host/src/terminals/manager.test.ts`. Tests execute actual tem
 ## Session setup exports
 
 The host may pass a second, private local-environment argument to either manager’s `create`. Its canonical worktree must equal the resolved terminal cwd. It applies captured allowed exports/unsets to that child only; project terminals do not inherit another session’s setup. Host/profile and terminal transport variables retain ownership. Native tmux uses a private self-removing launch file so export values stay out of argv and the shared server environment. A crash before catalog persistence may leave a0600 orphan; do not add startup glob deletion because a dispatched shell may not have opened its payload yet.
+
+## Native creation admission record
+
+`HostStore.terminalCreations` reserves one terminal UUID for one versioned request in a separate metadata namespace. The first claim raises the state compatibility fence to17 in the same SQLite transaction and preserves the exact legacy device access policy. Reads do not migrate. Same-ID changed input fails; a repeat claim never becomes fresh; settlement is immutable. Observation after a different host epoch projects an unknown result without changing the pending record. No receipt deletion/eviction is exposed, so forgetting terminal history cannot release its admission.
+
+The dedicated `/v2/terminals/creation-capabilities` (GET), `/create` and `/creation-status` (POST) routes now consume this journal. They require the existing authenticated server boundary plus the exact `X-Agent-Host-Id` header. New create requests bind the advertised control epoch; prior request IDs never dispatch again. The manager receives the reserved UUID and revalidates the host-owned target after asynchronous server preparation, before saving/launching its pane. Settlement must succeed before a completed response. Status reads the reserved record and current metadata only; a missing terminal is never replaced automatically. An unknown creation receipt and a matching live terminal are distinct facts.
+
+The existing unkeyed `/action` path is unchanged for legacy clients; new consumers must negotiate the dedicated capability and must not fall back to that path. Desktop transport, renderer intent persistence and explicit recovery remain unwired. Actual native creation/restart, live authentication, physical reconnect and installed compatibility remain unverified. The host drains admitted create requests before closing storage. Terminal input and configured-action restart semantics are unchanged.
+
+Run the storage-only suite with `bun scripts/test.ts apps/host/src/terminals/creation-records.test.ts`; it uses temporary SQLite storage and does not launch terminals.
+
+The controlled consumer suite is `bun scripts/test.ts apps/host/src/terminals/creation-http.test.ts apps/host/src/terminals/native-reservation.test.ts`. It executes real request/response and journal code with controlled manager/native-command boundaries; it does not start tmux or shells.

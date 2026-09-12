@@ -228,7 +228,7 @@ describe("actual local Git operations", () => {
     git(cwd, "checkout", "main");
     await writeFile(join(cwd, "tracked.txt"), "must survive rejection\n");
     let reviewed = await service.gitStatus();
-    await expect(service.checkout("conflicting", reviewed.revision)).rejects.toMatchObject({ code: "GIT_FAILED" });
+    await expect(service.checkout("conflicting", reviewed.revision)).rejects.toMatchObject({ code: "GIT_CHECKOUT_BLOCKED", conflictedPaths: ["tracked.txt"] });
     expect(git(cwd, "branch", "--show-current")).toBe("main");
     expect(await readFile(join(cwd, "tracked.txt"), "utf8")).toBe("must survive rejection\n");
 
@@ -241,7 +241,7 @@ describe("actual local Git operations", () => {
     git(cwd, "add", ".gitignore"); git(cwd, "commit", "--message", "Ignore local fixture");
     await writeFile(join(cwd, "ignored.txt"), "ignored local work must survive\n");
     reviewed = await service.gitStatus();
-    await expect(service.checkout("ignored-target", reviewed.revision)).rejects.toMatchObject({ code: "GIT_FAILED" });
+    await expect(service.checkout("ignored-target", reviewed.revision)).rejects.toMatchObject({ code: "GIT_CHECKOUT_BLOCKED", conflictedPaths: ["ignored.txt"] });
     expect(git(cwd, "branch", "--show-current")).toBe("main");
     expect(await readFile(join(cwd, "ignored.txt"), "utf8")).toBe("ignored local work must survive\n");
 

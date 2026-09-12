@@ -1,3 +1,14 @@
+export * from "./branch-query-transport";
+export * from "./browser-observation";
+import type { GitRepositoryChange } from "./repository-changes";
+export * from "./repository-changes";
+import type { SessionSearchRequest, SessionSearchResult } from "./session-search";
+import type { GitCheckoutRefusalError } from "./checkout-refusal";
+export * from "./session-search";
+export * from "./repository-watch-transport";
+export * from "./ssh-settings";
+import type { DeviceAccessState, DeviceAccessUpdate } from "./device-access";
+export * from "./device-access";
 import type { SelectedTextAttachment } from "./selected-text";
 import type { WholeFileAttachment } from "./whole-file";
 export * from "./selected-text";
@@ -19,13 +30,15 @@ import type { BrowserControlRequest, BrowserControlReceipt } from './browser-con
 import type { NewChatExecution } from './new-chat';
 import type { WorktreeStartingState } from './workspace';
 export * from './new-chat';
-import type { BrowserCreateRequest, BrowserCreateReceipt } from "./browser-create";
+import type { BrowserCreateRequest, BrowserCreateReceipt, BrowserCreateObservation } from "./browser-create";
 import type { AccountInfo, LoginResponse, LoginSnapshot, ProviderCatalog, SessionAccountList } from "./accounts";
 import type { OmpInteraction, OmpInteractionResponse } from "./interactions";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "./workspace-protocol";
 import type { PreferenceChange, PreferenceRecord, PreferencesSnapshot } from "./preferences";
+import type { CommandKeymapMutation, CommandKeymapPreferenceRecord, PreferencesSnapshotV2 } from "./preferences-v2";
 import type { ThemeAsset, ThemeDocument, ThemeState, WindowThemeEffects } from "./theme";
 import type { TerminalBridge, NativeTerminalBridge } from "./terminals";
+import type { TerminalCreationBridge } from "./terminal-creation";
 import type { OmpApprovalMode, OmpModelDefinitions, OmpModelDefinitionsMutation, OmpModelDefinitionsSnapshot } from "./settings";
 import type { OmpComposerCatalog, OmpModelCapabilities, OmpSessionControlMutation, OmpSessionControls, OmpSettingOptions, OmpSettingsCatalog, OmpSettingsMutation, OmpSettingsSnapshot } from "./settings";
 import type { DraftConsumption, ImageAttachmentRef, ImageAttachmentCapabilities, UploadedImageMetadata, RecordedImageBytes } from "./attachments";
@@ -40,6 +53,7 @@ export * from "./browser";
 export * from "./browser-frame";
 export * from "./browser-control";
 export * from "./browser-create";
+export * from "./draft-browser";
 export * from "./goal-control";
 export * from "./detached-questions";
 export * from "./btw";
@@ -52,6 +66,7 @@ export type * from "./interactions";
 export type * from "./settings";
 export type * from "./theme";
 export type * from "./terminals";
+export * from "./terminal-creation";
 export const PROTOCOL_VERSION = 1 as const;
 
 export interface HostIdentity {
@@ -193,13 +208,19 @@ export interface HostState {
   imageAttachments?: ImageAttachmentCapabilities;
   selectedText?: { commandVersion: 6; maxSerializedChars: number; ordinaryPrompt: true };
   wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number; inlineMentions?: { commandVersion: 8; repeatedSources?: { commandVersion: 9 } } };
-  newChatExecution?: { commandVersion: 4; worktrees: true };
+  gitSubmissions?: { commandVersion: 10 };
+  sessionSearch?: { version: 1 };
+  repositoryWatches?: { version: 1 };
+  branchQueries?: { version: 1 };
+  commandKeybindings?: { commandVersion: 11; snapshotVersion: 2; numberTargetVersion?: 1 };
+  newChatExecution?: { commandVersion: 4; worktrees: true; startingRefs?: { commandVersion: 12; remote: true } };
   localEnvironments?: { configuration: true; actions?: true; execution?: { commandVersion: 5; scriptOutput?: true; scriptCancellation?: true } };
   diagnostics?: { models?: string; preferences?: string };
 }
 
 export type HostCommand =
   | { type: "preferences.put"; change: PreferenceChange }
+  | { type: "preferences.keymap.mutate"; mutation: CommandKeymapMutation }
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
   | { type: "skill.file.write"; ref: NativeSkillFileRef; expectedRevision: string; text: string; bom?: boolean }
   | { type: "skill.file.reveal"; ref: NativeSkillFileRef }
@@ -226,7 +247,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 }
 
 export interface ImageAdmission {
@@ -242,8 +263,8 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
-  | { ok: false; commandId: string; error: { code: string; message: string }; currentDraft?: Draft };
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } }
+  | { ok: false; commandId: string; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
 
 export type HostEvent =
   | { sequence: number; type: "state"; state: HostState; /** Direct websocket replay barrier; absent on durable state events. */ replayComplete?: true }
@@ -251,8 +272,9 @@ export type HostEvent =
   | { sequence: number; type: "accounts" }
   | { sequence: number; type: "interactions"; sessionId: string }
   | { sequence: number; type: "notification"; notification: HostNotification }
-  | { sequence: number; type: "workspace"; target: WorkspaceTarget }
+  | { sequence: number; type: "workspace"; target: WorkspaceTarget; repositoryChange?: GitRepositoryChange }
   | { sequence: number; type: "preferences" }
+  | { sequence: number; type: "device-access" }
   | { sequence: number; type: "settings"; target?: WorkspaceTarget; sessionId?: string; scope?: "global" | "project" }
   | { sequence: number; type: "connection"; connected: boolean; error?: string };
 
@@ -264,6 +286,8 @@ export interface DiscoveredHost {
   availability: "available" | "unavailable" | "offline";
   host?: HostIdentity;
   origin?: string;
+  /** Explicit authenticated health capability; absence retains the legacy preference exchange. */
+  preferencesSyncVersion?: 2 | 3;
   error?: string;
 }
 export interface NetworkState {
@@ -288,7 +312,12 @@ export type AccountAction =
   | { type: "session.release"; sessionId: string };
 export interface AccountActionResult { login?: LoginSnapshot; accounts?: AccountInfo[]; selection?: SessionAccountList }
 
-export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge> {
+export type NativeModifier = "meta" | "control" | "alt";
+export type ModifierReleaseResult = "released" | "unavailable" | "cancelled";
+
+export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge>, Partial<TerminalCreationBridge> {
+  watchModifierRelease?(modifier: NativeModifier, requestId: string): Promise<ModifierReleaseResult>;
+  cancelModifierRelease?(requestId: string): Promise<void>;
   showContextMenu?(items:import("./context-menu").DesktopMenuItem[]):Promise<string|null>;
   subscribeWindowClose?(listener: (request: {id: string; cancelled?: boolean}) => void): () => void;
   answerWindowClose?(id: string, allowed: boolean): Promise<void>;
@@ -308,23 +337,37 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getTranscriptImage?(sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string): Promise<RecordedImageBytes>;
   getState(hostId?: string): Promise<HostState>;
   getHosts(): Promise<NetworkState>;
+  /** Local machine only; these calls intentionally accept no remote host selector. */
+  getKeepAwakeStatus?(): Promise<{ supported: boolean; active: boolean; onBattery?: boolean; error?: string }>;
+  subscribeKeepAwakeStatus?(listener: () => void): () => void;
+  getDeviceAccess?(): Promise<DeviceAccessState>;
+  updateDeviceAccess?(update: DeviceAccessUpdate): Promise<DeviceAccessState>;
+  subscribeDeviceAccess?(listener: () => void): () => void;
   getProviders(hostId?: string): Promise<ProviderCatalog>;
   getAccounts(providerId: string, hostId?: string): Promise<AccountInfo[]>;
   getSessionAccounts(sessionId: string, hostId?: string): Promise<SessionAccountList>;
   getInteractions(sessionId: string, hostId?: string): Promise<OmpInteraction[]>;
   getDetachedQuestions?(sessionId: string, hostId?: string): Promise<import('./detached-questions').DetachedQuestionsSnapshot | null>;
   workspaceQuery(target: WorkspaceTarget, query: WorkspaceQuery, hostId?: string): Promise<WorkspaceQueryResult>;
+  repositoryWatch?(request: import("./repository-watch-transport").RepositoryWatchRequest): Promise<void>;
+  subscribeRepositoryWatch?(listener: (status: import("./repository-watch-transport").RepositoryWatchObserverStatus) => void): () => void;
+  branchQuery?(request: import("./branch-query-transport").BranchQueryRequest): Promise<void>;
+  subscribeBranchQuery?(listener: (status: import("./branch-query-transport").BranchQueryObserverStatus) => void): () => void;
   saveSkillFileCopy?(ref: NativeSkillFileRef, hostId: string): Promise<{path:string|null}>;
   saveWorkspaceCopy?(target: WorkspaceTarget, path: string, hostId: string): Promise<{path: string | null}>;
   acquireSkillImage?(ref: NativeSkillFileRef, path: string, hostId: string): Promise<{url: string; id: string}>;
   acquireWorkspaceImage?(target: WorkspaceTarget, path: string, hostId: string): Promise<{url: string; id: string}>;
   releaseWorkspaceImage?(id: string): Promise<void>;
   getPreferences(): Promise<PreferencesSnapshot>;
+  getPreferencesV2?(): Promise<PreferencesSnapshotV2>;
   getTheme(): Promise<ThemeState>;
   setTheme(document: ThemeDocument, expectedRevision: string): Promise<ThemeState>;
   getLocalFonts(): Promise<string[]>;
   openThemeFile(): Promise<void>;
+  /** Local desktop backing support, independent of temporary focus/size fallback. */
+  readonly windowBackdropSupported?: boolean;
   applyWindowTheme(effects: WindowThemeEffects): Promise<void>;
+  subscribeWindowTheme?(listener: (opaqueWindows: boolean) => void): () => void;
   importThemeBackground(): Promise<ThemeAsset | null>;
   getThemeBackground(sha256: string): Promise<{ asset: ThemeAsset; dataUrl: string } | null>;
   getPlugins(target?: WorkspaceTarget, hostId?: string): Promise<NativePluginCatalog>;
@@ -334,6 +377,9 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getPluginAcquisitionOperations(hostId?: string): Promise<NativePluginAcquisitionReceipt[]>;
   reviewPluginAcquisition(target: WorkspaceTarget | undefined, id: string, expectedRevision: string, hostId?: string): Promise<NativePluginAcquisitionReceipt>;
   closePluginAcquisitionRequest(target: WorkspaceTarget | undefined, request: { id: string; operation: NativePluginAcquisition['operation'] }, hostId?: string): Promise<NativePluginAcquisitionReceipt>;
+  getSshHosts(target?: WorkspaceTarget, hostId?: string): Promise<import("./ssh-settings").NativeSshCatalog>;
+  getSshHostDetail(target: WorkspaceTarget | undefined, request: import("./ssh-settings").NativeSshDetailRequest, hostId?: string): Promise<import("./ssh-settings").NativeSshDetail>;
+  mutateSshHost(target: WorkspaceTarget | undefined, mutation: import("./ssh-settings").NativeSshMutation, hostId?: string): Promise<import("./ssh-settings").NativeSshCatalog>;
   getMcpServers(target?: WorkspaceTarget, hostId?: string): Promise<NativeMcpCatalog>;
   getMcpServerDetail(target: WorkspaceTarget | undefined, request: NativeMcpDetailRequest, hostId?: string): Promise<NativeMcpDetail>;
   mutateMcpServer(target: WorkspaceTarget | undefined, mutation: NativeMcpMutation, hostId?: string): Promise<NativeMcpCatalog>;
@@ -352,6 +398,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   accountAction(action: AccountAction, hostId?: string): Promise<AccountActionResult>;
   openExternal(url: string): Promise<void>;
   command(envelope: CommandEnvelope, hostId?: string): Promise<CommandResult>;
+  searchSessions?(input: SessionSearchRequest, hostId: string, requestId?: string): Promise<SessionSearchResult>;
+  cancelSessionSearch?(requestId: string, hostId: string): Promise<void>;
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
@@ -361,8 +409,12 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   respondSessionMcpAuthorization?(sessionId: string, reply: import("./session-mcp-authorization").NativeMcpAuthorizationReply, hostId: string): Promise<import("./session-mcp-authorization").NativeMcpAuthorizationResponse>;
   cancelSessionMcpAuthorization?(sessionId: string, authorizationId: string, hostId: string): Promise<import("./session-mcp-authorization").NativeMcpAuthorizationResponse>;
   getBtw?(sessionId: string, hostId?: string): Promise<import('./btw').NativeBtwResponse>;
+  draftBrowser?: import("./draft-browser").DraftBrowserBridge;
+  browserClose?: import("./browser-close").BrowserCloseBridge;
+  browserObservation?: import("./browser-observation").BrowserObservationBridge;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;
   createBrowserTab?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateReceipt>;
+  getBrowserCreationStatus?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateObservation>;
   controlBrowser?(sessionId: string, request: BrowserControlRequest, hostId?: string): Promise<BrowserControlReceipt>;
   getBrowserFrame?(sessionId: string, target: BrowserFrameTarget, hostId?: string): Promise<BrowserFrameSnapshot>;
   chooseDirectory(): Promise<string | null>;

@@ -1,3 +1,11 @@
+import { BranchQueryPeer } from "./branch-query-peer";
+import { BRANCH_QUERY_CAPABILITY } from "@agent-desktop/shared";
+import { RepositoryWatchPeer } from "./repository-watch-peer";
+import { REPOSITORY_WATCH_CAPABILITY } from "@agent-desktop/shared";
+import { SessionSearch, SessionSearchError } from "./session-search";
+import { readStoredSessionText } from "./session-search-reader";
+import { SESSION_SEARCH_OWNER_HEADER } from "@agent-desktop/shared";
+import { DeviceAccessHttp } from "./device-access-http";
 import { hasInlineFileIntent, hasRepeatedWholeFileIntent, requiresInlineFileProtocol, requiresRepeatedWholeFileProtocol, hasWholeFileIntent, requiresWholeFileProtocol } from "./whole-file-protocol";
 import { sameWholeFileAttachments, MAX_WHOLE_FILE_ATTACHMENTS } from "@agent-desktop/shared";
 import { hasSelectedTextIntent, requiresSelectedTextProtocol } from "./selected-text-protocol";
@@ -8,7 +16,7 @@ import { SessionMcpResourceHttp } from "./session-mcp-resource-http";
 import { SessionMcpHttp } from "./session-mcp-http";
 import { BtwPromotionService } from "./btw-promotion";
 import { LocalEnvironmentActions } from "./local-environments/actions";
-import { hasNewChatIntent, requiresNewChatProtocol } from './new-chat-protocol';
+import { hasNewChatIntent, requiresNewChatProtocol, hasRemoteWorktreeIntent, remoteWorktreeProtocolError } from './new-chat-protocol';
 import { hasEnvironmentIntent, requiresEnvironmentProtocol } from './environment-protocol';
 import { LocalEnvironmentRuns } from './local-environments/runs';
 import { WorktreeEnvironmentLifecycle } from './local-environments/lifecycle';
@@ -35,6 +43,10 @@ import type { PreparedPromptImage } from "./omp/images";
 import { AccountsHttp } from "./accounts-http";
 import { parseInteractionAnswer } from "./interaction-http";
 import { HostWorkspaces, parseWorkspaceQuery, parseWorkspaceTarget } from "./workspace-http";
+import { checkoutRefusalResult } from "./checkout-refusal";
+import { applicationKeybindingAdmissionDefinitions } from "../../../packages/shared/src/application-commands";
+import { PreferenceError } from "../../../packages/shared/src/preferences";
+import { KeybindingError } from "../../../packages/shared/src/command-keybindings";
 import { PreferencesSync } from "./preferences-sync";
 import { ComposerActionsHttp } from "./composer-actions-http";
 import { SkillFiles, type SkillFileAuthorization } from "./skill-files";
@@ -47,14 +59,20 @@ import { GoalControlHttp } from "./goal-control-http";
 import { GoalContinuationController } from "./goal-continuation";
 import { QuestionDeliveryController } from "./question-delivery";
 import { BrowserMetadataHttp } from "./browser-metadata-http";
+import { BrowserObservationHttp } from "./browser-observation-http";
+import { BrowserCloseHttp } from "./browser-close-http";
+import { BrowserCloseRequests } from "./browser-close-requests";
 import { BrowserControlHttp } from "./browser-control-http";
 import { BrowserFrameHttp } from "./browser-frame-http";
 import { BrowserCreateHttp } from "./browser-create-http";
+import { DraftBrowserHttp } from "./draft-browser-http";
+import { DraftBrowserWorkers } from "./browser-draft-workers";
 import { IntegrationsHttp } from "./integrations-http";
 import { SettingsHttp } from "./settings-http";
 import { ThemeFile, ThemeConflictError } from "./theme-file";
 import { TerminalManager, TmuxTerminalManager, TmuxTerminalsHttp } from "./terminals";
 import { TerminalsHttp } from "./terminals-http";
+import { TerminalCreationHttp } from "./terminals/creation-http";
 import { ThemeAssets } from "./theme-assets";
 import { approvalMode, hasApprovalIntent } from "./approval";
 import { OmpSettingsError } from "./omp-settings";
@@ -62,7 +80,7 @@ import { ApprovalRecovery } from "./approval-recovery";
 import { NotificationEvents } from "./notification-events";
 import { WorkspaceFileOpen, type WorkspaceFileOpenRuntime } from "./workspace-open";
 
-type SocketData = { after: number; remoteAddress?: string };
+type SocketData = { after: number; remoteAddress?: string; nodeId?: string; repositoryWatches?: RepositoryWatchPeer; branchQueries?: BranchQueryPeer };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string; skillFileReveal?: (canonicalPath: string) => Promise<void>; workspaceFileOpen?: WorkspaceFileOpenRuntime } = {}) {
@@ -71,6 +89,25 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const environmentAbort = new AbortController();
   let store!: HostStore;
   let runtime!: WorkerRuntime;
+  let draftBrowsers: DraftBrowserHttp | undefined;
+  let browserObservations: BrowserObservationHttp | undefined;
+  let browserCloseRequests: BrowserCloseRequests | undefined;
+  let workspaces!: HostWorkspaces;
+  const repositoryWatchPeers = new Set<RepositoryWatchPeer | BranchQueryPeer>();
+  function retireRepositoryWatchPeer(peer: ServerWebSocket<SocketData>): void {
+    const owners = [peer.data.repositoryWatches, peer.data.branchQueries];
+    peer.data.repositoryWatches = undefined; peer.data.branchQueries = undefined;
+    for (const owner of owners) if (owner) {
+      void owner.dispose().catch(error => console.error("Repository query/watch connection cleanup failed:", error))
+        .finally(() => repositoryWatchPeers.delete(owner));
+    }
+  }
+
+  async function drainRepositoryWatchPeers(): Promise<void> {
+    const results = await Promise.allSettled([...repositoryWatchPeers].map(watches => watches.dispose()));
+    const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, "Repository watch connections did not finish cleanup.");
+  }
   let accounts: AccountsHttp | undefined;
   let preferences: PreferencesSync | undefined;
   let settings: SettingsHttp | undefined;
@@ -81,6 +118,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let terminalsHttp: TerminalsHttp | undefined;
   let nativeTerminals: TmuxTerminalManager | undefined;
   let nativeTerminalsHttp: TmuxTerminalsHttp | undefined;
+  let terminalCreationHttp: TerminalCreationHttp | undefined;
   let themeAssets: ThemeAssets | undefined;
   let goalContinuations: GoalContinuationController | undefined;
   let questionDeliveries: QuestionDeliveryController | undefined;
@@ -89,7 +127,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let tailServer: ReturnType<typeof Bun.serve<SocketData>> | undefined;
   let networkTimer: ReturnType<typeof setInterval> | undefined;
   let networkCall: Promise<void> | undefined;
-  const network = options.tailscale ? new TailnetNetwork() : undefined;
+  const network = options.tailscale ? new TailnetNetwork(() => store.getDeviceAccessPolicy()) : undefined;
   const temporary = join(dataDirectory, `connection.${process.pid}.tmp`);
   try {
   store = new HostStore(dataDirectory);
@@ -113,7 +151,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     mutatingWorkspaces.add(cwd);
     return () => { mutatingWorkspaces.delete(cwd); };
   });
-  const workspaces = new HostWorkspaces(store, dataDirectory, reserveWorkspaceMutation, {
+  workspaces = new HostWorkspaces(store, dataDirectory, reserveWorkspaceMutation, {
     before: async path => {
       const record = store.environmentPreparations.list().find(item => item.worktreePath === path && item.phase !== 'removed');
       if (!record) return;
@@ -127,7 +165,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       }
       publishState();
     },
-  }, environmentActions, new WorkspaceFileOpen(options.workspaceFileOpen));
+  }, environmentActions, new WorkspaceFileOpen(options.workspaceFileOpen), {
+    generate: (input, generationOptions) => runtime.generateCommit(input, generationOptions),
+    changed: (target, repositoryChange) => publish({ type: "workspace", target, ...(repositoryChange === undefined ? {} : { repositoryChange }) }),
+  });
   const environmentRuns = new LocalEnvironmentRuns(store.environmentPreparations);
   const environmentLifecycle = new WorktreeEnvironmentLifecycle(store, workspaces, { signal: environmentAbort.signal }, environmentRuns);
   function assertWorkspaceAvailable(cwd: string): void {
@@ -136,7 +177,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   // Native postmortem allows 10s for this process's cleanup. Leave time to
   // settle command receipts and remove our locator after a stuck child exits.
   runtime = new WorkerRuntime({ agentDir: options.agentDirectory, workerPath: options.workerPath, shutdownTimeoutMs: 5000, onWorkerFailure(failure) {
-    if (stopping) return;
+    if (stopping || failure.browserOwnerId) return; // The draft registry owns these failures; they are not model discovery.
     if (failure.sessionId && store.getSession(failure.sessionId)) {
       updateSession(failure.sessionId, { status: "error", error: failure.message });
       const failed = handles.get(failure.sessionId);
@@ -149,6 +190,17 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   } });
   const token = randomBytes(32).toString("hex");
   const peers = new Set<ServerWebSocket<SocketData>>();
+  function closePeer(peer: ServerWebSocket<SocketData>, code: number, reason: string): void {
+    peers.delete(peer); retireRepositoryWatchPeer(peer); peer.close(code, reason);
+  }
+  const deviceAccess = new DeviceAccessHttp(store, Boolean(network), () => {
+    for (const peer of peers) {
+      if (peer.data.remoteAddress && (!peer.data.nodeId || !network!.allows(peer.data.nodeId))) {
+        closePeer(peer, 1008, "Device authorization changed");
+      }
+    }
+    publish({ type: "device-access" });
+  });
   const handles = new Map<string, Promise<WorkerSession>>();
   // A lost permission-apply receipt must never leave an old worker eligible for
   // another prompt. Failed cleanup stays blocked rather than guessing ownership.
@@ -203,6 +255,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const nativeBundle = options.nativeTerminalBundle ?? join(import.meta.dir, "../../../runtime/tmux", `${process.platform}-${process.arch}`);
   if (options.nativeTerminalBundle || existsSync(nativeBundle)) {
     nativeTerminals = await TmuxTerminalManager.open({ dataDirectory, hostId: store.host.id, bundleDirectory: nativeBundle });
+    terminalCreationHttp = new TerminalCreationHttp({ manager: nativeTerminals, records: store.terminalCreations,
+      hostId: store.host.id, controlEpoch: crypto.randomUUID(), resolveTarget: resolveTerminalTarget, environmentForTarget: terminalEnvironment });
     nativeTerminalsHttp = new TmuxTerminalsHttp({ manager: nativeTerminals, resolveTarget: resolveTerminalTarget, environmentForTarget: terminalEnvironment, invalidate: event => {
       if (stopping) return;
       const payload = JSON.stringify({ type: "native-terminal", event });
@@ -380,6 +434,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const btwHttp = new BtwHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)), service: btw });
   const browserControls = new BrowserControlHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
+  browserCloseRequests = new BrowserCloseRequests(store.browserCloses, store.host.id, browserControls.epoch);
+  const browserClose = new BrowserCloseHttp(browserCloseRequests, store.host.id, id => Boolean(store.getSession(id)),
+    async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; });
   const browserMetadata = new BrowserMetadataHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     creationTicket: () => ({ controlEpoch: browserControls.epoch, observedAt: Date.now() }),
     getExistingHandle: async id => {
@@ -388,7 +445,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try { return await pending; }
       catch { return { workerFailure: { message: "The native session worker is unavailable." }, getBrowserMetadata: async () => ({ availability: "unavailable" as const, reason: "The native session worker is unavailable." }) }; }
     } });
-  const browserCreate = new BrowserCreateHttp({ hostId: store.host.id, controlEpoch: browserControls.epoch,
+  const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
+  draftBrowsers = new DraftBrowserHttp(store, draftBrowserWorkers, browserControls.epoch);
+  browserObservations = new BrowserObservationHttp({ hostId: store.host.id,
+    sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    getSessionHandle: async id => handles.get(id)?.catch(() => undefined),
+    draftReady: owner => !stopping && draftBrowserWorkers.inspect(owner).state === "ready",
+    getDraftHandle: owner => draftBrowserWorkers.getExisting(owner) });
+  const browserCreate = new BrowserCreateHttp({ records: store.browserCreations, hostId: store.host.id, controlEpoch: browserControls.epoch,
     sessionExists: id => Boolean(store.getSession(id)), getHandle,
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
   const browserFrames = new BrowserFrameHttp({ hostId: store.host.id, controlEpoch: browserControls.epoch, sessionExists: id => Boolean(store.getSession(id)),
@@ -438,10 +502,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     },
   });
 
+  const sessionSearch = new SessionSearch(store.host.id, () => store.listSessions(), readStoredSessionText);
+
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput): void {
@@ -449,11 +515,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const event = store.appendEvent(input);
     const payload = JSON.stringify(event);
     for (const peer of peers) {
-      if (peer.getBufferedAmount() > 8 * 1024 * 1024) peer.close(1013, "Reconnect to resume events");
+      if (peer.getBufferedAmount() > 8 * 1024 * 1024) closePeer(peer, 1013, "Reconnect to resume events");
       else peer.send(payload);
     }
   }
-  function publishState(): void { publish({ type: "state", state: snapshot() }); }
+  function publishState(): void {
+    void workspaces.reconcileRepositoryWatchOwners().catch(error => console.error("Repository watch owner cleanup failed:", error));
+    publish({ type: "state", state: snapshot() });
+  }
   function updateSession(id: string, update: Partial<SessionSummary>): SessionSummary {
     const current = store.getSession(id);
     if (!current) throw new Error("Session does not exist on this host.");
@@ -560,8 +629,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12): Promise<CommandResult> {
     const command = envelope.command;
+    const remoteError = remoteWorktreeProtocolError(command, commandVersion, id => store.getDraft(id), id => store.environmentPreparations.get(id));
+    if (remoteError) return fail(envelope.id, remoteError.code, remoteError.message);
+    if (commandVersion < 11 && command.type === "preferences.keymap.mutate") return fail(envelope.id, "KEYBINDINGS_PROTOCOL_REQUIRED", "Keyboard shortcut changes require the current client protocol.");
+    if (commandVersion < 10 && command.type === "workspace.mutate" && command.action.type.startsWith("git.submit")) return fail(envelope.id, "GIT_SUBMISSION_PROTOCOL_REQUIRED", "Git submissions require the current client protocol.");
     if(commandVersion<9 && requiresRepeatedWholeFileProtocol(command,id=>store.getDraft(id)))return fail(envelope.id,"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED","This draft repeats an inline file mention. Update the client; its content was preserved.");
     if(commandVersion<8 && requiresInlineFileProtocol(command,id=>store.getDraft(id)))return fail(envelope.id,"INLINE_FILE_PROTOCOL_REQUIRED","This draft contains inline file positions. Update the client; its content was preserved.");
     if (commandVersion < 7 && requiresWholeFileProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "WHOLE_FILE_PROTOCOL_REQUIRED", "This draft requires the whole-file protocol. Its content was preserved.");
@@ -649,6 +722,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const snapshot = await btw.cancel(command.sessionId, command.runId);
         return ok({ type: "session.btw", snapshot });
       }
+      case "preferences.keymap.mutate": return ok({ type: command.type, preference: preferences!.mutateCommandKeymap(command.mutation, target => applicationKeybindingAdmissionDefinitions({ primaryNumberShortcutTarget: target })) });
       case "preferences.put": return ok({ type: command.type, preference: preferences!.put(command.change) });
       case "workspace.mutate": {
         try { return ok(await workspaces.mutate(command.target, command.action, envelope.id)); }
@@ -796,7 +870,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     }
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -804,20 +878,30 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const workspaceAction = envelope.command.type === "workspace.mutate" ? envelope.command.action : undefined;
     // Action references contain no script bodies. Retain their version gate and owner
     // so an older artifact cannot adopt a terminal with newer restart semantics.
-    const journalCommand = envelope.command.type === "skill.file.write" ? undefined : workspaceAction && workspaceAction.type !== "environment.action" && workspaceAction.type !== "environment.select" ? undefined : envelope.command;
+    const journalCommand = envelope.command.type === "skill.file.write" ? undefined : workspaceAction && workspaceAction.type !== "environment.action" && workspaceAction.type !== "environment.select" && !workspaceAction.type.startsWith("git.submit") ? undefined : envelope.command;
     const claim = store.claimCommand(envelope.id, hash, journalCommand);
     if (claim.kind === "conflict") return fail(envelope.id, "COMMAND_ID_REUSED", "This command ID belongs to a different request.");
     if (claim.kind === "done") return claim.record.result!;
     if (claim.kind === "pending") return commands.get(envelope.id)
       ?? fail(envelope.id, "OUTCOME_UNKNOWN", "The original command has no confirmed durable receipt. Inspect its outcome before issuing a new command.");
     const command = envelope.command;
+    if (command.type === "workspace.mutate" && command.action.type === "git.submit") {
+      // Publish the original receipt before waiting on the owner's command tail,
+      // so queued work can be inspected and cancelled without starting Git.
+      try { store.beginGitSubmission(envelope.id, hash); publish({ type: "workspace", target: command.target }); }
+      catch (error) {
+        const result = fail(envelope.id, "GIT_SUBMISSION_NOT_ADMITTED", errorMessage(error));
+        return store.finishCommand(envelope.id, hash, result).result!;
+      }
+    }
     const key = command.type === "workspace.mutate" ? `workspace:${JSON.stringify(command.target)}` : command.type === "skill.file.write" || command.type === "skill.file.reveal" || command.type === "skill.file.open" ? `skill-file:${command.ref.sourcePath}` : "sessionId" in command ? command.sessionId : "$catalog";
-    const interrupt = command.type === "session.interrupt" || command.type === "session.environment.cancel";
+    const interrupt = command.type === "session.interrupt" || command.type === "session.environment.cancel" || command.type === "workspace.mutate" && (command.action.type === "git.submit.cancel" || command.action.type === "git.submit.acknowledge");
     const previous = interrupt ? undefined : sessionTails.get(key);
     const pending = (previous ?? Promise.resolve()).catch(() => {}).then(async () => {
       let result: CommandResult;
       try { result = await execute(envelope, commandVersion); }
-      catch (error) { result = fail(envelope.id, error instanceof AttachmentRequestError || error instanceof AttachmentImageError ? error.code
+      catch (error) { result = checkoutRefusalResult(envelope.id, command, error) ?? fail(envelope.id, error instanceof AttachmentRequestError || error instanceof AttachmentImageError ? error.code
+        : command.type === "preferences.keymap.mutate" && (error instanceof PreferenceError || error instanceof KeybindingError) ? error.code
         : error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN" ? "OUTCOME_UNKNOWN" : "COMMAND_FAILED", errorMessage(error)); }
       let completed;
       try { completed = store.finishCommand(envelope.id, hash, result); }
@@ -854,24 +938,40 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       const url = new URL(request.url);
       const websocket = url.pathname === "/v1/events";
       const remoteAddress = remote ? server.requestIP(request)?.address : undefined;
-      const verified = remote
-        ? !request.headers.has("origin") && Boolean(remoteAddress && await network!.verify(remoteAddress).catch(() => false))
-        : authorized(request, websocket);
+      const nodeId = remote && !request.headers.has("origin") && remoteAddress
+        ? await network!.authenticate(remoteAddress).catch(() => undefined) : undefined;
+      const verified = remote ? nodeId !== undefined : authorized(request, websocket);
       if (!verified) return Response.json({ error: "Unauthorized" }, { status: 401 });
       try {
-        if (request.method === "GET" && url.pathname === "/v1/health") return Response.json({ hostId: store.host.id, host: store.host, protocolVersion: 1 });
+        const deviceAccessResponse = await deviceAccess.route(request, remote);
+        if (deviceAccessResponse) return deviceAccessResponse;
+        if (remote && (!nodeId || !network!.allows(nodeId))) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        if (request.method === "GET" && url.pathname === "/v1/health") return Response.json({ hostId: store.host.id, host: store.host, protocolVersion: 1, preferencesSyncVersion: 3 });
         if (websocket) {
           const after = Number(url.searchParams.get("after") ?? 0);
           if (!Number.isSafeInteger(after) || after < 0) throw new Error("Invalid event cursor.");
-          return server.upgrade(request, { data: { after, remoteAddress }, headers: { "Sec-WebSocket-Protocol": "agent-desktop" } })
+          return server.upgrade(request, { data: { after, remoteAddress, nodeId }, headers: { "Sec-WebSocket-Protocol": "agent-desktop" } })
             ? undefined : Response.json({ error: "WebSocket upgrade required" }, { status: 400 });
         }
         if (!remote && request.method === "GET" && url.pathname === "/v1/peers") {
           if (network) await refreshNetwork();
           return Response.json(network ? network.state : { status: "unavailable", error: "Tailscale discovery is disabled for this host.", hosts: [], checkedAt: Date.now() });
         }
+        if (url.pathname === "/v1/sessions/search") {
+          const headers = { "Cache-Control": "no-store", [SESSION_SEARCH_OWNER_HEADER]: store.host.id };
+          if (request.headers.get(SESSION_SEARCH_OWNER_HEADER) !== store.host.id) return Response.json({ error: { code: "OWNER_MISMATCH", message: "The chat search owner changed." } }, { status: 409, headers });
+          if (request.method !== "GET") return Response.json({ error: { code: "INVALID_REQUEST", message: "Chat search is read-only." } }, { status: 405, headers });
+          try {
+            const content = url.searchParams.get("content");
+            const result = await sessionSearch.search({ query: url.searchParams.get("query"), includeContent: content === "true" ? true : content === "false" ? false : undefined, limit: Number(url.searchParams.get("limit")) }, request.signal);
+            return Response.json(result, { headers });
+          } catch (cause) {
+            return Response.json({ error: { code: cause instanceof SessionSearchError ? cause.code : "INVALID_REQUEST", message: cause instanceof Error ? cause.message : "Chat search failed." } }, { status: cause instanceof SessionSearchError && cause.code === "SEARCH_BUSY" ? 429 : 400, headers });
+          }
+        }
         if (request.method === "GET" && url.pathname === "/v1/state") return Response.json(snapshot());
         if (request.method === "GET" && url.pathname === "/v1/preferences") return Response.json(preferences!.snapshot(), { headers: { "Cache-Control": "no-store" } });
+        if (request.method === "GET" && url.pathname === "/v2/preferences") return Response.json(preferences!.snapshotV2(), { headers: { "Cache-Control": "no-store" } });
         if (url.pathname === "/v1/theme") {
           if (request.method === "GET") return Response.json(await theme!.refresh(), { headers: { "Cache-Control": "no-store" } });
           if (request.method === "POST") {
@@ -884,6 +984,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           }
         }
         if (request.method === "POST" && url.pathname === "/v1/preferences/merge") return Response.json(preferences!.merge(await request.json()), { headers: { "Cache-Control": "no-store" } });
+        if (request.method === "POST" && (url.pathname === "/v2/preferences/merge" || url.pathname === "/v3/preferences/merge")) return Response.json(preferences!.mergeV2(await request.json()), { headers: { "Cache-Control": "no-store" } });
         const themeAssetResponse = await themeAssets!.handle(request);
         if (themeAssetResponse) return themeAssetResponse;
         const attachmentResponse = await attachments.handle(request);
@@ -906,8 +1007,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (goalControlResponse) return goalControlResponse;
         const browserMetadataResponse = await browserMetadata.route(request, url);
         if (browserMetadataResponse) return browserMetadataResponse;
+        const browserObservationResponse = await browserObservations!.route(request, url);
+        if (browserObservationResponse) return browserObservationResponse;
         const browserCreateResponse = await browserCreate.route(request, url);
         if (browserCreateResponse) return browserCreateResponse;
+        const draftBrowserResponse = await draftBrowsers!.route(request, url);
+        if (draftBrowserResponse) return draftBrowserResponse;
+        const browserCloseResponse = await browserClose.route(request, url);
+        if (browserCloseResponse) return browserCloseResponse;
         const browserControlResponse = await browserControls.route(request, url);
         if (browserControlResponse) return browserControlResponse;
         const browserFrameResponse = await browserFrames.route(request, url);
@@ -922,6 +1029,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (terminalResponse) { terminalResponse.headers.set("Cache-Control", "no-store"); return terminalResponse; }
         if (url.pathname.startsWith("/v2/terminals/")) {
           if (!nativeTerminalsHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING", message: "The pinned native terminal bundle is missing from this host. Build or reinstall its native runtime." } }, { status: 503, headers: { "Cache-Control": "no-store" } });
+          const creationResponse = await terminalCreationHttp?.handle(request);
+          if (creationResponse) return creationResponse;
           const nativeResponse = await nativeTerminalsHttp.handle(request);
           if (nativeResponse) { nativeResponse.headers.set("Cache-Control", "no-store"); return nativeResponse; }
         }
@@ -977,17 +1086,20 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
         }
-        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands"].includes(url.pathname)) {
+        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname)) {
           const value = await request.json();
-          if(url.pathname!=="/v9/commands"&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
-          if(!["/v8/commands","/v9/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
-          if (!["/v7/commands","/v8/commands","/v9/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
+          if (url.pathname !== "/v12/commands" && (value?.commandVersion === 12 || hasRemoteWorktreeIntent(value?.command))) return Response.json({ code: "REMOTE_WORKTREE_PROTOCOL_REQUIRED", error: "Remote worktree starting refs require /v12/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v11/commands", "/v12/commands"].includes(url.pathname) && (value?.commandVersion === 11 || value?.command?.type === "preferences.keymap.mutate")) return Response.json({ code: "KEYBINDINGS_PROTOCOL_REQUIRED", error: "Keyboard shortcut changes require /v11/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname) && (value?.commandVersion === 10 || value?.command?.type === "workspace.mutate" && String(value?.command?.action?.type).startsWith("git.submit"))) return Response.json({ code: "GIT_SUBMISSION_PROTOCOL_REQUIRED", error: "Git submissions require /v10/commands. This request was not accepted." }, { status: 422 });
+          if(!["/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname)&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
+          if(!["/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
+          if (!["/v7/commands","/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
           if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
-          const commandVersion = url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
+          const commandVersion = url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
           return Response.json(await dispatch(parseCommandEnvelope(value, commandVersion), commandVersion));
         }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
@@ -997,6 +1109,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     },
     websocket: {
       open(peer) {
+        // Upgrade and open can straddle a policy update. Do not send a replay to a revoked device.
+        if (peer.data.remoteAddress && (!peer.data.nodeId || !network!.allows(peer.data.nodeId))) { peer.close(1008, "Device authorization changed"); return; }
         let cursor = peer.data.after;
         // Large gaps resume from the fresh catalog + native transcript, keeping reconnect buffers bounded.
         if (store.lastEventSequence - cursor <= 500) {
@@ -1007,10 +1121,41 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           }
         }
         peers.add(peer);
+        const watches = new RepositoryWatchPeer({
+          hostId: store.host.id,
+          isCurrent: () => !stopping && peers.has(peer) && (!peer.data.remoteAddress || Boolean(peer.data.nodeId && network!.allows(peer.data.nodeId))),
+          retain: (target, signal) => workspaces.retainRepositoryWatch(target, signal),
+          send: status => {
+            const payload = JSON.stringify(status);
+            if (peer.getBufferedAmount() + Buffer.byteLength(payload) > 8 * 1024 * 1024) throw new Error("Repository watch event buffer is full.");
+            if (peer.send(payload) === 0) throw new Error("Repository watch socket is closed.");
+          },
+          close: reason => closePeer(peer, 1008, reason),
+        });
+        peer.data.repositoryWatches = watches; repositoryWatchPeers.add(watches);
+        const queries = new BranchQueryPeer({
+          hostId: store.host.id,
+          isCurrent: () => !stopping && peers.has(peer) && (!peer.data.remoteAddress || Boolean(peer.data.nodeId && network!.allows(peer.data.nodeId))),
+          subscribe: (target, query, signal, emit) => workspaces.subscribeBranchQuery(target, query, signal, emit, !peer.data.remoteAddress),
+          send: update => {
+            const payload = JSON.stringify(update);
+            if (Buffer.byteLength(payload) > 512 * 1024 || peer.getBufferedAmount() + Buffer.byteLength(payload) > 8 * 1024 * 1024) throw new Error("Branch query result buffer is full.");
+            if (peer.send(payload) === 0) throw new Error("Branch query socket is closed.");
+          },
+          close: reason => closePeer(peer, 1008, reason),
+        });
+        peer.data.branchQueries = queries; repositoryWatchPeers.add(queries);
         peer.send(JSON.stringify({ sequence: store.lastEventSequence, type: "state", state: snapshot(), replayComplete: true } satisfies HostEvent));
       },
-      message() {},
-      close(peer) { peers.delete(peer); },
+      message(peer, data) {
+        if (typeof data !== "string" || Buffer.byteLength(data) > 1024) { closePeer(peer, 1008, "Subscription messages must be bounded text."); return; }
+        let type: unknown;
+        try { type = JSON.parse(data)?.type; } catch { closePeer(peer, 1008, "Invalid subscription message."); return; }
+        if (type === "repository-watch" && peer.data.repositoryWatches) peer.data.repositoryWatches.receive(data);
+        else if (type === "branch-query" && peer.data.branchQueries) peer.data.branchQueries.receive(data);
+        else closePeer(peer, 1008, "Unsupported subscription message.");
+      },
+      close(peer) { peers.delete(peer); retireRepositoryWatchPeer(peer); },
       maxPayloadLength: 1024,
     },
   });
@@ -1031,10 +1176,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }
       }
       for (const peer of peers) {
-        if (peer.data.remoteAddress && !await network.verify(peer.data.remoteAddress).catch(() => false)) peer.close(1008, "Device authorization changed");
+        if (peer.data.remoteAddress && !await network.verify(peer.data.remoteAddress).catch(() => false)) closePeer(peer, 1008, "Device authorization changed");
       }
       preferencePeers = state.hosts.flatMap(peer => peer.availability === "available" && peer.host && peer.origin && peer.host.id !== store.host.id
-        ? [{ hostId: peer.host.id, origin: peer.origin }] : []);
+        ? [{ hostId: peer.host.id, origin: peer.origin, ...(peer.preferencesSyncVersion === 2 || peer.preferencesSyncVersion === 3 ? { preferencesSyncVersion: peer.preferencesSyncVersion } : {}) }] : []);
       void preferences!.sync(preferencePeers);
       syncThemeAsset();
     })().finally(() => { networkCall = undefined; });
@@ -1075,14 +1220,21 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try {
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
+        const terminalCreationDrain = terminalCreationHttp?.dispose();
+        const browserCloseDrain = browserCloseRequests?.dispose();
+        void browserCloseDrain?.catch(() => {});
+        const browserObservationDrain = browserObservations?.dispose();
+        void browserObservationDrain?.catch(() => {});
+        const draftBrowserDrain = draftBrowsers?.dispose();
+        void draftBrowserDrain?.catch(() => {}); // Retain failure for the aggregate after configuration drains.
         // Configuration writes are bounded, local operations. Drain them before
         // retiring their discovery worker so a graceful stop cannot interrupt
         // a native registry write midway through serialization.
         // Native acquisition has no abort API; graceful shutdown drains it.
-        const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose()]);
+        const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([runtime.dispose(), networkCall, discovery, modelsRefresh,
+        const outcomes = await Promise.allSettled([runtime.dispose(), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
@@ -1103,7 +1255,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     questionDeliveries?.stop();
     clearInterval(networkTimer);
     server?.stop(true); tailServer?.stop(true);
-    try { terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose(); await Promise.allSettled([terminals?.shutdown(), nativeTerminals?.shutdown()]); await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose(); await runtime?.dispose(); }
+    try {
+      terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose();
+      // Failed startup can already have admitted session reads. Begin their
+      // worker retirement alongside the read drain, rather than waiting for
+      // reads that may themselves need the worker to finish stopping.
+      await Promise.allSettled([browserObservations?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
+    }
     finally {
       try {
         store?.close();

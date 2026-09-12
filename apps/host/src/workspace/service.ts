@@ -1,16 +1,33 @@
-import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
+import type { ContentMetadata, WorkspaceEntry, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitReviewSummary, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
 export type * from "../../../../packages/shared/src/workspace";
 
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, realpathSync, statSync } from "node:fs";
-import { access, copyFile, link, lstat, mkdir, mkdtemp, open, readdir, readlink, realpath, rename, rm, stat, unlink } from "node:fs/promises";
+import { access, copyFile, link, lstat, mkdir, mkdtemp, open, readdir, readlink, realpath, rename, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { fuzzyFind } from "@oh-my-pi/pi-natives";
+import { searchGitBranches } from "./branch-presentation-search";
+import type { GitRepositoryWatchContext } from "./repository-watch";
+import type { RecentBranchCache } from "./recent-branch-cache";
+import type { DefaultBranchCache } from "./default-branch-cache";
+
+export interface BranchReadOptions {
+  cache: RecentBranchCache;
+  defaults?: DefaultBranchCache;
+  isLive?(context: GitRepositoryWatchContext): boolean;
+}
+import { parseWorktreeStartingState } from "../../../../packages/shared/src/new-chat";
+import { readCheckoutConflict } from "./checkout-conflict";
+import type { GitPreparedPushInput, GitPreparedPushResult } from "./git-push";
+import type { GitSelectionSummary } from "../../../../packages/shared/src/git-submissions";
+import { parseGitRecentBranchesLimit, parseGitResolvedRevision, parseGitRevisionExpression, type GitResolvedRevision, type GitCheckoutTarget, parseGitBranchSearch, parseGitBranchSelection, type GitBranchSelection } from "../../../../packages/shared/src/workspace-protocol";
 
 const execute = promisify(execFile);
 const FILE_COPY_CHUNK_BYTES = 1024 * 1024;
+const FILE_SEARCH_TIMEOUT_MS = 1000;
 const editTails = new Map<string, Promise<void>>();
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
@@ -34,8 +51,69 @@ export interface ManagedWorktreeSnapshotReceipt {
   snapshotCommit: string;
 }
 
+export type GitCommitSelectionMode = "staged" | "include-unstaged";
+
+/** Host-private immutable input prepared for later message generation and commit submission. */
+export interface PreparedGitCommitSelection {
+  readonly mode: GitCommitSelectionMode;
+  readonly reviewedRevision: string;
+  readonly head: string | null;
+  readonly branch: string | null;
+  readonly selectedTree: string;
+  readonly selectedPaths: readonly string[];
+  readonly diff: string;
+  readonly stat: string;
+  readonly numstat: string;
+  readonly privateIndexPath: string;
+  assertCurrent(): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+export interface PreparedGitCommitResult extends GitCommitResult {
+  reviewedTree: string;
+  committedTree: string;
+  publishedIndexTree: string;
+}
+
+type PreparedSelectionState = "active" | "committing" | "consumed" | "unknown" | "disposed";
+interface PreparedSelectionRecord {
+  owner: WorkspaceService;
+  state: PreparedSelectionState;
+  temporary: string;
+  reviewed: { head: string | null; revision: string };
+  branch: string | null;
+  indexPath: string;
+  liveIndexBytes: Uint8Array | null;
+  privateIndexPath: string;
+  privateIndexBytes: Uint8Array;
+  expectedWorking: string | null;
+}
+const preparedSelections = new WeakMap<PreparedGitCommitSelection, PreparedSelectionRecord>();
+
 export class WorkspaceError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "WorkspaceError"; }
+}
+
+/** A confirmed checkout refusal, distinct from an uncertain dispatched mutation.
+ * Consumers must retain the original action and require an explicit commit flow. */
+export class GitCheckoutBlockedError extends WorkspaceError {
+  constructor(message: string, readonly conflictedPaths: string[]) {
+    super("GIT_CHECKOUT_BLOCKED", message);
+  }
+}
+
+class GitProcessError extends WorkspaceError {
+  constructor(message: string, readonly exitCode: number | undefined, readonly output: string) {
+    super("GIT_FAILED", message);
+  }
+}
+
+function throwCheckoutFailure(error: unknown): never {
+  if (error instanceof GitProcessError && error.exitCode === 1) {
+    const conflict = readCheckoutConflict(error.output);
+    if (conflict) throw new GitCheckoutBlockedError(error.message, conflict.conflictedPaths);
+  }
+  throw error;
 }
 
 
@@ -57,6 +135,25 @@ async function serialized<T>(key: string, operation: () => Promise<T>): Promise<
 function decode(bytes: Uint8Array): string {
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
   catch { throw new WorkspaceError("INVALID_GIT_ENCODING", "Git output contains filenames or metadata that are not valid UTF-8."); }
+}
+
+function reviewNumstat(output: string): GitReviewSummary["files"] {
+  if (!output) return [];
+  const invalid = () => new WorkspaceError("GIT_FAILED", "Git returned invalid review statistics.");
+  if (!output.endsWith("\0")) throw invalid();
+  const records = output.slice(0, -1).split("\0"), files: GitReviewSummary["files"] = [];
+  let totalAdditions = 0, totalDeletions = 0;
+  for (let index = 0; index < records.length; index++) {
+    const match = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(records[index]!);
+    if (!match || (match[1] === "-") !== (match[2] === "-")) throw invalid();
+    const renamed = match[3] === "", previousPath = renamed ? records[++index] : null, path = renamed ? records[++index] : match[3];
+    if (!path || renamed && !previousPath) throw invalid();
+    const additions = match[1] === "-" ? null : Number(match[1]), deletions = match[2] === "-" ? null : Number(match[2]);
+    totalAdditions += additions ?? 0; totalDeletions += deletions ?? 0;
+    if (![additions ?? 0, deletions ?? 0, totalAdditions, totalDeletions].every(Number.isSafeInteger)) throw invalid();
+    files.push({ path, previousPath: previousPath ?? null, additions, deletions });
+  }
+  return files;
 }
 
 /** One owning directory; every caller-supplied file path is relative to it. */
@@ -197,6 +294,41 @@ export class WorkspaceService {
     return entries.sort((a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name));
   }
 
+  /** Bounded, owner-confined filename search for the command-menu Files action. */
+  async searchFiles(query: string, limit = 50): Promise<{ entries: Array<WorkspaceEntry & { score: number }>; nativeTotalMatches: number; status: "complete" | "truncated" }> {
+    if (typeof query !== "string" || !query.trim() || query.length > 512 || /[\0\r\n]/.test(query)) throw new WorkspaceError("INVALID_SEARCH", "A nonempty file search query of at most 512 characters is required.");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new WorkspaceError("INVALID_SEARCH", "A file search limit must be between 1 and 100.");
+    const text = query.trim();
+    await this.assertWorkspaceIdentity("The selected workspace changed before file search. Reopen it before searching.");
+    const signal = AbortSignal.timeout(FILE_SEARCH_TIMEOUT_MS);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let result;
+    try {
+      result = await Promise.race([
+        fuzzyFind({ query: text, path: this.cwd, hidden: false, gitignore: true, cache: false, maxResults: limit, signal, timeoutMs: FILE_SEARCH_TIMEOUT_MS }),
+        new Promise<never>((_resolve, reject) => { deadline = setTimeout(() => reject(new WorkspaceError("SEARCH_TIMED_OUT", "File search exceeded its 1000 ms limit. Refine the query and try again.")), FILE_SEARCH_TIMEOUT_MS); }),
+      ]);
+    } finally { if (deadline) clearTimeout(deadline); }
+    if (signal.aborted) throw new WorkspaceError("SEARCH_TIMED_OUT", "File search exceeded its 1000 ms limit. Refine the query and try again.");
+    await this.assertWorkspaceIdentity("The selected workspace changed during file search. Reopen it before using results.");
+    const entries: Array<WorkspaceEntry & { score: number }> = [];
+    for (const match of result.matches) {
+      try {
+        const entry = await this.stat(match.path);
+        // The command menu opens previews. Keep a symlink only when its resolved
+        // target is an inside-root regular file; never follow directory links.
+        if (entry.kind === "symlink") {
+          if (entry.linkState !== "inside" || !(await stat(await this.owned(entry.path))).isFile()) continue;
+        } else if (entry.kind !== "file") continue;
+        entries.push({ ...entry, score: match.score });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    await this.assertWorkspaceIdentity("The selected workspace changed during file search. Reopen it before using results.");
+    return { entries, nativeTotalMatches: result.totalMatches, status: result.totalMatches > result.matches.length ? "truncated" : "complete" };
+  }
+
   async readText(path: string): Promise<FileContent> {
     const target = await this.owned(path);
     if (!(await stat(target)).isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Text reading supports regular files only.");
@@ -279,28 +411,36 @@ export class WorkspaceService {
     });
   }
 
-  private async git(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; validExitCodes?: number[] } = {}): Promise<{ stdout: string; exitCode: number }> {
+  private async git(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; validExitCodes?: number[]; timeoutMs?: number; signal?: AbortSignal; assertCurrent?: () => void } = {}): Promise<{ stdout: string; exitCode: number }> {
+    options.assertCurrent?.();
     const command = ["--no-pager", "--literal-pathspecs", "-c", "color.ui=false", "-C", options.cwd ?? this.cwd, ...args];
     try {
-      const result = await execute("git", command, { encoding: "buffer", timeout: this.gitTimeoutMs, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", ...options.env } });
+      const result = await execute("git", command, { encoding: "buffer", timeout: Math.min(this.gitTimeoutMs, options.timeoutMs ?? this.gitTimeoutMs), maxBuffer: 8 * 1024 * 1024, signal: options.signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", ...options.env } });
+      options.signal?.throwIfAborted();
+      options.assertCurrent?.();
       return { stdout: decode(result.stdout), exitCode: 0 };
     } catch (error) {
+      options.signal?.throwIfAborted();
+      options.assertCurrent?.();
+      if (error instanceof WorkspaceError) throw error;
       const failure = error as Error & { code?: number | string; killed?: boolean; stdout?: Buffer; stderr?: Buffer };
       if (typeof failure.code === "number" && options.validExitCodes?.includes(failure.code)) return { stdout: decode(failure.stdout ?? Buffer.alloc(0)), exitCode: failure.code };
       if (failure.killed) throw new WorkspaceError("GIT_TIMEOUT", "Git exceeded its time limit. Inspect repository state before retrying a mutation.");
       if (failure.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new WorkspaceError("GIT_OUTPUT_TOO_LARGE", "Git output exceeds 8 MiB. Select a narrower path.");
       const detail = failure.stderr ? new TextDecoder().decode(failure.stderr).trim().slice(0, 32_000) : failure.message;
-      throw new WorkspaceError("GIT_FAILED", detail || "Git failed.");
+      throw new GitProcessError(detail || "Git failed.", typeof failure.code === "number" ? failure.code : undefined,
+        [failure.stderr, failure.stdout].filter(Boolean).map(bytes => new TextDecoder().decode(bytes)).join("\n"));
     }
   }
 
-  private async requireGitRoot(): Promise<void> {
-    if ((await this.gitWorkspaceContext()).gitRoot !== this.cwd) throw new WorkspaceError("GIT_ROOT_OUTSIDE_WORKSPACE", "Select the repository root before performing Git operations.");
+  private async requireGitRoot(signal?: AbortSignal): Promise<void> {
+    if ((await this.gitWorkspaceContext(signal)).gitRoot !== this.cwd) throw new WorkspaceError("GIT_ROOT_OUTSIDE_WORKSPACE", "Select the repository root before performing Git operations.");
   }
 
   /** Canonical repository ownership and the selected workspace's path within it. This does not broaden file access. */
-  async gitWorkspaceContext(): Promise<GitWorkspaceContext> {
+  async gitWorkspaceContext(signal?: AbortSignal): Promise<GitWorkspaceContext> {
     const assertWorkspaceIdentity = async () => {
+      signal?.throwIfAborted();
       let current, canonical;
       try { current = await lstat(this.cwd); canonical = await realpath(this.cwd); }
       catch { throw new WorkspaceError("PATH_CHANGED", "The selected workspace changed identity. Reopen it before resolving Git context."); }
@@ -309,7 +449,7 @@ export class WorkspaceService {
       }
     };
     await assertWorkspaceIdentity();
-    const top = (await this.git(["rev-parse", "--show-toplevel"])).stdout.replace(/\r?\n$/, "");
+    const top = (await this.git(["rev-parse", "--show-toplevel"], { signal })).stdout.replace(/\r?\n$/, "");
     const gitRoot = await realpath(top);
     await assertWorkspaceIdentity();
     if (!(await stat(gitRoot)).isDirectory() || !within(gitRoot, this.cwd)) {
@@ -319,9 +459,52 @@ export class WorkspaceService {
   }
 
   /** Explicitly enter repository-wide Git/worktree authority while retaining this service's host-owned limits. */
-  async gitRootService(): Promise<WorkspaceService> {
-    const { gitRoot } = await this.gitWorkspaceContext();
+  async gitRootService(signal?: AbortSignal): Promise<WorkspaceService> {
+    const { gitRoot } = await this.gitWorkspaceContext(signal);
     return new WorkspaceService(gitRoot, { worktreeRoot: this.worktreeRoot, maxTextBytes: this.maxTextBytes, gitTimeoutMs: this.gitTimeoutMs });
+  }
+
+  /** Resolve shared refs and per-worktree metadata using Git, including unborn
+   * repositories where the index/current ref need not exist yet. No watch is
+   * started here; a subscription must retain and revalidate its catalog owner. */
+  async repositoryWatchContext(signal?: AbortSignal): Promise<GitRepositoryWatchContext> {
+    return (await this.repositoryReadContext(signal)).context;
+  }
+  private async repositoryReadContext(signal?: AbortSignal) {
+    const changed = "The repository changed while resolving its watch paths. Refresh before subscribing.";
+    const readPaths = async () => {
+      signal?.throwIfAborted();
+      await this.assertWorkspaceIdentity(changed);
+      const { gitRoot: root } = await this.gitWorkspaceContext(signal);
+      const paths = await Promise.all([
+        ["--absolute-git-dir"], ["--git-common-dir"], ["--git-path", "HEAD"], ["--git-path", "index"],
+      ].map(async args => {
+        const path = (await this.git(["rev-parse", "--path-format=absolute", ...args], { signal })).stdout.replace(/\r?\n$/, "");
+        if (!path || !isAbsolute(path) || path.includes("\0")) throw new WorkspaceError("GIT_FAILED", "Git returned an invalid repository watch path.");
+        return path;
+      }));
+      const gitDir = await realpath(paths[0]!), commonDir = await realpath(paths[1]!);
+      // Canonicalize existing parents without requiring unborn metadata files.
+      const headPath = join(await realpath(dirname(paths[2]!)), basename(paths[2]!));
+      const indexPath = join(await realpath(dirname(paths[3]!)), basename(paths[3]!));
+      const identity = await Promise.all([...new Set([root, gitDir, commonDir, dirname(headPath), dirname(indexPath)])].map(async path => {
+        const metadata = await stat(path);
+        if (!metadata.isDirectory()) throw new WorkspaceError("PATH_CHANGED", changed);
+        return { path, dev: metadata.dev, ino: metadata.ino };
+      }));
+      signal?.throwIfAborted();
+      return { paths: { root, gitDir, commonDir, headPath, indexPath }, identity };
+    };
+    const before = await readPaths();
+    const symbolic = await this.git(["symbolic-ref", "--quiet", "HEAD"], { validExitCodes: [1], signal });
+    const headRef = symbolic.exitCode === 1 ? null : symbolic.stdout.replace(/\r?\n$/, "");
+    if (headRef !== null && (!headRef.startsWith("refs/") || headRef.includes("\0") || /[\r\n]/.test(headRef)))
+      throw new WorkspaceError("GIT_FAILED", "Git returned an invalid symbolic HEAD.");
+    const after = await readPaths();
+    await this.assertWorkspaceIdentity(changed);
+    signal?.throwIfAborted();
+    if (JSON.stringify(before) !== JSON.stringify(after)) throw new WorkspaceError("PATH_CHANGED", changed);
+    return { context: { ...after.paths, headRef }, identity: JSON.stringify(after) };
   }
 
   /** Content revision of HEAD and the index, independent of working-file edits. */
@@ -411,6 +594,84 @@ export class WorkspaceService {
     });
   }
 
+  /** Pinned recent-branches means local branch tip committer-date order, not
+   * checkout history. The cache stores the full scan before the caller's slice. */
+  async recentBranches(limit?: number, signal?: AbortSignal, reads?: BranchReadOptions): Promise<string[]> {
+    const bounded = parseGitRecentBranchesLimit(limit);
+    await this.requireGitRoot(signal);
+    const scan = async (signal?: AbortSignal) => {
+      const { stdout } = await this.git(["for-each-ref", "--count=100", "--sort=-committerdate", "refs/heads", "--format=%(refname:short)"], { signal });
+      return stdout.split("\n").map(name => name.trim()).filter(Boolean);
+    };
+    let branches: string[];
+    if (reads) {
+      const { context, identity } = await this.repositoryReadContext(signal);
+      branches = await reads.cache.read(context.root, identity, reads.isLive?.(context) ?? false, scan, signal);
+    } else branches = await scan(signal);
+    signal?.throwIfAborted();
+    return branches.slice(0, bounded);
+  }
+
+  /** Pinned base discovery checks each ordered remote. remote show may contact
+   * that remote using host-native auth; a base branch always retains its remote. */
+  async baseBranch(signal?: AbortSignal, cache?: DefaultBranchCache): Promise<{ local: string; remote: string } | null> {
+    await this.requireGitRoot(signal);
+    const proof = cache ? await this.repositoryReadContext(signal) : undefined;
+    const root = proof?.context.root ?? this.cwd, identity = proof?.identity ?? "";
+    const list = async (signal?: AbortSignal) => {
+      const remotes = (await this.git(["remote"], { signal })).stdout.split("\n").map(name => name.trim()).filter(Boolean);
+      return remotes.includes("origin") ? ["origin", ...remotes.filter(name => name !== "origin")] : remotes;
+    };
+    const ordered = cache ? await cache.orderedRemotes(root, identity, list, signal) : await list(signal);
+    for (const remote of ordered) {
+      signal?.throwIfAborted();
+      const prefix = `refs/remotes/${remote}/`;
+      const symbolic = async (signal?: AbortSignal) => {
+        const result = await this.git(["symbolic-ref", "--quiet", `${prefix}HEAD`], { validExitCodes: [1], signal });
+        const local = result.stdout.trim();
+        return result.exitCode === 0 && local.startsWith(prefix) && local.length > prefix.length ? local.slice(prefix.length) : null;
+      };
+      const local = cache ? await cache.localDefault(root, identity, remote, symbolic, signal) : await symbolic(signal);
+      if (local) return { local, remote };
+      const advertisement = async (signal?: AbortSignal) => {
+        const advertised = await this.git(["remote", "show", "--", remote], {
+          signal, timeoutMs: 10_000, validExitCodes: [1, 128],
+          env: { LC_ALL: "C", LC_MESSAGES: "C", LANGUAGE: "C", GIT_TERMINAL_PROMPT: "0" },
+        });
+        const name = advertised.exitCode === 0 ? /HEAD branch:\s*(.+)/.exec(advertised.stdout)?.[1]?.trim() : null;
+        return name && name !== "(unknown)" ? name : null;
+      };
+      const advertised = cache ? await cache.advertisedDefault(root, identity, remote, advertisement, signal) : await advertisement(signal);
+      if (advertised) return { local: advertised, remote };
+      for (const name of ["main", "master"]) {
+        const exists = async (signal?: AbortSignal) => (await this.git(["show-ref", "--verify", "--quiet", `${prefix}${name}`], { validExitCodes: [1], signal })).exitCode === 0;
+        if (cache ? await cache.remoteBranch(root, identity, remote, name, exists, signal) : await exists(signal)) return { local: name, remote };
+      }
+    }
+    return null;
+  }
+
+  /** Default naming uses the remote-backed base before its bounded local fallback. */
+  async defaultBranch(signal?: AbortSignal, reads?: BranchReadOptions): Promise<string | null> {
+    const base = await this.baseBranch(signal, reads?.defaults);
+    if (base) return base.local;
+    return (await this.recentBranches(10, signal, reads)).find(name => name === "main" || name === "master") ?? null;
+  }
+
+  /** Native current-checkout presentation, independent of target resolution. */
+  async searchBranches(query: string, limit?: number): Promise<{ branches: GitBranch[]; limitReached: boolean }> {
+    const input = parseGitBranchSearch(query, limit);
+    await this.requireGitRoot();
+    return searchGitBranches(this.cwd, input.query, input.limit, this.gitTimeoutMs);
+  }
+
+  /** Starting-state presentation preserves remote identity without resolving or fetching. */
+  async searchStartingBranches(query: string, limit?: number): Promise<{ branches: GitBranch[]; limitReached: boolean }> {
+    const input = parseGitBranchSearch(query, limit);
+    await this.requireGitRoot();
+    return searchGitBranches(this.cwd, input.query, input.limit, this.gitTimeoutMs, undefined, true);
+  }
+
   async diff(options: GitDiffOptions = {}): Promise<GitDiff> {
     await this.requireGitRoot();
     const context = options.context ?? 3;
@@ -431,6 +692,50 @@ export class WorkspaceService {
     return { patch, binary, staged: options.staged ?? false, ...(options.path === undefined ? {} : { path: options.path }) };
   }
 
+  /** Staged and working changes are distinct review sources, even when they
+   * cancel in the final commit tree. This never prepares or publishes an index. */
+  async reviewSummary(source: GitReviewSummary["source"]): Promise<GitReviewSummary> {
+    if (source !== "staged" && source !== "unstaged") throw new WorkspaceError("INVALID_REVIEW_SOURCE", "Choose staged or unstaged review changes.");
+    return serialized(`git:${this.cwd}`, async () => {
+      const before = await this.readGitStatus();
+      const files = reviewNumstat((await this.git(["--no-lazy-fetch", "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--numstat", "-z",
+        ...(source === "staged" ? ["--cached"] : []), "--"])).stdout);
+      if (source === "unstaged") {
+        // Unmerged records have unknown line counts, not a normal diff against
+        // one arbitrarily selected index stage.
+        for (const entry of before.entries.filter(entry => entry.kind === "conflict")) {
+          for (let i = files.length - 1; i >= 0; i--) if (files[i]!.path === entry.path) files.splice(i, 1);
+          files.push({ path: entry.path, previousPath: null, additions: null, deletions: null });
+        }
+        const deadline = Date.now() + this.gitTimeoutMs;
+        for (const entry of before.entries.filter(entry => entry.kind === "untracked")) {
+          const target = await this.parentOwned(entry.path), metadata = await lstat(target);
+          if (!metadata.isFile() && !metadata.isSymbolicLink())
+            throw new WorkspaceError("REVIEW_FILE_UNSUPPORTED", "Review statistics require regular files or symlinks. Inspect the untracked directory separately.");
+          const timeoutMs = deadline - Date.now();
+          if (timeoutMs <= 0) throw new WorkspaceError("GIT_TIMEOUT", "Untracked review statistics exceeded the read time limit.");
+          const statOutput = await this.git(["--no-lazy-fetch", "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--", "/dev/null", target], { validExitCodes: [1], timeoutMs });
+          const rows = reviewNumstat(statOutput.stdout);
+          // An empty regular file can have no numstat record. It still appears
+          // in the review inventory, with known zero line changes.
+          if (rows.length > 1 || rows.length === 0 && (metadata.isSymbolicLink() || metadata.size !== 0))
+            throw new WorkspaceError("GIT_FAILED", "Git returned invalid statistics for an untracked review file.");
+          const row = rows[0];
+          files.push({ path: entry.path, previousPath: null, additions: row ? row.additions : 0, deletions: row ? row.deletions : 0 });
+        }
+      }
+      const after = await this.readGitStatus();
+      if (JSON.stringify(before) !== JSON.stringify(after)) throw new WorkspaceError("GIT_CHANGED", "Git state changed while reading review statistics. Refresh the changes.");
+      let additions = 0, deletions = 0;
+      for (const file of files) { additions += file.additions ?? 0; deletions += file.deletions ?? 0; }
+      if (![additions, deletions].every(Number.isSafeInteger)) throw new WorkspaceError("GIT_FAILED", "Review totals exceed the supported range.");
+      return { source, revision: before.revision, files,
+        stagedCount: before.entries.filter(entry => entry.kind !== "untracked" && entry.indexStatus !== ".").length,
+        unstagedCount: before.entries.filter(entry => entry.kind !== "untracked" && entry.worktreeStatus !== ".").length,
+        untrackedCount: before.entries.filter(entry => entry.kind === "untracked").length };
+    });
+  }
+
   async stage(paths: string[]): Promise<GitStatus> {
     return serialized(`git:${this.cwd}`, async () => { await this.requireGitRoot(); await this.git(["add", "--", ...await this.gitPaths(paths)]); return this.readGitStatus(); });
   }
@@ -449,13 +754,522 @@ export class WorkspaceService {
     if (typeof message !== "string" || !message.trim() || message.includes("\0")) throw new WorkspaceError("INVALID_COMMIT_MESSAGE", "A nonempty commit message is required.");
     return serialized(`git:${this.cwd}`, async () => {
       await this.requireGitRoot();
-      await this.checkIndexRevision(expectedRevision);
-      const result = await this.git(["commit", "--message", message]);
-      return { commit: (await this.git(["rev-parse", "HEAD"])).stdout.trim(), summary: result.stdout.trim() };
+      const before = await this.checkIndexRevision(expectedRevision);
+      let result: { stdout: string; exitCode: number };
+      try {
+        result = await this.git(["commit", "--message", message]);
+      } catch (error) {
+        if (error instanceof WorkspaceError && error.code === "OUTCOME_UNKNOWN") throw error;
+        // A killed command or exhausted output buffer may return before Git and a
+        // hook descendant have reached a stable state, even if HEAD is unchanged.
+        if (error instanceof WorkspaceError && (error.code === "GIT_TIMEOUT" || error.code === "GIT_OUTPUT_TOO_LARGE")) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "Git did not return a reliable commit outcome. Inspect the repository before retrying.");
+        }
+        try {
+          const observed = (await this.git(["rev-parse", "--verify", "--quiet", "HEAD"], { validExitCodes: [1] })).stdout.trim() || null;
+          if (observed === before.head) throw error;
+        } catch (probeError) {
+          if (probeError === error) throw error;
+        }
+        throw new WorkspaceError("OUTCOME_UNKNOWN", "Git did not return a reliable commit outcome. Inspect the repository before retrying.");
+      }
+      try {
+        const receipt = /^\[[^\x00-\x20]+(?: [^\]\r\n]*)? ([0-9a-f]{4,64})\] /m.exec(result.stdout)?.[1];
+        if (!receipt) throw new WorkspaceError("OUTCOME_UNKNOWN", "Git did not return a commit receipt that can be verified. Inspect the repository before retrying.");
+        const commit = (await this.git(["rev-parse", "--verify", `${receipt}^{commit}`])).stdout.trim();
+        const observed = (await this.git(["rev-parse", "--verify", "--quiet", "HEAD"], { validExitCodes: [1] })).stdout.trim() || null;
+        if (!commit || commit === before.head || observed !== commit) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "Git reported a commit, but its resulting HEAD does not verify that receipt. Inspect the repository before retrying.");
+        }
+        return { commit, summary: result.stdout.trim() };
+      } catch { throw new WorkspaceError("OUTCOME_UNKNOWN", "Git reported a commit, but its resulting receipt could not be verified. Inspect the repository before retrying."); }
     });
   }
 
-  async checkout(branch: string, expectedRevision: string, create = false): Promise<GitStatus> {
+  /**
+   * Capture an explicit commit selection in a private index. This is read-only
+   * with respect to the live index, refs, and working tree; callers must dispose
+   * the returned selection after generation or submission.
+   */
+  async prepareCommitSelection(mode: GitCommitSelectionMode, expectedRevision: string): Promise<PreparedGitCommitSelection> {
+    return this.captureCommitSelection(mode, expectedRevision, false);
+  }
+  /** Summarize the same final tree used by commit preparation, including a validated empty selection. */
+  async summarizeCommitSelection(mode: GitCommitSelectionMode, expectedRevision: string): Promise<GitSelectionSummary> {
+    const selection = await this.captureCommitSelection(mode, expectedRevision, true);
+    try {
+      let additions = 0, deletions = 0, binaryFiles = 0, files = 0;
+      for (const line of selection.numstat.split("\n").filter(Boolean)) {
+        const match = /^(\d+|-)\t(\d+|-)\t.+$/.exec(line);
+        if (!match || (match[1] === "-") !== (match[2] === "-")) throw new WorkspaceError("GIT_FAILED", "Git returned an invalid selection summary.");
+        files++;
+        if (match[1] === "-") binaryFiles++;
+        else { additions += Number(match[1]); deletions += Number(match[2]); }
+      }
+      if (![additions, deletions, binaryFiles, files].every(Number.isSafeInteger)) throw new WorkspaceError("GIT_FAILED", "Git selection totals exceed the supported range.");
+      return { selectionMode: mode, reviewedRevision: selection.reviewedRevision, selectedTree: selection.selectedTree, additions, deletions, binaryFiles, files };
+    } finally { await selection.dispose(); }
+  }
+  private async captureCommitSelection(mode: GitCommitSelectionMode, expectedRevision: string, allowEmpty: boolean): Promise<PreparedGitCommitSelection> {
+    if (mode !== "staged" && mode !== "include-unstaged") throw new WorkspaceError("INVALID_COMMIT_SELECTION", "Choose staged changes or staged and unstaged changes.");
+    if (typeof expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(expectedRevision)) throw new WorkspaceError("INVALID_REVISION", "An exact SHA-256 Git revision is required.");
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      const reviewed = await this.checkIndexRevision(expectedRevision);
+      const branchResult = await this.git(["symbolic-ref", "--quiet", "--short", "HEAD"], { validExitCodes: [1] });
+      const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+      if ((await this.git(["ls-files", "--unmerged", "-z"])).stdout) {
+        throw new WorkspaceError("COMMIT_SELECTION_CONFLICT", "Resolve Git index conflicts before preparing a commit.");
+      }
+      const indexPath = (await this.git(["rev-parse", "--path-format=absolute", "--git-path", "index"])).stdout.trim();
+      const liveIndexBytes = await readOptionalFileBytes(indexPath);
+      const liveIndexMetadata = liveIndexBytes === null ? null : await stat(indexPath);
+      if (mode === "include-unstaged") await this.assertIncludeUnstagedSupported();
+      const rawBefore = mode === "include-unstaged" ? await this.workingSelectionFingerprint() : null;
+      const temporary = await mkdtemp(join(tmpdir(), "agent-desktop-commit-index-"));
+      const privateIndexPath = join(temporary, "index");
+      const env = { ...process.env, GIT_INDEX_FILE: privateIndexPath };
+      let preparing = true;
+      try {
+        if (liveIndexBytes === null) await this.git(["read-tree", "--empty"], { env });
+        else {
+          await writeFile(privateIndexPath, liveIndexBytes, { flag: "wx", mode: 0o600 });
+          // A newer copied index can hide same-size edits by disabling Git's
+          // racy-stat check. Preserve the source timestamp before refreshing it.
+          await utimes(privateIndexPath, liveIndexMetadata!.atime, liveIndexMetadata!.mtime);
+        }
+        if (mode === "include-unstaged") await this.git(["add", "-A", "--", "."], { env });
+        const selectedTree = (await this.git(["write-tree"], { env })).stdout.trim();
+        const selectedPaths = (await this.git(["diff", "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--"], { env })).stdout.split("\0").filter(Boolean);
+        if (!selectedPaths.length && !allowEmpty) throw new WorkspaceError("NO_CHANGES", "The selected changes do not produce a commit.");
+        const [diff, statOutput, numstat] = await Promise.all([
+          this.git(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--"], { env }),
+          this.git(["diff", "--cached", "--stat", "--no-ext-diff", "--no-textconv", "--"], { env }),
+          this.git(["diff", "--cached", "--numstat", "--no-ext-diff", "--no-textconv", "--"], { env }),
+        ]);
+        const privateIndexBytes = await readFileBytes(privateIndexPath);
+        const rawAfter = mode === "include-unstaged" ? await this.workingSelectionFingerprint() : null;
+        await this.assertCommitSelectionState(reviewed, branch, indexPath, liveIndexBytes, privateIndexPath, privateIndexBytes, rawBefore, rawAfter);
+        const record: PreparedSelectionRecord = { owner: this, state: "active", temporary, reviewed, branch, indexPath,
+          liveIndexBytes, privateIndexPath, privateIndexBytes, expectedWorking: rawBefore };
+        const assertCurrent = () => serialized(`git:${this.cwd}`, async () => {
+          if (record.state === "unknown") throw new WorkspaceError("OUTCOME_UNKNOWN", "This prepared selection belongs to an unresolved Git outcome. Inspect it before any cleanup or retry.");
+          if (record.state !== "active") throw new WorkspaceError("COMMIT_SELECTION_DISPOSED", "This prepared commit selection is no longer active.");
+          await this.requireGitRoot();
+          await this.assertCommitSelectionState(reviewed, branch, indexPath, liveIndexBytes, privateIndexPath, privateIndexBytes, rawBefore,
+            mode === "include-unstaged" ? await this.workingSelectionFingerprint() : null);
+        });
+        const dispose = async () => {
+          if (record.state === "unknown") throw new WorkspaceError("OUTCOME_UNKNOWN", "This prepared selection belongs to an unresolved Git outcome and is retained for inspection.");
+          if (record.state === "committing") throw new WorkspaceError("COMMIT_SELECTION_BUSY", "This prepared selection is being committed.");
+          if (record.state === "disposed" || record.state === "consumed") return;
+          record.state = "disposed";
+          await rm(temporary, { recursive: true, force: true });
+        };
+        const selection = Object.freeze({ mode, reviewedRevision: reviewed.revision, head: reviewed.head, branch, selectedTree,
+          selectedPaths: Object.freeze(selectedPaths), diff: diff.stdout, stat: statOutput.stdout, numstat: numstat.stdout,
+          privateIndexPath, assertCurrent, dispose });
+        preparedSelections.set(selection, record);
+        preparing = false;
+        return selection;
+      } catch (error) {
+        if (preparing) await rm(temporary, { recursive: true, force: true });
+        throw error;
+      }
+    });
+  }
+
+  /** Commit an opaque prepared selection once, then atomically publish its post-hook private index. */
+  async commitPreparedSelection(prepared: PreparedGitCommitSelection, message: string, beforeDispatch?: () => void): Promise<PreparedGitCommitResult> {
+    if (typeof message !== "string" || !message.trim() || message.includes("\0")) throw new WorkspaceError("INVALID_COMMIT_MESSAGE", "A nonempty commit message is required.");
+    const record = preparedSelections.get(prepared);
+    if (!record || record.owner !== this) throw new WorkspaceError("INVALID_COMMIT_SELECTION", "Use a prepared commit selection from this owning workspace.");
+    if (record.state === "unknown") throw new WorkspaceError("OUTCOME_UNKNOWN", "This prepared selection belongs to an unresolved Git outcome and cannot be replayed.");
+    if (record.state !== "active") throw new WorkspaceError("COMMIT_SELECTION_DISPOSED", "This prepared commit selection is no longer active.");
+    record.state = "committing";
+    return serialized(`git:${this.cwd}`, async () => {
+      const lockPath = `${record.indexPath}.lock`;
+      let lock: Awaited<ReturnType<typeof open>> | null = null;
+      let lockIdentity: { dev: number; ino: number } | null = null;
+      let published = false;
+      let dispatched = false;
+      let definiteFailure = false;
+      try {
+        await this.requireGitRoot();
+        const currentIndexPath = (await this.git(["rev-parse", "--path-format=absolute", "--git-path", "index"])).stdout.trim();
+        if (currentIndexPath !== record.indexPath) throw new WorkspaceError("GIT_CHANGED", "The Git index path changed after commit preparation.");
+        const indexMetadata = await lstat(record.indexPath).catch(error => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT" && record.liveIndexBytes === null) return null;
+          throw error;
+        });
+        try { lock = await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, indexMetadata?.mode ?? 0o644); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new WorkspaceError("GIT_BUSY", "Git is already updating this worktree index. Retry from a fresh review when it finishes.");
+          throw error;
+        }
+        const lockMetadata = await lock.stat();
+        lockIdentity = { dev: lockMetadata.dev, ino: lockMetadata.ino };
+        if (indexMetadata) await lock.chmod(indexMetadata.mode & 0o777);
+        await this.assertCommitSelectionState(record.reviewed, record.branch, record.indexPath, record.liveIndexBytes,
+          record.privateIndexPath, record.privateIndexBytes, record.expectedWorking,
+          prepared.mode === "include-unstaged" ? await this.workingSelectionFingerprint() : null);
+
+        let result: { stdout: string; exitCode: number };
+        beforeDispatch?.();
+        dispatched = true;
+        try { result = await this.git(["commit", "--message", message], { env: { ...process.env, GIT_INDEX_FILE: record.privateIndexPath } }); }
+        catch (error) {
+          if (error instanceof WorkspaceError && (error.code === "GIT_TIMEOUT" || error.code === "GIT_OUTPUT_TOO_LARGE" || error.code === "OUTCOME_UNKNOWN")) throw error;
+          const observed = await this.currentHead();
+          if (observed === record.reviewed.head) { definiteFailure = true; throw error; }
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "Git may have created the prepared commit. Inspect the repository before retrying.");
+        }
+
+        const receipt = /^\[[^\x00-\x20]+(?: [^\]\r\n]*)? ([0-9a-f]{4,64})\] /m.exec(result.stdout)?.[1];
+        if (!receipt) throw new WorkspaceError("OUTCOME_UNKNOWN", "Git did not return a commit receipt that can be verified. Inspect the repository before retrying.");
+        const commit = (await this.git(["rev-parse", "--verify", `${receipt}^{commit}`])).stdout.trim();
+        const observed = await this.currentHead();
+        const currentBranch = await this.currentBranch();
+        const parents = (await this.git(["rev-list", "--parents", "-n", "1", commit])).stdout.trim().split(" ");
+        const parentVerified = record.reviewed.head === null ? parents.length === 1 && parents[0] === commit
+          : parents[0] === commit && parents[1] === record.reviewed.head;
+        if (!commit || commit === record.reviewed.head || observed !== commit || currentBranch !== record.branch
+          || !parentVerified) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "Git reported a prepared commit, but its HEAD, branch, or parent receipt could not be verified.");
+        }
+        const reviewedTree = prepared.selectedTree;
+        const committedTree = (await this.git(["rev-parse", "--verify", `${commit}^{tree}`])).stdout.trim();
+        const publishedIndexTree = (await this.git(["write-tree"], { env: { ...process.env, GIT_INDEX_FILE: record.privateIndexPath } })).stdout.trim();
+        const postHookIndexBytes = await readFileBytes(record.privateIndexPath);
+        if (!sameOptionalBytes(await readOptionalFileBytes(record.indexPath), record.liveIndexBytes)) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "The live Git index changed despite its held lock after the prepared commit.");
+        }
+        await lock.writeFile(postHookIndexBytes);
+        await lock.sync();
+        await lock.close();
+        lock = null;
+        // Check the pathname after descriptor writes have settled. This detects
+        // replacement by hooks; it cannot fence nonconforming concurrent writers.
+        const ownedLock = await lstat(lockPath).catch(() => null);
+        if (!ownedLock?.isFile() || !lockIdentity || ownedLock.dev !== lockIdentity.dev || ownedLock.ino !== lockIdentity.ino) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "The prepared commit completed, but ownership of its live index lock was lost before publication.");
+        }
+        await rename(lockPath, record.indexPath);
+        published = true;
+        const directory = await open(dirname(record.indexPath), constants.O_RDONLY | constants.O_DIRECTORY);
+        try { await directory.sync(); } finally { await directory.close(); }
+        if (await this.currentHead() !== commit || await this.currentBranch() !== record.branch) {
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "The prepared commit was published, but its branch or HEAD changed before final verification.");
+        }
+        record.state = "consumed";
+        await rm(record.temporary, { recursive: true, force: true }).catch(() => {});
+        return { commit, summary: result.stdout.trim(), reviewedTree, committedTree, publishedIndexTree };
+      } catch (error) {
+        const unknown = error instanceof WorkspaceError && error.code === "OUTCOME_UNKNOWN"
+          || dispatched && !definiteFailure;
+        if (unknown) {
+          record.state = "unknown";
+          if (error instanceof WorkspaceError && error.code === "OUTCOME_UNKNOWN") throw error;
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "The prepared commit or index publication could not be verified. Inspect it before retrying.");
+        }
+        record.state = "consumed";
+        await rm(record.temporary, { recursive: true, force: true }).catch(() => {});
+        throw error;
+      } finally {
+        if (lock) await lock.close().catch(() => {});
+        if (!published && lockIdentity) {
+          const current = await lstat(lockPath).catch(() => null);
+          if (current && current.dev === lockIdentity.dev && current.ino === lockIdentity.ino) await unlink(lockPath).catch(() => {});
+        }
+      }
+    });
+  }
+
+  private async currentHead(): Promise<string | null> {
+    const result = await this.git(["rev-parse", "--verify", "--quiet", "HEAD"], { validExitCodes: [1] });
+    return result.exitCode === 0 ? result.stdout.trim() : null;
+  }
+
+  private async currentBranch(): Promise<string | null> {
+    const result = await this.git(["symbolic-ref", "--quiet", "--short", "HEAD"], { validExitCodes: [1] });
+    return result.exitCode === 0 ? result.stdout.trim() : null;
+  }
+
+  async pushPreparedDestination(input: GitPreparedPushInput, beforeDispatch?: () => void): Promise<GitPreparedPushResult> {
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      const { pushPreparedDestination } = await import("./git-push");
+      return pushPreparedDestination({ cwd: this.cwd, gitStatus: () => this.readGitStatus() }, input, this.gitTimeoutMs, undefined, beforeDispatch);
+    });
+  }
+
+  private async assertCommitSelectionState(
+    reviewed: { head: string | null; revision: string }, branch: string | null, indexPath: string,
+    liveIndexBytes: Uint8Array | null, privateIndexPath: string, privateIndexBytes: Uint8Array,
+    expectedWorking: string | null, actualWorking: string | null,
+  ): Promise<void> {
+    const current = await this.indexState();
+    const branchResult = await this.git(["symbolic-ref", "--quiet", "--short", "HEAD"], { validExitCodes: [1] });
+    const currentBranch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+    const currentIndexPath = (await this.git(["rev-parse", "--path-format=absolute", "--git-path", "index"])).stdout.trim();
+    const currentIndexBytes = await readOptionalFileBytes(currentIndexPath);
+    const currentPrivateIndexBytes = await readOptionalFileBytes(privateIndexPath);
+    if (current.revision !== reviewed.revision || current.head !== reviewed.head || currentBranch !== branch
+      || currentIndexPath !== indexPath || !sameOptionalBytes(currentIndexBytes, liveIndexBytes)
+      || !sameOptionalBytes(currentPrivateIndexBytes, privateIndexBytes)
+      || expectedWorking !== actualWorking) {
+      throw new WorkspaceError("GIT_CHANGED", "Git branch, HEAD, index, or selected working files changed after commit preparation. Refresh before continuing.");
+    }
+  }
+
+  private async assertIncludeUnstagedSupported(): Promise<void> {
+    const sparse = await this.git(["config", "--bool", "--get", "core.sparseCheckout"], { validExitCodes: [1] });
+    if (sparse.exitCode === 0 && sparse.stdout.trim() === "true") {
+      throw new WorkspaceError("COMMIT_SELECTION_SPARSE_UNSUPPORTED", "Include unstaged is not yet supported for sparse checkouts.");
+    }
+    const sharedIndex = (await this.git(["rev-parse", "--shared-index-path"])).stdout.trim();
+    if (sharedIndex) throw new WorkspaceError("COMMIT_SELECTION_SPLIT_INDEX_UNSUPPORTED", "Include unstaged is not yet supported for split indexes.");
+    const flagged = (await this.git(["ls-files", "-v", "-z"])).stdout.split("\0").find(record => /^[a-zS] /.test(record));
+    if (flagged) throw new WorkspaceError("COMMIT_SELECTION_HIDDEN_CHANGES_UNSUPPORTED", "Clear Git assume-unchanged and skip-worktree flags before including unstaged changes.");
+    const status = await this.readGitStatus();
+    if (status.entries.some(entry => entry.submodule && entry.worktreeStatus !== ".")) {
+      throw new WorkspaceError("COMMIT_SELECTION_SUBMODULE_UNSUPPORTED", "Commit or clean submodule working changes before including unstaged changes.");
+    }
+  }
+
+  private async workingSelectionFingerprint(): Promise<string> {
+    // Every staged path participates in include-unstaged even when its working
+    // bytes are stat-clean. Union those paths with Git's current working
+    // candidates so validation does not depend only on the stat cache.
+    const staged = (await this.git(["diff", "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--"])).stdout;
+    const working = (await this.git(["ls-files", "-z", "-m", "-d", "-o", "--exclude-standard", "--", "."])).stdout;
+    const paths = [...new Set([...staged.split("\0"), ...working.split("\0")].filter(Boolean))].sort();
+    const records: Array<[string, string, number?]> = [];
+    for (const path of paths) {
+      const target = resolve(this.cwd, gitRelativePath(path));
+      if (!within(this.cwd, target)) throw new WorkspaceError("OUTSIDE_WORKSPACE", "Git selected a path outside its owning workspace.");
+      try {
+        const metadata = await lstat(target);
+        if (metadata.isSymbolicLink()) records.push([path, `link:${hash(Buffer.from(await readlink(target)))}`, metadata.mode]);
+        else if (metadata.isFile()) records.push([path, `file:${hash(await readFileBytes(target))}`, metadata.mode]);
+        else throw new WorkspaceError("COMMIT_SELECTION_FILE_UNSUPPORTED", "Include unstaged supports regular files, symlinks, and deletions only.");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") records.push([path, "deleted"]);
+        else throw error;
+      }
+    }
+    return hash(Buffer.from(JSON.stringify(records)));
+  }
+
+  /** Effectful starting-state resolution. Only a durably admitted preparation may
+   * consume this method; it is deliberately absent from read-only query routes. */
+  async resolveWorktreeStartingRef(input: string, signal?: AbortSignal, assertCurrent?: () => void): Promise<{ ref: string; remoteRef?: string } | null> {
+    const expression = parseGitRevisionExpression(input);
+    signal?.throwIfAborted();
+    assertCurrent?.();
+    await this.requireGitRoot();
+    const commit = (ref: string) => this.worktreeStartingCommit(ref, signal, assertCurrent);
+    if (expression === "HEAD" || expression === "@") return await commit(expression) ? { ref: expression } : null;
+    const local = expression.startsWith("refs/heads/") ? expression : expression.startsWith("refs/") ? null : `refs/heads/${expression}`;
+    const upstream = await this.git(["--no-lazy-fetch", "rev-parse", "--verify", "--abbrev-ref", "--symbolic-full-name", "--end-of-options", `${expression}@{u}`], { validExitCodes: [1, 128], signal, assertCurrent });
+    if (upstream.exitCode === 0 && upstream.stdout.trim()) {
+      const name = upstream.stdout.trim(), remote = `refs/remotes/${name}`;
+      const right = await commit(remote) ? remote : name.startsWith("refs/") ? name : `refs/heads/${name}`;
+      const left = local ?? expression;
+      // Resolve exact namespace identities before Git's range grammar can DWIM.
+      const leftCommit = await commit(left), rightCommit = await commit(right);
+      if (!leftCommit || !rightCommit) throw new WorkspaceError("BRANCH_CHANGED", "The branch or its upstream no longer resolves.");
+      const counts = await this.git(["--no-lazy-fetch", "rev-list", "--left-right", "--count", `${leftCommit}...${rightCommit}`, "--"], { signal, assertCurrent });
+      const matched = /^(\d+)\s+(\d+)$/.exec(counts.stdout.trim());
+      if (!matched) throw new WorkspaceError("GIT_FAILED", "Git returned invalid upstream divergence counts.");
+      return { ref: Number(matched[1]) === 0 && Number(matched[2]) > 0 ? right : left };
+    }
+    if (local && await commit(local)) return { ref: local };
+    const remotes = await this.worktreeStartingRemotes(signal, assertCurrent);
+    if (expression.startsWith("refs/remotes/") && await commit(expression)) return { ref: expression, remoteRef: expression };
+    const prefix = "refs/remotes/", short = expression.startsWith(prefix) ? expression.slice(prefix.length) : expression;
+    const named = remotes.find(remote => short.startsWith(`${remote}/`));
+    const candidates = expression.startsWith("refs/") && !expression.startsWith(prefix) ? []
+      : named ? [{ remote: named, branch: short.slice(named.length + 1), ref: `${prefix}${named}/${short.slice(named.length + 1)}` }]
+      : expression.startsWith(prefix) ? [] : remotes.map(remote => ({ remote, branch: expression, ref: `${prefix}${remote}/${expression}` }));
+    // Check all cached candidates before any remote operation.
+    for (const candidate of candidates) if (await commit(candidate.ref)) return { ref: candidate.ref, remoteRef: candidate.ref };
+    let validationFailure: Error | undefined;
+    for (const candidate of candidates) {
+      signal?.throwIfAborted();
+      assertCurrent?.();
+      if ((await this.git(["check-ref-format", `refs/heads/${candidate.branch}`], { validExitCodes: [1], signal, assertCurrent })).exitCode !== 0) continue;
+      let listed;
+      try { listed = await this.git(["ls-remote", "--exit-code", "--", candidate.remote, `refs/heads/${candidate.branch}`], { validExitCodes: [2], signal, assertCurrent }); }
+      catch (error) {
+        signal?.throwIfAborted();
+        assertCurrent?.();
+        // Only Git's remote validation failure may try another candidate. Timeout,
+        // cancellation, output limits and other operational failures propagate.
+        if (!(error instanceof GitProcessError) || ![1, 128].includes(error.exitCode ?? -1)) throw error;
+        validationFailure ??= error;
+        continue;
+      }
+      if (listed.exitCode === 2) continue;
+      await this.fetchWorktreeStartingRef(candidate.remote, candidate.branch, candidate.ref, signal, assertCurrent);
+      return { ref: candidate.ref, remoteRef: candidate.ref };
+    }
+    const revision = await commit(expression);
+    if (revision) return { ref: revision };
+    if (validationFailure) throw validationFailure;
+    return null;
+  }
+
+  /** Creation-stage refresh (pinned Zue). Caller must already retain its admitted
+   * operation: a fetch error may have changed refs/objects without a worktree. */
+  async resolveWorktreeStartingCommit(input: WorktreeStartingState, signal?: AbortSignal, assertCurrent?: () => void): Promise<string> {
+    const state = parseWorktreeStartingState(input);
+    signal?.throwIfAborted();
+    assertCurrent?.();
+    await this.requireGitRoot();
+    let ref: string;
+    if (state.type === "working-tree") ref = "HEAD";
+    else if (state.branchName === "HEAD" || state.branchName === "@") ref = state.branchName;
+    else if (state.remoteRef !== undefined) {
+      const remote = (await this.worktreeStartingRemotes(signal, assertCurrent)).filter(name => state.remoteRef!.startsWith(`refs/remotes/${name}/`)).sort((a, b) => b.length - a.length)[0];
+      if (!remote) throw new WorkspaceError("REMOTE_CHANGED", "The selected starting-state remote is no longer configured.");
+      return this.fetchWorktreeStartingRef(remote, state.remoteRef.slice(`refs/remotes/${remote}/`.length), state.remoteRef, signal, assertCurrent);
+    } else {
+      const resolved = await this.resolveWorktreeStartingRef(state.branchName, signal, assertCurrent);
+      if (!resolved) throw new WorkspaceError("BRANCH_NOT_FOUND", "The worktree starting state no longer resolves.");
+      ref = resolved.ref;
+    }
+    const commit = await this.worktreeStartingCommit(ref, signal, assertCurrent);
+    if (!commit) throw new WorkspaceError("BRANCH_CHANGED", "The worktree starting commit disappeared during resolution.");
+    return commit;
+  }
+
+  private async worktreeStartingRemotes(signal?: AbortSignal, assertCurrent?: () => void): Promise<string[]> {
+    const names = (await this.git(["remote"], { signal, assertCurrent })).stdout.split("\n").map(name => name.trim()).filter(Boolean);
+    return names.includes("origin") ? ["origin", ...names.filter(name => name !== "origin")] : names;
+  }
+
+  private async worktreeStartingCommit(ref: string, signal?: AbortSignal, assertCurrent?: () => void): Promise<string | null> {
+    signal?.throwIfAborted();
+    assertCurrent?.();
+    if (ref.startsWith("refs/")) {
+      if ((await this.git(["check-ref-format", ref], { validExitCodes: [1], signal, assertCurrent })).exitCode !== 0) return null;
+      if ((await this.git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1], signal, assertCurrent })).exitCode !== 0) return null;
+    }
+    const result = await this.git(["--no-lazy-fetch", "rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`], { validExitCodes: [1], signal, assertCurrent });
+    signal?.throwIfAborted();
+    assertCurrent?.();
+    if (result.exitCode === 1) return null;
+    const value = result.stdout.trim();
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)) throw new WorkspaceError("GIT_FAILED", "Git returned an invalid starting commit identity.");
+    return value;
+  }
+
+  private async fetchWorktreeStartingRef(remote: string, branch: string, ref: string, signal?: AbortSignal, assertCurrent?: () => void): Promise<string> {
+    signal?.throwIfAborted();
+    assertCurrent?.();
+    try {
+      await this.git(["fetch", "--", remote, `+refs/heads/${branch}:${ref}`], { signal, assertCurrent });
+      const commit = await this.worktreeStartingCommit(ref, signal, assertCurrent);
+      if (!commit) throw new Error("The fetched starting ref does not resolve to a commit.");
+      return commit;
+    } catch (error) {
+      throw new WorkspaceError("OUTCOME_UNKNOWN", `The starting-state fetch may have changed refs or objects. Inspect the admitted preparation before retrying. ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Resolve tags, commit IDs and revision expressions using only local objects.
+   * A later checkout must revalidate its own status/owner and target admission. */
+  async resolveRevision(input: string): Promise<GitResolvedRevision | null> {
+    const expression = parseGitRevisionExpression(input);
+    await this.requireGitRoot();
+    // The explicit option fails closed on Git versions lacking this capability;
+    // never silently fall back to a lookup that may fetch from a promisor remote.
+    const result = await this.git(["--no-lazy-fetch", "rev-parse", "--verify", "--quiet", "--end-of-options", `${expression}^{commit}`], { validExitCodes: [1] });
+    if (result.exitCode === 1) return null;
+    const commit = result.stdout.trim();
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit))
+      throw new WorkspaceError("GIT_FAILED", "Git returned an invalid resolved commit identity.");
+    return { expression, commit };
+  }
+
+  /** Native branch-name precedence, independent of presentation result limits.
+   * This reads an exact target; checkout still owns revision/identity admission. */
+  async resolveCheckoutTarget(input: string): Promise<GitCheckoutTarget | null> {
+    const expression = parseGitRevisionExpression(input);
+    await this.requireGitRoot();
+    if (!expression.startsWith("-") && (await this.git(["check-ref-format", `refs/heads/${expression}`], { validExitCodes: [1] })).exitCode === 0) {
+      const local = `refs/heads/${expression}`;
+      let ref: string | undefined;
+      if ((await this.git(["show-ref", "--verify", "--quiet", local], { validExitCodes: [1] })).exitCode === 0) ref = local;
+      else {
+        const result = await this.git(["for-each-ref", "--count=2", "--format=%(refname)", `refs/remotes/*/${expression}`]);
+        const refs = result.stdout.split("\n").map(name => name.trim()).filter(Boolean);
+        if (refs.length > 1) throw new WorkspaceError("BRANCH_AMBIGUOUS", `Branch '${expression}' exists on multiple remotes.`);
+        ref = refs[0];
+      }
+      if (ref) {
+        // rev-parse applies DWIM even to a full ref name. Read the exact ref's
+        // object first so a vanished branch cannot become a shadow tag.
+        const result = await this.git(["for-each-ref", "--format=%(refname)%00%(objectname)", "--", ref]);
+        const records = result.stdout.split("\n").filter(Boolean).map(line => line.split("\0")).filter(fields => fields[0] === ref);
+        if (!records.length) throw new WorkspaceError("BRANCH_CHANGED", "The selected branch is no longer locally resolvable. Refresh before continuing.");
+        const object = records[0]?.[1];
+        if (records.length !== 1 || records[0]?.length !== 2 || !object || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(object))
+          throw new WorkspaceError("GIT_FAILED", "Git returned an invalid exact branch object identity.");
+        const revision = await this.resolveRevision(object);
+        if (!revision) throw new WorkspaceError("BRANCH_CHANGED", "The selected branch is no longer locally resolvable. Refresh before continuing.");
+        const selection = parseGitBranchSelection({ ref, commit: revision.commit, ...(ref === local ? {} : { localBranch: expression }) });
+        return { kind: "branch", expression, selection };
+      }
+    }
+    const revision = await this.resolveRevision(expression);
+    return revision ? { kind: "revision", ...revision } : null;
+  }
+
+  /** Explicit detached checkout of a previously resolved commit. Branch selection
+   * continues through checkoutRef so branch tracking and identity stay intact. */
+  async checkoutRevision(input: GitResolvedRevision, expectedRevision: string, beforeDispatch?: () => void): Promise<GitStatus> {
+    const revision = parseGitResolvedRevision(input);
+    return serialized(`git:${this.cwd}`, async () => {
+      await this.requireGitRoot();
+      const before = await this.checkIndexRevision(expectedRevision);
+      const current = await this.resolveRevision(revision.expression);
+      if (!current) throw new WorkspaceError("REVISION_NOT_FOUND", "The selected revision no longer resolves to a local commit.");
+      if (current.commit !== revision.commit) throw new WorkspaceError("REVISION_CHANGED", "The selected revision changed. Resolve it again before switching.");
+      const confirms = (status: GitStatus) => status.branch === null && status.head === revision.commit;
+      const admitted = await this.readGitStatus();
+      if (admitted.revision !== before.revision) throw new WorkspaceError("GIT_REVISION_CONFLICT", "Git HEAD or index changed while resolving the checkout target. Refresh before switching.");
+      beforeDispatch?.();
+      if (confirms(admitted)) return admitted;
+      try {
+        // Dispatch the reviewed immutable object ID, not the mutable expression.
+        await this.git(["--no-lazy-fetch", "switch", "--detach", "--no-guess", "--no-overwrite-ignore", revision.commit]);
+      } catch (cause) {
+        const observed = await this.readGitStatus().catch(() => undefined);
+        if (observed && confirms(observed)) return observed;
+        if (!observed || observed.revision !== before.revision)
+          throw new WorkspaceError("OUTCOME_UNKNOWN", "The revision checkout did not return a reliable receipt. Inspect the repository before retrying.");
+        throwCheckoutFailure(cause);
+      }
+      try {
+        const result = await this.readGitStatus();
+        if (confirms(result)) return result;
+      } catch { /* Successful dispatch without verifiable state remains unknown. */ }
+      throw new WorkspaceError("OUTCOME_UNKNOWN", "The revision checkout completed, but its resulting state could not be verified. Inspect the repository before retrying.");
+    });
+  }
+
+  async checkout(branch: string, expectedRevision: string, create = false, beforeDispatch?: () => void): Promise<GitStatus> {
+    return this.switchBranch(branch, expectedRevision, create, beforeDispatch);
+  }
+
+  async checkoutRef(input: GitBranchSelection, expectedRevision: string, beforeDispatch?: () => void): Promise<GitStatus> {
+    const selection = parseGitBranchSelection(input);
+    return this.switchBranch(selection.localBranch ?? selection.ref.slice("refs/heads/".length), expectedRevision, selection.localBranch !== undefined, beforeDispatch, selection);
+  }
+
+  private async switchBranch(branch: string, expectedRevision: string, create: boolean, beforeDispatch?: () => void, selection?: GitBranchSelection): Promise<GitStatus> {
     if (typeof branch !== "string" || !branch || branch.length > 200 || branch.startsWith("-") || branch.includes("\0")) {
       throw new WorkspaceError("INVALID_BRANCH", "A valid local branch name is required.");
     }
@@ -464,9 +1278,19 @@ export class WorkspaceService {
       await this.requireGitRoot();
       const before = await this.checkIndexRevision(expectedRevision);
       await this.requireLiteralBranch(branch);
+      // Keep full ref identity until admission. Never let Git guess a remote or
+      // reinterpret a same-named local branch as the selected remote branch.
+      if (selection) {
+        const candidates = await this.branches();
+        const candidate = candidates.find(item => item.ref === selection.ref);
+        if (!candidate) throw new WorkspaceError("BRANCH_NOT_FOUND", "The selected branch no longer exists. Refresh the branch list.");
+        if (candidate.symbolicTarget) throw new WorkspaceError("SYMBOLIC_BRANCH", "Symbolic branch references cannot be checked out.");
+        if (candidate.commit !== selection.commit) throw new WorkspaceError("BRANCH_CHANGED", "The selected branch changed. Refresh the branch list before switching.");
+      }
+      const targetHead = selection?.commit ?? (create ? before.head : undefined);
       const ref = `refs/heads/${branch}`;
       if (create) {
-        if (before.head === null) throw new WorkspaceError("UNBORN_BRANCH", "Create the repository's first commit before creating another branch.");
+        if (targetHead === null) throw new WorkspaceError("UNBORN_BRANCH", "Create the repository's first commit before creating another branch.");
         if ((await this.git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1] })).exitCode === 0) {
           throw new WorkspaceError("BRANCH_EXISTS", "A local branch with this name already exists.");
         }
@@ -478,23 +1302,39 @@ export class WorkspaceService {
           throw new WorkspaceError("SYMBOLIC_BRANCH", "Symbolic branch references cannot be checked out.");
         }
         const current = await this.readGitStatus();
-        if (current.branch === branch) return current;
+        if (current.branch === branch && (!selection || current.head === selection.commit)) { beforeDispatch?.(); return current; }
       }
+      const trackingConfig = selection?.localBranch === undefined ? undefined : (await this.git(["config", "--local", "--null", "--list"])).stdout;
+      const confirmsSelection = async (status: GitStatus): Promise<boolean> => {
+        if (status.branch !== branch || (targetHead !== undefined && status.head !== targetHead)) return false;
+        return selection?.localBranch === undefined || (await this.git(["for-each-ref", "--format=%(upstream)", ref])).stdout.trim() === selection.ref;
+      };
+      beforeDispatch?.();
       try {
-        await this.git(create
-          ? ["switch", "--no-guess", "--no-overwrite-ignore", "--create", branch, before.head!]
+        await this.git(selection?.localBranch !== undefined
+          ? ["switch", "--no-guess", "--no-overwrite-ignore", "--create", branch, "--track=direct", selection.ref]
+          : create ? ["switch", "--no-guess", "--no-overwrite-ignore", "--create", branch, before.head!]
           : ["switch", "--no-guess", "--no-overwrite-ignore", "--", branch]);
       } catch (error) {
         const observed = await this.readGitStatus().catch(() => undefined);
-        if (observed?.branch === branch && (!create || observed.head === before.head)) return observed;
+        if (observed && await confirmsSelection(observed).catch(() => false)) return observed;
+        if (create) {
+          // A failed post-checkout hook can return HEAD to the source while
+          // leaving the new branch/tracking config behind. Status alone cannot
+          // establish a confirmed refusal in that case.
+          const unchanged = await (async () =>
+            (await this.git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1] })).exitCode === 1
+            && (trackingConfig === undefined || (await this.git(["config", "--local", "--null", "--list"])).stdout === trackingConfig))().catch(() => false);
+          if (!unchanged) throw new WorkspaceError("OUTCOME_UNKNOWN", "The branch checkout left an unconfirmed branch or tracking configuration. Inspect the repository before retrying.");
+        }
         if (!observed || observed.revision !== before.revision) {
           throw new WorkspaceError("OUTCOME_UNKNOWN", "The branch switch did not return a reliable receipt. Inspect the repository before retrying.");
         }
-        throw error;
+        throwCheckoutFailure(error);
       }
       try {
         const result = await this.readGitStatus();
-        if (result.branch !== branch || (create && result.head !== before.head)) throw new Error("Unexpected checked-out branch state");
+        if (!await confirmsSelection(result)) throw new Error("Unexpected checked-out branch state");
         return result;
       }
       catch { throw new WorkspaceError("OUTCOME_UNKNOWN", "The branch switched, but its resulting status could not be verified. Inspect the repository before retrying."); }
@@ -662,27 +1502,63 @@ export class WorkspaceService {
 
   /** Creates a detached session worktree from either a clean branch or an explicit snapshot of the source files and index. */
   async createSessionWorktree(path: string, startingState: WorktreeStartingState): Promise<GitWorktree> {
+    if (startingState && Object.hasOwn(startingState, "remoteRef")) throw new WorkspaceError("REMOTE_WORKTREE_PROTOCOL_REQUIRED", "Remote starting refs require admitted resolution before worktree creation.");
+    return this.createSessionWorktreeOwned(path, startingState);
+  }
+
+  /** The owning host binds this operation to a persisted worktree-creating record. */
+  async createPreparedSessionWorktree(path: string, startingState: WorktreeStartingState, admission: { destination: string; assertCurrent(): void; signal?: AbortSignal }): Promise<GitWorktree> {
+    return this.createSessionWorktreeOwned(path, parseWorktreeStartingState(startingState), admission);
+  }
+
+  private async createSessionWorktreeOwned(path: string, startingState: WorktreeStartingState, admission?: { destination: string; assertCurrent(): void; signal?: AbortSignal }): Promise<GitWorktree> {
+    let parentIdentity: { path: string; dev: number; ino: number } | undefined;
+    const assertCurrent = () => {
+      if (!admission) return;
+      admission.signal?.throwIfAborted();
+      admission.assertCurrent();
+      const info = statSync(this.cwd);
+      if (!info.isDirectory() || info.dev !== this.cwdIdentity.dev || info.ino !== this.cwdIdentity.ino || realpathSync(this.cwd) !== this.cwd)
+        throw new WorkspaceError("WORKSPACE_CHANGED", "The admitted source directory changed identity.");
+      if (parentIdentity) {
+        const parent = statSync(parentIdentity.path);
+        if (!parent.isDirectory() || parent.dev !== parentIdentity.dev || parent.ino !== parentIdentity.ino
+          || realpathSync(parentIdentity.path) !== parentIdentity.path || realpathSync(this.worktreeRoot!) !== parentIdentity.path)
+          throw new WorkspaceError("PREPARATION_CHANGED", "The admitted destination directory changed identity.");
+      }
+    };
+    const git = (args: string[], options: Parameters<WorkspaceService["git"]>[1] = {}) => this.git(args, { ...options, signal: admission?.signal, assertCurrent });
     return serialized(`git:${this.cwd}`, async () => {
+      assertCurrent();
       await this.requireGitRoot();
       relativePath(path);
       if (!startingState || typeof startingState !== "object" || (startingState.type !== "branch" && startingState.type !== "working-tree")) {
         throw new WorkspaceError("INVALID_STARTING_STATE", "Choose a branch or the current working tree as the worktree starting state.");
       }
+      assertCurrent();
       const root = await this.managedRoot(true);
       const target = await this.parentOwned(path, root);
+      if (admission) {
+        if (target !== admission.destination) throw new WorkspaceError("PREPARATION_CHANGED", "Creation must use the recorded destination.");
+        const parent = statSync(dirname(target));
+        parentIdentity = { path: dirname(target), dev: parent.dev, ino: parent.ino };
+      }
       if (target === root || target === this.cwd) throw new WorkspaceError("INVALID_WORKTREE_PATH", "Choose a new directory below the managed worktree root.");
       try { await lstat(target); throw new WorkspaceError("WORKTREE_EXISTS", "The worktree destination already exists."); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 
+      assertCurrent();
       let commit: string, indexTree: string | undefined, workingTree: string | undefined;
-      if (startingState.type === "branch") {
+      if (startingState.type === "branch" && admission) {
+        commit = await this.resolveWorktreeStartingCommit(startingState, admission.signal, assertCurrent);
+      } else if (startingState.type === "branch") {
         const branch = startingState.branchName;
         if (typeof branch !== "string" || !branch || branch.length > 200 || branch.startsWith("-") || branch.includes("\0")) throw new WorkspaceError("INVALID_BRANCH", "A valid local branch name is required.");
         await this.requireLiteralBranch(branch);
         const ref = `refs/heads/${branch}`;
-        if ((await this.git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1] })).exitCode !== 0) throw new WorkspaceError("BRANCH_NOT_FOUND", "The selected local branch no longer exists. Refresh the branch list.");
-        if ((await this.git(["symbolic-ref", "--quiet", ref], { validExitCodes: [1] })).exitCode === 0) throw new WorkspaceError("SYMBOLIC_BRANCH", "Symbolic branch references cannot start a worktree.");
-        commit = (await this.git(["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`])).stdout.trim();
+        if ((await git(["show-ref", "--verify", "--quiet", ref], { validExitCodes: [1] })).exitCode !== 0) throw new WorkspaceError("BRANCH_NOT_FOUND", "The selected local branch no longer exists. Refresh the branch list.");
+        if ((await git(["symbolic-ref", "--quiet", ref], { validExitCodes: [1] })).exitCode === 0) throw new WorkspaceError("SYMBOLIC_BRANCH", "Symbolic branch references cannot start a worktree.");
+        commit = (await git(["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`])).stdout.trim();
       } else {
         const before = await this.indexState();
         if (before.head === null) throw new WorkspaceError("UNBORN_BRANCH", "Create the repository's first commit before starting a worktree.");
@@ -694,13 +1570,13 @@ export class WorkspaceService {
         const indexFile = join(temporary, "index");
         const env = { ...process.env, GIT_INDEX_FILE: indexFile };
         try {
-          const sourceIndex = (await this.git(["rev-parse", "--path-format=absolute", "--git-path", "index"])).stdout.trim();
+          const sourceIndex = (await git(["rev-parse", "--path-format=absolute", "--git-path", "index"])).stdout.trim();
           await copyFile(sourceIndex, indexFile);
-          indexTree = (await this.git(["write-tree"], { env })).stdout.trim();
+          indexTree = (await git(["write-tree"], { env })).stdout.trim();
           const capture = async () => {
-            await this.git(["read-tree", indexTree!], { env });
-            await this.git(["add", "-A", "--", "."], { env });
-            return (await this.git(["write-tree"], { env })).stdout.trim();
+            await git(["read-tree", indexTree!], { env });
+            await git(["add", "-A", "--", "."], { env });
+            return (await git(["write-tree"], { env })).stdout.trim();
           };
           workingTree = await capture();
           if ((await this.indexState()).revision !== before.revision) throw new WorkspaceError("GIT_CHANGED", "The Git index or HEAD changed while the working tree was captured. Retry from a fresh review.");
@@ -711,23 +1587,24 @@ export class WorkspaceService {
       try {
         // Once dispatched, a timeout or missing directory cannot prove that Git
         // made no changes. Preserve the target and the command identity on error.
-        await this.git(["worktree", "add", "--detach", "--", target, commit]);
+        await git(["worktree", "add", "--detach", "--", target, commit]);
         if (indexTree && workingTree) {
-          await this.git(["read-tree", "--reset", "-u", workingTree], { cwd: target });
-          await this.git(["read-tree", "--reset", indexTree], { cwd: target });
+          await git(["read-tree", "--reset", "-u", workingTree], { cwd: target });
+          await git(["read-tree", "--reset", indexTree], { cwd: target });
         }
         const created = (await this.worktrees()).find(tree => tree.path === target);
         if (!created || !created.managed || !created.detached || created.head !== commit) throw new Error("The created worktree did not match its resolved starting commit.");
-        if (indexTree && (await this.git(["write-tree"], { cwd: target })).stdout.trim() !== indexTree) throw new Error("The created worktree did not retain the captured index.");
+        if (indexTree && (await git(["write-tree"], { cwd: target })).stdout.trim() !== indexTree) throw new Error("The created worktree did not retain the captured index.");
         if (workingTree) {
           const temporary = await mkdtemp(join(tmpdir(), "agent-desktop-worktree-verify-"));
           const env = { ...process.env, GIT_INDEX_FILE: join(temporary, "index") };
           try {
-            await this.git(["read-tree", indexTree!], { cwd: target, env });
-            await this.git(["add", "-A", "--", "."], { cwd: target, env });
-            if ((await this.git(["write-tree"], { cwd: target, env })).stdout.trim() !== workingTree) throw new Error("The created worktree did not retain the captured files.");
+            await git(["read-tree", indexTree!], { cwd: target, env });
+            await git(["add", "-A", "--", "."], { cwd: target, env });
+            if ((await git(["write-tree"], { cwd: target, env })).stdout.trim() !== workingTree) throw new Error("The created worktree did not retain the captured files.");
           } finally { await rm(temporary, { recursive: true, force: true }); }
-        } else if ((await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: target })).stdout) throw new Error("The branch worktree was not created cleanly.");
+        } else if ((await git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: target })).stdout) throw new Error("The branch worktree was not created cleanly.");
+        assertCurrent();
         return created;
       } catch (error) {
         throw new WorkspaceError("OUTCOME_UNKNOWN", `The session worktree may have been created at ${target}. Inspect it before retrying. ${error instanceof Error ? error.message : String(error)}`);
@@ -895,6 +1772,25 @@ async function readFileBytes(path: string): Promise<Uint8Array> {
     if (!metadata.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "The Git index must be a regular file.");
     return new Uint8Array(await file.readFile());
   } finally { await file.close(); }
+}
+
+async function readOptionalFileBytes(path: string): Promise<Uint8Array | null> {
+  try { return await readFileBytes(path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function sameOptionalBytes(left: Uint8Array | null, right: Uint8Array | null): boolean {
+  return left === null || right === null ? left === right : Buffer.from(left).equals(Buffer.from(right));
+}
+
+function gitRelativePath(path: string): string {
+  if (!path || path.includes("\0") || isAbsolute(path) || path.split("/").includes("..")) {
+    throw new WorkspaceError("OUTSIDE_WORKSPACE", "Git selected an invalid repository-relative path.");
+  }
+  return path;
 }
 
 function sameWorktreeRegistration(

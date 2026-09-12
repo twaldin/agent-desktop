@@ -147,9 +147,9 @@ for (const selectNested of [false, true]) test(`nested workspace inherits root s
 
 test("a lost receipt after real Git creation records uncertainty immediately and never replays", async () => {
   const f = await fixture("touch setup-must-not-run", "");
-  const create = f.workspaces.createSessionWorktree.bind(f.workspaces);
+  const create = f.workspaces.createPreparedSessionWorktree.bind(f.workspaces);
   let dispatches = 0;
-  f.workspaces.createSessionWorktree = async (...args) => {
+  f.workspaces.createPreparedSessionWorktree = async (...args) => {
     dispatches++;
     await create(...args);
     throw new Error("Injected receipt loss after real Git creation");

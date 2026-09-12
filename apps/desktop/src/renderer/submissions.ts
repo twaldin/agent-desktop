@@ -1,4 +1,4 @@
-import { sameNewChatExecution } from "../../../../packages/shared/src/new-chat";
+import { hasRemoteExecution, sameNewChatExecution } from "../../../../packages/shared/src/new-chat";
 import { sameEnvironmentSelection } from "../../../../packages/shared/src/environment-selection";
 import type { CommandEnvelope, CommandResult, Draft } from "../../../../packages/shared/src/protocol";
 import type { LocalEnvironmentPreparationPublic } from "../../../../packages/shared/src/environment-preparations";
@@ -24,7 +24,7 @@ export class EnvironmentPreparationPause extends Error {
     this.name = "EnvironmentPreparationPause";
   }
 }
-const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | 8 | 9 | undefined => hasRepeatedWholeFileSources(draft.wholeFileAttachments ?? []) ? 9 : draft.wholeFileAttachments?.some(file=>file.textOffset!==undefined) ? 8 : draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
+const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | 8 | 9 | 12 | undefined => hasRemoteExecution(draft.execution) ? 12 : hasRepeatedWholeFileSources(draft.wholeFileAttachments ?? []) ? 9 : draft.wholeFileAttachments?.some(file=>file.textOffset!==undefined) ? 8 : draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
 const sameDraftReference = (value: { id: string; revision: number } | undefined, draft: Draft, required: boolean) => required
   ? value?.id === draft.id && value.revision === draft.revision
   : value === undefined;
@@ -63,7 +63,7 @@ export class SubmissionController {
             item.preparation = this.validatePreparation(item, item.preparation);
           }
           if (item.resume) {
-            if (!item.preparation || !this.validResumeEnvelope(item.resume, item.preparation)) throw new Error("Pending environment resume differs from its captured preparation.");
+            if (!item.preparation || !this.validResumeEnvelope(item.resume, item.preparation, captured)) throw new Error("Pending environment resume differs from its captured preparation.");
           }
           if (item.send && (item.send.command.type === "session.prompt" || item.send.command.type === "session.steer")) {
             const command = item.send.command;
@@ -246,7 +246,7 @@ export class SubmissionController {
       throw new EnvironmentPreparationPause(item.preparation);
     }
     if (!item.resume) {
-      item.resume = { id: crypto.randomUUID(), commandVersion: 5, command: {
+      item.resume = { id: crypto.randomUUID(), commandVersion: hasRemoteExecution(item.draft.execution) ? 12 : 5, command: {
         type: "session.environment.resume",
         preparationId: item.preparation.id,
         expectedRevision: item.preparation.revision,
@@ -322,9 +322,9 @@ export class SubmissionController {
       && typeof value.outputTruncated === "boolean";
   }
 
-  private validResumeEnvelope(envelope: CommandEnvelope, preparation: LocalEnvironmentPreparationPublic): boolean {
+  private validResumeEnvelope(envelope: CommandEnvelope, preparation: LocalEnvironmentPreparationPublic, draft: Draft): boolean {
     if (envelope.command.type !== "session.environment.resume") return false;
-    return envelope.commandVersion === 5 && typeof envelope.id === "string" && !!envelope.id
+    return envelope.commandVersion === (hasRemoteExecution(draft.execution) ? 12 : 5) && typeof envelope.id === "string" && !!envelope.id
       && Object.keys(envelope).sort().join(",") === "command,commandVersion,id"
       && Object.keys(envelope.command).sort().join(",") === "expectedRevision,preparationId,type"
       && envelope.command.preparationId === preparation.id

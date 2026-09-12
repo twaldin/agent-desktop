@@ -1,0 +1,16 @@
+.workspace-file-search { position:fixed; --command-list-limit:min(440px,max(120px,calc(90dvh - 64px))); top:max(16px,calc((100dvh - var(--command-list-limit) - 64px) / 2)); left:50%; transform:translateX(-50%); bottom:auto; width:min(520px,92vw); max-width:none; max-height:calc(100dvh - 32px); margin:0; z-index:150; padding:4px; overflow:hidden; color:var(--text); background:var(--menu-surface,var(--elevated-surface)); border:1px solid var(--border); border-radius:var(--file-search-radius,16px); corner-shape:superellipse(var(--corner-exponent,1.25)); font-size:var(--font-size,14px); line-height:1.428571; box-shadow:0 16px 32px -8px #00000030; }
+.workspace-file-search-overlay { position:fixed; inset:0; z-index:149; background:#00000022; }
+.workspace-file-search-input { display:block; width:100%; padding:6px 10px; border:0; outline:none; background:transparent; color:var(--text); font:inherit; }
+.workspace-file-search-input::placeholder { color:var(--secondary); }
+.workspace-file-search-results { max-height:var(--command-list-limit); overflow:auto; scrollbar-width:none; overscroll-behavior:contain; scroll-padding-block-start:32px; }
+.workspace-file-search [cmdk-group-heading] { padding:8px 8px 0; color:var(--secondary); font-size:13px; }
+.workspace-file-search-results p { margin:0; padding:5px 8px; min-height:24px; color:var(--text); opacity:.6; overflow-wrap:anywhere; }
+.workspace-file-search-result { display:flex; align-items:center; gap:8px; min-height:24px; padding:5px 8px; opacity:.75; border-radius:var(--file-search-item-radius,8px); cursor:default; }
+.workspace-file-search-result[aria-selected="true"] { background:var(--hover); opacity:1; }
+.workspace-file-search-result>[data-file-icon] { width:16px; height:16px; flex:none; }
+.workspace-file-search-name { flex:none; max-width:65%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-file-search-directory { min-width:0; color:var(--secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-file-search-error>button { padding:4px 8px; margin:0 8px 4px; border-radius:var(--radius-small,6px); background:var(--hover); opacity:1; }
+
+.workspace-file-search [cmdk-root], .workspace-file-search [cmdk-group] { display:flex; flex-direction:column; gap:4px; }
+.workspace-file-search .workspace-file-search-input:focus-visible { outline:none; }

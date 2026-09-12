@@ -1,12 +1,13 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Icon } from "./Icons";
+import { GitSubmissionButton } from "./GitSubmissionDialog";
 import { ReviewDiff, ReviewDiffs } from "./ReviewDiff";
 import { DEFAULT_REVIEW_OPTIONS, parseReviewPatch, readReviewOptions, reviewEntries, reviewMutationPaths, type ReviewOptions, type ReviewPatch } from "./review-model";
 import type { WorkspaceState } from "./workspace-state";
 import "./review-panel.css";
 
 const OPTIONS_KEY = "agent-desktop:review-options:v1";
-export function ReviewPanel({ data, disabled, onEdit, commitRequest }: { data: WorkspaceState; disabled: boolean; onEdit(path: string): void; commitRequest?: string }) {
+export function ReviewPanel({ data, disabled, onEdit, commitRequest, onCommit }: { data: WorkspaceState; disabled: boolean; onEdit(path: string): void; commitRequest?: string; onCommit?(): void }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [options, setOptions] = useState<ReviewOptions>({ ...DEFAULT_REVIEW_OPTIONS });
   const [preferenceError, setPreferenceError] = useState<string>();
@@ -66,7 +67,7 @@ export function ReviewPanel({ data, disabled, onEdit, commitRequest }: { data: W
             <button disabled={!patch?.files.length} onClick={() => { setCollapsed(allCollapsed ? new Set() : new Set(patch!.files.map(file => file.metadata.name))); optionsMenu.current?.removeAttribute("open"); }}>{allCollapsed ? "Expand all diffs" : "Collapse all diffs"}</button>
           </div>
         </details>
-        <button ref={commitTrigger} className="review-commit-trigger" disabled={disabled || !stagedEntries.length || !data.status || data.status.entries.some(entry => entry.kind === "conflict")} onClick={() => { if (data.status) setCommit({ revision: data.status.revision, paths: stagedEntries.map(entry => entry.path) }); }} title="Commit staged changes">Commit<Icon name="chevron"/></button>
+        {onCommit ? <GitSubmissionButton data={data} className="review-commit-trigger" onOpen={onCommit}/> : <button ref={commitTrigger} className="review-commit-trigger" disabled={disabled || !stagedEntries.length || !data.status || data.status.entries.some(entry => entry.kind === "conflict")} onClick={() => { if (data.status) setCommit({ revision: data.status.revision, paths: stagedEntries.map(entry => entry.path) }); }} title="Commit staged changes">Commit<Icon name="chevron"/></button>}
       </div>
     </div>
     <div className="review-navigation">

@@ -1,10 +1,17 @@
+import { BranchQueryObserver } from "./branch-query-observer";
+import type { LiveBranchQuery, BranchQueryObserverView } from "@agent-desktop/shared";
+import { branchQueryTypes, repositoryChangeAffects, type BranchQueryType } from "@agent-desktop/shared";
+import { RepositoryWatchRetention } from "./repository-watch-retention";
+import type { RepositoryWatchView } from "@agent-desktop/shared";
 import type { CommandEnvelope, DesktopBridge, LocalEnvironmentActionsState } from "../../../../packages/shared/src/protocol";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "../../../../packages/shared/src/workspace-protocol";
 import { parseStandaloneFilePath } from "../../../../packages/shared/src/workspace";
-import type { FileContent, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "../../../../packages/shared/src/workspace";
+import type { FileContent, GitActionContext, GitBranch, GitDiff, GitStatus, GitWorktree, WorkspaceEntry } from "../../../../packages/shared/src/workspace";
+import type { GitSubmissionIntent, GitSubmissionReceipt } from "../../../../packages/shared/src/git-submissions";
+import { isGitCheckoutAction, readGitCheckoutRefusal, type GitCheckoutRefusal } from "../../../../packages/shared/src/checkout-refusal";
 import type { OfflineCache } from "./offline-cache";
 
-type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe" | "saveWorkspaceCopy" | "acquireWorkspaceImage" | "releaseWorkspaceImage">;
+type WorkspaceBridge = Pick<DesktopBridge, "workspaceQuery" | "command" | "subscribe" | "saveWorkspaceCopy" | "acquireWorkspaceImage" | "releaseWorkspaceImage" | "repositoryWatch" | "subscribeRepositoryWatch" | "branchQuery" | "subscribeBranchQuery">;
 export const WORKSPACE_AUTOSAVE_DELAY_MS = 3_000;
 export interface EditorDocument { discardedSaveId?: string; autosave?: boolean; saveError?: string; content: FileContent | null; text: string; dirty: boolean; conflict?: FileContent | null; recoveredText?: string }
 export interface PendingWorkspaceMutation { envelope: CommandEnvelope & { command: { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation } }; uncertain: boolean }
@@ -25,14 +32,31 @@ export class WorkspaceState {
   loading = new Set<string>();
   connected = false;
   imageGeneration = 0;
+  /** Observed owner invalidations, independent of the HEAD/index mutation revision. */
+  repositoryInvalidation = 0;
+  private repositoryQueryVersions = new Map<BranchQueryType, number>();
+  repositoryQueryRevision(query: BranchQueryType): number { return this.repositoryQueryVersions.get(query) ?? 0; }
+  private invalidateRepository(kind?: unknown) {
+    // Admission owners still observe every repository change. Query data only
+    // refreshes for its own dependency family; unknown/legacy events affect all.
+    this.repositoryInvalidation++;
+    for (const query of branchQueryTypes) if (repositoryChangeAffects(query, kind))
+      this.repositoryQueryVersions.set(query, this.repositoryQueryRevision(query) + 1);
+  }
   restored = false;
   pending?: PendingWorkspaceMutation;
   busy = false;
   notice?: string;
   environmentActions?: LocalEnvironmentActionsState;
   mutationReceipt?: { commandId: string; value: WorkspaceMutationResult };
+  checkoutRefusal?: GitCheckoutRefusal;
   cacheWarning?: string;
   commitMessage = "";
+  includeUnstaged = true;
+  gitActionContext?: GitActionContext;
+  gitSubmission?: GitSubmissionReceipt;
+  private repositoryWatch?: RepositoryWatchRetention;
+  private watchView?: RepositoryWatchView;
   private listeners = new Set<() => void>();
   private documentEpochs = new Map<string, number>();
   private inFlight = new Map<string, Promise<void>>();
@@ -44,15 +68,50 @@ export class WorkspaceState {
   private autosaveTimer?: ReturnType<typeof setTimeout>;
   private autosaveRunning = false;
   private autosaveDue = new Map<string, number>();
+  private submissionRead = 0;
+  private submissionControlBusy = false;
+  private gitSubmissionObserved = false;
   readonly cacheKey: string;
   constructor(private bridge: WorkspaceBridge, readonly hostId: string, readonly target: WorkspaceTarget, private cache: OfflineCache, private localHostId?: string) {
     if ("filePath" in target) parseStandaloneFilePath(target.filePath);
     this.cacheKey = `agent-desktop:workspace:v1:${hostId}:${workspaceKey(target)}`;
   }
+  get repositoryWatchView(): RepositoryWatchView | undefined { return this.watchView && { ...this.watchView }; }
+  get repositoryWatchWarning(): string | undefined {
+    const view = this.watchView;
+    if (!view || view.phase === "connecting" || view.phase === "pending" || view.phase === "released") return;
+    if (view.phase === "ready") return view.error ? `Live updates may be incomplete. ${view.error}` : undefined;
+    return `Live updates are unavailable. ${view.error ?? "Reconnect to restore repository watching."}`;
+  }
+  createBranchQueryObserver(query: LiveBranchQuery, listener: (view: BranchQueryObserverView) => void): BranchQueryObserver {
+    if ("filePath" in this.target) throw new Error("Standalone files do not have a branch query owner.");
+    return new BranchQueryObserver(this.bridge, this.hostId, this.target, query, listener);
+  }
+  retainRepositoryWatch(): () => void {
+    if ("filePath" in this.target) {
+      this.observeWatch({ phase: "unsupported", error: "A standalone file does not own a repository watch." });
+      return () => {};
+    }
+    this.repositoryWatch ??= new RepositoryWatchRetention(this.bridge, this.hostId, this.target);
+    return this.repositoryWatch.retain(view => this.observeWatch(view));
+  }
+  private observeWatch(view: RepositoryWatchView) {
+    const prior = this.watchView;
+    if (prior?.phase === view.phase && prior.error === view.error) return;
+    this.watchView = { ...view };
+    // A first post-watch read closes the gap after an ordinary initial read.
+    // Loss/failure invalidates live eligibility, without forbidding one-shot reads.
+    // Internal retirement precedes failure; released itself must not refresh twice.
+    if (view.phase !== "released" && (view.phase === "ready" || prior?.phase === "ready" || view.phase === "failed"
+      || view.phase === "unsupported" || view.phase === "disconnected")) this.invalidateRepository();
+    this.changed();
+  }
   get standalonePath() { return "filePath" in this.target ? this.target.filePath : undefined; }
   get standaloneName() { return this.standalonePath?.split("/").at(-1); }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   get canSaveCopy() { return Boolean(this.bridge.saveWorkspaceCopy); }
+  get gitSubmissionBlocked() { return this.hasGitSubmissionFence(); }
+  get gitSubmissionControlInFlight() { return this.submissionControlBusy; }
   saveCopy(path: string) {
     if (!this.connected) return Promise.reject(new Error("Reconnect to copy the file from its owning host."));
     if (!this.bridge.saveWorkspaceCopy) return Promise.reject(new Error("Save as is unavailable in this desktop build."));
@@ -71,7 +130,10 @@ export class WorkspaceState {
     this.started = true; this.scheduleAutosave();
     this.unsubscribe ??= this.bridge.subscribe(event => {
       if ((event.hostId ?? this.localHostId) !== this.hostId) return;
-      if (event.type === "workspace" && workspaceKey(event.target) === workspaceKey(this.target)) void this.refresh();
+      if (event.type === "workspace" && workspaceKey(event.target) === workspaceKey(this.target)) {
+        this.invalidateRepository(event.repositoryChange); this.changed();
+        void this.refresh();
+      }
     });
   }
   stop() { this.started = false; clearTimeout(this.autosaveTimer); this.unsubscribe?.(); this.unsubscribe = undefined; }
@@ -96,6 +158,8 @@ export class WorkspaceState {
           for (const [path, entries] of saved.directories ?? []) if (!this.directories.has(path)) this.directories.set(path, entries);
           this.pending ??= saved.pending ? { ...saved.pending, uncertain: true } : undefined;
           this.commitMessage ||= saved.commitMessage ?? "";
+          if (typeof saved.includeUnstaged === "boolean") this.includeUnstaged = saved.includeUnstaged;
+          if (isReceiptFor(saved.gitSubmission, this.hostId, this.target)) this.gitSubmission = saved.gitSubmission;
           this.opened ??= saved.opened;
           this.status ??= saved.status;
         }
@@ -106,7 +170,7 @@ export class WorkspaceState {
   }
   private persist(): Promise<void> {
     if (!this.restored) return Promise.reject(new Error(this.cacheWarning ?? "Editor recovery is still loading."));
-    const snapshot = JSON.stringify({ version: 1, documents: [...this.documents], directories: [...this.directories], pending: this.pending, commitMessage: this.commitMessage, opened: this.opened, status: this.status });
+    const snapshot = JSON.stringify({ version: 1, documents: [...this.documents], directories: [...this.directories], pending: this.pending, commitMessage: this.commitMessage, includeUnstaged: this.includeUnstaged, gitSubmission: this.gitSubmission, opened: this.opened, status: this.status });
     const write = this.writes.catch(() => {}).then(() => this.cache.write(this.cacheKey, snapshot));
     this.writes = write;
     return write.then(() => { this.cacheWarning = undefined; this.changed(); }, cause => { this.cacheWarning = `Editor recovery could not be saved on this device. ${message(cause)}`; this.changed(); throw cause; });
@@ -130,6 +194,8 @@ export class WorkspaceState {
     await this.restore();
     if(this.standaloneName) { await this.read(this.standaloneName); return; }
     const reads = [this.list(this.directory), this.loadGit()];
+    if (this.gitActionContext !== undefined) reads.push(this.loadGitActionContext());
+    if (this.gitSubmissionObserved || this.gitSubmission || isGitSubmit(this.pending?.envelope.command.action)) reads.push(this.loadGitSubmission());
     if (this.environmentActions !== undefined) reads.push(this.loadEnvironmentActions());
     if (this.opened) reads.push(this.read(this.opened));
     await Promise.allSettled(reads);
@@ -190,6 +256,65 @@ export class WorkspaceState {
       if (this.diffRequested) await this.loadDiff();
     });
   }
+  loadGitActionContext() {
+    return this.load("git-action-context", async () => {
+      const result = await this.query({ type: "git.action-context" });
+      if (result.type !== "git.action-context") throw new Error("The host returned the wrong Git action context response.");
+      this.gitActionContext = result.context;
+    });
+  }
+  loadGitSubmission() {
+    if (this.standaloneName) return Promise.resolve();
+    this.gitSubmissionObserved = true;
+    ++this.submissionRead;
+    return this.load("git-submission", async () => {
+      const read = this.submissionRead;
+      const expected = isGitSubmit(this.pending?.envelope.command.action) ? this.pending!.envelope.id : undefined;
+      const result = await this.query({ type: "git.submission", ...(expected ? { commandId: expected } : {}) });
+      if (result.type !== "git.submission") throw new Error("The host returned the wrong Git submission response.");
+      if (read !== this.submissionRead || !result.receipt) return;
+      if (!isReceiptFor(result.receipt, this.hostId, this.target) || expected && result.receipt.commandId !== expected)
+        throw new Error("The host returned a Git submission for another workspace or command.");
+      if (!this.acceptGitSubmission(result.receipt)) return;
+      if (expected && isSettled(result.receipt.outcome)) this.settleGitSubmission(result.receipt);
+      this.saveSoon();
+    });
+  }
+  setIncludeUnstaged(includeUnstaged: boolean) { this.includeUnstaged = includeUnstaged; this.changed(); this.saveSoon(); }
+  async submitGit(intent: GitSubmissionIntent): Promise<boolean> {
+    if (this.standaloneName) return false;
+    return this.mutate({ type: "git.submit", intent }, 10);
+  }
+  async cancelGitSubmission(): Promise<boolean> {
+    const receipt = this.gitSubmission;
+    if (!receipt || !isReceiptFor(receipt, this.hostId, this.target) || isTerminal(receipt.outcome)) return false;
+    return this.sendGitSubmissionControl("git.submit.cancel", receipt.commandId);
+  }
+  async acknowledgeGitSubmission(): Promise<boolean> {
+    const receipt = this.gitSubmission;
+    if (!receipt || !isReceiptFor(receipt, this.hostId, this.target) || receipt.outcome !== "unknown") return false;
+    return this.sendGitSubmissionControl("git.submit.acknowledge", receipt.commandId);
+  }
+  private async sendGitSubmissionControl(type: "git.submit.cancel" | "git.submit.acknowledge", commandId: string): Promise<boolean> {
+    if (!this.connected || this.submissionControlBusy) return false;
+    const envelope: CommandEnvelope & { command: { type: "workspace.mutate"; target: WorkspaceTarget; action: Extract<WorkspaceMutation, { type: typeof type }> } } = {
+      id: crypto.randomUUID(), commandVersion: 10, command: { type: "workspace.mutate", target: this.target, action: { type, commandId } },
+    };
+    this.submissionControlBusy = true; this.errors.action = undefined; this.changed();
+    try {
+      const result = await this.bridge.command(envelope, this.hostId);
+      const value = result.ok ? result.value as WorkspaceMutationResult | undefined : undefined;
+      if (result.commandId !== envelope.id || !result.ok || value?.type !== type) throw new Error(result.ok ? "The host returned the wrong Git submission receipt." : result.error.message);
+      const receipt = value.receipt;
+      if (!isReceiptFor(receipt, this.hostId, this.target) || receipt.commandId !== commandId) throw new Error("The host returned a Git submission for another workspace or command.");
+      if (this.gitSubmission && this.gitSubmission.commandId !== commandId) return false;
+      if (!this.acceptGitSubmission(receipt)) return false;
+      if (type === "git.submit.acknowledge" && receipt.outcome === "unknown" && typeof receipt.acknowledgedAt === "number" && this.pending?.envelope.id === commandId) this.pending = undefined;
+      if (type === "git.submit.cancel" && isSettled(receipt.outcome) && this.pending?.envelope.id === commandId) this.settleGitSubmission(receipt);
+      await this.persist(); return true;
+    } catch (cause) { this.errors.action = message(cause); this.saveSoon(); return false; }
+    finally { this.submissionControlBusy = false; this.changed(); }
+  }
   loadWorktrees() {
     return this.load("worktrees", async () => {
       const results = await Promise.all([this.query({ type: "git.worktrees" }), this.query({ type: "git.branches" })]);
@@ -210,7 +335,7 @@ export class WorkspaceState {
   /** Only new UI edits opt in. Older manual buffers never become writes on upgrade. */
   private scheduleAutosave() {
     clearTimeout(this.autosaveTimer);
-    if (!this.started || !this.restored || !this.connected || this.cacheWarning || this.pending || this.busy || this.autosaveRunning) return;
+    if (!this.started || !this.restored || !this.connected || this.cacheWarning || this.pending || this.busy || this.hasGitSubmissionFence() || this.autosaveRunning) return;
     let selected: { path: string; due: number } | undefined;
     for (const [path, item] of this.documents) {
       if (!item.autosave || !item.dirty || item.saveError || item.conflict !== undefined || item.content && item.content.kind !== "text") continue;
@@ -244,11 +369,11 @@ export class WorkspaceState {
       signal?.throwIfAborted();
       const item = this.documents.get(path);
       if (!item?.dirty) return true;
-      if (!this.restored || !this.connected || this.pending || this.cacheWarning || item.conflict !== undefined || item.content && item.content.kind !== "text") return false;
+      if (!this.restored || !this.connected || this.pending || this.hasGitSubmissionFence() || this.cacheWarning || item.conflict !== undefined || item.content && item.content.kind !== "text") return false;
       signal?.throwIfAborted();
       await this.saveFile(path);
       signal?.throwIfAborted();
-      if (this.pending || this.documents.get(path)?.saveError || this.errors.action || this.cacheWarning) return false;
+      if (this.pending || this.hasGitSubmissionFence() || this.documents.get(path)?.saveError || this.errors.action || this.cacheWarning) return false;
     }
   }
   /** Normal window shutdown drains opted-in saves; offline/manual buffers stay recoverable. */
@@ -287,19 +412,32 @@ export class WorkspaceState {
   private fileSaveError(action: WorkspaceMutation, error: string) {
     if (action.type === "file.write") { const item = this.documents.get(action.path); if (item) item.saveError = error; }
   }
-  async mutate(action: WorkspaceMutation): Promise<boolean> {
+  async mutate(action: WorkspaceMutation, commandVersion?: CommandEnvelope["commandVersion"]): Promise<boolean> {
+    return (await this.mutateCommand(action, commandVersion)) !== undefined;
+  }
+  /** Returns the admitted original ID even when its response needs inspection.
+   * The guard is evaluated after restore, before taking ownership of a command.
+   * Already-admitted work is not cancelled by later navigation. */
+  async mutateCommand(action: WorkspaceMutation, commandVersion?: CommandEnvelope["commandVersion"], canAdmit: () => boolean = () => true): Promise<string | undefined> {
     await this.restore();
-    if (this.busy || this.pending) return false;
-    if (!this.restored) return false;
-    if (!this.connected) { this.errors.action = "Reconnect to change files or Git state on this host."; this.changed(); await this.persist().catch(() => {}); return false; }
-    this.pending = { envelope: { id: crypto.randomUUID(), command: { type: "workspace.mutate", target: this.target, action } }, uncertain: false };
+    if (!canAdmit() || this.busy || this.pending || this.hasGitSubmissionFence()) return;
+    if (!this.restored) return;
+    if (!this.connected) { this.errors.action = "Reconnect to change files or Git state on this host."; this.changed(); await this.persist().catch(() => {}); return; }
+    if (isGitSubmit(action)) ++this.submissionRead;
+    this.checkoutRefusal = undefined;
+    this.pending = { envelope: { id: crypto.randomUUID(), ...(commandVersion ? { commandVersion } : {}), command: { type: "workspace.mutate", target: this.target, action: isGitCheckoutAction(action) ? structuredClone(action) : action } }, uncertain: false };
+    const id = this.pending.envelope.id;
     await this.deliver();
-    return true;
+    return id;
   }
   async retry() { if (this.pending && !this.busy) await this.deliver(); }
-  async acknowledgeUnknown() { if (this.busy || !this.pending?.uncertain) return; this.pending = undefined; this.errors.action = undefined; this.notice = "Previous outcome acknowledged. Review the current files and Git state before a new change."; this.changed(); await this.persist().catch(() => {}); }
+  async acknowledgeUnknown() {
+    if (this.busy || !this.pending?.uncertain || isGitSubmit(this.pending.envelope.command.action)) return;
+    this.pending = undefined; this.errors.action = undefined; this.notice = "Previous outcome acknowledged. Review the current files and Git state before a new change."; this.changed(); await this.persist().catch(() => {});
+  }
   private async deliver() {
     const item = this.pending; if (!item || !this.connected) return;
+    let refusal: GitCheckoutRefusal | undefined;
     this.busy = true; this.errors.action = undefined; this.notice = undefined; this.changed();
     try {
       await this.restore(); await this.persist(); // Never deliver without a recoverable original command ID.
@@ -307,6 +445,11 @@ export class WorkspaceState {
       if (result.commandId !== item.envelope.id) throw new Error("The host returned a receipt for a different command.");
       if (!result.ok) {
         if (result.error.code === "OUTCOME_UNKNOWN") throw new Error(result.error.message);
+        const conflict = readGitCheckoutRefusal(result.error);
+        if (conflict) {
+          if (!isGitCheckoutAction(item.envelope.command.action)) throw new Error("The host returned a checkout refusal for another action.");
+          refusal = { commandId: item.envelope.id, action: structuredClone(item.envelope.command.action), error: conflict };
+        }
         this.pending = undefined; this.errors.action = result.error.message;
         const action = item.envelope.command.action, document = action.type === "file.write" ? this.documents.get(action.path) : undefined;
         if (document?.discardedSaveId === item.envelope.id) { document.discardedSaveId = undefined; document.saveError = undefined; }
@@ -314,10 +457,23 @@ export class WorkspaceState {
       } else {
         const value = result.value;
         if (!value || !("type" in value) || value.type !== item.envelope.command.action.type) throw new Error("The host did not return the expected mutation receipt.");
-        this.applyResult(item.envelope.command.action, value, item.envelope.id); this.mutationReceipt = { commandId: item.envelope.id, value }; this.pending = undefined;
+        if (value.type === "git.submit") {
+          const receipt = value.receipt;
+          if (!isReceiptFor(receipt, this.hostId, this.target) || receipt.commandId !== item.envelope.id) throw new Error("The host returned a Git submission for another workspace or command.");
+          if (this.acceptGitSubmission(receipt)) {
+            if (isSettled(receipt.outcome)) this.settleGitSubmission(receipt);
+            else if (this.pending) this.pending.uncertain = receipt.outcome === "unknown";
+          }
+        } else {
+          this.applyResult(item.envelope.command.action, value, item.envelope.id); this.mutationReceipt = { commandId: item.envelope.id, value }; this.pending = undefined;
+        }
       }
       await this.persist();
+      if (refusal) this.checkoutRefusal = refusal;
     } catch (cause) {
+      // A failed local acknowledgement retains the original request for a
+      // read of its durable host receipt, never a new checkout command.
+      if (refusal) this.pending = item;
       if (this.pending) this.pending.uncertain = true;
       this.errors.action = this.pending ? `Delivery needs confirmation. Retry checks the original command. ${message(cause)}` : `The host replied, but its recovery receipt could not be saved. ${message(cause)}`;
       this.fileSaveError(item.envelope.command.action, this.errors.action!);
@@ -343,11 +499,36 @@ export class WorkspaceState {
       if (!newer) item.text = value.result.document.text;
       item.dirty = item.text !== value.result.document.text;
       this.notice = newer ? "Saved the submitted version. Your newer edits remain unsaved." : "File saved on the owning host.";
-    } else if (value.type === "git.checkout") { this.status = value.status; this.notice = `Switched to ${value.status.branch ?? "detached HEAD"}.`; void this.loadWorktrees(); }
+    } else if ((value.type === "git.checkout" || value.type === "git.checkout-ref" || value.type === "git.checkout-revision")) { this.status = value.status; this.notice = `Switched to ${value.status.branch ?? "detached HEAD"}.`; void this.loadWorktrees(); }
     else if (value.type === "git.stage" || value.type === "git.unstage") { this.status = value.status; this.notice = value.type === "git.stage" ? "Selected paths staged." : "Selected paths unstaged."; }
     else if (value.type === "git.commit" && action.type === "git.commit") { if (this.commitMessage === action.message) this.commitMessage = ""; this.notice = value.summary || `Committed ${value.commit}`; }
     else if (value.type === "worktree.create") { this.notice = `Created worktree ${value.worktree.path}`; void this.loadWorktrees(); }
     else if (value.type === "worktree.remove") { this.notice = "Managed worktree removed."; void this.loadWorktrees(); }
   }
+  private acceptGitSubmission(receipt: GitSubmissionReceipt) {
+    const current = this.gitSubmission;
+    if (current?.commandId === receipt.commandId && receipt.revision < current.revision) return false;
+    this.gitSubmission = receipt;
+    return true;
+  }
+  private hasGitSubmissionFence() { return this.gitSubmission?.outcome === "pending" || this.gitSubmission?.outcome === "unknown" && !this.gitSubmission.acknowledgedAt; }
+  private settleGitSubmission(receipt: GitSubmissionReceipt) {
+    const action = this.pending?.envelope.command.action;
+    if (this.pending?.envelope.id === receipt.commandId) this.pending = undefined;
+    if (action?.type === "git.submit" && receipt.commit && this.commitMessage === action.intent.message) this.commitMessage = "";
+    this.notice = receipt.outcome === "succeeded" ? receipt.commit?.summary ?? "Git submission completed." : receipt.error?.message;
+  }
+}
+function isGitSubmit(action: WorkspaceMutation | undefined): action is Extract<WorkspaceMutation, { type: "git.submit" }> { return action?.type === "git.submit"; }
+function isTerminal(outcome: GitSubmissionReceipt["outcome"]) { return outcome !== "pending"; }
+function isSettled(outcome: GitSubmissionReceipt["outcome"]) { return outcome === "succeeded" || outcome === "failed" || outcome === "cancelled"; }
+function isReceiptFor(receipt: unknown, hostId: string, target: WorkspaceTarget): receipt is GitSubmissionReceipt {
+  if (!receipt || typeof receipt !== "object") return false;
+  const value = receipt as GitSubmissionReceipt;
+  if (value.hostId !== hostId || typeof value.commandId !== "string" || !Number.isSafeInteger(value.revision) || value.revision < 0
+    || !["pending", "succeeded", "failed", "cancelled", "unknown"].includes(value.outcome)
+    || !["queued", "branch", "preparing", "generating", "committing", "pushing", "completed"].includes(value.phase)
+    || !value.target || typeof value.target !== "object" || !("projectId" in value.target || "sessionId" in value.target)) return false;
+  try { return workspaceKey(value.target) === workspaceKey(target); } catch { return false; }
 }
 function message(cause: unknown) { return cause instanceof Error ? cause.message : String(cause); }

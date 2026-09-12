@@ -27,6 +27,13 @@ export interface BrowserControlReceipt {
 export const BROWSER_CONTROL_MAX_AGE_MS = 60_000;
 const finite = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
 const identity = (v: unknown): v is string => typeof v === 'string' && /^[a-zA-Z0-9-]{1,100}$/.test(v);
+/** Shared by navigation in an observed page and initial browser acquisition. */
+export function parseBrowserNavigationUrl(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 8192 || /[\u0000-\u0020]/.test(value)) throw new Error('Invalid page address.');
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) && value !== 'about:blank') throw new Error('This address requires an unsupported browser operation.');
+  return value;
+}
 export function parseBrowserDocumentContext(v: unknown): BrowserDocumentContext {
   if (!v || typeof v !== 'object') throw new Error('Missing browser document context.');
   const c = v as BrowserDocumentContext;
@@ -48,10 +55,7 @@ export function parseBrowserHumanAction(v: unknown, context: BrowserDocumentCont
   const a = v as BrowserHumanAction;
   switch (a.type) {
     case 'navigate': {
-      if (typeof a.url !== 'string' || a.url.length > 8192 || /[\u0000-\u0020]/.test(a.url)) throw new Error('Invalid page address.');
-      const url = new URL(a.url);
-      if (!['http:', 'https:'].includes(url.protocol) && a.url !== 'about:blank') throw new Error('This address requires an unsupported browser operation.');
-      return { type: a.type, url: a.url };
+      return { type: a.type, url: parseBrowserNavigationUrl(a.url) };
     }
     case 'back': case 'forward':
       if (!context.navigation) throw new Error('Refresh this browser preview before using its history.');

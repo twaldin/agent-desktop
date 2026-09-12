@@ -7,3 +7,12 @@ runtime/tmux/
 .data/
 .DS_Store
 *.tsbuildinfo
+
+# Machine-local configuration and credentials never belong in the public repository.
+.env
+.env.*
+!.env.example
+.omp/
+*.key
+*.pem
+coverage/

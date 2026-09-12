@@ -4,8 +4,8 @@ import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, Nativ
 import type { NativeSessionMcpResourceRequest, NativeSessionMcpResourceResult } from "@agent-desktop/shared";
 import { NativeSessionMcp } from "./mcp-session";
 import type { NativeSessionMcpSnapshot, NativeSessionMcpReload, NativeSessionMcpReconnect } from "@agent-desktop/shared";
-import { constants } from "node:fs";
-import { access, open, realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
+import { readSessionHeader, requireDirectory, type SessionStartupIdentity } from "./session-files";
 import path from "node:path";
 import { goalControlState, parseNativeBrowserTabMetadata, type DetachedQuestionSnapshot, type GoalMutationRequest, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeGoalActivity, type NativeSessionActivity, type ResolveDetachedQuestionReceipt, type ResolveDetachedQuestionRequest, type TranscriptMessage } from "@agent-desktop/shared";
 import { createHash } from "node:crypto";
@@ -19,7 +19,6 @@ import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { AUTO_THINKING, parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import { initThemeSync } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
-import { parseTitleSlotLine } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
 import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
 import { reset as resetCapabilityCache } from "@oh-my-pi/pi-coding-agent/discovery";
 import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
@@ -69,7 +68,7 @@ export interface OmpSessionOptions {
   /** Enable only when the daemon provides an actual pending-interaction UI. */
   interactions?: boolean;
 }
-export interface OmpOpenOptions { sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
+export interface OmpOpenOptions { expectedIdentity?: SessionStartupIdentity; sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
 export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
 export interface OmpBrowserTabCreateResult {
   tab: NativeBrowserTabMetadata;
@@ -110,7 +109,7 @@ export interface OmpSession {
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
   getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
-  createBrowserTab(name: string): Promise<OmpBrowserTabCreateResult>;
+  createBrowserTab(name: string, initialUrl?: string): Promise<OmpBrowserTabCreateResult>;
   subscribe(listener: OmpEventListener): () => void;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
@@ -219,32 +218,6 @@ function toModelInfo(model: NativeModel, registry: ModelRegistry): ModelInfo {
     // Same baked metadata read used by native getSupportedEfforts().
     thinkingLevels: model.reasoning ? [...(model.thinking?.efforts ?? [])] : [],
   };
-}
-
-async function requireDirectory(directory: string): Promise<string> {
-  const resolved = await realpath(directory);
-  if (!(await stat(resolved)).isDirectory()) throw new Error("OMP working directory must be a directory");
-  await access(resolved, constants.R_OK | constants.X_OK);
-  return resolved;
-}
-
-async function readSessionHeader(sessionFile: string): Promise<{ id: string; cwd: string }> {
-  const file = await open(sessionFile, "r");
-  try {
-    const buffer = Buffer.alloc(64 * 1024);
-    const { bytesRead } = await file.read(buffer);
-    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
-    // 18.1.10 may put its fixed-width physical title slot before the semantic
-    // session header. Use native slot recognition and retain legacy support.
-    const headerLine = parseTitleSlotLine(lines[0]) ? lines[1] : lines[0];
-    const header: unknown = JSON.parse(headerLine);
-    if (!header || typeof header !== "object" || !("type" in header) || header.type !== "session"
-      || !("id" in header) || typeof header.id !== "string"
-      || !("cwd" in header) || typeof header.cwd !== "string") {
-      throw new Error("Cannot open an OMP session without a valid native identity and working directory");
-    }
-    return { id: header.id, cwd: header.cwd };
-  } finally { await file.close(); }
 }
 
 /** Bun-only native runtime. The owning host, never a window, controls its lifetime. */
@@ -382,7 +355,11 @@ export class OmpRuntime {
     let manager: SessionManager | undefined;
     try {
       const header = await readSessionHeader(sessionFile);
-      await requireDirectory(header.cwd);
+      const directory = await requireDirectory(header.cwd);
+      const expected = options.expectedIdentity;
+      if (expected && (header.id !== expected.id || header.cwd !== expected.cwd || directory !== expected.directory)) {
+        throw new Error("OMP session identity or working directory changed after worker startup was captured");
+      }
       manager = await SessionManager.open(sessionFile);
       if (manager.getSessionId() !== header.id || manager.getCwd() !== header.cwd) {
         throw new Error("OMP changed the session identity or working directory while opening it");
@@ -804,10 +781,11 @@ export class OmpRuntime {
           if (entry?.type !== "message" || !("content" in entry.message) || !Array.isArray(entry.message.content)) throw new Error("Native image entry is unavailable");
           return readNativeImage(entry.message.content[blockIndex]);
         },
-        createBrowserTab: async name => {
+        createBrowserTab: async (name, initialUrl) => {
           assertSessionActive();
           const module = await import("@oh-my-pi/pi-coding-agent/tools/browser") as unknown as {
-            createBrowserTabForSession?: (session: AgentSession, request: { name: string }) => Promise<{
+            BROWSER_TAB_CREATE_INITIAL_URL_VERSION?: number;
+            createBrowserTabForSession?: (session: AgentSession, request: { name: string; initialUrl?: string }) => Promise<{
               created: true; name: string; ownerSessionId: string; targetId: string;
               backend: "worker" | "cmux"; kindTag: NativeBrowserTabMetadata["kindTag"];
               targetDisposition: OmpBrowserTabCreateResult["targetDisposition"];
@@ -819,7 +797,12 @@ export class OmpRuntime {
             error.name = "BrowserTabCreateRejected";
             throw error;
           }
-          const value = await module.createBrowserTabForSession(session, { name });
+          if (initialUrl !== undefined && module.BROWSER_TAB_CREATE_INITIAL_URL_VERSION !== 1) {
+            const error = new Error("This pinned native OMP package does not support initial browser navigation.");
+            error.name = "BrowserTabCreateRejected";
+            throw error;
+          }
+          const value = await module.createBrowserTabForSession(session, { name, ...(initialUrl === undefined ? {} : { initialUrl }) });
           if (value.ownerSessionId !== session.sessionId || value.created !== true) throw new Error("Native browser creation changed session ownership.");
           return {
             tab: parseNativeBrowserTabMetadata({ ...value, state: "alive" }),

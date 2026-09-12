@@ -38,6 +38,62 @@ test("theme saves reject stale revisions and replicated preference changes reach
   expect(preferences.snapshot()).toEqual(before);
 });
 
+test("new themes default transparent while legacy preferences and managed v1 files preserve their native treatment", async () => {
+  const { theme, preferences } = await fixture();
+  expect((await theme.refresh()).document.opaqueWindows).toBe(false);
+  expect(preferences.store.get("theme.opaqueWindows")).toMatchObject({ value: false });
+  preferences.put({ key: "theme.mode", value: "dark" });
+  expect((await theme.refresh()).document.opaqueWindows).toBe(false);
+  preferences.put({ key: "theme.opaqueWindows", value: true });
+  preferences.put({ key: "theme.opaqueWindows", deleted: true });
+  expect((await theme.refresh()).document.opaqueWindows).toBe(false);
+
+  const { theme: legacyTheme, preferences: legacyPreferences, store, directory } = await fixture();
+  legacyPreferences.put({ key: "theme.material", value: "none" });
+  const migratedPreferences = await legacyTheme.refresh();
+  expect(migratedPreferences.document.opaqueWindows).toBe(true);
+  expect(JSON.parse(await readFile(legacyTheme.filePath, "utf8"))).toMatchObject({ version: 2, opaqueWindows: true });
+  expect(legacyPreferences.store.get("theme.opaqueWindows")).toMatchObject({ value: true });
+
+  const legacy = { version: 1, mode: "dark", material: "none", tokens: { "--sidebar-surface": "#393939" }, background: { kind: "none" } };
+  const legacyContents = JSON.stringify(legacy, null, 2) + "\n";
+  legacyPreferences.putMany([{ key: "theme.mode", value: "dark" }, { key: "theme.tokens", value: legacy.tokens }]);
+  await writeFile(legacyTheme.filePath, legacyContents);
+  store.writeThemeFileMarker({ currentHash: hash(legacyContents) });
+  const migratedFile = await legacyTheme.refresh();
+  expect(migratedFile.document).toMatchObject({ version: 2, mode: "dark", opaqueWindows: true, tokens: legacy.tokens });
+  expect(await readFile(legacyTheme.filePath, "utf8")).toBe(legacyContents);
+  expect(legacyPreferences.store.get("theme.opaqueWindows")).toMatchObject({ value: true });
+
+  const saved = await legacyTheme.set({ ...migratedFile.document, opaqueWindows: false }, migratedFile.revision);
+  expect(saved.document.opaqueWindows).toBe(false);
+  expect(JSON.parse(await readFile(legacyTheme.filePath, "utf8"))).toMatchObject({ version: 2, opaqueWindows: false });
+  const reopened = new ThemeFile({ dataDirectory: directory, store, preferences: legacyPreferences, changed() {} });
+  expect((await reopened.refresh()).document.opaqueWindows).toBe(false);
+  await reopened.dispose();
+});
+
+test("managed v1 crash recovery keeps preferences authoritative without rewriting legacy bytes", async () => {
+  const { theme, store, directory, preferences } = await fixture();
+  await theme.refresh();
+  const committed = { version: 1, mode: "system", material: "none", tokens: {}, background: { kind: "none" } };
+  const unacknowledged = { ...committed, mode: "dark" };
+  const contents = JSON.stringify(unacknowledged, null, 2) + "\n";
+  for (const marker of [
+    { currentHash: hash(JSON.stringify(committed, null, 2) + "\n"), pendingHash: hash(contents) },
+    { currentHash: hash(contents) },
+  ]) {
+    store.writeThemeFileMarker(marker);
+    await writeFile(theme.filePath, contents);
+    const restarted = new ThemeFile({ dataDirectory: directory, store, preferences, changed() {} });
+    const result = await restarted.refresh();
+    await restarted.dispose();
+    expect(result.document).toEqual(DEFAULT_THEME);
+    expect(await readFile(theme.filePath, "utf8")).toBe(contents);
+    expect(store.readThemeFileMarker()).toEqual(marker);
+  }
+});
+
 test("invalid external edits keep last valid values and are backed up before an explicit repair", async () => {
   const { theme, directory } = await fixture();
   const initial = await theme.refresh();

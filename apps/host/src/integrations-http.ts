@@ -61,6 +61,23 @@ export function parseMcpMutation(value: unknown): NativeMcpMutation {
     default: throw new InvalidRequest('Unknown MCP operation.');
   }
 }
+export function parseSshMutation(value: unknown): import('@agent-desktop/shared').NativeSshMutation {
+  const input = object(value), expectedRevision = text(input.expectedRevision);
+  switch (input.operation) {
+    case 'remove': keys(input, ['expectedRevision','operation','hostId']); return {expectedRevision, operation:'remove', hostId:text(input.hostId)};
+    case 'update': keys(input, ['expectedRevision','operation','hostId','config']); return {expectedRevision, operation:'update', hostId:text(input.hostId), config:object(safeJson(object(input.config)))};
+    case 'add': {
+      keys(input, ['expectedRevision','operation','scope','name','config']);
+      if (input.scope !== 'user' && input.scope !== 'project') throw new InvalidRequest('Invalid SSH configuration scope.');
+      return {expectedRevision, operation:'add', scope:input.scope, name:text(input.name, 100), config:object(safeJson(object(input.config)))};
+    }
+    default: throw new InvalidRequest('Unknown SSH configuration operation.');
+  }
+}
+export function parseSshDetailRequest(value: unknown): import('@agent-desktop/shared').NativeSshDetailRequest {
+  const input = object(value); keys(input, ['hostId','expectedRevision']);
+  return {hostId:text(input.hostId), expectedRevision:text(input.expectedRevision)};
+}
 export function parseMcpDetailRequest(value: unknown): NativeMcpDetailRequest {
   const input=object(value);keys(input,['serverId','expectedRevision']);
   return {serverId:text(input.serverId),expectedRevision:text(input.expectedRevision)};
@@ -81,7 +98,7 @@ export async function readIntegrationBody(request: Request): Promise<Record<stri
   } finally { reader.releaseLock(); }
 }
 interface Options {
-  runtime: Pick<WorkerRuntime, 'getPlugins'|'mutatePlugin'|'getMcpServers'|'getMcpServerDetail'|'mutateMcpServer'>;
+  runtime: Pick<WorkerRuntime, 'getPlugins'|'mutatePlugin'|'getMcpServers'|'getMcpServerDetail'|'mutateMcpServer'> & Partial<Pick<WorkerRuntime, 'getSshHosts'|'getSshHostDetail'|'mutateSshHost'>>;
   resolveCwd(target?: WorkspaceTarget): string | Promise<string>;
   changed(target?: WorkspaceTarget): void;
 }
@@ -102,9 +119,9 @@ export class IntegrationsHttp {
     const respond = (value:unknown,status=200) => Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
     try {
       if (this.stopping) return respond({error:'The host is stopping.'},503);
-      const match = /^\/v1\/integrations\/(plugins|mcp)\/(read|detail|mutate)$/.exec(url.pathname);
+      const match = /^\/v1\/integrations\/(plugins|mcp|ssh)\/(read|detail|mutate)$/.exec(url.pathname);
       if (!match || request.method !== 'POST') return respond({error:'Not found'},404);
-      if(match[2]==='detail'&&match[1]!=='mcp')return respond({error:'Not found'},404);
+      if(match[2]==='detail'&&match[1]==='plugins')return respond({error:'Not found'},404);
       const input = await readIntegrationBody(request); keys(input,match[2] === 'read' ? ['target'] : match[2]==='detail'?['target','request']:['target','mutation']);
       let target:WorkspaceTarget | undefined;
       try { target = input.target === undefined ? undefined : parseWorkspaceTarget(input.target); }
@@ -112,6 +129,16 @@ export class IntegrationsHttp {
       const cwd = await this.options.resolveCwd(target);
       if (this.stopping) return respond({error:'The host is stopping.'},503);
       const {runtime} = this.options;
+      if (match[1] === 'ssh') {
+        if (!runtime.getSshHosts || !runtime.getSshHostDetail || !runtime.mutateSshHost) return respond({error:'This host does not support SSH configuration. Update its host service.'},501);
+        if (match[2] === 'read') return respond(await runtime.getSshHosts(cwd));
+        if (match[2] === 'detail') return respond(await runtime.getSshHostDetail(cwd, parseSshDetailRequest(input.request)));
+        const mutation = parseSshMutation(input.mutation);
+        if (mutation.operation === 'add' && mutation.scope === 'project' && !target) throw new InvalidRequest('Project SSH hosts require an existing project or session.');
+        const result = await runtime.mutateSshHost(cwd, mutation);
+        this.options.changed(target);
+        return respond(result);
+      }
       if (match[2] === 'read') return respond(await (match[1] === 'plugins' ? runtime.getPlugins(cwd) : runtime.getMcpServers(cwd)));
       if(match[2]==='detail')return respond(await runtime.getMcpServerDetail(cwd,parseMcpDetailRequest(input.request)));
       let result: unknown;

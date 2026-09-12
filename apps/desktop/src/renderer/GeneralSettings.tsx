@@ -8,7 +8,7 @@ import { NativeSwitch } from './NativeSwitch';
 import './general-settings.css';
 
 const policies = [ ['never', 'Never'], ['unfocused', 'Only when unfocused'], ['always', 'Always'] ] as const;
-export function GeneralSettings({ preferences, bridge, onClose }: { preferences: PreferencesState; bridge: DesktopBridge; onClose(): void }) {
+export function GeneralSettings({ preferences, bridge }: { preferences: PreferencesState; bridge: DesktopBridge }) {
   const value = notificationPreferences(preferences.get('general.notifications'));
   const writable = preferences.ready && preferences.connected && !preferences.busy && !preferences.pending.length;
   const [delivery, setDelivery] = useState<{ supported: boolean; error?: string }>();
@@ -25,8 +25,12 @@ export function GeneralSettings({ preferences, bridge, onClose }: { preferences:
     void preferences.put({key:'general.notifications',value:next});
   };
   return <section className="settings-page general-settings" aria-label="General settings">
-    <header className="settings-header"><button className="icon-button" aria-label="Close General settings" onClick={onClose}><Icon name="browserBack"/></button><h1>General</h1></header>
     <div className="general-settings-scroll">
+      <div className="general-settings-column"><header className="settings-header general-settings-header"><h1>General</h1></header>
+      <section className="general-settings-group" aria-labelledby="general-dock"><h2 id="general-dock">General</h2><div className="general-settings-card">
+        <div className="general-settings-row"><div><h3>Bottom panel</h3><p>Show the bottom panel control in the app header</p></div><NativeSwitch label="Bottom panel" checked={preferences.get('general.bottomPanel') !== false} disabled={!writable} onChange={value => void preferences.put({key:'general.bottomPanel',value})}/></div>
+        {preferences.get('general.bottomPanel') !== false && <div className="general-settings-row"><div><h3 id="general-terminal-location">Default terminal location</h3><p>Choose where the terminal shortcut and environment actions open terminal tabs</p></div><div className="general-segmented" role="group" aria-labelledby="general-terminal-location">{(['bottom','right'] as const).map(location => <button key={location} type="button" aria-pressed={(preferences.get('general.defaultTerminalLocation') ?? 'bottom') === location} disabled={!writable} onClick={() => void preferences.put({key:'general.defaultTerminalLocation',value:location})}>{location === 'bottom' ? 'Bottom' : 'Right'}</button>)}</div></div>}
+      </div></section>
       <section className="general-settings-group" aria-labelledby="general-interaction"><h2 id="general-interaction">Interaction</h2><div className="general-settings-card">
         <div className="general-settings-row"><div><h3>Send messages with</h3><p>Choose the keyboard shortcut for sending messages</p></div><select aria-label="Send messages with" disabled={!writable} value={preferences.get('general.sendBehavior') ?? 'enter'} onChange={event => void preferences.put({key:'general.sendBehavior',value:event.target.value as 'enter'|'mod-enter'})}><option value="enter">Enter</option><option value="mod-enter">⌘ Enter</option></select></div>
         <div className="general-settings-row"><div><h3>Reduce motion</h3><p>Reduce interface animations</p></div><NativeSwitch label="Reduce motion" checked={preferences.get('general.reduceMotion') ?? false} disabled={!writable} onChange={value => void preferences.put({key:'general.reduceMotion',value})}/></div>
@@ -38,6 +42,7 @@ export function GeneralSettings({ preferences, bridge, onClose }: { preferences:
       </div><details className="general-notification-advanced"><summary>Advanced</summary><div className="general-settings-row"><div><h3>Notification sound</h3><p>Use the system alert sound</p></div><NativeSwitch label="Notification sound" checked={value.sound} disabled={!writable} onChange={sound => save({sound})}/></div><p>Alerts are delivered while Agent Desktop is open and connected to the session’s host. System notification settings also apply.</p>{delivery && <p role="status">{delivery.error ?? (delivery.supported ? 'System notification delivery is available. This does not confirm system permission.' : 'System notifications are unavailable on this device.')}</p>}</details></section>
       {!preferences.connected && <p className="settings-description">Reconnect to save shared preferences.</p>}
       {(preferences.error || preferences.cacheWarning || preferences.pending.length > 0) && <div className="inline-error" role="alert"><p>{preferences.error ?? preferences.cacheWarning ?? 'Preference changes are awaiting confirmation.'}</p><button className="secondary-button" disabled={!preferences.connected || preferences.busy} onClick={() => preferences.pending.length ? void preferences.retry() : void preferences.refresh()}>{preferences.pending.length ? 'Retry saved preference changes' : 'Refresh preferences'}</button></div>}
+      </div>
     </div>
   </section>;
 }

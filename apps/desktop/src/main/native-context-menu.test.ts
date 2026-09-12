@@ -11,3 +11,11 @@ test('native menus reject duplicate identity, excessive depth and oversized cata
  expect(()=>parseDesktopMenu(Array.from({length:51},(_,i)=>({id:String(i),label:'row'})))).toThrow();
  expect(()=>parseDesktopMenu([])).toThrow();
 });
+test('native checkbox descriptors retain checked state without admitting Electron actions',()=>{
+ const checked:DesktopMenuItem={type:'checkbox',id:'bottom',label:'Bottom panel',checked:true,enabled:false};
+ expect(parseDesktopMenu([checked,{type:'checkbox',id:'other',label:'Other',checked:false}])).toEqual([checked,{type:'checkbox',id:'other',label:'Other',checked:false}]);
+ for(const extra of [{checked:'true'},{checked:undefined},{submenu:[{id:'child',label:'Child'}]},{role:'quit'},{type:'radio'},{click:'execute'},{accelerator:'Cmd+Q'}])expect(()=>parseDesktopMenu([{...checked,...extra}])).toThrow();
+ expect(()=>parseDesktopMenu([checked,{id:'bottom',label:'Duplicate'}])).toThrow();
+ expect(()=>parseDesktopMenu([{id:'no-type',label:'Checked action',checked:true}])).toThrow();
+ expect(parseDesktopMenu(Array.from({length:50},(_,i)=>({type:'checkbox',id:String(i),label:'Checkbox',checked:false})))).toHaveLength(50);
+});

@@ -1,3 +1,4 @@
+import { buildModifierRelease } from "./build-modifier-release";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -15,3 +16,5 @@ if (!process.argv.includes("--main-only")) {
   const build = Bun.spawn([process.execPath, "--bun", "vite", "build", "--config", "apps/desktop/vite.config.ts"], { cwd: root, stdout: "inherit", stderr: "inherit" });
   if (await build.exited) throw new Error("Renderer build failed.");
 }
+
+buildModifierRelease(root, join(outdir, "native"));

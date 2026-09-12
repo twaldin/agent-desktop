@@ -3,7 +3,7 @@ import type { OfflineCache } from "./offline-cache";
 export type HostCatalogBridge = Pick<DesktopBridge, "getState" | "getHosts" | "subscribe">;
 
 export interface HostRecord { state?: HostState; connected: boolean; loading: boolean; error?: string }
-export interface HostOption { key: string; hostId?: string; name: string; local: boolean; availability: "available" | "unavailable" | "offline"; cached: boolean; error?: string }
+export interface HostOption { key: string; hostId?: string; nodeId?: string; name: string; local: boolean; availability: "available" | "unavailable" | "offline"; cached: boolean; error?: string }
 const cacheKey = "agent-desktop:host-catalog:v2";
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
@@ -159,7 +159,7 @@ export class HostCatalog {
       // to a now-connected owner. Disconnects and failed fetches clear connected.
       const availability = record?.connected ? "available" : node.availability === "available" && record?.error ? "unavailable" : node.availability;
       const error = record?.connected ? record.error : record?.error ?? node.error;
-      result.push({ key: hostId ?? `node:${node.nodeId}`, hostId, name: node.host?.name ?? record?.state?.host.name ?? node.name, local: false, availability, cached: Boolean(record?.state), error });
+      result.push({ key: hostId ?? `node:${node.nodeId}`, hostId, nodeId: node.nodeId, name: node.host?.name ?? record?.state?.host.name ?? node.name, local: false, availability, cached: Boolean(record?.state), error });
       if (hostId) included.add(hostId);
     }
     for (const [hostId, record] of this.records) if (!included.has(hostId)) result.push({ key: hostId, hostId, name: record.state?.host.name ?? hostId, local: false, availability: record.connected ? "available" : "offline", cached: Boolean(record.state), error: record.error });

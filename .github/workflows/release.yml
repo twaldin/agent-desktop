@@ -1,0 +1,191 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: version
+        name: Identify immutable release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || exit 1
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+            tag="$GITHUB_REF_NAME"
+            version="${tag#v}"
+          else
+            tag="dev-${GITHUB_SHA:0:12}"
+            version="0.1.0-dev.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  check:
+    if: vars.ENABLE_NATIVE_RELEASE_BUILDS == 'true'
+    name: Check ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin-arm64
+          - runner: ubuntu-22.04
+            platform: linux-x64
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Install exact dependencies
+        run: bun install --frozen-lockfile --backend=copyfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Build pinned terminal runtime
+        run: bun scripts/build-tmux.ts "$RUNNER_TEMP/tmux-work" "$RUNNER_TEMP/tmux-bundle"
+      - name: Test owned suites
+        env:
+          AGENT_TEST_TMUX_BUNDLE: ${{ runner.temp }}/tmux-bundle
+        run: bun run test
+      - name: Preserve terminal executable modes
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: tar -czf "$RUNNER_TEMP/tmux-$PLATFORM.tar.gz" -C "$RUNNER_TEMP/tmux-bundle" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tmux-${{ matrix.platform }}
+          path: ${{ runner.temp }}/tmux-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Package macOS desktop and both hosts
+    needs: [metadata, check]
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --backend=copyfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: tmux-*
+          path: ${{ runner.temp }}/bundles
+          merge-multiple: true
+      - name: Build versioned release artifacts
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          for platform in darwin-arm64 linux-x64; do
+            mkdir -p "$RUNNER_TEMP/bundles/$platform"
+            tar -xzf "$RUNNER_TEMP/bundles/tmux-$platform.tar.gz" -C "$RUNNER_TEMP/bundles/$platform"
+          done
+          bun scripts/release-artifacts.ts "$RELEASE_VERSION" "$RUNNER_TEMP/bundles" "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  source:
+    name: Archive public source
+    needs: metadata
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Package committed source
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          mkdir source-release
+          git archive --format=tar.gz --prefix=agent-desktop/ "$GITHUB_SHA" > "source-release/agent-desktop-$RELEASE_VERSION-source.tar.gz"
+          cd source-release
+          sha256sum *.tar.gz > SOURCE-SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-release
+          path: source-release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    if: >-
+      always() && !cancelled() && needs.metadata.result == 'success' && needs.source.result == 'success' &&
+      (needs.package.result == 'success' || (vars.ENABLE_NATIVE_RELEASE_BUILDS != 'true' && needs.package.result == 'skipped')) &&
+      github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [metadata, source, package]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: source-release
+          path: release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.package.result == 'success'
+        with:
+          name: release
+          path: release
+      - name: Publish immutable development prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          NATIVE_BUILT: ${{ needs.package.result == 'success' }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release already exists; immutable assets were not replaced."
+            exit 0
+          fi
+          if [[ "$NATIVE_BUILT" == true ]]; then
+            artifacts="Includes the macOS ARM64 desktop and a host archive with Darwin ARM64 and Linux x64 terminal runtimes. The desktop is ad-hoc signed, not notarized. Verify binaries against SHA256SUMS."
+          else
+            artifacts="Source-only prerelease. Native packaging is held pending explicit CI execution authorization; no installable desktop or host binary is claimed."
+          fi
+          cat > notes.md <<EOF
+          Development prerelease of Agent Desktop, powered by OMP 18.1.10.
+
+          Commit: $GITHUB_SHA
+          Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          $artifacts
+
+          This is an incomplete recreation; passing CI does not establish provider, physical-device, native-browser or visual parity acceptance. See docs/status.md and GOAL.md for open work.
+
+          Verify source downloads against SOURCE-SHA256SUMS. Existing user installations are never updated automatically.
+          EOF
+          gh release create "$RELEASE_TAG" release/* --target "$GITHUB_SHA" \
+            --title "Agent Desktop $RELEASE_VERSION" --notes-file notes.md --prerelease --latest=false

@@ -208,6 +208,22 @@ describe("host artifact state compatibility", () => {
     expect(await preservation(layout)).toEqual(before);
   });
 
+  test("a compound submission claim raises schema12 and prevents rollback to a schema11 host", async () => {
+    const { layout, current, target } = await installedFixture(1);
+    const store = new HostStore(layout.dataDirectory);
+    try {
+      const project = store.addProject({ path: layout.dataDirectory });
+      store.claimCommand("compound", "fixture-hash", { type: "workspace.mutate", target: { projectId: project.id },
+        action: { type: "git.submit", intent: { operation: "commit", contextRevision: "a".repeat(64), selectionMode: "staged", message: "fixture" } } });
+    } finally { store.close(); }
+    const supported = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    await artifact(current, "current12", supported); await artifact(target, "legacy11", supported.slice(0, -1));
+    expect(checkHostStateCompatibility({ stateSchemaVersions: supported }, layout.dataDirectory).checkedSchemaVersion).toBe(12);
+    const before = await preservation(layout), service = lifecycle();
+    await expect(manageHost("rollback", layout, undefined, service.hooks)).rejects.toThrow("schema 12 is incompatible");
+    expect(service.calls).toEqual([]); expect(await preservation(layout)).toEqual(before);
+  });
+
   test("incompatible rollback keeps the current service, symlink, record, files and database intact", async () => {
     const { layout } = await installedFixture(2), before = await preservation(layout), service = lifecycle();
     await expect(manageHost("rollback", layout, undefined, service.hooks)).rejects.toThrow("schema 2 is incompatible");

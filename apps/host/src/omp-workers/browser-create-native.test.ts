@@ -1,3 +1,4 @@
+import { testBrowserCreationRecords } from "../fixtures/browser-creation-journal";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -36,7 +37,7 @@ test("actual worker creates an owner-bound tab from its native AgentSession sett
     const requestId = crypto.randomUUID();
     const name = `desktop-${requestId}`;
     const controlEpoch = crypto.randomUUID();
-    const http = new BrowserCreateHttp({ hostId: "owner", controlEpoch, sessionExists: id => id === session.id,
+    const http = new BrowserCreateHttp({ records: testBrowserCreationRecords(), hostId: "owner", controlEpoch, sessionExists: id => id === session.id,
       getHandle: async () => session, getExistingHandle: async () => session });
     server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
       expect(request.headers.get("authorization")).toBe("Bearer fixture-token");

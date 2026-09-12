@@ -82,6 +82,12 @@ async function runAppShortcutAcceptance() {
     const menu = node("div"); menu.className = "action-menu"; menu.textContent = "An open menu";
     prompt.focus(); assert(!noCommand(prompt, "rendered menu").defaultPrevented, "open menu lost ownership");
     menu.hidden = true; assert(press(prompt).defaultPrevented, "hidden menu blocked app command"); menu.remove();
+    const details = node("details"), summary = node("summary", details), detailsMenu = node("div", details);
+    summary.textContent = "Panel actions"; detailsMenu.role = "menu"; detailsMenu.textContent = "Closed panel actions";
+    assert(press(prompt).defaultPrevented, `closed details menu blocked app command with ${detailsMenu.getClientRects().length} client rects`);
+    details.open = true; await tick();
+    assert(!noCommand(prompt, "open details menu").defaultPrevented, "open details menu lost ownership");
+    details.remove();
     const modal = node("dialog"); const modalButton = node("button", modal); modalButton.textContent = "Modal control"; modal.showModal(); modalButton.focus();
     assert(!noCommand(modalButton, "native modal").defaultPrevented, "modal lost ownership");
     modal.close(); modal.remove(); prompt.focus(); assert(press(prompt).defaultPrevented, "closed modal still blocked");

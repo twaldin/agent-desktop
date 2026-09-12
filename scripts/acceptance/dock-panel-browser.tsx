@@ -19,7 +19,7 @@ function Fixture() {
   latest = state;
   const drop = (id: string, from: "right" | "bottom", to: "right" | "bottom", index: number) => { drops.push(`${id}:${from}:${to}`); setState(current => moveDockTab(current, id, to, index)); };
   const props = { state, tabs, viewport: { left: 0, width: 1200, height: 800 }, onChange: setState, onTabDrop: drop, renderTab: (tab: DockTab, active: boolean) => <div className="fixture-tab" data-active={active}>{tab.title} buffer</div> };
-  return <div className="fixture"><DockPanel destination="right" {...props} onHide={() => checks.push("hide callback")} onMaximize={() => checks.push("maximize callback")} addActions={[{ id: "files", label: "Add files", onSelect: () => checks.push("add action") }]}/><DockPanel destination="bottom" {...props}/></div>;
+  return <div className="fixture"><DockPanel destination="right" {...props} onHide={() => checks.push("hide callback")} layoutAction={{label:"Fullscreen",onSelect:() => checks.push("maximize callback")}} addActions={[{ id: "files", label: "Add files", onSelect: () => checks.push("add action") }]}/><DockPanel destination="bottom" {...props}/></div>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture/>);
 function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }

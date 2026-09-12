@@ -1,3 +1,4 @@
+import { hasRemoteExecution } from "../../../../packages/shared/src/new-chat";
 import { parseEnvironmentSelection, sameEnvironmentSelection, parseImageAttachments, sameImageAttachments, parseNewChatExecution, sameNewChatExecution, type CommandEnvelope, type CommandResult, type Draft, type DraftInput, type ModelChoice } from "../../../../packages/shared/src/protocol";
 import { parseSelectedTextAttachments, sameSelectedTextAttachments } from "../../../../packages/shared/src/selected-text";
 import { hasRepeatedWholeFileSources, parseInlineWholeFileMentions, parseWholeFileAttachments, sameWholeFileAttachments, type WholeFileAttachment } from "../../../../packages/shared/src/whole-file";
@@ -19,6 +20,8 @@ interface Entry {
   sending?: SubmissionCorrelation;
   consuming?: SubmissionCorrelation;
   pendingDraft?: Draft;
+  /** Keep the route after a remote save may have reached the host, even if its reply was lost. */
+  remoteProtocol?: boolean;
 }
 interface SubmissionCorrelation { draft: Draft; commandId?: string }
 export interface DraftCache {
@@ -86,7 +89,7 @@ export class DraftController {
           const consuming = savedCorrelation ? { draft: captureDraft(savedCorrelation.draft, hostId), commandId: savedCorrelation.commandId } : undefined;
           if (consuming && (consuming.draft.id !== draft.id || (consuming.commandId !== undefined && (typeof consuming.commandId !== "string" || !consuming.commandId)))) throw new Error("Invalid pending draft identity.");
           const conflict = item.conflict ? captureDraft(item.conflict, hostId) : undefined;
-          this.entries.set(draft.id, { base, consuming, dirty: Boolean(item.dirty), version: 0, view: { draft, conflict, status: conflict ? "conflict" : item.dirty ? "offline" : "saved" } });
+          this.entries.set(draft.id, { base, consuming, remoteProtocol: item.remoteProtocol === true || [draft, base, conflict, consuming?.draft].some(value => hasRemoteExecution(value?.execution)), dirty: Boolean(item.dirty), version: 0, view: { draft, conflict, status: conflict ? "conflict" : item.dirty ? "offline" : "saved" } });
         } catch { this.cacheError = "Some local draft metadata could not be read. Check saved host drafts and pending submissions before resending."; }
       }
     } catch { this.cacheError = "The local draft cache could not be read. Saved host drafts remain available."; }
@@ -97,13 +100,13 @@ export class DraftController {
     let entry = this.entries.get(id);
     if (!entry) {
       const draft = captureDraft({ id, revision: 0, updatedAt: 0, text: "", projectId: null, model: null, ...initial }, this.hostId);
-      entry = { base: draft, dirty: false, version: 0, view: { draft, status: "saved" } };
+      entry = { base: draft, remoteProtocol: hasRemoteExecution(draft.execution), dirty: false, version: 0, view: { draft, status: "saved" } };
       this.entries.set(id, entry);
     }
     return entry.view;
   }
   private publish() {
-    try { this.cache?.write(this.cacheKey, JSON.stringify([...this.entries.values()].map(e => ({ draft: e.view.draft, base: e.base, dirty: e.dirty, conflict: e.view.conflict, consuming: e.sending ?? e.consuming })))); }
+    try { this.cache?.write(this.cacheKey, JSON.stringify([...this.entries.values()].map(e => ({ draft: e.view.draft, base: e.base, remoteProtocol: e.remoteProtocol, dirty: e.dirty, conflict: e.view.conflict, consuming: e.sending ?? e.consuming })))); }
     catch { this.cacheError = "Local draft storage is unavailable. Keep this window open until changes are saved to the host."; }
     for (const listener of this.listeners) listener();
   }
@@ -120,6 +123,7 @@ export class DraftController {
     this.get(remote.id);
     const entry = this.entries.get(remote.id)!;
     if (remote.revision < Math.max(entry.base.revision, entry.view.conflict?.revision ?? 0)) return;
+    entry.remoteProtocol ||= hasRemoteExecution(remote.execution);
     // A submitted revision may be consumed while its response is still in flight.
     const submitted = entry.sending ?? entry.consuming;
     if (submitted && directConsumption(remote, submitted)) {
@@ -193,13 +197,14 @@ export class DraftController {
     if (captured ? sameDraftContent(entry.base, captured.draft) : !entry.dirty) return captureDraft(entry.base, this.hostId);
     if (!this.connected) throw new Error("Reconnect to save and send this draft.");
     const snapshot = captureDraft(captured?.draft ?? entry.view.draft, this.hostId); const version = captured?.version ?? entry.version;
+    entry.remoteProtocol ||= hasRemoteExecution(snapshot.execution) || hasRemoteExecution(entry.base.execution);
     entry.pendingDraft = snapshot;
     entry.view = { ...entry.view, status: "saving", error: undefined }; this.publish();
     const task = (async () => {
       try {
         const draft = editableDraft(snapshot);
         const repeated = hasRepeatedWholeFileSources(snapshot.wholeFileAttachments ?? []) || hasRepeatedWholeFileSources(entry.base.wholeFileAttachments ?? []);
-        const result = await this.send({ id: crypto.randomUUID(), ...(repeated ? { commandVersion: 9 as const } : (snapshot.wholeFileAttachments?.some(file => file.textOffset !== undefined) || entry.base.wholeFileAttachments?.some(file => file.textOffset !== undefined)) ? { commandVersion: 8 as const } : snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
+        const result = await this.send({ id: crypto.randomUUID(), ...(entry.remoteProtocol ? { commandVersion: 12 as const } : repeated ? { commandVersion: 9 as const } : (snapshot.wholeFileAttachments?.some(file => file.textOffset !== undefined) || entry.base.wholeFileAttachments?.some(file => file.textOffset !== undefined)) ? { commandVersion: 8 as const } : snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
         if (!result.ok) {
           if (result.currentDraft) entry.view = { ...entry.view, status: "conflict", conflict: captureDraft(result.currentDraft, this.hostId), error: result.error.message };
           else entry.view = { ...entry.view, status: this.connected ? "error" : "offline", error: result.error.message };
@@ -223,6 +228,15 @@ export class DraftController {
     const saved = await task;
     if (entry.dirty) this.schedule(id);
     return saved;
+  }
+  get ownerHostId(): string { return this.hostId; }
+  /** Establish a real revision even for a pristine empty draft. No consumption,
+   * model request or session startup is involved. */
+  async ensureSaved(id: string): Promise<Draft> {
+    this.get(id);
+    const entry = this.entries.get(id)!;
+    if (entry.base.revision < 1 && !entry.dirty) this.update(id, {});
+    return this.flush(id);
   }
   async prepareSubmission(id: string): Promise<Draft> {
     this.get(id); const entry = this.entries.get(id)!;

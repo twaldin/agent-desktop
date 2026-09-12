@@ -45,6 +45,21 @@ Object.assign(window, {
   workbenchDockProgress: () => ({ checks, errors, queries, actions, snapshot: hook?.snapshot }),
   runWorkbenchDockAcceptance: async () => {
     resetCalls();
+    const legacyFiles = { ...defaultWindowView(), workspaceOpen: true, workspaceTab: "files" as const };
+    await mount(legacyFiles, "unconnected");
+    assert(hook!.persisted === undefined && hook!.snapshot.tabs.length === 0, "legacy restore must wait for its workspace owner");
+    await rerender(legacyFiles, "files-owner", { projectId: "files-project" });
+    await wait(() => hook!.persisted !== undefined && hook!.snapshot.tabs.length === 1, "legacy file tab restoration");
+    const fileTab = hook!.snapshot.tabs[0]!;
+    assert(fileTab.kind === "files" && fileTab.title === "Open file", `legacy files tab title must be Open file, got ${fileTab.title}`);
+    assert(fileTab.hostId === "files-owner" && fileTab.target === "project:files-project", "legacy file tab must retain the resolved owner");
+    assert(hook!.snapshot.state.right.open && hook!.snapshot.state.right.activeTabId === fileTab.id && hook!.persisted!.tabs[0]?.title === "Open file", "legacy restored file tab must be active and persist its corrected title");
+    assert(queries.length === 0 && actions.length === 0, "legacy files restoration must not create or query a terminal");
+    await rerender(legacyFiles, "files-owner", { projectId: "files-project" });
+    assert(hook!.snapshot.tabs.length === 1 && hook!.snapshot.tabs[0]!.id === fileTab.id, "settled restore must not duplicate the file tab");
+    checks.push("legacy files restore waits for owner, uses Open file, persists once and makes no terminal call");
+
+    resetCalls();
     const restoredDescriptor = { kind: "terminal" as const, hostId: "offline-owner", target: "session:saved-session" as const, terminalId: "restored-pane", title: "Restored shell" };
     const restoredTab: DockTab = { ...restoredDescriptor, id: dockTabId(restoredDescriptor) };
     const restoredDock = { tabs: [restoredTab], state: insertDockTab(createDockState(), restoredTab, "bottom") };

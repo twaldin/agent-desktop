@@ -60,7 +60,7 @@ test("restart restores local route/layout and normal bounds without storing arbi
   const normal = { x: 91, y: 41, width: 1200, height: 820 };
   expect(store.saveGeometry(normal, true)).toEqual({});
   const restarted = new WindowStateStore(directory, "primary");
-  expect(restarted.bootstrap()).toEqual({ state });
+  expect(restarted.bootstrap()).toEqual({ ownerSlot: "primary", state });
   expect(restarted.geometry()).toEqual({ bounds: normal, maximized: true });
   expect(statSync(store.file).mode & 0o777).toBe(0o600);
   const raw = readFileSync(store.file, "utf8");
@@ -145,6 +145,7 @@ test("failed atomic save preserves acknowledged state, reports failure and leave
   rmSync(store.file, { recursive: true });
   expect(store.saveView(defaultWindowView())).toEqual({});
   expect(new WindowStateStore(directory, "primary").bootstrap()).toEqual({
+    ownerSlot: "primary",
     state: defaultWindowView(),
   });
 });
@@ -566,4 +567,18 @@ test("file scroll fallback is bounded, mode-specific, owner-bound and window-loc
   }
   expect(parseDockSnapshot({ ...dock, tabs: [{ ...tab, fileScroll: { source: 0, content: "PRIVATE RAW", effect: {} } }] })?.tabs[0]?.fileScroll).toEqual({ source: 0 });
   expect(parseDockSnapshot({ ...dock, tabs: [{ ...tab, hostId: "other" }] })).toBeUndefined();
+});
+
+test("content placement reopens per-window while legacy absence stays direction-neutral",()=>{
+  const directory=temporary();
+  for(const side of ["left","right"] as const) {
+    const store=new WindowStateStore(directory,side);
+    const view={...defaultWindowView(),dock:{state:createDockState(side),tabs:[]}};
+    expect(store.saveView(view)).toEqual({});
+  }
+  expect(new WindowStateStore(directory,"left").bootstrap().state?.dock?.state.contentSide).toBe("left");
+  expect(new WindowStateStore(directory,"right").bootstrap().state?.dock?.state.contentSide).toBe("right");
+  const state=createDockState();delete state.contentSide;
+  const store=new WindowStateStore(directory,"legacy");expect(store.saveView({...defaultWindowView(),dock:{state,tabs:[]}})).toEqual({});
+  expect(new WindowStateStore(directory,"legacy").bootstrap().state?.dock?.state.contentSide).toBeUndefined();
 });

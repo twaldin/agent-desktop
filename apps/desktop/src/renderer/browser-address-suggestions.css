@@ -1,0 +1,37 @@
+.browser-address-suggestions {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 4px;
+  border: var(--border-width, .5px) solid var(--border);
+  border-radius: var(--menu-radius);
+  background: var(--menu-surface);
+  color: var(--text);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 20%);
+}
+.browser-address-suggestions > button {
+  display: flex;
+  align-items: center;
+  flex: none;
+  width: 100%;
+  height: 36px;
+  gap: 10px;
+  padding: 0 36px 0 10px;
+  border: 0;
+  border-radius: calc(var(--menu-radius) * 2 / 3);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  font-size: var(--font-size-13, 13px);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+.browser-address-suggestions > button:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
+.browser-address-suggestions > button[aria-selected="true"] { background: var(--hover); }
+.browser-address-suggestion-icon { display: flex; flex: none; width: 16px; height: 16px; }
+.browser-address-suggestion-icon > svg { width: 16px; height: 16px; }
+.browser-address-suggestion-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

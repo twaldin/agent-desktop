@@ -1,7 +1,7 @@
 import {Menu,type BrowserWindow,type MenuItemConstructorOptions} from 'electron';
 import {parseDesktopMenu,type DesktopMenuItem} from '../../../../packages/shared/src/context-menu';
 export function contextMenuTemplate(items:DesktopMenuItem[],choose:(id:string)=>void):MenuItemConstructorOptions[]{
- return items.map(item=>'type'in item?{type:'separator'}:{id:item.id,label:item.label,enabled:item.enabled??true,...(item.submenu?{submenu:contextMenuTemplate(item.submenu,choose)}:{click:()=>choose(item.id)})});
+ return items.map(item=>'type'in item?item.type==='separator'?{type:'separator'}:{id:item.id,label:item.label,type:'checkbox',checked:item.checked,enabled:item.enabled??true,click:()=>choose(item.id)}:{id:item.id,label:item.label,enabled:item.enabled??true,...(item.submenu?{submenu:contextMenuTemplate(item.submenu,choose)}:{click:()=>choose(item.id)})});
 }
 const openMenus=new Map<number,Menu>();
 export async function showDesktopContextMenu(window:BrowserWindow,input:unknown):Promise<string|null>{

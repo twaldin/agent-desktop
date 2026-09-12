@@ -37,8 +37,38 @@ export type FileContent = TextDocument
 export type FileWriteResult = { ok: true; document: TextDocument } | { ok: false; code: "REVISION_CONFLICT"; current: FileContent | null };
 export interface GitStatusEntry { path: string; originalPath?: string; indexStatus: string; worktreeStatus: string; kind: "tracked" | "untracked" | "conflict"; submodule: boolean }
 export interface GitStatus { revision: string; branch: string | null; head: string | null; upstream: string | null; ahead: number; behind: number; entries: GitStatusEntry[] }
+export type GitPushUnavailableReason = "unborn-head" | "detached-head" | "missing-remote" | "ambiguous-remote" | "push-target-unresolved";
+export interface GitPushDestination {
+  remote: string;
+  targetRef: string;
+  requiresUpstreamSetup: boolean;
+  revision: string;
+  localTrackingRef: string | null;
+  /** Counts against a locally cached destination ref; null means unknown, not zero. */
+  commitsAhead: number | null;
+  commitsBehind: number | null;
+}
+export interface GitActionContext {
+  status: GitStatus;
+  /** Local branch/index/destination revision; not a snapshot of unstaged file bytes. */
+  revision: string;
+  push: ({ state: "available"; destination: GitPushDestination } | { state: "unavailable"; reason: GitPushUnavailableReason }) & {
+    alternatives: GitPushDestination[];
+    freshness: "local-config-and-refs";
+  };
+}
 export interface GitBranch { name: string; ref: string; commit: string; current: boolean; remote: boolean; upstream: string | null; symbolicTarget: string | null }
 export interface GitDiff { patch: string; binary: boolean; staged: boolean; path?: string }
+/** Display observations from one owning-host read, not a future commit selection. */
+export interface GitReviewSummary {
+  source: "staged" | "unstaged";
+  /** HEAD/index identity only; working bytes may change after this observation. */
+  revision: string;
+  files: Array<{ path: string; previousPath: string | null; additions: number | null; deletions: number | null }>;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+}
 export interface GitWorktree { path: string; head: string | null; branch: string | null; detached: boolean; bare: boolean; locked: boolean; lockReason?: string; prunable?: string; managed: boolean; managedRelativePath?: string }
 export interface CreateWorktreeOptions { path: string; branch?: string; newBranch?: string; startPoint?: string }
-export type WorktreeStartingState = { type: "branch"; branchName: string } | { type: "working-tree" };
+export type WorktreeStartingState = { type: "branch"; branchName: string; remoteRef?: string } | { type: "working-tree" };

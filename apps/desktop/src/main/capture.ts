@@ -42,27 +42,32 @@ export async function captureDesktop(window: BrowserWindow, destination: string)
   const script = <T>(body: string): Promise<T> => window.webContents.executeJavaScript(`(async () => { ${helpers} ${body} })()`);
   const read = (view: View): Promise<Readiness> => script(`
     const view = ${JSON.stringify(view)};
-    const connected = visible(document.querySelector('.sidebar-footer > .connection-dot.online'));
-    const scope = view === 'accounts' ? document.querySelector('[aria-label="Accounts settings"]') : view === 'omp' ? document.querySelector('.native-settings') : view === 'appearance' ? document.querySelector('.theme-settings') : ['files','git','worktrees'].includes(view) ? document.querySelector('.workspace-panel') : view === 'terminal' ? document.querySelector('.terminal-panel') : document.querySelector('.main-panel');
+    const connected = document.querySelector('.sidebar-footer .profile-avatar')?.dataset.connection === 'online';
+    const scope = view === 'accounts' ? document.querySelector('[aria-label="Accounts settings"]') : view === 'omp' ? document.querySelector('.native-settings') : view === 'appearance' ? document.querySelector('.theme-settings') : ['files','git','worktrees'].includes(view) ? document.querySelector('.workspace-panel') : view === 'terminal' ? document.querySelector('.dock-slot-bottom') : document.querySelector('.main-panel');
     const text = selector => [...(scope?.querySelectorAll(selector) ?? [])].filter(visible).map(item => item.textContent.trim().slice(0, 800)).filter(Boolean);
     const errors = text('[role="alert"], .inline-error');
     const notices = text('[role="status"], .workspace-notice, .terminal-notice, .connection-banner');
     const exists = selector => visible(scope?.querySelector(selector));
     const loading = scope?.matches('[aria-busy="true"]') || !!scope?.querySelector('.spinner, [aria-busy="true"]');
     const loaded = view === 'new-conversation' ? exists('.composer') && connected : view === 'conversation' ? exists('.transcript-scroll') && scope.querySelector('.empty-transcript h2')?.textContent !== 'Loading conversation…' : view === 'accounts' ? exists('.accounts-layout') && !loading : view === 'omp' ? exists('.native-setting') && !loading : view === 'appearance' ? exists('.theme-file-path') && !loading : view === 'files' ? exists('.file-entries') && !loading && !notices.some(item => /Loading directory|Restoring editor/.test(item)) : view === 'git' ? exists('.changes-view') && !loading && !scope.textContent.includes('Git status unavailable') : view === 'worktrees' ? exists('.worktrees-view') && !loading && !notices.some(item => /Loading worktrees/.test(item)) : exists('.terminal-views, .terminal-empty, .native-terminal-view .xterm-screen') && !notices.some(item => /Attaching to the native pane/.test(item)) && !scope.textContent.includes('Loading terminals');
-    return { status: !visible(scope) ? 'loading' : errors.length ? 'error' : loaded ? 'rendered' : 'loading', connected, errors: [...new Set(errors)], notices, counts: { providers: scope?.querySelectorAll('.provider-row').length ?? 0, accounts: scope?.querySelectorAll('.account-row').length ?? 0, nativeSettings: scope?.querySelectorAll('[data-setting-path]').length ?? 0, visualTokens: scope?.querySelectorAll('.theme-token-control').length ?? 0, files: scope?.querySelectorAll('.file-entry-row').length ?? 0, changedPaths: scope?.querySelectorAll('.git-file-row').length ?? 0, worktrees: scope?.querySelectorAll('.worktree-card').length ?? 0, terminals: scope?.querySelectorAll('.terminal-tab').length ?? 0 } };
+    const missingTerminal = view === 'terminal' && visible(scope) && !scope.querySelector('.dock-native-terminal') && visible(scope.querySelector('.dock-empty-actions'));
+    if (missingTerminal) errors.push('No existing terminal tab is open in the bottom dock; the harness does not create shells.');
+    return { status: !visible(scope) ? 'loading' : missingTerminal ? 'unavailable' : errors.length ? 'error' : loaded ? 'rendered' : 'loading', connected, errors: [...new Set(errors)], notices, counts: { providers: scope?.querySelectorAll('.provider-row').length ?? 0, accounts: scope?.querySelectorAll('.account-row').length ?? 0, nativeSettings: scope?.querySelectorAll('[data-setting-path]').length ?? 0, visualTokens: scope?.querySelectorAll('.theme-token-control').length ?? 0, files: scope?.querySelectorAll('.file-entry-row').length ?? 0, changedPaths: scope?.querySelectorAll('.git-file-row').length ?? 0, worktrees: scope?.querySelectorAll('.worktree-card').length ?? 0, terminals: scope?.querySelectorAll('.terminal-tab').length ?? 0 } };
   `);
   async function ready(view: View, timeout = 15_000): Promise<Readiness> {
     const start = Date.now(); let state = await read(view);
     while (state.status === "loading" && Date.now() - start < timeout) { await new Promise(resolve => setTimeout(resolve, 120)); state = await read(view); }
     return { ...state, status: state.status === "loading" ? "timeout" : state.status, elapsedMs: Date.now() - start };
   }
+  // The footer profile trigger opens the profile menu; its Settings item opens the settings shell with the sidebar navigation.
   async function settings(page: "Accounts" | "OMP" | "Appearance") {
-    if (!await script<boolean>(`return visible(document.querySelector('.settings-navigation'));`)) {
-      await script(`click('button[aria-label="App menu"]'); await settle(); click('.footer-menu button', 'Settings'); await settle();`);
+    if (!await script<boolean>(`return visible(document.querySelector('.settings-sidebar'));`)) {
+      await script(`click('#active-host'); await settle(); click('.profile-menu [role="menuitem"] > span', 'Settings'); await settle();`);
     }
-    await script(`click('.settings-navigation button', ${JSON.stringify(page)}); await settle();`);
+    await script(`click('.settings-sidebar-item', ${JSON.stringify(page)}); await settle();`);
   }
+  // Dock toggles are stable checkboxes; aria-checked reports the open state so closing never toggles a closed dock open.
+  const closeDocks = `for (const name of ['Toggle bottom panel', 'Toggle side panel']) { const toggle = document.querySelector('[aria-label="' + name + '"][aria-checked="true"]'); if (visible(toggle)) { toggle.click(); await settle(); } }`;
   async function workspace() {
     if (!context.sessionId) throw new Error(context.reason ?? "No existing local session is available for workspace capture.");
     await script(`
@@ -90,15 +95,15 @@ export async function captureDesktop(window: BrowserWindow, destination: string)
         if (view === "new-conversation" || view === "conversation") {
           if (view === "new-conversation") await script(`click('.sidebar-actions .nav-action'); await settle();`);
           else await workspace();
-          await script(`for (const selector of ['button[aria-label="Close workspace panel"]', '.terminal-panel button[aria-label="Hide terminal panel"]']) { const close = document.querySelector(selector); if (visible(close)) { close.click(); await settle(); } }`);
+          await script(closeDocks);
         }
         if (view === "accounts") { await settings("Accounts"); await ready(view); }
         if (view === "omp") { await settings("OMP"); await script(`click('.native-sidebar nav button', 'All settings'); await settle();`); }
         if (view === "appearance") await settings("Appearance");
         if (["files", "git", "worktrees", "terminal"].includes(view)) {
           await workspace();
-          if (view === "terminal") await script(`const close = document.querySelector('button[aria-label="Close workspace panel"]'); if (visible(close)) { close.click(); await settle(); } if (!visible(document.querySelector('.terminal-panel'))) { click('button[aria-label="Show terminal panel"]'); await settle(); }`);
-          else await script(`if (!visible(document.querySelector('.workspace-panel'))) { click('button[aria-label="Show files and Git"]'); await settle(); } click('#workspace-tab-${view === "git" ? "changes" : view}'); await settle();`);
+          if (view === "terminal") await script(`${closeDocks} click('[aria-label="Toggle bottom panel"][aria-checked="false"]'); await settle();`);
+          else await script(`if (!visible(document.querySelector('.workspace-panel'))) { const side = document.querySelector('[aria-label="Toggle side panel"][aria-checked="false"]'); if (side) { side.click(); await settle(); } click('.dock-slot-right .dock-empty-actions button', 'Files'); await settle(); } click('#workspace-tab-${view === "git" ? "changes" : view}'); await settle();`);
         }
         readiness = await ready(view);
       } catch (cause) { readiness = { status: "unavailable", connected: false, errors: [cause instanceof Error ? cause.message : String(cause)], notices: [], counts: {} }; }
@@ -107,9 +112,9 @@ export async function captureDesktop(window: BrowserWindow, destination: string)
         window.setContentSize(width, height); window.webContents.setZoomFactor(zoom);
         const measurement = await script(`
           await settle();
-          const selectors = ['.sidebar','.main-header','.composer','.welcome','.sidebar-footer','.transcript-scroll','.transcript','.message-body','.transcript-activity-header','.settings-navigation','.settings-header','.accounts-layout','.provider-sidebar','.provider-detail','.native-scope-bar','.native-sidebar','.native-content','.native-compound','.theme-settings-scroll','.theme-overview','.theme-token-grid','.workspace-panel','.file-browser','.file-editor','.git-files','.diff-view','.worktrees-view','.terminal-panel','.terminal-tabs','.terminal-screen','.native-terminal-scrollport','.native-terminal-grid','.native-terminal-grid .xterm-screen'];
+          const selectors = ['.sidebar','.main-header','.composer','.welcome','.sidebar-footer','.transcript-scroll','.transcript','.message-body','.transcript-activity-header','.settings-sidebar','.settings-header','.header-panel-actions','.dock-slot-bottom','.accounts-layout','.provider-sidebar','.provider-detail','.native-scope-bar','.native-sidebar','.native-content','.native-compound','.theme-settings-scroll','.theme-overview','.theme-token-grid','.workspace-panel','.file-browser','.file-editor','.git-files','.diff-view','.worktrees-view','.terminal-panel','.terminal-tabs','.terminal-screen','.native-terminal-scrollport','.native-terminal-grid','.native-terminal-grid .xterm-screen'];
           return { viewport:{width:innerWidth,height:innerHeight,devicePixelRatio}, dark:matchMedia('(prefers-color-scheme: dark)').matches, themeMode:document.documentElement.dataset.theme, material:document.documentElement.dataset.material,
-            fontStatus:document.fonts.status, activeSettingsPage:document.querySelector('.settings-navigation [aria-current]')?.textContent, activeWorkspaceTab:document.querySelector('.workspace-tabs [aria-selected="true"]')?.textContent,
+            fontStatus:document.fonts.status, activeSettingsPage:document.querySelector('.settings-sidebar [aria-current]')?.textContent, activeWorkspaceTab:document.querySelector('.workspace-tabs [aria-selected="true"]')?.textContent,
             elements:Object.fromEntries(selectors.map(selector => { const element=document.querySelector(selector); if(!element) return [selector,null]; const box=element.getBoundingClientRect(),style=getComputedStyle(element); return [selector,{visible:visible(element),x:box.x,y:box.y,width:box.width,height:box.height,scrollWidth:element.scrollWidth,scrollHeight:element.scrollHeight,clientWidth:element.clientWidth,clientHeight:element.clientHeight,background:style.backgroundColor,color:style.color,fontFamily:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,borderRadius:style.borderRadius,padding:style.padding,borders:Object.fromEntries(['Top','Right','Bottom','Left'].map(edge=>[edge.toLowerCase(),{width:style['border'+edge+'Width'],style:style['border'+edge+'Style'],color:style['border'+edge+'Color']}]))}]; })) };
         `);
         const actualReadiness = readiness.status === "unavailable" ? readiness : await read(view);

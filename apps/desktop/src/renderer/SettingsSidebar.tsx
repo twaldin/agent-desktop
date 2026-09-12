@@ -5,13 +5,15 @@ import "./settings-sidebar.css";
 import type { SettingsPage } from "../window-state";
 export type { SettingsPage } from "../window-state";
 
-type SettingsItem = { id: SettingsPage; label: string; group: "Personal" | "Integrations" | "Coding"; icon: "shield" | "sliders" | "branch" | "laptop" | "folder"; description: string };
+type SettingsItem = { id: SettingsPage; label: string; group: "Personal" | "Integrations" | "Coding"; icon: "shortcut" | "shield" | "sliders" | "branch" | "laptop" | "folder" | "globe"; description: string };
 
 const settingsItems: SettingsItem[] = [
   { id: "general", label: "General", group: "Personal", icon: "sliders", description: "Notifications and interaction" },
   { id: "accounts", label: "Accounts", group: "Personal", icon: "shield", description: "Provider accounts and sign-in" },
   { id: "appearance", label: "Appearance", group: "Personal", icon: "sliders", description: "Theme and window appearance" },
-  { id: "omp", label: "OMP", group: "Coding", icon: "laptop", description: "Native OMP configuration" },
+  { id: "keyboard-shortcuts", label: "Keyboard shortcuts", group: "Personal", icon: "shortcut", description: "Customize application keyboard shortcuts" },
+  { id: "omp", label: "Configuration", group: "Personal", icon: "laptop", description: "Native OMP configuration" },
+  { id: "connections", label: "Connections", group: "Coding", icon: "globe", description: "This Mac and other devices on your tailnet" },
   { id: "git", label: "Git", group: "Coding", icon: "branch", description: "Branch and repository defaults" },
   { id: "environments", label: "Environments", group: "Coding", icon: "folder", description: "Project setup environments" },
   { id: "plugins", label: "Plugins", group: "Integrations", icon: "folder", description: "Native OMP plugins and features" },
@@ -37,7 +39,6 @@ export function SettingsSidebar({ page, onSelect, onBack, hostControl, environme
       <Icon name="browserBack" />
       <span>Back to app</span>
     </button>
-    {hostControl && <div className="settings-sidebar-host">{hostControl}</div>}
     <label className="settings-sidebar-search">
       <Icon name="search" />
       <span className="sr-only">Search settings</span>
@@ -57,5 +58,6 @@ export function SettingsSidebar({ page, onSelect, onBack, hostControl, environme
       })}
       {!visible.length && <p className="settings-sidebar-empty">No settings match your search.</p>}
     </nav>
+    {hostControl && <div className="settings-sidebar-host">{hostControl}</div>}
   </aside>;
 }

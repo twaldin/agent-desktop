@@ -13,9 +13,9 @@ const labels: Record<LocalEnvironmentPreparationPhase, string> = {
 const resumable = new Set<LocalEnvironmentPreparationPhase>(['validated', 'worktree-created', 'setup-failed', 'setup-succeeded', 'session-created']);
 
 /** Read-only observation never dispatches setup or input; continuation requires its explicit button. */
-export function EnvironmentPreparationCard({ bridge, hostId, pending, submissions, connected, busy, executionControls, onResume, onSettings }: {
+export function EnvironmentPreparationCard({ bridge, hostId, pending, submissions, connected, busy, executionControls, resumeIssue, onResume, onSettings }: {
   bridge: DesktopBridge; hostId: string; pending: PendingSubmission; submissions: SubmissionController;
-  connected: boolean; busy: boolean; executionControls?: { scriptOutput?: true; scriptCancellation?: true }; onResume(): void; onSettings(): void;
+  connected: boolean; busy: boolean; resumeIssue: string | undefined; executionControls?: { scriptOutput?: true; scriptCancellation?: true }; onResume(): void; onSettings(): void;
 }) {
   const [error, setError] = useState<string>();
   const [expanded, setExpanded] = useState(false);
@@ -67,7 +67,7 @@ export function EnvironmentPreparationCard({ bridge, hostId, pending, submission
   const phase = preparation?.phase;
   useEffect(() => { if (phase === 'setup-failed' || phase === 'cleanup-failed') setExpanded(true); }, [phase]);
   const running = phase && ['worktree-creating', 'setup-running', 'native-creating', 'cleanup-running'].includes(phase);
-  const canResume = connected && !busy && phase !== undefined && resumable.has(phase);
+  const canResume = connected && !busy && !resumeIssue && phase !== undefined && resumable.has(phase);
   useEffect(() => { cancellationCommand.current = undefined; setCancellation(undefined); setCancelError(undefined); }, [preparation?.revision]);
   const cancel = async () => {
     if (!preparation || !projectId || !connected || cancellation === 'sending') return;
@@ -89,6 +89,7 @@ export function EnvironmentPreparationCard({ bridge, hostId, pending, submission
     {phase === 'unknown' && <p>The last operation has no confirmed outcome. Inspect the worktree before taking another action; checking status does not run it again.</p>}
     {phase === 'removed' && <p>The worktree was removed. The original prompt remains in the pending submission below.</p>}
     {!connected && <p>Offline · showing the saved preparation.</p>}
+    {resumeIssue && <p role="status">{resumeIssue}</p>}
     {error && <p role="status">{error}</p>}
     {cancelError && <p role="status">{cancelError}</p>}
     {cancellation === 'accepted' && <p role="status">Cancellation requested. Waiting for the script to stop.</p>}

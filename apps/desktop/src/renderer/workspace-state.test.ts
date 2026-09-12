@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceService } from "../../../host/src/workspace/service";
+import { readGitActionContext } from "../../../host/src/workspace/git-action-context";
 import type { CommandEnvelope, CommandResult, DesktopEvent } from "../../../../packages/shared/src/protocol";
 import type { WorkspaceMutationResult, WorkspaceQueryResult } from "../../../../packages/shared/src/workspace-protocol";
 import { WorkspaceState } from "./workspace-state";
@@ -25,8 +26,11 @@ async function fixture(standalone = false) {
     workspaceQuery: async (_target: unknown, query: Parameters<ConstructorParameters<typeof WorkspaceState>[0]["workspaceQuery"]>[1], hostId?: string): Promise<WorkspaceQueryResult> => {
       owners.push(hostId!);
       switch (query.type) {
+        case "git.submission": throw new Error("Compound submissions are exercised through the host journal fixture.");
+        case "git.selection-summary": throw new Error("Selection summaries are exercised through the owner-fenced host query fixture.");
         case "file.copy-info": case "file.copy-chunk": case "file.open-options": case "environment.actions": case "environment.output": case "environment.preparation": case "environment.read": case "environments.list": throw new Error("Environment catalog is outside this file/Git fixture.");
         case "files.list": return { type: query.type, entries: await native.list(query.path) };
+        case "files.search": return { type: query.type, ...await native.searchFiles(query.query, query.limit) };
         case "file.stat": return { type: query.type, entry: await native.stat(query.path) };
         case "file.read": {
           const content = await native.readText(query.path), held = heldRead; heldRead = undefined;
@@ -34,8 +38,17 @@ async function fixture(standalone = false) {
           return { type: query.type, content };
         }
         case "git.status": return { type: query.type, status: await native.gitStatus() };
+        case "git.action-context": return { type: query.type, context: await readGitActionContext(native) };
         case "git.diff": return { type: query.type, diff: await native.diff(query) };
+        case "git.review-summary": return { type: query.type, summary: await native.reviewSummary(query.source) };
         case "git.branches": return { type: query.type, branches: await native.branches() };
+        case "git.base-branch": return { type: query.type, base: await native.baseBranch() };
+        case "git.default-branch": return { type: query.type, branch: await native.defaultBranch() };
+        case "git.recent-branches": return { type: query.type, branches: await native.recentBranches(query.limit) };
+        case "git.resolve-checkout": return { type: query.type, target: await native.resolveCheckoutTarget(query.expression) };
+        case "git.resolve-revision": return { type: query.type, revision: await native.resolveRevision(query.expression) };
+        case "git.search-starting-branches": return { type: query.type, ...await native.searchStartingBranches(query.query, query.limit) };
+        case "git.search-branches": return { type: query.type, ...await native.searchBranches(query.query, query.limit) };
         case "git.worktrees": return { type: query.type, worktrees: await native.worktrees() };
       }
     },
@@ -49,10 +62,13 @@ async function fixture(standalone = false) {
       try {
         let value: WorkspaceMutationResult;
         switch (action.type) {
+          case "git.submit": case "git.submit.cancel": case "git.submit.acknowledge": throw new Error("Compound submissions require the real host journal.");
           case "file.open": case "environment.action": case "environment.select": case "environment.save": throw new Error("Environment editing is outside this file/Git fixture.");
           case "file.write": value = { type: action.type, result: await native.writeText(action.path, action) }; break;
           case "git.stage": value = { type: action.type, status: await native.stage(action.paths) }; break;
           case "git.unstage": value = { type: action.type, status: await native.unstage(action.paths, action.expectedRevision) }; break;
+          case "git.checkout-revision": value = { type: action.type, status: await native.checkoutRevision(action.revision, action.expectedRevision) }; break;
+          case "git.checkout-ref": value = { type: action.type, status: await native.checkoutRef(action.selection, action.expectedRevision) }; break;
           case "git.checkout": value = { type:action.type, status: await native.checkout(action.branch,action.expectedRevision,action.create) }; break;
           case "git.commit": value = { type: action.type, ...await native.commit(action.message, action.expectedRevision) }; break;
           case "worktree.create": value = { type: action.type, worktree: await native.createWorktree(action.options) }; break;
@@ -136,6 +152,26 @@ describe("workspace renderer against actual file and Git services", () => {
     expect(next.pending).toBeUndefined(); expect(next.errors.action).toBeUndefined();
     expect(next.status?.branch).toBe("recovered-feature");
     expect(next.notice).toBe("Switched to recovered-feature.");
+  });
+  test("ref checkout receipt restores the same selection and does not repeat the native switch", async () => {
+    const f = await fixture(); await f.data.loadGit();
+    const commit = f.git("rev-parse", "HEAD");
+    f.git("remote", "add", "origin", join(f.path, "never-contacted"));
+    f.git("update-ref", "refs/remotes/origin/topic", commit);
+    await f.data.open("sample.txt"); f.data.edit("sample.txt", "unsent buffer\n");
+    f.dropNextReceipt();
+    const selection = { ref: "refs/remotes/origin/topic", commit, localBranch: "topic" };
+    await f.data.mutate({ type: "git.checkout-ref", selection, expectedRevision: f.data.status!.revision });
+    expect(f.data.pending?.uncertain).toBe(true);
+    const original = f.deliveries[0]!;
+    expect(original.command).toMatchObject({ action: { type: "git.checkout-ref", selection } });
+    const next = new WorkspaceState(f.bridge, "home", { projectId: "project" }, f.cache, "home");
+    await next.restore(); next.setConnected(true); await next.retry();
+    expect(f.deliveries).toEqual([original, original]);
+    expect(next.pending).toBeUndefined(); expect(next.status?.branch).toBe("topic");
+    expect(next.notice).toBe("Switched to topic.");
+    expect(next.documents.get("sample.txt")).toMatchObject({ text: "unsent buffer\n", dirty: true });
+    expect(f.git("reflog", "--format=%gs").split("\n").filter(line => line.startsWith("checkout:"))).toHaveLength(1);
   });
   test("edits made during a real save survive its completion and following refresh", async () => {
     const f = await fixture(); await f.data.open("sample.txt"); f.data.edit("sample.txt", "submitted\n");
@@ -478,4 +514,76 @@ describe("standalone file editor ownership", () => {
     expect(acquired[1]).toEqual({target:{filePath:"/other/assets/chart.png"},path:"chart.png",hostId:"home"});
     await outside.release();
   });
+});
+
+
+test("owning workspace forwards revision resolution without a mutation envelope", async () => {
+  const f = await fixture();
+  try {
+    const revision = await f.data.query({ type: "git.resolve-revision", expression: "HEAD" });
+    expect(revision).toEqual({ type: "git.resolve-revision", revision: { expression: "HEAD", commit: f.git("rev-parse", "HEAD") } });
+    expect(f.owners.at(-1)).toBe("home");
+    expect(f.deliveries).toHaveLength(0);
+  } finally { f.data.stop(); }
+});
+
+
+test("revision checkout receipt retries the original envelope without a second native switch", async () => {
+  const f = await fixture(); await f.data.loadGit();
+  const revision = { expression: "HEAD", commit: f.git("rev-parse", "HEAD") };
+  await f.data.open("sample.txt"); f.data.edit("sample.txt", "unsent revision buffer\n");
+  f.dropNextReceipt();
+  await f.data.mutate({ type: "git.checkout-revision", revision, expectedRevision: f.data.status!.revision });
+  expect(f.data.pending?.uncertain).toBe(true);
+  const original = f.deliveries[0]!;
+  expect(original.command).toMatchObject({ action: { type: "git.checkout-revision", revision } });
+  const next = new WorkspaceState(f.bridge, "home", { projectId: "project" }, f.cache, "home");
+  try {
+    await next.restore(); next.setConnected(true); await next.retry();
+    expect(f.deliveries).toEqual([original, original]);
+    expect(next.pending).toBeUndefined(); expect(next.status).toMatchObject({ branch: null, head: revision.commit });
+    expect(next.notice).toBe("Switched to detached HEAD.");
+    expect(next.documents.get("sample.txt")).toMatchObject({ text: "unsent revision buffer\n", dirty: true });
+    expect(f.git("reflog", "--format=%gs").split("\n").filter(line => line.startsWith("checkout:"))).toHaveLength(1);
+  } finally { f.data.stop(); next.stop(); }
+});
+
+
+test("owning workspace forwards recent branches without a mutation envelope", async () => {
+  const f = await fixture();
+  try {
+    const branches = await f.data.query({ type: "git.recent-branches", limit: 1 });
+    expect(branches).toEqual({ type: "git.recent-branches", branches: ["main"] });
+    expect(f.owners.at(-1)).toBe("home");
+    expect(f.deliveries).toHaveLength(0);
+  } finally { f.data.stop(); }
+});
+
+
+test("owning workspace forwards default branch discovery without a mutation envelope", async () => {
+  const f = await fixture();
+  try {
+    expect(await f.data.query({ type: "git.default-branch" })).toEqual({ type: "git.default-branch", branch: "main" });
+    expect(f.owners.at(-1)).toBe("home"); expect(f.deliveries).toHaveLength(0);
+  } finally { f.data.stop(); }
+});
+
+
+test("owning workspace forwards base branch discovery without a mutation envelope", async () => {
+  const f = await fixture();
+  try {
+    expect(await f.data.query({ type: "git.base-branch" })).toEqual({ type: "git.base-branch", base: null });
+    expect(f.owners.at(-1)).toBe("home"); expect(f.deliveries).toHaveLength(0);
+  } finally { f.data.stop(); }
+});
+
+
+test("owning workspace forwards checkout target resolution without a mutation envelope", async () => {
+  const f = await fixture();
+  try {
+    expect(await f.data.query({ type: "git.resolve-checkout", expression: "main" })).toEqual({ type: "git.resolve-checkout", target: {
+      kind: "branch", expression: "main", selection: { ref: "refs/heads/main", commit: f.git("rev-parse", "HEAD") },
+    } });
+    expect(f.owners.at(-1)).toBe("home"); expect(f.deliveries).toHaveLength(0);
+  } finally { f.data.stop(); }
 });

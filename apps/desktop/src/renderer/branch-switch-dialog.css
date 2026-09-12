@@ -1,0 +1,18 @@
+.branch-switch-overlay{position:fixed;inset:0;z-index:130;background:var(--dialog-backdrop-color,#00000022)}
+.branch-switch-dialog{position:fixed;z-index:131;top:50%;left:50%;transform:translate(-50%,-50%);width:400px;max-width:92vw;max-height:92vh;overflow:auto;padding:0;color:var(--text);background:color-mix(in srgb,var(--dialog-surface) calc(var(--dialog-opacity,.9) * 100%),transparent);backdrop-filter:blur(var(--dialog-blur,24px));border:0;border-radius:calc(20px * var(--corner-radius-scale,1.25));corner-shape:superellipse(var(--corner-exponent));box-shadow:0 0 0 .5px var(--border),0 10px 15px -3px #0000001a,0 4px 6px -4px #0000001a;font:inherit;font-size:14px;line-height:21px}
+.branch-switch-dialog form{display:flex;flex-direction:column;gap:0;min-width:0;padding:20px}
+.branch-switch-dialog h2{margin:0;padding-right:20px;font-size:16px;line-height:28px;font-weight:600;letter-spacing:-.36px}
+.branch-switch-description{display:flex;flex-direction:column;gap:8px;padding-top:12px;color:var(--secondary);font-size:13px;line-height:calc(1.25 / .875)}
+.branch-switch-description p{margin:0;overflow-wrap:anywhere}
+.branch-switch-description ul{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none;overflow-wrap:anywhere}
+.branch-switch-dialog footer{display:flex;justify-content:flex-end;gap:12px;padding-top:12px}
+.branch-switch-dialog footer button{padding:6px 16px;border:1px solid transparent;border-radius:calc(10px * var(--corner-radius-scale,1.25));font:inherit;font-size:14px;line-height:18px}
+.branch-switch-close{position:absolute;top:16px;right:16px;display:grid;place-items:center;padding:4px;border:0;border-radius:8px;color:var(--secondary);background:transparent}
+.branch-switch-close .icon{width:16px;height:16px}
+.branch-switch-close:hover{background:var(--hover);color:var(--text)}
+.branch-switch-dialog button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.branch-switch-description li{display:inline-flex;align-items:center;gap:4px;color:var(--text)}
+.branch-switch-statistics{display:inline-flex;align-items:center;gap:4px;line-height:1;font-variant-numeric:tabular-nums;font-feature-settings:"cv01" on,"cv02" on;letter-spacing:-.025em;white-space:nowrap}
+.branch-switch-statistics>span{display:flex;flex-shrink:0;align-items:center}
+.branch-switch-added{color:var(--success)}
+.branch-switch-deleted{color:var(--danger)}

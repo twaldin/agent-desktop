@@ -68,7 +68,7 @@ app.whenReady().then(async () => {
     await wait(`window.state().dock.state.bottom.tabIds.some(id=>window.state().tabs.find(tab=>tab.id===id)?.path==='nested/nested.ts')&&window.editor('Edit nested/nested.ts')?.textContent.includes('unchanged')`);
     if (!await js(`window.state().tabs.find(tab=>tab.path==='nested/nested.ts')?.path==='nested/nested.ts'`)) throw new Error("Moved tab lost its file path");
     await capture("04-file-moved-to-bottom-dock");
-    await click('.dock-slot-bottom .dock-menu summary'); await click('.dock-slot-bottom .dock-menu button', "Hide panel"); await wait(`!window.state().dock.state.bottom.open&&!window.editor('Edit nested/nested.ts')`);
+    await click('.dock-slot-bottom .dock-close'); await wait(`!window.state().dock.state.bottom.open&&!window.editor('Edit nested/nested.ts')`);
     await click('.fixture-actions button', "Show bottom dock"); await wait(`window.state().dock.state.bottom.open&&window.editor('Edit nested/nested.ts')`);
     await js(`window.editor('Edit nested/nested.ts').focus()`); await wait(`window.state().editorFocused`); await capture("05-bottom-dock-restored-focus");
     checks.push("DockPanel keyboard move preserves file identity; hide/show restores the same editor and accepts focus");

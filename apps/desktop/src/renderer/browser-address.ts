@@ -19,11 +19,13 @@ export function browserExternalAddress(value: string): boolean {
   try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch { return false; }
 }
 
-/** Match the reference's URL/search distinction, using public and private suffixes. */
-export function browserNavigationAddress(value: string): string {
+export type BrowserAddress = { kind: 'empty' | 'url' | 'search'; address: string };
+
+/** One URL/search decision for navigation and workspace suggestion defaults. */
+export function parseBrowserAddress(value: string): BrowserAddress {
   const input = value.trim();
-  if (!input) return '';
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^about:/i.test(input)) return input;
+  if (!input) return { kind: 'empty', address: '' };
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^about:/i.test(input)) return { kind: 'url', address: input };
   // Host-local files need an owning-host operation; never leak their paths into a search.
   if (/^(?:\/(?!\/)|[a-z]:[\\/]|\\\\)/i.test(input)) throw new Error('Opening a host-local file in the browser is not available yet.');
   const authority = input.split(/[/?#]/, 1)[0];
@@ -37,13 +39,18 @@ export function browserNavigationAddress(value: string): string {
     validHost &&= Boolean(match);
     if (match) { host = match[1]; hasPort = true; }
   }
-  if (validHost && localHost(host)) return `http://${input}`;
+  if (validHost && localHost(host)) return { kind: 'url', address: `http://${input}` };
   if (validHost && !/\s/.test(input)) {
     let ip = false;
     if (host.startsWith('[')) { try { ip = new URL(`https://${host}`).hostname.startsWith('['); } catch {} }
     else ip = /^\d+\.\d+\.\d+\.\d+$/.test(host) && host.split('.').every(part => Number(part) <= 255);
     const domain = parse(host, { allowPrivateDomains: true });
-    if (ip || (!host.startsWith('[') && (hasPort || host.startsWith('www.') || domain.domain !== null && (domain.isIcann || domain.isPrivate)))) return `https://${input}`;
+    if (ip || (!host.startsWith('[') && (hasPort || host.startsWith('www.') || domain.domain !== null && (domain.isIcann || domain.isPrivate)))) return { kind: 'url', address: `https://${input}` };
   }
-  return `https://www.google.com/search?${new URLSearchParams({ q: input })}`;
+  return { kind: 'search', address: `https://www.google.com/search?${new URLSearchParams({ q: input })}` };
+}
+
+/** Preserve the existing navigation API and exact normalized bytes. */
+export function browserNavigationAddress(value: string): string {
+  return parseBrowserAddress(value).address;
 }

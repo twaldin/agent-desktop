@@ -1,0 +1,46 @@
+/* Pinned 7982 command surface; see git-submission-dialog-reference contract. */
+.git-submission-dialog{width:420px;max-width:92vw;max-height:92dvh;margin:auto;padding:0;border:1px solid var(--border);border-radius:calc(16px * var(--corner-radius-scale,1));corner-shape:superellipse(var(--corner-exponent));background:var(--menu-surface,var(--elevated-surface));color:var(--text);box-shadow:0 16px 32px -8px #00000030;font-size:calc(var(--font-size,14px) * 13 / 14);line-height:20px;overflow:visible}
+.git-submission-dialog::backdrop{background:#00000022;backdrop-filter:none}
+.git-submission-dialog>[cmdk-root]{display:flex;flex-direction:column;gap:4px;padding:4px;max-height:calc(92dvh - 2px);overflow:auto;border-radius:inherit}
+.git-submission-branch{display:flex;gap:12px;min-width:0}
+.git-submission-branch>.branch-selector-trigger{display:flex;align-items:center;justify-content:flex-start;gap:4px;width:100%;min-width:0;height:32px;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--text);font:inherit}
+.git-submission-branch>.branch-selector-trigger:hover{background:var(--hover)}
+.git-submission-branch>.branch-selector-trigger>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-submission-branch>.branch-selector-trigger>.icon{width:16px;height:16px}
+.git-submission-branch>.branch-selector-trigger>.icon:last-child{width:8px;height:8px;margin-left:0}
+.git-submission-new-branch{display:flex;flex-direction:column;gap:4px;padding:8px 12px 0}
+.git-submission-new-branch input{min-width:0;width:100%;height:32px;padding:4px 8px;background:var(--dialog-input-surface);color:var(--text);border:1px solid var(--border);border-radius:8px;font:inherit}
+.git-submission-new-branch p{margin:0;color:var(--danger);font:inherit}
+.git-submission-dialog .git-submission-message{display:block;width:100%;height:80px;min-height:80px;padding:8px 12px;border:0;resize:none;background:transparent;outline:0;color:var(--text);font:inherit}
+.git-submission-message::placeholder{color:var(--secondary)}
+.git-submission-selection{display:flex;align-items:center;gap:8px;padding:8px 12px 12px;min-width:0}
+.git-submission-selection>input{width:14px;height:14px;margin:0;flex:none;accent-color:var(--secondary)}
+.git-submission-selection>label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-submission-totals{display:flex;align-items:center;gap:4px;flex:none;margin-left:auto}
+.git-submission-totals>.spinner{width:16px;height:16px}
+.git-submission-action-region{border-top:1px solid var(--border);padding:4px 0}
+.git-submission-action-region [cmdk-list]{max-height:300px;overflow:auto}
+.git-submission-actions{display:flex;flex-direction:column;gap:4px}
+.git-submission-action{display:flex;align-items:center;gap:8px;min-height:24px;padding:5px 8px;border-radius:8px;opacity:.75;cursor:default}
+.git-submission-action[aria-disabled=true]{opacity:.25}
+.git-submission-action[aria-selected=true]{background:var(--hover);opacity:1}
+.git-submission-action>.icon{width:16px;height:16px;flex:none}
+.git-submission-action>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-submission-action>kbd{margin-left:auto;visibility:hidden;border:0;border-radius:12px;padding:0 6px;background:var(--selected);color:var(--secondary);font:inherit;font-size:12px;line-height:16px}
+.git-submission-action[aria-selected=true]>kbd{visibility:visible}
+.git-submission-destination{display:flex;align-items:center;gap:8px;padding:4px 12px;color:var(--secondary)}
+.git-submission-destination select{min-width:0;flex:1;padding:4px;background:var(--menu-surface,var(--elevated-surface));color:var(--text);border:1px solid var(--border);border-radius:6px;font:inherit}
+.git-submission-error{padding:4px 12px;color:var(--secondary)}
+.git-submission-error p{margin:0;overflow-wrap:anywhere}
+.git-submission-error button{padding:4px 0;color:var(--text);background:transparent;border:0;font:inherit;text-decoration:underline}
+.git-submission-cancel{width:24px;height:24px;display:inline-grid;place-items:center;flex:none;background:transparent;border:0;border-radius:8px;color:var(--secondary)}
+.git-submission-cancel:hover{background:var(--hover);color:var(--text)}
+.git-submission-cancel>.icon{width:14px;height:14px}
+.git-submission-receipt{font-size:13px;line-height:20px;overflow-wrap:anywhere}
+.git-submission-receipt p{margin:4px 0}
+.git-submission-receipt-actions{display:flex;flex-wrap:wrap;gap:8px}
+.git-submission-receipt-actions button{padding:4px 8px;color:var(--text);background:var(--hover);border:1px solid var(--border);border-radius:8px;font:inherit}
+.git-submission-dialog .git-submission-receipt{padding:4px 12px}
+.git-submission-feedback{position:fixed;z-index:140;top:56px;left:50%;transform:translateX(-50%);width:420px;max-width:92vw;padding:10px 12px;border:1px solid var(--border);border-radius:16px;background:var(--menu-surface,var(--elevated-surface));box-shadow:0 8px 24px #0003;color:var(--text)}
+.git-submission-feedback>header{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:var(--secondary)}
+.git-submission-feedback>header>.icon-button{width:20px;height:20px}

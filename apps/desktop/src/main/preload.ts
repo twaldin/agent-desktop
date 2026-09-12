@@ -1,8 +1,21 @@
+import { createBrowserCloseBridge } from "./browser-close-preload";
+import { createBrowserObservationBridge } from "./browser-observation-preload";
+import { createDraftBrowserBridge } from "./draft-browser-preload";
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge, DesktopEvent, DesktopTerminalEvent, NativeTerminalInvalidation } from "@agent-desktop/shared";
 
 let lastNotificationNavigation: string | undefined;
+// This cache belongs to one isolated preload/document, never a successor navigation.
+let repositoryWatchWindow: Promise<string> | undefined;
+let branchQueryWindow: Promise<string> | undefined;
 const bridge: DesktopBridge = {
+  draftBrowser: createDraftBrowserBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
+  browserClose: createBrowserCloseBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
+  browserObservation: createBrowserObservationBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
+  watchModifierRelease: (modifier, id) => ipcRenderer.invoke("desktop:modifier-release", id, modifier),
+  cancelModifierRelease: id => ipcRenderer.invoke("desktop:modifier-release-cancel", id),
+  // This desktop implements native translucent backing only through Darwin vibrancy.
+  windowBackdropSupported: process.platform === "darwin",
   showContextMenu: items=>ipcRenderer.invoke("desktop:context-menu",items),
   getNotificationStatus: () => ipcRenderer.invoke("desktop:notification-status"),
   subscribeNotificationStatus: listener => {
@@ -27,12 +40,43 @@ const bridge: DesktopBridge = {
   getTranscriptImage: (sessionId, nativeEntryId, blockIndex, hostId) => ipcRenderer.invoke("host:transcript-image", sessionId, nativeEntryId, blockIndex, hostId),
   getState: hostId => ipcRenderer.invoke("host:state", hostId),
   getHosts: () => ipcRenderer.invoke("host:peers"),
+  getKeepAwakeStatus: () => ipcRenderer.invoke("desktop:keep-awake-status"),
+  subscribeKeepAwakeStatus: listener => {
+    const changed = () => listener(); ipcRenderer.on("desktop:keep-awake-status", changed);
+    return () => ipcRenderer.removeListener("desktop:keep-awake-status", changed);
+  },
+  getDeviceAccess: () => ipcRenderer.invoke("host:device-access"),
+  updateDeviceAccess: update => ipcRenderer.invoke("host:device-access-update", update),
+  subscribeDeviceAccess: listener => {
+    const changed = () => listener(); ipcRenderer.on("host:device-access-changed", changed);
+    return () => ipcRenderer.removeListener("host:device-access-changed", changed);
+  },
   getProviders: hostId => ipcRenderer.invoke("host:providers", hostId),
   getAccounts: (providerId, hostId) => ipcRenderer.invoke("host:accounts", providerId, hostId),
   getSessionAccounts: (sessionId, hostId) => ipcRenderer.invoke("host:session-accounts", sessionId, hostId),
   getInteractions: (sessionId, hostId) => ipcRenderer.invoke("host:interactions", sessionId, hostId),
   getDetachedQuestions: (sessionId, hostId) => ipcRenderer.invoke('host:detached-questions', sessionId, hostId),
   workspaceQuery: (target, query, hostId) => ipcRenderer.invoke("host:workspace-query", target, query, hostId),
+  repositoryWatch: async request => {
+    repositoryWatchWindow ??= ipcRenderer.invoke("host:repository-watch-window").catch(error => { repositoryWatchWindow = undefined; throw error; });
+    const token = await repositoryWatchWindow;
+    return ipcRenderer.invoke("host:repository-watch", token, request);
+  },
+  subscribeRepositoryWatch: listener => {
+    const callback = (_event: Electron.IpcRendererEvent, status: import("@agent-desktop/shared").RepositoryWatchObserverStatus) => listener(status);
+    ipcRenderer.on("host:repository-watch-status", callback);
+    return () => ipcRenderer.removeListener("host:repository-watch-status", callback);
+  },
+  branchQuery: async request => {
+    branchQueryWindow ??= ipcRenderer.invoke("host:branch-query-window").catch(error => { branchQueryWindow = undefined; throw error; });
+    const token = await branchQueryWindow;
+    return ipcRenderer.invoke("host:branch-query", token, request);
+  },
+  subscribeBranchQuery: listener => {
+    const callback = (_event: Electron.IpcRendererEvent, status: import("@agent-desktop/shared").BranchQueryObserverStatus) => listener(status);
+    ipcRenderer.on("host:branch-query-status", callback);
+    return () => ipcRenderer.removeListener("host:branch-query-status", callback);
+  },
   saveSkillFileCopy: async (ref, hostId) => {
     const outcome = await ipcRenderer.invoke("desktop:skill-save-copy", ref, hostId);
     if (!outcome.ok) throw new Error(outcome.error);
@@ -57,11 +101,17 @@ const bridge: DesktopBridge = {
   },
   answerWindowClose: (id, allowed) => ipcRenderer.invoke("desktop:window-close-answer", id, allowed),
   getPreferences: () => ipcRenderer.invoke("host:preferences"),
+  getPreferencesV2: () => ipcRenderer.invoke("host:preferences-v2"),
   getTheme: () => ipcRenderer.invoke("host:theme"),
   setTheme: (document, expectedRevision) => ipcRenderer.invoke("host:theme-set", document, expectedRevision),
   getLocalFonts: () => ipcRenderer.invoke("desktop:fonts"),
   openThemeFile: () => ipcRenderer.invoke("desktop:open-theme"),
   applyWindowTheme: effects => ipcRenderer.invoke("desktop:window-theme", effects),
+  subscribeWindowTheme: listener => {
+    const callback = (_event: unknown, opaqueWindows: unknown) => { if (typeof opaqueWindows === "boolean") listener(opaqueWindows); };
+    ipcRenderer.on("desktop:window-theme-state", callback);
+    return () => ipcRenderer.removeListener("desktop:window-theme-state", callback);
+  },
   importThemeBackground: () => ipcRenderer.invoke("desktop:theme-background-import"),
   getThemeBackground: sha256 => ipcRenderer.invoke("desktop:theme-background", sha256),
   getTerminals: (target, hostId) => ipcRenderer.invoke("host:terminals", target, hostId),
@@ -75,6 +125,9 @@ const bridge: DesktopBridge = {
   },
   getNativeTerminalCapabilities: hostId => ipcRenderer.invoke("host:native-terminal-capabilities", hostId),
   nativeTerminalQuery: (query, hostId) => ipcRenderer.invoke("host:native-terminal-query", query, hostId),
+  getTerminalCreationCapabilities: hostId => ipcRenderer.invoke("host:terminal-creation-capabilities", hostId),
+  createNativeTerminal: (request, hostId) => ipcRenderer.invoke("host:terminal-create", request, hostId),
+  observeTerminalCreation: (request, hostId) => ipcRenderer.invoke("host:terminal-creation-status", request, hostId),
   nativeTerminalAction: (action, hostId) => ipcRenderer.invoke("host:native-terminal-action", action, hostId),
   writeNativeTerminal: (input, hostId) => ipcRenderer.invoke("host:native-terminal-input", input, hostId),
   subscribeNativeTerminals: listener => {
@@ -89,6 +142,9 @@ const bridge: DesktopBridge = {
   getPluginAcquisitionOperations: hostId => ipcRenderer.invoke("host:plugin-acquisition-operations", hostId),
   reviewPluginAcquisition: (target, id, expectedRevision, hostId) => ipcRenderer.invoke("host:plugin-acquisition-review", target, id, expectedRevision, hostId),
   closePluginAcquisitionRequest: (target, request, hostId) => ipcRenderer.invoke("host:plugin-acquisition-close", target, request, hostId),
+  getSshHosts: (target, hostId) => ipcRenderer.invoke("host:ssh-read", target, hostId),
+  getSshHostDetail: (target, request, hostId) => ipcRenderer.invoke("host:ssh-detail", target, request, hostId),
+  mutateSshHost: (target, mutation, hostId) => ipcRenderer.invoke("host:ssh-mutate", target, mutation, hostId),
   getMcpServers: (target, hostId) => ipcRenderer.invoke("host:mcp-read", target, hostId),
   getMcpServerDetail: (target, request, hostId) => ipcRenderer.invoke("host:mcp-detail", target, request, hostId),
   mutateMcpServer: (target, mutation, hostId) => ipcRenderer.invoke("host:mcp-mutate", target, mutation, hostId),
@@ -113,6 +169,8 @@ const bridge: DesktopBridge = {
   accountAction: (action, hostId) => ipcRenderer.invoke("host:account-action", action, hostId),
   openExternal: url => ipcRenderer.invoke("desktop:open-external", url),
   command: (envelope, hostId) => ipcRenderer.invoke("host:command", envelope, hostId),
+  searchSessions: (input, hostId, requestId) => ipcRenderer.invoke("host:session-search", input, hostId, requestId),
+  cancelSessionSearch: (requestId, hostId) => ipcRenderer.invoke("host:session-search-cancel", requestId, hostId),
   getMessages: (sessionId, hostId) => ipcRenderer.invoke("host:messages", sessionId, hostId),
   mutateGoal: (sessionId, request, hostId) => ipcRenderer.invoke("host:goal-control", sessionId, request, hostId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
@@ -124,6 +182,7 @@ const bridge: DesktopBridge = {
   getBtw: (sessionId, hostId) => ipcRenderer.invoke("host:btw", sessionId, hostId),
   getBrowserMetadata: (sessionId, hostId) => ipcRenderer.invoke("host:browser-metadata", sessionId, hostId),
   createBrowserTab: (sessionId, request, hostId) => ipcRenderer.invoke("host:browser-create", sessionId, request, hostId),
+  getBrowserCreationStatus: (sessionId, request, hostId) => ipcRenderer.invoke("host:browser-creation-status", sessionId, request, hostId),
   controlBrowser: (sessionId, request, hostId) => ipcRenderer.invoke("host:browser-control", sessionId, request, hostId),
   getBrowserFrame: (sessionId, target, hostId) => ipcRenderer.invoke("host:browser-frame", sessionId, target, hostId),
   chooseDirectory: () => ipcRenderer.invoke("desktop:directory"),

@@ -1,4 +1,10 @@
+import { parseDeviceAccessPolicy, parseDeviceAccessUpdate, DeviceAccessConflictError, type DeviceAccessPolicy } from "../../../packages/shared/src/device-access";
 import { PluginAcquisitionRecords } from "./integrations/acquisition-records";
+import { BrowserCloseRecords } from "./browser-close-records";
+import { BrowserCreationRecords } from "./browser-creation-records";
+import { DraftBrowserOwnerRecords } from "./browser-draft-owner-records";
+import { DraftBrowserCreationRecords } from "./draft-browser-creation-records";
+import { TerminalCreationRecords } from "./terminals/creation-records";
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { arch, hostname, platform } from "node:os";
@@ -19,8 +25,8 @@ import { parseImageAttachments } from "../../../packages/shared/src/attachments"
 import { hasRepeatedWholeFileIntent, hasRepeatedWholeFileSources, parseInlineWholeFileMentions, parseWholeFileAttachments } from "../../../packages/shared/src/whole-file";
 import { parseSelectedTextAttachments } from "../../../packages/shared/src/selected-text";
 import { detachedAnswerDraft, type DetachedQuestionSnapshot } from '../../../packages/shared/src/detached-questions';
-import { parseNewChatExecution } from '../../../packages/shared/src/new-chat';
-import { hasNewChatIntent } from './new-chat-protocol';
+import { parseNewChatExecution, hasRemoteExecution, hasRemoteStartingState } from '../../../packages/shared/src/new-chat';
+import { hasNewChatIntent, hasRemoteWorktreeIntent } from './new-chat-protocol';
 import { hasEnvironmentIntent } from './environment-protocol';
 import { parseEnvironmentSelection } from '../../../packages/shared/src/environment-selection';
 import {
@@ -31,6 +37,8 @@ import {
   type LocalEnvironmentPreparationTransition,
 } from "./local-environments/preparations";
 import type { LocalEnvironmentWorkerEnvironment } from "./local-environments/environment";
+import type { GitSubmissionReceipt, GitSubmissionTarget } from "../../../packages/shared/src/git-submissions";
+import type { WorkspaceTarget } from "../../../packages/shared/src/workspace";
 
 export type { DraftInput } from "../../../packages/shared/src/protocol";
 import type { DraftInput } from "../../../packages/shared/src/protocol";
@@ -79,6 +87,16 @@ export interface WorktreeRemovalIntent {
 }
 
 const removalIntentPrefix = "worktree-removal.v1:";
+const gitSubmissionPrefix = "git-submission.v1:";
+const gitSubmissionLatestPrefix = "git-submission.latest.v1:";
+const gitSubmissionRecoveryPrefix = "git-submission.recovery.v1:";
+
+export interface GitSubmissionRecovery { ownerCwd: string; gitRoot: string; ownerStamp: string; privateIndexPath?: string }
+export interface GitSubmissionAdvance {
+  phase?: GitSubmissionReceipt["phase"]; progress?: string; generatedMessage?: string;
+  branch?: GitSubmissionReceipt["branch"]; commit?: GitSubmissionReceipt["commit"]; push?: GitSubmissionReceipt["push"];
+  recovery?: GitSubmissionRecovery;
+}
 
 type WithoutSequence<T> = T extends { sequence: number } ? Omit<T, "sequence"> : never;
 export type EventInput = WithoutSequence<HostEvent>;
@@ -89,6 +107,11 @@ type EnvironmentPreparationAccessor = Pick<LocalEnvironmentPreparations, "get" |
 export class HostStore {
   readonly host: HostIdentity;
   readonly pluginAcquisitions: PluginAcquisitionRecords;
+  readonly browserCreations: BrowserCreationRecords;
+  readonly browserCloses: BrowserCloseRecords;
+  readonly draftBrowserOwners: DraftBrowserOwnerRecords;
+  readonly draftBrowserCreations: DraftBrowserCreationRecords;
+  readonly terminalCreations: TerminalCreationRecords;
   readonly environmentPreparations: EnvironmentPreparationAccessor;
   private readonly db: Database;
   private readonly environmentPreparationStore: LocalEnvironmentPreparations;
@@ -101,7 +124,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 11) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 20) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -129,9 +152,51 @@ export class HostStore {
         return identity;
       }).immediate();
       this.pluginAcquisitions = new PluginAcquisitionRecords(this.db);
+      this.browserCreations = new BrowserCreationRecords(this.db, this.host.id, () => {
+        // The downgrade fence must not turn a valid legacy default policy into
+        // missing-policy corruption on reopen. Preserve its exact semantics.
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(16);
+      });
+      this.draftBrowserOwners = new DraftBrowserOwnerRecords(this.db, this.host.id, input => {
+        const draft = this.getDraft(input.draftId);
+        if (!draft || draft.revision !== input.draftRevision || draft.projectId !== input.projectId) throw new Error("The draft browser owner changed before its durable claim");
+        if (input.projectId !== null) {
+          const project = this.getProject(input.projectId);
+          if (!project || project.hostId !== this.host.id || project.path !== input.cwd) throw new Error("The draft browser project changed before its durable claim");
+        }
+        // A projectless cwd is supplied only by the owning host's admission path.
+        // This persistence primitive does not grant access to a client-supplied path.
+      }, () => {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(19);
+      });
+      this.draftBrowserCreations = new DraftBrowserCreationRecords(this.db, this.host.id, this.draftBrowserOwners);
+      this.browserCloses = new BrowserCloseRecords(this.db, this.host.id, owner => {
+        if (owner.kind === "session") {
+          if (!this.getSession(owner.sessionId)) throw new Error("The browser session no longer exists.");
+        } else {
+          const saved = this.draftBrowserOwners.get(owner.ownerId);
+          if (!saved || saved.retiredAt !== undefined || saved.draftId !== owner.draftId || saved.draftRevision !== owner.draftRevision) throw new Error("The draft browser owner changed before close admission.");
+        }
+      }, () => {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(20);
+      });
+      this.terminalCreations = new TerminalCreationRecords(this.db, this.host.id, () => {
+        // Preserve the legacy policy before raising the downgrade fence.
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(17);
+      });
       this.environmentPreparationStore = new LocalEnvironmentPreparations(this.db, this.host.id);
       this.environmentPreparations = this.environmentPreparationStore;
+      this.getDeviceAccessPolicy(); // Refuse corrupt or missing restrictions before serving any connection.
       this.recoverInterruptedSessions();
+      this.recoverInterruptedGitSubmissions();
       this.environmentPreparationStore.reconcileInterrupted();
     } catch (error) {
       this.db.close();
@@ -150,6 +215,30 @@ export class HostStore {
   writeMetadata<T>(key: string, value: T): void {
     this.db.query("INSERT INTO metadata (key, data) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data")
       .run(key, JSON.stringify(value));
+  }
+
+  getDeviceAccessPolicy(): DeviceAccessPolicy {
+    const policy = this.readMetadata<unknown>("device-access.v1");
+    if (policy !== undefined) return parseDeviceAccessPolicy(policy);
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+    if (version >= 13) throw new Error("Host device access policy is missing.");
+    // Preserve the existing same-user identity policy until an explicit local change.
+    return { revision: 0, enabled: true, revokedNodeIds: [] };
+  }
+
+  updateDeviceAccessPolicy(value: unknown): DeviceAccessPolicy {
+    const { expectedRevision, change } = parseDeviceAccessUpdate(value);
+    return this.db.transaction(() => {
+      const current = this.getDeviceAccessPolicy();
+      if (current.revision !== expectedRevision) throw new DeviceAccessConflictError();
+      const revoked = new Set(current.revokedNodeIds);
+      if (change.type === "device") { if (change.allowed) revoked.delete(change.nodeId); else revoked.add(change.nodeId); }
+      const next = parseDeviceAccessPolicy({ revision: current.revision + 1, enabled: change.type === "availability" ? change.enabled : current.enabled, revokedNodeIds: [...revoked] });
+      this.writeMetadata("device-access.v1", next);
+      // Atomically prevent old hosts from ignoring restrictions, including after re-enabling access.
+      this.requireVersion(13);
+      return next;
+    }).immediate();
   }
 
   getActionEnvironmentSelection(canonicalCwd: string): { revision: number; configPath: string | null } | undefined {
@@ -187,6 +276,8 @@ export class HostStore {
   updatePreferencesState<T>(update: (current: StoredPreferencesState | undefined) => { state: StoredPreferencesState; result: T }): T {
     return this.db.transaction(() => {
       const { state, result } = update(this.readPreferencesState());
+      // Commit the downgrade fence with the first v2 record; legacy-only writes do not migrate the database.
+      if (state.version === 2) this.requireVersion(state.records.some(record => record.key === "general.commandKeymap" && !record.deleted && record.value.version === 2) ? 15 : 14);
       this.db.query("INSERT INTO metadata (key, data) VALUES ('preferences.v1', ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data").run(JSON.stringify(state));
       return result;
     }).immediate();
@@ -272,6 +363,7 @@ export class HostStore {
       if (input.approvalMode !== undefined) this.requirePermissionVersion();
       if (input.attachments !== undefined) this.requireVersion(3);
       if (input.execution !== undefined) this.requireVersion(4);
+      if (hasRemoteExecution(input.execution)) this.requireRemoteStartingVersion();
       if (input.environment !== undefined) this.requireVersion(5);
       if (input.selectedTextAttachments !== undefined) this.requireVersion(8);
       if ((currentDraft?.revision ?? 0) !== expectedRevision) {
@@ -348,7 +440,9 @@ export class HostStore {
       if (selectedTextAttachments !== undefined) this.requireVersion(8);
       if (wholeFileAttachments !== undefined) this.requireVersion(hasRepeatedWholeFileSources(wholeFileAttachments) ? 11 : wholeFileAttachments.some(file=>file.textOffset!==undefined)?10:9);
       if (command && hasNewChatIntent(command)) this.requireVersion(4);
+      if (command && hasRemoteWorktreeIntent(command)) this.requireRemoteStartingVersion();
       if (command && hasEnvironmentIntent(command)) this.requireVersion(5);
+      if (command?.type === "workspace.mutate" && command.action.type === "git.submit") this.requireVersion(12);
       const now = Date.now();
       const record: CommandRecord = {
         id, requestHash, ...(command === undefined ? {} : { command }),
@@ -387,6 +481,97 @@ export class HostStore {
     }).immediate();
   }
 
+  beginGitSubmission(id: string, requestHash: string): GitSubmissionReceipt {
+    return this.db.transaction(() => {
+      const command = this.getCommand(id);
+      if (!command || command.requestHash !== requestHash || command.command?.type !== "workspace.mutate" || command.command.action.type !== "git.submit")
+        throw new Error("Git submission requires its retained pending command.");
+      const target = this.gitSubmissionTarget(command.command.target);
+      const existing = this.readGitSubmission(id);
+      if (existing) return existing;
+      if (command.state !== "pending") throw new Error("Git submission command is already finished without a receipt.");
+      const latest = this.readMetadata<{ id: string }>(`${gitSubmissionLatestPrefix}${this.gitSubmissionOwnerKey(target)}`);
+      if (latest && latest.id !== id) {
+        const prior = this.readGitSubmission(latest.id);
+        if (prior && (prior.outcome === "pending" || prior.outcome === "unknown" && prior.acknowledgedAt === undefined))
+          throw new Error("Inspect the existing Git submission before starting another one.");
+      }
+      this.requireVersion(12);
+      const now = Date.now();
+      const receipt: GitSubmissionReceipt = { commandId: id, hostId: this.host.id, target, operation: command.command.action.intent.operation,
+        revision: 1, phase: "queued", outcome: "pending", cancelRequested: false, createdAt: now, updatedAt: now };
+      this.writeMetadata(`${gitSubmissionPrefix}${id}`, receipt);
+      this.writeMetadata(`${gitSubmissionLatestPrefix}${this.gitSubmissionOwnerKey(target)}`, { id });
+      return receipt;
+    }).immediate();
+  }
+
+  getGitSubmission(target: GitSubmissionTarget, id?: string): GitSubmissionReceipt | undefined {
+    const targetKey = this.gitSubmissionOwnerKey(this.gitSubmissionTarget(target));
+    const resolved = id ?? this.readMetadata<{ id: string }>(`${gitSubmissionLatestPrefix}${targetKey}`)?.id;
+    if (!resolved) return undefined;
+    const receipt = this.readGitSubmission(resolved);
+    return receipt && receipt.hostId === this.host.id && this.gitSubmissionOwnerKey(receipt.target) === targetKey ? receipt : undefined;
+  }
+
+  advanceGitSubmission(id: string, requestHash: string, expectedRevision: number, update: GitSubmissionAdvance): GitSubmissionReceipt {
+    return this.db.transaction(() => {
+      const receipt = this.requiredGitSubmission(id, requestHash);
+      if (receipt.outcome !== "pending" || receipt.revision !== expectedRevision) throw new Error("Git submission changed; refresh before advancing it.");
+      if (update.phase === "completed") throw new Error("Git submission completion requires its finish transaction.");
+      if (update.phase && !phaseAllowed(receipt.operation, receipt.phase, update.phase)) throw new Error("Git submission phase transition is not allowed.");
+      if (receipt.cancelRequested && update.phase && ["branch", "committing", "pushing"].includes(update.phase)) throw new Error("Git submission cancellation prevents mutation.");
+      if (update.progress !== undefined && (typeof update.progress !== "string" || update.progress.includes("\0") || update.progress.length > 4_096)) throw new Error("Git submission progress is invalid.");
+      if (update.generatedMessage !== undefined && (typeof update.generatedMessage !== "string" || update.generatedMessage.includes("\0") || !update.generatedMessage.trim() || update.generatedMessage.length > 1_000_000)) throw new Error("Generated Git submission message is invalid.");
+      const merged = mergeGitSubmission(receipt, update);
+      const next = { ...merged, revision: receipt.revision + 1, updatedAt: Date.now() };
+      this.writeMetadata(`${gitSubmissionPrefix}${id}`, next);
+      if (update.recovery) this.writeMetadata(`${gitSubmissionRecoveryPrefix}${id}`, update.recovery);
+      return next;
+    }).immediate();
+  }
+
+  finishGitSubmission(id: string, requestHash: string, expectedRevision: number, update: GitSubmissionAdvance & { outcome: "succeeded" | "failed" | "cancelled" | "unknown"; error?: GitSubmissionReceipt["error"] }): GitSubmissionReceipt {
+    return this.db.transaction(() => {
+      const receipt = this.requiredGitSubmission(id, requestHash);
+      if (receipt.outcome !== "pending" || receipt.revision !== expectedRevision) throw new Error("Git submission changed; refresh before finishing it.");
+      if (receipt.cancelRequested && update.outcome === "succeeded") throw new Error("Git submission cancellation prevents success.");
+      const merged = mergeGitSubmission(receipt, update);
+      if (update.outcome === "succeeded" && !successfulGitSubmission(merged)) throw new Error("Git submission success requires its confirmed operation receipt.");
+      const next: GitSubmissionReceipt = { ...merged, phase: "completed", outcome: update.outcome, error: update.error,
+        revision: receipt.revision + 1, updatedAt: Date.now() };
+      this.writeMetadata(`${gitSubmissionPrefix}${id}`, next);
+      this.finishCommand(id, requestHash, { ok: true, commandId: id, value: { type: "git.submit", receipt: next } });
+      return next;
+    }).immediate();
+  }
+
+  requestGitSubmissionCancel(target: GitSubmissionTarget, id: string): GitSubmissionReceipt {
+    return this.db.transaction(() => {
+      const receipt = this.getGitSubmission(target, id);
+      if (!receipt || receipt.outcome !== "pending" || !["queued", "preparing", "generating"].includes(receipt.phase)) throw new Error("Git submission can no longer be cancelled.");
+      if (receipt.cancelRequested) return receipt;
+      const next = { ...receipt, cancelRequested: true, revision: receipt.revision + 1, updatedAt: Date.now() };
+      this.writeMetadata(`${gitSubmissionPrefix}${id}`, next); return next;
+    }).immediate();
+  }
+
+  acknowledgeGitSubmission(target: GitSubmissionTarget, id: string): GitSubmissionReceipt {
+    return this.db.transaction(() => {
+      const receipt = this.getGitSubmission(target, id);
+      if (!receipt || receipt.outcome !== "unknown") throw new Error("Only an unknown Git submission can be acknowledged.");
+      if (receipt.acknowledgedAt !== undefined) return receipt;
+      const next = { ...receipt, acknowledgedAt: Date.now(), revision: receipt.revision + 1, updatedAt: Date.now() };
+      this.writeMetadata(`${gitSubmissionPrefix}${id}`, next);
+      const command = this.getCommand(id);
+      if (command?.state === "done" && command.result?.ok && command.result.value && "type" in command.result.value && command.result.value.type === "git.submit") {
+        const updated: CommandRecord = { ...command, result: { ...command.result, value: { type: "git.submit", receipt: next } }, updatedAt: next.updatedAt };
+        this.db.query("UPDATE commands SET data = ? WHERE id = ?").run(JSON.stringify(updated), id);
+      }
+      return next;
+    }).immediate();
+  }
+
   /** First preparation use upgrades the database together with the captured record. */
   createEnvironmentPreparation(input: LocalEnvironmentPreparationInput): LocalEnvironmentPreparation {
     return this.db.transaction(() => {
@@ -394,6 +579,7 @@ export class HostStore {
       if (!project || project.hostId !== this.host.id) throw new Error("Unknown local-environment project");
       if (project.path !== input.sourceRoot) throw new Error("Local-environment source root differs from its project");
       this.requireVersion(input.directories !== undefined ? 6 : 5);
+      if (hasRemoteStartingState(input.startingState)) this.requireRemoteStartingVersion();
       return this.environmentPreparationStore.create(input);
     }).immediate();
   }
@@ -599,15 +785,86 @@ export class HostStore {
     }).immediate();
   }
 
+  private recoverInterruptedGitSubmissions(): void {
+    this.db.transaction(() => {
+      for (const { data } of this.db.query<JsonRow, []>("SELECT data FROM commands").all()) {
+        const command = JSON.parse(data) as CommandRecord;
+        if (command.state !== "pending" || command.command?.type !== "workspace.mutate" || command.command.action.type !== "git.submit") continue;
+        let target: GitSubmissionTarget;
+        try { target = this.gitSubmissionTarget(command.command.target); } catch { continue; }
+        const prior = this.readGitSubmission(command.id);
+        const now = Date.now();
+        const receipt: GitSubmissionReceipt = prior
+          ? { ...prior, outcome: prior.outcome === "pending" ? "unknown" : prior.outcome, phase: prior.phase, error: prior.outcome === "pending" ? { code: "OUTCOME_UNKNOWN", message: "The host restarted during this Git submission. Inspect the repository before continuing." } : prior.error, revision: prior.outcome === "pending" ? prior.revision + 1 : prior.revision, updatedAt: now }
+          : { commandId: command.id, hostId: this.host.id, target, operation: command.command.action.intent.operation, revision: 1, phase: "queued", outcome: "unknown", cancelRequested: false, error: { code: "OUTCOME_UNKNOWN", message: "The host restarted before this Git submission received a durable receipt. Inspect the repository before continuing." }, createdAt: command.createdAt, updatedAt: now };
+        this.writeMetadata(`${gitSubmissionPrefix}${command.id}`, receipt);
+        this.writeMetadata(`${gitSubmissionLatestPrefix}${this.gitSubmissionOwnerKey(target)}`, { id: command.id });
+        // Retries of the original command must return these preserved partials,
+        // rather than a generic pending-command error without its receipt.
+        this.finishCommand(command.id, command.requestHash, { ok: true, commandId: command.id, value: { type: "git.submit", receipt } });
+      }
+    }).immediate();
+  }
+
+  private gitSubmissionTarget(target: WorkspaceTarget): GitSubmissionTarget {
+    if ("filePath" in target) throw new Error("Standalone files cannot submit Git changes.");
+    if ("projectId" in target) { const project = this.getProject(target.projectId); if (!project || project.hostId !== this.host.id) throw new Error("Git submission project belongs to another host."); }
+    else { const session = this.getSession(target.sessionId); if (!session || session.hostId !== this.host.id) throw new Error("Git submission session belongs to another host."); }
+    return target;
+  }
+  private gitSubmissionOwnerKey(target: GitSubmissionTarget): string { return "projectId" in target ? `project:${target.projectId}` : `session:${target.sessionId}`; }
+  private readGitSubmission(id: string): GitSubmissionReceipt | undefined { return this.readMetadata<GitSubmissionReceipt>(`${gitSubmissionPrefix}${id}`); }
+  private requiredGitSubmission(id: string, requestHash: string): GitSubmissionReceipt {
+    const command = this.getCommand(id);
+    const receipt = this.readGitSubmission(id);
+    if (!receipt || !command || command.requestHash !== requestHash || command.command?.type !== "workspace.mutate" || command.command.action.type !== "git.submit") throw new Error("Unknown Git submission.");
+    return receipt;
+  }
+
+  private requireRemoteStartingVersion(): void {
+    // Preserve the existing default policy before crossing the policy-required floor.
+    const policy = this.getDeviceAccessPolicy();
+    if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+    this.requireVersion(18);
+  }
+
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 11) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 20) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }
 
 function withinPath(parent: string, path: string): boolean {
   return path === parent || path.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
+function phaseAllowed(operation: GitSubmissionReceipt["operation"], previous: GitSubmissionReceipt["phase"], next: GitSubmissionReceipt["phase"]): boolean {
+  if (previous === next) return true;
+  if (operation === "push") return previous === "queued" && next === "pushing";
+  if (previous === "queued") return next === "branch" || next === "preparing";
+  if (previous === "branch") return next === "preparing";
+  if (previous === "preparing") return next === "generating" || next === "committing";
+  if (previous === "generating") return next === "committing";
+  return previous === "committing" && operation === "commit-and-push" && next === "pushing";
+}
+function successfulGitSubmission(receipt: GitSubmissionReceipt): boolean {
+  const pushConfirmed = receipt.push?.outcome === "succeeded" && receipt.push.applied.remote === "confirmed"
+    && (receipt.push.upstreamRequested ? receipt.push.applied.upstream === "configured" : receipt.push.applied.upstream === "not-requested");
+  if (receipt.operation === "push") return receipt.phase === "pushing" && pushConfirmed;
+  if (!receipt.commit || receipt.phase !== (receipt.operation === "commit-and-push" ? "pushing" : "committing")) return false;
+  return receipt.operation === "commit" || pushConfirmed && receipt.push?.sourceCommit === receipt.commit.commit;
+}
+function preserve<T>(previous: T | undefined, next: T | undefined, name: string): T | undefined {
+  if (previous !== undefined && next !== undefined && JSON.stringify(previous) !== JSON.stringify(next)) throw new Error(`Git submission cannot replace its recorded ${name}.`);
+  return previous ?? next;
+}
+function mergeGitSubmission(receipt: GitSubmissionReceipt, update: GitSubmissionAdvance): GitSubmissionReceipt {
+  return { ...receipt, ...(update.phase ? { phase: update.phase } : {}), ...(update.progress !== undefined ? { progress: update.progress } : {}),
+    ...(preserve(receipt.generatedMessage, update.generatedMessage, "generated message") ? { generatedMessage: preserve(receipt.generatedMessage, update.generatedMessage, "generated message") } : {}),
+    ...(preserve(receipt.branch, update.branch, "branch") ? { branch: preserve(receipt.branch, update.branch, "branch") } : {}),
+    ...(preserve(receipt.commit, update.commit, "commit") ? { commit: preserve(receipt.commit, update.commit, "commit") } : {}),
+    ...(preserve(receipt.push, update.push, "push") ? { push: preserve(receipt.push, update.push, "push") } : {}) };
 }

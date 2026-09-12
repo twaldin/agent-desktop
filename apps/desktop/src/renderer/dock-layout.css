@@ -1,18 +1,34 @@
 .workbench { display:grid; min-width:0; min-height:0; position:relative; grid-template-columns:minmax(0,1fr) var(--right-dock-size,0px); grid-template-rows:minmax(0,1fr) var(--bottom-dock-size,0px); }
 .workbench>.main-panel { grid-column:1; grid-row:1; }
-.workbench>.dock-slot-right { grid-column:2; grid-row:1; border-left:var(--border-width,.5px) solid var(--border); }
-.workbench>.dock-slot-bottom { grid-column:1 / -1; grid-row:2; border-top:var(--border-width,.5px) solid var(--border); }
+.workbench>.dock-slot-right { grid-column:2; grid-row:1; border-left:var(--divider-width,.5px) solid var(--border); }
+/* Grid line numbers follow direction; physical contentSide does not. Keep outlets mounted. */
+.workbench:dir(ltr)[data-content-side=left],.workbench:dir(rtl)[data-content-side=right] { grid-template-columns:var(--right-dock-size,0px) minmax(0,1fr); }
+.workbench:dir(ltr)[data-content-side=left]>.main-panel,.workbench:dir(rtl)[data-content-side=right]>.main-panel { grid-column:2; }
+.workbench:dir(ltr)[data-content-side=left]>.dock-slot-right,.workbench:dir(rtl)[data-content-side=right]>.dock-slot-right { grid-column:1; }
+.workbench[data-content-side=left]>.dock-slot-right { border-left:0; border-right:var(--divider-width,.5px) solid var(--border); }
+.workbench>.dock-slot-bottom { grid-column:1 / -1; grid-row:2; border-top:var(--divider-width,.5px) solid var(--border); }
+/* The right dock's strip shares the 46px titlebar band with the chat header; its right end stays clear of the window-pinned toggle cluster (2×28px + 4px gap + 9px inset + 4px). */
+.workbench:not(.dock-narrow)>.dock-slot-right .dock-strip { height:var(--main-header-height,46px); padding-right:107px; border-bottom-color:var(--header-divider-color,var(--border)); }
+.workbench[data-content-side=left]:not(.dock-narrow)>.dock-slot-right .dock-strip { padding-right:10px; }
+.sidebar-hidden .workbench[data-content-side=left][data-content-column=true]:not(.dock-narrow):not(.dock-full-width):not(.has-main-task-strip)>.dock-slot-right .dock-strip { padding-left:80px; }
+.sidebar-hidden .workbench[data-content-side=left][data-content-column=true]:not(.dock-narrow):not(.dock-full-width)>.main-panel>.main-header { padding-left:16px; }
+.workbench:not(.dock-narrow)>.dock-slot-right>.dock-empty-actions { inset:var(--main-header-height,46px) 0 0; }
 .dock-slot { min-height:0; min-width:0; position:relative; }
 .dock-slot>.dock-panel { height:100%; }
 .workspace-panel.workspace-embedded { width:100%; height:100%; border:0; border-radius:0; }
 .dock-native-terminal { height:100%; }
-.environment-overlay { position:absolute; z-index:20; top:60px; right:12px; bottom:12px; max-width:calc(100% - 24px); pointer-events:none; }
+.environment-overlay { position:absolute; z-index:20; top:58px; right:15.5px; bottom:12px; max-width:calc(100% - 24px); pointer-events:none; }
 .environment-overlay>.environment-card { max-height:100%; pointer-events:auto; }
 .workbench.dock-narrow>.dock-slot-right { grid-column:1 / -1; z-index:15; margin-top:var(--main-header-height,46px); background:var(--app-surface); }
 .workbench.dock-narrow>.main-panel { grid-column:1 / -1; }
-.dock-empty-actions { position:absolute;inset:36px 0 0;height:calc(100% - 36px); box-sizing:border-box; display:flex; min-height:0; flex-direction:column; justify-content:safe center; overflow-y:auto; overscroll-behavior:contain; max-width:540px; margin:auto; padding:20px; gap:4px; }
-.dock-empty-actions button { flex:0 0 auto; text-align:left; display:flex; align-items:center; gap:10px; border:0; border-radius:8px; padding:12px; background:var(--hover); color:var(--text); }
+.dock-empty-actions { position:absolute; inset:37px 0 0; box-sizing:border-box; display:flex; min-height:0; flex-direction:column; justify-content:safe center; overflow-y:auto; overscroll-behavior:contain; max-width:576px; margin:auto; padding:12px; gap:4px; }
+.dock-slot-bottom>.dock-empty-actions { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); align-content:safe center; max-width:720px; gap:4px 8px; }
+.dock-empty-actions button { flex:0 0 auto; text-align:left; display:flex; align-items:center; min-height:40px; gap:8px; border:0; border-radius:calc(8px * var(--corner-radius-scale,1)); padding:8px 10px; font-size:var(--font-size,14px); line-height:calc(var(--font-size,14px) * 1.4285714286); background:var(--hover); color:var(--text); }
+.dock-empty-actions button>.icon { width:16px; height:16px; flex:none; color:var(--secondary); }
+.dock-empty-actions button>span { flex:1; min-width:0; }
+.dock-empty-actions kbd { font:12px var(--ui-font,system-ui); color:var(--tertiary); white-space:nowrap; }
 .dock-empty-actions button:hover { background:var(--selected); }
+.dock-empty-note { grid-column:1 / -1; margin:0; text-align:center; color:var(--secondary); font-size:calc(var(--font-size,14px) * .9285714286); line-height:1.5; }
 
 .dock-native-terminal {position:relative;}
 .dock-terminal-actions {position:absolute;right:10px;top:4px;z-index:8;}
@@ -20,3 +36,37 @@
 .dock-terminal-actions>div {position:absolute;right:0;display:grid;gap:4px;white-space:nowrap;padding:8px;border-radius:8px;background:var(--elevated-surface);box-shadow:0 3px 12px #0004;}
 .dock-terminal-actions span {color:var(--secondary);font-size:12px;}
 .dock-terminal-actions button {padding:6px;text-align:left;}
+
+/* Full width reuses the same mounted chat and dock outlets. The bottom controller stays independent. */
+.workbench.dock-full-width>.main-panel { display:none; }
+.workbench.dock-full-width>.dock-slot-right { grid-column:1 / -1; border-left:0; margin-top:0; }
+.sidebar-hidden .workbench.dock-full-width>.dock-slot-right .dock-strip { padding-left:80px; }
+
+/* Only the strip portals here; mounted file/browser/terminal outlets keep their original owners. */
+.main-task-strip-host { position:absolute; inset:0 0 auto; z-index:16; height:var(--main-header-height,46px); }
+.main-task-strip-host[hidden] { display:none; }
+.main-task-strip-host>.dock-strip { height:100%; padding-right:var(--task-strip-actions-reserve,73px); border-bottom-color:var(--header-divider-color,var(--border)); }
+.workbench.has-main-task-strip>.main-panel { padding-top:var(--main-header-height,46px); }
+.workbench.has-main-task-strip>.main-panel>.main-header { display:none; }
+.workbench.has-main-task-strip>.dock-slot-right { padding-top:var(--main-header-height,46px); }
+.sidebar-hidden .main-task-strip-host>.dock-strip { padding-left:80px; }
+.main-task-strip-host .dock-chat-pill>button:first-child { flex:1; }
+.main-task-strip-host .dock-strip-trailing .icon-button { width:28px; height:28px; }
+
+.main-task-strip-host>.dock-strip { -webkit-app-region:drag; background:var(--panel-surface,var(--app-surface)); }
+.main-task-strip-host :is(.dock-tabs,.dock-strip-trailing,button) { -webkit-app-region:no-drag; }
+
+/* Reference Os: presentation-only, non-shrinking current-key hint. */
+.dock-pill>button:first-child>.task-shortcut-hint { flex:none; overflow:visible; text-overflow:clip; white-space:nowrap; user-select:none; color:var(--secondary); }
+
+.dock-pill .task-shortcut-hint>kbd { display:inline-flex; padding:2px 6px; border:0; border-radius:var(--radius-md,6px); background:color-mix(in oklab,currentColor 10%,transparent); font:12px/1 var(--ui-font,system-ui); color:inherit; box-shadow:none; }
+
+.workbench.dock-full-width[data-content-side]>.dock-slot-right,.workbench.dock-narrow[data-content-side]>.dock-slot-right { grid-column:1 / -1; border-left:0; border-right:0; }
+.workbench.dock-narrow[data-content-side]>.main-panel { grid-column:1 / -1; }
+.workbench.dock-narrow .dock-panel-right>:is(.dock-resize,.dock-swap-sides) { display:none; }
+
+.task-pane-drop-layer { pointer-events:none; position:fixed; inset:0; z-index:60; }
+[data-unified-workspace-drop-indicator] { display:grid; place-items:center; background:color-mix(in oklab,var(--chart-blue,#4c9aff) 15%,transparent); color:var(--chart-blue,#4c9aff); border:0 solid color-mix(in oklab,var(--chart-blue,#4c9aff) 40%,transparent); box-sizing:border-box; }
+[data-unified-workspace-drop-indicator=left] { border-right-width:1px; }
+[data-unified-workspace-drop-indicator=right] { border-left-width:1px; }
+[data-unified-workspace-drop-indicator=bottom] { border-top-width:1px; }

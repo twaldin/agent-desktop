@@ -1,4 +1,4 @@
-import { closeDockTab, insertDockTab, type DockDestination, type DockState, type DockTab } from "./dock-state";
+import { closeDockTab, dockTabId, isWorkspaceFilePath, insertDockTab, type DockDestination, type DockState, type DockTab } from "./dock-state";
 import type { WorkspaceState } from "./workspace-state";
 
 export interface FileDockSnapshot { state: DockState; tabs: DockTab[] }
@@ -11,6 +11,8 @@ export function persistentFileTabs(snapshot: FileDockSnapshot): FileDockSnapshot
     for (const id of snapshot.state[destination].tabIds) if (previews.has(id)) state = closeDockTab(state,destination,id);
     state = {...state,[destination]:{...state[destination],open:snapshot.state[destination].open}};
   }
+  // Dropping transient descriptors must not change this window’s chosen layout.
+  if (snapshot.state.rightLayout) state = {...state,rightLayout:snapshot.state.rightLayout};
   return {state,tabs:snapshot.tabs.filter(tab => !previews.has(tab.id))};
 }
 export function pinFileTab(snapshot: FileDockSnapshot, id: string): FileDockSnapshot {
@@ -62,4 +64,16 @@ export function openFileTab(snapshot: FileDockSnapshot, tab: DockTab, destinatio
   }
   const value = preview ? {...tab,preview:true as const} : tab;
   return {state:insertDockTab(next.state,value,destination),tabs:[...next.tabs,value]};
+}
+
+/** A null-path browser selection replaces that browser in its current panel.
+ * Resolve the owner and destination from current state, including after a drag. */
+export function selectBrowserFile(snapshot: FileDockSnapshot, browserId: string, path: string): FileDockSnapshot {
+  if (!isWorkspaceFilePath(path)) return snapshot;
+  const browser = snapshot.tabs.find(tab => tab.id === browserId && tab.kind === "files");
+  const destination = (["right", "bottom"] as const).find(panel => snapshot.state[panel].tabIds.includes(browserId));
+  if (!browser || !destination || !(browser.target.startsWith("project:") || browser.target.startsWith("session:"))) return snapshot;
+  const descriptor = { kind: "file" as const, hostId: browser.hostId, target: browser.target, filePath: path, title: path.split("/").at(-1)!.slice(0,1000) };
+  const next = openFileTab(snapshot, { ...descriptor, id: dockTabId(descriptor) }, destination, false, () => false);
+  return { state: closeDockTab(next.state, destination, browserId), tabs: next.tabs.filter(tab => tab.id !== browserId) };
 }

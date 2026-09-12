@@ -4,25 +4,29 @@ import type { LocalEnvironmentSelection, NewChatExecution, Project } from "@agen
 import type { EnvironmentCatalogItem } from "./environment-catalog";
 import type { HostOption } from "./host-catalog";
 import { Icon } from "./Icons";
+import type { BranchSwitchRequest } from "./BranchSwitchDialog";
+import { BranchSelector } from "./BranchSelector";
+import { StartingStateMenu } from "./StartingStateMenu";
+import { useStartingStateInventory } from "./use-starting-state-inventory";
+import { startingStateLabel } from "./starting-state-options";
 import type { WorkspaceState } from "./workspace-state";
 import { retainWorkspace } from "./workspace-lease";
 import "./composer-context.css";
 
-type Menu = "projects" | "hosts" | "environments" | "starting-state" | "branches" | "create-branch";
+type Menu = "projects" | "hosts" | "environments" | "starting-state";
 export interface ComposerContextHandle { openProjects(anchor: HTMLButtonElement): void; }
 export const ComposerContext = forwardRef<ComposerContextHandle, {
   hostId: string; hostName: string; hosts: HostOption[]; projects: Project[]; projectId: string | null; connected: boolean; addingProject: boolean;
   workspace?: WorkspaceState; onProject(id: string | null): void; onHost(id: string): void; onAddProject(): void;
   execution?: NewChatExecution; worktreesAvailable: boolean; onExecution(execution: NewChatExecution): void; onExecutionMode?(execution: NewChatExecution): void;
-  branchPrefix?: string; onOpenGitSettings?(): void;
+  branchPrefix?: string; onOpenGitSettings(): void; onCheckoutBlocked?(request: BranchSwitchRequest): void;
   environment?: LocalEnvironmentSelection; environments?: { items: EnvironmentCatalogItem[]; loading: boolean; error?: string; refresh(): void };
   environmentAvailable?: boolean; onEnvironment?(value: LocalEnvironmentSelection): void; onOpenEnvironmentSettings?(): void;
-  onCheckout(branch: string, create: boolean): Promise<void>;
-}>(function ComposerContext({ hostId, hostName, hosts, projects, projectId, connected, addingProject, workspace, execution, worktreesAvailable, onExecution, onExecutionMode = onExecution, onProject, onHost, onAddProject, branchPrefix = "codex/", onOpenGitSettings, environment, environments, environmentAvailable = false, onEnvironment, onOpenEnvironmentSettings, onCheckout }, ref) {
-  const [open, setOpen] = useState<Menu>(), [query, setQuery] = useState(""), [newBranch, setNewBranch] = useState("");
+}>(function ComposerContext({ hostId, hostName, hosts, projects, projectId, connected, addingProject, workspace, execution, worktreesAvailable, onExecution, onExecutionMode = onExecution, onProject, onHost, onAddProject, branchPrefix = "codex/", onOpenGitSettings, onCheckoutBlocked, environment, environments, environmentAvailable = false, onEnvironment, onOpenEnvironmentSettings }, ref) {
+  const [open, setOpen] = useState<Menu>(), [query, setQuery] = useState("");
+  const [startingInventoryOwner, setStartingInventoryOwner] = useState<{ workspace: WorkspaceState; hostId: string; projectId: string | null }>();
   const [, redraw] = useReducer(value => value + 1, 0);
-  const root = useRef<HTMLDivElement>(null), menu = useRef<HTMLDivElement>(null), branchDialog = useRef<HTMLDialogElement>(null), branchInput = useRef<HTMLInputElement>(null), anchor = useRef<HTMLButtonElement>(null), anchorAlign = useRef<"start" | "center">("start");
-  const currentContext = useRef({ workspace, open }); currentContext.current = { workspace, open };
+  const root = useRef<HTMLDivElement>(null), menu = useRef<HTMLDivElement>(null), anchor = useRef<HTMLButtonElement>(null), anchorAlign = useRef<"start" | "center">("start");
   const [position, setPosition] = useState<CSSProperties>();
   const project = projects.find(item => item.id === projectId);
   const disabledGit = !connected || !workspace?.status || !workspace.restored || workspace.busy || Boolean(workspace.pending);
@@ -34,26 +38,35 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
     : localBranches[0] ? { type: "branch" as const, branchName: localBranches[0].name }
     : undefined;
   const worktreeSelected = execution?.type === "worktree";
+  const startingInventory = useStartingStateInventory(worktreeSelected && project ? workspace : undefined,
+    Boolean(worktreeSelected && project && worktreesAvailable && startingInventoryOwner?.workspace === workspace && startingInventoryOwner?.hostId === hostId && startingInventoryOwner?.projectId === projectId), open === "starting-state");
+  useLayoutEffect(() => {
+    setStartingInventoryOwner(owner => owner && (!worktreeSelected || !project || !worktreesAvailable || owner.workspace !== workspace || owner.hostId !== hostId || owner.projectId !== projectId) ? undefined : owner);
+  }, [worktreeSelected, Boolean(project), worktreesAvailable, workspace, hostId, projectId]);
   const worktreeDisabled = !project || !worktreesAvailable || disabledGit || !fallbackStartingState;
   const resolvedExecutionProject = useRef(projectId);
-  useEffect(() => { setOpen(undefined); setQuery(""); setNewBranch(""); }, [hostId, projectId]);
+  useEffect(() => { setOpen(undefined); setQuery(""); }, [hostId, projectId]);
   useEffect(() => {
     if (!workspace) return;
     let disposed = false;
     const off = workspace.subscribe(redraw), release = retainWorkspace(workspace);
     workspace.setConnected(connected);
-    void workspace.restore().then(() => { if (!disposed && workspace.connected) void workspace.loadGit(); });
+    void workspace.restore().then(() => {
+      if (disposed || !workspace.connected) return;
+      void workspace.loadGit();
+      if (worktreeSelected) void workspace.loadWorktrees();
+    });
     const timer = setInterval(() => { if (workspace.connected) void workspace.loadGit(); }, 5000);
     return () => { disposed = true; off(); release(); clearInterval(timer); };
-  }, [workspace, connected]);
+  }, [workspace, connected, worktreeSelected]);
   useEffect(() => {
     if (!worktreeSelected) { resolvedExecutionProject.current = projectId; return; }
     if (!project || !connected || !workspace?.restored || !workspace.status || !fallbackStartingState) return;
     const changedProject = resolvedExecutionProject.current !== projectId;
     resolvedExecutionProject.current = projectId;
-    const selected = execution.startingState;
-    const valid = selected.type === "branch" ? selected.branchName === workspace.status.branch || localBranches.some(item => item.name === selected.branchName) : dirty;
-    if (changedProject || !valid) onExecution({ type: "worktree", startingState: fallbackStartingState });
+    // Missing or late Git data must not replace an authored starting state.
+    // Only switching projects initializes the existing project fallback.
+    if (changedProject) onExecution({ type: "worktree", startingState: fallbackStartingState });
   }, [projectId, project, connected, workspace?.restored, workspace?.status?.revision, dirty, worktreeSelected, execution, localBranches, fallbackStartingState, onExecution]);
   useLayoutEffect(() => {
     if (!open || !anchor.current) return;
@@ -70,28 +83,19 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
     return () => { observer.disconnect(); window.removeEventListener("resize",measure); window.removeEventListener("scroll",measure,true); };
   }, [open]);
   useEffect(() => {
-    if (!open || open === "create-branch") return;
+    if (!open) return;
     const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>("input,button:not(:disabled)")?.focus({preventScroll:true}));
     const outside = (event:PointerEvent) => { if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(undefined); };
     window.addEventListener("pointerdown",outside);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("pointerdown",outside); };
   }, [open]);
-  useLayoutEffect(() => {
-    const dialog = branchDialog.current;
-    if (open !== "create-branch" || !dialog) return;
-    if (!dialog.open) dialog.showModal();
-    const frame = requestAnimationFrame(() => branchInput.current?.focus({preventScroll:true}));
-    return () => { cancelAnimationFrame(frame); if (dialog.open) dialog.close(); };
-  }, [open]);
   function close() {
-    const restore = anchor.current, modal = Boolean(branchDialog.current?.open);
-    setOpen(undefined);
-    if (!modal) restore?.focus({preventScroll:true});
-    else requestAnimationFrame(() => { if (currentContext.current.open == null) restore?.focus({preventScroll:true}); });
+    const restore = anchor.current; setOpen(undefined); restore?.focus({preventScroll:true});
   }
   function toggle(value:Menu, button:HTMLButtonElement, align: "start" | "center" = "start") {
-    anchor.current = button; anchorAlign.current = align; setQuery(""); setNewBranch(""); setOpen(open === value ? undefined : value);
-    if ((value === "hosts" || value === "branches" || value === "starting-state") && connected) void workspace?.loadWorktrees();
+    anchor.current = button; anchorAlign.current = align; setQuery(""); setOpen(open === value ? undefined : value);
+    if (value === "starting-state" && workspace) setStartingInventoryOwner({ workspace, hostId, projectId });
+    if ((value === "hosts" || value === "starting-state") && connected) void workspace?.loadWorktrees();
     if (value === "environments" && connected && environmentAvailable) environments?.refresh();
   }
   useImperativeHandle(ref, () => ({ openProjects(button) { toggle("projects", button, "center"); } }), [open]);
@@ -109,30 +113,15 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
   }
   const needle = query.trim().toLocaleLowerCase();
   const matches = (value:string) => value.toLocaleLowerCase().includes(needle);
-  async function checkout(branch:string, create=false) {
-    if (disabledGit) return;
-    await onCheckout(branch,create);
-    // A completed command for an old project cannot dismiss the new context's menu.
-    if (currentContext.current.workspace !== workspace || !["branches","create-branch"].includes(currentContext.current.open ?? "")) return;
-    // WorkspaceState retains rejected/uncertain receipts and exposes Retry.
-    if (!workspace?.errors.action && !workspace?.pending) close();
-  }
-  async function retryCheckout() {
-    await workspace?.retry();
-    if (currentContext.current.workspace !== workspace || currentContext.current.open !== "create-branch") return;
-    if (!workspace?.errors.action && !workspace?.pending) close();
-  }
-  const trimmedBranch = newBranch.trim(), branchExists = workspace?.branches.some(item => !item.remote && item.name === trimmedBranch), branchEndsWithSlash = trimmedBranch.endsWith("/");
-  const canCreateBranch = !disabledGit && Boolean(trimmedBranch) && !branchEndsWithSlash && !branchExists;
   const selectedEnvironmentName = environment && environments?.items.find(item => item.type === "environment" && item.configPath === environment.configPath);
-  const label = open === "projects" ? "Select project" : open === "hosts" ? "Select where to run the chat" : open === "environments" ? "Select a local environment" : open === "starting-state" ? "What branch should this chat start from?" : "Switch branch";
+  const label = open === "projects" ? "Select project" : open === "hosts" ? "Select where to run the chat" : open === "environments" ? "Select a local environment" : "What branch should this chat start from?";
   return <div className="composer-context" ref={root}>
     <button type="button" aria-label="Select project" aria-haspopup="menu" aria-expanded={open === "projects"} title={project?.path ?? "Choose a project on this host"} onClick={event => toggle("projects",event.currentTarget)}><Icon name="folder"/><span>{project?.name ?? (projectId ? "Unavailable project" : "No project")}</span></button>
     <button type="button" aria-label="Select where to run the chat" aria-haspopup="menu" aria-expanded={open === "hosts"} title={`${worktreeSelected ? "New local worktree" : "Local"} · ${hostName}${connected ? "" : " · Offline"}`} onClick={event => toggle("hosts",event.currentTarget)}><Icon name={worktreeSelected ? "branch" : "laptop"}/><span>{worktreeSelected ? "New local worktree" : "Local"}</span>{!connected && <span className="context-offline">Offline</span>}</button>
     {worktreeSelected && project && environmentAvailable && <button type="button" aria-label="Select a local environment" aria-haspopup="menu" aria-expanded={open === "environments"} title="Select a local environment" onClick={event => toggle("environments",event.currentTarget)}><Icon name="folder"/><span>{environment ? selectedEnvironmentName?.type === "environment" ? selectedEnvironmentName.environment.name : "Environment unavailable" : "No environment"}</span></button>}
-    {worktreeSelected && project && <button type="button" aria-label="What branch should this chat start from?" aria-haspopup="menu" aria-expanded={open === "starting-state"} disabled={worktreeDisabled} title={worktreeDisabled ? "Reconnect to the owning host and wait for Git status." : "What branch should this chat start from?"} onClick={event => toggle("starting-state",event.currentTarget)}><Icon name="branch"/><span>{execution.startingState.type === "working-tree" ? "Local file state" : execution.startingState.branchName}</span></button>}
-    {project && !worktreeSelected && <button type="button" aria-label="Switch branch" aria-haspopup="menu" aria-expanded={open === "branches" || open === "create-branch"} title={workspace?.errors.git ?? workspace?.status?.branch ?? "Repository branch"} onClick={event => toggle("branches",event.currentTarget)}><Icon name="branch"/><span>{workspace?.status ? workspace.status.branch ?? "Detached HEAD" : workspace?.loading.has("git") ? "Loading branch…" : "Branch unavailable"}</span></button>}
-    {open && open !== "create-branch" && position && createPortal(<div ref={menu} role="menu" aria-label={label} className="composer-context-menu" style={position} onKeyDown={key}>
+    {worktreeSelected && project && <button type="button" aria-label="What branch should this chat start from?" aria-haspopup="menu" aria-expanded={open === "starting-state"} disabled={disabledGit || !worktreesAvailable} title={disabledGit || !worktreesAvailable ? "Reconnect to the owning host and wait for Git status." : "What branch should this chat start from?"} onClick={event => toggle("starting-state",event.currentTarget)}><Icon name="branch"/><span>{startingStateLabel(execution.startingState, workspace?.status?.branch, startingInventory.snapshot)}</span></button>}
+    {project && !worktreeSelected && workspace && <BranchSelector onCheckoutBlocked={onCheckoutBlocked} workspace={workspace} connected={connected} branchPrefix={branchPrefix} onOpenGitSettings={onOpenGitSettings} variant="composer" repositoryName={project.name} onOpen={() => setOpen(undefined)}/>}
+    {open && position && createPortal(<div ref={menu} role="menu" aria-label={label} className="composer-context-menu" style={position} onKeyDown={key}>
       {open !== "starting-state" && open !== "environments" && <label className="context-search"><Icon name="search"/><input type="search" aria-label={`Search ${open}`} placeholder={`Search ${open}`} value={query} onChange={event => setQuery(event.target.value)}/></label>}
       {open === "projects" && <><div className="context-options">{projects.filter(item => matches(`${item.name} ${item.path}`)).map(item => <button role="menuitemradio" aria-checked={item.id === projectId} key={item.id} type="button" title={item.path} onClick={() => { onProject(item.id); close(); }}><Icon name="folder"/><span>{item.name}</span>{item.id === projectId && <Icon name="check"/>}</button>)}{!projects.some(item => matches(`${item.name} ${item.path}`)) && <p>No matching projects.</p>}</div><hr/><button role="menuitem" type="button" disabled={!connected || addingProject} onClick={() => { close(); onAddProject(); }}><Icon name="plus"/><span>{addingProject ? "Adding project…" : "New project"}</span></button><button role="menuitem" type="button" onClick={() => { onProject(null); close(); }}><Icon name="close"/><span>Don’t work in a project</span></button></>}
       {open === "hosts" && <><div className="context-options"><p className="context-menu-heading">Work in</p><button role="menuitemradio" aria-label="Local" aria-checked={!worktreeSelected} type="button" onClick={() => { onExecutionMode({type:"local"}); close(); }}><Icon name="laptop"/><span>Local</span>{!worktreeSelected && <Icon name="check"/>}</button><button role="menuitemradio" aria-label="New local worktree" aria-checked={worktreeSelected} type="button" disabled={worktreeDisabled} title={!worktreesAvailable ? "Update the owning host to create local worktrees." : !project ? "Choose a project first." : undefined} onClick={() => { if (fallbackStartingState) { onExecutionMode({type:"worktree",startingState:fallbackStartingState}); close(); } }}><Icon name="branch"/><span>New local worktree<small>{worktreeDisabled ? "Unavailable for this project" : fallbackStartingState?.type === "working-tree" ? "Start from local file state" : `Start from ${fallbackStartingState?.branchName}`}</small></span>{worktreeSelected && <Icon name="check"/>}</button></div><hr/><div className="context-options"><p className="context-menu-heading">Run on</p>{hosts.filter(item => matches(item.name)).map(item => <button role="menuitemradio" aria-checked={item.hostId === hostId} key={item.key} type="button" disabled={!item.hostId} title={item.error} onClick={() => { if (item.hostId) { close(); onHost(item.hostId); } }}><Icon name="laptop"/><span>{item.local ? "Local host" : item.name}<small>{item.local ? item.name : item.availability === "available" ? "Connected" : item.cached ? "Offline · cached projects" : item.availability}</small></span>{item.hostId === hostId && <Icon name="check"/>}</button>)}{!hosts.some(item => matches(item.name)) && <p>No matching hosts.</p>}</div></>}
@@ -154,27 +143,10 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
           <button role="menuitem" type="button" onClick={() => { close(); onOpenEnvironmentSettings?.(); }}><Icon name="plus"/><span>Set up project</span></button>
         </div>
       </>}
-      {open === "starting-state" && <><label className="context-search"><Icon name="search"/><input type="search" aria-label={`Search ${project?.name ?? "project"} branches`} placeholder={`Search ${project?.name ?? "project"} branches`} value={query} onChange={event => setQuery(event.target.value)}/></label><div className="context-options context-starting-states">{workspace?.loading.has("worktrees") && <p>Loading branches…</p>}{dirty && matches(`Local file state ${currentBranch ?? ""}`) && <button type="button" role="menuitemradio" aria-label="Local file state" aria-checked={execution?.type === "worktree" && execution.startingState.type === "working-tree"} onClick={() => { onExecution({type:"worktree",startingState:{type:"working-tree"}}); close(); }}><Icon name="folder"/><span>Local file state<small>{currentBranch ?? "Detached HEAD"} with local code changes</small></span>{execution?.type === "worktree" && execution.startingState.type === "working-tree" && <Icon name="check"/>}</button>}{localBranches.filter(item => matches(item.name)).map(item => <button type="button" role="menuitemradio" aria-checked={execution?.type === "worktree" && execution.startingState.type === "branch" && execution.startingState.branchName === item.name} key={item.ref} onClick={() => { onExecution({type:"worktree",startingState:{type:"branch",branchName:item.name}}); close(); }}><Icon name="branch"/><span>{item.name}</span>{execution?.type === "worktree" && execution.startingState.type === "branch" && execution.startingState.branchName === item.name && <Icon name="check"/>}</button>)}</div></>}
-      {open === "branches" && <>
-        {workspace?.cacheWarning && <p role="alert">{workspace.cacheWarning}</p>}
-        {workspace?.errors.git && <p role="alert">{workspace.errors.git}</p>}{workspace?.errors.worktrees && <p role="alert">{workspace.errors.worktrees}</p>}
-        {!connected && <p>Reconnect to switch branches.</p>}
-        {workspace?.errors.action && <p role="alert">{workspace.errors.action}</p>}
-        {workspace?.pending && <button type="button" disabled={!connected || workspace.busy} onClick={() => void workspace.retry()}>Retry original workspace command</button>}
-        <div className="context-options context-branches"><p className="context-menu-heading">Branches</p>{workspace?.branches.filter(item => !item.remote && !item.symbolicTarget && matches(item.name)).map(item => <button type="button" role="menuitemradio" aria-checked={item.current} disabled={disabledGit} key={item.ref} onClick={() => { if (item.current) close(); else void checkout(item.name); }}><Icon name="branch"/><span>{item.name}</span>{item.current && <Icon name="check"/>}</button>)}{workspace?.loading.has("worktrees") && <p>Loading branches…</p>}</div><hr/><button type="button" role="menuitem" disabled={disabledGit} onClick={() => { setNewBranch(branchPrefix); setOpen("create-branch"); }}><Icon name="plus"/><span>Create and checkout new branch…</span></button>
-      </>}
+      {open === "starting-state" && workspace && startingInventory.controller && execution?.type === "worktree" && <StartingStateMenu key={`${hostId}:${projectId}`} workspace={workspace} connected={connected} disabled={disabledGit || !worktreesAvailable}
+        inventory={{ controller: startingInventory.controller, snapshot: startingInventory.snapshot }} projectName={project?.name ?? "project"} query={query} onQuery={setQuery} selected={execution.startingState}
+        onSelect={startingState => onExecution({ type: "worktree", startingState })} onClose={close}/>}
+
     </div>,document.body)}
-    {open === "create-branch" && createPortal(<dialog ref={branchDialog} className="composer-branch-dialog" aria-labelledby="composer-branch-dialog-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
-      <form onSubmit={event => { event.preventDefault(); if (canCreateBranch) void checkout(trimmedBranch,true); }}>
-        <div className="context-dialog-header"><h2 id="composer-branch-dialog-title">Create and checkout branch</h2><button type="button" className="context-dialog-close" aria-label="Close dialog" onClick={close}><Icon name="close"/></button></div>
-        <div className="context-branch-label"><label htmlFor="composer-new-branch">Branch name</label><button type="button" onClick={() => { close(); onOpenGitSettings?.(); }}>Set prefix</button></div>
-        <input ref={branchInput} id="composer-new-branch" aria-label="Branch name" value={newBranch} onChange={event => setNewBranch(event.target.value)} placeholder="new-branch" autoFocus aria-invalid={branchEndsWithSlash || branchExists || undefined}/>
-        {branchEndsWithSlash ? <p className="context-branch-error" role="alert">Branch name cannot end with “/”.</p> : branchExists && !workspace?.busy ? <p className="context-branch-error" role="alert">Branch already exists.</p> : null}
-        {workspace?.cacheWarning && <p className="context-branch-error" role="alert">{workspace.cacheWarning}</p>}
-        {workspace?.errors.action && <p className="context-branch-error" role="alert">{workspace.errors.action}</p>}
-        {workspace?.pending && <button className="context-retry" type="button" disabled={!connected || workspace.busy} onClick={() => void retryCheckout()}>Retry original workspace command</button>}
-        <div className="context-dialog-actions"><button className="secondary-button" type="button" onClick={close}>Close</button><button className="primary-button" type="submit" disabled={!canCreateBranch}>{workspace?.busy ? <><span className="spinner"/> Create and checkout</> : "Create and checkout"}</button></div>
-      </form>
-    </dialog>,document.body)}
   </div>;
 });

@@ -73,7 +73,7 @@ export async function packageHost(options: { version: string; output: string; re
     if (!files.includes("apps/host/src/packaged-entry.ts") || !files.includes("apps/host/src/runtime-ownership.ts")
       || !files.includes("apps/host/src/omp-workers/packaged-entry.ts")) throw new Error("Packaged runtime ownership entrypoints are required.");
     const artifact: HostArtifact = { format: 1, version, createdAt: new Date().toISOString(), bunVersion: "1.3.14", ompVersion: "18.1.10",
-      runtimeEntrypoint: "apps/host/src/packaged-entry.ts", stateSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], excludedSources: [...excluded], files: {} };
+      runtimeEntrypoint: "apps/host/src/packaged-entry.ts", stateSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], excludedSources: [...excluded], files: {} };
     for (const file of files) {
       const destination = join(staging, file);
       await mkdir(dirname(destination), { recursive: true });

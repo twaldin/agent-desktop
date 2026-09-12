@@ -8,7 +8,7 @@ import type { PreferencesSync } from "./preferences-sync";
 import type { HostStore } from "./store";
 
 const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
-const THEME_FIELDS = ["mode", "material", "tokens", "background"] as const;
+const THEME_FIELDS = ["mode", "material", "opaqueWindows", "tokens", "background"] as const;
 const serialize = (document: ThemeDocument) => JSON.stringify(document, null, 2) + "\n";
 export class ThemeConflictError extends Error { constructor() { super("The theme changed elsewhere. Reload it before saving; your edits have been retained."); } }
 
@@ -28,10 +28,18 @@ export class ThemeFile {
   }
   #document(): ThemeDocument {
     const fields: Record<string, unknown> = structuredClone(DEFAULT_THEME) as unknown as Record<string, unknown>;
+    let hasLegacyThemePreference = false, hasOpaqueWindows = false;
     for (const field of THEME_FIELDS) {
       const record = this.options.preferences.store.get(`theme.${field}`);
-      if (record && !record.deleted) fields[field] = record.value;
+      if (field === "opaqueWindows" && record) hasOpaqueWindows = true;
+      if (record && !record.deleted) {
+        fields[field] = record.value;
+        if (field !== "opaqueWindows") hasLegacyThemePreference = true;
+      }
     }
+    // Existing preference stores predate this explicit switch. Preserve their
+    // native treatment while a genuinely new profile starts at the v2 default.
+    if (hasLegacyThemePreference && !hasOpaqueWindows) fields.opaqueWindows = fields.material === "none";
     return parseThemeDocument(fields);
   }
   #state(): ThemeState {
@@ -55,7 +63,8 @@ export class ThemeFile {
   }
   #adopt(document: ThemeDocument): void {
     const current = this.#document();
-    const changes = THEME_FIELDS.filter(field => JSON.stringify(document[field]) !== JSON.stringify(current[field]))
+    const changes = THEME_FIELDS.filter(field => JSON.stringify(document[field]) !== JSON.stringify(current[field])
+      || field === "opaqueWindows" && !this.options.preferences.store.get("theme.opaqueWindows"))
       .map(field => ({ key: `theme.${field}`, value: document[field] }) as PreferenceChange);
     if (changes.length) this.options.preferences.putMany(changes);
   }
@@ -89,6 +98,8 @@ export class ThemeFile {
       const metadata = await stat(target).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; });
       if (!metadata) {
         this.#observedHash = undefined; this.fileError = undefined;
+        const document = this.#document();
+        this.#adopt(document);
         await this.#writeManaged(this.#document());
       } else {
         if (!metadata.isFile() || metadata.size > 256 * 1024) throw new Error("The theme file must be a regular JSON file smaller than 256 KiB.");
@@ -97,14 +108,24 @@ export class ThemeFile {
         this.#observedHash = actualHash;
         const marker = this.options.store.readThemeFileMarker();
         const managed = actualHash === marker?.currentHash || actualHash === marker?.pendingHash;
+        let legacy = false;
+        if (managed) {
+          try {
+            const raw = JSON.parse(contents.toString("utf8"));
+            if (raw?.version === 1) { parseThemeDocument(raw); legacy = true; }
+          } catch { this.fileError = "theme.json is invalid. The last valid theme remains active; correct the file or save a valid theme from Settings."; return; }
+        }
         if (!managed) {
           let document: ThemeDocument;
           try { document = parseThemeDocument(JSON.parse(contents.toString("utf8"))); }
           catch { this.fileError = "theme.json is invalid. The last valid theme remains active; correct the file or save a valid theme from Settings."; return; }
           this.#adopt(document);
           this.options.store.writeThemeFileMarker({ currentHash: actualHash });
-        } else if (actualHash !== digest(serialize(this.#document()))) await this.#writeManaged(this.#document());
-        else if (marker?.pendingHash) this.options.store.writeThemeFileMarker({ currentHash: actualHash });
+        } else if (!legacy && actualHash !== digest(serialize(this.#document()))) {
+          this.#adopt(this.#document());
+          await this.#writeManaged(this.#document());
+        }
+        else if (!legacy && marker?.pendingHash) this.options.store.writeThemeFileMarker({ currentHash: actualHash });
         this.fileError = undefined;
       }
     } catch {

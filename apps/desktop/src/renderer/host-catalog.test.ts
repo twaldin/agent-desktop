@@ -52,7 +52,7 @@ describe("machine-owned host catalog", () => {
     catalog.ingest({ type: "state", hostId: "remote", sequence: 9, state: state("remote", 9) });
     expect(catalog.records.get("remote")?.connected).toBe(true);
     expect(catalog.options().filter(host => host.hostId === "remote")).toEqual([
-      { key: "remote", hostId: "remote", name: "remote", local: false, availability: "available", cached: true, error: undefined },
+      { key: "remote", hostId: "remote", nodeId: "node-remote", name: "remote", local: false, availability: "available", cached: true, error: undefined },
     ]);
     expect(catalog.network?.hosts[0]?.error).toBe("Earlier service probe failed");
     catalog.ingest({ type: "connection", hostId: "remote", sequence: 10, connected: false, error: "Connection closed" });

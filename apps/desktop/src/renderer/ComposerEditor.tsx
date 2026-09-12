@@ -79,6 +79,7 @@ export function ComposerEditor(props:Props){
    view.updateState(EditorState.create({doc:desired,plugins:view.state.plugins,selection:TextSelection.create(desired,documentPosition(desired,Math.min(start,props.text.length)),documentPosition(desired,Math.min(end,props.text.length)))}));
   }
   view.setProps({editable:()=>!props.disabled,attributes:{id:'prompt',role:'textbox','aria-label':'Prompt','aria-multiline':'true','aria-describedby':'prompt-keyboard-hint','aria-disabled':String(Boolean(props.disabled)),'aria-autocomplete':'list','aria-controls':props.ariaControls??'','aria-expanded':String(Boolean(props.ariaExpanded)),'aria-activedescendant':props.ariaActiveDescendant??'',spellcheck:'true',class:'composer-rich-input','data-placeholder':props.placeholder,'data-empty':String(!props.text&&!props.files?.length)}});
- },[props.text,props.files,props.disabled,props.placeholder,props.ariaControls,props.ariaExpanded,props.ariaActiveDescendant]);
+ // A new scope replaces EditorView even when its draft and controls are identical.
+ },[props.scope,props.text,props.files,props.disabled,props.placeholder,props.ariaControls,props.ariaExpanded,props.ariaActiveDescendant]);
  return <div className="composer-editor" ref={mount} onKeyDownCapture={props.onKeyDown}/>;
 }

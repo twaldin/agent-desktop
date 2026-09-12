@@ -1,3 +1,4 @@
+import { testBrowserCreationRecords } from "./fixtures/browser-creation-journal";
 import { expect, test } from "bun:test";
 import { BROWSER_METADATA_OWNER_HEADER, type BrowserCreateRequest } from "@agent-desktop/shared";
 import { requestBrowserCreate } from "../../desktop/src/main/browser-create-transport";
@@ -16,7 +17,7 @@ function setup(create?: (name: string) => Promise<{ tab: ReturnType<typeof tab>;
     return create ? create(name) : { tab: tab(name), targetDisposition: "created-page" as const };
   } };
   let current: typeof handle | undefined = handle;
-  const http = new BrowserCreateHttp({ hostId: "owner", controlEpoch: epoch, sessionExists: () => exists,
+  const http = new BrowserCreateHttp({ records: testBrowserCreationRecords(), hostId: "owner", controlEpoch: epoch, sessionExists: () => exists,
     getHandle: async () => handle, getExistingHandle: async () => current, now: () => now });
   const input: BrowserCreateRequest = { requestId: crypto.randomUUID(), controlEpoch: epoch, observedAt: now };
   const request = (value: unknown = input, owner = "owner") => new Request("http://localhost/v1/sessions/session/browser-create", {

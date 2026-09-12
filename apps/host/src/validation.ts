@@ -2,6 +2,7 @@ import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativ
 import { isAbsolute } from "node:path";
 import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
 import { parseWorkspaceMutation, parseWorkspaceTarget } from "./workspace-http";
+import { parseCommandKeymapMutation } from "../../../packages/shared/src/preferences-v2";
 import { parsePreferenceChange } from "../../../packages/shared/src/preferences";
 import { approvalMode } from "./approval";
 import { parseInlineWholeFileMentions, parseWholeFileAttachments, parseSelectedTextAttachments, parseImageAttachments, parseDetachedQuestionAnswers, parseNewChatExecution, parseWorktreeStartingState, parseEnvironmentSelection } from "@agent-desktop/shared";
@@ -34,13 +35,13 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && envelope.commandVersion !== 4 && envelope.commandVersion !== 5 && envelope.commandVersion !== 6 && envelope.commandVersion !== 7 && envelope.commandVersion !== 8 && envelope.commandVersion !== 9) throw new Error('Unsupported command version.');
-  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | undefined;
-  return { ...parseCommandBody(value, version ?? (transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
+  if (envelope.commandVersion !== undefined && envelope.commandVersion !== 4 && envelope.commandVersion !== 5 && envelope.commandVersion !== 6 && envelope.commandVersion !== 7 && envelope.commandVersion !== 8 && envelope.commandVersion !== 9 && envelope.commandVersion !== 10 && envelope.commandVersion !== 11 && envelope.commandVersion !== 12) throw new Error('Unsupported command version.');
+  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | undefined;
+  return { ...parseCommandBody(value, version ?? (transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
 }
-function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9): CommandEnvelope {
+function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12): CommandEnvelope {
   const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
@@ -52,7 +53,7 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
   if (Object.hasOwn(input, "selectedTextAttachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept selected text.");
   const selectedTextAttachments = Object.hasOwn(input, "selectedTextAttachments") ? parseSelectedTextAttachments(input.selectedTextAttachments) : undefined;
   if (Object.hasOwn(input, "wholeFileAttachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept whole files.");
-  const wholeFileAttachments = Object.hasOwn(input, "wholeFileAttachments") ? commandVersion === 9
+  const wholeFileAttachments = Object.hasOwn(input, "wholeFileAttachments") ? (commandVersion ?? 0) >= 9
     ? parseInlineWholeFileMentions(input.wholeFileAttachments, typeof input.text === "string" ? input.text.length : 0)
     : parseWholeFileAttachments(input.wholeFileAttachments,typeof input.text==="string"?input.text.length:undefined) : undefined;
   const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
@@ -75,6 +76,11 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
     }
     case "session.environment.cancel": return { id, command: { type, preparationId: text(input.preparationId, "preparation ID"), projectId: text(input.projectId, "project ID"), runRevision: revision(input.runRevision) } };
     case "session.environment.resume": return { id, command: { type, preparationId: text(input.preparationId, 'preparation ID'), expectedRevision: revision(input.expectedRevision) } };
+    case "preferences.keymap.mutate": {
+      if ((commandVersion ?? 0) < 11) throw new Error("Keyboard shortcut changes require command version 11.");
+      if (Object.keys(input).some(key => !["type", "mutation"].includes(key))) throw new Error("Invalid shortcut mutation fields.");
+      return { id, command: { type, mutation: parseCommandKeymapMutation(input.mutation) } };
+    }
     case "preferences.put": return { id, command: { type, change: parsePreferenceChange(input.change) } };
     case "workspace.mutate": return { id, command: { type, target: parseWorkspaceTarget(input.target), action: parseWorkspaceMutation(input.action) } };
     case "project.add": return { id, command: { type, path: directory(input.path), name: input.name === undefined ? undefined : text(input.name, "project name", 500) } };
@@ -147,7 +153,7 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
       if (typeof draft.text !== "string" || draft.text.length > 4_000_000) throw new Error("Invalid draft text.");
       return { id, command: { type, expectedRevision: revision(input.expectedRevision), draft: {
         id: text(draft.id, "draft ID"), text: draft.text,
-        ...(Object.hasOwn(draft, "wholeFileAttachments") ? { wholeFileAttachments: commandVersion === 9
+        ...(Object.hasOwn(draft, "wholeFileAttachments") ? { wholeFileAttachments: (commandVersion ?? 0) >= 9
           ? parseInlineWholeFileMentions(draft.wholeFileAttachments, draft.text.length)
           : parseWholeFileAttachments(draft.wholeFileAttachments,draft.text.length) } : {}),
         ...(Object.hasOwn(draft, "selectedTextAttachments") ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),

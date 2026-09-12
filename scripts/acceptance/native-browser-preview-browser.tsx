@@ -1,4 +1,6 @@
-import { useEffect } from "react";
+import { BrowserWindowCheckpoint } from "../../apps/desktop/src/renderer/browser-window-checkpoint";
+import { useWindowViewPersistence } from "../../apps/desktop/src/renderer/window-view-state";
+import { useState, useEffect } from "react";
 import { DockPanel } from "../../apps/desktop/src/renderer/DockPanel";
 import { useWorkbenchDock, type DockSnapshot } from "../../apps/desktop/src/renderer/use-workbench-dock";
 import { defaultWindowView, parseDockSnapshot } from "../../apps/desktop/src/window-state";
@@ -6,6 +8,7 @@ import type { BrowserCreateRequest, BrowserCreateReceipt } from "../../packages/
 import { createRoot } from "react-dom/client";
 import type { BrowserControlRequest, BrowserControlReceipt, BrowserFrameSnapshot, BrowserFrameTarget, BrowserMetadataSnapshot, DesktopBridge } from "../../packages/shared/src/protocol";
 import { BrowserPanel } from "../../apps/desktop/src/renderer/BrowserPanel";
+import { BrowserNewTabPanel } from "../../apps/desktop/src/renderer/BrowserNewTabPanel";
 import "../../apps/desktop/src/renderer/styles.css";
 
 declare global {
@@ -30,7 +33,7 @@ const expected = {
   name: params.get("name")!, targetId: params.get("targetId")!, url: params.get("url")!, title: params.get("title")!,
 };
 const sleep = (milliseconds: number) => new Promise<void>(resolve => setTimeout(resolve, milliseconds));
-const assert = (value: unknown, message: string): asserts value => { if (!value) throw new Error(message); };
+function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
 async function wait(check: () => unknown, message: string) {
   for (let attempt = 0; attempt < 240; attempt++) { if (check()) return; await sleep(25); }
   throw new Error(`Timed out: ${message}`);
@@ -62,11 +65,14 @@ const bridge = {
 } as DesktopBridge;
 const render = (active: boolean) => root.render(<BrowserPanel bridge={bridge} hostId={expected.hostId} sessionId={expected.sessionId} active={active}/>);
 function CreatedDock({ initial }: { initial?: DockSnapshot }) {
-  const dock = useWorkbenchDock(bridge, { ...defaultWindowView(), ...(initial ? {dock: initial} : {}) }, expected.hostId, {sessionId: expected.sessionId}, true, message => dockErrors.push(message));
+  const [checkpoint] = useState(() => new BrowserWindowCheckpoint());
+  const [restoration] = useState(() => ({ state: { ...defaultWindowView(), ...(initial ? { dock: initial } : {}) } }));
+  const dock = useWorkbenchDock(bridge, { ...defaultWindowView(), ...(initial ? {dock: initial} : {}) }, expected.hostId, {sessionId: expected.sessionId}, true, message => dockErrors.push(message), undefined, "ltr", (tab, state, signal) => checkpoint.wait(tab, state, signal));
+  useWindowViewPersistence({ ...restoration.state, dock: dock.persisted }, restoration, checkpoint);
   useEffect(() => { dockSnapshot = dock.snapshot; }, [dock.snapshot]);
   return <div style={{height: "100vh", display: "flex"}}><DockPanel destination="right" state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={{width: innerWidth, height: innerHeight}} onChange={dock.change}
-    addActions={[{id:"browser",label:"Browser",onSelect:destination => void dock.browser(destination, true)}]}
-    renderTab={(tab, active) => <BrowserPanel bridge={bridge} hostId={tab.hostId} sessionId={tab.target.slice(8)} nativeTarget={tab.browserTarget} active={active} onMetadata={metadata => dock.updateBrowserTitle(tab.id, metadata.title || metadata.url || "Browser")}/>}/></div>;
+    addActions={[{id:"browser",label:"Browser",icon:"globe",deferSelectionUntilDropdownClose:true,onSelect:destination => void dock.browser(destination, true)}]}
+    renderTab={(tab, active) => tab.browserNewTab ? <BrowserNewTabPanel controller={dock.browserLauncher(tab, true)} active={active}/> : <BrowserPanel bridge={bridge} hostId={tab.hostId} sessionId={tab.target.slice(8)} nativeTarget={tab.browserTarget} active={active} onMetadata={metadata => dock.updateBrowserTitle(tab.id, metadata.title || metadata.url || "Browser")}/>}/></div>;
 }
 const image = () => document.querySelector<HTMLImageElement>(".browser-viewport img");
 
@@ -143,11 +149,22 @@ window.runNativeBrowserPreviewAcceptance = async () => {
   root.render(null); await sleep(100);
   if (params.get("create") === "true") {
     root.render(<CreatedDock/>);
-    await wait(() => document.querySelector('[aria-label="Add panel tab"]'), "browser add menu");
-    (document.querySelector('[aria-label="Add panel tab"]') as HTMLElement).click();
-    const createButton = [...document.querySelectorAll<HTMLButtonElement>(".dock-add button")].find(button => button.textContent === "Browser");
+    await wait(() => document.querySelector('button[aria-label$="panel tab"]'), "browser add menu");
+    const add = document.querySelector<HTMLButtonElement>('button[aria-label$="panel tab"]')!;
+    add.focus(); add.dispatchEvent(new KeyboardEvent("keydown", { key:"ArrowDown", bubbles:true, cancelable:true }));
+    await wait(() => document.querySelector('.dock-add-menu[role="menu"]'), "portaled browser add menu");
+    const createButton = [...document.querySelectorAll<HTMLElement>('.dock-add-menu [role="menuitem"]')].find(item => item.querySelector("span")?.textContent === "Browser");
     assert(createButton, "Dock browser action missing"); createButton.click();
+    await wait(() => dockSnapshot?.tabs.length === 1 && dockSnapshot.tabs[0]?.browserNewTab && document.querySelector('[aria-label="Page address"]'), "application new-tab launcher");
+    assert(Number(createCalls) === 0 && !createdTarget, "Opening a new-tab launcher created a native target");
+    const launcherId = dockSnapshot!.tabs[0]!.id;
+    const launcherAddress = document.querySelector<HTMLInputElement>('[aria-label="Page address"]')!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(launcherAddress, "about:blank");
+    launcherAddress.dispatchEvent(new Event("input", { bubbles: true }));
+    await wait(() => dockSnapshot?.tabs[0]?.browserNewTab?.draft === "about:blank", "explicit initial address");
+    launcherAddress.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await wait(() => createdTarget && dockSnapshot?.tabs.length === 1 && image()?.naturalWidth, "native created dock page");
+    assert(dockSnapshot!.tabs[0]!.id === launcherId && !dockSnapshot!.tabs[0]!.browserNewTab, "Materialization changed the application tab identity");
     assert(createCalls === 1 && dockErrors.length === 0, `Unexpected native creation outcome: ${dockErrors.join("; ")}`);
     assert(!document.querySelector(".browser-tabs"), "Native target has a duplicate nested tab selector");
     const created = dockSnapshot!.tabs[0]!;

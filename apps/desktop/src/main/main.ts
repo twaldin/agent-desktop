@@ -1,4 +1,20 @@
+import { registerBrowserCloseHandlers } from "./browser-close-ipc";
+import { registerBrowserObservationHandlers } from "./browser-observation-ipc";
+import { registerDraftBrowserHandlers } from "./draft-browser-ipc";
+import { BranchQueryConnection } from "./branch-query-connection";
+import { BranchQueryWindows } from "./branch-query-windows";
+import { attachWorkspaceQueryEvents } from "./workspace-query-events";
+import { RepositoryWatchConnection } from "./repository-watch-connection";
+import { RepositoryWatchWindows } from "./repository-watch-windows";
+import type { BranchQueryMessage, RepositoryWatchStatus } from "@agent-desktop/shared";
+import { ModifierReleaseWatches, resolveModifierMonitor, watchNativeModifier } from "./modifier-release";
+import { SessionSearchRequests } from "./session-search-requests";
+import { requestSessionSearch } from "./session-search-transport";
+import { KeepAwake } from "./keep-awake";
+import type { DeviceAccessState } from "@agent-desktop/shared";
+import { parseDeviceAccessPolicy, parseDeviceAccessUpdate } from "../../../../packages/shared/src/device-access";
 import {showDesktopContextMenu} from "./native-context-menu";
+import { resolveWindowTheme } from "./window-theme";
 import { parseNativeSkillFileRef } from "@agent-desktop/shared";
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { closePluginAcquisitionRequest, requestMarketplaceCatalog, requestPluginAcquisitionOperations, reviewPluginAcquisition, startPluginAcquisition } from "./plugin-acquisition-transport";
@@ -14,12 +30,14 @@ import { requestDetachedQuestions } from './detached-questions-transport';
 import { requestBrowserMetadata } from "./browser-metadata-transport";
 import { requestBrowserFrame } from "./browser-frame-transport";
 import { requestBrowserControl } from "./browser-control-transport";
-import { requestBrowserCreate } from "./browser-create-transport";
+import { requestBrowserCreate, requestBrowserCreationStatus } from "./browser-create-transport";
+import { requestTerminalCreationCapabilities, requestTerminalCreate, requestTerminalCreationStatus } from "./terminal-create-transport";
+import type { TerminalCreationRequest } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserCreateRequest, BrowserFrameTarget } from "@agent-desktop/shared";
 import type { ComposerCompletionQuery, NativeSkillFileRef } from "@agent-desktop/shared";
 import { NotificationDelivery, type NotificationTarget } from "./notification-delivery";
 import { parsePreferencesSnapshot, type NotificationPreferences } from "../../../../packages/shared/src/preferences";
-import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, protocol, screen, shell } from "electron";
+import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, protocol, screen, shell, powerMonitor, powerSaveBlocker } from "electron";
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
 import { nativeTerminalResult, requestHost, type HostEndpoint } from "./host-transport";
@@ -52,9 +70,27 @@ const primaryInstance = Boolean(process.env.AGENT_DESKTOP_CAPTURE) || app.reques
 if (!primaryInstance) app.quit();
 const connectionPath = join(dataDirectory, "connection.json");
 const windows = new Set<BrowserWindow>();
+const modifierWatches = new ModifierReleaseWatches((modifier, signal) => {
+  if (process.platform !== "darwin") return Promise.resolve("unavailable");
+  const root = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "dist");
+  return watchNativeModifier(resolveModifierMonitor(root), modifier, signal);
+});
+const windowThemeEffects = new Map<BrowserWindow, WindowThemeEffects>();
+function applyNativeWindowTheme(window: BrowserWindow) {
+  const effects = windowThemeEffects.get(window);
+  if (!effects || window.isDestroyed()) return;
+  const bounds = window.getBounds();
+  const resolved = resolveWindowTheme(effects, { platform: process.platform, focused: window.isFocused(),
+    width: bounds.width, height: bounds.height, scaleFactor: screen.getDisplayMatching(bounds).scaleFactor });
+  window.setBackgroundColor(resolved.backgroundColor);
+  if (process.platform === "darwin") window.setVibrancy(resolved.vibrancy);
+  if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-theme-state", resolved.opaqueWindows);
+}
 const workspaceImages = new WorkspaceImageGrants();
 const workspaceImageEpochs = new Map<number, number>();
 const windowCloseGate = new WindowCloseGate({
+  senderIds: () => [...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id),
+  prepareQuit: () => modifierWatches.pauseAndDrain(),
   send: (senderId, request) => {
     const window = [...windows].find(candidate => candidate.webContents.id === senderId && !candidate.isDestroyed());
     if (!window || window.webContents.isDestroyed()) throw new Error("The renderer is unavailable.");
@@ -69,10 +105,59 @@ const windowCloseGate = new WindowCloseGate({
 });
 const windowStates = new Map<number, WindowStateStore>();
 let connection: LocalConnection | null = null;
-type HostStream = { endpoint: HostEndpoint; sequence: number; socket?: WebSocket; timer?: ReturnType<typeof setTimeout> };
+type HostStream = { endpoint: HostEndpoint; sequence: number; repositoryWatches: RepositoryWatchConnection; branchQueries: BranchQueryConnection; socket?: WebSocket; timer?: ReturnType<typeof setTimeout> };
 const streams = new Map<string, HostStream>();
 const remoteHosts = new Map<string, HostEndpoint>();
 let shuttingDown = false;
+const repositoryWatchWindows = new RepositoryWatchWindows({
+  connect: async (hostId, isCurrent) => {
+    const endpoint = await endpointFor(hostId);
+    if (shuttingDown || !isCurrent()) throw new Error("The repository watch window ended during host lookup.");
+    if (endpoint.hostId !== hostId) throw new Error("The repository watch host identity changed.");
+    connectEvents(endpoint);
+    const stream = streams.get(hostId);
+    if (!stream) throw new Error("Repository watch event connection is unavailable.");
+    return stream.repositoryWatches;
+  },
+  notify: (senderId, status) => {
+    const window = [...windows].find(value => !value.isDestroyed() && value.webContents.id === senderId);
+    if (!window || window.webContents.isDestroyed()) throw new Error("Repository watch renderer is unavailable.");
+    window.webContents.send("host:repository-watch-status", status);
+  },
+});
+const branchQueryWindows = new BranchQueryWindows({
+  connect: async (hostId, isCurrent) => {
+    const endpoint = await endpointFor(hostId);
+    if (shuttingDown || !isCurrent()) throw new Error("The branch query window ended during host lookup.");
+    if (endpoint.hostId !== hostId) throw new Error("The branch query host identity changed.");
+    connectEvents(endpoint);
+    const stream = streams.get(hostId);
+    if (!stream) throw new Error("Branch query event connection is unavailable.");
+    return stream.branchQueries;
+  },
+  notify: (senderId, status) => {
+    const window = [...windows].find(value => !value.isDestroyed() && value.webContents.id === senderId);
+    if (!window || window.webContents.isDestroyed()) throw new Error("Branch query renderer is unavailable.");
+    window.webContents.send("host:branch-query-status", status);
+  },
+});
+const keepAwake = new KeepAwake({
+  supported: process.platform === "darwin" || process.platform === "win32",
+  onBattery: () => powerMonitor.isOnBatteryPower(),
+  start: type => powerSaveBlocker.start(type), stop: id => powerSaveBlocker.stop(id), isStarted: id => powerSaveBlocker.isStarted(id),
+}, async () => {
+  const endpoint = await endpointFor();
+  const [rawPreferences, rawAccess] = await Promise.all([requestHost(endpoint, "/v1/preferences"), requestHost(endpoint, "/v1/device-access")]);
+  const snapshot = parsePreferencesSnapshot(rawPreferences);
+  const access = rawAccess as DeviceAccessState;
+  if (access?.hostId !== endpoint.hostId || connection?.hostId !== endpoint.hostId || typeof access.supported !== "boolean") throw new Error("Keep-awake policy belongs to an unavailable local host.");
+  const policy = parseDeviceAccessPolicy(access.policy);
+  const record = snapshot.records.find(record => record.key === "connections.keepAwakeWhilePluggedIn");
+  return { requested: Boolean(record && !record.deleted && record.value === true), remoteAccessEnabled: access.supported && policy.enabled };
+}, () => {
+  for (const window of windows) if (!window.isDestroyed()) window.webContents.send("desktop:keep-awake-status");
+});
+let keepAwakeRefresh: ReturnType<typeof setInterval> | undefined;
 let notificationPrefs: NotificationPreferences | undefined;
 let notificationPreferencesLoaded = false;
 let notificationQueue = Promise.resolve();
@@ -207,33 +292,50 @@ function connectEvents(endpoint: HostEndpoint): void {
   if (shuttingDown) return;
   let stream = streams.get(endpoint.hostId);
   if (stream?.socket && stream.socket.readyState <= 1 && stream.endpoint.origin === endpoint.origin && stream.endpoint.token === endpoint.token) return;
-  if (!stream) { stream = { endpoint, sequence: notificationDelivery.cursor(endpoint.hostId) }; streams.set(endpoint.hostId, stream); }
+  if (!stream) { stream = { endpoint, sequence: notificationDelivery.cursor(endpoint.hostId), repositoryWatches: new RepositoryWatchConnection(endpoint.hostId), branchQueries: new BranchQueryConnection(endpoint.hostId) }; streams.set(endpoint.hostId, stream); }
   stream.endpoint = endpoint;
   clearTimeout(stream.timer);
   stream.socket?.close();
   const current = stream;
   notificationDelivery.begin(endpoint.hostId);
+  if (endpoint.hostId === connection?.hostId) keepAwake.connection(false);
   const url = `${endpoint.origin.replace(/^http/, "ws")}/v1/events?after=${Math.min(current.sequence, notificationDelivery.cursor(endpoint.hostId))}`;
   const next = new WebSocket(url, endpoint.token ? ["agent-desktop", endpoint.token] : ["agent-desktop"]);
   current.socket = next;
+  let disconnectReason: string | undefined;
+  const queryEvents = attachWorkspaceQueryEvents(current.repositoryWatches, current.branchQueries, {
+    isCurrent: () => !shuttingDown && current.socket === next,
+    send: request => {
+      if (shuttingDown || current.socket !== next || next.readyState !== WebSocket.OPEN) throw new Error("Workspace query socket is unavailable.");
+      next.send(JSON.stringify(request));
+    },
+    close: reason => { if (current.socket === next) { disconnectReason = reason; next.close(1002, reason); } },
+  });
   const emitConnection = (connected: boolean, error?: string) => broadcast({ hostId: endpoint.hostId,
     sequence: current.sequence, type: "connection", connected, error });
-  let disconnectReason: string | undefined;
-  next.addEventListener("open", () => { if (current.socket === next && !shuttingDown) emitConnection(true); });
+  next.addEventListener("open", () => { if (current.socket === next && !shuttingDown) { emitConnection(true); if (endpoint.hostId === connection?.hostId) keepAwake.connection(true); } });
   next.addEventListener("message", ({ data }) => {
     if (current.socket !== next) return;
     try {
       const event = JSON.parse(String(data)) as HostEvent | { type: "terminal"; event: TerminalInvalidation }
-        | { type: "native-terminal"; event: NativeTerminalInvalidation };
+        | { type: "native-terminal"; event: NativeTerminalInvalidation } | RepositoryWatchStatus | BranchQueryMessage;
+      if (event.type === "state" && (!Number.isSafeInteger(event.sequence) || event.sequence < 0)) return;
+      if (queryEvents.receive(event)) return;
+      // The router consumes both connection-local protocols before cursor handling.
+      if (event.type === "repository-watch" || event.type === "branch-query") return;
       if (event.type === "terminal" || event.type === "native-terminal") {
         const channel = event.type === "terminal" ? "host:terminal-event" : "host:native-terminal-event";
         for (const window of windows) if (!window.isDestroyed()) window.webContents.send(channel, { ...event.event, hostId: endpoint.hostId });
         return;
       }
       if (!Number.isSafeInteger(event.sequence) || event.sequence < 0) return;
-      if (event.type === "state" && event.state.host.id !== endpoint.hostId) { disconnectReason = "The remote host identity changed."; next.close(1008, disconnectReason); return; }
+      if (event.type === "state" && event.state.host.id !== endpoint.hostId) { disconnectReason = "The remote host identity changed."; queryEvents.disconnected(disconnectReason); next.close(1008, disconnectReason); return; }
       current.sequence = Math.max(current.sequence, event.sequence);
       broadcast({ ...event, hostId: endpoint.hostId });
+      if (endpoint.hostId === connection?.hostId && (event.type === "preferences" || event.type === "device-access")) {
+        keepAwake.invalidate();
+        if (event.type === "device-access") for (const window of windows) if (!window.isDestroyed()) window.webContents.send("host:device-access-changed");
+      }
       if (event.type !== "notification" && event.type !== "state" && event.type !== "preferences") return;
       notificationQueue = notificationQueue.then(async () => {
         if (current.socket !== next || shuttingDown) return;
@@ -249,9 +351,9 @@ function connectEvents(endpoint: HostEndpoint): void {
         if (event.type === "notification") notificationDelivery.event(endpoint.hostId, event.sequence, event.notification);
         else if (event.type === "state") notificationDelivery.snapshot(endpoint.hostId, event.sequence, event.state.notifications, event.replayComplete === true);
       }).catch(() => { notificationPreferencesLoaded = false; });
-    } catch { disconnectReason = "Invalid host event."; next.close(1002, disconnectReason); }
+    } catch { disconnectReason = "Invalid host event."; queryEvents.disconnected(disconnectReason); next.close(1002, disconnectReason); }
   });
-  next.addEventListener("error", () => next.close());
+  next.addEventListener("error", () => { queryEvents.disconnected("Workspace query socket failed."); next.close(); });
   const reconnect = async () => {
     if (current.socket !== next || shuttingDown) return;
     try {
@@ -272,8 +374,10 @@ function connectEvents(endpoint: HostEndpoint): void {
     }
   };
   next.addEventListener("close", () => {
+    queryEvents.disconnected(disconnectReason);
     if (current.socket !== next || shuttingDown) return;
     emitConnection(false, disconnectReason);
+    if (endpoint.hostId === connection?.hostId) keepAwake.connection(false);
     clearTimeout(current.timer);
     current.timer = setTimeout(reconnect, 1500);
   });
@@ -295,6 +399,15 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMa
   }
 }
 
+ipcMain.handle("desktop:modifier-release", (event, id: unknown, modifier: unknown) => {
+  assertTrustedSender(event);
+  return modifierWatches.watch(event.sender.id, id, modifier);
+});
+ipcMain.handle("desktop:modifier-release-cancel", (event, id: unknown) => {
+  assertTrustedSender(event);
+  if (typeof id !== "string") throw new Error("Invalid modifier release cancellation.");
+  modifierWatches.cancel(event.sender.id, id);
+});
 ipcMain.handle("desktop:context-menu",(event,items:unknown)=>{assertTrustedSender(event);const owner=BrowserWindow.fromWebContents(event.sender);if(!owner)throw new Error("The menu window is unavailable.");return showDesktopContextMenu(owner,items)});
 ipcMain.handle("desktop:notification-status", event => { assertTrustedSender(event); return notificationDelivery.status(); });
 ipcMain.handle("desktop:notification-ready", event => {
@@ -341,6 +454,25 @@ ipcMain.handle("host:image-read", async (event, sha256: string, hostId: string) 
 ipcMain.handle("host:transcript-image", async (event, sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string) => {
   assertTrustedSender(event); return requestTranscriptImage(await endpointFor(requireImageOwner(hostId)), sessionId, nativeEntryId, blockIndex);
 });
+const sessionSearchRequests = new SessionSearchRequests();
+const searchOwners = new WeakSet<Electron.WebContents>();
+ipcMain.handle("host:session-search", async (event, input: import("@agent-desktop/shared").SessionSearchRequest, hostId: string, requestId: string = crypto.randomUUID()) => {
+  assertTrustedSender(event);
+  if (typeof hostId !== "string" || !hostId || hostId.length > 200 || /[\x00-\x1f\x7f]/.test(hostId)) throw new Error("Choose the chat search owning host.");
+  if (!searchOwners.has(event.sender)) {
+    searchOwners.add(event.sender);
+    const owner = event.sender.id; event.sender.once("destroyed", () => sessionSearchRequests.close(owner));
+  }
+  return sessionSearchRequests.run(event.sender.id, hostId, requestId, async signal => {
+    const endpoint = await endpointFor(hostId); signal.throwIfAborted();
+    return requestSessionSearch(endpoint, input, signal);
+  });
+});
+ipcMain.handle("host:session-search-cancel", (event, requestId: string, hostId: string) => {
+  assertTrustedSender(event);
+  if (typeof requestId !== "string" || typeof hostId !== "string") throw new Error("Invalid chat search cancellation.");
+  sessionSearchRequests.cancel(event.sender.id, hostId, requestId);
+});
 ipcMain.handle("host:messages", (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event);
   if (typeof sessionId !== "string" || sessionId.length > 200) throw new Error("Invalid session ID.");
@@ -377,11 +509,18 @@ ipcMain.handle("host:btw", async (event, sessionId: string, hostId?: string) => 
 ipcMain.handle('host:detached-questions', async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestDetachedQuestions(await endpointFor(hostId), sessionId);
 });
+registerDraftBrowserHandlers(ipcMain, assertTrustedSender, endpointFor);
+registerBrowserCloseHandlers(ipcMain, assertTrustedSender, endpointFor);
+registerBrowserObservationHandlers(ipcMain, assertTrustedSender, endpointFor);
+
 ipcMain.handle("host:browser-metadata", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserMetadata(await endpointFor(hostId), sessionId);
 });
 ipcMain.handle("host:browser-create", async (event, sessionId: string, request: BrowserCreateRequest, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserCreate(await endpointFor(hostId), sessionId, request);
+});
+ipcMain.handle("host:browser-creation-status", async (event, sessionId: string, request: BrowserCreateRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestBrowserCreationStatus(await endpointFor(hostId), sessionId, request);
 });
 ipcMain.handle("host:browser-control", async (event, sessionId: string, request: BrowserControlRequest, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserControl(await endpointFor(hostId), sessionId, request);
@@ -390,7 +529,17 @@ ipcMain.handle("host:browser-frame", async (event, sessionId: string, target: Br
   assertTrustedSender(event); return requestBrowserFrame(await endpointFor(hostId), sessionId, target);
 });
 ipcMain.handle("host:peers", event => { assertTrustedSender(event); return discoverHosts(); });
+ipcMain.handle("desktop:keep-awake-status", event => { assertTrustedSender(event); return keepAwake.status(); });
+ipcMain.handle("host:device-access", event => { assertTrustedSender(event); return request("/v1/device-access"); });
+ipcMain.handle("host:device-access-update", async (event, input: unknown) => {
+  assertTrustedSender(event);
+  const update = parseDeviceAccessUpdate(input);
+  const state = await request("/v1/device-access", update);
+  for (const window of windows) if (!window.isDestroyed()) window.webContents.send("host:device-access-changed");
+  return state;
+});
 ipcMain.handle("host:preferences", event => { assertTrustedSender(event); return request("/v1/preferences"); });
+ipcMain.handle("host:preferences-v2", event => { assertTrustedSender(event); return request("/v2/preferences"); });
 ipcMain.handle("host:theme", event => { assertTrustedSender(event); return request("/v1/theme"); });
 ipcMain.handle("host:theme-set", (event, document: ThemeDocument, expectedRevision: string) => {
   assertTrustedSender(event); return request("/v1/theme", { document, expectedRevision });
@@ -413,6 +562,21 @@ ipcMain.handle("host:terminal-action", (event, action: TerminalControlAction, ho
 });
 ipcMain.handle("host:terminal-input", (event, input: TerminalInputRequest, hostId?: string) => {
   assertTrustedSender(event); return request("/v1/terminals/input", input, hostId);
+});
+async function terminalCreationEndpoint(hostId: string) {
+  if (typeof hostId !== "string" || !hostId) throw new Error("An explicit terminal owner is required.");
+  const endpoint = await endpointFor(hostId);
+  if (endpoint.hostId !== hostId) throw new Error("The terminal host identity changed.");
+  return endpoint;
+}
+ipcMain.handle("host:terminal-creation-capabilities", (event, hostId: string) => {
+  assertTrustedSender(event); return nativeTerminalResult(async () => requestTerminalCreationCapabilities(await terminalCreationEndpoint(hostId)));
+});
+ipcMain.handle("host:terminal-create", (event, request: TerminalCreationRequest, hostId: string) => {
+  assertTrustedSender(event); return nativeTerminalResult(async () => requestTerminalCreate(await terminalCreationEndpoint(hostId), request));
+});
+ipcMain.handle("host:terminal-creation-status", (event, request: TerminalCreationRequest, hostId: string) => {
+  assertTrustedSender(event); return nativeTerminalResult(async () => requestTerminalCreationStatus(await terminalCreationEndpoint(hostId), request));
 });
 ipcMain.handle("host:native-terminal-capabilities", (event, hostId?: string) => {
   assertTrustedSender(event);
@@ -473,14 +637,18 @@ ipcMain.handle("desktop:theme-background", async (event, sha256: string) => {
 });
 ipcMain.handle("desktop:window-theme", (event, effects: WindowThemeEffects) => {
   assertTrustedSender(event);
-  if (!effects || !["none", "sidebar", "under-window", "hud"].includes(effects.material) || typeof effects.backgroundColor !== "string"
-    || !/^(#[\da-f]{6}|#[\da-f]{8}|rgba?\([\d.,%\s]+\)|transparent)$/i.test(effects.backgroundColor)) throw new Error("Invalid native window theme.");
-  // Convert CSS #RRGGBBAA to Electron's #AARRGGBB representation.
-  const color = /^#[\da-f]{8}$/i.test(effects.backgroundColor) ? `#${effects.backgroundColor.slice(7)}${effects.backgroundColor.slice(1, 7)}` : effects.backgroundColor;
-  for (const window of windows) if (!window.isDestroyed()) {
-    window.setBackgroundColor(color);
-    window.setVibrancy(effects.material === "none" ? null : effects.material);
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) throw new Error("The theme window is unavailable.");
+  resolveWindowTheme(effects, { platform: process.platform, focused: window.isFocused(), ...window.getBounds(), scaleFactor: 1 });
+  if (!windowThemeEffects.has(window)) {
+    const refresh = () => applyNativeWindowTheme(window);
+    window.on("focus", refresh); window.on("blur", refresh); window.on("show", refresh);
+    window.on("resize", refresh); window.on("move", refresh);
+    screen.on("display-metrics-changed", refresh);
+    window.once("closed", () => { windowThemeEffects.delete(window); screen.removeListener("display-metrics-changed", refresh); });
   }
+  windowThemeEffects.set(window, effects);
+  applyNativeWindowTheme(window);
 });
 ipcMain.handle("host:settings-catalog", (event, hostId?: string) => { assertTrustedSender(event); return request("/v1/settings/catalog", undefined, hostId); });
 ipcMain.handle("host:plugins-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/plugins/read", { target }, hostId); });
@@ -500,6 +668,9 @@ ipcMain.handle("host:plugin-acquisition-review", async (event, target: Workspace
 ipcMain.handle("host:plugin-acquisition-close", async (event, target: WorkspaceTarget | undefined, close: { id: string; operation: NativePluginAcquisition["operation"] }, hostId?: string) => {
   assertTrustedSender(event); return closePluginAcquisitionRequest(await endpointFor(hostId), target, close);
 });
+ipcMain.handle("host:ssh-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/ssh/read", { target }, hostId); });
+ipcMain.handle("host:ssh-detail", (event, target: WorkspaceTarget | undefined, detail: import("@agent-desktop/shared").NativeSshDetailRequest, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/ssh/detail", { target, request: detail }, hostId); });
+ipcMain.handle("host:ssh-mutate", (event, target: WorkspaceTarget | undefined, mutation: import("@agent-desktop/shared").NativeSshMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/ssh/mutate", { target, mutation }, hostId); });
 ipcMain.handle("host:mcp-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/read", { target }, hostId); });
 ipcMain.handle("host:mcp-detail", (event, target: WorkspaceTarget | undefined, detail: NativeMcpDetailRequest, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/detail", { target, request: detail }, hostId); });
 ipcMain.handle("host:mcp-mutate", (event, target: WorkspaceTarget | undefined, mutation: NativeMcpMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/mcp/mutate", { target, mutation }, hostId); });
@@ -570,6 +741,52 @@ ipcMain.handle("host:interactions", (event, sessionId: string, hostId?: string) 
 });
 ipcMain.handle("host:workspace-query", (event, target: WorkspaceTarget, query: WorkspaceQuery, hostId?: string) => {
   assertTrustedSender(event); return request("/v1/workspace/query", { target, query }, hostId);
+});
+function queryWindowToken(event: Electron.IpcMainInvokeEvent, owner: { token(senderId: number): string | undefined }): string | Promise<string> {
+  assertTrustedSender(event);
+  const sender = event.sender, existing = owner.token(sender.id);
+  if (existing) return existing;
+  // Waiting grants no observer. The old document cannot reuse its previous token,
+  // and a response to its destroyed preload cannot create a follow-up request.
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sender.removeListener("did-finish-load", loaded);
+      sender.removeListener("did-start-navigation", navigating);
+      sender.removeListener("destroyed", ended);
+      sender.removeListener("render-process-gone", ended);
+      if (error) { reject(error); return; }
+      try {
+        assertTrustedSender(event);
+        const token = owner.token(sender.id);
+        if (!token) throw new Error("Workspace query document is not ready.");
+        resolve(token);
+      } catch (cause) { reject(cause); }
+    };
+    const loaded = () => finish();
+    const ended = () => finish(new Error("Workspace query document ended before readiness."));
+    const navigating = (_event: Electron.Event, _url: string, inPlace: boolean, isMainFrame: boolean) => { if (isMainFrame && !inPlace) ended(); };
+    const timer = setTimeout(() => finish(new Error("Workspace query document did not finish loading.")), 30_000);
+    sender.once("did-finish-load", loaded);
+    sender.on("did-start-navigation", navigating);
+    sender.once("destroyed", ended);
+    sender.once("render-process-gone", ended);
+  });
+}
+ipcMain.handle("host:repository-watch-window", event => queryWindowToken(event, repositoryWatchWindows));
+ipcMain.handle("host:branch-query-window", event => queryWindowToken(event, branchQueryWindows));
+ipcMain.handle("host:repository-watch", (event, token: unknown, request: unknown) => {
+  assertTrustedSender(event);
+  const sender = event.sender, frame = event.senderFrame;
+  return repositoryWatchWindows.dispatch(sender.id, request, () => !sender.isDestroyed() && sender.mainFrame === frame, token);
+});
+ipcMain.handle("host:branch-query", (event, token: unknown, request: unknown) => {
+  assertTrustedSender(event);
+  const sender = event.sender, frame = event.senderFrame;
+  return branchQueryWindows.dispatch(sender.id, request, () => !sender.isDestroyed() && sender.mainFrame === frame, token);
 });
 const workspaceCopies = new Set<number>();
 ipcMain.handle("desktop:skill-save-copy", async (event, input: NativeSkillFileRef, hostId: string) => workspaceCopyOutcome(async () => {
@@ -688,6 +905,7 @@ async function createWindow(): Promise<void> {
   windows.add(window);
   windowStates.set(window.webContents.id, localState);
   const windowContentsId = window.webContents.id;
+  window.webContents.on("did-finish-load", () => { if (!shuttingDown && !window.isDestroyed()) { repositoryWatchWindows.reset(windowContentsId); branchQueryWindows.reset(windowContentsId); } });
   workspaceImageEpochs.set(windowContentsId, 0);
   if (geometry.maximized && !process.env.AGENT_DESKTOP_CAPTURE) window.maximize();
   trackWindowGeometry(window, localState, status => { if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-state:status", status); });
@@ -695,13 +913,16 @@ async function createWindow(): Promise<void> {
   window.webContents.on("did-start-loading", () => notificationReady.delete(windowContentsId));
   window.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
     if (!isMainFrame) return;
+    modifierWatches.cancel(windowContentsId);
+    if (!_inPlace) { repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); }
     windowCloseGate.unregister(windowContentsId);
     workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1);
     workspaceImages.releaseSender(windowContentsId);
   });
-  window.webContents.on("render-process-gone", (_event, details) => { notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
+  window.webContents.on("destroyed", () => { modifierWatches.cancel(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); });
+  window.webContents.on("render-process-gone", (_event, details) => { modifierWatches.cancel(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
   window.on("close", event => { if (!windowCloseGate.handleWindowClose(windowContentsId, () => { if (!window.isDestroyed()) window.close(); })) event.preventDefault(); });
-  window.on("closed", () => { windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
+  window.on("closed", () => { modifierWatches.cancel(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); windows.delete(window); windowStates.delete(windowContentsId); notificationReady.delete(windowContentsId); windowCloseGate.destroy(windowContentsId, true); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", event => event.preventDefault());
   const development = process.env.AGENT_DESKTOP_RENDERER_URL;
@@ -716,7 +937,14 @@ async function createWindow(): Promise<void> {
 
 if (primaryInstance) app.whenReady().then(() => {
   protocol.handle("agent-workspace-image", request => workspaceImages.response(request.url, request.signal));
-  app.setAccessibilitySupportEnabled(true); return createWindow();
+  app.setAccessibilitySupportEnabled(true);
+  powerMonitor.on("on-ac", () => keepAwake.powerChanged());
+  powerMonitor.on("on-battery", () => keepAwake.powerChanged());
+  powerMonitor.on("resume", () => keepAwake.invalidate());
+  // Recover a failed policy read without waiting for another user action.
+  keepAwakeRefresh = setInterval(() => { void keepAwake.refresh(); }, 15000);
+  keepAwakeRefresh.unref();
+  return createWindow();
 }).catch(error => { dialog.showErrorBox("Agent Desktop", String(error)); app.quit(); });
 app.on("second-instance", () => {
   const window = [...windows][0];
@@ -730,4 +958,4 @@ app.on("before-quit", event => {
   event.preventDefault();
   windowCloseGate.requestQuit([...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id), () => app.quit());
 });
-app.on("will-quit", () => { shuttingDown = true; notificationDelivery.dispose(); for (const stream of streams.values()) { clearTimeout(stream.timer); stream.socket?.close(); } });
+app.on("will-quit", () => { void modifierWatches.dispose(); shuttingDown = true; repositoryWatchWindows.dispose(); branchQueryWindows.dispose(); clearInterval(keepAwakeRefresh); keepAwake.dispose(); notificationDelivery.dispose(); for (const stream of streams.values()) { stream.repositoryWatches.dispose(); stream.branchQueries.dispose(); clearTimeout(stream.timer); stream.socket?.close(); } });

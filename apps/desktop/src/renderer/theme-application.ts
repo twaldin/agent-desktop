@@ -22,4 +22,5 @@ export function applyTheme(input: ThemeDocument, root: HTMLElement = document.do
   for (const name of [...Object.keys(THEME_TOKEN_DEFINITIONS), "--theme-background-color", "--theme-background-image"]) root.style.removeProperty(name);
   for (const [name, value] of Object.entries(styles)) root.style.setProperty(name, value);
   root.dataset.theme = theme.mode; root.dataset.material = theme.material;
+  root.dataset.opaqueWindowSurface = String(theme.opaqueWindows);
 }

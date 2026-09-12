@@ -1,3 +1,4 @@
+import { parseWorktreeStartingState } from '../../../../packages/shared/src/new-chat';
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -145,11 +146,6 @@ function materializedSnapshot(current: LocalEnvironmentPreparationV2, value: Loc
   const ownerRoot = value.configPath === current.selectedEnvironment.configPath ? current.directories.sourceGitRoot : current.worktreePath;
   return configSnapshot(value, ownerRoot);
 }
-function startingState(value: WorktreeStartingState): WorktreeStartingState {
-  if (value?.type === "working-tree") return { type: "working-tree" };
-  if (value?.type === "branch" && typeof value.branchName === "string" && value.branchName.length > 0 && value.branchName.length <= 500 && !value.branchName.includes("\0")) return { type: "branch", branchName: value.branchName };
-  throw new Error("Invalid worktree starting state.");
-}
 function storedResult(result: LocalEnvironmentRunResult, expected: "succeeded" | "failed"): StoredRunResult {
   if (expected === "succeeded" ? result.status !== "succeeded" : result.status === "succeeded") throw new Error(`Environment lifecycle result must be ${expected}.`);
   const { environmentDelta: _privateDelta, ...stored } = structuredClone(result);
@@ -218,7 +214,7 @@ export class LocalEnvironmentPreparations {
     const now = Date.now(), base: LocalEnvironmentPreparationBase = {
       id: identifier(input.id, "Preparation identity"), revision: 1, hostId: this.hostId,
       projectId: identifier(input.projectId, "Project identity"), sourceRoot, worktreePath,
-      startingState: startingState(input.startingState), draft: { id: identifier(input.draft.id, "Draft identity"), revision: input.draft.revision },
+      startingState: parseWorktreeStartingState(input.startingState), draft: { id: identifier(input.draft.id, "Draft identity"), revision: input.draft.revision },
       ...(input.model ? { model: structuredClone(input.model) } : {}), ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
       environment: selectedEnvironment, phase: "validated", createdAt: now, updatedAt: now,
     };

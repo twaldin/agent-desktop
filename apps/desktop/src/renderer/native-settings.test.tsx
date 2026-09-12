@@ -28,6 +28,29 @@ describe("native settings UI contracts", () => {
     }
     expect(filterNativeSettings(catalog.settings, "", "all")).toHaveLength(484);
   });
+  test("boolean rows expose a named switch while native details reveal matching paths and reset", () => {
+    const data = new NativeSettingsState(bridge(), "contract-host"); data.snapshot = snapshot();
+    const d = { ...descriptor("compaction.enabled"), condition: undefined };
+    const render = (searching = false) => renderToStaticMarkup(<NativeSettingRow descriptor={d} state={snapshot().entries[0]} data={data} scope="global" writable searching={searching}/>);
+    const idle = render();
+    expect(idle).toContain('role="switch"'); expect(idle).toContain(`aria-label="${d.label}"`);
+    expect(idle).toContain('aria-checked="true"'); expect(idle).not.toContain('type="checkbox"');
+    expect(idle).toContain('<details class="native-setting-details">');
+    expect(idle).not.toContain('>Save</button>'); expect(idle).not.toContain('>Discard edit</button>');
+    const searched = render(true);
+    expect(searched).toContain('<details class="native-setting-details" open="">');
+    expect(searched).toContain('<dt>Setting path</dt><dd><code>compaction.enabled</code>');
+    expect(searched).toContain('Reset to native default');
+  });
+  test("obsolete row opens saved-value comparison without losing its switch edit or discard", () => {
+    const data = new NativeSettingsState(bridge(), "contract-host"); data.snapshot = snapshot();
+    data.edit("global", "compaction.enabled", false); data.snapshot = snapshot("changed");
+    const html = renderToStaticMarkup(<NativeSettingRow descriptor={descriptor("compaction.enabled")} state={snapshot().entries[0]} data={data} scope="global" writable/>);
+    expect(html).toContain('aria-checked="false"'); expect(html).toContain('<details class="native-setting-details" open="">');
+    expect(html).toContain('Saved: <code>true</code>'); expect(html).toContain('Use current revision for this edit');
+    expect(html).toContain('<button class="primary-button" disabled="">Save</button>');
+    expect(html).toContain('>Discard edit</button>');
+  });
   test("compound fields expose maps, optional fields, arrays and type choices without a raw JSON-only editor", () => {
     const modelTags = renderToStaticMarkup(<NativeValueField schema={descriptor("modelTags").schema} value={{ fast: { name: "Fast", hidden: false } }} label="Model tags" onChange={() => {}}/>);
     expect(modelTags).toContain("Model tags fast name"); expect(modelTags).toContain("Color (optional)");

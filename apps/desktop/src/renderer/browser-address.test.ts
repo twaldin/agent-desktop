@@ -24,3 +24,13 @@ test('URL input supports local development, public/private domains, IPs and quer
 test('local paths are never sent to a search provider as a fallback', () => {
   for (const value of ['/Users/local/private.txt', 'C:\\private.txt', '\\\\host\\share']) expect(() => navigate(value)).toThrow('host-local');
 });
+
+test('tagged address decisions preserve navigation bytes without mistaking explicit search URLs for queries', async () => {
+  const { parseBrowserAddress } = await import('./browser-address');
+  for (const value of ['localhost:3000/path', 'dev.localhost', '[::1]:4000/', 'example.com/path', 'app.github.io', 'www.intranet', 'deckbox:8080', '192.168.1.2', '[2001:db8::1]:8080/', 'about:blank', 'https://www.google.com/search?q=hello']) {
+    expect(parseBrowserAddress(value)).toEqual({ kind: 'url', address: navigate(value) });
+  }
+  for (const value of ['hello world', 'not-a-domain', '999.2.3.4']) expect(parseBrowserAddress(value)).toEqual({ kind: 'search', address: navigate(value) });
+  expect(parseBrowserAddress('  ')).toEqual({ kind: 'empty', address: '' });
+  expect(() => parseBrowserAddress('/private/secret')).toThrow('host-local');
+});

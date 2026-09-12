@@ -1,13 +1,28 @@
+import { admitBrowserClose, type BrowserClosePresentations } from "./browser-close-focus";
+import type { DockPresentationRef } from "./dock-presentations";
+import { admitBrowserSearch, type BrowserSearchPresentations } from "./browser-search-activation";
+import type { DraftBrowserPageIntent } from "../draft-browser-page-intent";
+import { type CommandBrowserTab } from "./command-browser-tabs";
+import { createDraftBrowserDockTab } from "./draft-browser-dock";
+import type { TerminalWindowOwner } from "./terminal-window-owner";
+import type { TerminalWindowIntent } from "../terminal-window-intent";
+import type { TerminalCreationOptions } from "./terminal-creation-controller";
+import { resolveContentSide } from "./content-side-placement";
 import { parseStandaloneFilePath, type NativeSkillFileRef } from "@agent-desktop/shared";
 import { useEffect, useRef, useState } from "react";
+import { reconcileDockPresentations, type DockPresentations } from "./dock-presentations";
+import type { BrowserReplacementOrigin, BrowserReplacementDestination } from "./browser-workspace-replacement";
+import { admitBrowserReplacement, acknowledgeBrowserAdmissions } from "./browser-replacement-admission";
 import type {
   BrowserFrameTarget,
   DesktopBridge,
   WorkspaceTarget,
 } from "../../../../packages/shared/src/protocol";
-import type { WindowViewState, WorkspaceTab } from "../window-state";
+import { type WindowViewState, type WorkspaceTab } from "../window-state";
 import {
   createDockState,
+  showDock,
+  hideDock,
   dockTabId,
   insertDockTab,
   isWorkspaceFilePath,
@@ -18,10 +33,19 @@ import {
   type DockTab,
   type DockTarget,
 } from "./dock-state";
-import { openFileTab, pinFileTab, persistentFileTabs, changeFileDock } from "./file-preview-tabs";
-import { hasNativeTerminalBridge } from "./native-terminal-state";
-import { nativeTerminalClient } from "./native-terminal-bridge";
+import { openFileTab, selectBrowserFile, pinFileTab, persistentFileTabs, changeFileDock } from "./file-preview-tabs";
 import { workspaceKey } from "./workspace-state";
+import { BrowserNewTabController, createBrowserNewTab, type BrowserNewTabState } from "./browser-new-tab";
+import { stepWorkspaceLayout } from "./workspace-layout-step";
+import type { MainChatTarget } from "./main-task-targets";
+import { cleanupPreviousBrowserConversation } from "./browser-conversation-cleanup";
+
+/** One explicit acquisition attempt; unknown/cancelled results are not retry authority. */
+export type TerminalPreparation =
+  | { status: "ready"; tab: DockTab }
+  | { status: "busy" }
+  | { status: "cancelled"; creationMayHaveRun: boolean; tab?: DockTab }
+  | { status: "error"; outcome: "not-submitted" | "unknown"; message: string };
 
 export type DockSnapshot = NonNullable<WindowViewState["dock"]>;
 const dockTargetForWorkspace = (target: WorkspaceTarget): DockTarget =>
@@ -45,50 +69,121 @@ export function useWorkbenchDock(
   connected: boolean,
   onError: (message: string) => void,
   canReplacePreview: (tab: DockTab) => boolean = () => false,
+  direction: "ltr" | "rtl" = "ltr",
+  browserCheckpoint: (tab: DockTab, state: BrowserNewTabState, signal: AbortSignal) => Promise<void> = async () => { throw new Error("Window save acknowledgement is unavailable for browser creation."); },
+  browserCleanupProtected: (presentations: DockPresentations, tabId: string) => boolean = () => false,
+  terminalOwner?: TerminalWindowOwner,
 ) {
-  const [snapshot, setSnapshot] = useState<DockSnapshot>(
-    () => initial.dock ?? { state: createDockState(), tabs: [] },
+  const [presentations, updatePresentations] = useState<BrowserClosePresentations>(
+    () => reconcileDockPresentations(undefined, initial.dock ? { ...initial.dock, state: { ...initial.dock.state, contentSide: resolveContentSide(initial.dock.state,direction) }, tabs: initial.dock.tabs.map(tab => tab.kind === "files" ? { ...tab, title: "Open file" } : tab) } : { state: createDockState(resolveContentSide(undefined,direction)), tabs: [] }, crypto.randomUUID()),
   );
+  const { snapshot } = presentations;
+  function setSnapshot(value: DockSnapshot | ((snapshot: DockSnapshot, presentations: DockPresentations) => DockSnapshot)) {
+    const seed = crypto.randomUUID();
+    updatePresentations(previous => {
+      const next = reconcileDockPresentations(previous, typeof value === "function" ? value(previous.snapshot, previous) : value, seed);
+      return next === previous ? previous : { ...previous, ...next };
+    });
+  }
   const [ready, setReady] = useState(
     Boolean(initial.dock) || (!initial.workspaceOpen && !initial.terminalOpen),
   );
   const pending = useRef(new Set<string>());
-  const add = (tab: DockTab, destination: DockDestination) => {
-    setReady(true);
-    setSnapshot((previous) => ({
+  useEffect(() => {
+    for (const destination of ["right", "bottom"] as const) {
+      const region = snapshot.state[destination];
+      const tab = region.open ? snapshot.tabs.find(value => value.id === region.activeTabId) : undefined;
+      if (tab?.kind === "terminal" && tab.terminalId) {
+        try { localStorage.setItem(`terminal.native.selected.${tab.hostId}.${tab.target}`, tab.terminalId); } catch { /* Window state retains the identity. */ }
+      }
+    }
+  }, [snapshot]);
+  const browserLaunchers = useRef(new Map<string, BrowserNewTabController>());
+  const browserLaunchersMounted = useRef(false);
+  useEffect(() => {
+    browserLaunchersMounted.current = true;
+    return () => {
+      browserLaunchersMounted.current = false;
+      queueMicrotask(() => { if (!browserLaunchersMounted.current) { for (const controller of browserLaunchers.current.values()) controller.dispose(); browserLaunchers.current.clear(); } });
+    };
+  }, []);
+  useEffect(() => {
+    const used = new Set([...snapshot.state.right.tabIds, ...snapshot.state.bottom.tabIds]);
+    for (const [id, controller] of browserLaunchers.current) if (!used.has(id)) {
+      controller.dispose(); browserLaunchers.current.delete(id);
+    }
+  }, [snapshot]);
+  function browserLauncher(tab: DockTab, online: boolean) {
+    let controller = browserLaunchers.current.get(tab.id);
+    if (!controller) {
+      controller = new BrowserNewTabController(bridge, tab,
+        browserNewTab => setSnapshot(previous => ({ ...previous,
+          tabs: previous.tabs.map(item => item.id === tab.id && item.browserNewTab ? { ...item, browserNewTab } : item) })),
+        (browserTarget, title) => {
+          setSnapshot(previous => ({ ...previous, tabs: previous.tabs.map(item => {
+            if (item.id !== tab.id || !item.browserNewTab) return item;
+            const { browserNewTab: _launcher, ...materialized } = item;
+            return { ...materialized, browserTarget, title };
+          }) }));
+          browserLaunchers.current.delete(tab.id);
+        }, browserCheckpoint);
+      browserLaunchers.current.set(tab.id, controller);
+    }
+    controller.connected = online;
+    return controller;
+  }
+  const add = (tab: DockTab, destination: DockDestination, guard: () => boolean = () => true) => {
+    setReady(previous => guard() ? true : previous);
+    setSnapshot((previous) => guard() ? ({
       tabs: previous.tabs.some((value) => value.id === tab.id)
         ? previous.tabs
         : [...previous.tabs, tab],
       state: insertDockTab(previous.state, tab, destination),
-    }));
+    }) : previous);
   };
-  function open(
+  function prepareOpen(
     kind: Exclude<DockTab["kind"], "terminal" | "skill-file" | "file">,
-    destination: DockDestination = "right",
     owner = hostId,
     workspace = target,
+  ): TerminalPreparation {
+    if (!workspace) return { status: "error", outcome: "not-submitted", message: "Choose a workspace to open a panel." };
+    if ("filePath" in workspace) return { status: "error", outcome: "not-submitted", message: "Standalone files support only file tabs." };
+    if ((kind === "browser" || kind === "side-chat") && !("sessionId" in workspace))
+      return { status: "error", outcome: "not-submitted", message: `${kind === "browser" ? "Browser tabs" : "Side chat"} require a native session.` };
+    if (kind === "browser" && "sessionId" in workspace)
+      return { status: "ready", tab: createBrowserNewTab(owner, workspace.sessionId) };
+    const descriptor = {
+      kind, hostId: owner, target: workspaceKey(workspace) as DockTarget,
+      title: kind === "side-chat" ? "Side chat" : kind === "goal" ? "Edit goal" : kind === "review" ? "Review" : kind === "worktrees" ? "Worktrees" : "Open file",
+    };
+    return { status: "ready", tab: { ...descriptor, id: dockTabId(descriptor) } };
+  }
+  function open(
+    kind: Exclude<DockTab["kind"], "terminal" | "skill-file" | "file">,
+    destination: DockDestination = "right", owner = hostId, workspace = target,
   ) {
     if (!workspace || (kind === "side-chat" && !("sessionId" in workspace))) return;
-    if ("filePath" in workspace) {
-      onError("Standalone files support only file tabs.");
-      return;
-    }
-    const descriptor = {
-      kind,
-      hostId: owner,
-      target: workspaceKey(workspace) as DockTarget,
-      title:
-        kind === "side-chat" ? "Side chat" : kind === "goal" ? "Edit goal" : kind === "review"
-          ? "Review"
-          : kind === "worktrees"
-            ? "Worktrees"
-            : kind === "browser"
-              ? "Browser"
-              : "Files",
-    };
-    add({ ...descriptor, id: dockTabId(descriptor) }, destination);
+    const result = prepareOpen(kind, owner, workspace);
+    if (result.status === "error") onError(result.message);
+    else if (result.status === "ready") add(result.tab, destination);
   }
 
+  function openDraftBrowser(owner: string, draftId: string, destination: DockDestination, guard: () => boolean) {
+    if (!guard()) return;
+    add(createDraftBrowserDockTab(owner, draftId), destination, guard);
+  }
+  function updateDraftBrowserAddress(tabId: string, presentationId: string, browserNewTab: BrowserNewTabState, guard: () => boolean) {
+    setSnapshot((previous, presentations) => {
+      if (!guard() || presentations.instances.get(tabId) !== presentationId) return previous;
+      return { ...previous, tabs: previous.tabs.map(tab => tab.id === tabId && tab.kind === "browser" && tab.target.startsWith("draft:") && tab.browserNewTab && !tab.browserTarget
+        ? { ...tab, browserNewTab } : tab) };
+    });
+  }
+  function updateDraftBrowserTitle(tabId: string, presentationId: string, title: string, guard: () => boolean) {
+    setSnapshot((previous, presentations) => !guard() || presentations.instances.get(tabId) !== presentationId ? previous
+      : { ...previous, tabs: previous.tabs.map(tab => tab.id === tabId && tab.kind === "browser" && tab.target.startsWith("draft:")
+        ? { ...tab, title } : tab) });
+  }
   function openFile(
     path: string,
     owner: string,
@@ -126,6 +221,7 @@ export function useWorkbenchDock(
     catch { onError("Use a canonical absolute file path."); return; }
     openFile(path.split("/").at(-1)!, owner, { filePath: path }, destination, preview);
   }
+  const selectFile = (browserId: string, path: string) => setSnapshot(previous => selectBrowserFile(previous, browserId, path));
   const pinFile = (id: string) => setSnapshot(previous => pinFileTab(previous,id));
 
   function openSkillFile(ref: NativeSkillFileRef, owner: string) {
@@ -171,113 +267,33 @@ export function useWorkbenchDock(
       browserTarget,
       title: browserTitle(title),
     };
-    add({ ...descriptor, id: dockTabId(descriptor) }, destination);
+    setReady(true);
+    setSnapshot(previous => {
+      const existing = previous.tabs.find(tab => tab.kind === "browser" && tab.hostId === owner && tab.target === descriptor.target
+        && tab.browserTarget?.workerPid === browserTarget.workerPid && tab.browserTarget.name === browserTarget.name && tab.browserTarget.targetId === browserTarget.targetId);
+      const tab = existing ?? { ...descriptor, id: dockTabId(descriptor) };
+      return { tabs: existing ? previous.tabs : [...previous.tabs, tab], state: insertDockTab(previous.state, tab, destination) };
+    });
   };
-  async function browser(
-    destination: DockDestination = "right",
-    create = true,
-  ) {
+  async function browser(destination: DockDestination = "right", create = true) {
     if (!target || !("sessionId" in target)) return;
-    const sessionId = target.sessionId,
-      owner = hostId,
-      key = `browser:${owner}:${sessionId}`;
-    if (!connected) {
-      onError("Reconnect to the owning host to open native browser tabs.");
-      return;
-    }
+    const sessionId = target.sessionId, owner = hostId;
+    if (create) { open("browser", destination, owner, target); return; }
+    const key = `browser:${owner}:${sessionId}`;
+    if (!connected) { onError("Reconnect to the owning host to inspect native browser tabs."); return; }
     if (pending.current.has(key)) return;
-    if (!bridge.getBrowserMetadata) {
-      onError("Update this desktop to inspect native browser tabs.");
-      return;
-    }
+    if (!bridge.getBrowserMetadata) { onError("Update this desktop to inspect native browser tabs."); return; }
     pending.current.add(key);
     try {
       const metadata = await bridge.getBrowserMetadata(sessionId, owner);
-      if (
-        !metadata ||
-        metadata.hostId !== owner ||
-        metadata.sessionId !== sessionId
-      ) {
-        onError("Native browser metadata belongs to a different session.");
-        return;
-      }
-      if (!create && metadata.availability !== "running") {
-        onError(metadata.reason);
-        return;
-      }
-      const running =
-        metadata.availability === "running" ? metadata : undefined;
-      const alive = running?.tabs.filter((tab) => tab.state === "alive") ?? [];
-      if (!create) {
-        if (!alive.length) {
-          onError("This session has no live native browser tabs.");
-          return;
-        }
-        for (const tab of alive)
-          bindBrowser(
-            {
-              workerPid: running!.workerPid,
-              name: tab.name,
-              targetId: tab.targetId,
-            },
-            tab.title || tab.url || "Browser",
-            owner,
-            sessionId,
-            destination,
-          );
-        return;
-      }
-      if (!bridge.createBrowserTab || !metadata.creationTicket) {
-        onError("Update this host to create native browser tabs.");
-        return;
-      }
-      const receipt = await bridge.createBrowserTab(
-        sessionId,
-        {
-          requestId: crypto.randomUUID(),
-          controlEpoch: metadata.creationTicket.controlEpoch,
-          observedAt: metadata.creationTicket.observedAt,
-        },
-        owner,
-      );
-      if (
-        receipt.hostId !== owner ||
-        receipt.sessionId !== sessionId ||
-        receipt.outcome !== "completed"
-      ) {
-        const message =
-          receipt.outcome === "completed"
-            ? "Browser tab creation returned a different owner."
-            : receipt.message;
-        onError(
-          message ||
-            (receipt.outcome === "unknown"
-              ? "Browser tab creation outcome is unknown. Refresh existing tabs before trying again."
-              : "Browser tab creation was rejected."),
-        );
-        return;
-      }
-      const tab = receipt.tab;
-      if (!tab)
-        throw new Error(
-          "Browser tab creation returned an invalid native target.",
-        );
-      bindBrowser(
-        {
-          workerPid: receipt.workerPid,
-          name: tab.name,
-          targetId: tab.targetId,
-        },
-        tab.title || tab.url || "New tab",
-        owner,
-        sessionId,
-        destination,
-      );
-    } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      pending.current.delete(key);
-    }
+      if (!metadata || metadata.hostId !== owner || metadata.sessionId !== sessionId) throw new Error("Native browser metadata belongs to a different session.");
+      if (metadata.availability !== "running") throw new Error(metadata.reason);
+      const alive = metadata.tabs.filter(tab => tab.state === "alive");
+      if (!alive.length) throw new Error("This session has no live native browser tabs.");
+      for (const tab of alive) bindBrowser({ workerPid: metadata.workerPid, name: tab.name, targetId: tab.targetId },
+        tab.title || tab.url || "Browser", owner, sessionId, destination);
+    } catch (cause) { onError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { pending.current.delete(key); }
   }
   const bindTerminal = (
     id: string,
@@ -299,89 +315,29 @@ export function useWorkbenchDock(
     };
     add({ ...descriptor, id: dockTabId(descriptor) }, destination);
   };
-  async function terminal(
-    destination: DockDestination = "bottom",
-    create = false,
-  ) {
-    if (!target) return;
-    if ("filePath" in target) {
-      onError("Standalone files cannot host terminals.");
-      return;
-    }
-    const owner = hostId,
-      workspace = target,
-      key = `${owner}:${workspaceKey(workspace)}`;
-    if (pending.current.has(key)) return;
-    if (!connected) {
-      onError("Reconnect to the owning host to open its terminals.");
-      return;
-    }
-    if (!hasNativeTerminalBridge(bridge)) {
-      onError("Update this desktop to open native terminal tabs.");
-      return;
-    }
-    pending.current.add(key);
-    try {
-      const client = nativeTerminalClient(bridge);
-      // Always refresh before a possible creation, including after an uncertain prior result.
-      const catalog = await client.nativeTerminalQuery(
-        { type: "list", target: workspace },
-        owner,
-      );
-      if (catalog.type !== "list")
-        throw new Error("The host returned an invalid terminal catalog.");
-      const available = catalog.terminals.filter(
-        (value) => workspaceKey(value.target) === workspaceKey(workspace),
-      );
-      let selected: string | null = null;
-      try {
-        selected = localStorage.getItem(
-          `terminal.native.selected.${owner}.${workspaceKey(workspace)}`,
-        );
-      } catch {
-        /* In-memory selection is sufficient. */
-      }
-      let pane = create
-        ? undefined
-        : (available.find((value) => value.id === selected) ?? available[0]);
-      if (!pane) {
-        const result = await client.nativeTerminalAction(
-          {
-            type: "create",
-            options: { target: workspace, cols: 120, rows: 30 },
-          },
-          owner,
-        );
-        pane = result.terminal;
-        if (!pane || workspaceKey(pane.target) !== workspaceKey(workspace))
-          throw new Error(
-            "Terminal creation was not confirmed. Refresh the catalog before starting another shell.",
-          );
-      }
-      bindTerminal(
-        pane.id,
-        owner,
-        workspace,
-        destination,
-        pane.cwd.split("/").filter(Boolean).at(-1) ?? "Terminal",
-      );
-      try {
-        localStorage.setItem(
-          `terminal.native.selected.${owner}.${workspaceKey(workspace)}`,
-          pane.id,
-        );
-      } catch {
-        /* Window state still persists the identity. */
-      }
-    } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      pending.current.delete(key);
-    }
+  function terminalOptions(source: TerminalWindowIntent["source"]): TerminalCreationOptions | undefined {
+    return target && !("filePath" in target) ? { hostId, target, source, cols: 120, rows: 30 } : undefined;
+  }
+  async function prepareTerminal(create = false, signal?: AbortSignal, source: TerminalWindowIntent["source"] = { kind: "dock", destination: "bottom" }, settled?: () => void): Promise<TerminalPreparation> {
+    const options = terminalOptions(source);
+    if (!options) return { status: "error", outcome: "not-submitted", message: "Choose a workspace to open a terminal." };
+    if (!terminalOwner) return { status: "error", outcome: "not-submitted", message: "Window request ownership is unavailable. Terminal creation was not sent." };
+    return terminalOwner.prepare(options, signal, create ? "validate" : "reuse", settled);
+  }
+  function publishTerminal(tab: DockTab, destination: DockDestination, guard: () => boolean) {
+    add(tab, destination, guard);
+  }
+  async function terminal(destination: DockDestination = "bottom", create = false) {
+    const source = { kind: "dock" as const, destination }, options = terminalOptions(source);
+    if (!options || !terminalOwner) { onError("Window request ownership is unavailable. Choose a workspace before opening a terminal."); return; }
+    const guard = terminalOwner.attachmentGuard(options);
+    const result = await prepareTerminal(create, undefined, source);
+    if (result.status === "error") { onError(result.message); return; }
+    if (result.status === "ready") publishTerminal(result.tab, destination, guard);
   }
   useEffect(() => {
     if (ready || !target || hostId === "unconnected") return;
-    let next = createDockState();
+    let next = createDockState(resolveContentSide(undefined,direction));
     const tabs: DockTab[] = [];
     const insert = (
       kind: DockTab["kind"],
@@ -399,7 +355,7 @@ export function useWorkbenchDock(
             : kind === "worktrees"
               ? "Worktrees"
               : kind === "files"
-                ? "Files"
+                ? "Open file"
                 : kind === "browser"
                   ? "Browser"
                   : "Terminal",
@@ -430,6 +386,8 @@ export function useWorkbenchDock(
     setReady(true);
   }, [ready, hostId, target && workspaceKey(target)]);
   function change(state: DockState) {
+    const used = new Set([...state.right.tabIds, ...state.bottom.tabIds]);
+    for (const [id, controller] of browserLaunchers.current) if (!used.has(id)) { controller.dispose(); browserLaunchers.current.delete(id); }
     setReady(true);
     setSnapshot(previous => changeFileDock(previous,state,canReplacePreview));
   }
@@ -437,27 +395,63 @@ export function useWorkbenchDock(
     setReady(true);
     setSnapshot((previous) => ({
       ...previous,
-      state: {
-        ...previous.state,
-        [destination]: {
-          ...previous.state[destination],
-          open: !previous.state[destination].open,
-        },
-      },
+      state: previous.state[destination].open ? hideDock(previous.state, destination) : showDock(previous.state, destination),
     }));
+  }
+  function activateBrowserSearch(entry: CommandBrowserTab, readDraftPages: () => readonly DraftBrowserPageIntent[] = () => []) {
+    const id = crypto.randomUUID(), selected = structuredClone(entry);
+    setReady(true);
+    updatePresentations(previous => ({ ...previous, ...admitBrowserSearch(previous, selected, readDraftPages(), id) }));
+    return id;
+  }
+
+  function stepLayout(chat: MainChatTarget, canOpenBrowser: boolean, draftOwner?: {
+    draftId: string; isCurrent(): boolean; canDispose(tab: DockTab, presentations: DockPresentations): boolean;
+  }) {
+    if (chat.hostId !== hostId || draftOwner && (chat.sessionId !== null || !draftOwner.isCurrent())) return;
+    // Retained content can still change layout while its session is unavailable.
+    // New draft launchers are local descriptors, guarded by their committed owner.
+    const newTab = canOpenBrowser && chat.sessionId && target && "sessionId" in target && target.sessionId === chat.sessionId
+      ? createBrowserNewTab(chat.hostId, chat.sessionId)
+      : canOpenBrowser && draftOwner ? createDraftBrowserDockTab(chat.hostId, draftOwner.draftId) : undefined;
+    const layoutOwner = draftOwner ? { ...chat, draftId: draftOwner.draftId } : chat;
+    setReady(true);
+    setSnapshot((previous, owner) => draftOwner && !draftOwner.isCurrent() ? previous
+      : stepWorkspaceLayout(previous, layoutOwner, newTab, tab => !browserCleanupProtected(owner, tab.id)
+        && (!draftOwner || canOpenBrowser && draftOwner.canDispose(tab, owner))));
+  }
+  function leaveBrowserConversation(previous: MainChatTarget, current: MainChatTarget) {
+    const observed = new Set([...browserLaunchers.current].filter(([, controller]) => controller.hasObservedPristinePresentation).map(([id]) => id));
+    if (!observed.size) return;
+    setSnapshot((snapshot, owner) => cleanupPreviousBrowserConversation(snapshot, previous, current, observed, tab => !browserCleanupProtected(owner, tab.id)));
+  }
+  /** Selection callers supply a read-only committed-owner lookup. Re-read inside
+   * the queued update so a route change cannot authorize an old selection. */
+  function replaceBrowserDestination(origin: BrowserReplacementOrigin, destination: BrowserReplacementDestination, readCurrentOwner: () => MainChatTarget | undefined) {
+    const seed = crypto.randomUUID();
+    updatePresentations(previous => ({ ...previous, ...admitBrowserReplacement(previous, origin, destination, readCurrentOwner(), seed), browserSearchAdmission: previous.browserSearchAdmission }));
+    return seed;
   }
   const workspaceTab: WorkspaceTab = initial.workspaceTab;
   return {
     snapshot,
+    presentations,
     persisted: ready ? persistentFileTabs(snapshot) : undefined,
     change,
+    closeBrowser: (source: DockPresentationRef, tab: DockTab, allowed: () => boolean, focusId: string = crypto.randomUUID()) => updatePresentations(previous => admitBrowserClose(previous, source, tab, allowed, focusId)),
+    browserCloseState: (tab: DockTab) => browserLaunchers.current.get(tab.id)?.state ?? tab.browserNewTab,
     toggle,
-    open,
-    openFile, openHostFile, pinFile,
+    stepLayout,
+    activateBrowserSearch,
+    leaveBrowserConversation,
+    replaceBrowserDestination,
+    acknowledgeBrowserReplacements: (ids: readonly string[]) => updatePresentations(previous => ({ ...acknowledgeBrowserAdmissions(previous, ids), browserSearchAdmission: previous.browserSearchAdmission })),
+    open, prepareOpen, openDraftBrowser, updateDraftBrowserAddress, updateDraftBrowserTitle,
+    openFile, openHostFile, pinFile, selectFile,
     openSkillFile,
-    terminal,
+    terminal, prepareTerminal, publishTerminal,
     bindTerminal,
-    browser,
+    browser, browserLauncher,
     updateBrowserTitle,
     updateTitle,
     setUnread,

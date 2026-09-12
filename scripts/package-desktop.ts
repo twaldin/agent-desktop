@@ -37,6 +37,10 @@ try {
   const appDirectory = join(resources, "app");
   await mkdir(appDirectory, { recursive: true });
   await cp(join(root, "apps/desktop/dist"), join(appDirectory, "dist"), { recursive: true });
+  await mkdir(join(resources, "native"), { recursive: true });
+  await cp(join(root, "apps/desktop/dist/native/modifier-release"), join(resources, "native/modifier-release"), { dereference: true });
+  run("/usr/bin/codesign", ["--force", "--sign", "-", join(resources, "native/modifier-release")]);
+  await rm(join(appDirectory, "dist/native"), { recursive: true, force: true });
   const desktopPackage = JSON.parse(await readFile(join(root, "apps/desktop/package.json"), "utf8"));
   await writeFile(join(appDirectory, "package.json"), JSON.stringify({ name: "agent-desktop", version: desktopPackage.version, main: "dist/main.cjs" }));
   const hostDirectory = join(resources, "host");

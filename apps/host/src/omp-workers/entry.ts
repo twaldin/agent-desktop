@@ -1,7 +1,11 @@
+import { WorkerBrowserEvaluationChannels } from "../omp-browser/evaluation";
+import { WorkerBrowserObservations } from "../omp-browser/observation";
+import { WorkerBrowserReservations } from "../omp-browser/reservation";
+import { WorkerBrowserCloses } from "../omp-browser/close";
 import { parseNativeMcpAuthorizationId, parseNativeMcpAuthorizationReply, parseNativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import { parseNativeSessionMcpResourceRequest } from "@agent-desktop/shared";
 import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
-import { parseBrowserControlRequest, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
+import { parseBrowserControlRequest, parseBrowserNavigationUrl, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
 import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeBrowserTabMetadata } from "@agent-desktop/shared";
@@ -13,8 +17,23 @@ import { projectWorkerEvent } from "./events";
 // directory. The daemon never imports/initializes OMP through this boundary.
 let marketplaces: Promise<import("../integrations/marketplaces").NativeMarketplaces> | undefined;
 let plugins: Promise<import("../integrations/plugins").NativePlugins> | undefined;
+let ssh: Promise<import("../integrations/ssh").NativeSsh> | undefined;
 let mcp: Promise<import("../integrations/mcp").NativeMcp> | undefined;
 let runtime: OmpRuntime | undefined;
+let browserOwner: import("../omp-browser/owner").NativeBrowserOwner | undefined;
+const browserCloses = new WorkerBrowserCloses(process.pid, () => browserOwner ?? requireSession());
+const browserObservations = new WorkerBrowserObservations(process.pid, () => browserOwner ?? requireSession());
+const browserReservations = new WorkerBrowserReservations(process.pid, () => {
+  if (!browserOwner) throw new Error("Reservation requires the original browser-only owner.");
+  return browserOwner;
+});
+const browserEvaluations = new WorkerBrowserEvaluationChannels(browserReservations, () => {
+  if (!browserOwner) throw new Error("Evaluation requires the original browser-only owner.");
+  return browserOwner;
+}, (binding, frame) => send({ type: "browserEvaluationFrame", binding, frame }));
+let nativeDisposal: Promise<void> | undefined;
+let commitGeneration: Promise<import("./protocol").CommitGenerationResult> | undefined;
+let commitAbort: AbortController | undefined;
 let session: OmpSession | undefined;
 let initializing = false;
 let stopping = false;
@@ -80,13 +99,42 @@ function emit(event: OmpRuntimeEvent): void {
   } catch (error) { void fatal(error); }
 }
 
+// Stop admission first; an in-flight close drains before either native owner is
+// destroyed. Independent owner cleanup still runs after a close failure.
+function disposeNativeOwners(): Promise<void> {
+  if (nativeDisposal) return nativeDisposal;
+  const completion = Promise.withResolvers<void>(); nativeDisposal = completion.promise;
+  void (async () => {
+    const errors: unknown[] = [];
+    const closes = browserCloses.dispose();
+    const observations = browserObservations.dispose();
+    const evaluations = browserEvaluations.dispose();
+    const evaluationResult = evaluations.then(() => undefined, error => { errors.push(error); });
+    const reservations = browserReservations.dispose();
+    // Observe the drain immediately, even while commit cancellation settles.
+    const closeResult = closes.then(() => undefined, error => { errors.push(error); });
+    const observationResult = observations.then(() => undefined, error => { errors.push(error); });
+    try { commitAbort?.abort(); await commitGeneration?.catch(() => {}); } catch (error) { errors.push(error); }
+    await Promise.all([closeResult, observationResult]);
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => browserOwner?.dispose()),
+      Promise.resolve().then(() => runtime?.dispose()),
+      reservations, evaluationResult,
+    ]);
+    for (const result of results) if (result.status === "rejected") errors.push(result.reason);
+    if (errors.length) throw new AggregateError(errors, `OMP worker native cleanup failed: ${errors.map(error => remoteError(error).message).join("; ").slice(0, 8192)}`);
+  })().then(completion.resolve, completion.reject);
+  return completion.promise;
+}
+
 async function shutdown(exitCode: number): Promise<void> {
   if (shuttingDown) return shuttingDown;
   stopping = true;
   shuttingDown = (async () => {
     const deadline = setTimeout(() => process.exit(exitCode || 1), 12_000);
     deadline.unref();
-    try { await runtime?.dispose(); }
+    try { await disposeNativeOwners(); }
+    catch { exitCode = 1; }
     finally { clearTimeout(deadline); process.exit(exitCode); }
   })();
   return shuttingDown;
@@ -102,6 +150,8 @@ function requireSession(): OmpSession {
   if (!session) throw new Error("OMP worker has no initialized session");
   return session;
 }
+
+function browserOwnerId(): string { return browserOwner ? browserOwner.id : requireSession().id; }
 
 function browserMetadata(value: unknown): BrowserMetadataAvailability {
   if (!Array.isArray(value)) return { availability: "unavailable", reason: "Pinned native browser metadata returned an invalid tab list." };
@@ -124,10 +174,11 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
   const originId = session?.id, originFile = session?.sessionFile;
   const respond = (ok: boolean, value?: unknown, error?: unknown, phase?: "accepted" | "completion") => {
     send({ type: "response", id: message.id, ok, value,
+      ...(message.operation === "requestBrowserEvaluation" ? { evaluation: { binding: message.args.binding, sequence: message.args.sequence } } : {}),
       ...(error === undefined ? {} : { error: remoteError(error) }), phase, snapshot: snapshot() });
   };
   try {
-    if (stopping && message.operation !== "dispose") throw new Error("OMP worker is stopping");
+    if (stopping && message.operation !== "dispose" && message.operation !== "disposeBrowserEvaluation") throw new Error("OMP worker is stopping");
     const interactive = ["listInteractions", "respondInteraction", "cancelInteractions", "dispose"].includes(message.operation);
     if ((promotionInFlight || promotedOwnerRetired) && !interactive) throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
     if (message.operation === "promoteBtw") {
@@ -144,11 +195,35 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         // adapter directory, including default session paths. Omitted means
         // ordinary native profile/environment discovery remains unchanged.
         if (init.agentDir) process.env.PI_CODING_AGENT_DIR = init.agentDir;
+        if (init.mode === "browser") {
+          const { NativeBrowserOwner } = await import("../omp-browser/owner");
+          if (stopping) throw new Error("OMP worker is stopping");
+          browserOwner = new NativeBrowserOwner({ ...init.owner, agentDir: init.agentDir });
+          await browserOwner.ready();
+          if (stopping) throw new Error("OMP worker is stopping");
+          respond(true, { ownerId: browserOwner.id, cwd: browserOwner.cwd });
+          break;
+        }
         const { OmpRuntime } = await import("../omp");
         runtime = new OmpRuntime({ agentDir: init.agentDir });
         if (init.mode === "create") session = await runtime.create({ ...init.options, onEvent: emit });
         if (init.mode === "open") session = await runtime.open({ ...init.options, onEvent: emit });
         respond(true, snapshot());
+        break;
+      }
+      case "generateCommit": {
+        if (!runtime || session || commitAbort) throw new Error("Commit generation requires a fresh discovery worker.");
+        commitAbort = new AbortController();
+        const abort = commitAbort;
+        commitGeneration = (async () => {
+          const { generateGitCommitFromDiff, formatConventionalCommit } = await import("@oh-my-pi/pi-coding-agent/commit");
+          abort.signal.throwIfAborted();
+          const generated = await generateGitCommitFromDiff({ ...message.args, signal: abort.signal,
+            onProgress: text => { if (!stopping) send({ type: "commitProgress", id: message.id, message: text.slice(0, 4096) }); },
+          });
+          return { ...generated, message: formatConventionalCommit(generated.commit) };
+        })();
+        respond(true, await commitGeneration);
         break;
       }
       case "getMarketplaceCatalog":
@@ -165,6 +240,23 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         plugins ??= import("../integrations/plugins").then(module => new module.NativePlugins());
         const backend = await plugins;
         respond(true, message.operation === "getPlugins" ? await backend.read(message.args.cwd) : await backend.mutate(message.args.cwd, message.args.mutation));
+        break;
+      }
+      case "refreshSshConfiguration": {
+        if (!runtime) throw new Error("OMP worker is not initialized");
+        // Same native cache reset used by /ssh; existing remote tool work is not cancelled.
+        const { reset } = await import("@oh-my-pi/pi-coding-agent/discovery");
+        reset(); respond(true, null); break;
+      }
+      case "getSshHosts":
+      case "getSshHostDetail":
+      case "mutateSshHost": {
+        if (!runtime || session) throw new Error("Native configuration requires an initialized discovery worker.");
+        ssh ??= import("../integrations/ssh").then(module => new module.NativeSsh());
+        const backend = await ssh;
+        respond(true, message.operation === "getSshHosts" ? await backend.read(message.args.cwd)
+          : message.operation === "getSshHostDetail" ? await backend.detail(message.args.cwd, message.args.request)
+          : await backend.mutate(message.args.cwd, message.args.mutation));
         break;
       }
       case "getMcpServers":
@@ -242,7 +334,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "cancelBtw": respond(true, requireSession().cancelBtw(message.args.runId)); break;
       case "promoteBtw": respond(true, await requireSession().promoteBtw(message.args.runId, message.args.operationId)); break;
       case "getBrowserMetadata": {
-        const owner = requireSession().id;
+        const owner = browserOwnerId();
         let native: { listTabsForOwner?: (ownerSessionId: string) => unknown };
         try { native = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as typeof native; }
         catch { respond(true, { availability: "unavailable", reason: "This host could not load its pinned native browser metadata seam." } satisfies BrowserMetadataAvailability); break; }
@@ -256,11 +348,14 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
           error.name = "BrowserTabCreateRejected";
           throw error;
         }
-        respond(true, await requireSession().createBrowserTab(message.args.name));
+        let initialUrl: string | undefined;
+        try { if (message.args.initialUrl !== undefined) initialUrl = parseBrowserNavigationUrl(message.args.initialUrl); }
+        catch { const error = new Error("Invalid initial browser address."); error.name = "BrowserTabCreateRejected"; throw error; }
+        respond(true, await (browserOwner ?? requireSession()).createBrowserTab(message.args.name, initialUrl));
         break;
       }
       case "controlBrowser": {
-        const owner = requireSession().id, request = parseBrowserControlRequest(message.args.request);
+        const owner = browserOwnerId(), request = parseBrowserControlRequest(message.args.request);
         if (request.target.workerPid !== process.pid) { const error = new Error("The browser worker changed."); error.name = "BrowserActionRejected"; throw error; }
         const native = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as unknown as {
           performTabHumanActionForOwner?: (owner: string, target: typeof request.target, context: typeof request.context, action: typeof request.action) => Promise<unknown>
@@ -269,8 +364,16 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         respond(true, await native.performTabHumanActionForOwner(owner, request.target, request.context, request.action));
         break;
       }
+      case "closeBrowserTab": respond(true, await browserCloses.close(message.args.target)); break;
+      case "inspectBrowserTab": respond(true, await browserObservations.inspect(message.args.target)); break;
+      case "openBrowserEvaluation": respond(true, await browserEvaluations.open(message.args.binding, message.args.timeoutMs)); break;
+      case "startBrowserEvaluation": await browserEvaluations.start(message.args.binding); respond(true); break;
+      case "requestBrowserEvaluation": await browserEvaluations.request(message.args.binding, message.args.sequence, message.args.method, message.args.params, message.args.options, respond); break;
+      case "disposeBrowserEvaluation": await browserEvaluations.close(message.args.binding); respond(true); break;
+      case "reserveBrowserEvaluation": respond(true, await browserReservations.reserve(message.args.target, message.args.operationId)); break;
+      case "inspectBrowserEvaluationReservation": respond(true, browserReservations.inspect(message.args.target, message.args.operationId)); break;
       case "getBrowserFrame": {
-        const owner = requireSession().id, target = message.args.target;
+        const owner = browserOwnerId(), target = message.args.target;
         if (!validBrowserFrameTarget(target) || target.workerPid !== process.pid) throw new Error("The selected browser frame belongs to a stale or invalid worker target.");
         let native: { captureTabViewportForOwner?: (ownerSessionId: string, target: { name: string; targetId: string }) => Promise<unknown> };
         try { native = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as typeof native; }
@@ -307,7 +410,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         {
           let disposed = false;
           let failure: unknown;
-          try { await runtime?.dispose(); disposed = true; } catch (error) { failure = error; }
+          try { await disposeNativeOwners(); disposed = true; } catch (error) { failure = error; }
           if (pendingDispose) throw new Error("OMP worker disposal is already awaiting acknowledgement");
           // Bun's advanced IPC can still have queued bytes after send() and
           // setImmediate(). Keep the child alive until the owner receives this
@@ -333,7 +436,13 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
 process.on("message", (value: unknown) => {
   if (!value || typeof value !== "object" || !("type" in value)) return;
   const message = value as ParentMessage;
-  if (message.type === "disposeAck") {
+  if (message.type === "browserEvaluationFrame") {
+    // Native channel sequencing owns ACKs. Terminal frames remain routed while
+    // stopping; a bad channel frame does not recreate or kill its resource.
+    try { browserEvaluations.receive(message.binding, message.frame); } catch { /* Matched-channel failures are retained by its drain. */ }
+  } else if (message.type === "browserEvaluationAck") {
+    try { browserEvaluations.acknowledge(message.binding, message.sequence); } catch { /* No lookup or allocation on foreign receipts. */ }
+  } else if (message.type === "disposeAck") {
     if (message.id === pendingDispose?.id) {
       clearTimeout(pendingDispose.deadline);
       process.exit(pendingDispose.exitCode);

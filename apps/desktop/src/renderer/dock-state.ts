@@ -1,4 +1,6 @@
 import { parseStandaloneFilePath, type NativeSkillFileRef } from "@agent-desktop/shared";
+import type { BrowserNewTabState } from "./browser-new-tab";
+export type ContentSide = "left" | "right";
 export type DockDestination = "right" | "bottom";
 export type DockTabKind =
   | "side-chat"
@@ -10,7 +12,7 @@ export type DockTabKind =
   | "worktrees"
   | "terminal"
   | "browser";
-export type DockTarget = `session:${string}` | `project:${string}` | `file:${string}` | "host";
+export type DockTarget = `session:${string}` | `project:${string}` | `file:${string}` | `draft:${string}` | "host";
 export interface DockTab {
   id: string;
   title: string;
@@ -26,6 +28,9 @@ export interface DockTab {
   fileScroll?: { markdown?: number; source?: number };
   terminalId?: string;
   browserTarget?: BrowserFrameTarget;
+  /** Stable local identity retained when a launcher acquires its native target. */
+  browserInstanceId?: string;
+  browserNewTab?: BrowserNewTabState;
 }
 export interface BrowserFrameTarget {
   workerPid: number;
@@ -40,6 +45,10 @@ export interface DockRegion {
 export interface DockState {
   right: DockRegion;
   bottom: DockRegion;
+  /** Window-local; absent is split. Chat selection remembers full width until the next open. */
+  rightLayout?: "full" | "restore-full";
+  /** Physical placement; legacy absence is finalized using the renderer direction. */
+  contentSide?: ContentSide;
   rightWidthRatio: number;
   bottomHeight: number;
 }
@@ -73,6 +82,19 @@ export function standaloneFilePathFromDock(target: unknown): string | undefined 
     return;
   }
 }
+/** Draft targets are window presentation identities, never WorkspaceTarget or
+ * native session IDs. Encoding keeps the complete durable draft ID unambiguous. */
+export function draftBrowserDockTarget(draftId: unknown): DockTarget {
+  if (typeof draftId !== "string" || !draftId || draftId.length > 200 || /[\u0000-\u001f\u007f]/.test(draftId)) throw new Error("Invalid draft browser identity.");
+  return `draft:${encodeURIComponent(draftId)}`;
+}
+export function draftBrowserIdFromDock(target: unknown): string | undefined {
+  if (typeof target !== "string" || !target.startsWith("draft:")) return;
+  try {
+    const draftId = decodeURIComponent(target.slice(6));
+    return draftBrowserDockTarget(draftId) === target ? draftId : undefined;
+  } catch { return; }
+}
 const emptyRegion = (): DockRegion => ({ tabIds: [], open: false });
 const other = (destination: DockDestination): DockDestination =>
   destination === "right" ? "bottom" : "right";
@@ -87,20 +109,22 @@ const clone = (state: DockState): DockState => ({
 export const dockTabId = (
   tab: Pick<
     DockTab,
-    "hostId" | "target" | "kind" | "terminalId" | "browserTarget" | "skillFile" | "filePath"
+    "hostId" | "target" | "kind" | "terminalId" | "browserTarget" | "browserInstanceId" | "skillFile" | "filePath"
   >,
 ) => {
   const base = `${tab.hostId}:${tab.target}:${tab.kind}`;
   if (tab.kind === "skill-file" && tab.skillFile) return `${base}:${encodeURIComponent(tab.skillFile.skillId)}:${encodeURIComponent(tab.skillFile.sourcePath)}:${tab.skillFile.inventory ? "inventory" : "composer"}`;
   if (tab.kind === "file" && tab.filePath) return `${base}:${encodeURIComponent(tab.filePath)}`;
+  if (tab.kind === "browser" && tab.browserInstanceId) return `${base}:instance=${tab.browserInstanceId}`;
   if (tab.kind === "browser" && tab.browserTarget)
     return `${base}:target=${encodeURIComponent(`${tab.browserTarget.workerPid}\0${tab.browserTarget.name}\0${tab.browserTarget.targetId}`)}`;
   return `${base}${tab.terminalId ? `:${tab.terminalId}` : ""}`;
 };
-export function createDockState(): DockState {
+export function createDockState(contentSide: ContentSide = "right"): DockState {
   return {
     right: emptyRegion(),
     bottom: emptyRegion(),
+    contentSide,
     rightWidthRatio: 0.36,
     bottomHeight: DOCK_BOTTOM_DEFAULT_HEIGHT,
   };
@@ -109,8 +133,9 @@ export function validateDockState(
   value: unknown,
   tabs: readonly DockTab[],
   viewport: DockViewport,
+  contentSide: ContentSide = "right",
 ): DockState {
-  const fallback = createDockState();
+  const fallback = createDockState(contentSide);
   if (!value || typeof value !== "object")
     return resizeDock(fallback, "bottom", fallback.bottomHeight, viewport);
   const raw = value as Partial<DockState>,
@@ -159,8 +184,10 @@ export function validateDockState(
   if (bottom.activeTabId && !bottom.tabIds.includes(bottom.activeTabId))
     bottom.activeTabId = bottom.tabIds[0];
   const state: DockState = {
+    contentSide: raw.contentSide === "left" || raw.contentSide === "right" ? raw.contentSide : contentSide,
     right,
     bottom,
+    ...(raw.rightLayout === "full" && right.open ? { rightLayout: "full" as const } : raw.rightLayout === "restore-full" && !right.open ? { rightLayout: "restore-full" as const } : {}),
     rightWidthRatio:
       typeof raw.rightWidthRatio === "number"
         ? raw.rightWidthRatio
@@ -191,15 +218,32 @@ export function activateDockTab(
     region = next[destination];
   if (!region.tabIds.includes(id)) return state;
   region.activeTabId = id;
-  region.open = true;
+  return showDock(next, destination);
+}
+export function showDock(state: DockState, destination: DockDestination): DockState {
+  const next = clone(state);
+  next[destination].open = true;
+  if (destination === "right" && next.rightLayout === "restore-full") next.rightLayout = "full";
+  return next;
+}
+export function setRightDockFullWidth(state: DockState, full: boolean): DockState {
+  if (!state.right.open) return state;
+  const next = clone(state);
+  if (full) next.rightLayout = "full";
+  else delete next.rightLayout;
   return next;
 }
 export function hideDock(
   state: DockState,
   destination: DockDestination,
+  restoreFullWidthOnNextOpen = false,
 ): DockState {
   const next = clone(state);
   next[destination].open = false;
+  if (destination === "right") {
+    if (restoreFullWidthOnNextOpen && state.rightLayout === "full") next.rightLayout = "restore-full";
+    else delete next.rightLayout;
+  }
   return next;
 }
 export function insertDockTab(
@@ -227,8 +271,7 @@ export function insertDockTab(
     at = clamp(index ?? target.tabIds.length, 0, target.tabIds.length);
   target.tabIds.splice(at, 0, tab.id);
   target.activeTabId = tab.id;
-  target.open = true;
-  return next;
+  return showDock(next, destination);
 }
 export function closeDockTab(
   state: DockState,
@@ -245,6 +288,7 @@ export function closeDockTab(
   if (!region.tabIds.length) {
     region.open = false;
     region.activeTabId = undefined;
+    if (destination === "right") delete next.rightLayout;
   }
   return next;
 }
@@ -260,13 +304,14 @@ export function moveDockTab(
       ? "bottom"
       : undefined;
   if (!from) return state;
+  if (from === destination) return activateDockTab(reorderDockTab(state, from, id, index ?? state[from].tabIds.length), from, id);
   const next = closeDockTab(state, from, id),
     target = next[destination],
     at = clamp(index ?? target.tabIds.length, 0, target.tabIds.length);
   target.tabIds.splice(at, 0, id);
   target.activeTabId = id;
-  target.open = true;
-  return next;
+  if (from === "right" && !next.right.open && state.rightLayout === "full") next.rightLayout = "restore-full";
+  return showDock(next, destination);
 }
 export function reorderDockTab(
   state: DockState,

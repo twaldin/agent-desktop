@@ -257,6 +257,8 @@ export class TmuxTerminalManager {
     input: TerminalCreateOptions & { cwd: string },
     localEnvironment?: LocalEnvironmentWorkerEnvironment,
     action?: { actionKey: string; actionRoot?: string },
+    /** Host-private UUID reserved by the durable creation journal. */
+    reservation?: { terminalId: string; validateOwner(): void },
   ): Promise<NativeTerminalInfo> {
     const operation = this.createTail.then(async () => {
       if (this.stopping) throw new TerminalError("TERMINALS_STOPPING", "The native terminal host is stopping.");
@@ -265,9 +267,13 @@ export class TmuxTerminalManager {
       if (this.entries.size >= 128) throw new TerminalError("TERMINAL_HISTORY_LIMIT", "Forget an exited terminal before creating another.");
       if (action && !ACTION_KEY.test(action.actionKey)) throw new TerminalError("INVALID_TERMINAL_ACTION", "A terminal action key must be a SHA-256 digest.");
       if (action && [...this.entries.values()].some(entry => entry.record.actionKey === action.actionKey)) throw new TerminalError("TERMINAL_ACTION_EXISTS", "This configured action already owns a native terminal.");
-      const id = crypto.randomUUID(), size = dimensions(input.cols ?? 120, input.rows ?? 40);
+      const id = reservation === undefined ? crypto.randomUUID() : reservation?.terminalId;
+      if (typeof id !== "string" || !UUID.test(id)) throw new TerminalError("INVALID_TERMINAL_ID", "A reserved native terminal UUID is required.");
+      if (reservation && typeof reservation.validateOwner !== "function") throw new TerminalError("INVALID_TERMINAL_OWNER_CHECK", "Reserved creation requires its current host owner check.");
+      if (this.entries.has(id)) throw new TerminalError("TERMINAL_ID_EXISTS", "This native terminal identity is already owned; creation was not repeated.");
+      const size = dimensions(input.cols ?? 120, input.rows ?? 40);
       const launch = this.environmentLaunch(id, cwd, localEnvironment, action?.actionRoot);
-      try { await this.prepareServer(); }
+      try { await this.prepareServer(); reservation?.validateOwner(); }
       catch (error) {
         // No pane launch was dispatched, so this payload cannot still be opening.
         if (launch.payload) this.cleanupEnvironmentLaunch(id);

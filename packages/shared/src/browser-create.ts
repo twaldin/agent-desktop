@@ -1,4 +1,5 @@
 import type { NativeBrowserTabMetadata } from "./browser";
+import { parseBrowserNavigationUrl } from "./browser-control";
 
 export const BROWSER_CREATE_PROTOCOL_VERSION = 1 as const;
 export const BROWSER_CREATE_MAX_AGE_MS = 60_000;
@@ -10,6 +11,8 @@ export interface BrowserCreationTicket {
 
 export interface BrowserCreateRequest extends BrowserCreationTicket {
   requestId: string;
+  /** Explicit user navigation during native acquisition, never a pristine-state marker. */
+  initialUrl?: string;
 }
 
 interface BrowserCreateReceiptBase {
@@ -32,6 +35,13 @@ export type BrowserCreateReceipt =
       workerPid?: number;
     };
 
+/** Observation of admission history, never permission to replay a missing request
+ * or a claim that a previously acquired native target remains alive. */
+export type BrowserCreateObservation = BrowserCreateReceiptBase & (
+  | { status: "pending" | "unavailable" }
+  | { status: "settled"; receipt: BrowserCreateReceipt }
+);
+
 const identity = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9-]{1,100}$/.test(value);
 
 export function parseBrowserCreationTicket(value: unknown): BrowserCreationTicket {
@@ -47,5 +57,6 @@ export function parseBrowserCreateRequest(value: unknown): BrowserCreateRequest 
   if (!value || typeof value !== "object") throw new Error("Missing browser creation request.");
   const request = value as BrowserCreateRequest;
   if (!identity(request.requestId)) throw new Error("Invalid browser creation request identity.");
-  return { requestId: request.requestId, ...parseBrowserCreationTicket(request) };
+  return { requestId: request.requestId, ...parseBrowserCreationTicket(request),
+    ...(request.initialUrl === undefined ? {} : { initialUrl: parseBrowserNavigationUrl(request.initialUrl) }) };
 }

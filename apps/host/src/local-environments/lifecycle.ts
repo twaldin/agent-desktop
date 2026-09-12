@@ -80,8 +80,7 @@ export class WorktreeEnvironmentLifecycle {
   private async createWorktree(current: LocalEnvironmentPreparation): Promise<LocalEnvironmentPreparation> {
     let record = this.store.environmentPreparations.transition(current.id, current.revision, { type: "worktree-create.started" });
     try {
-      const name = `chat-${createHash("sha256").update(record.id).digest("hex")}`;
-      const worktree = await this.workspaces.createSessionWorktree(record.projectId, name, record.startingState, record.directories);
+      const worktree = await this.workspaces.createPreparedSessionWorktree(record.id, record.revision, this.runOptions.signal);
       if (record.directories) {
         await this.workspaces.verifyPreparedWorktree(record.projectId, worktree.path, { ...record.directories, configCwdRelativePath: null });
         const effective = await materializeWorktreeEnvironment({ sourceWorkspaceRoot: record.sourceRoot,

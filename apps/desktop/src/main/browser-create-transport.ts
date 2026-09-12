@@ -5,6 +5,7 @@ import {
   parseNativeBrowserTabMetadata,
   type BrowserCreateReceipt,
   type BrowserCreateRequest,
+  type BrowserCreateObservation,
 } from "@agent-desktop/shared";
 import type { HostEndpoint } from "./host-transport";
 import { readBrowserJSON } from "./browser-frame-transport";
@@ -20,7 +21,9 @@ export async function requestBrowserCreate(
   if (!endpoint.hostId || !sessionId || sessionId.length > 200 || sessionId.includes("\0")) {
     throw new Error("Select the browser owning session.");
   }
-  const response = await fetch(`${endpoint.origin}/v1/sessions/${encodeURIComponent(sessionId)}/browser-create`, {
+  // Older hosts must not silently project away the URL and acquire a blank tab.
+  const operation = input.initialUrl === undefined ? "browser-create" : "browser-open";
+  const response = await fetch(`${endpoint.origin}/v1/sessions/${encodeURIComponent(sessionId)}/${operation}`, {
     method: "POST",
     body: JSON.stringify(input),
     redirect: "error",
@@ -49,6 +52,12 @@ export async function requestBrowserCreate(
     }
     throw new Error(`Browser creation could not be confirmed (${response.status}); its outcome is unknown.`);
   }
+  return validatedBrowserCreateReceipt(value, endpoint, sessionId, input);
+}
+
+/** Shared projection for a fresh response and the same retained receipt. */
+function validatedBrowserCreateReceipt(value: Record<string, unknown>, endpoint: HostEndpoint, sessionId: string,
+  input: BrowserCreateRequest): BrowserCreateReceipt {
   if (!value || value.protocolVersion !== BROWSER_CREATE_PROTOCOL_VERSION || value.hostId !== endpoint.hostId
     || value.sessionId !== sessionId || value.requestId !== input.requestId
     || !["completed", "rejected", "unknown"].includes(typeof value.outcome === "string" ? value.outcome : "")) {
@@ -75,4 +84,35 @@ export async function requestBrowserCreate(
   if (value.targetDisposition !== expected) throw new Error("Browser creation disposition is invalid; its outcome is unknown.");
   return { protocolVersion: BROWSER_CREATE_PROTOCOL_VERSION, hostId: endpoint.hostId, sessionId,
     requestId: input.requestId, outcome: "completed", workerPid: value.workerPid, tab, targetDisposition: expected };
+}
+
+/** Read one retained admission outcome. This endpoint cannot acquire a browser;
+ * missing/expired history remains unavailable, never a reason to resubmit. */
+export async function requestBrowserCreationStatus(endpoint: HostEndpoint, sessionId: string,
+  request: BrowserCreateRequest): Promise<BrowserCreateObservation> {
+  const input = parseBrowserCreateRequest(request);
+  if (!endpoint.hostId || typeof sessionId !== "string" || !sessionId || sessionId.length > 200 || sessionId.includes("\0")) {
+    throw new Error("Select the browser owning session.");
+  }
+  const response = await fetch(`${endpoint.origin}/v1/sessions/${encodeURIComponent(sessionId)}/browser-creation-status`, {
+    method: "POST", body: JSON.stringify(input), redirect: "error", signal: AbortSignal.timeout(20_000),
+    headers: { "Content-Type": "application/json", [BROWSER_METADATA_OWNER_HEADER]: endpoint.hostId,
+      ...(endpoint.token ? { Authorization: `Bearer ${endpoint.token}` } : {}) },
+  });
+  if (response.headers.get(BROWSER_METADATA_OWNER_HEADER) !== endpoint.hostId) {
+    await response.body?.cancel(); throw new Error("Browser creation observation belongs to another host.");
+  }
+  const value = await readBrowserJSON(response, 32_768) as Record<string, unknown>;
+  if (!response.ok) throw new Error(`Browser creation observation is unavailable (${response.status}); do not replay creation.`);
+  if (!value || value.protocolVersion !== BROWSER_CREATE_PROTOCOL_VERSION || value.hostId !== endpoint.hostId
+    || value.sessionId !== sessionId || value.requestId !== input.requestId
+    || !["pending", "unavailable", "settled"].includes(typeof value.status === "string" ? value.status : "")) {
+    throw new Error("Browser creation observation has an invalid owner, request or status.");
+  }
+  const base = { protocolVersion: BROWSER_CREATE_PROTOCOL_VERSION, hostId: endpoint.hostId, sessionId, requestId: input.requestId };
+  if (value.status === "settled") {
+    return { ...base, status: "settled", receipt: validatedBrowserCreateReceipt(value.receipt as Record<string, unknown>, endpoint, sessionId, input) };
+  }
+  if (value.receipt !== undefined) throw new Error("Unsettled browser observation contains an unexpected receipt.");
+  return { ...base, status: value.status as "pending" | "unavailable" };
 }

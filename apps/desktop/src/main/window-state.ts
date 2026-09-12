@@ -18,7 +18,7 @@ export class WindowStateStore {
   private document: WindowDocument = { version: 1 };
   private readError?: string;
   private writeError?: string;
-  constructor(profile: string, slot: string) {
+  constructor(profile: string, readonly slot: string) {
     if (!/^[a-z0-9-]{1,80}$/.test(slot)) throw new Error("Invalid local window slot.");
     this.file = join(profile, `window-${slot}-v1.json`);
     try {
@@ -31,7 +31,7 @@ export class WindowStateStore {
       this.document = { version: 1, ...(saved.view ? { view: parseWindowView(saved.view)! } : {}), ...(saved.bounds ? { bounds: bounds(saved.bounds)! } : {}), ...(saved.maximized === undefined ? {} : { maximized: saved.maximized }) };
     } catch { this.readError = "The saved window layout could not be read. This window is using defaults."; }
   }
-  bootstrap(): WindowStateBootstrap { const error = this.writeError ?? this.readError; return { ...(this.document.view ? { state: structuredClone(this.document.view) } : {}), ...(error ? { error } : {}) }; }
+  bootstrap(): WindowStateBootstrap { const error = this.writeError ?? this.readError; return { ownerSlot: this.slot, ...(this.document.view ? { state: structuredClone(this.document.view) } : {}), ...(error ? { error } : {}) }; }
   geometry() { return { bounds: this.document.bounds ? { ...this.document.bounds } : undefined, maximized: this.document.maximized ?? false }; }
   saveView(value: unknown): { error?: string } {
     const view = parseWindowView(value);
@@ -47,10 +47,16 @@ export class WindowStateStore {
   private write(next: WindowDocument): { error?: string } {
     const temporary = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     try {
+      const serialized = JSON.stringify(next) + "\n";
+      if (Buffer.byteLength(serialized, "utf8") > maximumBytes) throw new Error("Window state exceeds the readable document limit.");
       mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
       const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-      try { writeFileSync(fd, JSON.stringify(next) + "\n", "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
-      renameSync(temporary, this.file); this.document = next; this.writeError = undefined; return {};
+      try { writeFileSync(fd, serialized, "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
+      renameSync(temporary, this.file);
+      // The rename must reach the directory before its new view is acknowledged.
+      const directory = openSync(dirname(this.file), constants.O_RDONLY);
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+      this.document = next; this.writeError = undefined; return {};
     } catch { this.writeError = "This window’s layout could not be saved on this device. Navigation remains available."; return { error: this.writeError }; }
     finally { try { unlinkSync(temporary); } catch { /* Missing staging files need no cleanup. */ } }
   }

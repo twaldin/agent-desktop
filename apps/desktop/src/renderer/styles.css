@@ -45,7 +45,7 @@
     --header-divider-color: #3c3c3c;
     --sidebar-divider-color: #363636;
     --composer-shadow: inset 0 0 1px 0 #fff3;
-    --text: #ededed;
+    --text: #ffffff;
     --secondary: #a3a3a3;
     --tertiary: #767676;
     --border: #ffffff12;
@@ -121,20 +121,18 @@ button { touch-action: manipulation; }
 .session-dot.interrupted { background: var(--tertiary); }
 .sidebar-empty { color: var(--tertiary); font-size: calc(var(--font-size, 14px) * 0.8571428571428571); line-height: 1.5; padding: 4px 11px 8px; margin: 0; }
 .sidebar-empty.nested { padding-left: 13px; }
-.sidebar-footer { display: flex; align-items: center; gap: 9px; padding: 12px 13px; border-top: 1px solid var(--border); min-height: 62px; }
-.host-label { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.5; }
-.host-label strong { font-size: calc(var(--font-size, 14px) * 0.8571428571428571); font-weight: clamp(100, calc(var(--font-weight, 400) + 100), 1000); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.host-label span { font-size: calc(var(--font-size, 14px) * 0.7142857142857143); color: var(--tertiary); }
-.host-label select { max-width: 100%; min-width: 0; border: 0; padding: 0 2px 0 0; background: transparent; font-size: calc(var(--font-size, 14px) * 0.8571428571428571); font-weight: clamp(100, calc(var(--font-weight, 400) + 100), 1000); text-overflow: ellipsis; }
-.host-label option { background: var(--elevated-surface); color: var(--text); }
+.sidebar-footer { flex-shrink: 0; padding: 14px 9px 6px; border-top: var(--divider-width, .5px) solid var(--sidebar-divider-color); min-height: 54px; }
 .host-section-label { display: flex; align-items: center; gap: 7px; padding: 5px 6px; margin-top: 6px; width: 100%; min-width: 0; border-radius: 6px; text-align: left; color: var(--tertiary); font-size: calc(var(--font-size, 14px) * 0.7857142857142857); }
 .host-section-label.current { color: var(--secondary); }
 .host-section-label > span:last-child { margin-left: auto; font-size: calc(var(--font-size, 14px) * 0.7142857142857143); }
 .connection-dot { width: 6px; height: 6px; background: var(--tertiary); border-radius: 100%; flex-shrink: 0; }
 .connection-dot.online { background: #37976a; }
 .main-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; background: var(--app-surface); }
-.main-header { height: var(--main-header-height,46px); flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+/* Titlebar band. The chat header lives in the main column; the dock toggles are a workbench-level cluster pinned to the window edge,
+   so the header only reserves room for them (--header-cluster-reserve) while no right dock occupies that corner. */
+.main-header { height: var(--main-header-height,46px); flex-shrink: 0; min-width: 0; padding: 0 var(--header-cluster-reserve, 73px) 0 16px; display: flex; align-items: center; gap: 12px; border-bottom: var(--divider-width, .5px) solid var(--header-divider-color); }
 .sidebar-hidden .main-header { padding-left: 80px; }
+.main-header .icon-button, .header-panel-actions .icon-button { width: 28px; height: 28px; padding: 5px; border-radius: 6px; }
 .header-breadcrumb { display: flex; align-items: center; gap: 12px; min-width: 0; font-size: calc(var(--font-size, 14px) * 1.0); color: var(--secondary); }
 .header-breadcrumb > span { white-space: nowrap; flex-shrink: 0; }
 .header-breadcrumb strong { font-weight: clamp(100, calc(var(--font-weight, 400) + 100), 1000); color: var(--text); }
@@ -143,15 +141,17 @@ button { touch-action: manipulation; }
 .header-breadcrumb { flex: 1; gap: 8px; }
 .header-breadcrumb > .no-drag { flex-shrink: 0; }
 .header-breadcrumb .action-menu { right: auto; left: 0; }
-.header-panel-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
-.status-label { color: var(--secondary); text-transform: capitalize; font-size: calc(var(--font-size, 14px) * 0.7857142857142857); }
+.header-conversation-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.header-panel-actions { position: absolute; z-index: 16; top: 0; right: var(--header-inset-right, 8px); height: var(--main-header-height,46px); display: flex; align-items: center; gap: var(--header-action-gap, 6px); }
+.header-panel-actions .icon-button:not(.active) { color: var(--header-inactive-icon-color, light-dark(color-mix(in oklab, var(--text) 50%, transparent), rgb(255 255 255 / 50%))); }
+.header-panel-actions .icon { width: calc(var(--icon-size, 20px) * .8); height: calc(var(--icon-size, 20px) * .8); }
+.status-label { color: var(--secondary); text-transform: capitalize; font-size: calc(var(--font-size, 14px) * 0.7857142857142857); white-space: nowrap; flex-shrink: 0; }
 .status-label.error { color: var(--danger); }
 .status-label.running { color: var(--accent); }
 .menu-anchor { position: relative; }
 .menu-dismiss { position: fixed; inset: 0; z-index: 19; width: 100%; height: 100%; background: transparent !important; }
 .action-menu { position: absolute; right: 0; top: 37px; width: 190px; background: var(--elevated-surface); border: 1px solid var(--border); box-shadow: 0 6px 24px #0002; border-radius: 12px; padding: 5px; z-index: 20; }
 .action-menu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 7px; font-size: calc(var(--font-size, 14px) * 0.9285714285714286); }
-.footer-menu { top: auto; bottom: 38px; }
 .settings-page { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .settings-header { display: flex; align-items: center; gap: 12px; min-height: 88px; padding: 16px 24px; flex-shrink: 0; }
 .settings-header h1 { margin: 0; font-size: calc(var(--font-size, 14px) * 1.5714285714285714); font-weight: clamp(100, calc(var(--font-weight, 400) + 200), 1000); letter-spacing: -.5px; }
@@ -257,7 +257,8 @@ button { touch-action: manipulation; }
 .welcome h1 { font-size: calc(var(--font-size, 14px) * 1.9285714285714286); font-weight: clamp(100, calc(var(--font-weight, 400) + 0), 1000); letter-spacing: -.65px; margin: 0; line-height: 1.25; }
 .welcome h1 button { display: inline; padding: 0 1px; border-radius: 3px; font: inherit; letter-spacing: inherit; text-decoration: underline; text-decoration-style: dotted; text-decoration-thickness: 1px; text-underline-offset: 4px; }
 .welcome h1 button:hover { background: transparent; text-decoration-style: solid; }
-.composer-region { width: min(100% - 32px, 768px); margin: 0 auto; flex-shrink: 0; padding: 8px 0 16px; }
+/* The composer box is the content column (736px at the default tokens); theme.css repeats the same expression. */
+.composer-region { width: min(100% - var(--spacing-xl, 32px), calc(var(--conversation-width, 768px) - var(--spacing-xl, 32px))); margin: 0 auto; flex-shrink: 0; padding: 8px 0 16px; }
 .composer-region.home-composer { margin-bottom: 0; padding-top: 10px; }
 .composer { background: var(--composer-surface); border: 0 solid var(--border); border-radius: 25px; box-shadow: var(--composer-shadow); overflow: hidden; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--text) 15%, transparent); }
@@ -350,7 +351,7 @@ button { touch-action: manipulation; }
 @keyframes breathe { 50% { opacity: .35; } }
 @media (max-width: 880px) {
   .composer-region { width: calc(100% - 28px); }
-  .main-header { padding-right: 12px; padding-left: 14px; }
+  .main-header { padding-left: 14px; }
   .welcome h1 { font-size: calc(var(--font-size, 14px) * 1.6428571428571428); }
   .select-control select { max-width: 155px; }
   .composer-selections { gap: 0; }
@@ -487,8 +488,6 @@ button { touch-action: manipulation; }
 .with-terminal .welcome-mark { display:none; }
 
 .app-shell.settings-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
-.settings-host-picker { display: flex; flex-direction: column; gap: 4px; color: var(--secondary); font-size: 12px; }
-.settings-host-picker select { width: 100%; min-width: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 5px; color: var(--text); }
 .settings-unavailable { padding: 0 24px; color: var(--secondary); }
 
 .workspace-markdown-mode { flex:none; height:28px; padding:0 8px; border:0; border-radius:6px; background:transparent; font:14px/20px var(--ui-font); color:var(--text); }

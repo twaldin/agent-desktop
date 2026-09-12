@@ -1,0 +1,27 @@
+.command-menu { position:fixed; --command-menu-list-limit:min(440px,max(120px,calc(90dvh - 64px))); top:max(16px,calc((100dvh - var(--command-menu-list-limit) - 64px) / 2)); left:50%; bottom:auto; z-index:150; width:min(520px,92vw); max-width:none; max-height:calc(100dvh - 32px); margin:0; padding:4px; overflow:hidden; transform:translateX(-50%); border:1px solid var(--border); border-radius:var(--file-search-radius,16px); corner-shape:superellipse(var(--corner-exponent,1.25)); color:var(--text); background:var(--menu-surface,var(--elevated-surface)); box-shadow:0 16px 32px -8px #00000030; font-size:var(--font-size,14px); line-height:1.428571; }
+.command-menu-overlay { position:fixed; inset:0; z-index:149; background:#00000022; }
+.command-menu [cmdk-root], .command-menu [cmdk-group] { display:flex; flex-direction:column; gap:4px; }
+.command-menu-search { display:flex; min-height:32px; align-items:center; }
+.command-menu-search [cmdk-input] { display:block; width:100%; min-width:0; padding:6px 10px; border:0; outline:none; background:transparent; color:var(--text); font:inherit; }
+.command-menu-search [cmdk-input]::placeholder { color:var(--secondary); }
+.command-menu-back { flex:none; width:28px; height:28px; padding:6px; border-radius:var(--radius-small,6px); color:var(--secondary); }
+.command-menu-back:hover { color:var(--text); background:var(--hover); }
+.command-menu-results { max-height:var(--command-menu-list-limit); overflow:auto; scrollbar-width:none; overscroll-behavior:contain; scroll-padding-block-start:32px; }
+.command-menu [cmdk-group-heading] { padding:8px 8px 0; color:var(--secondary); font-size:13px; }
+.command-menu-item { display:flex; min-height:24px; align-items:center; gap:8px; padding:5px 8px; border-radius:var(--file-search-item-radius,8px); color:var(--text); opacity:.75; cursor:default; }
+.command-menu-item[aria-selected="true"] { background:var(--hover); opacity:1; }
+.command-menu-item>.icon { width:16px; height:16px; flex:none; color:var(--secondary); }
+.command-menu-copy { display:flex; min-width:0; flex:1; align-items:center; gap:8px; }
+.command-menu-copy strong { max-width:60%; flex:none; overflow:hidden; font-weight:400; text-overflow:ellipsis; white-space:nowrap; }
+.command-menu-copy small { min-width:0; flex:1; overflow:hidden; color:var(--secondary); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.command-menu-chat { min-height:34px; padding-block:6px; }
+.command-menu-chat .command-menu-copy { align-items:flex-start; flex-direction:column; gap:0; }
+.command-menu-chat .command-menu-copy strong { max-width:100%; }
+.command-menu-item kbd { flex:none; color:var(--secondary); font:inherit; font-size:12px; white-space:nowrap; }
+.command-menu-meta { display:flex; flex:none; align-items:center; gap:6px; }
+.command-menu-history { padding:1px 5px; border:1px solid var(--border); border-radius:999px; color:var(--secondary); font-size:11px; }
+.command-menu-host { flex:none; max-width:112px; overflow:hidden; color:var(--secondary); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.command-menu-status { min-height:28px; margin:0; padding:5px 8px; color:var(--secondary); overflow-wrap:anywhere; }
+.command-menu-notice { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0; padding:5px 8px; color:var(--secondary); font-size:12px; }
+.command-menu-notice button { flex:none; padding:4px 8px; border-radius:var(--radius-small,6px); color:var(--text); background:var(--hover); }
+.command-menu :is(button,[cmdk-item]):focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
