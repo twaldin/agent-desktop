@@ -36,14 +36,14 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
       {message.mcpArtifactError && <p role="status">{message.mcpArtifactError}</p>}
       <Disclosure state={disclosures} stateKey={message.id} running={outcome.tone === "running"} label={`${name} result`} icon={toolIcon(name)} tone={outcome.tone} status={outcome.label}>
         {linkedCall && <a className="transcript-call-reference" href={`#${encodeURIComponent(callAnchor(linkedCall.key))}`}>View {name} invocation</a>}
-        {message.tool?.output && <OutputProvenance message={message}/>}
+        {message.tool?.output && <OutputProvenance message={message} disclosures={disclosures}/>}
         {blocks.length ? blocks.map(renderBlock) : <p className="transcript-empty-output">{message.tool?.isError ? "The tool failed without output." : message.tool?.status === "completed" ? "No output was returned." : "No output has been received."}</p>}
       </Disclosure>
     </div>;
   }
   if (message.role === "commandOutput" && message.commandOutput) return <details className="transcript-command-output" data-message-id={message.id} data-native-id={message.commandOutput.entryId} open>
     <summary><Icon name="terminal"/><span>/{message.commandOutput.command.replace(/^\//, "")}</span><span className="transcript-command-origin">Command output</span></summary>
-    <TranscriptCode code={message.commandOutput.output} blockKey={`${message.id}:output`} output title="Command output"/>
+    <pre className="transcript-output-text">{message.commandOutput.output}</pre>
   </details>;
   if (message.role === "selectedText" && message.selectedText) return <section className="transcript-selected-context" data-message-id={message.id} data-native-id={message.nativeId} aria-label="Saved selected text">
     <ComposerSelectedText attachments={message.selectedText.attachments}/><span className="transcript-selected-context-status">Saved context · prompt not linked</span>
@@ -81,18 +81,18 @@ function Block({ block, blockKey, nativeEntryId, disclosures, calls, connected, 
   if (block.type === "thinking") return <Disclosure state={disclosures} stateKey={blockKey} label="Thinking" variant="thinking"><MarkdownText text={block.thinking} blockKey={blockKey} streaming={streaming}/></Disclosure>;
   if (block.type === "toolCall") {
     const link = calls.get(blockKey), outcome = toolOutcome(link?.result, connected);
-    return <div id={callAnchor(blockKey)} className="transcript-tool-invocation"><Disclosure state={disclosures} stateKey={blockKey} label={block.intent || block.name} icon={toolIcon(block.name)} status={outcome.label} tone={outcome.tone} running={outcome.tone === "running"}><p className="transcript-tool-name">{block.name}</p><TranscriptCode code={JSON.stringify(block.arguments, null, 2)} language="json" blockKey={`${blockKey}:arguments`} output title="Arguments"/></Disclosure></div>;
+    return <div id={callAnchor(blockKey)} className="transcript-tool-invocation"><Disclosure state={disclosures} stateKey={blockKey} label={block.intent || block.name} icon={toolIcon(block.name)} status={outcome.label} tone={outcome.tone} running={outcome.tone === "running"}><p className="transcript-tool-name">{block.name}</p><TranscriptCode code={JSON.stringify(block.arguments, null, 2)} language="json" blockKey={`${blockKey}:arguments`} output title="Arguments" copyAction="Copy arguments"/></Disclosure></div>;
   }
   return <p className="subtle-notice transcript-unsupported">{block.nativeType === "redactedThinking" ? "The provider withheld this reasoning content." : `This build cannot display native ${block.nativeType} content${block.mimeType ? ` (${block.mimeType})` : ""}.`}</p>;
 }
-function OutputProvenance({ message }: { message: TranscriptMessage }) {
+function OutputProvenance({ message, disclosures }: { message: TranscriptMessage; disclosures: TranscriptDisclosureState }) {
   const output = message.tool!.output!, truncation = output.truncation;
   return <div className="transcript-output-provenance">
-    {truncation?.truncated && <p className="transcript-message-notice">OMP truncated this output{truncation.outputLines !== undefined && truncation.totalLines !== undefined ? ` · ${truncation.outputLines} of ${truncation.totalLines} lines shown` : ""}. Copy output copies only the recorded text, not omitted content.</p>}
+    {truncation?.truncated && <p className="transcript-message-notice">OMP truncated this output{truncation.direction ? ` (${truncation.direction === "middle" ? "middle omitted" : truncation.direction === "head" ? "beginning shown" : "end shown"})` : ""}{truncation.partialLine ? " · the shown line is partial" : truncation.outputLines !== undefined && truncation.totalLines !== undefined ? ` · ${truncation.outputLines} of ${truncation.totalLines} lines shown` : ""}. Copy output copies only the recorded text, not omitted content.</p>}
     {output.columnTruncated !== undefined && <p className="transcript-message-notice">OMP limited output columns to {output.columnTruncated}.</p>}
     {output.summary && output.summary.elidedLines > 0 && <p className="transcript-message-notice">OMP returned a summary with {output.summary.elidedLines} lines omitted.</p>}
     {truncation?.artifactId && <p className="transcript-message-notice">Recorded full-output reference: <code>artifact://{truncation.artifactId}</code>. Retrieve it with OMP read; this view contains the recorded preview.</p>}
-    <details><summary>Output details</summary><TranscriptCode code={JSON.stringify(output, null, 2)} language="json" blockKey={`${message.id}:output-details`} output title="Native output metadata"/></details>
+    <Disclosure state={disclosures} stateKey={`${message.id}:output-details`} label="Output details" variant="thinking"><TranscriptCode code={JSON.stringify(output, null, 2)} language="json" blockKey={`${message.id}:output-details`} output title="Native output metadata" copyAction="Copy output metadata"/></Disclosure>
   </div>;
 }
 function toolIcon(name: string): React.ComponentProps<typeof Icon>["name"] {
@@ -106,6 +106,6 @@ function toolIcon(name: string): React.ComponentProps<typeof Icon>["name"] {
 }
 function Disclosure({ state, stateKey, label, status, tone = "unknown", running = false, variant = "tool", icon = "sliders", children }: { state: TranscriptDisclosureState; stateKey: string; label: string; status?: string; tone?: string; running?: boolean; variant?: "tool" | "thinking"; icon?: React.ComponentProps<typeof Icon>["name"]; children: ReactNode }) {
   const [, redraw] = useState(0); const expanded = state.get(stateKey, running), bodyId = useId();
-  return <section className={`transcript-disclosure ${variant} ${tone}`}><button type="button" className="transcript-activity-header" aria-expanded={expanded} aria-controls={bodyId} title={label} onClick={() => { state.set(stateKey, !expanded); redraw(value => value + 1); }}>{variant === "tool" && <Icon name={icon}/>}<span className="transcript-activity-label">{label}</span>{status && <span className="transcript-activity-status" role="status">{status}</span>}<Icon name="chevron" className={`transcript-activity-chevron${expanded ? " rotated" : ""}`}/></button><div id={bodyId} className="transcript-activity-body" hidden={!expanded} inert={!expanded}>{children}</div></section>;
+  return <section className={`transcript-disclosure ${variant} ${tone}`}><button type="button" className="transcript-activity-header" aria-expanded={expanded} aria-controls={bodyId} title={label} onClick={() => { state.set(stateKey, !expanded); redraw(value => value + 1); }}>{variant === "tool" && <Icon name={icon}/>}<span className="transcript-activity-label">{label}</span>{status && <span className="transcript-activity-status">{status}</span>}<Icon name="chevron" className={`transcript-activity-chevron${expanded ? " rotated" : ""}`}/></button><div id={bodyId} className="transcript-activity-body" hidden={!expanded} inert={!expanded}>{children}</div></section>;
 }
 function callAnchor(key: string) { return `tool-call-${key}`; }

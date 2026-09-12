@@ -21,7 +21,6 @@
 .transcript-code-output .markdown-code-toolbar { min-height:32px; padding:2px 4px 2px 8px; color:var(--secondary); font-weight:400; }
 .transcript-code-output .markdown-code-toolbar button { width:28px; height:28px; }
 .transcript-code-output.markdown-code-block pre { max-height:192px; padding:8px; overflow:auto; }
-.transcript-copy-status { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .transcript-call-reference { display:inline-block; color:var(--secondary); font-size:var(--small-font-size); text-underline-offset:3px; margin-bottom:var(--spacing-sm); }
 .transcript-native-message { border-left:var(--border-width) solid var(--border); padding-left:var(--spacing-md); margin:var(--spacing-md) 0; color:var(--secondary); }
 .transcript-native-role { font-size:var(--small-font-size); color:var(--tertiary); margin-bottom:var(--spacing-xs); }
@@ -41,6 +40,7 @@
 .transcript-command-output summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: var(--small-font-size, 12px); }
 .transcript-command-output summary .icon { width: 16px; height: 16px; }
 .transcript-command-origin { color: var(--tertiary); }
+.transcript-command-output > pre { max-height: 320px; overflow: auto; margin-top: 8px; }
 
 .transcript-user-attachments { display:flex; flex-direction:row-reverse; align-self:flex-end; gap:8px; max-width:100%; overflow-x:auto; padding:1px; scrollbar-width:none; }
 .transcript-user-attachments::-webkit-scrollbar { display:none; }

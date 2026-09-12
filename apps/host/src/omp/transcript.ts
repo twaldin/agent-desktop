@@ -36,7 +36,7 @@ function toolOutput(details: unknown): TranscriptToolOutput | undefined {
       if (range && Number.isSafeInteger(range.start) && Number.isSafeInteger(range.end) && Number(range.start) > 0 && Number(range.end) >= Number(range.start)) value[key] = { start: Number(range.start), end: Number(range.end) };
     }
     if (typeof truncation.partialLine === "boolean") value.partialLine = truncation.partialLine;
-    if (typeof truncation.artifactId === "string") value.artifactId = truncation.artifactId;
+    if (typeof truncation.artifactId === "string" && /^\d+$/.test(truncation.artifactId)) value.artifactId = truncation.artifactId;
     output.truncation = value;
   }
   const origin = record(meta?.source);

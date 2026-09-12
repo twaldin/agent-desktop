@@ -14,11 +14,11 @@ function messageEvent(mirror: TranscriptMirror, type: "message_start" | "message
 
 test("native truncation provenance survives progress, persistence and reopen without leaking arbitrary details", () => {
   const mirror = new TranscriptMirror();
-  const details = { meta: { truncation: { direction: "tail", truncatedBy: "lines", totalLines: 500, totalBytes: 9000, outputLines: 10, outputBytes: 180, shownRange: { start: 491, end: 500 }, artifactId: "actual-output" }, source: { type: "internal", value: "artifact://actual-output" } }, privatePayload: "do-not-project" };
+  const details = { meta: { truncation: { direction: "tail", truncatedBy: "lines", totalLines: 500, totalBytes: 9000, outputLines: 10, outputBytes: 180, shownRange: { start: 491, end: 500 }, artifactId: "2" }, source: { type: "internal", value: "artifact://2" } }, privatePayload: "do-not-project" };
   mirror.accept({ type: "tool_execution_start", toolCallId: "native-call", toolName: "bash", args: {} });
   mirror.accept({ type: "tool_execution_update", toolCallId: "native-call", toolName: "bash", args: {}, partialResult: { content: [{ type: "text", text: "last lines\n" }], details } });
   const [running] = mirror.snapshot([], []);
-  expect(running!.tool!.output!.truncation).toMatchObject({ truncated: true, artifactId: "actual-output", shownRange: { start: 491, end: 500 } });
+  expect(running!.tool!.output!.truncation).toMatchObject({ truncated: true, artifactId: "2", shownRange: { start: 491, end: 500 } });
   const message = { role: "toolResult", toolCallId: "native-call", toolName: "bash", timestamp: 50, isError: true, content: [{ type: "text", text: "last lines\n" }], details };
   mirror.accept({ type: "tool_execution_end", toolCallId: "native-call", toolName: "bash", result: { content: message.content, details }, isError: true });
   messageEvent(mirror, "message_start", message); messageEvent(mirror, "message_end", message);
@@ -39,6 +39,13 @@ test("completed full output cannot inherit a truncated progress preview", () => 
   mirror.accept({ type: "tool_execution_update", toolCallId: "unknown", toolName: "read", args: {}, partialResult: { content: [], details: { truncation: { truncated: true } } } });
   mirror.accept({ type: "tool_execution_end", toolCallId: "unknown", toolName: "read", result: { content: [] }, isError: false });
   expect(mirror.snapshot([], []).find(message => message.tool?.callId === "unknown")!.tool!.output).toBeUndefined();
+});
+
+test("unresolvable artifact identifiers cannot become native retrieval references", () => {
+  const message = { role: "toolResult", toolCallId: "invalid-reference", toolName: "bash", content: "preview", details: { meta: { truncation: { artifactId: "../not-numeric", partialLine: true } } } };
+  const [projected] = new TranscriptMirror().snapshot([message], native([message]));
+  expect(projected!.tool!.output!.truncation).toEqual({ truncated: true, partialLine: true });
+  expect(projected!.text).toBe("preview");
 });
 
 test('native display:false continuation stays hidden both during events and reopened history', () => {

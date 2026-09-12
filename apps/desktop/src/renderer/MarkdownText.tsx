@@ -58,12 +58,12 @@ function CodeBlock({ node }: ExtraProps) {
 }
 /** Native output is literal text, never Markdown; the same code surface owns
  * selection, wrapping, highlighting and acknowledged clipboard writes. */
-export function TranscriptCode({ code, language = "plaintext", blockKey, open = false, output = false, title: suppliedTitle, views: suppliedViews }: { code: string; language?: string; blockKey: string; open?: boolean; output?: boolean; title?: string; views?: MarkdownViewState }) {
+export function TranscriptCode({ code, language = "plaintext", blockKey, open = false, output = false, title: suppliedTitle, copyAction, views: suppliedViews }: { code: string; language?: string; blockKey: string; open?: boolean; output?: boolean; title?: string; copyAction?: string; views?: MarkdownViewState }) {
   const parent = useContext(TranscriptMarkdownContext), localViews = useMemo(() => new MarkdownViewState(), []);
   const views = suppliedViews ?? parent.views ?? localViews, [, redraw] = useState(0), element = useRef<HTMLDivElement>(null);
   const wrapped = views.wrapped(blockKey), title = suppliedTitle ?? codeLanguageLabel(language);
   const {highlighted, tail} = useCodeHighlight(code, open && !language ? "plaintext" : language, element);
-  const copy = useCodeCopy(code), copyLabel = copy.state === "copied" ? "Copied" : copy.state === "failed" ? "Copy failed · retry" : output ? "Copy output" : "Copy code";
+  const copy = useCodeCopy(code), copyLabel = copy.state === "copied" ? "Copied" : copy.state === "failed" ? "Copy failed · retry" : copyAction ?? (output ? "Copy output" : "Copy code");
   const wrapLabel = wrapped ? "Disable word wrap" : "Enable word wrap";
   const tokens = useMemo(() => highlighted.kind === "highlighted" ? syntax(highlighted.tree.children) : null, [highlighted]);
   return <div ref={element} className={`markdown-code-block${output ? " transcript-code-output" : ""}`} data-code-key={blockKey} data-code-open={open} data-highlighted={highlighted.kind === "highlighted"} data-markdown-copy="code-block">
@@ -71,12 +71,11 @@ export function TranscriptCode({ code, language = "plaintext", blockKey, open = 
       <button type="button" aria-label={wrapLabel} title={wrapLabel} aria-pressed={wrapped} onClick={() => { views.setWrapped(blockKey, !wrapped); redraw(value => value + 1); }}><TranscriptCodeIcon name={wrapped ? "wrap_on" : "wrap_off"}/></button>
       {(!open || output) && <button type="button" className="markdown-code-copy" aria-label={copyLabel} title={copyLabel} aria-busy={copy.state === "pending"} disabled={copy.state === "pending"} onClick={() => void copy.copy()}><TranscriptCodeIcon name={copy.state === "copied" ? "copied" : "copy"}/></button>}
     </div></div>
-    <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={`${title || "Plain text"} ${output ? "output" : "code"}`} onCopy={event => {
+    <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={output ? title || "Output" : `${title || "Plain text"} code`} onCopy={event => {
       const selection = event.currentTarget.ownerDocument.getSelection();
       if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return;
       event.clipboardData.setData("text/plain", selection.toString()); event.preventDefault(); event.stopPropagation();
     }}><SelectableCode text={code}>{tokens ? <>{tokens}{tail}</> : code}</SelectableCode></pre>
-    <span className="transcript-copy-status" role="status" data-markdown-copy="exclude">{copy.state === "copied" ? "Copied" : ""}</span>
     {copy.error && <p className="markdown-code-copy-error" role="alert" data-markdown-copy="exclude">{copy.error} <button type="button" onClick={() => void copy.copy()}>Retry</button></p>}
   </div>;
 }
