@@ -1,5 +1,15 @@
 # Milestone status
 
+## Desktop integration — September 12
+
+The latest published checkpoint before this integration is [dev-be87d54ae517](https://github.com/twaldin/agent-desktop/releases/tag/dev-be87d54ae517). macOS and Linux checks, release packaging, and startup checks of the packaged desktop and hosts passed. It includes the editor milestone and a reviewed terminal snapshot fix: concurrent history readers now share the original pane capture until it settles. Commit history remains intact. The release is still an unnotarized development build.
+
+The next integrated source combines browser navigation/autocomplete, suggested outputs and HTML previews, MCP app panels, pull-request discussion actions, General keyboard controls, notification navigation, and session account selection. The focused combined suite passes 464 tests / 3,708 assertions across 75 files, with typecheck and build passing against an unchanged 1,851-file tracked-source inventory. The integration and corrections returned to their original independent review contexts; the original rejected reports remain unchanged.
+
+Fresh disposable App runs verify notification navigation and reload against synchronous window saves; composer/Settings account pin, release, reload, offline and stale-host behavior; HTML source/preview navigation; and MCP panel ownership. The account runs use native account storage with controlled sessions, not live provider login or quota rotation. Notification completion and click are synthetic inputs to Electron; macOS rejected physical presentation with `UNErrorDomain`, so Notification Center interaction is still unproved. The focused Git blame command also passed actual App command-menu invocation and original-file history checks before composition.
+
+Whole-chat fork, remaining sidebar/settings and model controls, additional backend recovery, matched reference appearance, installed physical cross-device execution and the final user acceptance step remain open. Individual source reviews and these bounded App runs do not establish full parity or complete the goal.
+
 ## Public development release — September 11
 
 The source is now public at [twaldin/agent-desktop](https://github.com/twaldin/agent-desktop), preserving all 166 original local commits. The current development checkpoint is committed; private `.data` review packets, reference assets and installed state remain excluded. The full parity milestone is still incomplete.
