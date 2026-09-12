@@ -209,6 +209,7 @@ export interface TranscriptMessage {
 }
 
 export interface HostState {
+  pullRequests?: typeof import('./pull-requests').PULL_REQUESTS_CAPABILITY;
   automations?: { capability: typeof import('./automations').AUTOMATIONS_CAPABILITY };
   protocolVersion: typeof PROTOCOL_VERSION;
   host: HostIdentity;
@@ -341,6 +342,7 @@ export type NativeModifier = "meta" | "control" | "alt";
 export type ModifierReleaseResult = "released" | "unavailable" | "cancelled";
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge>, Partial<TerminalCreationBridge> {
+  pullRequests?: import('./pull-requests').PullRequestsBridge;
   automations?: import('./automations').AutomationsBridge;
   watchModifierRelease?(modifier: NativeModifier, requestId: string): Promise<ModifierReleaseResult>;
   cancelModifierRelease?(requestId: string): Promise<void>;

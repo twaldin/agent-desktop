@@ -1,3 +1,4 @@
+import { parsePullRequestWindowViews, type PullRequestWindowView } from './pull-request-window-state';
 import { parseMcpDockApp } from "./renderer/mcp-app-dock";
 import { isPreferenceId } from "../../../packages/shared/src/preferences";
 import { parseAutomationWindowRequests, type AutomationWindowRequest } from './automation-window-state';
@@ -37,6 +38,8 @@ export interface WindowViewState {
   environmentOpen?: boolean;
   environmentCollapsed?: EnvironmentSectionKey[];
   pluginDirectoryOpen?: boolean;
+  pullRequestsOpen?: boolean;
+  pullRequestViews?: PullRequestWindowView[];
   automationsOpen?: boolean;
   automationRequests?: AutomationWindowRequest[];
   pluginDirectoryTab?: "plugins" | "skills";
@@ -133,6 +136,9 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
   )
     return;
   if (value.pluginDirectoryOpen !== undefined && typeof value.pluginDirectoryOpen !== "boolean") return;
+  if (value.pullRequestsOpen !== undefined && typeof value.pullRequestsOpen !== 'boolean') return;
+  let pullRequestViews: PullRequestWindowView[] | undefined;
+  if (value.pullRequestViews !== undefined) { try { pullRequestViews = parsePullRequestWindowViews(value.pullRequestViews); } catch { return; } }
   if (value.automationsOpen !== undefined && typeof value.automationsOpen !== 'boolean') return;
   let automationRequests: AutomationWindowRequest[] | undefined;
   if (value.automationRequests !== undefined) {
@@ -187,6 +193,8 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
       : {}),
     ...(value.environmentCollapsed === undefined ? {} : { environmentCollapsed: [...new Set(value.environmentCollapsed as EnvironmentSectionKey[])] }),
     ...(typeof value.pluginDirectoryOpen === "boolean" ? {pluginDirectoryOpen:value.pluginDirectoryOpen} : {}),
+    ...(typeof value.pullRequestsOpen === 'boolean' ? { pullRequestsOpen: value.pullRequestsOpen } : {}),
+    ...(pullRequestViews === undefined ? {} : { pullRequestViews }),
     ...(typeof value.automationsOpen === 'boolean' ? { automationsOpen: value.automationsOpen } : {}),
     ...(automationRequests === undefined ? {} : { automationRequests }),
     ...(value.pluginDirectoryTab === undefined ? {} : {pluginDirectoryTab:value.pluginDirectoryTab as "plugins"|"skills"}),
