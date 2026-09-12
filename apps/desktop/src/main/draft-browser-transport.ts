@@ -1,6 +1,6 @@
 import { BROWSER_FRAME_MAX_BYTES, BROWSER_METADATA_OWNER_HEADER, parseBrowserCreateRequest, parseBrowserCreationTicket,
-  parseBrowserControlRequest, parseDraftBrowserOwnerReference, parseBrowserDocumentContext, parseDraftBrowserCreationReceipt, parseNativeBrowserFrame, parseNativeBrowserTabMetadata, validBrowserFrameTarget,
-  type BrowserCreateRequest, type BrowserControlRequest, type BrowserFrameTarget, type DraftBrowserCreationReceipt, type DraftBrowserCreationObservation,
+  parseBrowserControlRequest, parseBrowserHistoryRequest, parseBrowserHistoryResult, parseDraftBrowserOwnerReference, parseBrowserDocumentContext, parseDraftBrowserCreationReceipt, parseNativeBrowserFrame, parseNativeBrowserTabMetadata, validBrowserFrameTarget,
+  type BrowserCreateRequest, type BrowserControlRequest, type BrowserFrameTarget, type BrowserHistoryRequest, type BrowserHistoryResult, type DraftBrowserCreationReceipt, type DraftBrowserCreationObservation,
   type DraftBrowserOwnerReference, type DraftBrowserOwnerSnapshot, type DraftBrowserMetadataSnapshot, type DraftBrowserFrameSnapshot, type DraftBrowserControlReceipt } from "@agent-desktop/shared";
 import { readBrowserJSON } from "./browser-frame-transport";
 import { HostRequestError, type HostEndpoint } from "./host-transport";
@@ -75,6 +75,11 @@ export class DraftBrowserTransport {
     const tabs = value.tabs.map(parseNativeBrowserTabMetadata);
     if (new Set(tabs.map(tab => tab.name)).size !== tabs.length) throw new Error("Duplicate draft browser tab identity.");
     return { ...this.identity(), availability: "running", workerPid: value.workerPid, tabs, controlEpoch: this.controlEpoch(value) };
+  }
+
+  async history(request: BrowserHistoryRequest): Promise<BrowserHistoryResult> {
+    const input=parseBrowserHistoryRequest(request),value=await this.post("history",{history:input},2*1024*1024);
+    return parseBrowserHistoryResult(value,this.endpoint.hostId,{kind:"draft",id:this.reference.ownerId},input);
   }
 
   async frame(target: BrowserFrameTarget): Promise<DraftBrowserFrameSnapshot> {

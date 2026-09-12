@@ -1,7 +1,8 @@
-import { BROWSER_CREATE_MAX_AGE_MS, BROWSER_METADATA_OWNER_HEADER, parseBrowserCreateRequest, parseBrowserControlRequest, parseNativeBrowserFrame, parseNativeBrowserTabMetadata, validBrowserFrameTarget,
-  type BrowserCreateRequest, type BrowserControlRequest, type BrowserFrameTarget, type BrowserMetadataAvailability, type NativeBrowserFrame } from "@agent-desktop/shared";
+import { BROWSER_CREATE_MAX_AGE_MS, BROWSER_HISTORY_PROTOCOL_VERSION, BROWSER_METADATA_OWNER_HEADER, parseBrowserCreateRequest, parseBrowserControlRequest, parseBrowserHistoryRequest, parseNativeBrowserFrame, parseNativeBrowserTabMetadata, validBrowserFrameTarget,
+  type BrowserCreateRequest, type BrowserControlRequest, type BrowserFrameTarget, type BrowserHistoryRequest, type BrowserMetadataAvailability, type NativeBrowserFrame } from "@agent-desktop/shared";
 import { parseBrowserCloseRequest, type BrowserCloseRequest } from "../../../packages/shared/src/browser-close";
 import { BrowserCloseInputMismatch } from "./browser-close-records";
+import { browserHistoryRevision } from "./browser-history-revision";
 import { BrowserCloseRequests } from "./browser-close-requests";
 import { readBrowserCreateBody } from "./browser-create-http";
 import { readBrowserControlBody } from "./browser-control-http";
@@ -27,20 +28,20 @@ export class DraftBrowserHttp {
   }
 
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
-    const match = /^\/v1\/draft-browser-owners\/([^/]+)\/(acquire|status|retire|create|open|creation-status|metadata|frame|control|close|close-status)$/.exec(url.pathname);
+    const match = /^\/v1\/draft-browser-owners\/([^/]+)\/(acquire|status|retire|create|open|creation-status|metadata|history|frame|control|close|close-status)$/.exec(url.pathname);
     if (!match) return;
     const headers = { "Cache-Control": "no-store", [BROWSER_METADATA_OWNER_HEADER]: this.store.host.id };
     const error = (code: string, message: string, status = 400) => Response.json({ error: { code, message } }, { status, headers });
     if (request.headers.get(BROWSER_METADATA_OWNER_HEADER) !== this.store.host.id) return error("OWNER_MISMATCH", "The draft browser belongs to another host", 409);
     if (request.method !== "POST") return error("INVALID_REQUEST", "Use POST for this request", 405);
-    let owner: DraftBrowserAdmissionRequest, creation: BrowserCreateRequest | undefined, target: BrowserFrameTarget | undefined, control: BrowserControlRequest | undefined, close: BrowserCloseRequest | undefined;
+    let owner: DraftBrowserAdmissionRequest, creation: BrowserCreateRequest | undefined, target: BrowserFrameTarget | undefined, history: BrowserHistoryRequest | undefined, control: BrowserControlRequest | undefined, close: BrowserCloseRequest | undefined;
     const action = match[2]!;
     try {
       const ownerId = decodeURIComponent(match[1]!);
       const body = await (action === "control" ? readBrowserControlBody(request) : readBrowserCreateBody(request)) as {
-        draftId: string; draftRevision: number; creation?: BrowserCreateRequest; target?: BrowserFrameTarget; control?: BrowserControlRequest; close?: BrowserCloseRequest };
+        draftId: string; draftRevision: number; creation?: BrowserCreateRequest; target?: BrowserFrameTarget; history?: BrowserHistoryRequest; control?: BrowserControlRequest; close?: BrowserCloseRequest };
       const creates = action === "create" || action === "open" || action === "creation-status";
-      if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["draftId", "draftRevision", ...(creates ? ["creation"] : []), ...(action === "frame" ? ["target"] : []), ...(action === "control" ? ["control"] : []), ...(["close", "close-status"].includes(action) ? ["close"] : [])].includes(key))
+      if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["draftId", "draftRevision", ...(creates ? ["creation"] : []), ...(action === "frame" ? ["target"] : []), ...(action === "history" ? ["history"] : []), ...(action === "control" ? ["control"] : []), ...(["close", "close-status"].includes(action) ? ["close"] : [])].includes(key))
         || ![ownerId, body.draftId].every(id => typeof id === "string" && id.length > 0 && id.length <= 200 && !/[\u0000-\u001f\u007f]/.test(id))
         || !Number.isSafeInteger(body.draftRevision) || body.draftRevision < 1) throw new Error("Invalid owner request");
       owner = { hostId: this.store.host.id, ownerId, draftId: body.draftId, draftRevision: body.draftRevision };
@@ -52,6 +53,7 @@ export class DraftBrowserHttp {
         if (!validBrowserFrameTarget(body.target) || Object.keys(body.target).some(key => !["workerPid", "name", "targetId"].includes(key))) throw new Error("Invalid frame target");
         target = { workerPid: body.target.workerPid, name: body.target.name, targetId: body.target.targetId };
       }
+      if (action === "history") history = parseBrowserHistoryRequest(body.history);
       if (action === "control") control = parseBrowserControlRequest(body.control);
       if (action === "close" || action === "close-status") close = parseBrowserCloseRequest(body.close);
     } catch { return error("INVALID_REQUEST", "Invalid draft browser request"); }
@@ -77,6 +79,7 @@ export class DraftBrowserHttp {
           });
           return Response.json({ ...result, hostId: owner.hostId, ownerKind: "draft", ownerId: owner.ownerId }, { headers });
         }
+        if (history) return await this.history(owner, history, headers);
         if (action === "metadata" || action === "frame") return await this.observation(owner, target, headers);
         if (creation) return Response.json(await this.creation(owner, creation, action === "creation-status"), { headers });
         if (action === "acquire") await this.workers.acquire(owner);
@@ -92,6 +95,17 @@ export class DraftBrowserHttp {
     })();
     this.active.add(operation);
     try { return await operation; } finally { this.active.delete(operation); }
+  }
+
+  private async history(owner: DraftBrowserAdmissionRequest, input: BrowserHistoryRequest, headers: Record<string,string>): Promise<Response> {
+    const error = (message: string, status = 503) => Response.json({ error: { code: "DRAFT_BROWSER_HISTORY_FAILED", message } }, { status, headers });
+    try {
+      this.workers.inspect(owner); const handle = await this.workers.getExisting(owner);
+      if (this.closing || !handle || handle.workerPid !== input.target.workerPid) return error("The draft browser worker changed.", 409);
+      const entries = await handle.getBrowserHistory(input.target), current = await this.workers.getExisting(owner);
+      if (this.closing || current !== handle) return error("The draft browser owner changed during the history read.", 409);
+      return Response.json({ protocolVersion:BROWSER_HISTORY_PROTOCOL_VERSION,hostId:owner.hostId,owner:{kind:"draft",id:owner.ownerId},requestId:input.requestId,target:input.target,query:input.query,revision:browserHistoryRevision(entries),entries }, { headers });
+    } catch { return error("The draft browser history is unavailable."); }
   }
 
   private async observation(owner: DraftBrowserAdmissionRequest, target: BrowserFrameTarget | undefined, headers: Record<string, string>): Promise<Response> {

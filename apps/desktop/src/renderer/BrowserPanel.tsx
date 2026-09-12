@@ -7,8 +7,9 @@ import {
   type NativeBrowserTabMetadata,
 } from "../../../../packages/shared/src/protocol";
 import { browserPreviewSource, type BrowserPreviewOwner, type BrowserPreviewSource, type PreviewFrame, type PreviewMetadata } from "./browser-preview-source";
+import { BrowserAddressInput, type BrowserAddressSuggestion } from "./BrowserAddressInput";
 import { Icon } from "./Icons";
-import { browserAddressLabel, browserExternalAddress, browserNavigationAddress } from "./browser-address";
+import { browserAddressLabel, browserExternalAddress, browserNavigationAddress, parseBrowserAddress } from "./browser-address";
 import { framePoint } from "./browser-input";
 import "./browser-panel.css";
 
@@ -58,6 +59,7 @@ function modifiers(event: {
     event.shiftKey && "Shift",
   ].filter(Boolean) as Array<"Alt" | "Control" | "Meta" | "Shift">;
 }
+interface AddressRow extends BrowserAddressSuggestion { address:string; subtitle?:string }
 
 export function BrowserPanel(props: Props) {
   const draft = props.draftOwner;
@@ -95,10 +97,14 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   const panelSizeFresh = useRef(false);
   const [refresh, setRefresh] = useState(0);
   const [pending, setPending] = useState(false);
+  const [pendingNavigation,setPendingNavigation]=useState(false);
+  const stoppingNavigation=useRef(false);
   const [address, setAddress] = useState("");
   const [addressFocused, setAddressFocused] = useState(false);
   const addressFocusRef = useRef(false);
   const addressInput = useRef<HTMLInputElement>(null);
+  const addressForm = useRef<HTMLFormElement>(null);
+  const [addressSuggestions,setAddressSuggestions]=useState<AddressRow[]>([]);
   const optionsMenu = useRef<HTMLDetailsElement>(null);
   const blankPageFocused = useRef(false);
   const [queuedText, setQueuedText] = useState(0);
@@ -126,6 +132,24 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   }, [frame]);
 
   useLayoutEffect(() => { if (addressFocused && !addressDirty.current) addressInput.current?.select(); }, [addressFocused]);
+
+  useEffect(()=>{
+    if(!addressFocused||!selected||!source.canHistory||!source.current()){setAddressSuggestions([]);return;}
+    const query=address==="about:blank"?"":address, target={...selected}; let disposed=false,timer:ReturnType<typeof setTimeout>;
+    const load=(attempt:number)=>{const requestId=crypto.randomUUID();void source.history({requestId,target,query}).then(result=>{
+        if(disposed||!source.current()||selectedRef.current?.workerPid!==target.workerPid||selectedRef.current?.name!==target.name||selectedRef.current?.targetId!==target.targetId)return;
+        const needle=query.trim().toLocaleLowerCase(), seen=new Set<string>(), rows:AddressRow[]=[];
+        let parsed:ReturnType<typeof parseBrowserAddress>|undefined; try{parsed=parseBrowserAddress(query)}catch{}
+        if(parsed?.kind==="search")rows.push({id:`search:${query}`,title:`Search for ${query.trim()}`,address:parsed.address,canBeDefault:true,icon:<Icon name="search"/>});
+        for(const item of [...result.entries].reverse()){
+          if(seen.has(item.url)||item.url==="about:blank"||needle&&!`${item.title}\n${item.url}`.toLocaleLowerCase().includes(needle))continue;
+          seen.add(item.url);rows.push({id:`history:${item.id}:${item.url}`,title:item.title||item.url,address:item.url,subtitle:item.title?item.url:undefined,canBeDefault:false,icon:<Icon name="globe"/>});
+          if(rows.length>=8)break;
+        }
+        setAddressSuggestions(rows.slice(0,8));
+      },()=>{if(!disposed){if(attempt<2)timer=setTimeout(()=>load(attempt+1),200);else setAddressSuggestions([])}})};
+    timer=setTimeout(()=>load(0),120);return()=>{disposed=true;clearTimeout(timer)};
+  },[address,addressFocused,selected?.workerPid,selected?.name,selected?.targetId,source]);
 
   const holdInput = (extra?: BrowserHumanAction) => {
     const waiting = [...(extra ? [extra] : []), ...textQueue.current];
@@ -334,6 +358,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     // Invalidates a capture already in progress before this native mutation.
     const revision = ++selectionRevision.current;
     pendingRef.current = true;
+    const navigation=["navigate","reload","back","forward"].includes(action.type);if(navigation)setPendingNavigation(true);
     panelSizeFresh.current = false;
     setPending(true);
     try {
@@ -379,8 +404,17 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       }
     } finally {
       pendingRef.current = false;
+      if(navigation)setPendingNavigation(false);
       if (mounted.current) setPending(false);
     }
+  };
+  const stopNavigation=async()=>{
+    const image=frameRef.current,target=selectedRef.current,context=contextRef.current??image?.context;
+    if(!pendingNavigation||stoppingNavigation.current||!source.current()||!source.canControl||!image?.controlEpoch||!target||!context||!same(image,target))return;
+    stoppingNavigation.current=true;setToolbarError(undefined);
+    try{const receipt=await source.control({requestId:crypto.randomUUID(),controlEpoch:image.controlEpoch,capturedAt:image.capturedAt,target,context,action:{type:"stop"}});if(!mounted.current||committedSource.current!==source||!source.current())return;if(receipt.outcome!=="completed"){haltedRef.current=true;setActionError(receipt.message??"Stopping the page could not be confirmed. Inspect it before acting again.")}else setRefresh(value=>value+1)}
+    catch(cause){if(mounted.current)setActionError(cause instanceof Error?cause.message:"Stopping the page could not be confirmed.")}
+    finally{stoppingNavigation.current=false}
   };
 
   const fitControl = useRef(control); fitControl.current = control;
@@ -450,8 +484,8 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     else textQueue.current.push(action);
     setQueuedText(queuedCharacters());
   };
-  const submitAddress = (event: React.FormEvent) => {
-    event.preventDefault();
+  const submitAddress = (event?: React.FormEvent) => {
+    event?.preventDefault();
     if (!controlsReady) return;
     try {
       const url = browserNavigationAddress(address);
@@ -588,35 +622,23 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           <Icon name="browserBack" className="browser-forward-icon" />
         </button>
         <button
-          aria-label="Reload page"
-          title="Reload page"
-          disabled={!controlsReady}
-          onClick={() => void control({ type: "reload" })}
+          aria-label={pendingNavigation?"Stop loading":"Reload page"}
+          title={pendingNavigation?"Stop loading":"Reload page"}
+          disabled={pendingNavigation?!source.canControl:!controlsReady}
+          onClick={() => pendingNavigation?void stopNavigation():void control({ type: "reload" })}
         >
-          <Icon name="browserReload" />
+          <Icon name={pendingNavigation?"stop":"browserReload"} />
         </button>
-        <form onSubmit={submitAddress}>
-          <input
-            ref={addressInput}
-            data-browser-address-owner={source.focusOwner}
-            data-browser-address-draft={addressDirty.current ? "true" : undefined}
-            aria-label="Page address"
-            role="combobox"
-            aria-expanded={false}
-            aria-autocomplete="none"
-            spellCheck={false}
-            autoComplete="off"
-            disabled={!selected || !active}
-            value={addressFocused || addressDirty.current ? (address === "about:blank" ? "" : address) : browserAddressLabel(address)}
-            onFocus={event => { addressFocusRef.current = true; setAddressFocused(true); }}
-            onBlur={() => { addressFocusRef.current = false; setAddressFocused(false); if (!addressDirty.current) setAddress(frameRef.current?.url ?? address); }}
-            onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); addressDirty.current = false; setAddress(frameRef.current?.url ?? ""); event.currentTarget.blur(); } }}
-            onChange={(event) => {
-              addressDirty.current = true;
-              setAddress(event.target.value);
-            }}
-            placeholder="Search or enter a URL"
-          />
+        <form ref={addressForm} onSubmit={submitAddress}>
+          <BrowserAddressInput inputRef={addressInput} anchorRef={addressForm} owner={source.focusOwner}
+            value={addressFocused||addressDirty.current?(address==="about:blank"?"":address):browserAddressLabel(address)}
+            draft={addressDirty.current} disabled={!selected||!active} readOnly={false} suggestions={addressSuggestions}
+            onFocus={()=>{addressFocusRef.current=true;setAddressFocused(true)}}
+            onBlur={()=>{addressFocusRef.current=false;setAddressFocused(false);if(!addressDirty.current)setAddress(frameRef.current?.url??address)}}
+            onChange={value=>{addressDirty.current=true;setAddress(value)}}
+            onCancel={()=>{addressFocusRef.current=false;setAddressFocused(false);addressDirty.current=false;setAddress(frameRef.current?.url??"")}}
+            onSubmit={()=>submitAddress()}
+            onChoose={row=>{setToolbarError(undefined);addressDirty.current=false;setAddress(row.address);addressInput.current?.blur();void control({type:"navigate",url:row.address})}} />
           <button
             aria-label="Open in external browser"
             title="Open in this device’s external browser"

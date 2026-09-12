@@ -10,6 +10,7 @@ export function createDraftBrowserBridge(invoke: (channel: string, ...args: unkn
     create: (reference, request, hostId) => invoke("host:draft-browser-create", reference, request, hostId),
     creationStatus: (reference, request, hostId) => invoke("host:draft-browser-creation-status", reference, request, hostId),
     metadata: (reference, hostId) => invoke("host:draft-browser-metadata", reference, hostId),
+    history: (reference, request, hostId) => invoke("host:draft-browser-history", reference, request, hostId),
     frame: (reference, target, hostId) => invoke("host:draft-browser-frame", reference, target, hostId),
     control: (reference, request, hostId) => invoke("host:draft-browser-control", reference, request, hostId),
   };

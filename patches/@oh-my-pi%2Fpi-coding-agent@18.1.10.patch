@@ -122,6 +122,18 @@ index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67
      catalogPath: string;
      addedAt: string;
      updatedAt: string;
+diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
+index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..fe34b47ef176c0db02946c5c38d430a63750d5c9 100644
+--- a/dist/types/mcp/client.d.ts
++++ b/dist/types/mcp/client.d.ts
+@@ -11,6 +11,7 @@ export declare class MCPConnectionTimeoutError extends Error {
+  * Set OMP_MCP_TIMEOUT_MS=0 to disable MCP client-side timeouts.
+  */
+ export declare function connectToServer(name: string, config: MCPServerConfig, options?: {
++    enableApps?: boolean;
+     signal?: AbortSignal;
+     onNotification?: (method: string, params: unknown) => void;
+     onRequest?: (method: string, params: unknown) => Promise<unknown>;
 diff --git a/dist/types/mcp/errors.d.ts b/dist/types/mcp/errors.d.ts
 index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6af7beb0ed 100644
 --- a/dist/types/mcp/errors.d.ts
@@ -147,11 +159,31 @@ index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6a
  /** Extract a safe request or trace identifier from MCP HTTP response headers. */
  export declare function mcpTraceIdFromHeaders(headers: Headers): string | undefined;
  /** Preserve a server-provided JSON-RPC error without exposing credential-shaped data. */
+diff --git a/dist/types/mcp/loader.d.ts b/dist/types/mcp/loader.d.ts
+index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf0316ccd78bd 100644
+--- a/dist/types/mcp/loader.d.ts
++++ b/dist/types/mcp/loader.d.ts
+@@ -21,6 +21,7 @@ export interface MCPToolsLoadResult {
+ }
+ /** Options for loading MCP tools */
+ export interface MCPToolsLoadOptions {
++    enableApps?: boolean;
+     /** Called when MCP server connection state changes. */
+     onStatus?: (event: McpConnectionStatusEvent) => void;
+     /** Whether to load project-level config (default: true) */
 diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index 9933dc7374a3560fb62f234463a714a332863a78..d1fd2fc36a9fd54600476147f8351c27c41d6c3f 100644
+index 9933dc7374a3560fb62f234463a714a332863a78..523ea1bef2048b9e9b6cfcdd5bfad85a8f7f160f 100644
 --- a/dist/types/mcp/manager.d.ts
 +++ b/dist/types/mcp/manager.d.ts
-@@ -50,8 +50,14 @@ export interface MCPDiscoverOptions {
+@@ -39,6 +39,7 @@ export interface MCPLoadResult {
+ }
+ /** Options for discovering and connecting to MCP servers */
+ export interface MCPDiscoverOptions {
++    enableApps?: boolean;
+     /** Whether to load project-level config (default: true) */
+     enableProjectConfig?: boolean;
+     /** Whether to filter out Exa MCP servers (default: true) */
+@@ -50,8 +51,14 @@ export interface MCPDiscoverOptions {
      /** Called when MCP server connection state changes. */
      onStatus?: (event: McpConnectionStatusEvent) => void;
  }
@@ -167,7 +199,7 @@ index 9933dc7374a3560fb62f234463a714a332863a78..d1fd2fc36a9fd54600476147f8351c27
  /**
   * MCP Server Manager.
   *
-@@ -228,6 +234,7 @@ export declare class MCPManager {
+@@ -228,6 +235,7 @@ export declare class MCPManager {
      reconnectServer(name: string, options?: {
          manual?: boolean;
          authChallenge?: MCPAuthChallenge;
@@ -176,7 +208,7 @@ index 9933dc7374a3560fb62f234463a714a332863a78..d1fd2fc36a9fd54600476147f8351c27
      /**
       * Refresh tools from a specific server.
 diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
-index 7a53726f6d1b0c309fadb168ea698b68135b7e42..d3d4d167bc5c376e20014611530bfecec0d79e71 100644
+index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d46cc55212 100644
 --- a/dist/types/mcp/tool-bridge.d.ts
 +++ b/dist/types/mcp/tool-bridge.d.ts
 @@ -13,6 +13,7 @@ import type { MCPAuthChallenge, MCPContent, MCPServerConnection, MCPToolDefiniti
@@ -187,6 +219,19 @@ index 7a53726f6d1b0c309fadb168ea698b68135b7e42..d3d4d167bc5c376e20014611530bfece
  }) => Promise<MCPServerConnection | null>;
  export declare function isRetriableConnectionError(error: unknown): boolean;
  /** Details included in MCP tool results for rendering */
+@@ -27,6 +28,12 @@ export interface MCPToolDetails {
+     rawContent?: MCPContent[];
+     /** Structured metadata from the MCP response */
+     mcpMeta?: Record<string, unknown>;
++    /** Exact structured MCP response, retained separately from model-visible text. */
++    structuredContent?: Record<string, unknown>;
++    /** Tool metadata captured before this invocation, never a later catalogue lookup. */
++    mcpToolMeta?: Record<string, unknown>;
++    /** Effective protocol arguments after native input preparation. */
++    mcpArguments?: Record<string, unknown>;
+     /** Provider ID (e.g., "claude", "mcp-json") */
+     provider?: string;
+     /** Provider display name (e.g., "Claude Code", "MCP Config") */
 diff --git a/dist/types/mcp/transports/sse.d.ts b/dist/types/mcp/transports/sse.d.ts
 index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110b6be85eb 100644
 --- a/dist/types/mcp/transports/sse.d.ts
@@ -204,52 +249,30 @@ index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110
  /** Create and connect a legacy HTTP+SSE transport. */
 -export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
 +export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;
-diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
-index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
---- a/dist/types/tools/browser.d.ts
-+++ b/dist/types/tools/browser.d.ts
-@@ -1,3 +1,5 @@
-+import type { AgentSession } from "../session/agent-session.js";
-+import type { BrowserKindTag } from "./browser/registry.js";
- import type { EvalPreludeDefinition } from "../eval/preludes.js";
- import type { ToolSession } from "../sdk.js";
- export { type AriaSnapshotOptions, buildAriaSnapshotScript, parseAriaRefSelector } from "./browser/aria/aria-snapshot.js";
-@@ -10,3 +12,35 @@ export type { Observation, ObservationEntry } from "./browser/tab-protocol.js";
- export declare function createBrowserPrelude(session: ToolSession): EvalPreludeDefinition;
- /** Drop headless tabs so a browser mode change applies to the next open. */
- export declare function restartBrowserForModeChange(): Promise<void>;
-+
-+/** Supports an initial URL within the existing acquisition deadline. */
-+export declare const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
-+
-+/** Explicit browser resource owner; no AgentSession is constructed by acquisition. */
-+export interface BrowserTabCreationOwner {
-+    readonly id: string;
-+    readonly cwd: string;
-+    readonly settings: ToolSession["settings"];
-+    readonly signal: AbortSignal;
-+}
-+export declare const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
-+export interface SessionBrowserTabCreateRequest {
-+    readonly name: string;
-+    readonly initialUrl?: string;
-+}
-+export interface SessionBrowserTabCreateResult {
-+    readonly created: true;
-+    readonly name: string;
-+    readonly ownerSessionId: string;
-+    readonly targetId: string;
-+    readonly backend: "worker" | "cmux";
-+    readonly kindTag: BrowserKindTag;
-+    readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
-+    readonly url: string;
-+    readonly title: string;
-+    readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-+}
-+export declare function createBrowserTabForOwner(owner: BrowserTabCreationOwner, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
-+export declare function createBrowserTabForSession(session: AgentSession, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
-+
-+export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
+diff --git a/dist/types/mcp/types.d.ts b/dist/types/mcp/types.d.ts
+index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bbe734d2ec 100644
+--- a/dist/types/mcp/types.d.ts
++++ b/dist/types/mcp/types.d.ts
+@@ -155,6 +155,7 @@ export interface MCPImplementation {
+ }
+ /** MCP client capabilities */
+ export interface MCPClientCapabilities {
++    extensions?: Record<string, unknown>;
+     roots?: {
+         listChanged?: boolean;
+     };
+diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
+index e3b75c288b6c8ded7d709832d65a2cf993461374..0a306d7465c2f498f630bfb8851b7a8aa9f13d55 100644
+--- a/dist/types/sdk.d.ts
++++ b/dist/types/sdk.d.ts
+@@ -191,6 +191,7 @@ export interface CreateAgentSessionOptions {
+      * true.
+      */
+     enableMCP?: boolean;
++    enableMcpApps?: boolean;
+     /** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
+     mcpManager?: MCPManager;
+     /** Enable LSP integration (tool, formatting, diagnostics, warmup). Default: true */
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 new file mode 100755
 index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ace39556d1
@@ -539,6 +562,52 @@ index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb
 +}
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
+diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
+index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
+--- a/dist/types/tools/browser.d.ts
++++ b/dist/types/tools/browser.d.ts
+@@ -1,3 +1,5 @@
++import type { AgentSession } from "../session/agent-session.js";
++import type { BrowserKindTag } from "./browser/registry.js";
+ import type { EvalPreludeDefinition } from "../eval/preludes.js";
+ import type { ToolSession } from "../sdk.js";
+ export { type AriaSnapshotOptions, buildAriaSnapshotScript, parseAriaRefSelector } from "./browser/aria/aria-snapshot.js";
+@@ -10,3 +12,35 @@ export type { Observation, ObservationEntry } from "./browser/tab-protocol.js";
+ export declare function createBrowserPrelude(session: ToolSession): EvalPreludeDefinition;
+ /** Drop headless tabs so a browser mode change applies to the next open. */
+ export declare function restartBrowserForModeChange(): Promise<void>;
++
++/** Supports an initial URL within the existing acquisition deadline. */
++export declare const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
++
++/** Explicit browser resource owner; no AgentSession is constructed by acquisition. */
++export interface BrowserTabCreationOwner {
++    readonly id: string;
++    readonly cwd: string;
++    readonly settings: ToolSession["settings"];
++    readonly signal: AbortSignal;
++}
++export declare const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
++export interface SessionBrowserTabCreateRequest {
++    readonly name: string;
++    readonly initialUrl?: string;
++}
++export interface SessionBrowserTabCreateResult {
++    readonly created: true;
++    readonly name: string;
++    readonly ownerSessionId: string;
++    readonly targetId: string;
++    readonly backend: "worker" | "cmux";
++    readonly kindTag: BrowserKindTag;
++    readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++    readonly url: string;
++    readonly title: string;
++    readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++export declare function createBrowserTabForOwner(owner: BrowserTabCreationOwner, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
++export declare function createBrowserTabForSession(session: AgentSession, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
++
++export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/src/blob-broker/uploaders-object-storage.ts b/src/blob-broker/uploaders-object-storage.ts
 index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906beeee2f0e 100644
 --- a/src/blob-broker/uploaders-object-storage.ts
@@ -1013,7 +1082,7 @@ index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d5547412
  	addedAt: string;
  	updatedAt: string;
 diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..262ed35508f2094ca2e920bad93cec7c0f1e02bb 100644
+index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0ed6abea78 100644
 --- a/src/mcp/client.ts
 +++ b/src/mcp/client.ts
 @@ -70,7 +70,7 @@ async function defaultRequestHandler(method: string, _params: unknown): Promise<
@@ -1034,7 +1103,33 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..262ed35508f2094ca2e920bad93cec7c
  		default:
  			throw new Error(`Unknown server type: ${serverType}`);
  	}
-@@ -161,7 +161,7 @@ export async function connectToServer(
+@@ -91,6 +91,8 @@ async function createTransport(config: MCPServerConfig): Promise<MCPTransport> {
+ async function initializeConnection(
+ 	transport: MCPTransport,
+ 	options?: {
++		/** Advertise the UI protocol only for a caller that supplies its host. */
++		enableApps?: boolean;
+ 		signal?: AbortSignal;
+ 		/** Called after notifications/initialized succeeds. */
+ 		onInitialized?: () => void | Promise<void>;
+@@ -100,6 +102,7 @@ async function initializeConnection(
+ 		protocolVersion: MCP_PROTOCOL_VERSION,
+ 		capabilities: {
+ 			roots: { listChanged: false },
++			...(options?.enableApps === true ? { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } } : {}),
+ 		},
+ 		clientInfo: CLIENT_INFO,
+ 	};
+@@ -151,6 +154,8 @@ export async function connectToServer(
+ 	name: string,
+ 	config: MCPServerConfig,
+ 	options?: {
++		/** Advertise the UI protocol only for a caller that supplies its host. */
++		enableApps?: boolean;
+ 		signal?: AbortSignal;
+ 		onNotification?: (method: string, params: unknown) => void;
+ 		onRequest?: (method: string, params: unknown) => Promise<unknown>;
+@@ -161,7 +166,7 @@ export async function connectToServer(
  	let transport: MCPTransport | undefined;
  
  	const connect = async (): Promise<MCPServerConnection> => {
@@ -1043,6 +1138,14 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..262ed35508f2094ca2e920bad93cec7c
  		if (options?.onNotification) {
  			transport.onNotification = options.onNotification;
  		}
+@@ -173,6 +178,7 @@ export async function connectToServer(
+ 
+ 		try {
+ 			const initResult = await initializeConnection(transport, {
++				enableApps: options?.enableApps,
+ 				signal: options?.signal,
+ 				async onInitialized() {
+ 					// Open the optional GET SSE stream only after the initialized
 diff --git a/src/mcp/errors.ts b/src/mcp/errors.ts
 index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6dab5207bb 100644
 --- a/src/mcp/errors.ts
@@ -1101,8 +1204,28 @@ index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6d
  }
  
  function errorCode(error: unknown): string | number | undefined {
+diff --git a/src/mcp/loader.ts b/src/mcp/loader.ts
+index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e316020f6dd 100644
+--- a/src/mcp/loader.ts
++++ b/src/mcp/loader.ts
+@@ -27,6 +27,7 @@ export interface MCPToolsLoadResult {
+ 
+ /** Options for loading MCP tools */
+ export interface MCPToolsLoadOptions {
++	enableApps?: boolean;
+ 	/** Called when MCP server connection state changes. */
+ 	onStatus?: (event: McpConnectionStatusEvent) => void;
+ 	/** Whether to load project-level config (default: true) */
+@@ -69,6 +70,7 @@ export async function discoverAndLoadMCPTools(cwd: string, options?: MCPToolsLoa
+ 	let result: MCPLoadResult;
+ 	try {
+ 		result = await manager.discoverAndConnect({
++			enableApps: options?.enableApps,
+ 			onStatus: options?.onStatus,
+ 			enableProjectConfig: options?.enableProjectConfig,
+ 			filterExa: options?.filterExa,
 diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac0b7d7fac 100644
+index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc889b45974 100644
 --- a/src/mcp/manager.ts
 +++ b/src/mcp/manager.ts
 @@ -7,7 +7,7 @@
@@ -1114,7 +1237,28 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac
  import type { EffectiveExtensionRoots, SourceMeta } from "../capability/types";
  import { resolveConfigValue } from "../config/resolve-config-value";
  import type { CustomTool } from "../extensibility/custom-tools/types";
-@@ -189,8 +189,19 @@ export interface MCPDiscoverOptions {
+@@ -175,8 +175,20 @@ export interface MCPLoadResult {
+ 	exaApiKeys: string[];
+ }
+ 
++/** App-only tools remain callable through their captured UI connection, never
++ * model wrappers (including deferred cached wrappers from an Apps session). */
++function modelVisibleTools(tools: MCPToolDefinition[]): MCPToolDefinition[] {
++	return tools.filter(tool => {
++		const ui = tool._meta?.ui;
++		const visibility = ui && typeof ui === "object" && !Array.isArray(ui) ? (ui as Record<string, unknown>).visibility : undefined;
++		return !Array.isArray(visibility) || visibility.includes("model");
++	});
++}
++
+ /** Options for discovering and connecting to MCP servers */
+ export interface MCPDiscoverOptions {
++	/** Owning host implements the MCP Apps UI protocol. Disabled by default. */
++	enableApps?: boolean;
+ 	/** Whether to load project-level config (default: true) */
+ 	enableProjectConfig?: boolean;
+ 	/** Whether to filter out Exa MCP servers (default: true) */
+@@ -189,8 +201,19 @@ export interface MCPDiscoverOptions {
  	onStatus?: (event: McpConnectionStatusEvent) => void;
  }
  
@@ -1135,26 +1279,39 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac
  
  /**
   * MCP Server Manager.
-@@ -696,7 +707,7 @@ export class MCPManager {
+@@ -610,6 +633,7 @@ export class MCPManager {
+ 			const connectionPromise = (async () => {
+ 				const resolvedConfig = await this.#resolveAuthConfig(config);
+ 				return connectToServer(name, resolvedConfig, {
++					enableApps: this.#discoverOptions?.enableApps,
+ 					onNotification: (method, params) => {
+ 						this.#handleServerNotification(name, method, params);
+ 					},
+@@ -696,9 +720,9 @@ export class MCPManager {
  				.then(async ({ connection, serverTools }) => {
  					if (this.#pendingToolLoads.get(name) !== toolsPromise) return;
  					this.#pendingToolLoads.delete(name);
 -					const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) =>
 +					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
  						this.reconnectServer(name, options);
- 					const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
+-					const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
++					const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
  					this.#replaceServerTools(name, customTools);
-@@ -773,7 +784,8 @@ export class MCPManager {
+ 					void this.#onToolsChanged?.(this.#tools);
+ 					void this.toolCache?.set(name, config, serverTools);
+@@ -773,8 +797,9 @@ export class MCPManager {
  					if (!value) continue;
  					const { connection, serverTools } = value;
  					connectedServers.add(name);
 -					const reconnect = () => this.reconnectServer(name);
+-					this.#replaceServerTools(name, MCPTool.fromTools(connection, serverTools, reconnect));
 +					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
 +						this.reconnectServer(name, options);
- 					this.#replaceServerTools(name, MCPTool.fromTools(connection, serverTools, reconnect));
++					this.#replaceServerTools(name, MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect));
  				} else if (task.tracked.status === "rejected") {
  					const message =
-@@ -784,7 +796,8 @@ export class MCPManager {
+ 						task.tracked.reason instanceof Error ? task.tracked.reason.message : String(task.tracked.reason);
+@@ -784,10 +809,11 @@ export class MCPManager {
  					const cached = cachedTools.get(name);
  					if (cached) {
  						const source = this.#sources.get(name);
@@ -1163,8 +1320,12 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac
 +							this.reconnectServer(name, options);
  						this.#replaceServerTools(
  							name,
- 							DeferredMCPTool.fromTools(name, cached, () => this.waitForConnection(name), source, reconnect),
-@@ -1107,7 +1120,7 @@ export class MCPManager {
+-							DeferredMCPTool.fromTools(name, cached, () => this.waitForConnection(name), source, reconnect),
++							DeferredMCPTool.fromTools(name, modelVisibleTools(cached), () => this.waitForConnection(name), source, reconnect),
+ 						);
+ 					}
+ 				}
+@@ -1107,7 +1133,7 @@ export class MCPManager {
  	 */
  	async reconnectServer(
  		name: string,
@@ -1173,7 +1334,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac
  	): Promise<MCPServerConnection | null> {
  		if (options?.manual) {
  			this.#reconnectHistory.delete(name);
-@@ -1120,7 +1133,7 @@ export class MCPManager {
+@@ -1120,7 +1146,7 @@ export class MCPManager {
  			return null;
  		}
  
@@ -1182,7 +1343,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac
  		this.#pendingReconnections.set(name, attempt);
  		return attempt.finally(() => {
  			if (this.#pendingReconnections.get(name) === attempt) {
-@@ -1172,89 +1185,118 @@ export class MCPManager {
+@@ -1172,89 +1198,118 @@ export class MCPManager {
  		return false;
  	}
  
@@ -1367,7 +1528,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac
  	}
  
  	/** Establish a new connection to a server, wire handlers, load tools. */
-@@ -1263,9 +1305,11 @@ export class MCPManager {
+@@ -1263,9 +1318,12 @@ export class MCPManager {
  		config: MCPServerConfig,
  		source: SourceMeta | undefined,
  		reconnectEpoch: number,
@@ -1375,32 +1536,37 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..dc226ea689a9a6a7fb06b4f46b36daac
  	): Promise<MCPServerConnection> {
  		const resolvedConfig = await this.#resolveAuthConfig(config);
  		const connection = await connectToServer(name, resolvedConfig, {
++			enableApps: this.#discoverOptions?.enableApps,
 +			signal,
  			onNotification: (method, params) => {
  				this.#handleServerNotification(name, method, params);
  			},
-@@ -1304,8 +1348,8 @@ export class MCPManager {
+@@ -1304,9 +1362,9 @@ export class MCPManager {
  			void this.reconnectServer(name);
  		};
  		try {
 -			const serverTools = await listTools(connection);
 -			const reconnect = (options?: { authChallenge?: MCPAuthChallenge }) => this.reconnectServer(name, options);
+-			const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
 +			const serverTools = await listTools(connection, { signal });
 +			const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
- 			const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
++			const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
  			void this.toolCache?.set(name, config, serverTools);
  			this.#replaceServerTools(name, customTools);
-@@ -1355,7 +1399,7 @@ export class MCPManager {
+ 			void this.#onToolsChanged?.(this.#tools);
+@@ -1355,8 +1413,8 @@ export class MCPManager {
  
  		// Reload tools
  		const serverTools = await listTools(connection);
 -		const reconnect = () => this.reconnectServer(name);
+-		const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
 +		const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
- 		const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
++		const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
  		void this.toolCache?.set(name, connection.config, serverTools);
  
+ 		// Replace tools from this server
 diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
-index 955b72489bcae7bb44723fd42a7075141311f40c..679ec59ae222397cac48056509532c0c20df24d7 100644
+index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b464568a987 100644
 --- a/src/mcp/tool-bridge.ts
 +++ b/src/mcp/tool-bridge.ts
 @@ -33,7 +33,7 @@ import type {
@@ -1412,7 +1578,39 @@ index 955b72489bcae7bb44723fd42a7075141311f40c..679ec59ae222397cac48056509532c0c
  
  /**
   * Network-level and stale-session errors that warrant a reconnect + single retry.
-@@ -385,10 +385,10 @@ function rethrowIfAborted(error: unknown, signal?: AbortSignal): void {
+@@ -194,6 +194,12 @@ export interface MCPToolDetails {
+ 	rawContent?: MCPContent[];
+ 	/** Structured metadata from the MCP response */
+ 	mcpMeta?: Record<string, unknown>;
++	/** Exact structured MCP response, retained separately from model-visible text. */
++	structuredContent?: Record<string, unknown>;
++	/** Tool metadata captured before this invocation, never a later catalogue lookup. */
++	mcpToolMeta?: Record<string, unknown>;
++	/** Effective protocol arguments after native input preparation. */
++	mcpArguments?: Record<string, unknown>;
+ 	/** Provider ID (e.g., "claude", "mcp-json") */
+ 	provider?: string;
+ 	/** Provider display name (e.g., "Claude Code", "MCP Config") */
+@@ -282,6 +288,8 @@ function buildResult(
+ 	mcpToolName: string,
+ 	provider?: string,
+ 	providerName?: string,
++	mcpToolMeta?: Record<string, unknown>,
++	mcpArguments?: Record<string, unknown>,
+ ): CustomToolResult<MCPToolDetails> {
+ 	const content = formatMCPContent(result.content);
+ 	const details: MCPToolDetails = {
+@@ -290,6 +298,9 @@ function buildResult(
+ 		isError: result.isError,
+ 		rawContent: result.content,
+ 		mcpMeta: result._meta,
++		structuredContent: result.structuredContent,
++		mcpToolMeta,
++		mcpArguments,
+ 		provider,
+ 		providerName,
+ 	};
+@@ -385,10 +396,10 @@ function rethrowIfAborted(error: unknown, signal?: AbortSignal): void {
  async function reconnectWithAbort(
  	reconnect: MCPReconnect,
  	signal?: AbortSignal,
@@ -1425,6 +1623,67 @@ index 955b72489bcae7bb44723fd42a7075141311f40c..679ec59ae222397cac48056509532c0c
  	} catch (error) {
  		rethrowIfAborted(error, signal);
  		return null;
+@@ -587,6 +598,7 @@ export class MCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 		signal?: AbortSignal,
+ 	): Promise<CustomToolResult<MCPToolDetails>> {
+ 		throwIfAborted(signal);
++		const toolMetadata = this.tool._meta === undefined ? undefined : structuredClone(this.tool._meta);
+ 		const args = await prepareOutboundArgs(params, this.tool.inputSchema, _ctx);
+ 		const provider = this.connection._source?.provider;
+ 		const providerName = this.connection._source?.providerName;
+@@ -612,6 +624,8 @@ export class MCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 				this.tool.name,
+ 				attempt.connection._source?.provider ?? provider,
+ 				attempt.connection._source?.providerName ?? providerName,
++				toolMetadata,
++				args,
+ 			);
+ 		} catch (error) {
+ 			rethrowIfAborted(error, signal);
+@@ -624,7 +638,7 @@ export class MCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 					const retryProviderName = newConn._source?.providerName ?? providerName;
+ 					try {
+ 						const result = await callTool(newConn, this.tool.name, args, { signal });
+-						return buildResult(result, newConn.name, this.tool.name, retryProvider, retryProviderName);
++						return buildResult(result, newConn.name, this.tool.name, retryProvider, retryProviderName, toolMetadata, args);
+ 					} catch (retryError) {
+ 						rethrowIfAborted(retryError, signal);
+ 						return buildErrorResult(
+@@ -707,6 +721,7 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 		signal?: AbortSignal,
+ 	): Promise<CustomToolResult<MCPToolDetails>> {
+ 		throwIfAborted(signal);
++		const toolMetadata = this.tool._meta === undefined ? undefined : structuredClone(this.tool._meta);
+ 		const args = await prepareOutboundArgs(params, this.tool.inputSchema, _ctx);
+ 		const provider = this.#fallbackProvider;
+ 		const providerName = this.#fallbackProviderName;
+@@ -740,6 +755,8 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 					this.tool.name,
+ 					attempt.connection._source?.provider ?? provider,
+ 					attempt.connection._source?.providerName ?? providerName,
++					toolMetadata,
++					args,
+ 				);
+ 			} catch (callError) {
+ 				rethrowIfAborted(callError, signal);
+@@ -750,7 +767,7 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 						const retryProviderName = newConn._source?.providerName ?? providerName;
+ 						try {
+ 							const result = await callTool(newConn, this.tool.name, args, { signal });
+-							return buildResult(result, this.serverName, this.tool.name, retryProvider, retryProviderName);
++							return buildResult(result, this.serverName, this.tool.name, retryProvider, retryProviderName, toolMetadata, args);
+ 						} catch (retryError) {
+ 							rethrowIfAborted(retryError, signal);
+ 							return buildErrorResult(
+@@ -781,6 +798,8 @@ export class DeferredMCPTool implements CustomTool<TSchema, MCPToolDetails> {
+ 							this.tool.name,
+ 							newConn._source?.provider ?? provider,
+ 							newConn._source?.providerName ?? providerName,
++							toolMetadata,
++							args,
+ 						);
+ 					} catch (retryError) {
+ 						rethrowIfAborted(retryError, signal);
 diff --git a/src/mcp/transports/http.ts b/src/mcp/transports/http.ts
 index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd14ad42e4 100644
 --- a/src/mcp/transports/http.ts
@@ -1542,251 +1801,39 @@ index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73
 +	await transport.connect(signal);
  	return transport;
  }
-diff --git a/src/tools/browser.ts b/src/tools/browser.ts
-index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
---- a/src/tools/browser.ts
-+++ b/src/tools/browser.ts
-@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
- import { untilAborted } from "@oh-my-pi/pi-utils";
- import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
- import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
-+import type { AgentSession } from "../session/agent-session";
- import type { ToolSession } from "../sdk";
- import { enforceInlineByteCap } from "../session/streaming-output";
- // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
-@@ -25,11 +26,13 @@ import type { OutputMeta } from "./output-meta";
- import {
- 	type AcquireTabResult,
- 	acquireTab,
-+	BrowserTabCreateRejected,
- 	dropHeadlessTabs,
- 	getTab,
- 	releaseAllTabs,
- 	releaseTab,
- 	runInTab,
-+	type TabSession,
- } from "./browser/tab-supervisor";
- import { renderTabCall } from "./browser/tab-call";
- import { resolveToCwd } from "./path-utils";
-@@ -44,6 +47,7 @@ export { CmuxSocketClient } from "./browser/cmux/socket-client";
- export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
- export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
- export type { Observation, ObservationEntry } from "./browser/tab-protocol";
-+export { BrowserTabCreateRejected, BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor";
+diff --git a/src/mcp/types.ts b/src/mcp/types.ts
+index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8e7ea9a41 100644
+--- a/src/mcp/types.ts
++++ b/src/mcp/types.ts
+@@ -187,6 +187,7 @@ export interface MCPImplementation {
  
- const DEFAULT_TAB_NAME = "main";
- const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
-@@ -97,7 +101,43 @@ interface BrowserPreludeDetails {
- 	value?: unknown;
- }
+ /** MCP client capabilities */
+ export interface MCPClientCapabilities {
++	extensions?: Record<string, unknown>;
+ 	roots?: { listChanged?: boolean };
+ 	sampling?: Record<string, never>;
+ 	experimental?: Record<string, unknown>;
+diff --git a/src/sdk.ts b/src/sdk.ts
+index d647c7908f246ebd2edefe00f427d20378b22d30..6c1978fd9477c89f8f4dfef58423f3e9924d4745 100644
+--- a/src/sdk.ts
++++ b/src/sdk.ts
+@@ -540,6 +540,8 @@ export interface CreateAgentSessionOptions {
+ 	 * true.
+ 	 */
+ 	enableMCP?: boolean;
++	/** Opt in only when the session owner provides an MCP Apps host. */
++	enableMcpApps?: boolean;
+ 	/** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
+ 	mcpManager?: MCPManager;
  
--function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
-+type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
-+
-+/** Supports an initial URL within the existing acquisition deadline. */
-+export const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
-+
-+/** Explicit native browser resource ownership, independent of AgentSession.
-+ * The owning host retires this lifetime by aborting signal. */
-+export interface BrowserTabCreationOwner {
-+	readonly id: string;
-+	readonly cwd: string;
-+	readonly settings: ToolSession["settings"];
-+	readonly signal: AbortSignal;
-+}
-+
-+export const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
-+
-+export interface SessionBrowserTabCreateRequest {
-+	/** New managed OMP tab name. Existing names are rejected atomically. */
-+	readonly name: string;
-+	readonly initialUrl?: string;
-+}
-+
-+export interface SessionBrowserTabCreateResult {
-+	readonly created: true;
-+	readonly name: string;
-+	readonly ownerSessionId: string;
-+	readonly targetId: string;
-+	readonly backend: TabSession["backend"];
-+	readonly kindTag: BrowserKindTag;
-+	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
-+	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
-+	readonly url: string;
-+	readonly title: string;
-+	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-+}
-+
-+function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
- 	const app = params.app;
- 	if (app?.cdp_url) {
- 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
-@@ -201,11 +241,35 @@ async function openBrowser(
- 	timeoutMs: number,
- 	signal?: AbortSignal,
- ): Promise<AgentToolResult<unknown>> {
-+	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
-+	details.browser = browser.kind.kind;
-+	const tab = result.tab;
-+	const url = tab.info.url;
-+	const title = tab.info.title ?? "";
-+	details.url = url;
-+	details.viewport = tab.info.viewport;
-+	const verb = result.created ? "Opened" : "Reused";
-+	const lines = [
-+		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
-+		`URL: ${url}`,
-+		title ? `Title: ${title}` : null,
-+	].filter((line): line is string => typeof line === "string");
-+	return toolResult(details).text(lines.join("\n")).done();
-+}
-+
-+async function acquireBrowserTab(
-+	session: BrowserOpenSession,
-+	name: string,
-+	params: BrowserParams,
-+	timeoutMs: number,
-+	signal?: AbortSignal,
-+	createOnly = false,
-+): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
- 	const kind = resolveBrowserKind(params, session);
--	details.browser = kind.kind;
- 
- 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
- 	const existing = getTab(name);
-+	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
- 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
- 		throw new ToolError(
- 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
-@@ -267,6 +331,7 @@ async function openBrowser(
- 					dialogs: params.dialogs,
- 					signal: openSignal,
- 					ownerSessionId: session.getSessionId?.() ?? undefined,
-+					createOnly,
- 				}),
- 			);
- 		} catch (error) {
-@@ -277,18 +342,7 @@ async function openBrowser(
- 		}
- 		await releaseBrowser(browser, { kill: false });
- 
--		const tab = result.tab;
--		const url = tab.info.url;
--		const title = tab.info.title ?? "";
--		details.url = url;
--		details.viewport = tab.info.viewport;
--		const verb = result.created ? "Opened" : "Reused";
--		const lines = [
--			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
--			`URL: ${url}`,
--			title ? `Title: ${title}` : null,
--		].filter((line): line is string => typeof line === "string");
--		return toolResult(details).text(lines.join("\n")).done();
-+		return { browser, result };
- 	} catch (error) {
- 		// Caller cancellation stays a ToolAbortError; the requested timeout
- 		// becomes a timeout ToolError; anything else passes through unchanged.
-@@ -298,6 +352,100 @@ async function openBrowser(
- 	}
- }
- 
-+/**
-+ * Create one managed browser tab directly for an actual AgentSession. This is
-+ * an explicit human resource action: it reads the live native browser settings
-+ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
-+ * conversation transcript.
-+ */
-+export async function createBrowserTabForSession(
-+	session: AgentSession,
-+	request: SessionBrowserTabCreateRequest,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	validateBrowserTabCreateRequest(request);
-+	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
-+	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
-+	const ownerSessionId = session.sessionManager.getSessionId();
-+	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
-+	return createOwnedBrowserTab({
-+		cwd: session.sessionManager.getCwd(), settings: session.settings, getSessionId: () => ownerSessionId,
-+	}, ownerSessionId, request, () => !session.isDisposed && session.sessionManager.getSessionId() === ownerSessionId,
-+		"The native session changed while creating its browser tab");
-+}
-+
-+/** Acquire through the configured native backend without constructing a session.
-+ * This does not allocate, transfer or persist an owner; the host owns that lifecycle. */
-+export async function createBrowserTabForOwner(
-+	owner: BrowserTabCreationOwner,
-+	request: SessionBrowserTabCreateRequest,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	validateBrowserTabCreateRequest(request);
-+	if (!owner || typeof owner.id !== "string" || !owner.id || owner.id.length > 200
-+		|| /[\u0000-\u001f\u007f]/.test(owner.id) || typeof owner.cwd !== "string" || !owner.cwd
-+		|| !(owner.signal instanceof AbortSignal)) {
-+		throw new BrowserTabCreateRejected("Native browser creation requires an explicit owner and lifetime");
-+	}
-+	const { id, cwd, settings, signal } = owner;
-+	if (signal.aborted) throw new BrowserTabCreateRejected("The native browser owner is retired");
-+	if (!settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled for this owner");
-+	return createOwnedBrowserTab({ cwd, settings, getSessionId: () => id }, id, request, () => !signal.aborted,
-+		"The native browser owner retired while creating its browser tab", signal);
-+}
-+
-+function validateBrowserTabCreateRequest(request: SessionBrowserTabCreateRequest): void {
-+	if (
-+		!request ||
-+		typeof request.name !== "string" ||
-+		request.name.length === 0 ||
-+		request.name.length > 200 ||
-+		/[\u0000-\u001f\u007f]/.test(request.name)
-+	) {
-+		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
-+	}
-+	if (request.initialUrl !== undefined) {
-+		try {
-+			if (typeof request.initialUrl !== "string" || request.initialUrl.length > 8192 || /[\u0000-\u0020]/.test(request.initialUrl)) throw new Error();
-+			const url = new URL(request.initialUrl);
-+			if (!["http:", "https:"].includes(url.protocol) && request.initialUrl !== "about:blank") throw new Error();
-+		} catch { throw new BrowserTabCreateRejected("Invalid initial browser address"); }
-+	}
-+}
-+
-+async function createOwnedBrowserTab(
-+	nativeSession: BrowserOpenSession,
-+	ownerSessionId: string,
-+	request: SessionBrowserTabCreateRequest,
-+	isCurrent: () => boolean,
-+	changedMessage: string,
-+	signal?: AbortSignal,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	const timeoutMs = clampTimeout("browser", undefined, nativeSession.settings.get("tools.maxTimeout")) * 1_000;
-+	const params = { action: "open", name: request.name, ...(request.initialUrl === undefined ? {} : { url: request.initialUrl }) } as BrowserParams;
-+	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, signal, true);
-+	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
-+	if (!isCurrent()) {
-+		// Only the exact tab returned by this acquisition may be cleaned up. A
-+		// same-name replacement belongs to its own caller, even after retirement.
-+		if (getTab(result.tab.name) === result.tab) await releaseTab(result.tab.name, { kill: true, timeoutMs });
-+		throw new ToolError(changedMessage);
-+	}
-+	const tab = result.tab;
-+	const targetDisposition = tab.kindTag === "headless" ? "created-page"
-+		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
-+	return Object.freeze({
-+		created: true,
-+		name: tab.name,
-+		ownerSessionId,
-+		targetId: tab.targetId,
-+		backend: tab.backend,
-+		kindTag: tab.kindTag,
-+		targetDisposition,
-+		url: tab.info.url,
-+		title: tab.info.title ?? "",
-+		viewport: Object.freeze({ ...tab.info.viewport }),
-+	});
-+}
-+
- async function closeBrowser(
- 	name: string,
- 	params: BrowserParams,
+@@ -2005,6 +2007,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 				configuredLevel: settings.extensionsSourceLevel(),
+ 			}));
+ 		const mcpDiscoverOptions = {
++			enableApps: options.enableMcpApps === true,
+ 			onStatus: onMCPStatus,
+ 			enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
+ 			// Always filter Exa - we have native integration
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts
 new file mode 100755
 index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd781508d8205f5
@@ -2926,10 +2973,10 @@ index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da0
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6bbba5cf876717ac2d6d0412f1a1a81f6f469bc0
+index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d338494fe8
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,300 @@
 +import type { Browser, ConnectionTransport } from "puppeteer-core";
 +import type { CdpBrowser } from "puppeteer-core/internal/cdp/Browser.js";
 +import type { Connection } from "puppeteer-core/internal/cdp/Connection.js";
@@ -3210,12 +3257,14 @@ index 0000000000000000000000000000000000000000..6bbba5cf876717ac2d6d0412f1a1a81f
 +			try {
 +				if (!this.#connection._closed) await this.#connection.send("Target.detachFromTarget", { sessionId: this.#root.id() }, { timeout: this.#timeoutMs });
 +			} catch (error) { this.#failures.push(error); }
-+			finally { await Promise.all(pending); }
++			// A suspended child request has no reply path after root detach. Closing each
++			// captured child settles its native request before the joined drain.
 +			for (const session of owned) {
 +				try { if (!session.detached) session.onClosed(); } catch (error) { this.#failures.push(error); }
 +				this.#forget(session.id());
 +				if (this.#connection._session(session.id()) === session) this.#connection._sessions.delete(session.id());
 +			}
++			await Promise.all(pending);
 +			if (this.#failures.length) gate.reject(new AggregateError([...this.#failures], "Owned browser transport cleanup failed"));
 +			else gate.resolve();
 +		})();
@@ -4551,7 +4600,7 @@ index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0
 +	};
 +}
 diff --git a/src/tools/browser/tab-protocol.ts b/src/tools/browser/tab-protocol.ts
-index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c813f49b18f 100644
+index 98cbe214ebfd047d98aaa566e539dcf285fbd684..80be7e60d1430e30e7d783a9352fa4f78788aa9d 100644
 --- a/src/tools/browser/tab-protocol.ts
 +++ b/src/tools/browser/tab-protocol.ts
 @@ -1,4 +1,5 @@
@@ -4598,7 +4647,7 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  			safeDir: string;
  			targetId: string;
  			dialogs?: "accept" | "dismiss";
-@@ -75,16 +92,18 @@ export type WorkerInitPayload =
+@@ -75,16 +92,19 @@ export type WorkerInitPayload =
  			 * behaves as `true`; the supervisor clears it for browsers we did not launch.
  			 */
  			activateForScreenshot?: boolean;
@@ -4613,12 +4662,13 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  	| { type: "init"; payload: WorkerInitPayload }
  	| { type: "run"; id: string; name: string; code: string; timeoutMs: number; session: SessionSnapshot }
  	| { type: "abort"; id: string; expectedCleanup?: boolean }
++	| { type: "stop-navigation"; id: string }
  	| { type: "tool-reply"; id: string; reply: ToolReply }
 +	| { type: "retire" }
  	| { type: "close" };
  
  export interface ReadyInfo {
-@@ -111,6 +130,7 @@ export interface RunErrorPayload {
+@@ -111,6 +131,7 @@ export interface RunErrorPayload {
  }
  
  export type WorkerOutbound =
@@ -4626,8 +4676,11 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  	| {
  			/**
  			 * Puppeteer loaded, browser connected. Sent before page acquisition so the supervisor's cold-start budget
-@@ -134,7 +154,7 @@ export type WorkerOutbound =
+@@ -132,9 +153,10 @@ export type WorkerOutbound =
+ 	| { type: "init-failed"; error: RunErrorPayload }
+ 	| { type: "result"; id: string; ok: true; payload: RunResultOk }
  	| { type: "result"; id: string; ok: false; error: RunErrorPayload }
++	| { type: "navigation-stopped"; id: string; ok: true; result: unknown } | { type: "navigation-stopped"; id: string; ok: false; error: RunErrorPayload }
  	| { type: "tool-call"; id: string; runId: string; name: string; args: unknown }
  	| { type: "log"; level: "debug" | "warn" | "error"; msg: string; meta?: Record<string, unknown> }
 -	| { type: "closed" };
@@ -4636,10 +4689,10 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  export interface Transport {
  	send(msg: WorkerOutbound | WorkerInbound, transferList?: Transferable[]): void;
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc094f7975f 100644
+index c6b8dd5f4d2217a615c0058f4129f9d3322456af..c9625b69a48c5cbd7a286b577bdca7eaf67d3b21 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
-@@ -5,18 +5,22 @@ import {
+@@ -5,18 +5,23 @@ import {
  	postmortem,
  	Snowflake,
  	withTimeout,
@@ -4655,7 +4708,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  import { ToolAbortError, ToolError } from "../tool-errors";
  import { pickElectronTarget, shouldPreserveConnectedBrowserFocus } from "./attach";
 -import { CmuxTab, runCmuxCode } from "./cmux/cmux-tab";
-+import { CmuxTab, drainCmuxRun, runCmuxCodeWithContext } from "./cmux/cmux-tab";
++import { CmuxTab, createRetainedCmuxTab, drainCmuxRun, runCmuxCodeWithContext, type CmuxRetainedState } from "./cmux/cmux-tab";
 +import { createCmuxEvaluationChannel, type CmuxEvaluationChannel } from "./cmux/evaluation-channel";
 +import { createCdpEvaluationOpening, type CdpEvaluationOpening, type CdpEvaluationChannel } from "./cdp-evaluation-channel";
 +import { createBrowserRunContext, type BrowserRunContext } from "./run-context";
@@ -4665,10 +4718,11 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  import { DEFAULT_VIEWPORT } from "./launch";
 +import { captureOwnedCdpTransport, type OwnedCdpTransport } from "./owned-cdp-transport";
 +import { spawnTabWorker, spawnInlineWorker, type WorkerHandle } from "./tab-worker-host";
++import { WorkerCdpChannel, type WorkerCdpFrame } from "./worker-cdp-channel";
  import { closeCdpTarget, forgetSharedTarget, recordSharedTarget, type SharedTargetScope } from "./orphan-registry";
  import {
  	type BrowserHandle,
-@@ -31,8 +35,6 @@ import type {
+@@ -31,8 +36,6 @@ import type {
  	RunErrorPayload,
  	RunResultOk,
  	SessionSnapshot,
@@ -4677,7 +4731,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	WorkerInbound,
  	WorkerInitPayload,
  	WorkerOutbound,
-@@ -41,20 +43,12 @@ import type {
+@@ -41,20 +44,12 @@ import type {
  // Coding-agent binary/bundle workers route through the CLI entrypoint with a
  // hidden argv mode, so compiled/npm builds only need one JavaScript entry.
  
@@ -4699,7 +4753,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	signal?: AbortSignal;
  	toolCalls: Map<string, AbortController>;
  	/**
-@@ -87,9 +81,74 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
+@@ -87,9 +82,74 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
  	ownerSessionId?: string;
  }
  
@@ -4751,7 +4805,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +
 +export type OwnerTabHumanAction =
 +	| { readonly type: "navigate"; readonly url: string }
-+	| { readonly type: "reload" | "back" | "forward" }
++	| { readonly type: "reload" | "back" | "forward" | "stop" }
 +	| { readonly type: "click"; readonly x: number; readonly y: number; readonly button?: MouseButton; readonly clickCount?: 1 | 2 | 3 }
 +	| { readonly type: "wheel"; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number }
 +	| { readonly type: "resize"; readonly width: number; readonly height: number }
@@ -4774,7 +4828,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	activateForScreenshot: boolean;
  }
  
-@@ -126,6 +185,8 @@ export interface AcquireTabOptions {
+@@ -126,6 +186,8 @@ export interface AcquireTabOptions {
  	 * dispose. Optional — omitting it opts the tab out of session-scoped reap.
  	 */
  	ownerSessionId?: string;
@@ -4783,7 +4837,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  }
  
  export interface AcquireTabResult {
-@@ -146,7 +207,76 @@ export interface ReleaseTabOptions {
+@@ -146,7 +208,163 @@ export interface ReleaseTabOptions {
  	timeoutMs?: number;
  }
  
@@ -4793,6 +4847,84 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +}
 +
  const tabs = new Map<string, TabSession>();
++
++type RetainedSessionTab = {
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly sourceOwnerId: string;
++	readonly operationId: string;
++	readonly targetId: string;
++	readonly kindTag: BrowserKindTag;
++	readonly safeDir: string;
++	readonly backend: "worker" | "cmux";
++	readonly info: ReadyInfo;
++	readonly pending: Map<string, PendingRun>;
++	state: "alive" | "dead";
++	worker?: WorkerHandle;
++	cmuxTab?: CmuxTab;
++	dispose(): Promise<void>;
++};
++const retainedSessionTabs = new Map<string, RetainedSessionTab>();
++
++export type RetainedBrowserEvaluationInstall = {
++	readonly ownerSessionId: string;
++	readonly sourceOwnerId: string;
++	readonly operationId: string;
++	readonly name: string;
++	readonly targetId: string;
++	readonly kindTag: BrowserKindTag;
++	readonly safeDir: string;
++	readonly backend: "cdp" | "cmux";
++	readonly descriptor?: Readonly<{ version: 1; channel: string; targetId: string; activateForScreenshot: boolean; dialogs?: DialogPolicy }>;
++	readonly state?: Readonly<CmuxRetainedState>;
++};
++export type RetainedBrowserEvaluationTransport = {
++	post(frame: WorkerCdpFrame): void;
++	installReceiver?(receive: (frame: WorkerCdpFrame) => void): void;
++	request(method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<Record<string, unknown>>;
++};
++
++/** Install one fresh evaluator in the destination session process. The caller
++ * owns the original browser resource and transports; this never reconnects,
++ * creates a target, navigates, or changes its creator identity. */
++export async function installRetainedBrowserEvaluation(
++	input: RetainedBrowserEvaluationInstall,
++	transport: RetainedBrowserEvaluationTransport,
++): Promise<{ receive(frame: WorkerCdpFrame): void; dispose(): Promise<void> }> {
++	if (!input.ownerSessionId || !input.sourceOwnerId || !input.operationId || !input.name || !input.targetId || !input.safeDir
++		|| retainedSessionTabs.has(input.name) || tabs.has(input.name)) throw new ToolError("Invalid retained browser evaluator installation");
++	let receive = (_frame: WorkerCdpFrame): void => { throw new ToolError("Retained CDP evaluator is not installed"); };
++	let tab: RetainedSessionTab;
++	if (input.backend === "cdp") {
++		const descriptor = input.descriptor;
++		if (!descriptor || descriptor.version !== 1 || descriptor.targetId !== input.targetId || !descriptor.channel) throw new ToolError("Invalid retained CDP evaluator descriptor");
++		const channel = new WorkerCdpChannel(descriptor.channel, frame => transport.post(structuredClone(frame)));
++		transport.installReceiver?.(frame => { if (!channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); });
++		const owned = Object.assign(channel, { startupCreations: Object.freeze([]), finishStartup() {} }) as OwnedCdpTransport;
++		const worker = await spawnTabWorker(owned, descriptor.channel);
++		let info: ReadyInfo;
++		try {
++			info = await initializeTabWorker(worker, { mode: "retained", cdpChannel: descriptor.channel, safeDir: input.safeDir,
++				targetId: input.targetId, timeoutMs: 30_000, activateForScreenshot: descriptor.activateForScreenshot,
++				...(descriptor.dialogs === undefined ? {} : { dialogs: descriptor.dialogs }) }, 30_000);
++			worker.finishStartup();
++		} catch (error) { await worker.abort(error instanceof Error ? error : new Error(String(error))).catch(() => {}); throw error; }
++		tab = { ...input, backend: "worker", info, pending: new Map(), state: "alive", worker,
++			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await worker.terminate(); } };
++		worker.onMessage(message => handleTabMessage(tab as unknown as WorkerTabSession, message));
++		receive = frame => { if (tab.state === "alive" && !channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); };
++	} else {
++		if (!input.state || input.state.surfaceId !== input.targetId) throw new ToolError("Invalid retained cmux evaluator state");
++		const cmuxTab = createRetainedCmuxTab(input.state, { request: transport.request.bind(transport) });
++		const viewport = input.state.viewport;
++		tab = { ...input, backend: "cmux", info: { targetId: input.targetId, url: input.state.url, title: input.state.title ?? "",
++			viewport: { width: viewport.width, height: viewport.height, ...(viewport.deviceScaleFactor === undefined ? {} : { deviceScaleFactor: viewport.deviceScaleFactor }) } },
++			pending: new Map(), state: "alive", cmuxTab,
++			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await drainCmuxRun(cmuxTab); } };
++	}
++	retainedSessionTabs.set(input.name, tab);
++	return Object.freeze({ receive, dispose: async () => { if (retainedSessionTabs.get(input.name) === tab) retainedSessionTabs.delete(input.name); await tab.dispose(); } });
++}
 +// Original capture belongs to the exact native tab object, never its reusable name.
 +interface CapturedTabObservation {
 +	inspect(targetId: string): Promise<"present" | "absent">;
@@ -4857,10 +4989,19 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +}
 +const viewportCaptures = new Map<string, Promise<Readonly<OwnerTabViewportCapture>>>();
 +const humanActions = new Map<string, Promise<Readonly<OwnerTabHumanActionResult>>>();
++type StoppedNavigationObservation={context:OwnerTabDocumentContext;url:string;title:string};
++type ActiveOwnerNavigation = { ownerSessionId:string; targetId:string; entryId:number; stopRequested:boolean; stopped:Promise<StoppedNavigationObservation>; settleStopped(value:StoppedNavigationObservation):void; stop():Promise<StoppedNavigationObservation>; pending?:Promise<Readonly<OwnerTabHumanActionResult>> };
++const activeOwnerNavigations = new Map<string,ActiveOwnerNavigation>();
++const activeNavigation=(ownerSessionId:string,targetId:string,entryId:number,stop:()=>Promise<StoppedNavigationObservation>):ActiveOwnerNavigation=>{const stopped=Promise.withResolvers<StoppedNavigationObservation>();return{ownerSessionId,targetId,entryId,stopRequested:false,stopped:stopped.promise,settleStopped:stopped.resolve,stop}};
++const workerNavigationStops = new WeakMap<WorkerHandle,Map<string,ReturnType<typeof Promise.withResolvers<StoppedNavigationObservation>>>>();
++async function stopWorkerNavigation(worker:WorkerHandle):Promise<StoppedNavigationObservation>{
++	const id=Snowflake.next(),done=Promise.withResolvers<StoppedNavigationObservation>(),pending=workerNavigationStops.get(worker)??new Map();workerNavigationStops.set(worker,pending);pending.set(id,done);
++	try{worker.send({type:"stop-navigation",id});return await withTimeout(done.promise,5_000,"Timed out stopping browser navigation")}finally{pending.delete(id)}
++}
  // Headless targets a worker created before dying during init (page-created).
  // A killed worker can't close its own page; the supervisor closes the
  // recorded target instead. A shared browser's other targets must never be
-@@ -168,7 +298,6 @@ const SETUP_BUDGET_CAP_MS = 10_000;
+@@ -168,7 +386,6 @@ const SETUP_BUDGET_CAP_MS = 10_000;
  // Floor for the ready-phase budget: the 2s setup floor can consume more than
  // a sub-3s caller's entire init budget, so the remaining-budget math must
  // never hand raceWithTimeout a non-positive value.
@@ -4868,7 +5009,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  // Names of tabs the supervisor force-killed (timeout past grace, failed recycle),
  // mapped to the kill reason. Lets the next `run` on that name explain WHY the tab
  // vanished instead of a bare "not alive". Cleared when the name is opened again.
-@@ -203,23 +332,239 @@ async function waitForTabCleanup<T>(
+@@ -203,23 +420,240 @@ async function waitForTabCleanup<T>(
  	}
  }
  
@@ -5069,6 +5210,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	let workerOwner: WorkerConnectionOwner | undefined;
 +	const request = { ...opts, viewport: opts.viewport ? { ...opts.viewport } : undefined, deadlineStartMs: opts.deadlineStartMs ?? performance.now() };
 +	try {
++		if (retainedSessionTabs.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is a retained original browser evaluator`);
 +		assertTabNotReserved(name);
 +		if ("client" in browser) cmuxClient = captureCmuxTabClient(browser);
 +		else workerOwner = captureWorkerConnection(browser);
@@ -5112,7 +5254,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		},
  		async error => {
  			await releaseBrowser(browser, { kill: false }).catch(() => undefined);
-@@ -241,7 +586,12 @@ async function acquireTabImpl(
+@@ -241,7 +675,12 @@ async function acquireTabImpl(
  	name: string,
  	browser: BrowserHandle,
  	opts: AcquireTabOptions,
@@ -5125,7 +5267,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	// Worker-init deadline: the inline-fallback retry passes this same start
  	// so it can't restart the budget (which would let a cold import that
  	// consumed most of it spend the phase floors again for another full
-@@ -261,6 +611,7 @@ async function acquireTabImpl(
+@@ -261,6 +700,7 @@ async function acquireTabImpl(
  	// to reuse (e.g. reopening the sole tab with a different dialogs policy).
  	let tempHold = false;
  	const existing = tabs.get(name);
@@ -5133,7 +5275,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	if (existing) {
  		if (existing.browser === browser && existing.state === "alive") {
  			const requestedCmuxSurface = "client" in browser ? (opts.cmuxSurface ?? browser.surface) : undefined;
-@@ -273,6 +624,13 @@ async function acquireTabImpl(
+@@ -273,6 +713,13 @@ async function acquireTabImpl(
  				tempHold = true;
  				await releaseTab(name, { kill: false });
  			} else {
@@ -5147,7 +5289,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  				const reuseSteps: string[] = [];
  				if (opts.viewport && browser.kind.kind !== "cmux") {
  					const dsf = opts.viewport.deviceScaleFactor;
-@@ -286,14 +644,14 @@ async function acquireTabImpl(
+@@ -286,14 +733,14 @@ async function acquireTabImpl(
  					);
  				}
  				if (reuseSteps.length) {
@@ -5164,7 +5306,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  					);
  				}
  				return { tab: tabs.get(name)!, created: false };
-@@ -309,7 +667,8 @@ async function acquireTabImpl(
+@@ -309,7 +756,8 @@ async function acquireTabImpl(
  
  	if ("client" in browser) {
  		try {
@@ -5174,7 +5316,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  			if (tempHold) await releaseBrowser(browser, { kill: false });
  			return result;
  		} catch (error) {
-@@ -317,87 +676,58 @@ async function acquireTabImpl(
+@@ -317,87 +765,58 @@ async function acquireTabImpl(
  			throw error;
  		}
  	}
@@ -5299,7 +5441,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		state: "alive",
  		info,
  		pending: new Map(),
-@@ -407,6 +737,7 @@ async function acquireTabImpl(
+@@ -407,6 +826,7 @@ async function acquireTabImpl(
  		ownerSessionId: opts.ownerSessionId,
  	};
  	worker.onMessage(msg => handleTabMessage(tab, msg));
@@ -5307,7 +5449,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	tabs.set(name, tab);
  	// Durably record ownership so another live omp process can reap this page if
  	// this process dies abnormally before its own teardown closes the tab.
-@@ -415,10 +746,222 @@ async function acquireTabImpl(
+@@ -415,10 +835,222 @@ async function acquireTabImpl(
  	return { tab, created: true };
  }
  
@@ -5530,7 +5672,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  ): Promise<AcquireTabResult> {
  	const attachedSurface = opts.cmuxSurface ?? browser.surface;
  	if (attachedSurface?.startsWith("surface:")) {
-@@ -427,15 +970,19 @@ async function acquireCmuxTab(
+@@ -427,15 +1059,19 @@ async function acquireCmuxTab(
  		);
  	}
  
@@ -5551,7 +5693,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  			if (typeof result.surface_id !== "string" || result.surface_id.length === 0) {
  				throw new ToolError("cmux browser.open_split did not return a surface_id");
  			}
-@@ -443,7 +990,7 @@ async function acquireCmuxTab(
+@@ -443,7 +1079,7 @@ async function acquireCmuxTab(
  			ownsSurface = true;
  			if (typeof result.url === "string" && result.url.length > 0) initialUrl = result.url;
  			if (opts.url) {
@@ -5560,7 +5702,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  					"browser.wait",
  					{
  						surface_id: surfaceId,
-@@ -455,7 +1002,7 @@ async function acquireCmuxTab(
+@@ -455,7 +1091,7 @@ async function acquireCmuxTab(
  			}
  		}
  
@@ -5569,7 +5711,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		if (attachedSurface && opts.url) {
  			await cmuxTab.goto(opts.url, { waitUntil: opts.waitUntil ?? "load", timeoutMs: opts.timeoutMs });
  		}
-@@ -465,6 +1012,7 @@ async function acquireCmuxTab(
+@@ -465,6 +1101,7 @@ async function acquireCmuxTab(
  		if (opts.signal?.aborted) {
  			throw new ToolAbortError("Browser tab open aborted");
  		}
@@ -5577,7 +5719,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		holdBrowser(browser);
  		const tab: CmuxTabSession = {
  			name,
-@@ -481,33 +1029,52 @@ async function acquireCmuxTab(
+@@ -481,33 +1118,77 @@ async function acquireCmuxTab(
  			cmuxAttachedSurface: attachedSurface,
  			ownerSessionId: opts.ownerSessionId,
  		};
@@ -5611,12 +5753,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  
 -async function runInTabWithSnapshot(
 +function runInTabWithContext(
- 	name: string,
--	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
--	snapshot: SessionSnapshot,
++	name: string,
 +	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
 +	context: BrowserRunContext,
- ): Promise<RunResultOk> {
++): Promise<RunResultOk> {
++	const retained = retainedSessionTabs.get(name);
++	if (retained) return executeRetainedTabRun(retained, opts, context);
 +	try { assertTabNotReserved(name); } catch (error) { return Promise.reject(error); }
 +	const tab = tabs.get(name);
 +	if (!tab) return executeTabRun(name, opts, context);
@@ -5632,16 +5774,41 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	return result;
 +}
 +
++async function executeRetainedTabRun(tab: RetainedSessionTab,
++	opts: { code: string; timeoutMs: number; signal?: AbortSignal }, context: BrowserRunContext): Promise<RunResultOk> {
++	if (tab.state !== "alive" || retainedSessionTabs.get(tab.name) !== tab) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is not alive.`);
++	if (tab.pending.size) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is busy`);
++	if (tab.backend === "cmux") {
++		const closeAc = new AbortController(), signal = opts.signal ? AbortSignal.any([opts.signal, closeAc.signal]) : closeAc.signal;
++		return await runCmuxCodeWithContext(tab.cmuxTab!, { code: opts.code, timeoutMs: opts.timeoutMs, signal }, context);
++	}
++	const id = Snowflake.next(), worker = tab.worker!;
++	const completion = Promise.withResolvers<RunResultOk>();
++	const pending: PendingRun = { resolve: completion.resolve, reject: completion.reject, context, signal: opts.signal, toolCalls: new Map() };
++	tab.pending.set(id, pending);
++	const abort = () => { try { worker.send({ type: "abort", id }); } catch {} for (const ctrl of pending.toolCalls.values()) ctrl.abort(opts.signal?.reason); };
++	if (opts.signal?.aborted) abort(); else opts.signal?.addEventListener("abort", abort, { once: true });
++	try {
++		worker.send({ type: "run", id, name: tab.name, code: opts.code, timeoutMs: opts.timeoutMs, session: context.snapshot });
++		return await raceWithTimeout(completion.promise, opts.timeoutMs + GRACE_MS, "Retained browser code execution hung past grace", async reason => {
++			if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
++			tab.state = "dead"; await worker.abort(new ToolError(reason));
++		});
++	} finally { opts.signal?.removeEventListener("abort", abort); tab.pending.delete(id); }
++}
++
 +async function executeTabRun(
-+	name: string,
+ 	name: string,
+-	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
+-	snapshot: SessionSnapshot,
 +	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
 +	context: BrowserRunContext,
-+): Promise<RunResultOk> {
+ ): Promise<RunResultOk> {
 +	if (humanActions.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is busy with a human browser action`);
  	const tab = tabs.get(name);
  	if (!tab || tab.state === "dead") {
  		const killed = killedTabs.get(name);
-@@ -517,7 +1084,9 @@ async function runInTabWithSnapshot(
+@@ -517,7 +1198,9 @@ async function runInTabWithSnapshot(
  				: `Tab ${JSON.stringify(name)} is not alive. Open it first with action:"open".`,
  		);
  	}
@@ -5651,7 +5818,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	const id = Snowflake.next();
  	const { promise, resolve, reject } = Promise.withResolvers<RunResultOk>();
  	// `releaseTab` calls `pending.reject(closeError)` when the tab dies
-@@ -539,7 +1108,7 @@ async function runInTabWithSnapshot(
+@@ -539,7 +1222,7 @@ async function runInTabWithSnapshot(
  	const pending: PendingRun = {
  		resolve,
  		reject,
@@ -5660,7 +5827,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		signal: opts.signal,
  		toolCalls: new Map(),
  		closeAc,
-@@ -553,20 +1122,19 @@ async function runInTabWithSnapshot(
+@@ -553,20 +1236,19 @@ async function runInTabWithSnapshot(
  			// rejected it — `Promise.withResolvers` settles on the first
  			// call and later resolve/reject are no-ops, so the tab-close
  			// error still wins the race.
@@ -5685,7 +5852,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		for (const ctrl of pending.toolCalls.values()) ctrl.abort(opts.signal?.reason);
  	};
  	if (opts.signal?.aborted) abort();
-@@ -578,7 +1146,7 @@ async function runInTabWithSnapshot(
+@@ -578,7 +1260,7 @@ async function runInTabWithSnapshot(
  			name,
  			code: opts.code,
  			timeoutMs: opts.timeoutMs,
@@ -5694,7 +5861,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		});
  		try {
  			return await raceWithTimeout(
-@@ -590,7 +1158,7 @@ async function runInTabWithSnapshot(
+@@ -590,7 +1272,7 @@ async function runInTabWithSnapshot(
  		} catch (error) {
  			const runTimedOut =
  				error instanceof ToolError && error.message.startsWith("Browser code execution timed out after ");
@@ -5703,7 +5870,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  				try {
  					if (tab.worker.mode === "inline") {
  						const reason = runTimedOut
-@@ -615,12 +1183,128 @@ async function runInTabWithSnapshot(
+@@ -615,12 +1297,139 @@ async function runInTabWithSnapshot(
  	}
  }
  
@@ -5806,6 +5973,11 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	}
 +	if (opts.signal?.aborted) throw new BrowserActionRejected("Browser close was cancelled before admission");
 +	const { name, targetId } = target;
++	const retained=retainedSessionTabs.get(name);
++	if(retained){
++		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==targetId||retained.state!=="alive")throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
++		retainedSessionTabs.delete(name);await retained.dispose();return Object.freeze({ownerSessionId,name,targetId,released:true});
++	}
 +	const tab = tabs.get(name);
 +	if (!tab || tab.ownerSessionId !== ownerSessionId || tab.targetId !== targetId) {
 +		throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
@@ -5817,6 +5989,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +}
 +
  export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Promise<boolean> {
++	const retained = retainedSessionTabs.get(name);
++	if (retained) {
++		retainedSessionTabs.delete(name);
++		await retained.dispose();
++		return true;
++	}
  	const tab = tabs.get(name);
  	if (!tab) {
  		logger.debug("releaseTab: unknown tab", { name });
@@ -5832,7 +6010,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	const wasAlive = tab.state === "alive";
  	tab.state = "dead";
  	const closeError = postmortem.markExpectedCleanupError(new ToolError(`Tab ${JSON.stringify(name)} was closed`));
-@@ -653,7 +1337,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -653,7 +1462,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  					tab,
  					timeoutMs,
  					`cmux surface ${JSON.stringify(tab.targetId)} (surface.close)`,
@@ -5841,7 +6019,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  				);
  			} catch (err) {
  				if (isLastSurfaceCloseError(err)) {
-@@ -674,14 +1358,21 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -674,14 +1483,21 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  		} catch (error) {
  			closeError ??= error;
  		} finally {
@@ -5866,7 +6044,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		try {
  			tab.worker.send({ type: "close" });
  			await waitForClosed(tab);
-@@ -689,8 +1380,10 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -689,8 +1505,10 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  			forced = true;
  		}
  	}
@@ -5879,7 +6057,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		try {
  			await waitForTabCleanup(
  				tab,
-@@ -699,7 +1392,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -699,7 +1517,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  				closeOrphanTarget(tab),
  			);
  		} catch (error) {
@@ -5888,7 +6066,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		}
  	}
  	try {
-@@ -711,26 +1404,30 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -711,26 +1529,30 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  	} catch (error) {
  		cleanupError ??= error;
  	} finally {
@@ -5929,7 +6107,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  }
  
  /**
-@@ -748,12 +1445,373 @@ export async function dropHeadlessTabs(): Promise<void> {
+@@ -748,12 +1570,513 @@ export async function dropHeadlessTabs(): Promise<void> {
   */
  export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptions = {}): Promise<number> {
  	if (!ownerId) return 0;
@@ -5937,7 +6115,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 -	let count = 0;
 -	for (const name of names) {
 -		if (await releaseTab(name, opts)) count++;
-+	return releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true);
++	const retained = [...retainedSessionTabs.values()].filter(tab => tab.ownerSessionId === ownerId);
++	for (const tab of retained) if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
++	const outcomes = await Promise.allSettled([releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true), ...retained.map(tab => tab.dispose())]);
++	const failures = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
++	if (failures.length) throw failures.length === 1 ? failures[0] : new AggregateError(failures, "Retained browser evaluator cleanup failed");
++	return (outcomes[0] as PromiseFulfilledResult<number>).value + retained.length;
 +}
 +
 +/**
@@ -5963,6 +6146,10 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +				targetId: tab.info.targetId,
 +			}),
 +		}));
++	for (const tab of retainedSessionTabs.values()) if (tab.ownerSessionId === ownerSessionId) snapshot.push(Object.freeze({
++		name: tab.name, ownerSessionId, targetId: tab.targetId, backend: tab.backend, kindTag: tab.kindTag, state: tab.state,
++		info: Object.freeze({ ...tab.info, viewport: Object.freeze({ ...tab.info.viewport }) }),
++	}));
 +	return Object.freeze(snapshot);
 +}
 +
@@ -5976,6 +6163,13 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +
 +/** Original backend read only. Unavailable capture/owner is an error, never absence. */
 +export async function inspectTabForOwner(ownerSessionId: string, target: OwnerTabViewportTarget): Promise<Readonly<OwnerTabObservation>> {
++	const retained=retainedSessionTabs.get(target.name);
++	if(retained){
++		if(!ownerSessionId||retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
++		await executeRetainedTabRun(retained,{code:"return await page.title()",timeoutMs:5_000},{snapshot:{cwd:retained.safeDir}});
++		if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during observation");
++		return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,kindTag:retained.kindTag,presence:"present"});
++	}
 +	assertTabNotReserved(target.name);
 +	const { name, targetId } = target;
 +	if (!ownerSessionId || !name || !targetId) throw new ToolError("Browser observation requires an exact owner, name, and target id");
@@ -6040,6 +6234,24 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	target: OwnerTabViewportTarget,
 +): Promise<Readonly<OwnerTabViewportCapture>> {
 +	if (!ownerSessionId || !target.name || !target.targetId) throw new ToolError("Browser viewport capture requires an exact owner, name, and target id");
++	const retained=retainedSessionTabs.get(target.name);
++	if(retained){
++		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
++		if(retained.backend!=="worker")throw new ToolError("Viewport capture is not supported for cmux browser tabs");
++		const key=`${ownerSessionId}\0${target.name}\0${target.targetId}`;
++		if(humanActions.has(target.name)||viewportCaptures.has(key))throw new ToolError("This browser viewport is busy");
++		const pending=(async()=>{
++			const result=await executeRetainedTabRun(retained,{code:`
++const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
++const before=await read(),data=await page.screenshot({type:"jpeg",quality:80,fullPage:false,captureBeyondViewport:false,encoding:"base64"}),url=page.url(),title=await page.title(),context=await read();return{before,data,url,title,context};`,timeoutMs:10_000},{snapshot:{cwd:retained.safeDir}});
++			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during capture");
++			const value=result.returnValue as {before?:OwnerTabDocumentContext;context?:OwnerTabDocumentContext;data?:string;url?:string;title?:string};
++			if(!value||!validDocumentContext(value.before!)||!validDocumentContext(value.context!)||!sameOwnerTabDocumentContext(value.before!,value.context!,false)||typeof value.data!=="string"||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser viewport returned an invalid snapshot");
++			const data=Buffer.from(value.data,"base64");if(!data.length||data.length>8*1024*1024)throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
++			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,data,url:value.url,title:value.title,context:value.context!});
++		})();
++		viewportCaptures.set(key,pending);void pending.finally(()=>{if(viewportCaptures.get(key)===pending)viewportCaptures.delete(key)}).catch(()=>{});return await pending;
++	}
 +	assertTabNotReserved(target.name);
 +	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
 +	if (humanActions.has(target.name)) throw new ToolError("This browser tab is busy with a human action");
@@ -6089,6 +6301,51 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	viewportCaptures.set(key, pending);
 +	void pending.then(() => viewportCaptures.delete(key), () => viewportCaptures.delete(key));
 +	return await withTimeout(pending, 10_000, "Timed out after 10000ms capturing the browser viewport");
++}
++
++export interface OwnerTabNavigationHistoryEntry { readonly id: string; readonly url: string; readonly title: string; readonly current: boolean }
++
++/** Reads Chromium navigation history from one exact original owner and target.
++ * This does not activate or navigate the tab and deliberately exposes no
++ * cross-tab/global browser history. */
++export async function readTabNavigationHistoryForOwner(
++	ownerSessionId: string,
++	target: OwnerTabViewportTarget,
++): Promise<readonly OwnerTabNavigationHistoryEntry[]> {
++	if (!ownerSessionId || !target?.name || !target.targetId) throw new ToolError("Browser history requires an exact owner, name, and target id");
++	const project = (value: unknown): readonly OwnerTabNavigationHistoryEntry[] => {
++		if (!value || typeof value !== "object") throw new ToolError("Native browser history returned an invalid result");
++		const input = value as { currentIndex?: unknown; entries?: unknown };
++		if (!Number.isSafeInteger(input.currentIndex) || !Array.isArray(input.entries) || input.entries.length > 100) throw new ToolError("Native browser history exceeded its bound");
++		return Array.from({ length: input.entries.length }, (_, index) => {
++			const row = input.entries![index] as { id?: unknown; url?: unknown; title?: unknown };
++			if (!row || !Number.isSafeInteger(row.id) || typeof row.url !== "string" || !row.url || row.url.length > 8192 || typeof row.title !== "string" || row.title.length > 1024) throw new ToolError("Native browser history contains an invalid entry");
++			return Object.freeze({ id: String(row.id), url: row.url, title: row.title.replace(/[\u0000-\u001f\u007f]+/g, " "), current: index === input.currentIndex });
++		});
++	};
++	const retained = retainedSessionTabs.get(target.name);
++	if (retained) {
++		if (retained.ownerSessionId !== ownerSessionId || retained.targetId !== target.targetId || retained.state !== "alive") throw new ToolError("The selected owner-bound browser tab is no longer available");
++		if (retained.backend !== "worker") throw new ToolError("Browser history is not supported for cmux browser tabs");
++		const result = await executeRetainedTabRun(retained, { code: `const c=await page.target().createCDPSession();try{return await c.send("Page.getNavigationHistory")}finally{await c.detach().catch(()=>{})}`, timeoutMs: 10_000 }, { snapshot: { cwd: retained.safeDir } });
++		if (retainedSessionTabs.get(target.name) !== retained || retained.state !== "alive") throw new ToolError("The selected owner-bound browser tab changed during the history read");
++		return project(result.returnValue);
++	}
++	assertTabNotReserved(target.name);
++	if (humanActions.has(target.name)) throw new ToolError("This browser tab is busy with a human action");
++	const tab = tabs.get(target.name);
++	if (!tab || tab.ownerSessionId !== ownerSessionId || tab.targetId !== target.targetId || tab.state !== "alive") throw new ToolError("The selected owner-bound browser tab is no longer available");
++	if (tab.backend === "cmux") throw new ToolError("Browser history is not supported for cmux browser tabs");
++	let exactTarget: Target | undefined;
++	for (const candidate of tab.browser.browser.targets()) if ((await targetIdForTarget(candidate)) === target.targetId) { exactTarget = candidate; break; }
++	const page = await exactTarget?.page();
++	if (!page || page.isClosed()) throw new ToolError("The selected browser target is not an open page");
++	const client = await page.target().createCDPSession();
++	try {
++		const result = project(await client.send("Page.getNavigationHistory"));
++		if (tabs.get(target.name) !== tab || tab.state !== "alive" || tab.ownerSessionId !== ownerSessionId || tab.targetId !== target.targetId) throw new ToolError("The selected owner-bound browser tab changed during the history read");
++		return result;
++	} finally { await client.detach().catch(() => {}); }
 +}
 +
 +const HUMAN_ACTION_TIMEOUT_MS = 15_000;
@@ -6162,14 +6419,14 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	for (;;) {
 +		const current = tabs.get(target.name);
 +		if (current !== tab || current?.state !== "alive" || current?.ownerSessionId !== ownerSessionId || current?.targetId !== target.targetId || page.isClosed()) {
-+			throw new ToolError("The selected owner-bound browser tab changed during the action");
++			throw new ToolError(`The selected owner-bound browser tab changed during the action [map=${current===tab},state=${current?.state},owner=${current?.ownerSessionId===ownerSessionId},target=${current?.targetId===target.targetId},closed=${page.isClosed()}]`);
 +		}
 +		if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during the action");
 +		try {
 +			const context = await readOwnerTabDocumentContext(page), url = page.url(), title = await page.title();
 +			const verified = tabs.get(target.name);
 +			if (verified !== tab || verified?.state !== "alive" || verified?.ownerSessionId !== ownerSessionId || verified?.targetId !== target.targetId || page.isClosed()) {
-+				throw new ToolError("The selected owner-bound browser tab changed during the action");
++				throw new ToolError(`The selected owner-bound browser tab changed during the action [verified=${verified===tab},state=${verified?.state},owner=${verified?.ownerSessionId===ownerSessionId},target=${verified?.targetId===target.targetId},closed=${page.isClosed()}]`);
 +			}
 +			if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during the action");
 +			return { context, url, title };
@@ -6180,7 +6437,32 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	}
 +}
 +
++async function stopAttachedTabNavigation(
++	tab: WorkerTabSession,
++	ownerSessionId: string,
++	target: OwnerTabViewportTarget,
++): Promise<StoppedNavigationObservation> {
++	const current = tabs.get(target.name);
++	if (current !== tab || current.state !== "alive" || current.ownerSessionId !== ownerSessionId || current.targetId !== target.targetId) {
++		throw new ToolError("The selected owner-bound browser tab changed before navigation stopped");
++	}
++	let exactTarget: Target | undefined;
++	for (const candidate of tab.browser.browser.targets()) if ((await targetIdForTarget(candidate)) === target.targetId) { exactTarget = candidate; break; }
++	if (!exactTarget) throw new ToolError("The selected browser target is no longer attached");
++	const page = await exactTarget.page();
++	if (!page || page.isClosed()) throw new ToolError("The selected browser target is not an open page");
++	const session = await page.target().createCDPSession();
++	try { await session.send("Page.stopLoading"); }
++	finally { await session.detach().catch(() => undefined); }
++	const context = await readOwnerTabDocumentContext(page), url = page.url(), title = await page.title();
++	const verified = tabs.get(target.name);
++	if (verified !== tab || verified.state !== "alive" || verified.ownerSessionId !== ownerSessionId || verified.targetId !== target.targetId || page.isClosed()
++		|| (await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected owner-bound browser tab changed while navigation stopped");
++	return { context, url, title };
++}
++
 +function validateHumanAction(action: OwnerTabHumanAction, expected: OwnerTabDocumentContext): void {
++	if(action.type==="stop")return;
 +	if (!action || typeof action !== "object" || Array.isArray(action)) rejectHumanAction("Invalid human browser action");
 +	if (action.type === "navigate") {
 +		if (typeof action.url !== "string" || action.url.length === 0 || action.url.length > 8_192 || /[\u0000-\u0020]/.test(action.url)) rejectHumanAction("Invalid browser navigation URL");
@@ -6234,6 +6516,34 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	if (typeof ownerSessionId !== "string" || !ownerSessionId || !target || typeof target.name !== "string" || !target.name || target.name.length > 200 || target.name.includes("\0")
 +		|| typeof target.targetId !== "string" || !target.targetId || target.targetId.length > 200 || target.targetId.includes("\0") || !validDocumentContext(expected)) rejectHumanAction("Human browser action requires an exact owner, target, and document context");
 +	validateHumanAction(action, expected);
++	if(action.type==="stop"){
++		const active=activeOwnerNavigations.get(target.name),entryId=expected.navigation?.entryId;
++		if(!active||active.ownerSessionId!==ownerSessionId||active.targetId!==target.targetId||entryId===undefined||active.entryId!==entryId||!active.pending)rejectHumanAction("The selected browser tab has no matching navigation to stop");
++		if(active.stopRequested)rejectHumanAction("The selected browser navigation is already stopping");
++		active.stopRequested=true;let observed:StoppedNavigationObservation;
++		try{observed=await active.stop()}catch(error){active.stopRequested=false;throw error}
++		if(!validDocumentContext(observed.context)||typeof observed.url!=="string"||typeof observed.title!=="string")throw new ToolError("The stopped browser navigation returned an invalid observation");
++		active.settleStopped(observed);
++		return Object.freeze({name:target.name,ownerSessionId,targetId:target.targetId,...observed});
++	}
++	const retained=retainedSessionTabs.get(target.name);
++	if(retained){
++		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")rejectHumanAction("The selected owner-bound browser tab is no longer available");
++		if(retained.backend!=="worker")rejectHumanAction("Human actions are not supported for cmux browser tabs");
++		if(humanActions.has(target.name))rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
++		const navigation=["navigate","reload","back","forward"].includes(action.type), active:ActiveOwnerNavigation|undefined=navigation?activeNavigation(ownerSessionId,target.targetId,expected.navigation!.entryId,()=>stopWorkerNavigation(retained.worker!)):undefined;
++		const pending=(async()=>{
++			let result:RunResultOk;try{result=await executeRetainedTabRun(retained,{code:`
++const expected=${JSON.stringify(expected)},action=${JSON.stringify(action)};
++const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
++const before=await read(),navigation=["navigate","reload","back","forward"].includes(action.type),same=expected.documentId===before.documentId&&expected.width===before.width&&expected.height===before.height&&(navigation||(expected.scrollX===before.scrollX&&expected.scrollY===before.scrollY))&&(!expected.navigation||(before.navigation&&expected.navigation.entryId===before.navigation.entryId&&expected.navigation.canGoBack===before.navigation.canGoBack&&expected.navigation.canGoForward===before.navigation.canGoForward));if(!same)throw new Error("The browser document or viewport changed; refresh before acting");
++if(action.type==="navigate")await page.goto(action.url,{waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="reload")await page.reload({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="back")await page.goBack({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="forward")await page.goForward({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="click")await page.mouse.click(action.x,action.y,{button:action.button,count:action.clickCount});else if(action.type==="wheel"){await page.mouse.move(action.x,action.y);await page.mouse.wheel({deltaX:action.deltaX,deltaY:action.deltaY})}else if(action.type==="resize")await page.setViewport({...page.viewport(),width:action.width,height:action.height});else if(action.type==="text")await page.keyboard.sendCharacter(action.text);else if(action.type==="key"){const pressed=[];try{for(const key of action.modifiers||[]){await page.keyboard.down(key);pressed.push(key)}await page.keyboard.press(action.key)}finally{for(const key of pressed.reverse())await page.keyboard.up(key).catch(()=>{})}}const context=await read();return{context,url:page.url(),title:await page.title()};`,timeoutMs:HUMAN_ACTION_TIMEOUT_MS},{snapshot:{cwd:retained.safeDir}})}catch(error){if(!active?.stopRequested)throw error;result={displays:[],screenshots:[],returnValue:await active.stopped}}
++			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during the action");
++			const value=result.returnValue as {context?:OwnerTabDocumentContext;url?:string;title?:string};if(!value||!validDocumentContext(value.context!)||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser action returned an invalid observation");
++			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,context:value.context!,url:value.url,title:value.title});
++		})();
++		if(active){active.pending=pending;activeOwnerNavigations.set(target.name,active)}humanActions.set(target.name,pending);void pending.finally(()=>{if(humanActions.get(target.name)===pending)humanActions.delete(target.name);if(activeOwnerNavigations.get(target.name)===active)activeOwnerNavigations.delete(target.name)}).catch(()=>{});return await pending;
++	}
 +	assertTabNotReserved(target.name);
 +	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
 +	if (humanActions.has(target.name)) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
@@ -6245,6 +6555,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +	assertTabNotReserved(target.name);
 +	if (tab.pending.size > 0) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy with native browser work`);
 +	let dispatched = false, callerTimedOut = false;
++	const navigationAction=["navigate","reload","back","forward"].includes(action.type);
 +	const pending = Promise.resolve().then(async () => {
 +		let page: Page, resizeViewport: NonNullable<ReturnType<Page["viewport"]>> | undefined;
 +		try {
@@ -6272,11 +6583,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +			Object.defineProperty(rejected, "cause", { value: error, configurable: true }); throw rejected;
 +		}
 +		dispatched = true;
-+		switch (action.type) {
-+			case "navigate": await page.goto(action.url, { waitUntil: "domcontentloaded", timeout: 30_000 }); break;
-+			case "reload": await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
-+			case "back": await page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
-+			case "forward": await page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
++		const waitNavigation=async<T>(operation:Promise<T>)=>{const active=activeOwnerNavigations.get(target.name);if(!active)return await operation;void operation.catch(()=>{});return await Promise.race([operation,active.stopped.then(()=>undefined)])};
++		try{switch (action.type) {
++			case "navigate": await waitNavigation(page.goto(action.url, { waitUntil: "domcontentloaded", timeout: 30_000 })); break;
++			case "reload": await waitNavigation(page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 })); break;
++			case "back": await waitNavigation(page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 })); break;
++			case "forward": await waitNavigation(page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 })); break;
 +			case "click": await page.mouse.click(action.x, action.y, { button: action.button, count: action.clickCount }); break;
 +			case "wheel": await page.mouse.move(action.x, action.y); await page.mouse.wheel({ deltaX: action.deltaX, deltaY: action.deltaY }); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))); break;
 +			case "resize": await page.setViewport(resizeViewport!); break;
@@ -6287,15 +6599,21 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +				finally { for (const modifier of pressed.reverse()) await page.keyboard.up(modifier).catch(() => undefined); }
 +				break;
 +			}
-+		}
++			case "stop": break;
++		}}catch(error){const active=activeOwnerNavigations.get(target.name);if(!active?.stopRequested)throw error;}
 +		// A pointer/key action may synchronously start a navigation after Puppeteer
 +		// reports input dispatch. Retry only transient CDP/context attachment races;
 +		// every pass revalidates the same live owner, tab, page, and target.
++		const stopped=activeOwnerNavigations.get(target.name);
++		if(stopped?.stopRequested){const observed=await stopped.stopped;return Object.freeze({name:tab.name,ownerSessionId,targetId:tab.targetId,...observed})}
 +		const observed = await observeOwnerTabAfterAction(page, tab, ownerSessionId, target);
 +		return Object.freeze({ name: tab.name, ownerSessionId, targetId: tab.targetId, ...observed });
 +	});
 +	humanActions.set(target.name, pending);
-+	const release = () => { if (humanActions.get(target.name) === pending) humanActions.delete(target.name); };
++	if(navigationAction){
++		const active=activeNavigation(ownerSessionId,target.targetId,expected.navigation!.entryId,()=>stopAttachedTabNavigation(tab,ownerSessionId,target));active.pending=pending;activeOwnerNavigations.set(target.name,active);
++	}
++	const release = () => { if (humanActions.get(target.name) === pending) humanActions.delete(target.name);if(activeOwnerNavigations.get(target.name)?.pending===pending)activeOwnerNavigations.delete(target.name); };
 +	void pending.then(release, release);
 +	try { return await withTimeout(pending, HUMAN_ACTION_TIMEOUT_MS, `Timed out after ${HUMAN_ACTION_TIMEOUT_MS}ms performing the human browser action`); }
 +	catch (error) {
@@ -6308,7 +6626,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  }
  
  /** Test-only accessor for the module-global tabs map. */
-@@ -766,14 +1824,12 @@ function isLastSurfaceCloseError(err: unknown): boolean {
+@@ -766,14 +2089,12 @@ function isLastSurfaceCloseError(err: unknown): boolean {
  	return /last/i.test(message);
  }
  
@@ -6325,7 +6643,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  			safeDir,
  			// Visible launches still need an OMP-owned page, stealth setup, and
  			// independent lifecycle; only their fixed device emulation is disabled.
-@@ -790,14 +1846,15 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
+@@ -790,14 +2111,15 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
  	// target may be backgrounded, so retain activation for target-correct pixels.
  	const userDriven = browser.kind.kind === "connected" || browser.kind.kind === "relay";
  	const activateForScreenshot = !userDriven || !shouldPreserveConnectedBrowserFocus(opts.target);
@@ -6344,7 +6662,17 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		safeDir,
  		targetId,
  		dialogs: opts.dialogs,
-@@ -821,6 +1878,7 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
+@@ -809,6 +2131,9 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
+ }
+ 
+ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
++	if(msg.type==="navigation-stopped"){
++		const pending=workerNavigationStops.get(tab.worker)?.get(msg.id);if(!pending)return;msg.ok?pending.resolve(msg.result as StoppedNavigationObservation):pending.reject(errorFromPayload(msg.error));return;
++	}
+ 	if (msg.type === "result") {
+ 		const pending = tab.pending.get(msg.id);
+ 		if (!pending) return;
+@@ -821,6 +2146,7 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
  		return;
  	}
  	if (msg.type === "ready") {
@@ -6352,7 +6680,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		tab.info = msg.info;
  		return;
  	}
-@@ -831,52 +1889,53 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
+@@ -831,52 +2157,53 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
  	if (msg.type === "log") logWorkerMessage(msg);
  }
  
@@ -6446,7 +6774,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  }
  
  function toErrorPayload(error: unknown): RunErrorPayload {
-@@ -893,77 +1952,73 @@ function toErrorPayload(error: unknown): RunErrorPayload {
+@@ -893,77 +2220,73 @@ function toErrorPayload(error: unknown): RunErrorPayload {
  }
  
  async function recycleTimedOutWorkerTab(tab: WorkerTabSession, timeoutMs: number): Promise<void> {
@@ -6559,6 +6887,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 +		if (tab.kindTag === "headless") {
 +			try { await closeOrphanTarget(tab); } catch (error) { cleanupError ??= error; }
 +		}
++	}
++	try { await releaseBrowser(tab.browser, { kill: false }); } catch (error) { cleanupError ??= error; }
++	finally {
++		if (tabs.get(name) === tab) tabs.delete(name);
++		const scope = sharedScopeOf(tab.browser);
++		if (scope) void forgetSharedTarget(scope, tab.targetId);
  	}
 -	await tab.worker.terminate().catch(() => undefined);
 -	if (tab.kindTag === "headless") await closeOrphanTarget(tab);
@@ -6566,17 +6900,11 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
 -	tabs.delete(name);
 -	const scope = sharedScopeOf(tab.browser);
 -	if (scope) void forgetSharedTarget(scope, tab.targetId);
-+	try { await releaseBrowser(tab.browser, { kill: false }); } catch (error) { cleanupError ??= error; }
-+	finally {
-+		if (tabs.get(name) === tab) tabs.delete(name);
-+		const scope = sharedScopeOf(tab.browser);
-+		if (scope) void forgetSharedTarget(scope, tab.targetId);
-+	}
 +	if (cleanupError) throw cleanupError;
  }
  
  /**
-@@ -994,36 +2049,14 @@ function sharedScopeOf(browser: BrowserHandle): SharedTargetScope | undefined {
+@@ -994,36 +2317,14 @@ function sharedScopeOf(browser: BrowserHandle): SharedTargetScope | undefined {
   * page can be, so no targetId guesswork across multiple sessions.
   */
  async function closeOrphanTarget(tab: WorkerTabSession): Promise<void> {
@@ -6616,7 +6944,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	});
  	try {
  		await raceWithTimeout(promise, GRACE_MS, "Timed out closing browser tab worker");
-@@ -1032,21 +2065,20 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
+@@ -1032,21 +2333,20 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
  	}
  }
  
@@ -6645,7 +6973,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  		if (info.targetInfo?.targetId) return info.targetInfo.targetId;
  		throw new ToolError("Target id unavailable from CDP target info");
  	} finally {
-@@ -1098,86 +2130,6 @@ async function raceWithTimeout<T>(
+@@ -1098,86 +2398,6 @@ async function raceWithTimeout<T>(
  	}
  }
  
@@ -6732,7 +7060,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  /**
   * Init a tab worker under a single listener spanning the whole init: a short
   * `setup` handshake (bounded by the cold-start guard so a stalled cold start
-@@ -1203,16 +2155,22 @@ async function initializeTabWorker(
+@@ -1203,16 +2423,22 @@ async function initializeTabWorker(
  	payload: WorkerInitPayload,
  	timeoutMs: number,
  	deadlineStart: number = performance.now(),
@@ -6762,7 +7090,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	let setupDone = false;
  	// Reject only the active phase's promise: the other one may never be
  	// awaited (a phase that already failed leaves the rest un-run), so
-@@ -1220,6 +2178,8 @@ async function initializeTabWorker(
+@@ -1220,6 +2446,8 @@ async function initializeTabWorker(
  	const failStartup = (error: Error) => {
  		(setupDone ? ready : setup).reject(error);
  	};
@@ -6771,7 +7099,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc0
  	const unlisten = worker.onMessage(msg => {
  		if (msg.type === "page-created") {
  			// Record the headless target before the (potentially slow)
-@@ -1231,22 +2191,27 @@ async function initializeTabWorker(
+@@ -1231,22 +2459,27 @@ async function initializeTabWorker(
  			setup.resolve();
  		} else if (msg.type === "ready") ready.resolve(msg.info);
  		else if (msg.type === "init-failed") failStartup(markReportedInitFailure(errorFromPayload(msg.error)));
@@ -7156,7 +7484,7 @@ index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cc
 +	return attempt;
 +}
 diff --git a/src/tools/browser/tab-worker.ts b/src/tools/browser/tab-worker.ts
-index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76cdd29b4b 100644
+index 6e8281a7b1a6d42d22775cef6fb786beda634897..a822c09e37414533ab18602d35bc4a8d9898ce0f 100644
 --- a/src/tools/browser/tab-worker.ts
 +++ b/src/tools/browser/tab-worker.ts
 @@ -3,13 +3,13 @@ import * as os from "node:os";
@@ -7362,7 +7690,14 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  				return;
  			case "abort":
  				if (this.#active?.id === msg.id) {
-@@ -1060,77 +1104,119 @@ export class WorkerCore {
+@@ -1057,80 +1101,126 @@ export class WorkerCore {
+ 					this.#active.ac.abort(reason);
+ 				}
+ 				return;
++			case "stop-navigation":
++				try { const page=this.#requirePage(),session=await page.target().createCDPSession();let result:unknown;try{await session.send("Page.stopLoading");const history=await session.send("Page.getNavigationHistory"),tree=await session.send("Page.getFrameTree"),viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),entry=history.entries[history.currentIndex];result={context:{documentId:tree.frameTree.frame.loaderId,...viewport,navigation:{entryId:entry.id,canGoBack:history.currentIndex>0,canGoForward:history.currentIndex<history.entries.length-1}},url:page.url(),title:await page.title()}}finally{await session.detach().catch(()=>{})}this.#transport.send({ type: "navigation-stopped", id: msg.id, ok: true,result }); }
++				catch (error) { this.#transport.send({ type: "navigation-stopped", id: msg.id, ok: false, error: errorPayload(error) }); }
++				return;
  			case "tool-reply":
  				this.#deliverToolReply(msg.id, msg.reply);
  				return;
@@ -7512,7 +7847,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			return target;
  		}
  		throw new ToolError(`Target ${targetId} is no longer available on the attached browser`);
-@@ -1144,7 +1230,9 @@ export class WorkerCore {
+@@ -1144,7 +1234,9 @@ export class WorkerCore {
  	async #claimRelayTarget(page: Page): Promise<void> {
  		let session: CDPSession | undefined;
  		try {
@@ -7522,7 +7857,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			// Puppeteer's protocol map cannot express the relay-private method; the
  			// send signature is otherwise identical.
  			const raw = session as unknown as { send(method: string): Promise<unknown> };
-@@ -1165,10 +1253,15 @@ export class WorkerCore {
+@@ -1165,10 +1257,15 @@ export class WorkerCore {
  	async #recoverAttachedTarget(target: Target): Promise<void> {
  		let session: CDPSession | undefined;
  		try {
@@ -7538,7 +7873,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			await session.send("Fetch.disable").catch(() => undefined);
  		} catch (error) {
  			this.#log("debug", "Recovery CDP session failed; proceeding with attach", {
-@@ -1187,17 +1280,19 @@ export class WorkerCore {
+@@ -1187,17 +1284,19 @@ export class WorkerCore {
  	 */
  	#observeDialogs(): void {
  		const page = this.#requirePage();
@@ -7565,7 +7900,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		this.#targetId = targetId;
  		return {
  			url: redactUrlCredentials(page.url()),
-@@ -1212,17 +1307,28 @@ export class WorkerCore {
+@@ -1212,17 +1311,28 @@ export class WorkerCore {
  		if (this.#dialogPolicy === policy && this.#dialogHandler) return;
  		if (this.#dialogHandler) page.off("dialog", this.#dialogHandler);
  		const handler = (dialog: Dialog): void => {
@@ -7604,7 +7939,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		};
  		page.on("dialog", handler);
  		this.#dialogPolicy = policy;
-@@ -1231,7 +1337,9 @@ export class WorkerCore {
+@@ -1231,7 +1341,9 @@ export class WorkerCore {
  
  	async #postReadyInfo(): Promise<void> {
  		try {
@@ -7615,7 +7950,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		} catch (error) {
  			this.#log("debug", "Failed to refresh tab info", {
  				error: error instanceof Error ? error.message : String(error),
-@@ -1240,6 +1348,7 @@ export class WorkerCore {
+@@ -1240,6 +1352,7 @@ export class WorkerCore {
  	}
  
  	async #run(msg: Extract<WorkerInbound, { type: "run" }>): Promise<void> {
@@ -7623,7 +7958,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		if (this.#active) {
  			this.#transport.send({
  				type: "result",
-@@ -1365,17 +1474,20 @@ export class WorkerCore {
+@@ -1365,17 +1478,20 @@ export class WorkerCore {
  			try {
  				await runPage?.cleanup();
  			} catch (error) {
@@ -7644,7 +7979,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			this.#transport.send({
  				type: "result",
  				id: msg.id,
-@@ -1415,6 +1527,8 @@ export class WorkerCore {
+@@ -1415,6 +1531,8 @@ export class WorkerCore {
  	}
  
  	async #callTool(active: ActiveRun, name: string, args: unknown): Promise<unknown> {
@@ -7653,7 +7988,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		const id = `tab-tc-${active.id}-${crypto.randomUUID()}`;
  		const { promise, resolve, reject } = Promise.withResolvers<unknown>();
  		active.pendingTools.set(id, { resolve, reject });
-@@ -2170,6 +2284,7 @@ export class WorkerCore {
+@@ -2170,6 +2288,7 @@ export class WorkerCore {
  		try {
  			const session = await this.#requirePage().createCDPSession();
  			try {
@@ -7661,7 +7996,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  				await session.send("Page.stopLoading");
  			} finally {
  				await session.detach().catch(() => undefined);
-@@ -2181,29 +2296,96 @@ export class WorkerCore {
+@@ -2181,29 +2300,96 @@ export class WorkerCore {
  		}
  	}
  
@@ -8121,6 +8456,251 @@ index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8
 +	}
 +	dispose(): Promise<void> { this.close(); return this.#done.promise; }
 +}
+diff --git a/src/tools/browser.ts b/src/tools/browser.ts
+index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
+--- a/src/tools/browser.ts
++++ b/src/tools/browser.ts
+@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
+ import { untilAborted } from "@oh-my-pi/pi-utils";
+ import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
+ import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
++import type { AgentSession } from "../session/agent-session";
+ import type { ToolSession } from "../sdk";
+ import { enforceInlineByteCap } from "../session/streaming-output";
+ // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
+@@ -25,11 +26,13 @@ import type { OutputMeta } from "./output-meta";
+ import {
+ 	type AcquireTabResult,
+ 	acquireTab,
++	BrowserTabCreateRejected,
+ 	dropHeadlessTabs,
+ 	getTab,
+ 	releaseAllTabs,
+ 	releaseTab,
+ 	runInTab,
++	type TabSession,
+ } from "./browser/tab-supervisor";
+ import { renderTabCall } from "./browser/tab-call";
+ import { resolveToCwd } from "./path-utils";
+@@ -44,6 +47,7 @@ export { CmuxSocketClient } from "./browser/cmux/socket-client";
+ export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
+ export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
+ export type { Observation, ObservationEntry } from "./browser/tab-protocol";
++export { BrowserTabCreateRejected, BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor";
+ 
+ const DEFAULT_TAB_NAME = "main";
+ const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
+@@ -97,7 +101,43 @@ interface BrowserPreludeDetails {
+ 	value?: unknown;
+ }
+ 
+-function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
++type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
++
++/** Supports an initial URL within the existing acquisition deadline. */
++export const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
++
++/** Explicit native browser resource ownership, independent of AgentSession.
++ * The owning host retires this lifetime by aborting signal. */
++export interface BrowserTabCreationOwner {
++	readonly id: string;
++	readonly cwd: string;
++	readonly settings: ToolSession["settings"];
++	readonly signal: AbortSignal;
++}
++
++export const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
++
++export interface SessionBrowserTabCreateRequest {
++	/** New managed OMP tab name. Existing names are rejected atomically. */
++	readonly name: string;
++	readonly initialUrl?: string;
++}
++
++export interface SessionBrowserTabCreateResult {
++	readonly created: true;
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly targetId: string;
++	readonly backend: TabSession["backend"];
++	readonly kindTag: BrowserKindTag;
++	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
++	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++	readonly url: string;
++	readonly title: string;
++	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++
++function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
+ 	const app = params.app;
+ 	if (app?.cdp_url) {
+ 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
+@@ -201,11 +241,35 @@ async function openBrowser(
+ 	timeoutMs: number,
+ 	signal?: AbortSignal,
+ ): Promise<AgentToolResult<unknown>> {
++	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
++	details.browser = browser.kind.kind;
++	const tab = result.tab;
++	const url = tab.info.url;
++	const title = tab.info.title ?? "";
++	details.url = url;
++	details.viewport = tab.info.viewport;
++	const verb = result.created ? "Opened" : "Reused";
++	const lines = [
++		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
++		`URL: ${url}`,
++		title ? `Title: ${title}` : null,
++	].filter((line): line is string => typeof line === "string");
++	return toolResult(details).text(lines.join("\n")).done();
++}
++
++async function acquireBrowserTab(
++	session: BrowserOpenSession,
++	name: string,
++	params: BrowserParams,
++	timeoutMs: number,
++	signal?: AbortSignal,
++	createOnly = false,
++): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
+ 	const kind = resolveBrowserKind(params, session);
+-	details.browser = kind.kind;
+ 
+ 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
+ 	const existing = getTab(name);
++	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
+ 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
+ 		throw new ToolError(
+ 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
+@@ -267,6 +331,7 @@ async function openBrowser(
+ 					dialogs: params.dialogs,
+ 					signal: openSignal,
+ 					ownerSessionId: session.getSessionId?.() ?? undefined,
++					createOnly,
+ 				}),
+ 			);
+ 		} catch (error) {
+@@ -277,18 +342,7 @@ async function openBrowser(
+ 		}
+ 		await releaseBrowser(browser, { kill: false });
+ 
+-		const tab = result.tab;
+-		const url = tab.info.url;
+-		const title = tab.info.title ?? "";
+-		details.url = url;
+-		details.viewport = tab.info.viewport;
+-		const verb = result.created ? "Opened" : "Reused";
+-		const lines = [
+-			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
+-			`URL: ${url}`,
+-			title ? `Title: ${title}` : null,
+-		].filter((line): line is string => typeof line === "string");
+-		return toolResult(details).text(lines.join("\n")).done();
++		return { browser, result };
+ 	} catch (error) {
+ 		// Caller cancellation stays a ToolAbortError; the requested timeout
+ 		// becomes a timeout ToolError; anything else passes through unchanged.
+@@ -298,6 +352,100 @@ async function openBrowser(
+ 	}
+ }
+ 
++/**
++ * Create one managed browser tab directly for an actual AgentSession. This is
++ * an explicit human resource action: it reads the live native browser settings
++ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
++ * conversation transcript.
++ */
++export async function createBrowserTabForSession(
++	session: AgentSession,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	validateBrowserTabCreateRequest(request);
++	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
++	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
++	const ownerSessionId = session.sessionManager.getSessionId();
++	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
++	return createOwnedBrowserTab({
++		cwd: session.sessionManager.getCwd(), settings: session.settings, getSessionId: () => ownerSessionId,
++	}, ownerSessionId, request, () => !session.isDisposed && session.sessionManager.getSessionId() === ownerSessionId,
++		"The native session changed while creating its browser tab");
++}
++
++/** Acquire through the configured native backend without constructing a session.
++ * This does not allocate, transfer or persist an owner; the host owns that lifecycle. */
++export async function createBrowserTabForOwner(
++	owner: BrowserTabCreationOwner,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	validateBrowserTabCreateRequest(request);
++	if (!owner || typeof owner.id !== "string" || !owner.id || owner.id.length > 200
++		|| /[\u0000-\u001f\u007f]/.test(owner.id) || typeof owner.cwd !== "string" || !owner.cwd
++		|| !(owner.signal instanceof AbortSignal)) {
++		throw new BrowserTabCreateRejected("Native browser creation requires an explicit owner and lifetime");
++	}
++	const { id, cwd, settings, signal } = owner;
++	if (signal.aborted) throw new BrowserTabCreateRejected("The native browser owner is retired");
++	if (!settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled for this owner");
++	return createOwnedBrowserTab({ cwd, settings, getSessionId: () => id }, id, request, () => !signal.aborted,
++		"The native browser owner retired while creating its browser tab", signal);
++}
++
++function validateBrowserTabCreateRequest(request: SessionBrowserTabCreateRequest): void {
++	if (
++		!request ||
++		typeof request.name !== "string" ||
++		request.name.length === 0 ||
++		request.name.length > 200 ||
++		/[\u0000-\u001f\u007f]/.test(request.name)
++	) {
++		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
++	}
++	if (request.initialUrl !== undefined) {
++		try {
++			if (typeof request.initialUrl !== "string" || request.initialUrl.length > 8192 || /[\u0000-\u0020]/.test(request.initialUrl)) throw new Error();
++			const url = new URL(request.initialUrl);
++			if (!["http:", "https:"].includes(url.protocol) && request.initialUrl !== "about:blank") throw new Error();
++		} catch { throw new BrowserTabCreateRejected("Invalid initial browser address"); }
++	}
++}
++
++async function createOwnedBrowserTab(
++	nativeSession: BrowserOpenSession,
++	ownerSessionId: string,
++	request: SessionBrowserTabCreateRequest,
++	isCurrent: () => boolean,
++	changedMessage: string,
++	signal?: AbortSignal,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	const timeoutMs = clampTimeout("browser", undefined, nativeSession.settings.get("tools.maxTimeout")) * 1_000;
++	const params = { action: "open", name: request.name, ...(request.initialUrl === undefined ? {} : { url: request.initialUrl }) } as BrowserParams;
++	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, signal, true);
++	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
++	if (!isCurrent()) {
++		// Only the exact tab returned by this acquisition may be cleaned up. A
++		// same-name replacement belongs to its own caller, even after retirement.
++		if (getTab(result.tab.name) === result.tab) await releaseTab(result.tab.name, { kill: true, timeoutMs });
++		throw new ToolError(changedMessage);
++	}
++	const tab = result.tab;
++	const targetDisposition = tab.kindTag === "headless" ? "created-page"
++		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
++	return Object.freeze({
++		created: true,
++		name: tab.name,
++		ownerSessionId,
++		targetId: tab.targetId,
++		backend: tab.backend,
++		kindTag: tab.kindTag,
++		targetDisposition,
++		url: tab.info.url,
++		title: tab.info.title ?? "",
++		viewport: Object.freeze({ ...tab.info.viewport }),
++	});
++}
++
+ async function closeBrowser(
+ 	name: string,
+ 	params: BrowserParams,
 diff --git a/src/tools/computer/worker-entry.ts b/src/tools/computer/worker-entry.ts
 index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d589ce816a 100644
 --- a/src/tools/computer/worker-entry.ts
@@ -8177,506 +8757,3 @@ new mode 100644
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 old mode 100755
 new mode 100644
-diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index cfd026f2c443df9761787f61b7adbdc094f7975f..7e6d9583fc4cf2887d8526bf67426dcfb54c90aa 100644
---- a/src/tools/browser/tab-supervisor.ts
-+++ b/src/tools/browser/tab-supervisor.ts
-@@ -11,7 +11,7 @@ import type { Connection } from "puppeteer-core/internal/cdp/Connection.js";
- import type { ToolSession } from "../index";
- import { ToolAbortError, ToolError } from "../tool-errors";
- import { pickElectronTarget, shouldPreserveConnectedBrowserFocus } from "./attach";
--import { CmuxTab, drainCmuxRun, runCmuxCodeWithContext } from "./cmux/cmux-tab";
-+import { CmuxTab, createRetainedCmuxTab, drainCmuxRun, runCmuxCodeWithContext, type CmuxRetainedState } from "./cmux/cmux-tab";
- import { createCmuxEvaluationChannel, type CmuxEvaluationChannel } from "./cmux/evaluation-channel";
- import { createCdpEvaluationOpening, type CdpEvaluationOpening, type CdpEvaluationChannel } from "./cdp-evaluation-channel";
- import { createBrowserRunContext, type BrowserRunContext } from "./run-context";
-@@ -21,6 +21,7 @@ import { captureBrowserTargetObservation } from "./target-observation";
- import { DEFAULT_VIEWPORT } from "./launch";
- import { captureOwnedCdpTransport, type OwnedCdpTransport } from "./owned-cdp-transport";
- import { spawnTabWorker, spawnInlineWorker, type WorkerHandle } from "./tab-worker-host";
-+import { WorkerCdpChannel, type WorkerCdpFrame } from "./worker-cdp-channel";
- import { closeCdpTarget, forgetSharedTarget, recordSharedTarget, type SharedTargetScope } from "./orphan-registry";
- import {
- 	type BrowserHandle,
-@@ -213,6 +214,84 @@ export class BrowserTabCreateRejected extends ToolError {
- }
- 
- const tabs = new Map<string, TabSession>();
-+
-+type RetainedSessionTab = {
-+	readonly name: string;
-+	readonly ownerSessionId: string;
-+	readonly sourceOwnerId: string;
-+	readonly operationId: string;
-+	readonly targetId: string;
-+	readonly kindTag: BrowserKindTag;
-+	readonly safeDir: string;
-+	readonly backend: "worker" | "cmux";
-+	readonly info: ReadyInfo;
-+	readonly pending: Map<string, PendingRun>;
-+	state: "alive" | "dead";
-+	worker?: WorkerHandle;
-+	cmuxTab?: CmuxTab;
-+	dispose(): Promise<void>;
-+};
-+const retainedSessionTabs = new Map<string, RetainedSessionTab>();
-+
-+export type RetainedBrowserEvaluationInstall = {
-+	readonly ownerSessionId: string;
-+	readonly sourceOwnerId: string;
-+	readonly operationId: string;
-+	readonly name: string;
-+	readonly targetId: string;
-+	readonly kindTag: BrowserKindTag;
-+	readonly safeDir: string;
-+	readonly backend: "cdp" | "cmux";
-+	readonly descriptor?: Readonly<{ version: 1; channel: string; targetId: string; activateForScreenshot: boolean; dialogs?: DialogPolicy }>;
-+	readonly state?: Readonly<CmuxRetainedState>;
-+};
-+export type RetainedBrowserEvaluationTransport = {
-+	post(frame: WorkerCdpFrame): void;
-+	installReceiver?(receive: (frame: WorkerCdpFrame) => void): void;
-+	request(method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<Record<string, unknown>>;
-+};
-+
-+/** Install one fresh evaluator in the destination session process. The caller
-+ * owns the original browser resource and transports; this never reconnects,
-+ * creates a target, navigates, or changes its creator identity. */
-+export async function installRetainedBrowserEvaluation(
-+	input: RetainedBrowserEvaluationInstall,
-+	transport: RetainedBrowserEvaluationTransport,
-+): Promise<{ receive(frame: WorkerCdpFrame): void; dispose(): Promise<void> }> {
-+	if (!input.ownerSessionId || !input.sourceOwnerId || !input.operationId || !input.name || !input.targetId || !input.safeDir
-+		|| retainedSessionTabs.has(input.name) || tabs.has(input.name)) throw new ToolError("Invalid retained browser evaluator installation");
-+	let receive = (_frame: WorkerCdpFrame): void => { throw new ToolError("Retained CDP evaluator is not installed"); };
-+	let tab: RetainedSessionTab;
-+	if (input.backend === "cdp") {
-+		const descriptor = input.descriptor;
-+		if (!descriptor || descriptor.version !== 1 || descriptor.targetId !== input.targetId || !descriptor.channel) throw new ToolError("Invalid retained CDP evaluator descriptor");
-+		const channel = new WorkerCdpChannel(descriptor.channel, frame => transport.post(structuredClone(frame)));
-+		transport.installReceiver?.(frame => { if (!channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); });
-+		const owned = Object.assign(channel, { startupCreations: Object.freeze([]), finishStartup() {} }) as OwnedCdpTransport;
-+		const worker = await spawnTabWorker(owned, descriptor.channel);
-+		let info: ReadyInfo;
-+		try {
-+			info = await initializeTabWorker(worker, { mode: "retained", cdpChannel: descriptor.channel, safeDir: input.safeDir,
-+				targetId: input.targetId, timeoutMs: 30_000, activateForScreenshot: descriptor.activateForScreenshot,
-+				...(descriptor.dialogs === undefined ? {} : { dialogs: descriptor.dialogs }) }, 30_000);
-+			worker.finishStartup();
-+		} catch (error) { await worker.abort(error instanceof Error ? error : new Error(String(error))).catch(() => {}); throw error; }
-+		tab = { ...input, backend: "worker", info, pending: new Map(), state: "alive", worker,
-+			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await worker.terminate(); } };
-+		worker.onMessage(message => handleTabMessage(tab as unknown as WorkerTabSession, message));
-+		receive = frame => { if (tab.state === "alive" && !channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); };
-+	} else {
-+		if (!input.state || input.state.surfaceId !== input.targetId) throw new ToolError("Invalid retained cmux evaluator state");
-+		const cmuxTab = createRetainedCmuxTab(input.state, { request: transport.request.bind(transport) });
-+		const viewport = input.state.viewport;
-+		tab = { ...input, backend: "cmux", info: { targetId: input.targetId, url: input.state.url, title: input.state.title ?? "",
-+			viewport: { width: viewport.width, height: viewport.height, ...(viewport.deviceScaleFactor === undefined ? {} : { deviceScaleFactor: viewport.deviceScaleFactor }) } },
-+			pending: new Map(), state: "alive", cmuxTab,
-+			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await drainCmuxRun(cmuxTab); } };
-+	}
-+	retainedSessionTabs.set(input.name, tab);
-+	return Object.freeze({ receive, dispose: async () => { if (retainedSessionTabs.get(input.name) === tab) retainedSessionTabs.delete(input.name); await tab.dispose(); } });
-+}
- // Original capture belongs to the exact native tab object, never its reusable name.
- interface CapturedTabObservation {
- 	inspect(targetId: string): Promise<"present" | "absent">;
-@@ -529,6 +608,7 @@ export function acquireTab(name: string, browser: BrowserHandle, opts: AcquireTa
- 	let workerOwner: WorkerConnectionOwner | undefined;
- 	const request = { ...opts, viewport: opts.viewport ? { ...opts.viewport } : undefined, deadlineStartMs: opts.deadlineStartMs ?? performance.now() };
- 	try {
-+		if (retainedSessionTabs.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is a retained original browser evaluator`);
- 		assertTabNotReserved(name);
- 		if ("client" in browser) cmuxClient = captureCmuxTabClient(browser);
- 		else workerOwner = captureWorkerConnection(browser);
-@@ -1054,6 +1134,8 @@ function runInTabWithContext(
- 	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
- 	context: BrowserRunContext,
- ): Promise<RunResultOk> {
-+	const retained = retainedSessionTabs.get(name);
-+	if (retained) return executeRetainedTabRun(retained, opts, context);
- 	try { assertTabNotReserved(name); } catch (error) { return Promise.reject(error); }
- 	const tab = tabs.get(name);
- 	if (!tab) return executeTabRun(name, opts, context);
-@@ -1069,6 +1151,29 @@ function runInTabWithContext(
- 	return result;
- }
- 
-+async function executeRetainedTabRun(tab: RetainedSessionTab,
-+	opts: { code: string; timeoutMs: number; signal?: AbortSignal }, context: BrowserRunContext): Promise<RunResultOk> {
-+	if (tab.state !== "alive" || retainedSessionTabs.get(tab.name) !== tab) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is not alive.`);
-+	if (tab.pending.size) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is busy`);
-+	if (tab.backend === "cmux") {
-+		const closeAc = new AbortController(), signal = opts.signal ? AbortSignal.any([opts.signal, closeAc.signal]) : closeAc.signal;
-+		return await runCmuxCodeWithContext(tab.cmuxTab!, { code: opts.code, timeoutMs: opts.timeoutMs, signal }, context);
-+	}
-+	const id = Snowflake.next(), worker = tab.worker!;
-+	const completion = Promise.withResolvers<RunResultOk>();
-+	const pending: PendingRun = { resolve: completion.resolve, reject: completion.reject, context, signal: opts.signal, toolCalls: new Map() };
-+	tab.pending.set(id, pending);
-+	const abort = () => { try { worker.send({ type: "abort", id }); } catch {} for (const ctrl of pending.toolCalls.values()) ctrl.abort(opts.signal?.reason); };
-+	if (opts.signal?.aborted) abort(); else opts.signal?.addEventListener("abort", abort, { once: true });
-+	try {
-+		worker.send({ type: "run", id, name: tab.name, code: opts.code, timeoutMs: opts.timeoutMs, session: context.snapshot });
-+		return await raceWithTimeout(completion.promise, opts.timeoutMs + GRACE_MS, "Retained browser code execution hung past grace", async reason => {
-+			if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
-+			tab.state = "dead"; await worker.abort(new ToolError(reason));
-+		});
-+	} finally { opts.signal?.removeEventListener("abort", abort); tab.pending.delete(id); }
-+}
-+
- async function executeTabRun(
- 	name: string,
- 	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
-@@ -1282,6 +1387,11 @@ export async function releaseTabForOwner(
- 	}
- 	if (opts.signal?.aborted) throw new BrowserActionRejected("Browser close was cancelled before admission");
- 	const { name, targetId } = target;
-+	const retained=retainedSessionTabs.get(name);
-+	if(retained){
-+		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==targetId||retained.state!=="alive")throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
-+		retainedSessionTabs.delete(name);await retained.dispose();return Object.freeze({ownerSessionId,name,targetId,released:true});
-+	}
- 	const tab = tabs.get(name);
- 	if (!tab || tab.ownerSessionId !== ownerSessionId || tab.targetId !== targetId) {
- 		throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
-@@ -1293,6 +1403,12 @@ export async function releaseTabForOwner(
- }
- 
- export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Promise<boolean> {
-+	const retained = retainedSessionTabs.get(name);
-+	if (retained) {
-+		retainedSessionTabs.delete(name);
-+		await retained.dispose();
-+		return true;
-+	}
- 	const tab = tabs.get(name);
- 	if (!tab) {
- 		logger.debug("releaseTab: unknown tab", { name });
-@@ -1445,7 +1561,12 @@ export async function dropHeadlessTabs(): Promise<void> {
-  */
- export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptions = {}): Promise<number> {
- 	if (!ownerId) return 0;
--	return releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true);
-+	const retained = [...retainedSessionTabs.values()].filter(tab => tab.ownerSessionId === ownerId);
-+	for (const tab of retained) if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
-+	const outcomes = await Promise.allSettled([releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true), ...retained.map(tab => tab.dispose())]);
-+	const failures = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
-+	if (failures.length) throw failures.length === 1 ? failures[0] : new AggregateError(failures, "Retained browser evaluator cleanup failed");
-+	return (outcomes[0] as PromiseFulfilledResult<number>).value + retained.length;
- }
- 
- /**
-@@ -1471,6 +1592,10 @@ export function listTabsForOwner(ownerSessionId: string): readonly OwnerTabMetad
- 				targetId: tab.info.targetId,
- 			}),
- 		}));
-+	for (const tab of retainedSessionTabs.values()) if (tab.ownerSessionId === ownerSessionId) snapshot.push(Object.freeze({
-+		name: tab.name, ownerSessionId, targetId: tab.targetId, backend: tab.backend, kindTag: tab.kindTag, state: tab.state,
-+		info: Object.freeze({ ...tab.info, viewport: Object.freeze({ ...tab.info.viewport }) }),
-+	}));
- 	return Object.freeze(snapshot);
- }
- 
-@@ -1484,6 +1609,13 @@ export interface OwnerTabObservation {
- 
- /** Original backend read only. Unavailable capture/owner is an error, never absence. */
- export async function inspectTabForOwner(ownerSessionId: string, target: OwnerTabViewportTarget): Promise<Readonly<OwnerTabObservation>> {
-+	const retained=retainedSessionTabs.get(target.name);
-+	if(retained){
-+		if(!ownerSessionId||retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
-+		await executeRetainedTabRun(retained,{code:"return await page.title()",timeoutMs:5_000},{snapshot:{cwd:retained.safeDir}});
-+		if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during observation");
-+		return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,kindTag:retained.kindTag,presence:"present"});
-+	}
- 	assertTabNotReserved(target.name);
- 	const { name, targetId } = target;
- 	if (!ownerSessionId || !name || !targetId) throw new ToolError("Browser observation requires an exact owner, name, and target id");
-@@ -1548,6 +1680,24 @@ export async function captureTabViewportForOwner(
- 	target: OwnerTabViewportTarget,
- ): Promise<Readonly<OwnerTabViewportCapture>> {
- 	if (!ownerSessionId || !target.name || !target.targetId) throw new ToolError("Browser viewport capture requires an exact owner, name, and target id");
-+	const retained=retainedSessionTabs.get(target.name);
-+	if(retained){
-+		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
-+		if(retained.backend!=="worker")throw new ToolError("Viewport capture is not supported for cmux browser tabs");
-+		const key=`${ownerSessionId}\0${target.name}\0${target.targetId}`;
-+		if(humanActions.has(target.name)||viewportCaptures.has(key))throw new ToolError("This browser viewport is busy");
-+		const pending=(async()=>{
-+			const result=await executeRetainedTabRun(retained,{code:`
-+const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
-+const before=await read(),data=await page.screenshot({type:"jpeg",quality:80,fullPage:false,captureBeyondViewport:false,encoding:"base64"}),url=page.url(),title=await page.title(),context=await read();return{before,data,url,title,context};`,timeoutMs:10_000},{snapshot:{cwd:retained.safeDir}});
-+			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during capture");
-+			const value=result.returnValue as {before?:OwnerTabDocumentContext;context?:OwnerTabDocumentContext;data?:string;url?:string;title?:string};
-+			if(!value||!validDocumentContext(value.before!)||!validDocumentContext(value.context!)||!sameOwnerTabDocumentContext(value.before!,value.context!,false)||typeof value.data!=="string"||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser viewport returned an invalid snapshot");
-+			const data=Buffer.from(value.data,"base64");if(!data.length||data.length>8*1024*1024)throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
-+			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,data,url:value.url,title:value.title,context:value.context!});
-+		})();
-+		viewportCaptures.set(key,pending);void pending.finally(()=>{if(viewportCaptures.get(key)===pending)viewportCaptures.delete(key)}).catch(()=>{});return await pending;
-+	}
- 	assertTabNotReserved(target.name);
- 	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
- 	if (humanActions.has(target.name)) throw new ToolError("This browser tab is busy with a human action");
-@@ -1742,6 +1892,23 @@ export async function performTabHumanActionForOwner(
- 	if (typeof ownerSessionId !== "string" || !ownerSessionId || !target || typeof target.name !== "string" || !target.name || target.name.length > 200 || target.name.includes("\0")
- 		|| typeof target.targetId !== "string" || !target.targetId || target.targetId.length > 200 || target.targetId.includes("\0") || !validDocumentContext(expected)) rejectHumanAction("Human browser action requires an exact owner, target, and document context");
- 	validateHumanAction(action, expected);
-+	const retained=retainedSessionTabs.get(target.name);
-+	if(retained){
-+		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")rejectHumanAction("The selected owner-bound browser tab is no longer available");
-+		if(retained.backend!=="worker")rejectHumanAction("Human actions are not supported for cmux browser tabs");
-+		if(humanActions.has(target.name))rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
-+		const pending=(async()=>{
-+			const result=await executeRetainedTabRun(retained,{code:`
-+const expected=${JSON.stringify(expected)},action=${JSON.stringify(action)};
-+const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
-+const before=await read(),navigation=["navigate","reload","back","forward"].includes(action.type),same=expected.documentId===before.documentId&&expected.width===before.width&&expected.height===before.height&&(navigation||(expected.scrollX===before.scrollX&&expected.scrollY===before.scrollY))&&(!expected.navigation||(before.navigation&&expected.navigation.entryId===before.navigation.entryId&&expected.navigation.canGoBack===before.navigation.canGoBack&&expected.navigation.canGoForward===before.navigation.canGoForward));if(!same)throw new Error("The browser document or viewport changed; refresh before acting");
-+if(action.type==="navigate")await page.goto(action.url,{waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="reload")await page.reload({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="back")await page.goBack({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="forward")await page.goForward({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="click")await page.mouse.click(action.x,action.y,{button:action.button,count:action.clickCount});else if(action.type==="wheel"){await page.mouse.move(action.x,action.y);await page.mouse.wheel({deltaX:action.deltaX,deltaY:action.deltaY})}else if(action.type==="resize")await page.setViewport({...page.viewport(),width:action.width,height:action.height});else if(action.type==="text")await page.keyboard.sendCharacter(action.text);else if(action.type==="key"){const pressed=[];try{for(const key of action.modifiers||[]){await page.keyboard.down(key);pressed.push(key)}await page.keyboard.press(action.key)}finally{for(const key of pressed.reverse())await page.keyboard.up(key).catch(()=>{})}}const context=await read();return{context,url:page.url(),title:await page.title()};`,timeoutMs:HUMAN_ACTION_TIMEOUT_MS},{snapshot:{cwd:retained.safeDir}});
-+			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during the action");
-+			const value=result.returnValue as {context?:OwnerTabDocumentContext;url?:string;title?:string};if(!value||!validDocumentContext(value.context!)||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser action returned an invalid observation");
-+			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,context:value.context!,url:value.url,title:value.title});
-+		})();
-+		humanActions.set(target.name,pending);void pending.finally(()=>{if(humanActions.get(target.name)===pending)humanActions.delete(target.name)}).catch(()=>{});return await pending;
-+	}
- 	assertTabNotReserved(target.name);
- 	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
- 	if (humanActions.has(target.name)) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
-diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
-index fb43dfe..fe34b47 100644
---- a/dist/types/mcp/client.d.ts
-+++ b/dist/types/mcp/client.d.ts
-@@ -11,6 +11,7 @@ export declare class MCPConnectionTimeoutError extends Error {
-  * Set OMP_MCP_TIMEOUT_MS=0 to disable MCP client-side timeouts.
-  */
- export declare function connectToServer(name: string, config: MCPServerConfig, options?: {
-+    enableApps?: boolean;
-     signal?: AbortSignal;
-     onNotification?: (method: string, params: unknown) => void;
-     onRequest?: (method: string, params: unknown) => Promise<unknown>;
-diff --git a/dist/types/mcp/loader.d.ts b/dist/types/mcp/loader.d.ts
-index 88cb17b..083b2f7 100644
---- a/dist/types/mcp/loader.d.ts
-+++ b/dist/types/mcp/loader.d.ts
-@@ -21,6 +21,7 @@ export interface MCPToolsLoadResult {
- }
- /** Options for loading MCP tools */
- export interface MCPToolsLoadOptions {
-+    enableApps?: boolean;
-     /** Called when MCP server connection state changes. */
-     onStatus?: (event: McpConnectionStatusEvent) => void;
-     /** Whether to load project-level config (default: true) */
-diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index d1fd2fc..523ea1b 100644
---- a/dist/types/mcp/manager.d.ts
-+++ b/dist/types/mcp/manager.d.ts
-@@ -39,6 +39,7 @@ export interface MCPLoadResult {
- }
- /** Options for discovering and connecting to MCP servers */
- export interface MCPDiscoverOptions {
-+    enableApps?: boolean;
-     /** Whether to load project-level config (default: true) */
-     enableProjectConfig?: boolean;
-     /** Whether to filter out Exa MCP servers (default: true) */
-diff --git a/dist/types/mcp/types.d.ts b/dist/types/mcp/types.d.ts
-index 8b623f5..90dfda5 100644
---- a/dist/types/mcp/types.d.ts
-+++ b/dist/types/mcp/types.d.ts
-@@ -155,6 +155,7 @@ export interface MCPImplementation {
- }
- /** MCP client capabilities */
- export interface MCPClientCapabilities {
-+    extensions?: Record<string, unknown>;
-     roots?: {
-         listChanged?: boolean;
-     };
-diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
-index e3b75c2..0a306d7 100644
---- a/dist/types/sdk.d.ts
-+++ b/dist/types/sdk.d.ts
-@@ -191,6 +191,7 @@ export interface CreateAgentSessionOptions {
-      * true.
-      */
-     enableMCP?: boolean;
-+    enableMcpApps?: boolean;
-     /** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
-     mcpManager?: MCPManager;
-     /** Enable LSP integration (tool, formatting, diagnostics, warmup). Default: true */
-diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index 262ed35..9f107a5 100644
---- a/src/mcp/client.ts
-+++ b/src/mcp/client.ts
-@@ -91,6 +91,8 @@ async function createTransport(config: MCPServerConfig, signal?: AbortSignal): P
- async function initializeConnection(
- 	transport: MCPTransport,
- 	options?: {
-+		/** Advertise the UI protocol only for a caller that supplies its host. */
-+		enableApps?: boolean;
- 		signal?: AbortSignal;
- 		/** Called after notifications/initialized succeeds. */
- 		onInitialized?: () => void | Promise<void>;
-@@ -100,6 +102,7 @@ async function initializeConnection(
- 		protocolVersion: MCP_PROTOCOL_VERSION,
- 		capabilities: {
- 			roots: { listChanged: false },
-+			...(options?.enableApps === true ? { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } } : {}),
- 		},
- 		clientInfo: CLIENT_INFO,
- 	};
-@@ -151,6 +154,8 @@ export async function connectToServer(
- 	name: string,
- 	config: MCPServerConfig,
- 	options?: {
-+		/** Advertise the UI protocol only for a caller that supplies its host. */
-+		enableApps?: boolean;
- 		signal?: AbortSignal;
- 		onNotification?: (method: string, params: unknown) => void;
- 		onRequest?: (method: string, params: unknown) => Promise<unknown>;
-@@ -173,6 +178,7 @@ export async function connectToServer(
- 
- 		try {
- 			const initResult = await initializeConnection(transport, {
-+				enableApps: options?.enableApps,
- 				signal: options?.signal,
- 				async onInitialized() {
- 					// Open the optional GET SSE stream only after the initialized
-diff --git a/src/mcp/loader.ts b/src/mcp/loader.ts
-index 135a0c5..81aa537 100644
---- a/src/mcp/loader.ts
-+++ b/src/mcp/loader.ts
-@@ -27,6 +27,7 @@ export interface MCPToolsLoadResult {
- 
- /** Options for loading MCP tools */
- export interface MCPToolsLoadOptions {
-+	enableApps?: boolean;
- 	/** Called when MCP server connection state changes. */
- 	onStatus?: (event: McpConnectionStatusEvent) => void;
- 	/** Whether to load project-level config (default: true) */
-@@ -69,6 +70,7 @@ export async function discoverAndLoadMCPTools(cwd: string, options?: MCPToolsLoa
- 	let result: MCPLoadResult;
- 	try {
- 		result = await manager.discoverAndConnect({
-+			enableApps: options?.enableApps,
- 			onStatus: options?.onStatus,
- 			enableProjectConfig: options?.enableProjectConfig,
- 			filterExa: options?.filterExa,
-diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index dc226ea..cd08466 100644
---- a/src/mcp/manager.ts
-+++ b/src/mcp/manager.ts
-@@ -175,8 +175,20 @@ export interface MCPLoadResult {
- 	exaApiKeys: string[];
- }
- 
-+/** App-only tools remain callable through their captured UI connection, never
-+ * model wrappers (including deferred cached wrappers from an Apps session). */
-+function modelVisibleTools(tools: MCPToolDefinition[]): MCPToolDefinition[] {
-+	return tools.filter(tool => {
-+		const ui = tool._meta?.ui;
-+		const visibility = ui && typeof ui === "object" && !Array.isArray(ui) ? (ui as Record<string, unknown>).visibility : undefined;
-+		return !Array.isArray(visibility) || visibility.includes("model");
-+	});
-+}
-+
- /** Options for discovering and connecting to MCP servers */
- export interface MCPDiscoverOptions {
-+	/** Owning host implements the MCP Apps UI protocol. Disabled by default. */
-+	enableApps?: boolean;
- 	/** Whether to load project-level config (default: true) */
- 	enableProjectConfig?: boolean;
- 	/** Whether to filter out Exa MCP servers (default: true) */
-@@ -621,6 +633,7 @@ export class MCPManager {
- 			const connectionPromise = (async () => {
- 				const resolvedConfig = await this.#resolveAuthConfig(config);
- 				return connectToServer(name, resolvedConfig, {
-+					enableApps: this.#discoverOptions?.enableApps,
- 					onNotification: (method, params) => {
- 						this.#handleServerNotification(name, method, params);
- 					},
-@@ -709,7 +722,7 @@ export class MCPManager {
- 					this.#pendingToolLoads.delete(name);
- 					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
- 						this.reconnectServer(name, options);
--					const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
-+					const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
- 					this.#replaceServerTools(name, customTools);
- 					void this.#onToolsChanged?.(this.#tools);
- 					void this.toolCache?.set(name, config, serverTools);
-@@ -786,7 +799,7 @@ export class MCPManager {
- 					connectedServers.add(name);
- 					const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) =>
- 						this.reconnectServer(name, options);
--					this.#replaceServerTools(name, MCPTool.fromTools(connection, serverTools, reconnect));
-+					this.#replaceServerTools(name, MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect));
- 				} else if (task.tracked.status === "rejected") {
- 					const message =
- 						task.tracked.reason instanceof Error ? task.tracked.reason.message : String(task.tracked.reason);
-@@ -800,7 +813,7 @@ export class MCPManager {
- 							this.reconnectServer(name, options);
- 						this.#replaceServerTools(
- 							name,
--							DeferredMCPTool.fromTools(name, cached, () => this.waitForConnection(name), source, reconnect),
-+							DeferredMCPTool.fromTools(name, modelVisibleTools(cached), () => this.waitForConnection(name), source, reconnect),
- 						);
- 					}
- 				}
-@@ -1309,6 +1322,7 @@ export class MCPManager {
- 	): Promise<MCPServerConnection> {
- 		const resolvedConfig = await this.#resolveAuthConfig(config);
- 		const connection = await connectToServer(name, resolvedConfig, {
-+			enableApps: this.#discoverOptions?.enableApps,
- 			signal,
- 			onNotification: (method, params) => {
- 				this.#handleServerNotification(name, method, params);
-@@ -1350,7 +1364,7 @@ export class MCPManager {
- 		try {
- 			const serverTools = await listTools(connection, { signal });
- 			const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
--			const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
-+			const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
- 			void this.toolCache?.set(name, config, serverTools);
- 			this.#replaceServerTools(name, customTools);
- 			void this.#onToolsChanged?.(this.#tools);
-@@ -1400,7 +1414,7 @@ export class MCPManager {
- 		// Reload tools
- 		const serverTools = await listTools(connection);
- 		const reconnect = (options?: { authChallenge?: MCPAuthChallenge; signal?: AbortSignal }) => this.reconnectServer(name, options);
--		const customTools = MCPTool.fromTools(connection, serverTools, reconnect);
-+		const customTools = MCPTool.fromTools(connection, modelVisibleTools(serverTools), reconnect);
- 		void this.toolCache?.set(name, connection.config, serverTools);
- 
- 		// Replace tools from this server
-diff --git a/src/mcp/types.ts b/src/mcp/types.ts
-index 7a600a6..19e6282 100644
---- a/src/mcp/types.ts
-+++ b/src/mcp/types.ts
-@@ -187,6 +187,7 @@ export interface MCPImplementation {
- 
- /** MCP client capabilities */
- export interface MCPClientCapabilities {
-+	extensions?: Record<string, unknown>;
- 	roots?: { listChanged?: boolean };
- 	sampling?: Record<string, never>;
- 	experimental?: Record<string, unknown>;
-diff --git a/src/sdk.ts b/src/sdk.ts
-index d647c79..6c1978f 100644
---- a/src/sdk.ts
-+++ b/src/sdk.ts
-@@ -540,6 +540,8 @@ export interface CreateAgentSessionOptions {
- 	 * true.
- 	 */
- 	enableMCP?: boolean;
-+	/** Opt in only when the session owner provides an MCP Apps host. */
-+	enableMcpApps?: boolean;
- 	/** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
- 	mcpManager?: MCPManager;
- 
-@@ -2005,6 +2007,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
- 				configuredLevel: settings.extensionsSourceLevel(),
- 			}));
- 		const mcpDiscoverOptions = {
-+			enableApps: options.enableMcpApps === true,
- 			onStatus: onMCPStatus,
- 			enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
- 			// Always filter Exa - we have native integration

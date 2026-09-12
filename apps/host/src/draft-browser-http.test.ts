@@ -31,6 +31,7 @@ function fixture(create?: WorkerBrowserOwner["createBrowserTab"]) {
       inspectBrowserTab: async () => { throw new Error("Unexpected observation in this fixture"); },
       closeBrowserTab: async () => { throw new Error("No close allowed"); },
       getBrowserMetadata: async () => { throw new Error("No metadata probe allowed"); }, controlBrowser: async () => { throw new Error("No controls allowed"); }, getBrowserFrame: async () => { throw new Error("No frame allowed"); },
+      getBrowserHistory: async target => [{ id: "1", url: "https://example.invalid/observed", title: target.name, current: true }],
     };
   } });
   const handler = new DraftBrowserHttp(store, workers, "epoch-one", () => 1000);
@@ -55,6 +56,16 @@ test("owner-header, method and strict body gates precede mutation; status is rea
   expect((await f.send("open", creation)).status).toBe(503); expect(f.events).toEqual([]);
   expect((await f.send("acquire")).body).toMatchObject({ state: "ready", ownerId: "owner", workerPid: 99, ticket: { controlEpoch: "epoch-one", observedAt: 1000 } });
   expect(f.events).toEqual(["worker"]); expect(f.store.getDraft("draft")?.text).toBe("keep draft"); expect(f.store.listSessions()).toEqual([]);
+});
+
+test("draft history reads only its existing exact owner worker and target", async () => {
+  const f = fixture(); await f.send("acquire");
+  const history = { requestId: "history", target: { workerPid: 99, name: "page", targetId: "native-target" }, query: "observed" };
+  const reply = await f.send("history", undefined, { history });
+  expect(reply).toMatchObject({ status: 200, body: { hostId: f.store.host.id, owner: { kind: "draft", id: "owner" }, requestId: "history", query: "observed",
+    entries: [{ id: "1", url: "https://example.invalid/observed", title: "page", current: true }] } });
+  expect((await f.send("history", undefined, { history: { ...history, target: { ...history.target, workerPid: 100 } } })).status).toBe(409);
+  expect(f.events).toEqual(["worker"]);
 });
 
 test("one native creation with exact concurrent requests, completed receipt and no historical replay", async () => {

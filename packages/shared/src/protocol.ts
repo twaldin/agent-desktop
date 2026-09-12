@@ -1,5 +1,6 @@
 export * from "./branch-query-transport";
 export * from "./browser-observation";
+export * from "./browser-history";
 export * from "./browser-continuation";
 import type { GitRepositoryChange } from "./repository-changes";
 export * from "./repository-changes";
@@ -440,6 +441,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   browserClose?: import("./browser-close").BrowserCloseBridge;
   browserObservation?: import("./browser-observation").BrowserObservationBridge;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;
+  getBrowserHistory?(sessionId: string, request: import("./browser-history").BrowserHistoryRequest, hostId?: string): Promise<import("./browser-history").BrowserHistoryResult>;
   createBrowserTab?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateReceipt>;
   getBrowserCreationStatus?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateObservation>;
   controlBrowser?(sessionId: string, request: BrowserControlRequest, hostId?: string): Promise<BrowserControlReceipt>;

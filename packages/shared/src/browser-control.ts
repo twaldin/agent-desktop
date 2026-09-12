@@ -9,7 +9,7 @@ export interface BrowserDocumentContext {
 }
 export type BrowserModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
 export type BrowserHumanAction =
-  | { type: 'navigate'; url: string } | { type: 'reload' | 'back' | 'forward' }
+  | { type: 'navigate'; url: string } | { type: 'reload' | 'back' | 'forward' | 'stop' }
   | { type: 'click'; x: number; y: number; button?: 'left' | 'middle' | 'right'; clickCount?: 1 | 2 | 3 }
   | { type: 'wheel'; x: number; y: number; deltaX: number; deltaY: number }
   | { type: 'resize'; width: number; height: number }
@@ -60,7 +60,7 @@ export function parseBrowserHumanAction(v: unknown, context: BrowserDocumentCont
     case 'back': case 'forward':
       if (!context.navigation) throw new Error('Refresh this browser preview before using its history.');
       return { type: a.type };
-    case 'reload': return { type: a.type };
+    case 'reload': case 'stop': return { type: a.type };
     case 'click': case 'wheel': {
       if (!finite(a.x, 0, context.width) || !finite(a.y, 0, context.height) || a.x === context.width || a.y === context.height) throw new Error('Pointer is outside the captured browser viewport.');
       if (a.type === 'wheel') {

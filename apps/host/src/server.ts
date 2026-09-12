@@ -65,6 +65,7 @@ import { BrowserObservationHttp } from "./browser-observation-http";
 import { BrowserCloseHttp } from "./browser-close-http";
 import { BrowserCloseRequests } from "./browser-close-requests";
 import { BrowserControlHttp } from "./browser-control-http";
+import { BrowserHistoryHttp } from "./browser-history-http";
 import { BrowserFrameHttp } from "./browser-frame-http";
 import { BrowserCreateHttp } from "./browser-create-http";
 import { DraftBrowserHttp } from "./draft-browser-http";
@@ -100,6 +101,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let runtime!: WorkerRuntime;
   let draftBrowsers: DraftBrowserHttp | undefined;
   let browserObservations: BrowserObservationHttp | undefined;
+  let browserHistory: BrowserHistoryHttp | undefined;
   let browserCloseRequests: BrowserCloseRequests | undefined;
   let workspaces!: HostWorkspaces;
   let browserFirstSend!: BrowserFirstSend;
@@ -455,6 +457,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const btwHttp = new BtwHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)), service: btw });
   const browserControls = new BrowserControlHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
+  browserHistory = new BrowserHistoryHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
+    getExistingHandle: async id => { const pending = handles.get(id),handle=pending?await pending.catch(()=>undefined):undefined;return handle?.getBrowserHistory?{workerPid:handle.workerPid,workerFailure:handle.workerFailure,getBrowserHistory:target=>handle.getBrowserHistory!(target)}:undefined; } });
   browserCloseRequests = new BrowserCloseRequests(store.browserCloses, store.host.id, browserControls.epoch);
   const browserClose = new BrowserCloseHttp(browserCloseRequests, store.host.id, id => Boolean(store.getSession(id)),
     async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; });
@@ -1226,6 +1230,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (browserCloseResponse) return browserCloseResponse;
         const browserControlResponse = await browserControls.route(request, url);
         if (browserControlResponse) return browserControlResponse;
+        const browserHistoryResponse = await browserHistory!.route(request, url);
+        if (browserHistoryResponse) return browserHistoryResponse;
         const browserFrameResponse = await browserFrames.route(request, url);
         if (browserFrameResponse) return browserFrameResponse;
         const acquisitionResponse = await acquisitions!.route(request,url);
@@ -1442,6 +1448,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         void browserCloseDrain?.catch(() => {});
         const browserObservationDrain = browserObservations?.dispose();
         void browserObservationDrain?.catch(() => {});
+        const browserHistoryDrain = browserHistory?.dispose();
+        void browserHistoryDrain?.catch(() => {});
         const draftBrowserDrain = draftBrowsers?.dispose();
         void draftBrowserDrain?.catch(() => {}); // Retain failure for the aggregate after configuration drains.
         // Configuration writes are bounded, local operations. Drain them before
@@ -1451,7 +1459,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
+        const outcomes = await Promise.allSettled([automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
@@ -1477,7 +1485,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([automations?.dispose(), browserObservations?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await Promise.allSettled([automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
       await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
     }
     finally {

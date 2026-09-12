@@ -36,6 +36,7 @@ import { requestBtw } from "./btw-transport";
 import { mutateQueuedMessages, requestQueuedMessages } from "./queued-messages-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
 import { requestBrowserMetadata } from "./browser-metadata-transport";
+import { requestBrowserHistory } from "./browser-history-transport";
 import { requestBrowserFrame } from "./browser-frame-transport";
 import { requestBrowserControl } from "./browser-control-transport";
 import { requestBrowserCreate, requestBrowserCreationStatus } from "./browser-create-transport";
@@ -588,6 +589,9 @@ registerBrowserObservationHandlers(ipcMain, assertTrustedSender, endpointFor);
 
 ipcMain.handle("host:browser-metadata", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserMetadata(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:browser-history", async (event, sessionId: string, request: import("@agent-desktop/shared").BrowserHistoryRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestBrowserHistory(await endpointFor(hostId), sessionId, request);
 });
 ipcMain.handle("host:browser-create", async (event, sessionId: string, request: BrowserCreateRequest, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserCreate(await endpointFor(hostId), sessionId, request);

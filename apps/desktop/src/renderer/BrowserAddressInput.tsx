@@ -20,6 +20,8 @@ export interface BrowserAddressInputProps<T extends BrowserAddressSuggestion> {
   readOnly: boolean;
   suggestions?: readonly T[];
   onChange(value: string): void;
+  onFocus?(): void;
+  onBlur?(): void;
   onCancel(): void;
   onSubmit(): void;
   /** Selection is an intent. The caller revalidates source/destination ownership
@@ -74,9 +76,9 @@ export function BrowserAddressInput<T extends BrowserAddressSuggestion>(props: B
       aria-activedescendant={expanded && view.selectedIndex >= 0 ? `${listId}-option-${view.selectedIndex}` : undefined}
       spellCheck={false} autoComplete="off" maxLength={8192} placeholder="Search or enter a URL"
       disabled={props.disabled} readOnly={props.readOnly} value={props.value}
-      onFocus={() => { setFocused(true); setKeyboard(undefined); }}
+      onFocus={() => { setFocused(true); setKeyboard(undefined); props.onFocus?.(); }}
       onPointerDown={() => { if (enabled) setFocused(true); }}
-      onBlur={() => { setFocused(false); setKeyboard(undefined); composing.current = false; setInComposition(false); }}
+      onBlur={() => { setFocused(false); setKeyboard(undefined); composing.current = false; setInComposition(false); props.onBlur?.(); }}
       onChange={event => { setKeyboard(undefined); props.onChange(event.currentTarget.value); }}
       onCompositionStart={() => { composing.current = true; setInComposition(true); setKeyboard(undefined); }}
       onCompositionEnd={() => { composing.current = false; setInComposition(false); }}

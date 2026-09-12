@@ -26,3 +26,7 @@ test("browser resize and history actions require a current native history contex
     expect(() => parseBrowserControlRequest(request({ type: "resize", width: size[0], height: size[1] }))).toThrow();
   }
 });
+
+test("stop loading retains the captured owner context",()=>{
+  expect(parseBrowserControlRequest(request({type:"stop"})).action).toEqual({type:"stop"});
+});

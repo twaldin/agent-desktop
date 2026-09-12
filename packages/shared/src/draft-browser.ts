@@ -1,6 +1,7 @@
 import { parseNativeBrowserTabMetadata, type NativeBrowserTabMetadata, type BrowserMetadataAvailability, type NativeBrowserFrame, type BrowserFrameTarget } from "./browser";
 import type { BrowserCreateRequest, BrowserCreationTicket } from "./browser-create";
 import type { BrowserControlRequest, BrowserControlReceipt } from "./browser-control";
+import type { BrowserHistoryRequest, BrowserHistoryResult } from "./browser-history";
 
 export interface DraftBrowserReceiptIdentity {
   protocolVersion: 1;
@@ -62,6 +63,7 @@ export interface DraftBrowserBridge {
   create(reference: DraftBrowserOwnerReference, request: BrowserCreateRequest, hostId: string): Promise<DraftBrowserCreationReceipt>;
   creationStatus(reference: DraftBrowserOwnerReference, request: BrowserCreateRequest, hostId: string): Promise<DraftBrowserCreationObservation>;
   metadata(reference: DraftBrowserOwnerReference, hostId: string): Promise<DraftBrowserMetadataSnapshot>;
+  history?(reference: DraftBrowserOwnerReference, request: BrowserHistoryRequest, hostId: string): Promise<BrowserHistoryResult>;
   frame(reference: DraftBrowserOwnerReference, target: BrowserFrameTarget, hostId: string): Promise<DraftBrowserFrameSnapshot>;
   control(reference: DraftBrowserOwnerReference, request: BrowserControlRequest, hostId: string): Promise<DraftBrowserControlReceipt>;
 }

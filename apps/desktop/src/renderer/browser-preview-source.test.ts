@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { BrowserControlRequest, DesktopBridge, DraftBrowserFrameSnapshot, DraftBrowserMetadataSnapshot, DraftBrowserOwnerReference } from "@agent-desktop/shared";
+import type { BrowserControlRequest, BrowserHistoryRequest, DesktopBridge, DraftBrowserFrameSnapshot, DraftBrowserMetadataSnapshot, DraftBrowserOwnerReference } from "@agent-desktop/shared";
 import { BrowserPanel } from "./BrowserPanel";
 import { browserPreviewSource } from "./browser-preview-source";
 
@@ -13,6 +13,8 @@ const metadata: DraftBrowserMetadataSnapshot = { ...base, availability: "running
   tabs: [{ name: "page", targetId: "native-target", backend: "worker", kindTag: "headless", state: "alive", url: "https://example.com/", viewport: { width: 800, height: 600 } }] };
 const image: DraftBrowserFrameSnapshot = { ...base, ...target, capturedAt: 1, context, mimeType: "image/jpeg", data: "aGVsbG8=", width: 800, height: 600, url: "https://example.com/", title: "Page", controlEpoch: "epoch" };
 const request = (): BrowserControlRequest => ({ requestId: "request", controlEpoch: "epoch", capturedAt: 1, target: { ...target }, context: { ...context }, action: { type: "text", text: "retained input" } });
+const historyRequest = (): BrowserHistoryRequest => ({ requestId: "history-request", target: { ...target }, query: "example" });
+const history = { protocolVersion: 1 as const, hostId: "host", owner: { kind: "draft" as const, id: "owner" }, requestId: "history-request", target, query: "example", revision: "revision", entries: [{ id: "1", url: "https://example.com/", title: "Page", current: true }] };
 function gate<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function fixture() {
   const calls: Array<{ method: string; ref?: DraftBrowserOwnerReference; host?: string; value?: unknown }> = [];
@@ -21,6 +23,7 @@ function fixture() {
     acquire: forbidden, status: forbidden, retire: forbidden, create: forbidden, creationStatus: forbidden,
     metadata: async (reference, host) => { calls.push({ method: "metadata", ref: reference, host }); return structuredClone(metadata); },
     frame: async (reference, value, host) => { calls.push({ method: "frame", ref: reference, host, value }); return structuredClone(image); },
+    history: async (reference, value, host) => { calls.push({ method: "history", ref: reference, host, value }); return structuredClone(history); },
     control: async (reference, value, host) => { calls.push({ method: "control", ref: reference, host, value }); return { ...base, ...target, requestId: value.requestId, outcome: "completed" as const }; },
   }, getBrowserMetadata: async () => { throw new Error("Session fallback forbidden"); }, getBrowserFrame: async () => { throw new Error("Session fallback forbidden"); },
   controlBrowser: async () => { throw new Error("Session fallback forbidden"); } };
@@ -34,39 +37,42 @@ test("draft preview uses only the original explicit draft route and copies calle
   f.owner.reference.ownerId = "replacement"; f.owner.target.targetId = "replacement";
   expect((await source.metadata())?.hostId).toBe("host");
   expect(await source.frame(target)).toEqual(image);
+  expect(await source.history(historyRequest())).toEqual(history);
   const sent = request(), completed = source.control(sent); sent.action = { type: "reload" }; sent.context.width = 123;
   expect((await completed).outcome).toBe("completed");
   expect(f.calls).toEqual([{ method: "metadata", ref, host: "host" }, { method: "frame", ref, host: "host", value: target },
+    { method: "history", ref, host: "host", value: historyRequest() },
     { method: "control", ref, host: "host", value: request() }]);
   f.calls[0]!.ref!.ownerId = "callback-mutated";
-  await source.metadata(); expect(f.calls[3]!.ref).toEqual(ref);
+  await source.metadata(); expect(f.calls[4]!.ref).toEqual(ref);
   expect(source.addressOwner).toBe(JSON.stringify(["draft", "host", "owner", "draft", 3]));
 });
 
 test("unavailable draft transport never falls back to an otherwise working session transport", async () => {
   const f = fixture(); delete f.bridge.draftBrowser;
   const source = browserPreviewSource(f.bridge, f.owner);
-  expect(source.canRead).toBe(false); expect(source.canControl).toBe(false);
+  expect(source.canRead).toBe(false); expect(source.canControl).toBe(false); expect(source.canHistory).toBe(false);
   expect(await source.metadata()).toBeNull();
   await expect(source.frame(target)).rejects.toThrow("viewport"); await expect(source.control(request())).rejects.toThrow("receipt");
+  await expect(source.history(historyRequest())).rejects.toThrow("history");
   expect(f.calls).toEqual([]);
 });
 
-test("a revoked original guard prevents all three dispatches and never revives", async () => {
+test("a revoked original guard prevents every preview dispatch and never revives", async () => {
   const f = fixture(); let valid = true;
   const source = browserPreviewSource(f.bridge, { ...f.owner, isCurrent: () => valid }); valid = false;
   expect(source.current()).toBe(false); valid = true;
   await expect(source.metadata()).rejects.toThrow("original"); await expect(source.frame(target)).rejects.toThrow("original");
-  await expect(source.control(request())).rejects.toThrow("original"); expect(f.calls).toEqual([]);
+  await expect(source.history(historyRequest())).rejects.toThrow("original"); await expect(source.control(request())).rejects.toThrow("original"); expect(f.calls).toEqual([]);
 });
 
 test("generation loss during each await suppresses late metadata, pixels and control success", async () => {
-  for (const method of ["metadata", "frame", "control"] as const) {
+  for (const method of ["metadata", "frame", "history", "control"] as const) {
     const f = fixture(), waiting = gate<unknown>(); let calls = 0;
     Object.assign(f.bridge.draftBrowser!, { [method]: async () => { calls++; return waiting.promise; } });
     const source = browserPreviewSource(f.bridge, f.owner);
-    const pending = method === "metadata" ? source.metadata() : method === "frame" ? source.frame(target) : source.control(request());
-    f.lose(); waiting.resolve(method === "metadata" ? metadata : method === "frame" ? image : { ...base, ...target, requestId: "request", outcome: "completed" });
+    const pending = method === "metadata" ? source.metadata() : method === "frame" ? source.frame(target) : method === "history" ? source.history(historyRequest()) : source.control(request());
+    f.lose(); waiting.resolve(method === "metadata" ? metadata : method === "frame" ? image : method === "history" ? history : { ...base, ...target, requestId: "request", outcome: "completed" });
     await expect(pending).rejects.toThrow("original"); expect(calls).toBe(1);
   }
 });
@@ -95,11 +101,12 @@ test("session preview preserves its real session arguments and legacy selection 
   const calls: unknown[] = [], { ownerKind, ownerId, ...sessionImage } = image, { ownerKind: _, ownerId: __, ...sessionMetadata } = metadata;
   const bridge = { getBrowserMetadata: async (...args: unknown[]) => { calls.push(args); return { ...sessionMetadata, sessionId: "session" }; },
     getBrowserFrame: async (...args: unknown[]) => { calls.push(args); return { ...sessionImage, sessionId: "session" }; },
+    getBrowserHistory: async (...args: unknown[]) => { calls.push(args); return { ...history, owner: { kind: "session", id: "session" } }; },
     controlBrowser: async (...args: unknown[]) => { calls.push(args); return { protocolVersion: 1, hostId: "host", sessionId: "session", ...target, requestId: "request", outcome: "completed" }; },
   } as DesktopBridge;
   const source = browserPreviewSource(bridge, { kind: "session", hostId: "host", sessionId: "session" });
-  await source.metadata(); await source.frame(target); await source.control(request());
-  expect(calls).toEqual([["session", "host"], ["session", target, "host"], ["session", request(), "host"]]);
+  await source.metadata(); await source.frame(target); await source.history(historyRequest()); await source.control(request());
+  expect(calls).toEqual([["session", "host"], ["session", target, "host"], ["session", historyRequest(), "host"], ["session", request(), "host"]]);
   expect(source.selectionKey).toBe("browser.preview.selected.host.session"); expect(source.addressOwner).toBe(JSON.stringify(["host", "session"]));
 });
 

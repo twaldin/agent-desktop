@@ -1,7 +1,7 @@
 import { browserAddressFocusOwner } from "./browser-address-focus";
 import {
-  parseBrowserControlRequest, parseDraftBrowserOwnerReference, validBrowserFrameTarget,
-  type BrowserControlReceipt, type BrowserControlRequest, type BrowserFrameSnapshot, type BrowserFrameTarget,
+  parseBrowserControlRequest, parseBrowserHistoryRequest, parseBrowserHistoryResult, parseDraftBrowserOwnerReference, validBrowserFrameTarget,
+  type BrowserControlReceipt, type BrowserControlRequest, type BrowserFrameSnapshot, type BrowserFrameTarget, type BrowserHistoryRequest, type BrowserHistoryResult,
   type BrowserMetadataSnapshot, type DesktopBridge, type DraftBrowserControlReceipt, type DraftBrowserFrameSnapshot,
   type DraftBrowserMetadataSnapshot, type DraftBrowserOwnerReference,
 } from "@agent-desktop/shared";
@@ -47,6 +47,7 @@ export function browserPreviewSource(bridge: DesktopBridge, input: BrowserPrevie
     selectionKey: owner.kind === "session" ? `browser.preview.selected.${owner.hostId}.${owner.sessionId}` : `browser.preview.selected.${JSON.stringify(addressOwner)}`,
     canRead: owner.kind === "session" ? Boolean(bridge.getBrowserMetadata && bridge.getBrowserFrame) : Boolean(draftBridge),
     canControl: owner.kind === "session" ? Boolean(bridge.controlBrowser) : Boolean(draftBridge),
+    canHistory: owner.kind === "session" ? Boolean(bridge.getBrowserHistory) : Boolean(draftBridge?.history),
     current,
     async metadata(): Promise<PreviewMetadata | null> {
       assertCurrent();
@@ -72,6 +73,12 @@ export function browserPreviewSource(bridge: DesktopBridge, input: BrowserPrevie
       assertCurrent();
       if (!value || !identity(value) || value.requestId !== request.requestId || !same(value, request.target)) throw new Error("The browser action receipt belongs to a different owner or tab.");
       return value;
+    },
+    async history(input: BrowserHistoryRequest): Promise<BrowserHistoryResult> {
+      assertCurrent(); const request=parseBrowserHistoryRequest(input); target(request.target);
+      const value=owner.kind==="session"?await bridge.getBrowserHistory?.(owner.sessionId,request,owner.hostId):await draftBridge?.history?.({...owner.reference},request,owner.hostId);
+      assertCurrent(); if(!value)throw new Error("Browser history is unavailable.");
+      return parseBrowserHistoryResult(value,owner.hostId,{kind:owner.kind,id:owner.kind==="session"?owner.sessionId:owner.reference.ownerId},request);
     },
   };
 }
