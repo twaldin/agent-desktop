@@ -9,6 +9,7 @@
 .organized-sidebar .organized-session { border-radius:8px; }
 .organized-sidebar .organized-session:hover,
 .organized-sidebar .organized-session.selected { background:var(--selected); }
+.organized-sidebar .project-row.selected { background:var(--selected); }
 .organized-sidebar .session-row { height:30px; gap:6px; padding:5px 10px; }
 .organized-sidebar .sidebar-session-title { min-width:0; overflow:hidden; white-space:nowrap; mask-image:linear-gradient(to right,#000 calc(100% - 12px),transparent); }
 .organized-sidebar .sidebar-session-status { margin-left:auto; flex-shrink:0; width:5px; height:5px; border-radius:50%; }

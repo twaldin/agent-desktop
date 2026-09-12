@@ -47,7 +47,7 @@ function fixture() {
   const useRef = (initial: unknown) => refs[refCursor++] ??= { current: initial };
   const Component = new Function("createElement", "Fragment", "useState", "useRef", "useEffect", "createPortal", "sidebarItemKey", "Icon", "SidebarPinIcon", `${compiled}; return OrganizedSidebar;`)
     (createElement, Fragment, useState, useRef, () => {}, (node: ReactNode) => node, sidebarItemKey, () => null, () => null);
-  const props = { preferences, groups, activeHostId: "home", selectedId: "same", query: "", showArchived: false, expandedProjects,
+  const props = { preferences, groups, activeHostId: "home", selectedId: "same" as string | null, activeProjectId: undefined as string | undefined, query: "", showArchived: false, expandedProjects,
     onNavigate: (...args: unknown[]) => navigations.push(args), onNew: (...args: unknown[]) => newChats.push(args), onArchive: (...args: unknown[]) => archives.push(args),
     collapsedSections: new Set<SidebarSectionKey>(["recents"]), onToggleSection: (key: SidebarSectionKey) => { const next = new Set(props.collapsedSections); next.has(key) ? next.delete(key) : next.add(key); props.collapsedSections = next; },
     onToggleProject: (key: string) => toggles.push(key), onAddProject() {}, addingProject: false, connected: true, onToggleArchived() {}, localHostId: "home",
@@ -171,4 +171,26 @@ test("reveal is offered only for the local available host and rejected callbacks
   f.props.onRevealProject = async () => { throw new Error("Finder is unavailable"); };
   projectMenu(f); await f.button("Reveal in Finder").props.onClick();
   expect(label(f.render().find(node => node.props.className === "sidebar-project-action-error")!.props.children)).toContain("Finder is unavailable");
+});
+
+
+test("new-chat project selection is host-bound and existing chat selection clears the project highlight", () => {
+  const f = fixture();
+  const remote = { ...f.groups[0]!.hostState.projects[0]!, hostId: "work", name: "Remote example" };
+  f.groups[1]!.hostState.projects.push(remote);
+  f.props.selectedId = null;
+  f.props.activeProjectId = "project";
+  expect(f.button("Example").props["aria-current"]).toBe("page");
+  expect(f.button("Remote example").props["aria-current"]).toBeUndefined();
+  f.props.activeHostId = "work";
+  expect(f.button("Example").props["aria-current"]).toBeUndefined();
+  expect(f.button("Remote example").props["aria-current"]).toBe("page");
+  f.props.selectedId = "same";
+  expect(f.button("Remote example").props["aria-current"]).toBeUndefined();
+  expect(f.render().find(node => node.props["data-session-id"] === "same" && node.props["data-host-id"] === "work")!.props["aria-current"]).toBe("page");
+  f.props.selectedId = null;
+  f.props.activeProjectId = undefined;
+  expect(f.button("Remote example").props["aria-current"]).toBeUndefined();
+  expect(f.writes).toEqual([]);
+  expect(f.navigations).toEqual([]);
 });

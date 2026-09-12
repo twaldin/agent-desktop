@@ -13,7 +13,7 @@ import type { SidebarSectionKey } from "../window-state";
 interface Props {
   layout: SidebarLayout;
   preferences: PreferencesState; groups: { host: HostOption; hostState: HostState }[];
-  activeHostId: string; selectedId: string | null; query: string; showArchived: boolean;
+  activeHostId: string; selectedId: string | null; activeProjectId?: string; query: string; showArchived: boolean;
   collapsedSections: ReadonlySet<SidebarSectionKey>; onToggleSection(key: SidebarSectionKey): void;
   expandedProjects: Set<string>; onToggleProject(key: string): void;
   onNavigate(id: string | null, hostId?: string): void; onNew(projectId?: string, hostId?: string): void;
@@ -155,10 +155,11 @@ export function OrganizedSidebar(props: Props) {
   }
   function projectRow(item: Extract<Item, { kind: "project" }>, list: Item[]) {
     const project = item.value; const key = `${project.hostId}:${project.id}`;
+    const selected = props.selectedId === null && props.activeHostId === project.hostId && props.activeProjectId === project.id;
     const children = projectChildren(project);
     const expanded = projectExpanded(project);
     const host = groups.find(group => group.hostState.host.id === project.hostId)?.host;
-    return <div className="project-group" data-project-id={project.id} data-host-id={project.hostId} key={sidebarItemKey(item)}><div className="project-row"><button className="project-label" title={`${project.path}\n${host?.name ?? project.hostId}`} onClick={() => props.onToggleProject(key)} aria-expanded={expanded}><span className="sidebar-project-glyph"><Icon name="folder"/><Icon name="chevron" className={expanded ? "rotated" : ""}/></span><span className="truncate">{project.name}</span></button>{itemMenu(item, list)}<button className="icon-button small project-new" disabled={host?.availability !== "available"} aria-label={`Start new chat in ${project.name}`} title={`Start new chat in ${project.name}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="compose"/></button></div>{expanded && <div className="project-sessions">{children.map(child => child.kind === "session" && sessionRow(child, children))}{!children.length && <p className="sidebar-empty nested">{query ? "No matching conversations" : showArchived ? "No archived conversations" : "No chats"}</p>}</div>}</div>;
+    return <div className="project-group" data-project-id={project.id} data-host-id={project.hostId} key={sidebarItemKey(item)}><div className={`project-row ${selected ? "selected" : ""}`}><button className="project-label" aria-current={selected ? "page" : undefined} title={`${project.path}\n${host?.name ?? project.hostId}`} onClick={() => props.onToggleProject(key)} aria-expanded={expanded}><span className="sidebar-project-glyph"><Icon name="folder"/><Icon name="chevron" className={expanded ? "rotated" : ""}/></span><span className="truncate">{project.name}</span></button>{itemMenu(item, list)}<button className="icon-button small project-new" disabled={host?.availability !== "available"} aria-label={`Start new chat in ${project.name}`} title={`Start new chat in ${project.name}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="compose"/></button></div>{expanded && <div className="project-sessions">{children.map(child => child.kind === "session" && sessionRow(child, children))}{!children.length && <p className="sidebar-empty nested">{query ? "No matching conversations" : showArchived ? "No archived conversations" : "No chats"}</p>}</div>}</div>;
   }
   const render = (item: Item, list: Item[]) => item.kind === "project" ? projectRow(item, list) : sessionRow(item, list);
   return <div className="organized-sidebar">
