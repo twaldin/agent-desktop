@@ -68,7 +68,7 @@ export class PullRequestComposers implements WindowSaveObserver {
     if (!entry || !current()) throw new Error("Reconnect to the original pull request before submitting.");
     if (this.active.has(key)) throw new Error("Wait for this submission to finish.");
     if (entry.request) throw new Error("Check the saved submission before starting another attempt.");
-    const request = parsePullRequestWriteRequest({ requestId: crypto.randomUUID(), accountId: entry.accountId, pullRequest: entry.pullRequest, action: entry.action, expectedHeadOid, body: entry.body });
+    const request = parsePullRequestWriteRequest({ requestId: crypto.randomUUID(), accountId: entry.accountId, pullRequest: entry.pullRequest, action: entry.action, expectedHeadOid: entry.expectedHeadOid ?? expectedHeadOid, body: entry.body, ...(entry.inline ? { inline: entry.inline } : {}), ...(entry.target ? { target: entry.target } : {}) });
     this.active.add(key);
     try {
       await this.wait({ ...entry, request }, "admission");

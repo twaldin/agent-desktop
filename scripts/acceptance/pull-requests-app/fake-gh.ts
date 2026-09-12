@@ -1,3 +1,4 @@
+import { discussionGithub } from "./discussion-gh";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { appendFile } from "node:fs/promises";
@@ -57,6 +58,7 @@ const pullRequest = {
     ],
   },
 };
+const discussion = discussionGithub(dirname(log), pullRequest, "octocat", now);
 const connection = (nodes: unknown[]) => ({
   issueCount: nodes.length,
   totalCount: nodes.length,
@@ -76,7 +78,11 @@ else if (args[0] === "api" && args[1] === "user")
 else if (args[0] === "api" && args[1] === "graphql") {
   const request = JSON.parse(input),
     query = String(request.query ?? "");
-  if (query.includes("search(type:ISSUE"))
+  if (discussion && query.startsWith("mutation")) {
+    const method = /\)\{(\w+)\(input:/.exec(query)![1]!;
+    value = { data: { [method]: await discussion.mutation(method, request.variables.input) } };
+  } else if (discussion && query.includes("node(id:")) value = { data: { viewer: { login: "octocat" }, node: discussion.node(request.variables.id) } };
+  else if (query.includes("search(type:ISSUE"))
     value = {
       data: { viewer: { login: "octocat" }, search: connection([pullRequest]) },
     };
@@ -87,7 +93,7 @@ else if (args[0] === "api" && args[1] === "graphql") {
         repository: {
           pullRequest: {
             ...pullRequest,
-            comments: connection([
+            comments: connection(discussion ? discussion.comments : [
               {
                 id: "C_NATIVE",
                 body: "Native review comment",
@@ -97,8 +103,8 @@ else if (args[0] === "api" && args[1] === "graphql") {
               },
               ...written.filter(item => !item.event).map(item => ({ id: `C_${item.id}`, body: item.body, createdAt: now, url: `https://github.com/example/parity/pull/17#issuecomment-${item.id}`, author: { login: "octocat", avatarUrl: null } })),
             ]),
-            reviews: connection(written.filter(item => item.event).map(item => ({ id: `R_${item.id}`, body: item.body, state: item.event === "APPROVE" ? "APPROVED" : item.event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED", submittedAt: now, createdAt: now, url: `https://github.com/example/parity/pull/17#pullrequestreview-${item.id}`, author: { login: "octocat", avatarUrl: null } }))),
-            reviewThreads: connection([]),
+            reviews: connection(discussion ? discussion.reviews : written.filter(item => item.event).map(item => ({ id: `R_${item.id}`, body: item.body, state: item.event === "APPROVE" ? "APPROVED" : item.event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED", submittedAt: now, createdAt: now, url: `https://github.com/example/parity/pull/17#pullrequestreview-${item.id}`, author: { login: "octocat", avatarUrl: null } }))),
+            reviewThreads: connection(discussion ? [discussion.thread] : []),
             commits: {
               nodes: [
                 {
@@ -138,7 +144,8 @@ else if (args[0] === "api" && args[1] === "graphql") {
         },
       },
     };
-} else if (args[0] === "api" && ["repos/example/parity/issues/17/comments", "repos/example/parity/pulls/17/reviews"].includes(args[1] ?? "")) {
+} else if (discussion && args[0] === "api" && args[1] === "repos/example/parity/pulls/17/comments") value = discussion.inline(JSON.parse(input));
+else if (args[0] === "api" && ["repos/example/parity/issues/17/comments", "repos/example/parity/pulls/17/reviews"].includes(args[1] ?? "")) {
   const body = JSON.parse(input), id = 100 + written.length;
   await appendFile(writtenPath, JSON.stringify({ ...body, id }) + "\n");
   value = control.malformed ? { error: "Controlled ambiguous response" } : { id, user: { login: "octocat" }, body: body.body,

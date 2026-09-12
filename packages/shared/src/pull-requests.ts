@@ -99,6 +99,9 @@ export interface PullRequestDiscussionItem {
   path: string | null;
   line: number | null;
   resolved: boolean | null;
+  canUpdate?: boolean;
+  canDelete?: boolean;
+  thread?: { id: string; side: "LEFT" | "RIGHT" | null; startSide: "LEFT" | "RIGHT" | null; startLine: number | null; originalLine: number | null; originalStartLine: number | null; canReply: boolean; canResolve: boolean; canUnresolve: boolean };
 }
 export interface PullRequestCheck {
   id: string;
@@ -656,7 +659,7 @@ export function parsePullRequestReadResult(
           "url",
           "path",
           "line",
-          "resolved",
+          "resolved", "canUpdate", "canDelete", "thread",
         ],
         "discussion item",
       );
@@ -669,6 +672,18 @@ export function parsePullRequestReadResult(
         throw new Error("Invalid discussion line.");
       if (d.resolved !== null && typeof d.resolved !== "boolean")
         throw new Error("Invalid discussion resolution.");
+      for (const permission of ["canUpdate", "canDelete"]) if (d[permission] !== undefined && typeof d[permission] !== "boolean") throw new Error("Invalid discussion permission.");
+      let thread: PullRequestDiscussionItem["thread"];
+      if (d.thread !== undefined) {
+        const t = object(d.thread, "review thread");
+        exact(t, ["id", "side", "startSide", "startLine", "originalLine", "originalStartLine", "canReply", "canResolve", "canUnresolve"], "review thread");
+        for (const key of ["startLine", "originalLine", "originalStartLine"]) if (t[key] !== null && (!Number.isSafeInteger(t[key]) || Number(t[key]) < 1)) throw new Error("Invalid original thread range.");
+        for (const key of ["canReply", "canResolve", "canUnresolve"]) if (typeof t[key] !== "boolean") throw new Error("Invalid thread permission.");
+        thread = { id: string(t.id, "thread ID", 256), side: t.side === null ? null : enumValue(t.side, ["LEFT", "RIGHT"] as const, "thread side"), startSide: t.startSide === null ? null : enumValue(t.startSide, ["LEFT", "RIGHT"] as const, "thread start side"),
+          startLine: t.startLine as number | null, originalLine: t.originalLine as number | null, originalStartLine: t.originalStartLine as number | null,
+          canReply: t.canReply as boolean, canResolve: t.canResolve as boolean, canUnresolve: t.canUnresolve as boolean };
+        if (d.kind !== "review_comment") throw new Error("Only a review comment belongs to a thread.");
+      }
       return {
         id: string(d.id, "discussion ID", 256),
         kind: enumValue(
@@ -683,6 +698,7 @@ export function parsePullRequestReadResult(
         path: nullableString(d.path, "discussion path", 4096),
         line: d.line as number | null,
         resolved: d.resolved as boolean | null,
+        ...(d.canUpdate !== undefined ? { canUpdate: d.canUpdate as boolean } : {}), ...(d.canDelete !== undefined ? { canDelete: d.canDelete as boolean } : {}), ...(thread ? { thread } : {}),
       };
     },
   );

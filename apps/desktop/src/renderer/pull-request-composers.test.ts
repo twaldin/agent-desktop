@@ -85,3 +85,35 @@ test("draft persistence preserves hosts, accounts, review decision, Unicode and 
     const copy = f.owner.drafts; copy[0]!.pullRequest.owner = "mutated"; expect(f.owner.get(key)?.pullRequest.owner).toBe("owner");
   } finally { f.cleanup(); }
 });
+
+test("inline selection and exact original head survive save/reopen without binding a newer diff", async () => {
+  const f = fixture();
+  const inline: PullRequestComposer = { ...draft, mode: "inline", action: "inline_comment", inline: { path: "src/a.ts", side: "RIGHT", line: 5, startSide: "RIGHT", startLine: 3 }, expectedHeadOid: head };
+  const inlineKey = pullRequestComposerKey(inline), calls: PullRequestWriteRequest[] = [];
+  const bridge: PullRequestWritesBridge = { submit: async (_, request) => { calls.push(request); return receipt(request); }, status: async () => null };
+  try {
+    f.owner.edit(inline); f.save();
+    const restored = new PullRequestComposers(new WindowStateStore(f.root, "original-window").bootstrap().state!.pullRequestComposers!, () => {});
+    expect(restored.get(inlineKey)?.inline).toEqual(inline.inline);
+    const operation = f.owner.submit(inlineKey, "b".repeat(40), bridge, () => true); f.save(); await tick();
+    expect(calls[0]?.expectedHeadOid).toBe(head); expect(calls[0]?.inline).toEqual(inline.inline);
+    f.save(); await operation;
+    expect(pullRequestComposerKey({ ...inline, expectedHeadOid: "b".repeat(40) })).not.toBe(inlineKey);
+    expect(() => parsePullRequestComposers([{ ...inline, request: { ...calls[0]!, inline: { ...inline.inline!, line: 99 } } }])).toThrow("another draft");
+  } finally { f.cleanup(); }
+});
+test("reply and destructive node drafts preserve distinct original targets, bodyless intent and unknown recovery", async () => {
+  const f = fixture(), ids: string[] = [];
+  const bridge: PullRequestWritesBridge = { submit: async (_, request) => { ids.push(request.requestId); return { ...receipt(request), outcome: "unknown", url: null }; }, status: async () => null };
+  try {
+    for (const action of ["reply", "resolve", "delete"] as const) {
+      const entry: PullRequestComposer = { ...draft, mode: "discussion", action, target: { id: action === "delete" ? "comment-id" : "thread-id", kind: action === "delete" ? "review_comment" : "thread" }, body: action === "reply" ? "Saved reply" : "" };
+      const entryKey = pullRequestComposerKey(entry); f.owner.edit(entry);
+      const operation = f.owner.submit(entryKey, head, bridge, () => true); f.save(); await tick(); f.save(); await operation; f.save();
+      const restored = new PullRequestComposers(new WindowStateStore(f.root, "original-window").bootstrap().state!.pullRequestComposers!, () => {});
+      expect(restored.get(entryKey)?.target).toEqual(entry.target); expect(restored.get(entryKey)?.receipt?.outcome).toBe("unknown");
+      await expect(restored.submit(entryKey, head, bridge, () => true)).rejects.toThrow("Check");
+    }
+    expect(ids).toHaveLength(3); expect(new Set(ids).size).toBe(3);
+  } finally { f.cleanup(); }
+});

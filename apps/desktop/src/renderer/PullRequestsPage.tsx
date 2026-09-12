@@ -1,4 +1,5 @@
 import { PullRequestComposerForm } from "./PullRequestComposer";
+import { pullRequestComposerKey, type PullRequestComposer } from "../pull-request-composer-state";
 import type { PullRequestComposers } from "./pull-request-composers";
 import { PullRequestIcon, PullRequestFilterIcon } from "./pull-request-icons";
 export { PullRequestIcon } from "./pull-request-icons";
@@ -13,6 +14,7 @@ import type {
   PullRequestInboxResult,
   PullRequestRelationship,
   PullRequestSummary,
+  PullRequestDiscussionItem,
 } from "../../../../packages/shared/src/pull-requests";
 import {
   defaultPullRequestFilters,
@@ -36,6 +38,8 @@ import { MarkdownText, TranscriptMarkdownContext } from "./MarkdownText";
 import { ReviewDiff, ReviewDiffs } from "./ReviewDiff";
 import { DEFAULT_REVIEW_OPTIONS, parseReviewPatch } from "./review-model";
 import "./pull-requests.css";
+import type { PullRequestInlineSelection } from "../../../../packages/shared/src/pull-request-write";
+import type { SelectedLineRange } from "@pierre/diffs";
 
 const sectionNames: Record<PullRequestRelationship, string> = {
   user_review_requested: "Needs my review",
@@ -52,6 +56,7 @@ export function PullRequestsPage({
   bridge,
   composers,
   writesSupported = false,
+  discussionWritesSupported = false,
   hostId,
   hostName,
   hosts,
@@ -66,6 +71,7 @@ export function PullRequestsPage({
   bridge: DesktopBridge;
   composers?: PullRequestComposers;
   writesSupported?: boolean;
+  discussionWritesSupported?: boolean;
   hostId: string;
   hostName: string;
   hosts: { id: string; name: string }[];
@@ -115,6 +121,8 @@ export function PullRequestsPage({
     detail: false,
   });
   const [tab, setTab] = useState<"overview" | "files">("overview");
+  const [activeInline, setActiveInline] = useState<string>();
+  useEffect(() => setActiveInline(undefined), [tab, detail?.revision]);
   const [search, setSearch] = useState(view.filters.search);
   const context = useRef(0),
     tokens = useRef({ accounts: 0, inbox: 0, detail: 0 }),
@@ -557,7 +565,7 @@ export function PullRequestsPage({
           </span>
         </footer>
       </div>
-      <div className="pull-request-detail">
+      <div className="pull-request-detail" aria-busy={loading.detail}>
         <header className="pull-request-detail-toolbar">
           <span>
             {detail
@@ -722,42 +730,8 @@ export function PullRequestsPage({
                           discussion.
                         </p>
                       )}
-                      {detail.discussion.items.length ? (
-                        detail.discussion.items.map((item) => (
-                          <article key={item.id}>
-                            <header>
-                              <strong>
-                                {item.author.login ?? "Unknown author"}
-                              </strong>
-                              <time dateTime={item.createdAt}>
-                                {new Date(item.createdAt).toLocaleString()}
-                              </time>
-                              {item.path && (
-                                <span>
-                                  {item.path}
-                                  {item.line ? `:${item.line}` : ""}
-                                </span>
-                              )}
-                              {item.resolved !== null && (
-                                <span>
-                                  {item.resolved ? "Resolved" : "Unresolved"}
-                                </span>
-                              )}
-                            </header>
-                            <MarkdownText
-                              text={item.body}
-                              blockKey={`pr:${detail.revision}:${item.id}`}
-                            />
-                            {item.url && (
-                              <button onClick={() => void external(item.url!)}>
-                                Open on GitHub
-                              </button>
-                            )}
-                          </article>
-                        ))
-                      ) : (
-                        <p>No comments</p>
-                      )}
+                      <PullRequestDiscussion detail={detail} hostId={hostId} composers={composers} bridge={bridge} enabled={submissionEnabled && discussionWritesSupported} recoveryEnabled={submissionEnabled}
+                        onSubmitted={() => { void loadDetail(); void loadInbox(); }} openExternal={external}/>
                       {detail.discussion.pageInfo.hasNextPage && (
                         <button
                           disabled={!enabled || loading.detail}
@@ -782,6 +756,8 @@ export function PullRequestsPage({
                     <PullRequestFiles
                       files={detail.files.items}
                       revision={detail.revision}
+                      onSelection={selection => setActiveInline(selection && detail ? pullRequestComposerKey({ hostId, accountId: detail.account.id, pullRequest: detail.summary.pullRequest, mode: "inline", action: "inline_comment", inline: selection, expectedHeadOid: detail.summary.headOid }) : undefined)}
+                      renderComment={composers && discussionWritesSupported ? selection => <PullRequestComposerForm key={JSON.stringify([detail.summary.headOid, selection])} hostId={hostId} detail={detail} mode="inline" action="inline_comment" inline={selection} composers={composers} bridge={bridge.pullRequestWrites} enabled={submissionEnabled && discussionWritesSupported} onSubmitted={() => { void loadDetail(); void loadInbox(); }} openExternal={external}/> : undefined}
                     />
                     {detail.files.pageInfo.hasNextPage && (
                       <button
@@ -793,6 +769,7 @@ export function PullRequestsPage({
                     )}
                   </>
                 )}
+                {composers && <SavedDiscussionDrafts excludeKey={activeInline} hostId={hostId} detail={detail} composers={composers} bridge={bridge} recoveryEnabled={submissionEnabled && discussionWritesSupported} onSubmitted={() => { void loadDetail(); void loadInbox(); }} openExternal={external}/>}
               </TranscriptMarkdownContext>
             </div>
           </>
@@ -848,10 +825,15 @@ function PullRequestRow({
 function PullRequestFiles({
   files,
   revision,
+  renderComment,
+  onSelection,
 }: {
   files: PullRequestFile[];
   revision: string;
+  onSelection?(selection: PullRequestInlineSelection | null): void;
+  renderComment?(selection: PullRequestInlineSelection): React.ReactNode;
 }) {
+  const [selection, setSelection] = useState<PullRequestInlineSelection | null>(null);
   const [split, setSplit] = useState(false),
     [collapsed, setCollapsed] = useState(new Set<string>());
   const options = { ...DEFAULT_REVIEW_OPTIONS, split };
@@ -870,6 +852,9 @@ function PullRequestFiles({
             revision={revision}
             collapsed={collapsed.has(file.path)}
             options={options}
+            renderComment={renderComment}
+            selection={selection?.path === file.path ? selection : null}
+            onSelection={value => { setSelection(value); onSelection?.(value); }}
             onToggle={() =>
               setCollapsed((old) => {
                 const next = new Set(old);
@@ -892,13 +877,25 @@ function PullRequestFileDiff({
   collapsed,
   options,
   onToggle,
+  renderComment,
+  onSelection,
+  selection,
 }: {
   file: PullRequestFile;
   revision: string;
   collapsed: boolean;
   options: typeof DEFAULT_REVIEW_OPTIONS;
+  selection: PullRequestInlineSelection | null;
   onToggle(): void;
+  onSelection?(selection: PullRequestInlineSelection | null): void;
+  renderComment?(selection: PullRequestInlineSelection): React.ReactNode;
 }) {
+  const selectLines = (range: SelectedLineRange | null) => {
+    if (!range || !range.side) { onSelection?.(null); return; }
+    const side = (range.endSide ?? range.side) === "deletions" ? "LEFT" : "RIGHT", startSide = range.side === "deletions" ? "LEFT" : "RIGHT";
+    const selected: PullRequestInlineSelection = { path: file.path, side, line: range.end, ...(range.start !== range.end || startSide !== side ? { startLine: range.start, startSide } : {}) };
+    onSelection?.(selected);
+  };
   const parsed = useMemo(() => {
     if (!("text" in file.patch))
       return { unavailable: file.patch.unavailableReason.replaceAll("_", " ") };
@@ -933,9 +930,10 @@ function PullRequestFileDiff({
           <span className="review-deleted">−{file.deletions}</span>
         </span>
       </header>
+      {!collapsed && renderComment && selection && <div className="pull-request-inline-action">{renderComment(selection)}</div>}
       {!collapsed &&
         (parsed.value?.files.map((value) => (
-          <ReviewDiff key={value.key} file={value} options={options} />
+          <ReviewDiff key={value.key} file={value} options={options} onLineSelected={renderComment ? selectLines : undefined} />
         )) ?? (
           <p
             className="pull-requests-notice"
@@ -1050,4 +1048,45 @@ function PullRequestFilters({
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
+}
+
+function PullRequestDiscussion({ detail, hostId, composers, bridge, enabled, recoveryEnabled, onSubmitted, openExternal }: {
+  detail: PullRequestDetailResult; hostId: string; composers?: PullRequestComposers; bridge: DesktopBridge; enabled: boolean; recoveryEnabled: boolean; onSubmitted(): void; openExternal(url: string): Promise<void>;
+}) {
+  const groups = new Map<string, PullRequestDiscussionItem[]>();
+  for (const item of detail.discussion.items) { const key = item.thread ? `thread:${item.thread.id}` : `${item.kind}:${item.id}`; groups.set(key, [...(groups.get(key) ?? []), item]); }
+  const common = { hostId, detail, composers: composers!, bridge: bridge.pullRequestWrites, onSubmitted, openExternal, recoveryEnabled };
+  const saved = (id: string, action: string) => composers?.drafts.some(entry => entry.hostId === hostId && entry.accountId === detail.account.id && pullRequestKey(entry.pullRequest) === pullRequestKey(detail.summary.pullRequest) && entry.target?.id === id && entry.action === action && (entry.body || entry.request && entry.receipt?.outcome !== "succeeded"));
+  if (!groups.size) return <p>No comments</p>;
+  return <>{[...groups].map(([key, items]) => {
+    const first = items[0]!, thread = first.thread;
+    return <section key={key} className="pull-request-thread" data-thread-id={thread?.id}>
+      {thread && <header><strong>{first.path}{thread.startLine ? `:${thread.startSide ?? thread.side}:${thread.startLine}–` : ":"}{thread.side ?? "original"}:{first.line ?? thread.originalLine ?? "outdated"}</strong><span>{first.resolved ? "Resolved" : "Unresolved"}</span></header>}
+      {items.map(item => <article key={item.id} data-comment-id={item.id}><header><strong>{item.author.login ?? "Unknown author"}</strong><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></header>
+        <MarkdownText text={item.body} blockKey={`pr:${detail.revision}:${item.id}`}/>
+        <div className="pull-request-discussion-actions">
+          {item.url && <button onClick={() => void openExternal(item.url!)}>Open on GitHub</button>}
+          {composers && item.kind !== "commit" && (item.canUpdate || saved(item.id, "update")) && <PullRequestComposerForm {...common} mode="discussion" action="update" target={{ id: item.id, kind: item.kind }} initialBody={item.body} enabled={enabled && item.canUpdate === true}/>}
+          {composers && (item.kind === "comment" || item.kind === "review_comment") && (item.canDelete || saved(item.id, "delete")) && <PullRequestComposerForm {...common} mode="discussion" action="delete" target={{ id: item.id, kind: item.kind }} enabled={enabled && item.canDelete === true}/>}
+        </div>
+      </article>)}
+      {composers && thread && <footer className="pull-request-discussion-actions">
+        {(thread.canReply || saved(thread.id, "reply")) && <PullRequestComposerForm {...common} mode="discussion" action="reply" target={{ id: thread.id, kind: "thread" }} enabled={enabled && thread.canReply}/>}
+        {(["resolve", "unresolve"] as const).map(action => {
+          const permitted = action === "resolve" ? !first.resolved && thread.canResolve : first.resolved && thread.canUnresolve;
+          return (permitted || saved(thread.id, action)) ? <PullRequestComposerForm key={action} {...common} mode="discussion" action={action} target={{ id: thread.id, kind: "thread" }} enabled={enabled && !!permitted}/> : null;
+        })}
+      </footer>}
+    </section>;
+  })}</>;
+}
+
+function SavedDiscussionDrafts({ excludeKey, hostId, detail, composers, bridge, recoveryEnabled, onSubmitted, openExternal }: { excludeKey?: string; hostId: string; detail: PullRequestDetailResult; composers: PullRequestComposers; bridge: DesktopBridge; recoveryEnabled: boolean; onSubmitted(): void; openExternal(url: string): Promise<void> }) {
+  const drafts = composers.drafts.filter(entry => pullRequestComposerKey(entry) !== excludeKey && entry.hostId === hostId && entry.accountId === detail.account.id && pullRequestKey(entry.pullRequest) === pullRequestKey(detail.summary.pullRequest) &&
+    (entry.body || entry.request && entry.receipt?.outcome !== "succeeded") && (entry.mode === "inline" || entry.mode === "discussion" && !detail.discussion.items.some(item => entry.target?.id === item.id || entry.target?.id === item.thread?.id)));
+  if (!drafts.length) return null;
+  return <section className="pull-request-saved-discussion"><h2>Saved discussion drafts</h2><p>These drafts keep their original selection. Checking status never posts them again.</p>
+    {drafts.map(entry => <PullRequestComposerForm key={pullRequestComposerKey(entry)} hostId={hostId} detail={detail} mode={entry.mode} action={entry.action} inline={entry.inline} target={entry.target} savedDraft={entry} composers={composers} bridge={bridge.pullRequestWrites}
+      enabled={entry.mode === "inline" && entry.expectedHeadOid === detail.summary.headOid && detail.files.items.some(file => file.path === entry.inline?.path) && recoveryEnabled} recoveryEnabled={recoveryEnabled} onSubmitted={onSubmitted} openExternal={openExternal}/>)}
+  </section>;
 }

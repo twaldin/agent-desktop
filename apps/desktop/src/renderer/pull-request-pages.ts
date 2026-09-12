@@ -81,6 +81,12 @@ export function appendPullRequestDetail(
     throw new Error(
       "GitHub returned the same detail cursor. Refresh before loading more.",
     );
+  if (section === "discussion") {
+    const threadState = (item: PullRequestDetailResult["discussion"]["items"][number]) => JSON.stringify([item.path, item.line, item.resolved, item.thread]);
+    const previousThreads = new Map(previous.discussion.items.filter(item => item.thread).map(item => [item.thread!.id, threadState(item)]));
+    for (const item of next.discussion.items) if (item.thread && previousThreads.has(item.thread.id) && previousThreads.get(item.thread.id) !== threadState(item))
+      throw new Error("The review thread changed. Refresh before loading more replies.");
+  }
   const merged =
     section === "files"
       ? unique(

@@ -452,3 +452,15 @@
 .pull-request-review-dialog { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:min(640px,calc(100vw - 40px)); max-height:calc(100vh - 60px); overflow:auto; background:var(--app-surface); color:var(--text); border:1px solid var(--border); border-radius:16px; padding:24px; z-index:101; box-shadow:0 24px 80px rgb(0 0 0 / 30%); }
 .pull-request-review-dialog h2 { font-size:18px; margin:0 0 8px; }
 .pull-request-review-dialog > p { color:var(--secondary); margin:0; }
+
+.pull-request-thread { border: 1px solid var(--border); border-radius: 8px; margin-block: 12px; overflow: hidden; }
+.pull-request-thread > header { display: flex; justify-content: space-between; gap: 12px; padding: 12px; background: var(--surface-hover); }
+.pull-request-thread > article { margin: 0; border-bottom: 1px solid var(--border); }
+.pull-request-discussion-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
+.pull-request-thread > footer { padding: 12px; }
+.pull-request-inline-action { display: flex; justify-content: flex-end; padding: 8px 12px; }
+
+.pull-request-discussion-actions button, .pull-request-submission-recovery button { text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+.pull-request-submission-recovery { display: flex; flex-wrap: wrap; gap: 8px; }
+.pull-request-submission-recovery > p { flex-basis: 100%; margin: 0; }
+.pull-request-submission-recovery button { margin: 0; }

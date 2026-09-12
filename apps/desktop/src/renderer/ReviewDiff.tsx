@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { FileDiff, Virtualizer, WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
-import type { FileDiffOptions, VirtualFileMetrics } from "@pierre/diffs";
+import type { FileDiffOptions, VirtualFileMetrics, SelectedLineRange } from "@pierre/diffs";
 import { REVIEW_SHADOW_CSS, REVIEW_THEMES } from "./review-theme";
 import type { ReviewFile, ReviewOptions } from "./review-model";
 import { useCodeTheme } from "./use-code-theme";
@@ -42,7 +42,7 @@ function useReviewMetrics(): VirtualFileMetrics {
   }, []);
   return metrics;
 }
-export function ReviewDiff({ file, options }: { file: ReviewFile; options: ReviewOptions }) {
+export function ReviewDiff({ file, options, onLineSelected }: { file: ReviewFile; options: ReviewOptions; onLineSelected?(range: SelectedLineRange | null): void }) {
   const { themeType, themes } = useCodeTheme();
   const metrics = useReviewMetrics();
   const rendererOptions = useMemo((): FileDiffOptions<undefined> => ({
@@ -52,8 +52,8 @@ export function ReviewDiff({ file, options }: { file: ReviewFile; options: Revie
     disableFileHeader: true, hunkSeparators: "line-info", collapsedContextThreshold: 3,
     expansionLineCount: 20, lineDiffType: options.wordDiffs ? "word-alt" : "none",
     tokenizeMaxLineLength: 1000, maxLineDiffLength: 1000, unsafeCSS: REVIEW_SHADOW_CSS,
-    enableLineSelection: true,
-  }), [themes, themeType, options]);
+    enableLineSelection: true, ...(onLineSelected ? { onLineSelected } : {}),
+  }), [themes, themeType, options, onLineSelected]);
   if (file.binary) return <p className="review-file-note">Binary file changed.</p>;
   if (!file.metadata.hunks.length) return <p className="review-file-note">{file.metadata.type === "rename-pure" ? "Renamed without content changes." : file.metadata.mode !== file.metadata.prevMode && file.metadata.prevMode ? `Mode changed: ${file.metadata.prevMode} → ${file.metadata.mode}` : file.metadata.type === "new" ? "Empty file added." : file.metadata.type === "deleted" ? "Empty file deleted." : "No text changes in this patch."}</p>;
   return <FileDiff fileDiff={file.metadata} options={rendererOptions} metrics={metrics}/>

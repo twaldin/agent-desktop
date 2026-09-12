@@ -221,3 +221,17 @@ test("pagination refuses repeated live cursors and preserves the readable pages"
   ).toThrow("same detail cursor");
   expect(current.files.items).toHaveLength(1);
 });
+
+test("thread pages reject changed permission, resolution and line context even under the same PR revision", () => {
+  const first = detail();
+  const item = { ...first.discussion.items[0]!, kind: "review_comment" as const, path: "a.ts", line: 7, resolved: false,
+    thread: { id: "thread-one", side: "RIGHT" as const, startSide: null, startLine: null, originalLine: 7, originalStartLine: null, canReply: true, canResolve: true, canUnresolve: false } };
+  first.discussion.items = [item];
+  const next = structuredClone(first); next.discussion.items[0]!.id = "next-comment";
+  expect(appendPullRequestDetail(first, next, "discussion").discussion.items.map(item => item.id)).toEqual([item.id, "next-comment"]);
+  for (const change of [(item: typeof first.discussion.items[number]) => { item.thread!.canReply = false; }, (item: typeof first.discussion.items[number]) => { item.resolved = true; }, (item: typeof first.discussion.items[number]) => { item.line = 8; }]) {
+    const changed = structuredClone(next); change(changed.discussion.items[0]!);
+    expect(() => appendPullRequestDetail(first, changed, "discussion")).toThrow("thread changed");
+  }
+  expect(first.discussion.items).toEqual([item]);
+});
