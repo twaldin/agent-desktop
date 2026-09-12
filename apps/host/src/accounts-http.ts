@@ -1,4 +1,4 @@
-import type { AccountAction, AccountActionResult, AccountSelectionBridge, LoginSnapshot, SessionAccountList } from "@agent-desktop/shared";
+import type { AccountAction, AccountActionResult, AccountSelectionBridge, LoginSnapshot, SessionAccountList, SessionAccountSelection } from "@agent-desktop/shared";
 import type { OmpAccounts } from "./omp-accounts";
 
 class AccountRequestError extends Error {}
@@ -9,6 +9,14 @@ function text(value: unknown, name: string, max = 200): string {
 function credential(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) throw new AccountRequestError("Invalid credential ID.");
   return value;
+}
+
+function selection(input: unknown): SessionAccountSelection | undefined {
+  if (input === undefined) return;
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new AccountRequestError("Invalid account selection.");
+  const value = input as Record<string, unknown>, model = value.model as Record<string, unknown> | undefined;
+  if (!model || typeof model !== "object" || Array.isArray(model) || Object.keys(value).some(key => !["model", "revision"].includes(key)) || Object.keys(model).some(key => !["provider", "id"].includes(key))) throw new AccountRequestError("Invalid account selection.");
+  return { model: { provider: text(model.provider, "model provider"), id: text(model.id, "model ID") }, revision: text(value.revision, "selection revision") };
 }
 
 export function parseAccountAction(input: unknown): AccountAction {
@@ -27,8 +35,8 @@ export function parseAccountAction(input: unknown): AccountAction {
     }
     case "key.set": return { type: value.type, providerId: text(value.providerId, "provider ID"), key: text(value.key, "API key", 1024 * 1024) };
     case "credential.remove": return { type: value.type, providerId: text(value.providerId, "provider ID"), credentialId: credential(value.credentialId) };
-    case "session.pin": return { type: value.type, sessionId: text(value.sessionId, "session ID"), credentialId: credential(value.credentialId) };
-    case "session.release": return { type: value.type, sessionId: text(value.sessionId, "session ID") };
+    case "session.pin": return { type: value.type, sessionId: text(value.sessionId, "session ID"), credentialId: credential(value.credentialId), ...(value.expectedSelection === undefined ? {} : { expectedSelection: selection(value.expectedSelection) }) };
+    case "session.release": return { type: value.type, sessionId: text(value.sessionId, "session ID"), ...(value.expectedSelection === undefined ? {} : { expectedSelection: selection(value.expectedSelection) }) };
     default: throw new AccountRequestError("Unknown account action.");
   }
 }
@@ -40,7 +48,7 @@ export class AccountsHttp {
   #stopping = false;
   constructor(private options: {
     agentDir?: string; cwd: string; selection: AccountSelectionBridge;
-    release(sessionId: string): Promise<SessionAccountList>;
+    release(sessionId: string, expectedSelection?: SessionAccountSelection): Promise<SessionAccountList>;
     changed(refreshModels: boolean): void;
   }) {}
 
@@ -82,11 +90,11 @@ export class AccountsHttp {
       case "key.set": await accounts.setApiKey(action.providerId, action.key); return { accounts: await accounts.listAccounts(action.providerId) };
       case "credential.remove": await accounts.removeCredential(action.providerId, action.credentialId); return { accounts: await accounts.listAccounts(action.providerId) };
       case "session.pin": {
-        const selection = await accounts.pinSessionAccount(action.sessionId, action.credentialId);
+        const selection = await accounts.pinSessionAccount(action.sessionId, action.credentialId, action.expectedSelection);
         this.options.changed(false); return { selection };
       }
       case "session.release": {
-        const selection = await this.options.release(action.sessionId);
+        const selection = await this.options.release(action.sessionId, action.expectedSelection);
         this.options.changed(false); return { selection };
       }
     }

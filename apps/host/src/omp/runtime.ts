@@ -1,3 +1,4 @@
+import type { SessionAccountSelection } from "@agent-desktop/shared";
 import { executeMcpAppTool } from "./mcp-app-tool";
 import { McpFileResources } from "./mcp-file-resource";
 import { NativeMcpApps } from "./mcp-apps";
@@ -139,8 +140,8 @@ export interface OmpSession {
   abort(): Promise<void>;
   setModel(model: ModelChoice): Promise<void>;
   listAccountChoices(): Promise<SessionAccountList>;
-  pinAccount(credentialId: number): Promise<SessionAccountList>;
-  releaseAccountForReselection(): Promise<SessionAccountList>;
+  pinAccount(credentialId: number, expectedSelection?: SessionAccountSelection): Promise<SessionAccountList>;
+  releaseAccountForReselection(expectedSelection?: SessionAccountSelection): Promise<SessionAccountList>;
   listInteractions(): Promise<OmpInteraction[]>;
   respondInteraction(id: string, response: OmpInteractionResponse): Promise<void>;
   cancelInteractions(reason?: "cancelled" | "disconnected"): Promise<void>;
@@ -540,7 +541,7 @@ export class OmpRuntime {
         return entry?.type === "message" ? nativeMcpArtifact(entry.id, entry.message) : undefined;
       }, filePath: source => path.join(mcpFiles.workspace.cwd, source.path), fileResource: (...args) => mcpFiles.request(...args), watchFile: (...args) => mcpFiles.watch(...args), manager: result.mcpManager, snapshot: () => mcp.read(), assertOwner: () => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are changing."); } });
       const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
-      const accountBridge = createNativeAccountSelectionBridge(async () => session);
+      const accountBridge = createNativeAccountSelectionBridge(async () => session, { assertActive: assertSessionActive, revalidate: () => auth.revalidateCredentials() });
       const controls = new NativeSessionControls(session, options.approvalOverride);
       const nativeGoalController = goalController = new NativeGoalController(session, manager, () => ({
         disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation || Boolean(mcpMutation),
@@ -575,7 +576,6 @@ export class OmpRuntime {
       });
       const listAccounts = async () => {
         assertSessionActive();
-        await auth.revalidateCredentials();
         return accountBridge.list(session.sessionId);
       };
       const handle: OmpSession = {
@@ -1041,17 +1041,15 @@ export class OmpRuntime {
           } finally { accountMutation = false; }
         },
         listAccountChoices: listAccounts,
-        pinAccount: async credentialId => {
+        pinAccount: async (credentialId, expectedSelection) => {
           assertIdle(); accountMutation = true;
-          try { await auth.revalidateCredentials(); return await accountBridge.pin(session.sessionId, credentialId); }
+          try { return await accountBridge.pin(session.sessionId, credentialId, expectedSelection); }
           finally { accountMutation = false; }
         },
-        releaseAccountForReselection: async () => {
+        releaseAccountForReselection: async expectedSelection => {
           assertIdle(); accountMutation = true;
           try {
-            await auth.revalidateCredentials();
-            if (session.model) auth.releaseSessionCredentialForReselection(session.model.provider, session.sessionId);
-            return await accountBridge.list(session.sessionId);
+            return await accountBridge.release(session.sessionId, expectedSelection);
           } finally { accountMutation = false; }
         },
         listInteractions: async () => { assertInteractionActive(); return ui?.list() ?? []; },
@@ -1099,7 +1097,7 @@ export class OmpRuntime {
             await clean(() => steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified"));
             await clean(() => detachedQuestions.settle());
             await clean(unsubscribeQueuedMessages); await clean(() => queuedMessages.close());
-            await clean(() => steering.close()); await clean(unsubscribe);
+            await clean(() => steering.close()); await clean(unsubscribe); await clean(() => accountBridge.dispose());
             listeners.clear(); await clean(() => auth.close());
             this.#sessions.delete(handle); for (const file of reservedPaths) this.#reservedFiles.delete(file);
             if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Native session cleanup failed.");

@@ -8,7 +8,7 @@ import { discoverAuthStorage, resolveAuthBrokerConfig } from "@oh-my-pi/pi-ai/au
 import { getOAuthProviders, PROVIDER_REGISTRY, type ProviderDefinition } from "@oh-my-pi/pi-ai/registry";
 import { NativeLogin } from "./login";
 import { disabledAccount, publicAuthError, storedAccount } from "./projection";
-import type { AccountEvent, AccountInfo, AccountSelectionBridge, AuthOrigin, LoginResponse, LoginRun, LoginSnapshot, ProviderCatalog, ProviderInfo, SessionAccountList } from "./types";
+import type { AccountEvent, AccountInfo, AccountSelectionBridge, AuthOrigin, LoginResponse, LoginRun, LoginSnapshot, ProviderCatalog, ProviderInfo, SessionAccountList, SessionAccountSelection } from "./types";
 
 export interface OmpAccountsOptions {
   agentDir?: string;
@@ -279,10 +279,10 @@ export class OmpAccounts {
     if (!this.#options.selectionBridge) throw new Error("Native account selection must be connected to the owning session worker");
     return this.#options.selectionBridge.list(sessionId);
   }
-  pinSessionAccount(sessionId: string, credentialId: number): Promise<SessionAccountList> {
+  pinSessionAccount(sessionId: string, credentialId: number, expectedSelection?: SessionAccountSelection): Promise<SessionAccountList> {
     this.#active();
     if (!this.#options.selectionBridge) throw new Error("Native account selection must be connected to the owning session worker");
-    return this.#options.selectionBridge.pin(sessionId, credentialId);
+    return this.#options.selectionBridge.pin(sessionId, credentialId, expectedSelection);
   }
 
   dispose(): Promise<void> {

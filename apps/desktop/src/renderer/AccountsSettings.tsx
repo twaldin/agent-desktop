@@ -1,5 +1,6 @@
+import { SessionAccountChoices } from "./SessionAccountChoices";
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AccountAction, AccountActionResult, AccountInfo, DesktopBridge, LoginPrompt, LoginSnapshot, ProviderCatalog, ProviderInfo, SessionAccountList, SessionSummary } from "../../../../packages/shared/src/protocol";
+import type { AccountAction, AccountActionResult, AccountInfo, DesktopBridge, LoginPrompt, LoginSnapshot, ProviderCatalog, ProviderInfo, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { AccountsState } from "./accounts-state";
 import { Icon } from "./Icons";
 import { errorMessage } from "./desktop-state";
@@ -50,9 +51,6 @@ export function ProviderDetails({ provider, catalog, data, ...props }: Props & {
   }, [props.bridge, props.hostId, props.session?.id, props.connected, data]);
   const [error, setError] = useState<string | null>(null);
   const [activeLoginId, setActiveLoginId] = useState<string | null>(null);
-  const [selection, setSelection] = useState<SessionAccountList | null>(null);
-  const [selectionError, setSelectionError] = useState<string | null>(null);
-  const selectionVersion = useRef(0);
   const [removeId, setRemoveId] = useState<number | null>(null);
   const accounts = data.accounts.get(provider.id);
   const login = data.logins.find(login => login.loginId === activeLoginId) ?? data.logins.find(login => login.providerId === provider.id && ["running", "cancelling"].includes(login.status)) ?? data.logins.find(login => login.providerId === provider.id);
@@ -60,18 +58,6 @@ export function ProviderDetails({ provider, catalog, data, ...props }: Props & {
   const loginUnavailable = provider.loginSupported && !provider.available;
   const canPin = catalog.sessionSelectionConnected && props.session?.model?.provider === provider.id;
   const writable = props.connected && !busy;
-  useEffect(() => {
-    let current = true; const version = selectionVersion.current; const admittedOwner = owner.current;
-    if (!canPin || !props.connected || !props.session) return;
-    void (async () => {
-      try {
-        if (!props.bridge.getSessionAccounts) throw new Error("Session account details require the current desktop bridge.");
-        const next = await props.bridge.getSessionAccounts(props.session!.id, props.hostId);
-        if (current && owner.current === admittedOwner && selectionVersion.current === version) { setSelection(next); setSelectionError(null); }
-      } catch (cause) { if (current && owner.current === admittedOwner) setSelectionError(errorMessage(cause)); }
-    })();
-    return () => { current = false; };
-  }, [props.bridge, props.hostId, props.session?.id, props.connected, canPin, data.revision]);
   async function act(action: AccountAction): Promise<AccountActionResult | undefined> {
     const admittedOwner = owner.current;
     if (!admittedOwner || pending.current) return;
@@ -81,7 +67,6 @@ export function ProviderDetails({ provider, catalog, data, ...props }: Props & {
       const result = await props.bridge.accountAction(action, props.hostId);
       if (owner.current !== admittedOwner) return;
       if (result.login) data.acceptLogin(result.login);
-      if (result.selection) { selectionVersion.current++; setSelection(result.selection); setSelectionError(null); }
       await Promise.allSettled([data.refresh(), data.loadAccounts(provider.id)]);
       if (owner.current !== admittedOwner) return;
       props.onChanged(); return result;
@@ -110,11 +95,10 @@ export function ProviderDetails({ provider, catalog, data, ...props }: Props & {
     {activeLoginId && !login && !data.loading && <p className="inline-error" role="alert">The host no longer reports this login. Refresh its status before starting again.</p>}
     <section className="settings-card" aria-label="Saved accounts"><div className="settings-card-heading"><h3>Saved accounts</h3>{data.loadingAccounts.has(provider.id) && <span className="spinner" aria-label="Loading accounts"/>}</div>
       {data.accountErrors.get(provider.id) && <div className="inline-error" role="alert">Account metadata could not be loaded: {data.accountErrors.get(provider.id)}</div>}
-      {accounts?.map(account => <div className="account-row" key={account.credentialId}><AccountIdentity account={account}/><div className="account-row-actions">{canPin && <button className="secondary-button" disabled={!writable || account.disabled || selection?.accounts.some(item => item.credentialId === account.credentialId && item.active)} onClick={() => void act({ type: "session.pin", sessionId: props.session!.id, credentialId: account.credentialId })}>{selection?.accounts.some(item => item.credentialId === account.credentialId && item.active) ? "Used by this session" : "Use for this session"}</button>}<button className="text-danger" disabled={!writable} onClick={() => setRemoveId(account.credentialId)}>Remove</button></div>{removeId === account.credentialId && <div className="account-remove" role="alert"><p>Remove this saved credential from {catalog.credentialLocation.mode === "broker" ? "the configured broker" : props.hostName}?</p><div><button className="secondary-button" onClick={() => setRemoveId(null)}>Cancel</button><button className="secondary-button text-danger" disabled={!writable} onClick={async () => { const result = await act({ type: "credential.remove", providerId: provider.id, credentialId: account.credentialId }); if (result) setRemoveId(null); }}>Remove credential</button></div></div>}</div>)}
+      {accounts?.map(account => <div className="account-row" key={account.credentialId}><AccountIdentity account={account}/><div className="account-row-actions"><button className="text-danger" disabled={!writable} onClick={() => setRemoveId(account.credentialId)}>Remove</button></div>{removeId === account.credentialId && <div className="account-remove" role="alert"><p>Remove this saved credential from {catalog.credentialLocation.mode === "broker" ? "the configured broker" : props.hostName}?</p><div><button className="secondary-button" onClick={() => setRemoveId(null)}>Cancel</button><button className="secondary-button text-danger" disabled={!writable} onClick={async () => { const result = await act({ type: "credential.remove", providerId: provider.id, credentialId: account.credentialId }); if (result) setRemoveId(null); }}>Remove credential</button></div></div>}</div>)}
       {accounts?.length === 0 && !data.accountErrors.has(provider.id) && <p className="settings-description">No saved account entries were returned for this provider.{provider.configured ? " Authentication is configured through the source shown above." : ""}</p>}
       {!accounts && !data.loadingAccounts.has(provider.id) && !data.accountErrors.has(provider.id) && <p className="settings-description">Account metadata has not been loaded.</p>}
-      {selectionError && <p className="inline-error" role="alert">Session account selection could not be read: {selectionError}</p>}
-      {canPin && <><p className="settings-description">Account choice applies to “{props.session?.title}”. There is no global active account.</p><button className="secondary-button" disabled={!writable} onClick={() => void act({ type: "session.release", sessionId: props.session!.id })}>Release for next native selection</button><p className="settings-description">Clears the current sticky account choice. Future selection follows the native provider behavior.</p></>}
+      {canPin && props.session && <SessionAccountChoices bridge={props.bridge} hostId={props.hostId} localHostId={props.localHostId} session={props.session} connected={props.connected} disabled={busy} refreshRevision={data.revision}/>}
       {!catalog.sessionSelectionConnected && <p className="settings-description">Session account selection is not connected on this host yet.</p>}
     </section>
     <details className="settings-card provider-advanced"><summary>Provider details</summary><dl><dt>Registry source</dt><dd>{provider.source}</dd><dt>Available in registry</dt><dd>{provider.available ? "Yes" : "No"}</dd><dt>Native login list</dt><dd>{provider.visibleInNativeLoginList ? "Listed" : "Not listed"}</dd><dt>Credential provider</dt><dd>{provider.storesCredentialsAs}</dd><dt>Models</dt><dd>{provider.modelCount}</dd><dt>Enabled saved credentials</dt><dd>{provider.storedCredentialCount}</dd><dt>Disabled saved credentials</dt><dd>{provider.disabledCredentialCount}</dd><dt>Stored API key</dt><dd>{provider.storedApiKeyConfigured ? "Configured" : "Not configured"}</dd><dt>Paste-code flow</dt><dd>{provider.pasteCodeFlow ? "Available when requested by the provider" : "Not exposed"}</dd>{provider.callbackPort !== undefined && <><dt>Callback port</dt><dd>{provider.callbackPort} on {props.hostName}</dd></>}<dt>Transport authentication</dt><dd>{provider.transportMayAuthenticateWithoutKey ? "May authenticate without a stored key" : "No keyless transport declared"}</dd><dt>Extension registry</dt><dd>Providers registered in this host process</dd></dl></details>

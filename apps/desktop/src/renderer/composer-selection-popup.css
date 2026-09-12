@@ -18,3 +18,9 @@
 .composer-selection-power input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
 .composer-selection-power output{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+
+.session-account-choices { display: flex; flex-direction: column; gap: 8px; padding: 10px; font-size: 12px; }
+.session-account-choices p { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.session-account-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; }
+.session-account-choice small { color: var(--text-secondary); }
+.session-account-choice[aria-pressed="true"] { background: var(--bg-hover); }

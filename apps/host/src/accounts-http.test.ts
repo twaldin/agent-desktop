@@ -23,3 +23,21 @@ test("account HTTP uses native storage, resolves callbacks once and never journa
     await rm(directory, { recursive: true, force: true });
   }
 }, 50_000);
+
+
+test("account selection requests keep the exact owner token and reject malformed tokens", async () => {
+  const { parseAccountAction } = await import("./accounts-http");
+  const expectedSelection = { model: { provider: "openai", id: "gpt-4o" }, revision: "original-worker-model-revision" };
+  for (const type of ["session.pin", "session.release"] as const) {
+    const action = type === "session.pin" ? { type, sessionId: "original-session", credentialId: 4, expectedSelection } : { type, sessionId: "original-session", expectedSelection };
+    const parsed = parseAccountAction(action);
+    expect(parsed).toEqual(action);
+    expectedSelection.model.id = "changed-model";
+    expect("expectedSelection" in parsed && parsed.expectedSelection?.model.id).toBe("gpt-4o");
+    expectedSelection.model.id = "gpt-4o";
+    for (const malformed of [null, [], { ...expectedSelection, revision: "" }, { ...expectedSelection, extra: true }, { ...expectedSelection, model: { ...expectedSelection.model, extra: true } }]) {
+      expect(() => parseAccountAction({ ...action, expectedSelection: malformed })).toThrow();
+    }
+    expect(parseAccountAction({ ...action, expectedSelection: undefined })).not.toHaveProperty("expectedSelection");
+  }
+});

@@ -1,3 +1,4 @@
+import { toSessionPinAccounts } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/session-pin";
 import type { OAuthAccountSummary, StoredAuthCredential } from "@oh-my-pi/pi-ai";
 import type { DisabledCredentialSummary } from "@oh-my-pi/pi-ai/auth-storage";
 import type { AccountIdentity, AccountInfo, LoginIdentity } from "./types";
@@ -26,7 +27,7 @@ export function disabledAccount(row: DisabledCredentialSummary): AccountInfo {
 export function sessionAccount(providerId: string, account: OAuthAccountSummary): AccountInfo {
   return {
     credentialId: account.credentialId, providerId, type: "oauth", disabled: false,
-    active: account.active, position: account.position, ...identity(account),
+    active: account.active, position: account.position, label: toSessionPinAccounts([account])[0]!.label, ...identity(account),
   };
 }
 export function loginIdentity(value: LoginIdentity): LoginIdentity {
