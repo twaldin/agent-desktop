@@ -42,7 +42,7 @@ import type { NewChatExecution } from './new-chat';
 import type { WorktreeStartingState } from './workspace';
 export * from './new-chat';
 import type { BrowserCreateRequest, BrowserCreateReceipt, BrowserCreateObservation } from "./browser-create";
-import type { AccountInfo, LoginResponse, LoginSnapshot, ProviderCatalog, SessionAccountList } from "./accounts";
+import type { AccountInfo, LoginResponse, LoginSnapshot, ProviderCatalog, SessionAccountList, SessionAccountSelection } from "./accounts";
 import type { OmpInteraction, OmpInteractionResponse } from "./interactions";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "./workspace-protocol";
 import type { PreferenceChange, PreferenceRecord, PreferencesSnapshot } from "./preferences";
@@ -339,8 +339,8 @@ export type AccountAction =
   | { type: "login.cancel"; loginId: string }
   | { type: "key.set"; providerId: string; key: string }
   | { type: "credential.remove"; providerId: string; credentialId: number }
-  | { type: "session.pin"; sessionId: string; credentialId: number }
-  | { type: "session.release"; sessionId: string };
+  | { type: "session.pin"; sessionId: string; credentialId: number; expectedSelection?: SessionAccountSelection }
+  | { type: "session.release"; sessionId: string; expectedSelection?: SessionAccountSelection };
 export interface AccountActionResult { login?: LoginSnapshot; accounts?: AccountInfo[]; selection?: SessionAccountList }
 
 export type NativeModifier = "meta" | "control" | "alt";

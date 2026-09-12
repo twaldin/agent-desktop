@@ -324,9 +324,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   accounts = new AccountsHttp({ agentDir: options.agentDirectory, cwd: options.discoveryDirectory ?? homedir(),
     selection: {
       list: async id => (await getHandle(id)).listAccountChoices(),
-      pin: (id, credentialId) => ordered(id, async () => (await getHandle(id)).pinAccount(credentialId)),
+      pin: (id, credentialId, expectedSelection) => ordered(id, async () => (await getHandle(id)).pinAccount(credentialId, expectedSelection)),
     },
-    release: id => ordered(id, async () => (await getHandle(id)).releaseAccountForReselection()),
+    release: (id, expectedSelection) => ordered(id, async () => (await getHandle(id)).releaseAccountForReselection(expectedSelection)),
     changed: refresh => { publish({ type: "accounts" }); if (refresh) refreshModels(); },
   });
   const resolveComposerCwd = (target?: import("@agent-desktop/shared").WorkspaceTarget) => {

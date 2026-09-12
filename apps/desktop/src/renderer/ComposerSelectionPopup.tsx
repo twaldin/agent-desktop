@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icons";
 import { filterModelOptions, nextModelOption, type ModelPickerOption } from "./model-picker";
@@ -6,13 +6,14 @@ import "./composer-selection-popup.css";
 
 export interface ComposerSelectionPopupHandle { openModels(): void }
 
-export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset, commandRef }: {
+export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset, accountChoicesNode, commandRef }: {
+  accountChoicesNode?: ReactNode;
+  commandRef?: Ref<ComposerSelectionPopupHandle>;
   modelValue: string; modelLabel: string; modelTitle: string; models: ModelPickerOption[]; levels: string[]; effort?: string; effectiveEffort?: string; defaultEffortLabel: string; disabled: boolean;
   onModel(value: string): void; onEffort(value?: string): void; onReset(): void;
-  commandRef?: Ref<ComposerSelectionPopupHandle>;
 }) {
   const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null), scrollFrame = useRef<number | undefined>(undefined);
-  const [open, setOpen] = useState<"main" | "models" | "effort">(), [query, setQuery] = useState("");
+  const [open, setOpen] = useState<"main" | "models" | "effort" | "accounts">(), [query, setQuery] = useState("");
   const [position, setPosition] = useState<CSSProperties>();
   useImperativeHandle(commandRef, () => ({ openModels() {
     if (disabled || !trigger.current?.isConnected) return;
@@ -42,7 +43,11 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
     if (!open) return;
     const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>(open === "models" ? "input" : "input:not(:disabled),button:not(:disabled)")?.focus({ preventScroll: true }));
     const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) { setOpen(undefined); setQuery(""); } };
-    addEventListener("pointerdown", outside); return () => { cancelAnimationFrame(frame); removeEventListener("pointerdown", outside); };
+    // An account action may disable its focused button while it settles. Escape
+    // still belongs to this open popup even if Chromium moved focus to the body.
+    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape" && !event.isComposing) { event.preventDefault(); event.stopPropagation(); close(); } };
+    addEventListener("keydown", escape, true);
+    addEventListener("pointerdown", outside); return () => { cancelAnimationFrame(frame); removeEventListener("pointerdown", outside); removeEventListener("keydown", escape, true); };
   }, [open]);
   const filtered = filterModelOptions(models, query);
   const visibleModels = filtered;
@@ -61,7 +66,7 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
   };
   return <div className="composer-selection-popup" ref={root}>
     <button ref={trigger} type="button" className="composer-selection-trigger" aria-label="Model and reasoning effort" aria-haspopup="menu" aria-expanded={Boolean(open)} title={modelTitle} disabled={disabled} onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); close(); } }} onClick={() => { if (disabled) return; if (open) close(); else setOpen("main") }}><span>{label}</span><Icon name="chevron"/></button>
-    {open && position && createPortal(<div style={position} ref={menu} className={`composer-selection-menu ${open === "main" ? "composer-power-menu" : ""}`} role="menu" aria-label={open === "models" ? "Select model" : open === "effort" ? "Select effort" : "Composer selections"} onKeyDown={moveMenuFocus}>
+    {open && position && createPortal(<div style={position} ref={menu} className={`composer-selection-menu ${open === "main" ? "composer-power-menu" : ""}`} role="menu" aria-label={open === "models" ? "Select model" : open === "effort" ? "Select effort" : open === "accounts" ? "Select session account" : "Composer selections"} onKeyDown={moveMenuFocus}>
       {open === "main" && <>
         <div className="composer-selection-header">
           {levels.length > 0 && <button role="menuitem" type="button" className="composer-effort-button" aria-label="Select effort" title="Select effort" onClick={() => { if (!disabled) setOpen("effort"); }}><Icon name="sliders"/></button>}
@@ -74,7 +79,9 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
           <output className="visually-hidden">{activeOrdinal >= 0 ? ordinal[activeOrdinal] : "Select effort"}</output>
         </div>}
 
+        {accountChoicesNode && <button role="menuitem" type="button" onClick={() => { if (!disabled) setOpen("accounts"); }}>Session account<Icon name="chevron"/></button>}
       </>}
+      {open === "accounts" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => setOpen("main")}><Icon name="chevron"/></button><strong>Session account</strong></div>{accountChoicesNode}</>}
       {open === "models" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select model</strong></div><label className="composer-selection-search"><Icon name="search"/><input type="search" aria-label="Search models" value={query} placeholder="Search model or provider" onChange={event => { setQuery(event.target.value); }} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); close(); return; } if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const index = event.key === "ArrowDown" ? nextModelOption(filtered, -1, 1) : nextModelOption(filtered, filtered.length, -1); if (index >= 0) menu.current?.querySelector<HTMLButtonElement>(`button[data-model-index="${index}"]`)?.focus(); return; } if (event.key === "Enter") { event.preventDefault(); const index = nextModelOption(filtered, -1, 1); if (index >= 0) chooseModel(filtered[index]!); } }}/></label><div className="composer-selection-options" role="menu">{visibleModels.map((item, index) => <button data-model-index={index} role="menuitemradio" aria-checked={item.value === modelValue} aria-disabled={Boolean(item.disabled)} disabled={item.disabled} key={item.value} type="button" onClick={() => chooseModel(item)}><span><b>{item.label}</b>{item.detail && <small>{item.detail}</small>}</span>{item.value === modelValue && <Icon name="check"/>}</button>)}{!filtered.length && <p>No models match this search.</p>}</div></>}
       {open === "effort" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select effort</strong></div><button role="menuitemradio" aria-checked={!effort} type="button" onClick={() => { if (disabled) return; onEffort(undefined); close(); }}>{defaultEffortLabel}{!effort && <Icon name="check"/>}</button>{levels.map(level => <button role="menuitemradio" aria-checked={effort === level} key={level} type="button" onClick={() => { if (disabled) return; onEffort(level); close(); }}>{effortLabel(level)}{effort === level && <Icon name="check"/>}</button>)}</>}
     </div>, document.body)}

@@ -6,6 +6,8 @@ export interface AccountIdentity {
   orgName?: string;
 }
 export interface AccountInfo extends AccountIdentity {
+  /** Native account-selector label, including distinct organization scope when available. */
+  label?: string;
   credentialId: number;
   providerId: string;
   type: "oauth" | "api_key";
@@ -47,10 +49,11 @@ export interface ProviderCatalog {
   /** Workers must supply their extension registry; this service never silently loads user extensions. */
   extensionProviderCoverage: "registered-in-this-process-only";
 }
-export interface SessionAccountList { sessionId: string; providerId: string | null; accounts: AccountInfo[] }
+export interface SessionAccountSelection { model: { provider: string; id: string }; revision: string }
+export interface SessionAccountList { sessionId: string; providerId: string | null; accounts: AccountInfo[]; selection?: SessionAccountSelection }
 export interface AccountSelectionBridge {
   list(sessionId: string): Promise<SessionAccountList>;
-  pin(sessionId: string, credentialId: number): Promise<SessionAccountList>;
+  pin(sessionId: string, credentialId: number, expectedSelection?: SessionAccountSelection): Promise<SessionAccountList>;
 }
 export interface LoginIdentity extends AccountIdentity { type: "oauth" | "api_key" }
 export interface LoginPrompt {

@@ -8,7 +8,7 @@ const providers = [{ ...base, id: 'fixture-native', name: 'Fixture native provid
 const states = new Map(['fixture-host', 'other-host'].map(host => [host, { accounts: [], logins: [], active: false }]));
 const calls = [], opened = [], checkpoints = [], consoleErrors = [];
 let failRefresh = false, failLogin = false, sequence = 0, holdNext = false, held;
-const selection = state => ({ sessionId: 'session', providerId: 'fixture-native', accounts: state.accounts.map(item => ({ ...item, active: state.active })) });
+const selection = state => ({ sessionId: 'session', providerId: 'fixture-native', selection: { model: { provider: 'fixture-native', id: 'fixture-model' }, revision: 'fixture-selection' }, accounts: state.accounts.map(item => ({ ...item, active: state.active })) });
 async function respond(method, args) {
   const host = method === 'getAccounts' || method === 'getSessionAccounts' || method === 'accountAction' ? args[1] : args[0];
   calls.push({ method, host, action: method === 'accountAction' ? args[0].type : undefined });
@@ -69,8 +69,8 @@ app.whenReady().then(async () => {
     await click('Open sign-in page'); await wait('true'); check(opened[0] === 'https://fixture.invalid/login','Wrong sign-in URL');
     await run(`document.querySelector('#login-code').focus()`); await win.webContents.insertText('fixture-code');
     await click('Continue'); await wait(text('Account connected')); await wait(text('fixture@example.invalid')); await idle();
-    await click('Use for this session'); await wait(text('Used by this session')); await idle();
-    await click('Release for next native selection'); await wait(`!!(${button('Use for this session')})`); await idle();
+    await click(null, '.session-account-choice'); await wait(text('Used by this session')); await idle();
+    await click('Release for next native selection'); await wait(`!!document.querySelector('.session-account-choice[aria-pressed="false"]')`); await idle();
     await checkpoint('03-completed-selection');
     await click('Remove'); await wait(text('Remove this saved credential')); const beforeCancel = actionCount(); await click('Cancel');
     await wait(`!${text('Remove this saved credential')}`); check(actionCount() === beforeCancel,'Removal cancel dispatched');

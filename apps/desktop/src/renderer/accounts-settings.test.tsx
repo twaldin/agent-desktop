@@ -6,7 +6,7 @@ import { AccountsState } from "./accounts-state";
 
 const provider = (patch: Partial<ProviderInfo> = {}): ProviderInfo => ({ id: "native", name: "Native provider", source: "builtin", available: true, disabledInSettings: false, loginSupported: true, visibleInNativeLoginList: true, storesCredentialsAs: "native", pasteCodeFlow: false, apiKeyStorageSupported: true, transportMayAuthenticateWithoutKey: false, configured: false, storedCredentialCount: 0, storedApiKeyConfigured: false, disabledCredentialCount: 0, modelCount: 1, ...patch });
 const catalog: ProviderCatalog = { credentialLocation: { mode: "local" }, providers: [], sessionSelectionConnected: true, extensionProviderCoverage: "registered-in-this-process-only" };
-const session = { id: "session", title: "Owned session", model: { provider: "native", id: "model" } } as SessionSummary;
+const session = { id: "session", title: "Owned session", status: "idle", model: { provider: "native", id: "model" } } as SessionSummary;
 const bridge = { subscribe: () => () => {} } as unknown as DesktopBridge;
 function view(item: ProviderInfo, connected = true) {
   const data = new AccountsState(bridge, "owner");
@@ -25,7 +25,8 @@ test("unavailable native sign-in is described without an action that will fail",
 test("saved account selection and removal stay scoped to the connected owner", () => {
   const html = view(provider());
   expect(html).toContain("account@example.invalid");
-  expect(html).toContain("Use for this session");
+  expect(html).not.toContain("Use for this session");
+  expect(html).toContain("Refresh accounts");
   expect(html).toContain("Remove");
   expect(html).toContain("There is no global active account.");
 });

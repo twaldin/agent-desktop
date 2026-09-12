@@ -30,7 +30,7 @@ function App() {
     <button id="reopen" onClick={() => setOpen(true)}>Open Accounts</button>
     <output id="changes">{changes}</output>
   </nav>{open && <AccountsSettings bridge={bridge} hostId={host} hostName={host} localHostId={host} connected={connected}
-    session={{ id: "session", title: "Fixture session", model: { provider: "fixture-native" } } as SessionSummary}
+    session={{ id: "session", title: "Fixture session", status: "idle", model: { provider: "fixture-native", id: "fixture-model" } } as SessionSummary}
     onClose={() => setOpen(false)} onChanged={() => setChanges(value => value + 1)}/>}</>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);

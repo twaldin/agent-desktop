@@ -1677,7 +1677,7 @@ export function App() {
             {autocomplete.popup}
             <div className="composer-toolbar">
               <div className="composer-selections">
-                <ComposerSelections key={`${hostId}:${draftId}:${workspaceOwner ?? ""}`} commandRef={composerSelections} data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)} />
+                <ComposerSelections connection={{ bridge, hostId, localHostId: desktop.localHostId, connected }} key={`${hostId}:${draftId}:${workspaceOwner ?? ""}`} commandRef={composerSelections} data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)} />
               </div>
               <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : `Send (${normalSendShortcut})` : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
             </div>
