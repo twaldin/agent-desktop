@@ -89,6 +89,28 @@ test("detail page merge preserves other sections and rejects a new head or targe
     ),
   ).toThrow("changed");
 });
+test("later complete thread pages retain an earlier upstream truncation warning", () => {
+  const first = detail(),
+    next = detail();
+  first.discussion.pageInfo.truncated = true;
+  next.discussion.items[0]!.id = "next-thread-comment";
+  next.discussion.pageInfo = {
+    hasNextPage: false,
+    endCursor: null,
+    totalCount: 2,
+    truncated: false,
+  };
+  const merged = appendPullRequestDetail(first, next, "discussion");
+  expect(merged.discussion.items.map((item) => item.id)).toEqual([
+    "comment1",
+    "next-thread-comment",
+  ]);
+  expect(merged.discussion.pageInfo).toMatchObject({
+    hasNextPage: false,
+    truncated: true,
+  });
+  expect(next.discussion.pageInfo.truncated).toBe(false);
+});
 test("accumulated detail byte limit fails without replacing the earlier readable page", () => {
   const first = detail(),
     next = detail();

@@ -102,6 +102,15 @@ export function appendPullRequestDetail(
     );
   return bounded({
     ...previous,
-    [section]: { ...next[section], items: merged },
+    [section]: {
+      ...next[section],
+      items: merged,
+      pageInfo: {
+        ...next[section].pageInfo,
+        truncated:
+          previous[section].pageInfo.truncated ||
+          next[section].pageInfo.truncated,
+      },
+    },
   });
 }
