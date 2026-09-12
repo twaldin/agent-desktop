@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createElement, Fragment, type ReactElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
 import { sidebarItemKey, sidebarLayout } from "./sidebar-layout";
@@ -7,6 +8,7 @@ import type { PreferencesState } from "./preferences-state";
 import type { SidebarSectionKey } from "../window-state";
 import type { HostOption } from "./host-catalog";
 import { PROJECT_APPEARANCE_COLORS, PROJECT_APPEARANCE_ICONS } from "../../../../packages/shared/src/preferences";
+import { ProjectMarkerPicker } from "./ProjectMarkerPicker";
 
 (globalThis as { window?: unknown; document?: unknown }).window = { innerWidth: 1_024, innerHeight: 768 };
 (globalThis as { document?: unknown }).document = { body: {} };
@@ -46,8 +48,8 @@ function fixture() {
   const state: unknown[] = [], refs: { current: unknown }[] = []; let cursor = 0, refCursor = 0;
   const useState = (initial: any) => { const slot = cursor++; if (!(slot in state)) state[slot] = typeof initial === "function" ? initial() : initial; return [state[slot], (next: any) => { state[slot] = typeof next === "function" ? next(state[slot]) : next; }]; };
   const useRef = (initial: unknown) => refs[refCursor++] ??= { current: initial };
-  const Component = new Function("createElement", "Fragment", "useState", "useRef", "useEffect", "createPortal", "sidebarItemKey", "Icon", "SidebarPinIcon", "ProjectMarker", "projectColor", "PROJECT_APPEARANCE_COLORS", "PROJECT_APPEARANCE_ICONS", `${compiled}; return OrganizedSidebar;`)
-    (createElement, Fragment, useState, useRef, () => {}, (node: ReactNode) => node, sidebarItemKey, () => null, () => null, () => null, () => "#000", PROJECT_APPEARANCE_COLORS, PROJECT_APPEARANCE_ICONS);
+  const Component = new Function("createElement", "Fragment", "useState", "useRef", "useEffect", "createPortal", "sidebarItemKey", "Icon", "SidebarPinIcon", "ProjectMarker", "projectColor", "PROJECT_APPEARANCE_COLORS", "PROJECT_APPEARANCE_ICONS", "ProjectMarkerPicker", `${compiled}; return OrganizedSidebar;`)
+    (createElement, Fragment, useState, useRef, () => {}, (node: ReactNode) => node, sidebarItemKey, () => null, () => null, () => null, () => "#000", PROJECT_APPEARANCE_COLORS, PROJECT_APPEARANCE_ICONS, ProjectMarkerPicker);
   const props = { preferences, groups, activeHostId: "home", selectedId: "same" as string | null, activeProjectId: undefined as string | undefined, query: "", showArchived: false, expandedProjects,
     onNavigate: (...args: unknown[]) => navigations.push(args), onNew: (...args: unknown[]) => newChats.push(args), onArchive: (...args: unknown[]) => archives.push(args),
     collapsedSections: new Set<SidebarSectionKey>(["recents"]), onToggleSection: (key: SidebarSectionKey) => { const next = new Set(props.collapsedSections); next.has(key) ? next.delete(key) : next.add(key); props.collapsedSections = next; },
@@ -62,6 +64,7 @@ function fixture() {
 function menuTrigger() { return { getBoundingClientRect: () => ({ right: 100, top: 20 }) } as unknown as DOMRect; }
 function projectMenu(f: ReturnType<typeof fixture>) { const project = f.groups[0]!.hostState.projects.find(project => project.id === "project")!; f.button(`Project actions for ${project.name}`).props.onClick({ currentTarget: menuTrigger() }); }
 function projectForm(f: ReturnType<typeof fixture>) { return f.render().find(node => node.type === "form" && nodes(node).some(child => child.props.id === "sidebar-project-name"))!; }
+function markerPicker(f: ReturnType<typeof fixture>) { return f.render().find(node => node.type === ProjectMarkerPicker)!; }
 
 test("unselected remote chat archive keeps the exact owner and does not navigate", () => {
   const f = fixture(), tree = f.render();
@@ -202,33 +205,42 @@ test("project appearance picker preserves its owner and resets without moving th
   const existing = { hostId: "home", sectionId: "pinned" as const, position: 2_048 };
   f.props.preferences.entity = (kind: string, id: string, hostId: string) => kind === "project" && id === "project" && hostId === "home" ? existing : undefined;
   projectMenu(f); f.button("Edit project").props.onClick();
-  expect(f.render().some(node => node.props["aria-label"] === "Use terminal icon")).toBe(true);
-  f.button("Use red project color").props.onClick();
-  f.button("Use terminal icon").props.onClick();
+  expect(f.render().some(node => node.type === "fieldset")).toBe(false);
+  markerPicker(f).props.onChange({ kind: "color", color: "red" });
+  markerPicker(f).props.onChange({ kind: "icon", icon: "terminal" });
   await projectForm(f).props.onSubmit({ preventDefault() {} });
   const appearance = { marker: { kind: "icon" as const, icon: "terminal" as const }, color: "red" as const };
   expect(f.writes[0]).toEqual({ key: "sidebar.project.project", value: { ...existing, appearance } });
 
   f.props.preferences.entity = (kind: string, id: string, hostId: string) => kind === "project" && id === "project" && hostId === "home" ? { ...existing, appearance } : undefined;
   projectMenu(f); f.button("Edit project").props.onClick();
-  f.button("Reset icon and color").props.onClick();
+  markerPicker(f).props.onChange({ kind: "reset" });
   await projectForm(f).props.onSubmit({ preventDefault() {} });
   expect(f.writes[1]).toEqual({ key: "sidebar.project.project", value: existing });
 
   f.props.preferences.entity = (kind: string, id: string, hostId: string) => kind === "project" && id === "project" && hostId === "home" ? existing : undefined;
   projectMenu(f); f.button("Edit project").props.onClick();
-  const customColor = () => f.render().find(node => node.props.id === "sidebar-project-custom-color")!;
-  customColor().props.onChange({ target: { value: "#" } });
-  expect(customColor().props.value).toBe("#");
-  customColor().props.onChange({ target: { value: "#3b82f6" } });
-  f.button("Use terminal icon").props.onClick();
+  markerPicker(f).props.onChange({ kind: "custom-color", value: "#" });
+  expect(markerPicker(f).props.draft.customColor).toBe("#");
+  markerPicker(f).props.onChange({ kind: "custom-color", value: "#3b82f6" });
+  markerPicker(f).props.onChange({ kind: "icon", icon: "terminal" });
   await projectForm(f).props.onSubmit({ preventDefault() {} });
   expect(f.writes[2]).toEqual({ key: "sidebar.project.project", value: { ...existing, appearance: { marker: { kind: "icon", icon: "terminal" }, color: "#3B82F6" } } });
 
   f.props.preferences.entity = (kind: string, id: string, hostId: string) => kind === "project" && id === "before" && hostId === "home" ? { hostId, sectionId: "pinned", position: 0 } : undefined;
   f.props.preferences.sectionFor = (kind: string, id: string, hostId: string) => kind === "project" && id === "before" && hostId === "home" ? "pinned" : null;
   projectMenu(f); f.button("Edit project").props.onClick();
-  f.button("Use terminal icon").props.onClick();
+  markerPicker(f).props.onChange({ kind: "icon", icon: "terminal" });
   await projectForm(f).props.onSubmit({ preventDefault() {} });
   expect(f.writes[3]).toEqual({ key: "sidebar.project.project", value: { hostId: "home", sectionId: null, position: 0, appearance: { marker: { kind: "icon", icon: "terminal" }, color: "black" } } });
+});
+
+test("marker trigger owns a compact native popover with all project markers", () => {
+  const html = renderToStaticMarkup(<ProjectMarkerPicker projectName="Example" draft={{ appearance: { marker: { kind: "icon", icon: "terminal" }, color: "#123456" }, color: "#123456", customColor: "#123456", emoji: "" }} onChange={() => {}}/>);
+  expect(html).toContain('aria-label="Change icon and color for Example"');
+  expect(html).toContain('popover="auto"');
+  expect(html).toContain('popoverTargetAction="hide"');
+  expect((html.match(/Use [a-z-]+ icon/g) ?? [])).toHaveLength(PROJECT_APPEARANCE_ICONS.length);
+  expect((html.match(/Use [a-z]+ project color/g) ?? [])).toHaveLength(PROJECT_APPEARANCE_COLORS.length);
+  expect((html.match(/#123456/g) ?? [])).toHaveLength(3); // trigger marker, trigger dot, and editable value; option glyphs stay neutral.
 });

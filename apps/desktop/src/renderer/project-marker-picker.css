@@ -1,0 +1,18 @@
+.project-marker-control { display:contents; }
+.project-marker-trigger { anchor-name:--project-marker-trigger; position:relative; display:grid; place-items:center; flex:0 0 54px; width:54px; padding:0; border:1px solid var(--border); border-right:0; border-radius:12px 0 0 12px; color:var(--secondary); background:var(--dialog-input-surface, var(--elevated-surface)); }
+.project-marker-trigger:hover { color:var(--text); background:var(--hover); }
+.project-marker-trigger .project-marker { width:20px; height:20px; }
+.project-marker-trigger-color { position:absolute; right:4px; bottom:4px; width:8px; height:8px; border:1.5px solid var(--dialog-input-surface, var(--elevated-surface)); border-radius:50%; }
+.project-marker-popover { position-anchor:--project-marker-trigger; position:fixed; inset:auto; top:anchor(bottom); left:anchor(left); position-try-fallbacks:flip-block; width:min(326px, calc(100vw - 24px)); max-height:min(510px, calc(100vh - 24px)); margin:8px 0; padding:16px; overflow:auto; border:var(--border-width, 1px) solid var(--border); border-radius:12px; color:var(--text); background:var(--menu-surface, var(--elevated-surface)); box-shadow:0 12px 30px #0005; }
+.project-marker-colors { display:grid; grid-template-columns:repeat(6, 28px); gap:18px 12px; padding:2px 0 18px; border-bottom:1px solid var(--border); }
+.project-color-swatch { width:26px; height:26px; border:0; border-radius:50%; box-shadow:none; }
+.project-color-swatch[aria-pressed="true"] { outline:2px solid var(--text); outline-offset:4px; }
+.project-marker-popover .field-label { display:block; margin:12px 0 6px; }
+.project-marker-popover .text-field { width:100%; }
+.project-marker-icons { display:grid; grid-template-columns:repeat(6, 32px); gap:12px 18px; padding:18px 0 2px; }
+.project-marker-icons button { display:grid; place-items:center; width:32px; height:32px; padding:0; border-radius:12px; color:var(--secondary); }
+.project-marker-icons button[aria-pressed="true"] { color:var(--text); background:var(--hover); }
+.project-marker-icons .project-marker { color:inherit; }
+.project-marker-popover-actions { display:flex; justify-content:space-between; gap:12px; margin-top:16px; }
+.project-marker-reset { flex:1; }
+.project-marker-done { flex:0 0 auto; }
