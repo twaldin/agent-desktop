@@ -64,12 +64,12 @@ const build=new Function(`${compiled};return build;`)() as (values:Record<string
 function catalogue(dock:unknown,overrides:Record<string,unknown>={}) {return build({dockWorkspace:{sessionId:"session"},dockSession:{sessionId:"session"},hostId:"owner",dock,connected:true,bridge:{getBtw:()=>{}},workspace:{status:{}},commandKeymap:undefined,appCommandBindings:{bindings:{}},workspaceKey,dockTabId,appCommandShortcutLabel:()=>"shortcut",hasNativeTerminalBridge:()=>true,browserMenu:new BrowserWorkspaceMenu(()=>{}),dockEmptyActionCatalogue,state:undefined,draftDockOwner:{enabled:false},committedDraftDockOwner:{current:undefined},draftId:"draft",draftBrowserDockTarget,createDraftBrowserDockTab,...overrides});}
 function actions(dock:unknown,overrides:Record<string,unknown>={}) {return catalogue(dock,overrides).dockActions;}
 
-test("actual App Terminal preparation requires the captured browser and does not acquire without it",async()=>{
+test("actual App Terminal preparation requires the captured browser and explicitly creates its sibling",async()=>{
   const f=fixture();let terminalCalls=0;
   const browser=createBrowserNewTab("owner","session","source");
   const presentations=reconcileDockPresentations(undefined,{tabs:[browser],state:insertDockTab(createDockState(),browser,"right")},"source");
   const origin=captureBrowserReplacement(presentations,browser.id,{kind:"chat",hostId:"owner",sessionId:"session"})!;
-  const dock={...f.render(),snapshot:presentations.snapshot,prepareTerminal:async(create:boolean,signal:AbortSignal)=>{terminalCalls++;expect(create).toBe(false);expect(signal.aborted).toBe(false);return{status:"busy"};}};
+  const dock={...f.render(),snapshot:presentations.snapshot,prepareTerminal:async(create:boolean,signal:AbortSignal,source:unknown,settle:unknown)=>{terminalCalls++;expect(create).toBe(true);expect(signal.aborted).toBe(false);expect(source).toEqual({kind:"browser",tabId:browser.id,browserInstanceId:browser.browserInstanceId,title:origin.title,draft:origin.state.draft});expect(settle).toBeUndefined();return{status:"busy"};}};
   const rows=actions(dock);expect(rows.map(a=>a.id)).toEqual(["review","terminal","browser","files","side-chat"]);expect(terminalCalls).toBe(0);f.flush();expect(f.render().snapshot.tabs).toEqual([]);
   expect(await rows.find(a=>a.id==="terminal")!.prepare!(new AbortController().signal)).toMatchObject({status:"error",outcome:"not-submitted"});expect(terminalCalls).toBe(0);
   expect(await rows.find(a=>a.id==="terminal")!.prepare!(new AbortController().signal,origin)).toEqual({status:"busy"});expect(terminalCalls).toBe(1);
