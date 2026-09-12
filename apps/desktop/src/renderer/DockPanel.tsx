@@ -45,6 +45,25 @@ export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shor
   const select = (id: string) => { if (leadingTab?.id === id) leadingTab.onSelect(); else publish(activateDockTab(state, destination, id)); };
   const activeId = leadingTab?.selected ? leadingTab.id : region.activeTabId;
   const stripIds = [...(leadingTab ? [leadingTab.id] : []), ...ordered.map(tab => tab.id)];
+  useEffect(() => {
+    if (!region.open || !ordered.some(tab => tab.id === activeId && (tab.kind === "file" || tab.kind === "files"))) return;
+    const header = strip.current;
+    const pill = header?.querySelector<HTMLButtonElement>(`[data-dock-tab-id="${CSS.escape(activeId!)}"]`)?.parentElement;
+    const scroller = header?.querySelector<HTMLElement>(".dock-tabs");
+    if (!header || !pill || !scroller) return;
+    // Keep the active file and its close control reachable without stealing editor/tree focus.
+    const end = pill.querySelector<HTMLElement>(".dock-tab-close") ?? pill;
+    const reveal = () => {
+      const bounds = scroller.getBoundingClientRect(), close = end.getBoundingClientRect(), tab = pill.getBoundingClientRect();
+      if (close.right > bounds.right) scroller.scrollLeft += close.right - bounds.right;
+      else if (tab.width <= bounds.width && tab.left < bounds.left) scroller.scrollLeft += tab.left - bounds.left;
+    };
+    reveal();
+    const frame = requestAnimationFrame(reveal);
+    const observer = new ResizeObserver(reveal);
+    observer.observe(scroller);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); };
+  }, [activeId, region.open, region.tabIds, tabs, stripContainer]);
   const pinFromContent = (event: React.SyntheticEvent, tab: DockTab) => {
     if (!region.open || region.activeTabId !== tab.id || !tab.preview || event.nativeEvent.composedPath().some(node => node instanceof Element && node.hasAttribute("data-tab-preview-pin-exempt"))) return;
     onPinTab?.(tab.id);
@@ -111,7 +130,7 @@ export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shor
     <header className="dock-strip" ref={strip} onContextMenu={onStripContextMenu} data-app-shell-tab-strip-controller={destination} data-dock-destination={destination} role="tablist" aria-label={leadingTab ? "Task tabs" : `${destination} dock tabs`}>
       {stripStart}
       <div className="dock-tabs">{leadingTab && <div className={`dock-pill dock-chat-pill ${leadingTab.selected ? "active" : ""}`}><button id={leadingTab.id} data-main-task-chat-tab data-dock-tab-id={leadingTab.id} role="tab" aria-selected={leadingTab.selected} aria-controls={leadingTab.panelId} tabIndex={leadingTab.selected ? 0 : -1}  {...paneDrag.handlers("chat",ordered.length>0)} onClick={event => {if(!paneDrag.consumeClick(event)) leadingTab.onSelect();}} onContextMenu={leadingTab.onContextMenu} onKeyDown={event => keydown(event,leadingTab.id)}><Icon name="sideChat"/><span>{leadingTab.title}</span>{leadingTab.shortcutHint && <span className="task-shortcut-hint" data-tab-shortcut-hint aria-hidden="true"><kbd>{leadingTab.shortcutHint}</kbd></span>}</button></div>}{ordered.map(tab => <div className={`dock-pill ${tab.preview ? "preview" : ""} ${activeId === tab.id ? "active" : ""}`} key={presentationIds?.get(tab.id) ?? tab.id} draggable={false}>
-        <button id={`${panelId}-${tab.id}`} data-dock-tab-id={tab.id} data-dock-content-tab {...paneDrag.handlers(tab)} role="tab" aria-selected={activeId === tab.id} aria-controls={`${panelId}-panel-${tab.id}`} tabIndex={activeId === tab.id ? 0 : -1} onClick={event => {if(!paneDrag.consumeClick(event)) select(tab.id);}} onContextMenu={event=>onTabContextMenu?.(event,tab)} onDoubleClick={() => onPinTab?.(tab.id)} onKeyDown={event => keydown(event, tab.id)} onAuxClick={event => { if (event.button === 1) { event.preventDefault(); close(tab.id); } }}><DockTabIcon tab={tab}/><span>{tab.title}</span>{shortcutHints?.get(tab.id) && <span className="task-shortcut-hint" data-tab-shortcut-hint aria-hidden="true"><kbd>{shortcutHints.get(tab.id)}</kbd></span>}{tab.unread && <i className="dock-unread" aria-label="Unread side-chat answer"/>}</button><button className="dock-tab-close" data-app-shell-tab-close-button aria-label={`Close ${tab.title} tab`} disabled={closing.has(tab.id)} onPointerDown={event => event.stopPropagation()} onClick={() => close(tab.id)}><Icon name="close"/></button>
+        <button id={`${panelId}-${tab.id}`} data-dock-tab-id={tab.id} data-dock-content-tab title={tab.kind === "file" ? tab.filePath : undefined} {...paneDrag.handlers(tab)} role="tab" aria-selected={activeId === tab.id} aria-controls={`${panelId}-panel-${tab.id}`} tabIndex={activeId === tab.id ? 0 : -1} onClick={event => {if(!paneDrag.consumeClick(event)) select(tab.id);}} onContextMenu={event=>onTabContextMenu?.(event,tab)} onDoubleClick={() => onPinTab?.(tab.id)} onKeyDown={event => keydown(event, tab.id)} onAuxClick={event => { if (event.button === 1) { event.preventDefault(); close(tab.id); } }}><DockTabIcon tab={tab}/><span>{tab.title}</span>{shortcutHints?.get(tab.id) && <span className="task-shortcut-hint" data-tab-shortcut-hint aria-hidden="true"><kbd>{shortcutHints.get(tab.id)}</kbd></span>}{tab.unread && <i className="dock-unread" aria-label="Unread side-chat answer"/>}</button><button className="dock-tab-close" data-app-shell-tab-close-button aria-label={`Close ${tab.title} tab`} disabled={closing.has(tab.id)} onPointerDown={event => event.stopPropagation()} onClick={() => close(tab.id)}><Icon name="close"/></button>
       </div>)}</div>
       {addActions.length > 0 && <DropdownMenu.Root modal={false} open={addMenuOpen} onOpenChange={changeAddMenuOpen}>
         <DropdownMenu.Trigger asChild><button type="button" className="dock-add-trigger" aria-label={`Open ${destination} panel tab`} title="Add panel tab"><Icon name="plus"/></button></DropdownMenu.Trigger>

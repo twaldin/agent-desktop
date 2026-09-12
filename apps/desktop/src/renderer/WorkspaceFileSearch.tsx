@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import type { WorkspaceQueryResult } from "@agent-desktop/shared";
 import type { WorkspaceState } from "./workspace-state";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { fileSearchDisplayText, fileSearchLabelParts } from "./workspace-file-search-label";
 import "./workspace-file-search.css";
 
 type SearchResult = Extract<WorkspaceQueryResult, { type: "files.search" }>;
@@ -74,10 +75,16 @@ export function WorkspaceFileSearch({ data, connected, onClose, onOpenFile }: {
                 : error ? <div className="workspace-file-search-error"><p role="alert">{error}</p><button type="button" onClick={() => setRetry(value => value + 1)}>Try again</button></div>
                 : !visible ? <p role="status">Searching files…</p>
                 : entries.length === 0 ? <p role="status">No files found</p>
-                : entries.map(entry => <Command.Item key={entry.path} value={entry.path} className="workspace-file-search-result" onSelect={select}>
-                    <FileTypeIcon path={entry.path}/><span className="workspace-file-search-name">{entry.name}</span>
-                    <span className="workspace-file-search-directory">{entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : ""}</span>
-                  </Command.Item>)}
+                : entries.map(entry => {
+                    const parts = fileSearchLabelParts(entry.name, term), matched = parts.some(part => part.isMatch);
+                    const directory = entry.path.includes("/") ? fileSearchDisplayText(entry.path.slice(0, entry.path.lastIndexOf("/"))) : "";
+                    return <Command.Item key={entry.path} value={entry.path} className="workspace-file-search-result" onSelect={select}>
+                      <FileTypeIcon path={entry.path}/><span className="workspace-file-search-content">
+                        <span className={`workspace-file-search-name${directory ? " with-directory" : ""}`}>{parts.map((part, index) => <span key={index} className={!part.isMatch && matched ? "workspace-file-search-unmatched" : undefined}>{part.text}</span>)}</span>
+                        {directory && <span className="workspace-file-search-directory">{directory}</span>}
+                      </span>
+                    </Command.Item>;
+                  })}
               {visible?.status === "truncated" && <p role="status">More matches available. Refine your search.</p>}
             </Command.Group>
           </Command.List>

@@ -1072,14 +1072,16 @@ export function App() {
         dock.selectFile(tab.id, path);
       }}/>
     return <WorkspacePanel onCommit={record?.state?.gitSubmissions?.commandVersion === 10 ? () => openGitSubmission(data!) : undefined} onAddFile={canAddWholeFile && tab.hostId === hostId && fileRoot ? relativePath => addWholeFile(tab.hostId, `${(fileRoot ?? "").replace(/\/$/, "")}/${relativePath}`) : undefined} onFileEdit={() => dock.pinFile(tab.id)} onAddToChat={canAddSelection && fileRoot ? (relativePath, selection) => addSelection(tab.hostId, `${(fileRoot ?? "").replace(/\/$/, "")}/${relativePath}`, selection) : undefined} embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location, options) => {
+      const destination = tab.kind !== "file" ? "right" : dock.destinationForTab(tab.id);
+      if (!destination) return;
       if ("filePath" in target) {
         const absolutePath = path.startsWith("/") ? path : `${(fileRoot ?? "/").replace(/\/$/, "")}/${path}`;
         const targetOwner = `${tab.hostId}:${workspaceKey({ filePath: absolutePath })}`;
         setWorkspaceFileRequest({ owner: targetOwner, request: { ...location, id: crypto.randomUUID(), path: path.split("/").at(-1)! } });
-        dock.openHostFile(absolutePath, tab.hostId, "right", options?.preview ?? true);
+        dock.openHostFile(absolutePath, tab.hostId, destination, options?.preview ?? true);
       } else {
         setWorkspaceFileRequest({ owner, request: { ...location, id: crypto.randomUUID(), path } });
-        dock.openFile(path, tab.hostId, target, "right", options?.preview ?? true);
+        dock.openFile(path, tab.hostId, target, destination, options?.preview ?? true);
       }
     }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? tab.title} path={fileRoot ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
   }

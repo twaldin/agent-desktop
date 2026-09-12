@@ -221,6 +221,8 @@ export function useWorkbenchDock(
     catch { onError("Use a canonical absolute file path."); return; }
     openFile(path.split("/").at(-1)!, owner, { filePath: path }, destination, preview);
   }
+  const destinationForTab = (id: string): DockDestination | undefined =>
+    snapshot.state.right.tabIds.includes(id) ? "right" : snapshot.state.bottom.tabIds.includes(id) ? "bottom" : undefined;
   const selectFile = (browserId: string, path: string) => setSnapshot(previous => selectBrowserFile(previous, browserId, path));
   const pinFile = (id: string) => setSnapshot(previous => pinFileTab(previous,id));
 
@@ -447,7 +449,7 @@ export function useWorkbenchDock(
     replaceBrowserDestination,
     acknowledgeBrowserReplacements: (ids: readonly string[]) => updatePresentations(previous => ({ ...acknowledgeBrowserAdmissions(previous, ids), browserSearchAdmission: previous.browserSearchAdmission })),
     open, prepareOpen, openDraftBrowser, updateDraftBrowserAddress, updateDraftBrowserTitle,
-    openFile, openHostFile, pinFile, selectFile,
+    openFile, openHostFile, destinationForTab, pinFile, selectFile,
     openSkillFile,
     terminal, prepareTerminal, publishTerminal,
     bindTerminal,

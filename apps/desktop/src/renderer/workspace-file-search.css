@@ -8,8 +8,11 @@
 .workspace-file-search-result { display:flex; align-items:center; gap:8px; min-height:24px; padding:5px 8px; opacity:.75; border-radius:var(--file-search-item-radius,8px); cursor:default; }
 .workspace-file-search-result[aria-selected="true"] { background:var(--hover); opacity:1; }
 .workspace-file-search-result>[data-file-icon] { width:16px; height:16px; flex:none; }
-.workspace-file-search-name { flex:none; max-width:65%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.workspace-file-search-directory { min-width:0; color:var(--secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-file-search-content { display:flex; align-items:center; flex:1; min-width:0; gap:8px; }
+.workspace-file-search-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-file-search-name.with-directory { flex:none; max-width:60%; }
+.workspace-file-search-unmatched { color:var(--secondary); }
+.workspace-file-search-directory { flex:1; min-width:0; color:var(--secondary); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .workspace-file-search-error>button { padding:4px 8px; margin:0 8px 4px; border-radius:var(--radius-small,6px); background:var(--hover); opacity:1; }
 
 .workspace-file-search [cmdk-root], .workspace-file-search [cmdk-group] { display:flex; flex-direction:column; gap:4px; }

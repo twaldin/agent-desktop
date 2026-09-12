@@ -152,6 +152,16 @@ Source topology restoration at P:2601165/2607381 carries `{bottom:{activeTabId,o
 
 Shared primitives matter at this scale. `zN` (I:4000940) owns disabled/loading/focus-ring/uniform toolbar geometry; `MV` (4811676) owns delayed tooltip/focus behavior (default delay 700ms, overridable); `QK` (6150996) owns Radix menu portal, edge collision/positioning and zoom. Default IC tokens are toolbar 46px, small toolbar 36px, pane toolbar 40px and ordinary transition 150ms. The generic spinner `LN` (4000116) uses `motion-safe:animate-spin` and a negative timestamp-derived phase, so concurrent spinners remain aligned; the diff skeleton is the distinct three-second effect above.
 
+### Workspace Files implementation
+
+`WorkspaceFileTree` now keeps view memory per window-local `WorkspaceState` and root: query, expanded paths, selection and separate tree/search scroll positions survive browser-to-file replacement, preview replacement and close/reopen. Active presentations have separate leases, so right and bottom views remain usable together; hidden views and obsolete requests cannot overwrite the current owner/query. This UI memory is not a new cross-window or restart persistence contract.
+
+Filtering uses the maintained host `files.search` operation, not a renderer walk of the entire filesystem. Its result-only tree preserves host ordering, groups ancestors and flattens empty directory chains. The existing 50-result bound remains explicit: truncated responses offer refinement rather than claiming a complete inventory. Directory reads, cached/offline state, errors and retry continue through the real workspace service.
+
+The null-path Files browser closes on its first selection and opens a pinned file. Subsequent file-tree selection uses the replaceable preview slot; double-click pins it. File-origin navigation resolves the initiating tab's current panel, including after movement, while existing-file identity/destination rules remain intact. Active file tabs expose their relative path and keep their close control reachable as the tab viewport changes, without taking editor focus.
+
+Tree labels use the pinned `Xfo/Qfo` extension-aware middle truncation and sticky-folder structure. Command-menu file labels are different: `f6/tKo/mKo` highlight query runs and clamp display text by code points, followed by the relative directory. The `main` / `.js` split in the older search capture is a query highlight, not an extension layout. The verified tree glyph bodies and palette remain unchanged; optional Review Git-status decorations are not enabled by the workspace Files caller.
+
 ## Terminal surface without weakening owning-host behavior
 
 Terminal:~11530 creates xterm with transparency, blinking bar cursor, configured code family/size, letter spacing 0 and line-height **1.2**. It loads fit, OSC52 clipboard and web-link addons; theme changes refresh existing rows. `terminal-panel-93f9fc5719bf.css` maps background/foreground, active/inactive selection and all 16 ANSI colors through `--vscode-terminal-*`, keeps xterm/viewport transparent, and uses 10px scrollbars with normal/hover border tokens.

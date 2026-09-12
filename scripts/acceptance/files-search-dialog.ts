@@ -10,7 +10,7 @@ const repo = resolve(import.meta.dir, "../..");
 const output = resolve(process.argv[2] ?? `.data/files-search-dialog-${Date.now()}`);
 if (existsSync(output) && (await readdir(output)).length) throw new Error(`Output must be empty: ${output}`);
 await mkdir(output, { recursive: true, mode: 0o700 });
-const sources = ["apps/desktop/src/renderer/WorkspaceFileSearch.tsx", "apps/desktop/src/renderer/workspace-file-search.css", "apps/desktop/src/renderer/FileTypeIcon.tsx", "apps/desktop/src/renderer/workspace-state.ts", "packages/shared/src/workspace-protocol.ts", "scripts/acceptance/files-search-dialog.ts", "scripts/acceptance/files-search-dialog-browser.tsx"];
+const sources = ["apps/desktop/src/renderer/WorkspaceFileSearch.tsx", "apps/desktop/src/renderer/workspace-file-search.css", "apps/desktop/src/renderer/workspace-file-search-label.ts", "apps/desktop/src/renderer/FileTypeIcon.tsx", "apps/desktop/src/renderer/workspace-state.ts", "packages/shared/src/workspace-protocol.ts", "scripts/acceptance/files-search-dialog.ts", "scripts/acceptance/files-search-dialog-browser.tsx"];
 const hashes = async () => Object.fromEntries(await Promise.all(sources.map(async path => [path, createHash("sha256").update(await readFile(join(repo, path))).digest("hex")] )));
 const sourceAtBuild = await hashes();
 await writeFile(join(output, "index.html"), `<!doctype html><meta charset="utf-8"><style>html,body,#root{margin:0;width:100%;height:100%;font:14px system-ui;background:#222;color:#eee}main{padding:16px}</style><div id="root"></div><script type="module" src="${relative(output, join(import.meta.dir, "files-search-dialog-browser.tsx"))}"></script>`);
