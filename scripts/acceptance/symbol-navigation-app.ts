@@ -63,6 +63,16 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     for (let attempt = 0; attempt < 500; attempt++) { const value = await snapshot(); if (predicate(value)) return value; await Bun.sleep(50); }
     throw new Error(`The actual App did not reach ${stage}: ` + JSON.stringify(await snapshot()));
   };
+  const waitForEditorFocus = async (label: string) => {
+    // Model restoration can precede Pierre's queued focus. A native typing or
+    // Undo gesture must reach the visible editor, not the interim document body.
+    await page.waitForFunction((label: string) => {
+      let active = document.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      return document.hasFocus() && active instanceof HTMLElement && active.isContentEditable
+        && active.getAttribute("aria-label") === label && active.getClientRects().length > 0;
+    }, { timeout: 5000 }, label);
+  };
   const retainSelection = async (text: string, stage: string) => {
     for (let frame = 0; frame < 8; frame++) {
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
@@ -209,13 +219,15 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     checks.push("Modifier-click away from the old caret records the clicked token as Back's origin, not the stale caret.");
     await click("Forward to symbol"); await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "first");
     const targetBeforeEdit = await snapshot();
+    await waitForEditorFocus("Edit symbol-target.ts");
     await page.keyboard.type("firstChanged");
     await wait(value => Boolean(value.text?.includes("firstChanged")));
     await click("Back to symbol"); await wait(value => value.label === "Edit symbol-source.ts");
     await click("Forward to symbol"); await wait(value => value.label === "Edit symbol-target.ts" && Boolean(value.text?.includes("firstChanged")));
+    await waitForEditorFocus("Edit symbol-target.ts");
     await page.keyboard.down(modifier);
     try { await page.keyboard.press("z"); } finally { await page.keyboard.up(modifier); }
-    await wait(value => value.label === "Edit symbol-target.ts" && value.text === targetBeforeEdit.text);
+    await wait(value => value.label === "Edit symbol-target.ts" && value.text === targetBeforeEdit.text, "native Undo in the focused target editor");
     await capture("07-unsaved-buffer-native-undo"); checks.push("Back/forward retain the unsaved target and Pierre's original undo timeline; native Undo restores the exact pre-edit text.");
     const pointer = await page.evaluate(() => {
       const frame = [...document.querySelectorAll<HTMLElement>(".pierre-source-editor-frame[data-symbol-owner]")].find(node => node.getClientRects().length);
