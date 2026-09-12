@@ -166,16 +166,16 @@ test("layout command can be rebound or cleared and remains distinct from panel t
 
 test("actual App eligibility omits Settings/plugin dispatch while installed support remains", () => {
   const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  const start = source.indexOf('...(!settingsOpen && !pluginDirectoryOpen && workspaceLayoutStepAvailable(');
+  const start = source.indexOf('...(!contentOverlayOpen && workspaceLayoutStepAvailable(');
   const end = source.indexOf('\n      }),', start); expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
   const expression = source.slice(start + 4, end + '\n      })'.length - 1);
-  const evaluate = new Function("settingsOpen", "pluginDirectoryOpen", "workspaceLayoutStepAvailable", "dock", "browserAction", "mainChat", "setMainTaskFocus", "draftId", "committedDraftDockOwner", "draftDockOwner", "draftBrowserDocks", new Bun.Transpiler({ loader: "tsx" }).transformSync(`const result = (${expression});`) + "\nreturn result;");
+  const evaluate = new Function("contentOverlayOpen", "workspaceLayoutStepAvailable", "dock", "browserAction", "mainChat", "setMainTaskFocus", "draftId", "committedDraftDockOwner", "draftDockOwner", "draftBrowserDocks", new Bun.Transpiler({ loader: "tsx" }).transformSync(`const result = (${expression});`) + "\nreturn result;");
   for (const [settings, plugins, canBrowser] of [[true, false, true], [false, true, true], [false, false, false]]) {
-    const result = evaluate(settings, plugins, workspaceLayoutStepAvailable, { snapshot: empty() }, canBrowser ? {} : undefined, chat, () => { throw new Error("No focus expected"); });
+    const result = evaluate(settings||plugins, workspaceLayoutStepAvailable, { snapshot: empty() }, canBrowser ? {} : undefined, chat, () => { throw new Error("No focus expected"); });
     expect(result && Object.keys(result).length).toBeFalsy();
   }
   let dispatched = 0, focused: unknown;
-  const result = evaluate(false, false, workspaceLayoutStepAvailable, { snapshot: empty(), stepLayout: (owner: unknown, capable: boolean) => { expect(owner).toEqual(chat); expect(capable).toBe(true); dispatched++; } }, {}, chat, (value: unknown) => focused = value);
+  const result = evaluate(false, workspaceLayoutStepAvailable, { snapshot: empty(), stepLayout: (owner: unknown, capable: boolean) => { expect(owner).toEqual(chat); expect(capable).toBe(true); dispatched++; } }, {}, chat, (value: unknown) => focused = value);
   result["step-workspace-layout"](); expect(dispatched).toBe(1);
   expect(focused).toEqual({ target: chat, onlyWhenContentClosed: true });
   expect(source).toContain('new Set(Object.keys(APP_COMMAND_BINDING_OWNERS))');

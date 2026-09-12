@@ -86,9 +86,9 @@ test("actual dock queues local draft creation, protects a queued empty edit and 
 
 function appAction() {
   const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  const start = source.indexOf('...(!settingsOpen && !pluginDirectoryOpen && workspaceLayoutStepAvailable('), end = source.indexOf('\n      }),', start);
+  const start = source.indexOf('...(!contentOverlayOpen && workspaceLayoutStepAvailable('), end = source.indexOf('\n      }),', start);
   if (start < 0 || end < 0) throw new Error("App layout action was not found");
-  return new Function("settingsOpen", "pluginDirectoryOpen", "workspaceLayoutStepAvailable", "dock", "browserAction", "mainChat", "setMainTaskFocus", "draftId", "committedDraftDockOwner", "draftDockOwner", "draftBrowserDocks", new Bun.Transpiler({ loader: "tsx" }).transformSync(`const result = (${source.slice(start + 4, end + '\n      })'.length - 1)});`) + "\nreturn result;");
+  return new Function("contentOverlayOpen", "workspaceLayoutStepAvailable", "dock", "browserAction", "mainChat", "setMainTaskFocus", "draftId", "committedDraftDockOwner", "draftDockOwner", "draftBrowserDocks", new Bun.Transpiler({ loader: "tsx" }).transformSync(`const result = (${source.slice(start + 4, end + '\n      })'.length - 1)});`) + "\nreturn result;");
 }
 
 test("retained draft through actual App action hides and reopens without browser capability, then disposes when available", () => {
@@ -102,7 +102,7 @@ test("retained draft through actual App action hides and reopens without browser
   const draftOwner = { enabled: true }, committed = { current: draftOwner };
   const controllers = new Map([[JSON.stringify([tab.id, instance]), { enabled: true, needsInspection: false, hasObservedPristinePresentation: true }]]);
   const step = (browserAction: unknown) => {
-    const actions = evaluate(false, false, workspaceLayoutStepAvailable, dock, browserAction, chat, () => {}, "draft", committed, draftOwner, controllers);
+    const actions = evaluate(false, workspaceLayoutStepAvailable, dock, browserAction, chat, () => {}, "draft", committed, draftOwner, controllers);
     expect(typeof actions["step-workspace-layout"]).toBe("function");
     actions["step-workspace-layout"](); dock = render();
   };
@@ -123,8 +123,8 @@ test("actual App callback uses committed draft scope and original observed contr
   const controllers = new Map([[JSON.stringify([tab.id, "original"]), controller]]);
   let args: any[] = [], focus: any;
   const dock = { snapshot: empty(), stepLayout: (...values: any[]) => { args = values; } };
-  const invoke = (settings = false, plugins = false, browser: unknown = {}) => evaluate(settings, plugins, workspaceLayoutStepAvailable, dock, browser, chat, (value: any) => { focus = value; }, "draft", committed, draftOwner, controllers);
-  expect(invoke(true)).toBeFalsy(); expect(invoke(false, true)).toBeFalsy(); expect(invoke(false, false, null)).toBeFalsy();
+  const invoke = (overlay = false, browser: unknown = {}) => evaluate(overlay, workspaceLayoutStepAvailable, dock, browser, chat, (value: any) => { focus = value; }, "draft", committed, draftOwner, controllers);
+  expect(invoke(true)).toBeFalsy(); expect(invoke(false, null)).toBeFalsy();
   invoke()["step-workspace-layout"](); expect(args[0]).toEqual(chat); expect(args[1]).toBe(true);
   const admitted = args[2], presentations = { instances: new Map([[tab.id, "original"]]) };
   expect(admitted.draftId).toBe("draft"); expect(admitted.isCurrent()).toBe(true); expect(admitted.canDispose(tab, presentations)).toBe(true);

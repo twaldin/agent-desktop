@@ -19,7 +19,7 @@ const dispatch = source.split("\n").filter(line => line.includes("numberedMainTa
 const settings = source.match(/<KeyboardShortcutsSettings\b[^>]*\bsupportedCommandIds=\{([^}]+)\}/);
 if (supports.length !== 1 || dispatch.length !== 1 || !settings) throw new Error("Actual App support/dispatch/settings seam was not found.");
 const supportExpression = new Function("APP_COMMAND_BINDING_OWNERS","currentShortcutOptions",`return (${supports[0]![1]});`) as (owners:typeof APP_COMMAND_BINDING_OWNERS,options:{actions:object}) => Set<string>;
-const dispatchExpression = new Function("settingsOpen","pluginDirectoryOpen","numberedMainTaskActions","taskTargets","taskDirection","selectMainTask",`return (${dispatch[0]});`) as (settings:boolean,plugins:boolean,actions:typeof numberedMainTaskActions,targets:MainTaskTarget[],direction:"ltr",select:() => void) => Record<string,() => void>;
+const dispatchExpression = new Function("contentOverlayOpen","numberedMainTaskActions","taskTargets","taskDirection","selectMainTask",`return (${dispatch[0]});`) as (overlay:boolean,actions:typeof numberedMainTaskActions,targets:MainTaskTarget[],direction:"ltr",select:() => void) => Record<string,() => void>;
 const ready = {loaded:true,available:true,connected:true,numberTargetAvailable:true} as CommandKeymapState;
 function row(markup:string,id:string): string {
   const match = markup.match(new RegExp(`<article[^>]*data-command-id="${id}"[^>]*>([\\s\\S]*?)</article>`));
@@ -32,7 +32,7 @@ test("actual App keeps all nine installed task shortcuts editable when Settings 
   let selections = 0;
   const targets:MainTaskTarget[] = [{kind:"chat",hostId:"home",sessionId:null}];
   for (const [settingsOpen,pluginDirectoryOpen] of [[true,false],[false,true]] as const) {
-    const actions = dispatchExpression(settingsOpen,pluginDirectoryOpen,numberedMainTaskActions,targets,"ltr",() => selections++);
+    const actions = dispatchExpression(settingsOpen||pluginDirectoryOpen,numberedMainTaskActions,targets,"ltr",() => selections++);
     expect(Object.keys(actions)).toEqual([]);
     const supported = supportExpression(APP_COMMAND_BINDING_OWNERS,{actions});
     const html = renderToStaticMarkup(<KeyboardShortcutsSettings data={ready} supportedCommandIds={supported}/>);
@@ -47,7 +47,7 @@ test("actual App keeps all nine installed task shortcuts editable when Settings 
     expect(supported.has("archiveThread")).toBe(false);
     expect(row(html,"archiveThread")).toContain("Unavailable until");
   }
-  const active = dispatchExpression(false,false,numberedMainTaskActions,targets,"ltr",() => selections++);
+  const active = dispatchExpression(false,numberedMainTaskActions,targets,"ltr",() => selections++);
   expect(Object.keys(active)).toEqual(["task-tab-1"]);
   active["task-tab-1"]!(); expect(selections).toBe(1);
 });

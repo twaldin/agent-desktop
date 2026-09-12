@@ -11,7 +11,7 @@ const openings=readFileSync(appPath,"utf8").split("\n").filter(line=>line.trimSt
 if(openings.length!==1)throw new Error("Actual App DockPanel opening seam was not found.");
 const gate=openings[0]!.match(/\bdragEnabled=\{([^}]+)\}/)?.[1];
 // Evaluate only the actual App prop expression. This is not an App mount/DOM proof.
-const appGate=new Function("settingsOpen","pluginDirectoryOpen",`return ${gate ?? "undefined"};`) as (settings:boolean,plugin:boolean)=>boolean|undefined;
+const appGate=new Function("contentOverlayOpen",`return ${gate ?? "undefined"};`) as (overlay:boolean)=>boolean|undefined;
 
 type EffectSlot={deps?:readonly unknown[];cleanup?:()=>void};
 /** Controlled hook commits for the real DockPanel and useTaskPaneDrag functions.
@@ -45,7 +45,7 @@ function fixture(destination:"right"|"bottom"="right") {
   function render(settings=false,plugin=false,owner="session:a") {
     nodes=[];
     const tree=hooks.render(()=>DockPanel({destination,state,tabs:[first,second],viewport:{width:1200,height:900},dragOwner:owner,
-      ...({dragEnabled:appGate(settings,plugin)} as Partial<DockPanelProps>),renderTab:()=>null,
+      ...({dragEnabled:appGate(settings||plugin)} as Partial<DockPanelProps>),renderTab:()=>null,
       onChange:(next:DockState)=>{state=next;selected.push(next[destination].activeTabId!);},onPinTab:id=>pinned.push(id),onPaneDrag:()=>moves++,onPaneDragEnd:()=>ends++,onPaneDrop:()=>drops++,
     }));
     function walk(value:any,parent?:NodeModel) {
