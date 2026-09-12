@@ -235,14 +235,11 @@ export function App() {
   useEffect(() => {
     const closing = settingsWasOpen.current && !settingsOpen;
     settingsWasOpen.current = settingsOpen;
-    if (!settingsOpen && !closing) return;
+    if (!closing) return;
     const frame = requestAnimationFrame(() => {
-      if (settingsOpen) document.querySelector<HTMLElement>(".settings-sidebar-back")?.focus();
-      else {
-        if(skillFileFocusPending.current){const panel=document.querySelector<HTMLElement>(".dock-panel-right .native-skill-file-panel");if(panel){skillFileFocusPending.current=false;panel.focus();return;}}
-        const origin = settingsOriginLabel.current ? document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(settingsOriginLabel.current)}"]`) : null;
-        (origin ?? (settingsPage === "git" ? document.querySelector<HTMLElement>('[aria-label="Switch branch"]') : null) ?? textarea.current)?.focus();
-      }
+      if(skillFileFocusPending.current){const panel=document.querySelector<HTMLElement>(".dock-panel-right .native-skill-file-panel");if(panel){skillFileFocusPending.current=false;panel.focus();return;}}
+      const origin = settingsOriginLabel.current ? document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(settingsOriginLabel.current)}"]`) : null;
+      (origin ?? (settingsPage === "git" ? document.querySelector<HTMLElement>('[aria-label="Switch branch"]') : null) ?? textarea.current)?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [settingsOpen]);
@@ -763,9 +760,16 @@ export function App() {
   const currentShortcutOptions: AppShortcutOptions = {
     ...(commandKeymap && { bindings: appCommandBindings.bindings }),
     composer: () => textarea.current?.element ?? null,
-    inputActions: ["focus-main-chat"],
+    inputActions: settingsOpen ? ["focus-main-chat", "find-in-thread"] : ["focus-main-chat"],
     blocked: () => Boolean(dialog || menuOpen || fileSearchOwner || commandMenuMode),
     actions: {
+      ...(settingsOpen && {
+        "find-in-thread": () => {
+          const search = document.querySelector<HTMLInputElement>(".settings-sidebar-search input");
+          search?.focus();
+          search?.select();
+        },
+      }),
       ...sidebarChatActions(sidebarActivityOpen ? sidebarActivityItems.map(item => ({ hostId: item.session.hostId, sessionId: item.session.id })) : organizedSidebar.chatSlots, navigate),
       ...(!contentOverlayOpen ? numberedMainTaskActions(taskTargets, taskDirection, selectMainTask) : {}),
       ...(!contentOverlayOpen && taskTargets.length > 1 ? { "next-task-tab": () => cycleMainTask("next"), "previous-task-tab": () => cycleMainTask("previous") } : {}),

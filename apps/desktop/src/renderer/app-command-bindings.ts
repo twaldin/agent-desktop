@@ -19,6 +19,7 @@ export const APP_COMMAND_BINDING_OWNERS = {
   stepWorkspaceLayout: "step-workspace-layout",
   keyboardShortcuts: "keyboard-shortcuts",
   openCommandMenu: "search", searchChats: "search-chats", openFolder: "open-folder",
+  findInThread: "find-in-thread",
   copyConversationPath: "copy-conversation-path", copyWorkingDirectory: "copy-working-directory",
   renameThread: "rename-thread", archiveThread: "archive-thread",
   markThreadUnread: "mark-thread-unread", toggleThreadPin: "toggle-thread-pin",
