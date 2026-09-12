@@ -2,7 +2,7 @@ import { GitFileHistoryState } from "./git-file-history-state";
 import { WorkspaceGitFilePanel } from "./WorkspaceGitFilePanel";
 import { workspaceSymbolNavigation } from "./symbol-navigation";
 import type { FileTextSelection } from "@agent-desktop/shared";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { defaultFileTreeView, type FileTreeView, type WorkspaceTab } from "../window-state";
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
@@ -85,6 +85,12 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
   const [localMode, setLocalMode] = useState<"markdown" | "source">("markdown");
   const markdownFile = Boolean(filePath && /\.(?:md|markdown|mdx)$/i.test(filePath));
   const mode = markdownFile ? fileMode ?? localMode : "source";
+  const sourcePresentation = useMemo(() => ({ data, path: opened, active: active && mode === "source" && !gitFile?.selected }), [data, opened, active, mode, gitFile?.selected]);
+  const currentSourcePresentation = useRef<typeof sourcePresentation | null>(sourcePresentation);
+  useLayoutEffect(() => {
+    currentSourcePresentation.current = sourcePresentation;
+    return () => { currentSourcePresentation.current = null; };
+  }, [sourcePresentation]);
   const modeOwner = useRef({ data, filePath, mode, active }); modeOwner.current = { data, filePath, mode, active };
   const [switchingMode, setSwitchingMode] = useState(false), [modeError, setModeError] = useState<string>();
   const modeGeneration = useRef(0);
@@ -157,7 +163,9 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
           <PierreSourceEditor key={path} documentKey={`${data.cacheKey}:${path}`} name={path} value={item.text}
             gitBlame={opened === path ? gitFile?.blame : undefined}
             onAddToChat={onAddToChat ? selection => onAddToChat(path, selection) : undefined} label={`Edit ${path}`} active={active && opened === path && mode === "source" && !gitFile?.selected}
-            symbolNavigation={{ navigation, path, open: location => {
+            symbolNavigation={{ navigation, path,
+              isCurrentSource: () => currentSourcePresentation.current === sourcePresentation && sourcePresentation.active && sourcePresentation.path === path,
+              open: location => {
               if (onOpenFile) onOpenFile(location.path, undefined, { preview: false });
               else void data.open(location.path);
             } }}

@@ -148,7 +148,7 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
         const binding = current.current.symbolNavigation, snapshot = captureSymbol();
         if (!binding || !snapshot || current.current.active === false || event.altKey || !(event.metaKey || event.ctrlKey)) return;
         event.preventDefault(); event.stopPropagation();
-        void binding.navigation.define(binding.path, { ...snapshot, position: { line: token.lineNumber, column: token.lineCharStart + 1 } }, binding.open);
+        void binding.navigation.define(binding.path, { ...snapshot, position: { line: token.lineNumber, column: token.lineCharStart + 1 } }, binding);
       } : undefined,
     } as const;
     const file = new File(fileOptions);

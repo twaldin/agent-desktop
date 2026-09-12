@@ -3,8 +3,9 @@ import { workspaceKey, type WorkspaceState } from "./workspace-state";
 
 export interface SymbolEditorSnapshot { text: string; selections: SymbolSelection[]; position?: SymbolPosition }
 export interface SymbolRevealRequest { id: string; path: string; line: number; column: number; selections: SymbolSelection[]; text: string }
-export interface SymbolEditorNavigation { navigation: SymbolNavigation; path: string; open(location: SymbolLocation): void }
-interface Choice { origin: SymbolLocation; sourceText: string; buffers: SymbolBuffer[]; definitions: SymbolDefinition[] }
+export interface SymbolSourcePresentation { isCurrentSource(): boolean; open(location: SymbolLocation): void }
+export interface SymbolEditorNavigation extends SymbolSourcePresentation { navigation: SymbolNavigation; path: string }
+interface Choice { origin: SymbolLocation; sourceText: string; buffers: SymbolBuffer[]; definitions: SymbolDefinition[]; presentation: SymbolSourcePresentation }
 interface Pending { request: SymbolRevealRequest; origin: SymbolLocation; destination: SymbolLocation; index?: number; timeout: ReturnType<typeof setTimeout> }
 const navigations = new WeakMap<WorkspaceState, SymbolNavigation>();
 export function workspaceSymbolNavigation(data: WorkspaceState): SymbolNavigation {
@@ -48,6 +49,9 @@ export class SymbolNavigation {
     this.generation++; clearTimeout(this.pending?.timeout); this.pending = undefined;
     this.choice = undefined; this.busy = false; this.message = ""; this.changed();
   }
+  private requireCurrentSource(presentation: SymbolSourcePresentation) {
+    if (!presentation.isCurrentSource()) throw new Error("The source view changed during symbol navigation. Return to the working source and retry; history has not moved.");
+  }
   private async capture(path: string, snapshot: SymbolEditorSnapshot): Promise<SymbolLocation> {
     const selections: SymbolSelection[] = snapshot.position
       ? [{ start: snapshot.position, end: snapshot.position, direction: "forward" }] : snapshot.selections;
@@ -81,7 +85,7 @@ export class SymbolNavigation {
       return buffer.path === prior.path && buffer.revision === prior.revision && buffer.text === prior.text;
     });
   }
-  async define(path: string, snapshot: SymbolEditorSnapshot | undefined, open: SymbolEditorNavigation["open"]) {
+  async define(path: string, snapshot: SymbolEditorSnapshot | undefined, presentation: SymbolSourcePresentation) {
     if (this.busy) return;
     this.message = ""; this.choice = undefined;
     const unavailable = this.unavailable(path);
@@ -89,33 +93,36 @@ export class SymbolNavigation {
     const generation = ++this.generation; this.busy = true; this.changed();
     try {
       const origin = await this.capture(path, snapshot), buffers = this.buffers();
+      this.requireCurrentSource(presentation);
       const selection = origin.selections[0]!, position = snapshot.position ?? (selection.direction === "backward" ? selection.start : selection.end);
       const result = await this.data.query({ type: "file.definitions", request: { path, revision: origin.revision, position, buffers, source: "working-tree" } });
       if (generation !== this.generation) return;
+      this.requireCurrentSource(presentation);
       if (result.type !== "file.definitions") throw new Error("The host did not return semantic definitions.");
       if (result.workspaceIdentity !== origin.workspaceIdentity) throw new Error("The owning workspace changed during lookup. Reopen the file before retrying.");
-      const choice = { origin, sourceText: snapshot.text, buffers, definitions: result.result.status === "definitions" ? result.result.definitions : [] };
+      const choice = { origin, sourceText: snapshot.text, buffers, definitions: result.result.status === "definitions" ? result.result.definitions : [], presentation };
       if (!this.choiceCurrent(choice)) throw new Error("The source or an unsaved dependency changed during lookup. Select the symbol again.");
       if (result.result.status !== "definitions") { this.message = result.result.message; return; }
       if (!choice.definitions.length) throw new Error("The provider returned an empty definition result. Retry the lookup.");
       this.choice = choice;
-      if (choice.definitions.length === 1) await this.choose(0, open, generation);
+      if (choice.definitions.length === 1) await this.choose(0, generation);
       else this.message = `${choice.definitions.length} definitions. Choose a location.`;
     } catch (error) { if (generation === this.generation) this.message = error instanceof Error ? error.message : String(error); }
     finally { if (generation === this.generation && !this.pending) { this.busy = false; this.changed(); } }
   }
-  async choose(index: number, open: SymbolEditorNavigation["open"], generation = ++this.generation) {
+  async choose(index: number, generation = ++this.generation) {
     const choice = this.choice, definition = choice?.definitions[index];
     if (!choice || !definition || this.pending) return;
     this.busy = true; this.changed();
     try {
+      this.requireCurrentSource(choice.presentation);
       if (!this.choiceCurrent(choice)) throw new Error("These definitions belong to an older source snapshot. Dismiss and run Go to definition again.");
       const destination: SymbolLocation = { ...definition, hostId: choice.origin.hostId, target: { ...choice.origin.target }, workspaceIdentity: choice.origin.workspaceIdentity, selections: [definition.selection] };
-      await this.navigate(choice.origin, destination, open, generation);
+      await this.navigate(choice.origin, destination, choice.presentation, generation);
     } catch (error) { if (generation === this.generation) this.message = error instanceof Error ? error.message : String(error); }
     finally { if (generation === this.generation && !this.pending) { this.busy = false; this.changed(); } }
   }
-  async travel(direction: -1 | 1, path: string, snapshot: SymbolEditorSnapshot | undefined, open: SymbolEditorNavigation["open"]) {
+  async travel(direction: -1 | 1, path: string, snapshot: SymbolEditorSnapshot | undefined, presentation: SymbolSourcePresentation) {
     if (this.busy || !snapshot) return;
     const index = this.index + direction, destination = this.entries[index];
     if (!destination) return;
@@ -123,11 +130,12 @@ export class SymbolNavigation {
     try {
       if (!this.data.connected) throw new Error("Reconnect before revisiting a symbol location; cached files may have changed.");
       const origin = await this.capture(path, snapshot);
-      await this.navigate(origin, destination, open, generation, index);
+      await this.navigate(origin, destination, presentation, generation, index);
     } catch (error) { if (generation === this.generation) this.message = error instanceof Error ? error.message : String(error); }
     finally { if (generation === this.generation && !this.pending) { this.busy = false; this.changed(); } }
   }
-  private async navigate(origin: SymbolLocation, destination: SymbolLocation, open: SymbolEditorNavigation["open"], generation: number, index?: number) {
+  private async navigate(origin: SymbolLocation, destination: SymbolLocation, presentation: SymbolSourcePresentation, generation: number, index?: number) {
+    this.requireCurrentSource(presentation);
     if (destination.hostId !== this.data.hostId || workspaceKey(destination.target) !== workspaceKey(this.data.target)) throw new Error("This symbol location belongs to another host or workspace. Reopen its original owner.");
     if (!this.data.connected || this.data.busy || this.data.pending) throw new Error("Reconnect and wait for pending workspace changes before navigating.");
     const context = await this.data.query({ type: "file.symbol-context" });
@@ -150,13 +158,16 @@ export class SymbolNavigation {
       || this.data.documents.get(origin.path)?.conflict !== undefined)
       throw new Error("The origin changed before navigation. Select the symbol again.");
     if (generation !== this.generation || !this.data.connected) return;
+    // Opening an accepted destination may deactivate the origin. Fence only
+    // before acceptance; the existing reveal identity owns the transition after it.
+    this.requireCurrentSource(presentation);
     const first = destination.selections[0]!;
     for (const selection of destination.selections) { symbolOffset(text, selection.start); symbolOffset(text, selection.end); }
     const id = crypto.randomUUID();
     const timeout = setTimeout(() => this.revealed(id, "The file opener did not reveal this location. Retry from the source editor."), 10_000);
     this.pending = { origin, destination, index, timeout, request: { id, path: destination.path, text, selections: structuredClone(destination.selections), line: first.start.line, column: first.start.column } };
     this.choice = undefined; this.message = "Opening symbol location…"; this.changed();
-    try { open(destination); } catch (error) { this.revealed(id, error instanceof Error ? error.message : String(error)); }
+    try { presentation.open(destination); } catch (error) { this.revealed(id, error instanceof Error ? error.message : String(error)); }
   }
   revealed(id: string, error?: string) {
     const pending = this.pending;
