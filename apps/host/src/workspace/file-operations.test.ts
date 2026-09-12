@@ -15,7 +15,7 @@ describe("reviewed workspace path operations",()=>{
   expect((await f.service.createDirectory("folder")).entry).toMatchObject({path:"folder",kind:"directory"});
   await expect(f.service.createFile("new.txt")).rejects.toMatchObject({code:"ALREADY_EXISTS"});
   await expect(f.service.createDirectory("folder")).rejects.toMatchObject({code:"ALREADY_EXISTS"});
-  expect(await readdir(f.cwd)).toEqual(["folder","new.txt"]);
+  expect((await readdir(f.cwd)).sort()).toEqual(["folder","new.txt"]);
  });
 
  test("renames only the reviewed identity and never replaces a destination",async()=>{
