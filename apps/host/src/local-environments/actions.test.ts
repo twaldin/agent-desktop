@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -19,6 +19,12 @@ const bundle = process.env.AGENT_TEST_TMUX_BUNDLE;
 afterEach(async () => { await Promise.allSettled(managers.splice(0).map(manager => manager.shutdown())); for (const store of stores.splice(0)) store.close(); await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
 async function until(check: () => boolean | Promise<boolean>, label: string, timeout = 8000) { const end = Date.now() + timeout; while (!await check()) { if (Date.now() > end) throw new Error(`Timed out: ${label}`); await Bun.sleep(20); } }
+async function untilFileEquals(path: string, expected: string, label: string) {
+  await until(() => {
+    try { return readFileSync(path, "utf8") === expected; }
+    catch { return false; }
+  }, label);
+}
 const revision = (raw: string) => createHash("sha256").update(raw).digest("hex");
 const advance = (store: HostStore, record: LocalEnvironmentPreparation, value: Parameters<HostStore["environmentPreparations"]["transition"]>[2]) =>
   store.environmentPreparations.transition(record.id, record.revision, value);
@@ -238,7 +244,7 @@ describe("LocalEnvironmentActions", () => {
     const initial = await service.catalog(target);
     expect(initial).toMatchObject({ selectedConfigPath: managedRootConfig, actions: [{ index: 0, name: "Root" }] });
     const rootTerminal = await service.run(target, { configPath: initial.selectedConfigPath!, configRevision: initial.configRevision!, selectionRevision: 0, actionIndex: 0 });
-    await until(() => existsSync(join(managed, "root-observed")), "root action output");
+    await untilFileEquals(join(managed, "root-observed"), `${managed}\n${managedProject}\n${managedProject}\n${project.path}\n`, "root action output");
     expect(rootTerminal.cwd).toBe(managed);
     expect(readFileSync(join(managed, "root-observed"), "utf8").trimEnd().split("\n")).toEqual([managed, managedProject, managedProject, project.path]);
 
@@ -246,7 +252,7 @@ describe("LocalEnvironmentActions", () => {
     const nestedConfig = join(managedProject, ".agent-desktop", "environments", "nested.toml"); await mkdir(dirname(nestedConfig), { recursive: true }); await writeFile(nestedConfig, nestedRaw);
     const selected = await service.select(target, nestedConfig, 0);
     const nestedTerminal = await service.run(target, { configPath: selected.selectedConfigPath!, configRevision: selected.configRevision!, selectionRevision: 1, actionIndex: 0 });
-    await until(() => existsSync(join(managedProject, "nested-observed")), "nested action output");
+    await untilFileEquals(join(managedProject, "nested-observed"), `${managedProject}\n${managedProject}\n${managedProject}\n${project.path}\n`, "nested action output");
     expect(nestedTerminal.cwd).toBe(managedProject); expect(nestedTerminal.id).not.toBe(rootTerminal.id);
     expect(readFileSync(join(managedProject, "nested-observed"), "utf8").trimEnd().split("\n")).toEqual([managedProject, managedProject, managedProject, project.path]);
     const rootKey = createHash("sha256").update(JSON.stringify([state.host.id, `sessionId:${sessionId}`, managed, managedRootConfig, "0"])).digest("hex");
@@ -276,7 +282,7 @@ describe("LocalEnvironmentActions", () => {
     expect(fallbackState).toMatchObject({ selectedConfigPath: fallbackConfig, actions: [{ index: 0, name: "Fallback" }] });
     const fallbackTerminal = await service.run({ sessionId: fallbackSessionId }, { configPath: fallbackConfig,
       configRevision: fallbackState.configRevision!, selectionRevision: 0, actionIndex: 0 });
-    await until(() => existsSync(join(fallback.worktreePath, "fallback-observed")), "source fallback action output");
+    await untilFileEquals(join(fallback.worktreePath, "fallback-observed"), `${fallback.worktreePath}\n${fallbackProject}\n${fallbackProject}\n${project.path}\n`, "source fallback action output");
     expect(fallbackTerminal.cwd).toBe(fallback.worktreePath);
     expect(readFileSync(join(fallback.worktreePath, "fallback-observed"), "utf8").trimEnd().split("\n"))
       .toEqual([fallback.worktreePath, fallbackProject, fallbackProject, project.path]);
