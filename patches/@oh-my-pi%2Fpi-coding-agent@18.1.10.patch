@@ -4632,10 +4632,10 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  export interface Transport {
  	send(msg: WorkerOutbound | WorkerInbound, transferList?: Transferable[]): void;
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcfb54c90aa 100644
+index c6b8dd5f4d2217a615c0058f4129f9d3322456af..cfd026f2c443df9761787f61b7adbdc094f7975f 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
-@@ -5,18 +5,23 @@ import {
+@@ -5,18 +5,22 @@ import {
  	postmortem,
  	Snowflake,
  	withTimeout,
@@ -4651,7 +4651,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  import { ToolAbortError, ToolError } from "../tool-errors";
  import { pickElectronTarget, shouldPreserveConnectedBrowserFocus } from "./attach";
 -import { CmuxTab, runCmuxCode } from "./cmux/cmux-tab";
-+import { CmuxTab, createRetainedCmuxTab, drainCmuxRun, runCmuxCodeWithContext, type CmuxRetainedState } from "./cmux/cmux-tab";
++import { CmuxTab, drainCmuxRun, runCmuxCodeWithContext } from "./cmux/cmux-tab";
 +import { createCmuxEvaluationChannel, type CmuxEvaluationChannel } from "./cmux/evaluation-channel";
 +import { createCdpEvaluationOpening, type CdpEvaluationOpening, type CdpEvaluationChannel } from "./cdp-evaluation-channel";
 +import { createBrowserRunContext, type BrowserRunContext } from "./run-context";
@@ -4661,11 +4661,10 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  import { DEFAULT_VIEWPORT } from "./launch";
 +import { captureOwnedCdpTransport, type OwnedCdpTransport } from "./owned-cdp-transport";
 +import { spawnTabWorker, spawnInlineWorker, type WorkerHandle } from "./tab-worker-host";
-+import { WorkerCdpChannel, type WorkerCdpFrame } from "./worker-cdp-channel";
  import { closeCdpTarget, forgetSharedTarget, recordSharedTarget, type SharedTargetScope } from "./orphan-registry";
  import {
  	type BrowserHandle,
-@@ -31,8 +36,6 @@ import type {
+@@ -31,8 +35,6 @@ import type {
  	RunErrorPayload,
  	RunResultOk,
  	SessionSnapshot,
@@ -4674,7 +4673,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	WorkerInbound,
  	WorkerInitPayload,
  	WorkerOutbound,
-@@ -41,20 +44,12 @@ import type {
+@@ -41,20 +43,12 @@ import type {
  // Coding-agent binary/bundle workers route through the CLI entrypoint with a
  // hidden argv mode, so compiled/npm builds only need one JavaScript entry.
  
@@ -4696,7 +4695,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	signal?: AbortSignal;
  	toolCalls: Map<string, AbortController>;
  	/**
-@@ -87,9 +82,74 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
+@@ -87,9 +81,74 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
  	ownerSessionId?: string;
  }
  
@@ -4771,7 +4770,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	activateForScreenshot: boolean;
  }
  
-@@ -126,6 +186,8 @@ export interface AcquireTabOptions {
+@@ -126,6 +185,8 @@ export interface AcquireTabOptions {
  	 * dispose. Optional — omitting it opts the tab out of session-scoped reap.
  	 */
  	ownerSessionId?: string;
@@ -4780,7 +4779,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  export interface AcquireTabResult {
-@@ -146,7 +208,154 @@ export interface ReleaseTabOptions {
+@@ -146,7 +207,76 @@ export interface ReleaseTabOptions {
  	timeoutMs?: number;
  }
  
@@ -4790,84 +4789,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +}
 +
  const tabs = new Map<string, TabSession>();
-+
-+type RetainedSessionTab = {
-+	readonly name: string;
-+	readonly ownerSessionId: string;
-+	readonly sourceOwnerId: string;
-+	readonly operationId: string;
-+	readonly targetId: string;
-+	readonly kindTag: BrowserKindTag;
-+	readonly safeDir: string;
-+	readonly backend: "worker" | "cmux";
-+	readonly info: ReadyInfo;
-+	readonly pending: Map<string, PendingRun>;
-+	state: "alive" | "dead";
-+	worker?: WorkerHandle;
-+	cmuxTab?: CmuxTab;
-+	dispose(): Promise<void>;
-+};
-+const retainedSessionTabs = new Map<string, RetainedSessionTab>();
-+
-+export type RetainedBrowserEvaluationInstall = {
-+	readonly ownerSessionId: string;
-+	readonly sourceOwnerId: string;
-+	readonly operationId: string;
-+	readonly name: string;
-+	readonly targetId: string;
-+	readonly kindTag: BrowserKindTag;
-+	readonly safeDir: string;
-+	readonly backend: "cdp" | "cmux";
-+	readonly descriptor?: Readonly<{ version: 1; channel: string; targetId: string; activateForScreenshot: boolean; dialogs?: DialogPolicy }>;
-+	readonly state?: Readonly<CmuxRetainedState>;
-+};
-+export type RetainedBrowserEvaluationTransport = {
-+	post(frame: WorkerCdpFrame): void;
-+	installReceiver?(receive: (frame: WorkerCdpFrame) => void): void;
-+	request(method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<Record<string, unknown>>;
-+};
-+
-+/** Install one fresh evaluator in the destination session process. The caller
-+ * owns the original browser resource and transports; this never reconnects,
-+ * creates a target, navigates, or changes its creator identity. */
-+export async function installRetainedBrowserEvaluation(
-+	input: RetainedBrowserEvaluationInstall,
-+	transport: RetainedBrowserEvaluationTransport,
-+): Promise<{ receive(frame: WorkerCdpFrame): void; dispose(): Promise<void> }> {
-+	if (!input.ownerSessionId || !input.sourceOwnerId || !input.operationId || !input.name || !input.targetId || !input.safeDir
-+		|| retainedSessionTabs.has(input.name) || tabs.has(input.name)) throw new ToolError("Invalid retained browser evaluator installation");
-+	let receive = (_frame: WorkerCdpFrame): void => { throw new ToolError("Retained CDP evaluator is not installed"); };
-+	let tab: RetainedSessionTab;
-+	if (input.backend === "cdp") {
-+		const descriptor = input.descriptor;
-+		if (!descriptor || descriptor.version !== 1 || descriptor.targetId !== input.targetId || !descriptor.channel) throw new ToolError("Invalid retained CDP evaluator descriptor");
-+		const channel = new WorkerCdpChannel(descriptor.channel, frame => transport.post(structuredClone(frame)));
-+		transport.installReceiver?.(frame => { if (!channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); });
-+		const owned = Object.assign(channel, { startupCreations: Object.freeze([]), finishStartup() {} }) as OwnedCdpTransport;
-+		const worker = await spawnTabWorker(owned, descriptor.channel);
-+		let info: ReadyInfo;
-+		try {
-+			info = await initializeTabWorker(worker, { mode: "retained", cdpChannel: descriptor.channel, safeDir: input.safeDir,
-+				targetId: input.targetId, timeoutMs: 30_000, activateForScreenshot: descriptor.activateForScreenshot,
-+				...(descriptor.dialogs === undefined ? {} : { dialogs: descriptor.dialogs }) }, 30_000);
-+			worker.finishStartup();
-+		} catch (error) { await worker.abort(error instanceof Error ? error : new Error(String(error))).catch(() => {}); throw error; }
-+		tab = { ...input, backend: "worker", info, pending: new Map(), state: "alive", worker,
-+			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await worker.terminate(); } };
-+		worker.onMessage(message => handleTabMessage(tab as unknown as WorkerTabSession, message));
-+		receive = frame => { if (tab.state === "alive" && !channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); };
-+	} else {
-+		if (!input.state || input.state.surfaceId !== input.targetId) throw new ToolError("Invalid retained cmux evaluator state");
-+		const cmuxTab = createRetainedCmuxTab(input.state, { request: transport.request.bind(transport) });
-+		const viewport = input.state.viewport;
-+		tab = { ...input, backend: "cmux", info: { targetId: input.targetId, url: input.state.url, title: input.state.title ?? "",
-+			viewport: { width: viewport.width, height: viewport.height, ...(viewport.deviceScaleFactor === undefined ? {} : { deviceScaleFactor: viewport.deviceScaleFactor }) } },
-+			pending: new Map(), state: "alive", cmuxTab,
-+			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await drainCmuxRun(cmuxTab); } };
-+	}
-+	retainedSessionTabs.set(input.name, tab);
-+	return Object.freeze({ receive, dispose: async () => { if (retainedSessionTabs.get(input.name) === tab) retainedSessionTabs.delete(input.name); await tab.dispose(); } });
-+}
 +// Original capture belongs to the exact native tab object, never its reusable name.
 +interface CapturedTabObservation {
 +	inspect(targetId: string): Promise<"present" | "absent">;
@@ -4935,7 +4856,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  // Headless targets a worker created before dying during init (page-created).
  // A killed worker can't close its own page; the supervisor closes the
  // recorded target instead. A shared browser's other targets must never be
-@@ -168,7 +377,6 @@ const SETUP_BUDGET_CAP_MS = 10_000;
+@@ -168,7 +298,6 @@ const SETUP_BUDGET_CAP_MS = 10_000;
  // Floor for the ready-phase budget: the 2s setup floor can consume more than
  // a sub-3s caller's entire init budget, so the remaining-budget math must
  // never hand raceWithTimeout a non-positive value.
@@ -4943,7 +4864,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  // Names of tabs the supervisor force-killed (timeout past grace, failed recycle),
  // mapped to the kill reason. Lets the next `run` on that name explain WHY the tab
  // vanished instead of a bare "not alive". Cleared when the name is opened again.
-@@ -203,23 +411,240 @@ async function waitForTabCleanup<T>(
+@@ -203,23 +332,239 @@ async function waitForTabCleanup<T>(
  	}
  }
  
@@ -5144,7 +5065,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	let workerOwner: WorkerConnectionOwner | undefined;
 +	const request = { ...opts, viewport: opts.viewport ? { ...opts.viewport } : undefined, deadlineStartMs: opts.deadlineStartMs ?? performance.now() };
 +	try {
-+		if (retainedSessionTabs.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is a retained original browser evaluator`);
 +		assertTabNotReserved(name);
 +		if ("client" in browser) cmuxClient = captureCmuxTabClient(browser);
 +		else workerOwner = captureWorkerConnection(browser);
@@ -5188,7 +5108,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		},
  		async error => {
  			await releaseBrowser(browser, { kill: false }).catch(() => undefined);
-@@ -241,7 +666,12 @@ async function acquireTabImpl(
+@@ -241,7 +586,12 @@ async function acquireTabImpl(
  	name: string,
  	browser: BrowserHandle,
  	opts: AcquireTabOptions,
@@ -5201,7 +5121,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	// Worker-init deadline: the inline-fallback retry passes this same start
  	// so it can't restart the budget (which would let a cold import that
  	// consumed most of it spend the phase floors again for another full
-@@ -261,6 +691,7 @@ async function acquireTabImpl(
+@@ -261,6 +611,7 @@ async function acquireTabImpl(
  	// to reuse (e.g. reopening the sole tab with a different dialogs policy).
  	let tempHold = false;
  	const existing = tabs.get(name);
@@ -5209,7 +5129,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	if (existing) {
  		if (existing.browser === browser && existing.state === "alive") {
  			const requestedCmuxSurface = "client" in browser ? (opts.cmuxSurface ?? browser.surface) : undefined;
-@@ -273,6 +704,13 @@ async function acquireTabImpl(
+@@ -273,6 +624,13 @@ async function acquireTabImpl(
  				tempHold = true;
  				await releaseTab(name, { kill: false });
  			} else {
@@ -5223,7 +5143,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  				const reuseSteps: string[] = [];
  				if (opts.viewport && browser.kind.kind !== "cmux") {
  					const dsf = opts.viewport.deviceScaleFactor;
-@@ -286,14 +724,14 @@ async function acquireTabImpl(
+@@ -286,14 +644,14 @@ async function acquireTabImpl(
  					);
  				}
  				if (reuseSteps.length) {
@@ -5240,7 +5160,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  					);
  				}
  				return { tab: tabs.get(name)!, created: false };
-@@ -309,7 +747,8 @@ async function acquireTabImpl(
+@@ -309,7 +667,8 @@ async function acquireTabImpl(
  
  	if ("client" in browser) {
  		try {
@@ -5250,7 +5170,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  			if (tempHold) await releaseBrowser(browser, { kill: false });
  			return result;
  		} catch (error) {
-@@ -317,87 +756,58 @@ async function acquireTabImpl(
+@@ -317,87 +676,58 @@ async function acquireTabImpl(
  			throw error;
  		}
  	}
@@ -5375,7 +5295,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		state: "alive",
  		info,
  		pending: new Map(),
-@@ -407,6 +817,7 @@ async function acquireTabImpl(
+@@ -407,6 +737,7 @@ async function acquireTabImpl(
  		ownerSessionId: opts.ownerSessionId,
  	};
  	worker.onMessage(msg => handleTabMessage(tab, msg));
@@ -5383,7 +5303,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	tabs.set(name, tab);
  	// Durably record ownership so another live omp process can reap this page if
  	// this process dies abnormally before its own teardown closes the tab.
-@@ -415,10 +826,222 @@ async function acquireTabImpl(
+@@ -415,10 +746,222 @@ async function acquireTabImpl(
  	return { tab, created: true };
  }
  
@@ -5606,7 +5526,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  ): Promise<AcquireTabResult> {
  	const attachedSurface = opts.cmuxSurface ?? browser.surface;
  	if (attachedSurface?.startsWith("surface:")) {
-@@ -427,15 +1050,19 @@ async function acquireCmuxTab(
+@@ -427,15 +970,19 @@ async function acquireCmuxTab(
  		);
  	}
  
@@ -5627,7 +5547,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  			if (typeof result.surface_id !== "string" || result.surface_id.length === 0) {
  				throw new ToolError("cmux browser.open_split did not return a surface_id");
  			}
-@@ -443,7 +1070,7 @@ async function acquireCmuxTab(
+@@ -443,7 +990,7 @@ async function acquireCmuxTab(
  			ownsSurface = true;
  			if (typeof result.url === "string" && result.url.length > 0) initialUrl = result.url;
  			if (opts.url) {
@@ -5636,7 +5556,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  					"browser.wait",
  					{
  						surface_id: surfaceId,
-@@ -455,7 +1082,7 @@ async function acquireCmuxTab(
+@@ -455,7 +1002,7 @@ async function acquireCmuxTab(
  			}
  		}
  
@@ -5645,7 +5565,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		if (attachedSurface && opts.url) {
  			await cmuxTab.goto(opts.url, { waitUntil: opts.waitUntil ?? "load", timeoutMs: opts.timeoutMs });
  		}
-@@ -465,6 +1092,7 @@ async function acquireCmuxTab(
+@@ -465,6 +1012,7 @@ async function acquireCmuxTab(
  		if (opts.signal?.aborted) {
  			throw new ToolAbortError("Browser tab open aborted");
  		}
@@ -5653,7 +5573,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		holdBrowser(browser);
  		const tab: CmuxTabSession = {
  			name,
-@@ -481,33 +1109,77 @@ async function acquireCmuxTab(
+@@ -481,33 +1029,52 @@ async function acquireCmuxTab(
  			cmuxAttachedSurface: attachedSurface,
  			ownerSessionId: opts.ownerSessionId,
  		};
@@ -5687,12 +5607,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  
 -async function runInTabWithSnapshot(
 +function runInTabWithContext(
-+	name: string,
+ 	name: string,
+-	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
+-	snapshot: SessionSnapshot,
 +	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
 +	context: BrowserRunContext,
-+): Promise<RunResultOk> {
-+	const retained = retainedSessionTabs.get(name);
-+	if (retained) return executeRetainedTabRun(retained, opts, context);
+ ): Promise<RunResultOk> {
 +	try { assertTabNotReserved(name); } catch (error) { return Promise.reject(error); }
 +	const tab = tabs.get(name);
 +	if (!tab) return executeTabRun(name, opts, context);
@@ -5708,41 +5628,16 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	return result;
 +}
 +
-+async function executeRetainedTabRun(tab: RetainedSessionTab,
-+	opts: { code: string; timeoutMs: number; signal?: AbortSignal }, context: BrowserRunContext): Promise<RunResultOk> {
-+	if (tab.state !== "alive" || retainedSessionTabs.get(tab.name) !== tab) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is not alive.`);
-+	if (tab.pending.size) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is busy`);
-+	if (tab.backend === "cmux") {
-+		const closeAc = new AbortController(), signal = opts.signal ? AbortSignal.any([opts.signal, closeAc.signal]) : closeAc.signal;
-+		return await runCmuxCodeWithContext(tab.cmuxTab!, { code: opts.code, timeoutMs: opts.timeoutMs, signal }, context);
-+	}
-+	const id = Snowflake.next(), worker = tab.worker!;
-+	const completion = Promise.withResolvers<RunResultOk>();
-+	const pending: PendingRun = { resolve: completion.resolve, reject: completion.reject, context, signal: opts.signal, toolCalls: new Map() };
-+	tab.pending.set(id, pending);
-+	const abort = () => { try { worker.send({ type: "abort", id }); } catch {} for (const ctrl of pending.toolCalls.values()) ctrl.abort(opts.signal?.reason); };
-+	if (opts.signal?.aborted) abort(); else opts.signal?.addEventListener("abort", abort, { once: true });
-+	try {
-+		worker.send({ type: "run", id, name: tab.name, code: opts.code, timeoutMs: opts.timeoutMs, session: context.snapshot });
-+		return await raceWithTimeout(completion.promise, opts.timeoutMs + GRACE_MS, "Retained browser code execution hung past grace", async reason => {
-+			if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
-+			tab.state = "dead"; await worker.abort(new ToolError(reason));
-+		});
-+	} finally { opts.signal?.removeEventListener("abort", abort); tab.pending.delete(id); }
-+}
-+
 +async function executeTabRun(
- 	name: string,
--	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
--	snapshot: SessionSnapshot,
++	name: string,
 +	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
 +	context: BrowserRunContext,
- ): Promise<RunResultOk> {
++): Promise<RunResultOk> {
 +	if (humanActions.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is busy with a human browser action`);
  	const tab = tabs.get(name);
  	if (!tab || tab.state === "dead") {
  		const killed = killedTabs.get(name);
-@@ -517,7 +1189,9 @@ async function runInTabWithSnapshot(
+@@ -517,7 +1084,9 @@ async function runInTabWithSnapshot(
  				: `Tab ${JSON.stringify(name)} is not alive. Open it first with action:"open".`,
  		);
  	}
@@ -5752,7 +5647,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	const id = Snowflake.next();
  	const { promise, resolve, reject } = Promise.withResolvers<RunResultOk>();
  	// `releaseTab` calls `pending.reject(closeError)` when the tab dies
-@@ -539,7 +1213,7 @@ async function runInTabWithSnapshot(
+@@ -539,7 +1108,7 @@ async function runInTabWithSnapshot(
  	const pending: PendingRun = {
  		resolve,
  		reject,
@@ -5761,7 +5656,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		signal: opts.signal,
  		toolCalls: new Map(),
  		closeAc,
-@@ -553,20 +1227,19 @@ async function runInTabWithSnapshot(
+@@ -553,20 +1122,19 @@ async function runInTabWithSnapshot(
  			// rejected it — `Promise.withResolvers` settles on the first
  			// call and later resolve/reject are no-ops, so the tab-close
  			// error still wins the race.
@@ -5786,7 +5681,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		for (const ctrl of pending.toolCalls.values()) ctrl.abort(opts.signal?.reason);
  	};
  	if (opts.signal?.aborted) abort();
-@@ -578,7 +1251,7 @@ async function runInTabWithSnapshot(
+@@ -578,7 +1146,7 @@ async function runInTabWithSnapshot(
  			name,
  			code: opts.code,
  			timeoutMs: opts.timeoutMs,
@@ -5795,7 +5690,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		});
  		try {
  			return await raceWithTimeout(
-@@ -590,7 +1263,7 @@ async function runInTabWithSnapshot(
+@@ -590,7 +1158,7 @@ async function runInTabWithSnapshot(
  		} catch (error) {
  			const runTimedOut =
  				error instanceof ToolError && error.message.startsWith("Browser code execution timed out after ");
@@ -5804,7 +5699,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  				try {
  					if (tab.worker.mode === "inline") {
  						const reason = runTimedOut
-@@ -615,12 +1288,139 @@ async function runInTabWithSnapshot(
+@@ -615,12 +1183,128 @@ async function runInTabWithSnapshot(
  	}
  }
  
@@ -5907,11 +5802,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	}
 +	if (opts.signal?.aborted) throw new BrowserActionRejected("Browser close was cancelled before admission");
 +	const { name, targetId } = target;
-+	const retained=retainedSessionTabs.get(name);
-+	if(retained){
-+		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==targetId||retained.state!=="alive")throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
-+		retainedSessionTabs.delete(name);await retained.dispose();return Object.freeze({ownerSessionId,name,targetId,released:true});
-+	}
 +	const tab = tabs.get(name);
 +	if (!tab || tab.ownerSessionId !== ownerSessionId || tab.targetId !== targetId) {
 +		throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
@@ -5923,12 +5813,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +}
 +
  export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Promise<boolean> {
-+	const retained = retainedSessionTabs.get(name);
-+	if (retained) {
-+		retainedSessionTabs.delete(name);
-+		await retained.dispose();
-+		return true;
-+	}
  	const tab = tabs.get(name);
  	if (!tab) {
  		logger.debug("releaseTab: unknown tab", { name });
@@ -5944,7 +5828,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	const wasAlive = tab.state === "alive";
  	tab.state = "dead";
  	const closeError = postmortem.markExpectedCleanupError(new ToolError(`Tab ${JSON.stringify(name)} was closed`));
-@@ -653,7 +1453,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -653,7 +1337,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  					tab,
  					timeoutMs,
  					`cmux surface ${JSON.stringify(tab.targetId)} (surface.close)`,
@@ -5953,7 +5837,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  				);
  			} catch (err) {
  				if (isLastSurfaceCloseError(err)) {
-@@ -674,14 +1474,21 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -674,14 +1358,21 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  		} catch (error) {
  			closeError ??= error;
  		} finally {
@@ -5978,7 +5862,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		try {
  			tab.worker.send({ type: "close" });
  			await waitForClosed(tab);
-@@ -689,8 +1496,10 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -689,8 +1380,10 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  			forced = true;
  		}
  	}
@@ -5991,7 +5875,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		try {
  			await waitForTabCleanup(
  				tab,
-@@ -699,7 +1508,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -699,7 +1392,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  				closeOrphanTarget(tab),
  			);
  		} catch (error) {
@@ -6000,7 +5884,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		}
  	}
  	try {
-@@ -711,26 +1520,30 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -711,26 +1404,30 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  	} catch (error) {
  		cleanupError ??= error;
  	} finally {
@@ -6041,7 +5925,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  /**
-@@ -748,12 +1561,424 @@ export async function dropHeadlessTabs(): Promise<void> {
+@@ -748,12 +1445,373 @@ export async function dropHeadlessTabs(): Promise<void> {
   */
  export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptions = {}): Promise<number> {
  	if (!ownerId) return 0;
@@ -6049,12 +5933,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 -	let count = 0;
 -	for (const name of names) {
 -		if (await releaseTab(name, opts)) count++;
-+	const retained = [...retainedSessionTabs.values()].filter(tab => tab.ownerSessionId === ownerId);
-+	for (const tab of retained) if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
-+	const outcomes = await Promise.allSettled([releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true), ...retained.map(tab => tab.dispose())]);
-+	const failures = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
-+	if (failures.length) throw failures.length === 1 ? failures[0] : new AggregateError(failures, "Retained browser evaluator cleanup failed");
-+	return (outcomes[0] as PromiseFulfilledResult<number>).value + retained.length;
++	return releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true);
 +}
 +
 +/**
@@ -6080,10 +5959,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +				targetId: tab.info.targetId,
 +			}),
 +		}));
-+	for (const tab of retainedSessionTabs.values()) if (tab.ownerSessionId === ownerSessionId) snapshot.push(Object.freeze({
-+		name: tab.name, ownerSessionId, targetId: tab.targetId, backend: tab.backend, kindTag: tab.kindTag, state: tab.state,
-+		info: Object.freeze({ ...tab.info, viewport: Object.freeze({ ...tab.info.viewport }) }),
-+	}));
 +	return Object.freeze(snapshot);
 +}
 +
@@ -6097,13 +5972,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +
 +/** Original backend read only. Unavailable capture/owner is an error, never absence. */
 +export async function inspectTabForOwner(ownerSessionId: string, target: OwnerTabViewportTarget): Promise<Readonly<OwnerTabObservation>> {
-+	const retained=retainedSessionTabs.get(target.name);
-+	if(retained){
-+		if(!ownerSessionId||retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
-+		await executeRetainedTabRun(retained,{code:"return await page.title()",timeoutMs:5_000},{snapshot:{cwd:retained.safeDir}});
-+		if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during observation");
-+		return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,kindTag:retained.kindTag,presence:"present"});
-+	}
 +	assertTabNotReserved(target.name);
 +	const { name, targetId } = target;
 +	if (!ownerSessionId || !name || !targetId) throw new ToolError("Browser observation requires an exact owner, name, and target id");
@@ -6168,24 +6036,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	target: OwnerTabViewportTarget,
 +): Promise<Readonly<OwnerTabViewportCapture>> {
 +	if (!ownerSessionId || !target.name || !target.targetId) throw new ToolError("Browser viewport capture requires an exact owner, name, and target id");
-+	const retained=retainedSessionTabs.get(target.name);
-+	if(retained){
-+		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
-+		if(retained.backend!=="worker")throw new ToolError("Viewport capture is not supported for cmux browser tabs");
-+		const key=`${ownerSessionId}\0${target.name}\0${target.targetId}`;
-+		if(humanActions.has(target.name)||viewportCaptures.has(key))throw new ToolError("This browser viewport is busy");
-+		const pending=(async()=>{
-+			const result=await executeRetainedTabRun(retained,{code:`
-+const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
-+const before=await read(),data=await page.screenshot({type:"jpeg",quality:80,fullPage:false,captureBeyondViewport:false,encoding:"base64"}),url=page.url(),title=await page.title(),context=await read();return{before,data,url,title,context};`,timeoutMs:10_000},{snapshot:{cwd:retained.safeDir}});
-+			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during capture");
-+			const value=result.returnValue as {before?:OwnerTabDocumentContext;context?:OwnerTabDocumentContext;data?:string;url?:string;title?:string};
-+			if(!value||!validDocumentContext(value.before!)||!validDocumentContext(value.context!)||!sameOwnerTabDocumentContext(value.before!,value.context!,false)||typeof value.data!=="string"||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser viewport returned an invalid snapshot");
-+			const data=Buffer.from(value.data,"base64");if(!data.length||data.length>8*1024*1024)throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
-+			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,data,url:value.url,title:value.title,context:value.context!});
-+		})();
-+		viewportCaptures.set(key,pending);void pending.finally(()=>{if(viewportCaptures.get(key)===pending)viewportCaptures.delete(key)}).catch(()=>{});return await pending;
-+	}
 +	assertTabNotReserved(target.name);
 +	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
 +	if (humanActions.has(target.name)) throw new ToolError("This browser tab is busy with a human action");
@@ -6380,23 +6230,6 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	if (typeof ownerSessionId !== "string" || !ownerSessionId || !target || typeof target.name !== "string" || !target.name || target.name.length > 200 || target.name.includes("\0")
 +		|| typeof target.targetId !== "string" || !target.targetId || target.targetId.length > 200 || target.targetId.includes("\0") || !validDocumentContext(expected)) rejectHumanAction("Human browser action requires an exact owner, target, and document context");
 +	validateHumanAction(action, expected);
-+	const retained=retainedSessionTabs.get(target.name);
-+	if(retained){
-+		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")rejectHumanAction("The selected owner-bound browser tab is no longer available");
-+		if(retained.backend!=="worker")rejectHumanAction("Human actions are not supported for cmux browser tabs");
-+		if(humanActions.has(target.name))rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
-+		const pending=(async()=>{
-+			const result=await executeRetainedTabRun(retained,{code:`
-+const expected=${JSON.stringify(expected)},action=${JSON.stringify(action)};
-+const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
-+const before=await read(),navigation=["navigate","reload","back","forward"].includes(action.type),same=expected.documentId===before.documentId&&expected.width===before.width&&expected.height===before.height&&(navigation||(expected.scrollX===before.scrollX&&expected.scrollY===before.scrollY))&&(!expected.navigation||(before.navigation&&expected.navigation.entryId===before.navigation.entryId&&expected.navigation.canGoBack===before.navigation.canGoBack&&expected.navigation.canGoForward===before.navigation.canGoForward));if(!same)throw new Error("The browser document or viewport changed; refresh before acting");
-+if(action.type==="navigate")await page.goto(action.url,{waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="reload")await page.reload({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="back")await page.goBack({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="forward")await page.goForward({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="click")await page.mouse.click(action.x,action.y,{button:action.button,count:action.clickCount});else if(action.type==="wheel"){await page.mouse.move(action.x,action.y);await page.mouse.wheel({deltaX:action.deltaX,deltaY:action.deltaY})}else if(action.type==="resize")await page.setViewport({...page.viewport(),width:action.width,height:action.height});else if(action.type==="text")await page.keyboard.sendCharacter(action.text);else if(action.type==="key"){const pressed=[];try{for(const key of action.modifiers||[]){await page.keyboard.down(key);pressed.push(key)}await page.keyboard.press(action.key)}finally{for(const key of pressed.reverse())await page.keyboard.up(key).catch(()=>{})}}const context=await read();return{context,url:page.url(),title:await page.title()};`,timeoutMs:HUMAN_ACTION_TIMEOUT_MS},{snapshot:{cwd:retained.safeDir}});
-+			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during the action");
-+			const value=result.returnValue as {context?:OwnerTabDocumentContext;url?:string;title?:string};if(!value||!validDocumentContext(value.context!)||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser action returned an invalid observation");
-+			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,context:value.context!,url:value.url,title:value.title});
-+		})();
-+		humanActions.set(target.name,pending);void pending.finally(()=>{if(humanActions.get(target.name)===pending)humanActions.delete(target.name)}).catch(()=>{});return await pending;
-+	}
 +	assertTabNotReserved(target.name);
 +	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
 +	if (humanActions.has(target.name)) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
@@ -6471,7 +6304,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  /** Test-only accessor for the module-global tabs map. */
-@@ -766,14 +1991,12 @@ function isLastSurfaceCloseError(err: unknown): boolean {
+@@ -766,14 +1824,12 @@ function isLastSurfaceCloseError(err: unknown): boolean {
  	return /last/i.test(message);
  }
  
@@ -6488,7 +6321,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  			safeDir,
  			// Visible launches still need an OMP-owned page, stealth setup, and
  			// independent lifecycle; only their fixed device emulation is disabled.
-@@ -790,14 +2013,15 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
+@@ -790,14 +1846,15 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
  	// target may be backgrounded, so retain activation for target-correct pixels.
  	const userDriven = browser.kind.kind === "connected" || browser.kind.kind === "relay";
  	const activateForScreenshot = !userDriven || !shouldPreserveConnectedBrowserFocus(opts.target);
@@ -6507,7 +6340,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		safeDir,
  		targetId,
  		dialogs: opts.dialogs,
-@@ -821,6 +2045,7 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
+@@ -821,6 +1878,7 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
  		return;
  	}
  	if (msg.type === "ready") {
@@ -6515,7 +6348,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		tab.info = msg.info;
  		return;
  	}
-@@ -831,52 +2056,53 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
+@@ -831,52 +1889,53 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
  	if (msg.type === "log") logWorkerMessage(msg);
  }
  
@@ -6609,7 +6442,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  function toErrorPayload(error: unknown): RunErrorPayload {
-@@ -893,77 +2119,73 @@ function toErrorPayload(error: unknown): RunErrorPayload {
+@@ -893,77 +1952,73 @@ function toErrorPayload(error: unknown): RunErrorPayload {
  }
  
  async function recycleTimedOutWorkerTab(tab: WorkerTabSession, timeoutMs: number): Promise<void> {
@@ -6739,7 +6572,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  /**
-@@ -994,36 +2216,14 @@ function sharedScopeOf(browser: BrowserHandle): SharedTargetScope | undefined {
+@@ -994,36 +2049,14 @@ function sharedScopeOf(browser: BrowserHandle): SharedTargetScope | undefined {
   * page can be, so no targetId guesswork across multiple sessions.
   */
  async function closeOrphanTarget(tab: WorkerTabSession): Promise<void> {
@@ -6779,22 +6612,22 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	});
  	try {
  		await raceWithTimeout(promise, GRACE_MS, "Timed out closing browser tab worker");
-@@ -1032,21 +2232,20 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
+@@ -1032,21 +2065,20 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
  	}
  }
  
 -function expandBrowserScreenshotDir(session: ToolSession): string | undefined {
 -	const value = session.settings.get("browser.screenshotDir") as string | undefined;
 -	return value ? expandPath(value) : undefined;
+-}
+-
+-async function targetIdForPage(page: Page): Promise<string> {
+-	return await targetIdForTarget(page.target());
 +async function targetIdForPage(page: Page, current: () => void = () => {}): Promise<string> {
 +	current();
 +	return await targetIdForTarget(page.target(), current);
  }
  
--async function targetIdForPage(page: Page): Promise<string> {
--	return await targetIdForTarget(page.target());
--}
--
 -async function targetIdForTarget(target: Target): Promise<string> {
 +async function targetIdForTarget(target: Target, current: () => void = () => {}): Promise<string> {
 +	current();
@@ -6808,7 +6641,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		if (info.targetInfo?.targetId) return info.targetInfo.targetId;
  		throw new ToolError("Target id unavailable from CDP target info");
  	} finally {
-@@ -1098,86 +2297,6 @@ async function raceWithTimeout<T>(
+@@ -1098,86 +2130,6 @@ async function raceWithTimeout<T>(
  	}
  }
  
@@ -6895,7 +6728,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  /**
   * Init a tab worker under a single listener spanning the whole init: a short
   * `setup` handshake (bounded by the cold-start guard so a stalled cold start
-@@ -1203,16 +2322,22 @@ async function initializeTabWorker(
+@@ -1203,16 +2155,22 @@ async function initializeTabWorker(
  	payload: WorkerInitPayload,
  	timeoutMs: number,
  	deadlineStart: number = performance.now(),
@@ -6925,7 +6758,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	let setupDone = false;
  	// Reject only the active phase's promise: the other one may never be
  	// awaited (a phase that already failed leaves the rest un-run), so
-@@ -1220,6 +2345,8 @@ async function initializeTabWorker(
+@@ -1220,6 +2178,8 @@ async function initializeTabWorker(
  	const failStartup = (error: Error) => {
  		(setupDone ? ready : setup).reject(error);
  	};
@@ -6934,7 +6767,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	const unlisten = worker.onMessage(msg => {
  		if (msg.type === "page-created") {
  			// Record the headless target before the (potentially slow)
-@@ -1231,22 +2358,27 @@ async function initializeTabWorker(
+@@ -1231,22 +2191,27 @@ async function initializeTabWorker(
  			setup.resolve();
  		} else if (msg.type === "ready") ready.resolve(msg.info);
  		else if (msg.type === "init-failed") failStartup(markReportedInitFailure(errorFromPayload(msg.error)));
@@ -8340,3 +8173,269 @@ new mode 100644
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 old mode 100755
 new mode 100644
+diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
+index cfd026f2c443df9761787f61b7adbdc094f7975f..7e6d9583fc4cf2887d8526bf67426dcfb54c90aa 100644
+--- a/src/tools/browser/tab-supervisor.ts
++++ b/src/tools/browser/tab-supervisor.ts
+@@ -11,7 +11,7 @@ import type { Connection } from "puppeteer-core/internal/cdp/Connection.js";
+ import type { ToolSession } from "../index";
+ import { ToolAbortError, ToolError } from "../tool-errors";
+ import { pickElectronTarget, shouldPreserveConnectedBrowserFocus } from "./attach";
+-import { CmuxTab, drainCmuxRun, runCmuxCodeWithContext } from "./cmux/cmux-tab";
++import { CmuxTab, createRetainedCmuxTab, drainCmuxRun, runCmuxCodeWithContext, type CmuxRetainedState } from "./cmux/cmux-tab";
+ import { createCmuxEvaluationChannel, type CmuxEvaluationChannel } from "./cmux/evaluation-channel";
+ import { createCdpEvaluationOpening, type CdpEvaluationOpening, type CdpEvaluationChannel } from "./cdp-evaluation-channel";
+ import { createBrowserRunContext, type BrowserRunContext } from "./run-context";
+@@ -21,6 +21,7 @@ import { captureBrowserTargetObservation } from "./target-observation";
+ import { DEFAULT_VIEWPORT } from "./launch";
+ import { captureOwnedCdpTransport, type OwnedCdpTransport } from "./owned-cdp-transport";
+ import { spawnTabWorker, spawnInlineWorker, type WorkerHandle } from "./tab-worker-host";
++import { WorkerCdpChannel, type WorkerCdpFrame } from "./worker-cdp-channel";
+ import { closeCdpTarget, forgetSharedTarget, recordSharedTarget, type SharedTargetScope } from "./orphan-registry";
+ import {
+ 	type BrowserHandle,
+@@ -213,6 +214,84 @@ export class BrowserTabCreateRejected extends ToolError {
+ }
+ 
+ const tabs = new Map<string, TabSession>();
++
++type RetainedSessionTab = {
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly sourceOwnerId: string;
++	readonly operationId: string;
++	readonly targetId: string;
++	readonly kindTag: BrowserKindTag;
++	readonly safeDir: string;
++	readonly backend: "worker" | "cmux";
++	readonly info: ReadyInfo;
++	readonly pending: Map<string, PendingRun>;
++	state: "alive" | "dead";
++	worker?: WorkerHandle;
++	cmuxTab?: CmuxTab;
++	dispose(): Promise<void>;
++};
++const retainedSessionTabs = new Map<string, RetainedSessionTab>();
++
++export type RetainedBrowserEvaluationInstall = {
++	readonly ownerSessionId: string;
++	readonly sourceOwnerId: string;
++	readonly operationId: string;
++	readonly name: string;
++	readonly targetId: string;
++	readonly kindTag: BrowserKindTag;
++	readonly safeDir: string;
++	readonly backend: "cdp" | "cmux";
++	readonly descriptor?: Readonly<{ version: 1; channel: string; targetId: string; activateForScreenshot: boolean; dialogs?: DialogPolicy }>;
++	readonly state?: Readonly<CmuxRetainedState>;
++};
++export type RetainedBrowserEvaluationTransport = {
++	post(frame: WorkerCdpFrame): void;
++	installReceiver?(receive: (frame: WorkerCdpFrame) => void): void;
++	request(method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<Record<string, unknown>>;
++};
++
++/** Install one fresh evaluator in the destination session process. The caller
++ * owns the original browser resource and transports; this never reconnects,
++ * creates a target, navigates, or changes its creator identity. */
++export async function installRetainedBrowserEvaluation(
++	input: RetainedBrowserEvaluationInstall,
++	transport: RetainedBrowserEvaluationTransport,
++): Promise<{ receive(frame: WorkerCdpFrame): void; dispose(): Promise<void> }> {
++	if (!input.ownerSessionId || !input.sourceOwnerId || !input.operationId || !input.name || !input.targetId || !input.safeDir
++		|| retainedSessionTabs.has(input.name) || tabs.has(input.name)) throw new ToolError("Invalid retained browser evaluator installation");
++	let receive = (_frame: WorkerCdpFrame): void => { throw new ToolError("Retained CDP evaluator is not installed"); };
++	let tab: RetainedSessionTab;
++	if (input.backend === "cdp") {
++		const descriptor = input.descriptor;
++		if (!descriptor || descriptor.version !== 1 || descriptor.targetId !== input.targetId || !descriptor.channel) throw new ToolError("Invalid retained CDP evaluator descriptor");
++		const channel = new WorkerCdpChannel(descriptor.channel, frame => transport.post(structuredClone(frame)));
++		transport.installReceiver?.(frame => { if (!channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); });
++		const owned = Object.assign(channel, { startupCreations: Object.freeze([]), finishStartup() {} }) as OwnedCdpTransport;
++		const worker = await spawnTabWorker(owned, descriptor.channel);
++		let info: ReadyInfo;
++		try {
++			info = await initializeTabWorker(worker, { mode: "retained", cdpChannel: descriptor.channel, safeDir: input.safeDir,
++				targetId: input.targetId, timeoutMs: 30_000, activateForScreenshot: descriptor.activateForScreenshot,
++				...(descriptor.dialogs === undefined ? {} : { dialogs: descriptor.dialogs }) }, 30_000);
++			worker.finishStartup();
++		} catch (error) { await worker.abort(error instanceof Error ? error : new Error(String(error))).catch(() => {}); throw error; }
++		tab = { ...input, backend: "worker", info, pending: new Map(), state: "alive", worker,
++			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await worker.terminate(); } };
++		worker.onMessage(message => handleTabMessage(tab as unknown as WorkerTabSession, message));
++		receive = frame => { if (tab.state === "alive" && !channel.receive(structuredClone(frame))) throw new ToolError("Retained CDP frame changed channel"); };
++	} else {
++		if (!input.state || input.state.surfaceId !== input.targetId) throw new ToolError("Invalid retained cmux evaluator state");
++		const cmuxTab = createRetainedCmuxTab(input.state, { request: transport.request.bind(transport) });
++		const viewport = input.state.viewport;
++		tab = { ...input, backend: "cmux", info: { targetId: input.targetId, url: input.state.url, title: input.state.title ?? "",
++			viewport: { width: viewport.width, height: viewport.height, ...(viewport.deviceScaleFactor === undefined ? {} : { deviceScaleFactor: viewport.deviceScaleFactor }) } },
++			pending: new Map(), state: "alive", cmuxTab,
++			dispose: async () => { tab.state = "dead"; for (const pending of tab.pending.values()) pending.reject(new ToolError("Retained browser evaluator closed")); tab.pending.clear(); await drainCmuxRun(cmuxTab); } };
++	}
++	retainedSessionTabs.set(input.name, tab);
++	return Object.freeze({ receive, dispose: async () => { if (retainedSessionTabs.get(input.name) === tab) retainedSessionTabs.delete(input.name); await tab.dispose(); } });
++}
+ // Original capture belongs to the exact native tab object, never its reusable name.
+ interface CapturedTabObservation {
+ 	inspect(targetId: string): Promise<"present" | "absent">;
+@@ -529,6 +608,7 @@ export function acquireTab(name: string, browser: BrowserHandle, opts: AcquireTa
+ 	let workerOwner: WorkerConnectionOwner | undefined;
+ 	const request = { ...opts, viewport: opts.viewport ? { ...opts.viewport } : undefined, deadlineStartMs: opts.deadlineStartMs ?? performance.now() };
+ 	try {
++		if (retainedSessionTabs.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is a retained original browser evaluator`);
+ 		assertTabNotReserved(name);
+ 		if ("client" in browser) cmuxClient = captureCmuxTabClient(browser);
+ 		else workerOwner = captureWorkerConnection(browser);
+@@ -1054,6 +1134,8 @@ function runInTabWithContext(
+ 	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
+ 	context: BrowserRunContext,
+ ): Promise<RunResultOk> {
++	const retained = retainedSessionTabs.get(name);
++	if (retained) return executeRetainedTabRun(retained, opts, context);
+ 	try { assertTabNotReserved(name); } catch (error) { return Promise.reject(error); }
+ 	const tab = tabs.get(name);
+ 	if (!tab) return executeTabRun(name, opts, context);
+@@ -1069,6 +1151,29 @@ function runInTabWithContext(
+ 	return result;
+ }
+ 
++async function executeRetainedTabRun(tab: RetainedSessionTab,
++	opts: { code: string; timeoutMs: number; signal?: AbortSignal }, context: BrowserRunContext): Promise<RunResultOk> {
++	if (tab.state !== "alive" || retainedSessionTabs.get(tab.name) !== tab) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is not alive.`);
++	if (tab.pending.size) throw new ToolError(`Tab ${JSON.stringify(tab.name)} is busy`);
++	if (tab.backend === "cmux") {
++		const closeAc = new AbortController(), signal = opts.signal ? AbortSignal.any([opts.signal, closeAc.signal]) : closeAc.signal;
++		return await runCmuxCodeWithContext(tab.cmuxTab!, { code: opts.code, timeoutMs: opts.timeoutMs, signal }, context);
++	}
++	const id = Snowflake.next(), worker = tab.worker!;
++	const completion = Promise.withResolvers<RunResultOk>();
++	const pending: PendingRun = { resolve: completion.resolve, reject: completion.reject, context, signal: opts.signal, toolCalls: new Map() };
++	tab.pending.set(id, pending);
++	const abort = () => { try { worker.send({ type: "abort", id }); } catch {} for (const ctrl of pending.toolCalls.values()) ctrl.abort(opts.signal?.reason); };
++	if (opts.signal?.aborted) abort(); else opts.signal?.addEventListener("abort", abort, { once: true });
++	try {
++		worker.send({ type: "run", id, name: tab.name, code: opts.code, timeoutMs: opts.timeoutMs, session: context.snapshot });
++		return await raceWithTimeout(completion.promise, opts.timeoutMs + GRACE_MS, "Retained browser code execution hung past grace", async reason => {
++			if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
++			tab.state = "dead"; await worker.abort(new ToolError(reason));
++		});
++	} finally { opts.signal?.removeEventListener("abort", abort); tab.pending.delete(id); }
++}
++
+ async function executeTabRun(
+ 	name: string,
+ 	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
+@@ -1282,6 +1387,11 @@ export async function releaseTabForOwner(
+ 	}
+ 	if (opts.signal?.aborted) throw new BrowserActionRejected("Browser close was cancelled before admission");
+ 	const { name, targetId } = target;
++	const retained=retainedSessionTabs.get(name);
++	if(retained){
++		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==targetId||retained.state!=="alive")throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
++		retainedSessionTabs.delete(name);await retained.dispose();return Object.freeze({ownerSessionId,name,targetId,released:true});
++	}
+ 	const tab = tabs.get(name);
+ 	if (!tab || tab.ownerSessionId !== ownerSessionId || tab.targetId !== targetId) {
+ 		throw new BrowserActionRejected("The original browser target is no longer owned by this caller");
+@@ -1293,6 +1403,12 @@ export async function releaseTabForOwner(
+ }
+ 
+ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Promise<boolean> {
++	const retained = retainedSessionTabs.get(name);
++	if (retained) {
++		retainedSessionTabs.delete(name);
++		await retained.dispose();
++		return true;
++	}
+ 	const tab = tabs.get(name);
+ 	if (!tab) {
+ 		logger.debug("releaseTab: unknown tab", { name });
+@@ -1445,7 +1561,12 @@ export async function dropHeadlessTabs(): Promise<void> {
+  */
+ export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptions = {}): Promise<number> {
+ 	if (!ownerId) return 0;
+-	return releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true);
++	const retained = [...retainedSessionTabs.values()].filter(tab => tab.ownerSessionId === ownerId);
++	for (const tab of retained) if (retainedSessionTabs.get(tab.name) === tab) retainedSessionTabs.delete(tab.name);
++	const outcomes = await Promise.allSettled([releaseMatchingTabs(tab => tab.ownerSessionId === ownerId, opts, true), ...retained.map(tab => tab.dispose())]);
++	const failures = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
++	if (failures.length) throw failures.length === 1 ? failures[0] : new AggregateError(failures, "Retained browser evaluator cleanup failed");
++	return (outcomes[0] as PromiseFulfilledResult<number>).value + retained.length;
+ }
+ 
+ /**
+@@ -1471,6 +1592,10 @@ export function listTabsForOwner(ownerSessionId: string): readonly OwnerTabMetad
+ 				targetId: tab.info.targetId,
+ 			}),
+ 		}));
++	for (const tab of retainedSessionTabs.values()) if (tab.ownerSessionId === ownerSessionId) snapshot.push(Object.freeze({
++		name: tab.name, ownerSessionId, targetId: tab.targetId, backend: tab.backend, kindTag: tab.kindTag, state: tab.state,
++		info: Object.freeze({ ...tab.info, viewport: Object.freeze({ ...tab.info.viewport }) }),
++	}));
+ 	return Object.freeze(snapshot);
+ }
+ 
+@@ -1484,6 +1609,13 @@ export interface OwnerTabObservation {
+ 
+ /** Original backend read only. Unavailable capture/owner is an error, never absence. */
+ export async function inspectTabForOwner(ownerSessionId: string, target: OwnerTabViewportTarget): Promise<Readonly<OwnerTabObservation>> {
++	const retained=retainedSessionTabs.get(target.name);
++	if(retained){
++		if(!ownerSessionId||retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
++		await executeRetainedTabRun(retained,{code:"return await page.title()",timeoutMs:5_000},{snapshot:{cwd:retained.safeDir}});
++		if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during observation");
++		return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,kindTag:retained.kindTag,presence:"present"});
++	}
+ 	assertTabNotReserved(target.name);
+ 	const { name, targetId } = target;
+ 	if (!ownerSessionId || !name || !targetId) throw new ToolError("Browser observation requires an exact owner, name, and target id");
+@@ -1548,6 +1680,24 @@ export async function captureTabViewportForOwner(
+ 	target: OwnerTabViewportTarget,
+ ): Promise<Readonly<OwnerTabViewportCapture>> {
+ 	if (!ownerSessionId || !target.name || !target.targetId) throw new ToolError("Browser viewport capture requires an exact owner, name, and target id");
++	const retained=retainedSessionTabs.get(target.name);
++	if(retained){
++		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
++		if(retained.backend!=="worker")throw new ToolError("Viewport capture is not supported for cmux browser tabs");
++		const key=`${ownerSessionId}\0${target.name}\0${target.targetId}`;
++		if(humanActions.has(target.name)||viewportCaptures.has(key))throw new ToolError("This browser viewport is busy");
++		const pending=(async()=>{
++			const result=await executeRetainedTabRun(retained,{code:`
++const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
++const before=await read(),data=await page.screenshot({type:"jpeg",quality:80,fullPage:false,captureBeyondViewport:false,encoding:"base64"}),url=page.url(),title=await page.title(),context=await read();return{before,data,url,title,context};`,timeoutMs:10_000},{snapshot:{cwd:retained.safeDir}});
++			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during capture");
++			const value=result.returnValue as {before?:OwnerTabDocumentContext;context?:OwnerTabDocumentContext;data?:string;url?:string;title?:string};
++			if(!value||!validDocumentContext(value.before!)||!validDocumentContext(value.context!)||!sameOwnerTabDocumentContext(value.before!,value.context!,false)||typeof value.data!=="string"||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser viewport returned an invalid snapshot");
++			const data=Buffer.from(value.data,"base64");if(!data.length||data.length>8*1024*1024)throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
++			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,data,url:value.url,title:value.title,context:value.context!});
++		})();
++		viewportCaptures.set(key,pending);void pending.finally(()=>{if(viewportCaptures.get(key)===pending)viewportCaptures.delete(key)}).catch(()=>{});return await pending;
++	}
+ 	assertTabNotReserved(target.name);
+ 	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
+ 	if (humanActions.has(target.name)) throw new ToolError("This browser tab is busy with a human action");
+@@ -1742,6 +1892,23 @@ export async function performTabHumanActionForOwner(
+ 	if (typeof ownerSessionId !== "string" || !ownerSessionId || !target || typeof target.name !== "string" || !target.name || target.name.length > 200 || target.name.includes("\0")
+ 		|| typeof target.targetId !== "string" || !target.targetId || target.targetId.length > 200 || target.targetId.includes("\0") || !validDocumentContext(expected)) rejectHumanAction("Human browser action requires an exact owner, target, and document context");
+ 	validateHumanAction(action, expected);
++	const retained=retainedSessionTabs.get(target.name);
++	if(retained){
++		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")rejectHumanAction("The selected owner-bound browser tab is no longer available");
++		if(retained.backend!=="worker")rejectHumanAction("Human actions are not supported for cmux browser tabs");
++		if(humanActions.has(target.name))rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
++		const pending=(async()=>{
++			const result=await executeRetainedTabRun(retained,{code:`
++const expected=${JSON.stringify(expected)},action=${JSON.stringify(action)};
++const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
++const before=await read(),navigation=["navigate","reload","back","forward"].includes(action.type),same=expected.documentId===before.documentId&&expected.width===before.width&&expected.height===before.height&&(navigation||(expected.scrollX===before.scrollX&&expected.scrollY===before.scrollY))&&(!expected.navigation||(before.navigation&&expected.navigation.entryId===before.navigation.entryId&&expected.navigation.canGoBack===before.navigation.canGoBack&&expected.navigation.canGoForward===before.navigation.canGoForward));if(!same)throw new Error("The browser document or viewport changed; refresh before acting");
++if(action.type==="navigate")await page.goto(action.url,{waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="reload")await page.reload({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="back")await page.goBack({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="forward")await page.goForward({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="click")await page.mouse.click(action.x,action.y,{button:action.button,count:action.clickCount});else if(action.type==="wheel"){await page.mouse.move(action.x,action.y);await page.mouse.wheel({deltaX:action.deltaX,deltaY:action.deltaY})}else if(action.type==="resize")await page.setViewport({...page.viewport(),width:action.width,height:action.height});else if(action.type==="text")await page.keyboard.sendCharacter(action.text);else if(action.type==="key"){const pressed=[];try{for(const key of action.modifiers||[]){await page.keyboard.down(key);pressed.push(key)}await page.keyboard.press(action.key)}finally{for(const key of pressed.reverse())await page.keyboard.up(key).catch(()=>{})}}const context=await read();return{context,url:page.url(),title:await page.title()};`,timeoutMs:HUMAN_ACTION_TIMEOUT_MS},{snapshot:{cwd:retained.safeDir}});
++			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during the action");
++			const value=result.returnValue as {context?:OwnerTabDocumentContext;url?:string;title?:string};if(!value||!validDocumentContext(value.context!)||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser action returned an invalid observation");
++			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,context:value.context!,url:value.url,title:value.title});
++		})();
++		humanActions.set(target.name,pending);void pending.finally(()=>{if(humanActions.get(target.name)===pending)humanActions.delete(target.name)}).catch(()=>{});return await pending;
++	}
+ 	assertTabNotReserved(target.name);
+ 	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
+ 	if (humanActions.has(target.name)) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
