@@ -112,7 +112,7 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     await goTo(7, 29); await click("Go to definition");
     await wait(value => value.messages.some(message => message?.includes("No semantic definition"))); await capture("03-no-definition");
     checks.push("A comment word is not substituted for a semantic symbol.");
-    await goTo(2, 3);
+    await goTo(3, 3); await capture("04-away-caret-before-click");
     const token = await page.evaluate(() => {
       const frame = [...document.querySelectorAll<HTMLElement>(".pierre-source-editor-frame[data-symbol-owner]")].find(node => node.getClientRects().length);
       const root = frame?.querySelector("diffs-container")?.shadowRoot;
@@ -125,6 +125,12 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     try { await page.mouse.click(token.x, token.y); } finally { await page.keyboard.up(modifier); }
     await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "first");
     await capture("04-native-token-click"); checks.push("Pierre's real token modifier-click uses semantic definitions, not a text search.");
+    await click("Back to symbol");
+    await wait(value => value.label === "Edit symbol-source.ts" && value.selection.anchor?.line === 2 && value.selection.anchor.column === 1
+      && value.selection.focus?.line === 2 && value.selection.focus.column === 1);
+    await capture("04-away-caret-origin");
+    checks.push("Modifier-click away from the old caret records the clicked token as Back's origin, not the stale caret.");
+    await click("Forward to symbol"); await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "first");
     const targetBeforeEdit = await snapshot();
     await page.keyboard.type("firstChanged");
     await wait(value => Boolean(value.text?.includes("firstChanged")));

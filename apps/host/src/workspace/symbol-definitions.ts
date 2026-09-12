@@ -30,6 +30,8 @@ class DefinitionFiles {
     if (previous) return previous;
     const canonical = this.owned(lexical);
     if (!canonical) return null;
+    if (lexical.toLowerCase().endsWith(".json") && this.overlays.has(canonical))
+      throw new Error(`Save or close unsaved JSON compiler input ${relative(this.root, lexical)} before looking up definitions.`);
     const file = openSync(canonical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const before = fstatSync(file);
@@ -90,7 +92,8 @@ export async function readSymbolDefinitions(workspace: WorkspaceService, input: 
     const overlays = new Map<string, string>();
     for (const buffer of request.buffers) {
       const path = await workspace.externalFilePath(buffer.path), content = await workspace.readText(buffer.path);
-      if (!symbolLanguage(buffer.path) || content.kind !== "text") return { status: "unsupported", capability, message: `Save or close unsupported dirty buffer ${buffer.path} before looking up definitions.` };
+      if ((!symbolLanguage(buffer.path) && !buffer.path.toLowerCase().endsWith(".json")) || content.kind !== "text")
+        return { status: "unsupported", capability, message: `Save or close unsupported dirty buffer ${buffer.path} before looking up definitions.` };
       if (content.revision !== buffer.revision) return { status: "stale", capability, message: `Resolve the changed host version of ${buffer.path} before looking up definitions.` };
       overlays.set(path, buffer.text);
     }

@@ -7,7 +7,7 @@ export interface SymbolBuffer { path: string; revision: string; text: string }
 export interface SymbolDefinitionRequest {
   path: string; revision: string; position: SymbolPosition;
   source: "working-tree" | "historical";
-  /** All dirty workspace buffers, never written to the host by this query. */
+  /** Dirty source and JSON inputs, never written; JSON is refused only if read by the compiler. */
   buffers: SymbolBuffer[];
 }
 export interface SymbolDefinition {

@@ -56,6 +56,35 @@ test("history commits only after reveal, restores cursor selections, and new nav
   expect(f.data.documents.get("source.ts")?.text).toBe(f.source);
 }, 60_000);
 
+test("unrelated dirty JSON does not block definitions, but dirty compiler JSON cannot use stale disk configuration", async () => {
+  const f = await fixture();
+  await writeFile(join(f.cwd, "notes.json"), '{"note":"saved"}');
+  await writeFile(join(f.cwd, "compiler-extra.json"), '{"compilerOptions":{"strict":false}}');
+  await writeFile(join(f.cwd, "tsconfig.json"), '{"extends":"./compiler-extra.json","compilerOptions":{"noLib":true,"module":"nodenext","moduleResolution":"nodenext"}}');
+  await f.data.read("notes.json"); await f.data.read("compiler-extra.json");
+  f.data.edit("notes.json", '{"note":"unsaved"}');
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open);
+  expect(f.opened.at(-1)?.path).toBe("target.ts"); f.reveal();
+  const index = f.navigation.index, count = f.opened.length;
+  f.data.edit("compiler-extra.json", '{"compilerOptions":{"strict":true}}');
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open);
+  expect(f.opened.length).toBe(count); expect(f.navigation.index).toBe(index);
+  expect(f.navigation.message).toContain("compiler-extra.json");
+  expect(f.data.documents.get("notes.json")?.text).toBe('{"note":"unsaved"}');
+  expect(f.data.documents.get("compiler-extra.json")?.text).toBe('{"compilerOptions":{"strict":true}}');
+}, 60_000);
+
+test("modifier-click navigation returns to the clicked token rather than the old caret", async () => {
+  const f = await fixture();
+  const snapshot = f.snapshot("source.ts", f.source.indexOf("second();") + 2);
+  snapshot.position = { line: 2, column: 1 };
+  await f.navigation.define("source.ts", snapshot, f.open); f.reveal();
+  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.open);
+  expect(f.opened.at(-1)?.path).toBe("source.ts");
+  expect(f.navigation.pending?.request.selections).toEqual([{ start: snapshot.position, end: snapshot.position, direction: "forward" }]);
+  f.reveal();
+}, 60_000);
+
 test("missing and dirty-stale destinations retain buffers and leave the history index unchanged", async () => {
   const f = await fixture();
   await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open); f.reveal();

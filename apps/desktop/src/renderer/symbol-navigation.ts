@@ -49,23 +49,24 @@ export class SymbolNavigation {
     this.choice = undefined; this.busy = false; this.message = ""; this.changed();
   }
   private async capture(path: string, snapshot: SymbolEditorSnapshot): Promise<SymbolLocation> {
+    const selections: SymbolSelection[] = snapshot.position
+      ? [{ start: snapshot.position, end: snapshot.position, direction: "forward" }] : snapshot.selections;
     const document = this.data.documents.get(path);
-    if (!document || document.content?.kind !== "text" || document.conflict !== undefined || snapshot.text !== document.text || !snapshot.selections.length)
+    if (!document || document.content?.kind !== "text" || document.conflict !== undefined || snapshot.text !== document.text || !selections.length)
       throw new Error("The editor changed or has no cursor. Select the symbol again; your buffer is retained.");
     const revision = document.content.revision, context = await this.data.query({ type: "file.symbol-context" });
     if (context.type !== "file.symbol-context") throw new Error("The host did not identify this symbol workspace.");
     const textHash = await symbolTextHash(snapshot.text);
     const current = this.data.documents.get(path);
     if (current?.text !== snapshot.text || current.content?.revision !== revision || current.conflict !== undefined) throw new Error("The document changed while capturing its location. Retry.");
-    for (const selection of snapshot.selections) { symbolOffset(snapshot.text, selection.start); symbolOffset(snapshot.text, selection.end); }
-    return { path, revision, textHash, name: "", selection: structuredClone(snapshot.selections[0]!), selections: structuredClone(snapshot.selections), hostId: this.data.hostId, target: { ...this.data.target }, workspaceIdentity: context.workspaceIdentity };
+    for (const selection of selections) { symbolOffset(snapshot.text, selection.start); symbolOffset(snapshot.text, selection.end); }
+    return { path, revision, textHash, name: "", selection: structuredClone(selections[0]!), selections: structuredClone(selections), hostId: this.data.hostId, target: { ...this.data.target }, workspaceIdentity: context.workspaceIdentity };
   }
   private buffers(): SymbolBuffer[] {
     const buffers: SymbolBuffer[] = [];
     for (const [path, item] of this.data.documents) {
       if (!item.dirty) continue;
-      if (path.toLowerCase().endsWith(".json")) throw new Error(`Save or resolve ${path} before looking up symbols; unsaved JSON project configuration is not used by the compiler.`);
-      if (!symbolLanguage(path)) continue;
+      if (!symbolLanguage(path) && !path.toLowerCase().endsWith(".json")) continue;
       if (item.content?.kind !== "text" || item.conflict !== undefined) throw new Error(`Save or resolve ${path} before resolving symbols across unsaved buffers.`);
       buffers.push({ path, revision: item.content.revision, text: item.text });
     }
