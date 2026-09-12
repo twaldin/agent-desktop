@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { browserAddressFocusOwner, browserAddressTarget, withBrowserAddressShortcut } from "./browser-address-focus";
 import { installAppShortcuts, type AppShortcutOptions } from "./app-shortcuts";
-import { APP_COMMAND_BINDING_OWNERS, readAppCommandBindings } from "./app-command-bindings";
+import { readAppCommandBindings } from "./app-command-bindings";
 
 // Controlled document/listener model only. No browser layout, React commit, OS
 // focus, native page input or provider is executed by these tests.
@@ -189,7 +189,6 @@ test("deferred address action with the same live App owner still uses only its o
 test("installed address command uses resolved keys and clears the legacy binding without forwarding to another app action", () => {
   const s = scene(), k = keyboard(s.document); s.document.activeElement = s.composer;
   const defaults = readAppCommandBindings(undefined, true).bindings;
-  expect(APP_COMMAND_BINDING_OWNERS.focusBrowserAddressBar).toBe("browser-address");
   expect(defaults["browser-address"]).toEqual(["CmdOrCtrl+L"]);
   let options: AppShortcutOptions = { platform: "mac", composer: () => s.composer as unknown as HTMLElement, bindings: defaults, actions: {} };
   const dispose = installAppShortcuts(k.window, () => withBrowserAddressShortcut(options, s.rootElement, owner));

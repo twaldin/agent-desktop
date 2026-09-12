@@ -1,6 +1,24 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { goToLineNumber } from "./go-to-line";
 
+const lineCommands = new WeakMap<Element, () => void>();
+
+/** Resolve only the focused mounted file owner, including its shadow editor. */
+export function goToLineCommand(root: HTMLElement, origin: Element | null): (() => void) | undefined {
+  let element: Element | null = origin;
+  while (element && root.contains(element)) {
+    const command = lineCommands.get(element);
+    if (command && element.isConnected && !element.closest("[hidden], [inert]") && element.getClientRects().length) return command;
+    element = element.parentElement;
+  }
+  const panel = origin?.closest("[data-dock-content-id]");
+  if (!panel || !root.contains(panel)) return;
+  for (const frame of panel.querySelectorAll<HTMLElement>("[data-go-to-line-owner]")) {
+    const command = lineCommands.get(frame);
+    if (command && frame.isConnected && !frame.closest("[hidden], [inert]") && frame.getClientRects().length) return command;
+  }
+}
+
 interface Props {
   appearance?: "pierre" | "codemirror";
   frame: RefObject<HTMLDivElement | null>; active: boolean; value: string;
@@ -21,22 +39,21 @@ export function GoToLine(props: Props) {
     opened.current = false; setOpen(false); current.current.onClose(cancel, focus);
   };
   const closeRef = useRef(close); closeRef.current = close;
+  // The parent frame ref attaches after this child's layout effects.
   useEffect(() => {
-    const key = (event: KeyboardEvent) => {
+    const frame = props.frame.current;
+    if (!frame || !props.active) return;
+    const open = () => {
       const value = current.current;
-      const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-      if (!value.active || event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey
-        || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "l") return;
-      const owner = value.frame.current?.closest('[role="tabpanel"]') ?? value.frame.current;
-      if (!owner || !event.composedPath().includes(owner)) return;
-      event.preventDefault(); event.stopPropagation();
+      if (lineCommands.get(frame) !== open || !frame.isConnected || value.frame.current !== frame || !value.active || frame.closest("[hidden], [inert]")) return;
       if (opened.current) { input.current?.focus({ preventScroll: true }); input.current?.select(); return; }
       if (!value.onOpen()) return;
       opened.current = true; setText(""); setInvalid(false); setOpen(true);
     };
-    document.addEventListener("keydown", key, true);
-    return () => { document.removeEventListener("keydown", key, true); if (opened.current) current.current.onClose(true, false); };
-  }, []);
+    lineCommands.set(frame, open);
+    frame.setAttribute("data-go-to-line-owner", "");
+    return () => { lineCommands.delete(frame); frame.removeAttribute("data-go-to-line-owner"); if (opened.current) closeRef.current(true, false); };
+  }, [props.active, props.frame]);
   useEffect(() => { if (!props.active) closeRef.current(true, false); }, [props.active]);
   // A changed document invalidates the old selection snapshot; do not restore it.
   useEffect(() => { closeRef.current(false, false); }, [props.value]);

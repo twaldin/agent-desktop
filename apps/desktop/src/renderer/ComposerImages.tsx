@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useImperativeHandle, useRef, type Ref } from "react";
 import type { ImageAttachmentCapabilities, ImageAttachmentRef } from "@agent-desktop/shared";
 import { AttachmentComposer, imageCapabilityIssue } from "./attachment-composer";
 import { ImagePreview } from "./ImagePreview";
@@ -6,12 +6,18 @@ import { Icon } from "./Icons";
 import { formatImageBytes, type AttachmentMediaContext } from "./attachment-media";
 import "./attachments.css";
 
-export function ComposerImages({ controller, attachments, media, hostId, connected, capabilities, disabled = false }: {
+export interface ComposerImagesHandle { addPhotos(): void }
+
+export function ComposerImages({ controller, attachments, media, hostId, connected, capabilities, disabled = false, commandRef }: {
   controller: AttachmentComposer; attachments?: ImageAttachmentRef[]; media: AttachmentMediaContext; hostId: string;
   connected: boolean; capabilities?: ImageAttachmentCapabilities; disabled?: boolean;
+  commandRef?: Ref<ComposerImagesHandle>;
 }) {
   const picker = useRef<HTMLInputElement>(null), add = useRef<HTMLButtonElement>(null);
   const unavailable = imageCapabilityIssue(capabilities);
+  useImperativeHandle(commandRef, () => ({ addPhotos() {
+    if (!disabled && !unavailable && picker.current?.isConnected) picker.current.click();
+  } }), [disabled, unavailable, controller]);
   function focusAfterRemove(index: number) { requestAnimationFrame(() => { const chips = add.current?.parentElement?.querySelectorAll<HTMLElement>(".composer-image-chip"); (chips?.[Math.min(index, chips.length - 1)] ?? add.current)?.focus(); }); }
   return <div className="composer-images">
     <button ref={add} type="button" className="attach-image-button" aria-label="Add images" disabled={disabled || Boolean(unavailable)} title={unavailable ?? "Attach PNG, JPEG, GIF, or WebP images"} onClick={() => picker.current?.click()}><Icon name="plus"/></button>

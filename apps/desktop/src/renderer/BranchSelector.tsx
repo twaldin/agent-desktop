@@ -10,6 +10,15 @@ import { orderBranchNames } from "./branch-inventory";
 import type { GitBranch } from "@agent-desktop/shared";
 import "./branch-selector.css";
 
+const branchCreationCommands = new WeakMap<HTMLButtonElement, { workspace: WorkspaceState; open(): void }>();
+
+export function branchCreationCommand(root: HTMLElement, workspace: WorkspaceState): (() => void) | undefined {
+  for (const trigger of root.querySelectorAll<HTMLButtonElement>("[data-branch-create-owner]")) {
+    const command = branchCreationCommands.get(trigger);
+    if (command?.workspace === workspace && trigger.isConnected && !trigger.closest("[hidden], [inert]") && trigger.getClientRects().length) return command.open;
+  }
+}
+
 export interface BranchSelectorProps {
   workspace: WorkspaceState;
   connected: boolean;
@@ -196,10 +205,20 @@ function BranchSelectorContent({ workspace, connected, branchPrefix, onOpenGitSe
   const branchEndsWithSlash = trimmedBranch.endsWith("/");
   const canCreateBranch = !disabled && workspace.status?.head !== null && Boolean(trimmedBranch) && !branchEndsWithSlash && !branchExists;
   const triggerTitle = workspace.errors.git ?? currentBranch ?? "Repository branch";
+  useLayoutEffect(() => {
+    const button = trigger.current;
+    if (!button || destination || disabled || workspace.status?.head === null) return;
+    const command = { workspace, open() {
+      if (branchCreationCommands.get(button) !== command || !button.isConnected || button.closest("[hidden], [inert]")) return;
+      onOpen?.(); setNewBranch(branchPrefix); setOpen("create-branch");
+    } };
+    branchCreationCommands.set(button, command);
+    return () => { branchCreationCommands.delete(button); };
+  });
   const triggerContent = <><Icon name="branch"/><span>{destination?.newBranch ? "New branch" : workspace.status ? currentBranch ?? "Detached HEAD" : workspace.loading.has("git") ? "Loading branch…" : "Branch unavailable"}</span>{workspace.pending ? <span className="spinner" aria-label="Branch operation pending"/> : <Icon name="chevron"/>}</>;
 
   return <>
-    <button ref={trigger} type="button" className={variant === "environment" ? "environment-row branch-selector-trigger" : "branch-selector-trigger"} aria-label={destination ? "Commit to" : "Switch branch"} aria-haspopup="menu" aria-expanded={open === "branches" || open === "create-branch"} title={triggerTitle} onClick={toggle} onContextMenu={branchCopy.onContextMenu}>{triggerContent}</button>
+    <button ref={trigger} data-branch-create-owner={!destination ? "" : undefined} type="button" className={variant === "environment" ? "environment-row branch-selector-trigger" : "branch-selector-trigger"} aria-label={destination ? "Commit to" : "Switch branch"} aria-haspopup="menu" aria-expanded={open === "branches" || open === "create-branch"} title={triggerTitle} onClick={toggle} onContextMenu={branchCopy.onContextMenu}>{triggerContent}</button>
     {branchCopy.error && <p className="environment-note" role="alert">{branchCopy.error}</p>}
     {open === "branches" && position && createPortal(<div ref={menu} role="menu" aria-label={destination ? "Commit to" : currentBranch ?? "Switch branch"} className="branch-selector-menu" data-side={variant === "environment" ? "left" : "composer"} style={position} onKeyDown={event => { key(event); if (destination) event.stopPropagation(); }}>
       {!destination && <label className="branch-selector-search"><Icon name="search"/><input type="search" aria-label="Search branches" placeholder={repositoryName ? `Search ${repositoryName} branches` : "Search branches"} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {

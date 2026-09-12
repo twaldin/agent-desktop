@@ -66,10 +66,17 @@ export function sidebarLayout(data: Organization, groups: readonly { hostState: 
   else if (organization.grouping === "project") visit(defaultProjects);
   visit(loose);
   return { unread, organization, defaultProjects, sections, projects, sessions, allItems, sectionOf, position, ordered, pinned, custom, hostProjects, loose,
-    projectChildren, projectExpanded, chatSlots: chatSlots.slice(0, 9) };
+    projectChildren, projectExpanded, allChatSlots: chatSlots, chatSlots: chatSlots.slice(0, 9) };
 }
 
 export type SidebarLayout = ReturnType<typeof sidebarLayout>;
+
+export async function moveSidebarItem(data: PreferencesState, layout: SidebarLayout, item: SidebarItem, sectionId: string | null) {
+  const target = layout.allItems.filter(candidate => layout.sectionOf(candidate) === sectionId);
+  const next = Math.min(1e12, Math.max(-1024, ...target.map(layout.position)) + 1024);
+  const current = data.entity(item.kind, item.value.id, item.value.hostId);
+  await data.put({ key: `sidebar.${item.kind}.${item.value.id}`, value: { hostId: item.value.hostId, sectionId, position: next, ...(current?.appearance ? { appearance: current.appearance } : {}) } });
+}
 
 /** Missing slots have no callback, so the dispatcher leaves their keys unhandled. */
 export function sidebarChatActions(slots: readonly SidebarChatTarget[], navigate: (sessionId: string, hostId: string) => void) {

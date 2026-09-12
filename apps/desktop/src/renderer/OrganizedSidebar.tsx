@@ -8,7 +8,7 @@ import { Icon } from "./Icons";
 import { sessionUnreadKey } from "./session-read-state";
 import { SidebarArchiveDialog, type SidebarArchiveSelection } from "./SidebarArchiveDialog";
 
-import { sidebarItemKey, type SidebarItem as Item, type SidebarLayout } from "./sidebar-layout";
+import { moveSidebarItem, sidebarItemKey, type SidebarItem as Item, type SidebarLayout } from "./sidebar-layout";
 import { SidebarPinIcon } from "./sidebar-icons";
 import { ProjectMarkerPicker, type ProjectMarkerChange } from "./ProjectMarkerPicker";
 import { ProjectMarker } from "./project-appearance";
@@ -180,10 +180,7 @@ export function OrganizedSidebar(props: Props) {
   }
   async function move(item: Item, sectionId: string | null) {
     setMenu(undefined);
-    const target = allItems.filter(candidate => sectionOf(candidate) === sectionId);
-    const next = Math.min(1e12, Math.max(-1024, ...target.map(position)) + 1024);
-    const current = data.entity(item.kind, item.value.id, item.value.hostId);
-    await data.put({ key: `sidebar.${item.kind}.${item.value.id}`, value: { hostId: item.value.hostId, sectionId, position: next, ...(current?.appearance ? { appearance: current.appearance } : {}) } });
+    await moveSidebarItem(data, props.layout, item, sectionId);
   }
   async function reorder(item: Item, list: Item[], direction: -1 | 1) {
     setMenu(undefined); const index = list.findIndex(row => sidebarItemKey(row) === sidebarItemKey(item)); const other = index + direction;

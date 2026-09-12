@@ -7,7 +7,7 @@ export function McpDirectoryStatus({ owner, cwd, hostLabel }: { owner: McpDirect
   return <section aria-label="App connection" className="mcp-directory-status">
     <p>{hostLabel} · {cwd}</p>
     {owner.error && <p role="alert">{owner.error}</p>}
-    {owner.snapshot?.interactions.map(request => <InteractionCard key={request.id} request={request} disabled={!owner.current() || owner.responding.has(request.id)} sending={owner.responding.has(request.id)} respond={response => owner.respond(request.id, response)}/>)}
+    {owner.snapshot?.interactions.map(request => <InteractionCard key={request.id} hostId={owner.hostId} request={request} disabled={!owner.current() || owner.responding.has(request.id)} sending={owner.responding.has(request.id)} respond={response => owner.respond(request.id, response)}/>)}
     {owner.current() && <button type="button" className="secondary-button" onClick={() => void owner.disconnect().catch(() => {})}>Disconnect apps</button>}
   </section>;
 }

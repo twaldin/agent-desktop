@@ -17,6 +17,7 @@
 .shortcut-number-row p, .shortcut-copy p { margin: 2px 0 0; color: var(--secondary); font-size: var(--small-font-size, 12px); line-height: 16px; }
 .shortcut-number-row select { flex-shrink: 0; min-height: 30px; padding: 4px 28px 4px 9px; border: 1px solid var(--border); border-radius: var(--button-radius, 8px); background: var(--elevated-surface); color: var(--text); }
 .shortcut-inline-error, .shortcut-dialog-error { color: var(--danger); font-size: var(--small-font-size, 12px); }
+.shortcut-copy .shortcut-inline-error, .shortcut-number-row .shortcut-inline-error { color: var(--danger); }
 .shortcut-status { color: var(--secondary); }
 .shortcut-pending { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin: 0 0 16px; border: 1px solid var(--border); border-radius: var(--button-radius, 8px); color: var(--secondary); font-size: var(--small-font-size, 12px); }
 .shortcut-stale { padding: 12px; margin: 0 0 16px; border: 1px solid color-mix(in srgb, var(--danger) 20%, var(--border)); border-radius: var(--button-radius, 8px); background: var(--error-surface); }
@@ -37,7 +38,7 @@
 .shortcut-binding .icon-button { width: 28px; height: 28px; padding: 5px; }
 .shortcut-binding .icon-button:disabled { opacity: .45; }
 .shortcut-recorder { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.shortcut-recorder > div { display: flex; width: 100%; align-items: center; gap: 8px; }
+.shortcut-recorder > div { display: flex; flex-wrap: wrap; width: 100%; align-items: center; gap: 8px; }
 .shortcut-recorder input { box-sizing: border-box; width: 144px; max-width: 100%; min-height: 32px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--button-radius, 8px); background: var(--app-surface); color: var(--text); }
 .shortcut-recorder input[aria-invalid=true] { border-color: var(--danger); }
 .shortcut-recorder button { padding: 5px 7px; color: var(--secondary); font-size: var(--small-font-size, 12px); border-radius: var(--button-radius, 8px); }

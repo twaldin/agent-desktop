@@ -6,7 +6,7 @@ import { readTaskLayoutActivation, type TaskLayoutActivation } from "./main-task
 import { createPortal } from "react-dom";
 import { dockStripFocusTarget } from "./dock-strip-navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useImperativeHandle, useRef, useState, type Ref, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { DockTabIcon } from "./DockTabIcon";
 import { DockActionIcon } from "./DockActionIcon";
@@ -26,12 +26,13 @@ export interface DockAddAction {
   destinations?: readonly DockDestination[];
   id: string; label: string; icon: "compose" | "terminal" | "folder" | "sideChat" | "globe"; shortcut?: string; deferSelectionUntilDropdownClose?: boolean; onSelect(destination: DockDestination): void }
 export interface DockLeadingTab { id: string; panelId: string; title: string; selected: boolean; shortcutHint?: string; onContextMenu?: React.MouseEventHandler<HTMLButtonElement>; onSelect(): void }
+export interface DockPanelCommands { closeCommand(id: string): (() => void) | undefined }
 export interface DockPanelProps { presentationIds?: ReadonlyMap<string, string>; dragEnabled?:boolean; dragOwner?:string; shortcutHints?: ReadonlyMap<string,string>; leadingTab?: DockLeadingTab; stripContainer?: HTMLElement | null; stripStart?: ReactNode; stripActions?: ReactNode; onEmpty?(destination: DockDestination): void; onStripContextMenu?: React.MouseEventHandler<HTMLElement>;  destination: DockDestination; state: DockState; tabs: readonly DockTab[]; viewport: DockViewport; renderTab(tab: DockTab, active: boolean): ReactNode; onChange(state: DockState): void; onBeforeClose?(tab: DockTab): Promise<boolean>; onPinTab?(tabId:string):void; onTabContextMenu?(event:React.MouseEvent<HTMLButtonElement>,tab:DockTab):void; onTabDrop?(tabId: string, from: DockDestination, to: DockDestination, index: number): void; onPaneDrag?(task:DockDragTask,point:{clientX:number;clientY:number}):void; onPaneDrop?(task:DockDragTask,point:{clientX:number;clientY:number}):void; onPaneDragEnd?():void; onHide?(): void; onSwapSides?(): void; layoutAction?: {label:"Fullscreen"|"Restore split"; onSelect(activation?:TaskLayoutActivation):void}; addActions?: readonly DockAddAction[];
   /** Strip-end Close button. The shell turns it off where a window-pinned toggle already closes the dock. */
-  closeable?: boolean }
-export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shortcutHints, leadingTab, stripContainer, stripStart, stripActions, onEmpty, onStripContextMenu, destination, state, tabs, viewport, renderTab, onChange, onBeforeClose, onPinTab, onTabContextMenu, onTabDrop, onPaneDrag, onPaneDrop, onPaneDragEnd, onHide, onSwapSides, layoutAction, addActions = [], closeable = true }: DockPanelProps) {
+  closeable?: boolean; commandRef?: Ref<DockPanelCommands> }
+export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shortcutHints, leadingTab, stripContainer, stripStart, stripActions, onEmpty, onStripContextMenu, destination, state, tabs, viewport, renderTab, onChange, onBeforeClose, onPinTab, onTabContextMenu, onTabDrop, onPaneDrag, onPaneDrop, onPaneDragEnd, onHide, onSwapSides, layoutAction, addActions = [], closeable = true, commandRef }: DockPanelProps) {
   const region = state[destination], panelId = useId(), strip = useRef<HTMLDivElement>(null), resize = useRef<{ pointer: number; start: DockState } | undefined>(undefined);
-  const latest = useRef({ state, tabs, onChange, onBeforeClose, onEmpty, onPaneDragEnd }); latest.current = { state, tabs, onChange, onBeforeClose, onEmpty, onPaneDragEnd };
+  const latest = useRef({ state, tabs, onChange, onBeforeClose, onEmpty, onPaneDragEnd, presentationIds, dragOwner, dragEnabled }); latest.current = { state, tabs, onChange, onBeforeClose, onEmpty, onPaneDragEnd, presentationIds, dragOwner, dragEnabled };
   const closingIds = useRef(new Set<string>()), [closing, setClosing] = useState<Set<string>>(() => new Set());
   const mounted = useRef(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -71,7 +72,7 @@ export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shor
     if (!region.open || region.activeTabId !== tab.id || !tab.preview || event.nativeEvent.composedPath().some(node => node instanceof Element && node.hasAttribute("data-tab-preview-pin-exempt"))) return;
     onPinTab?.(tab.id);
   };
-  const closeCurrent = (id: string) => {
+  const closeCurrent = (id: string, origin: Element | null) => {
     if (!mounted.current) return;
     const current = latest.current.state;
     const currentDestination = current.right.tabIds.includes(id) ? "right" : current.bottom.tabIds.includes(id) ? "bottom" : undefined;
@@ -80,20 +81,37 @@ export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shor
     latest.current.onChange(next);
     const nextId = next[currentDestination].activeTabId;
     if (!next[currentDestination].tabIds.length) latest.current.onEmpty?.(currentDestination);
-    requestAnimationFrame(() => { if (mounted.current) document.querySelector<HTMLButtonElement>(`[data-dock-tab-id="${CSS.escape(nextId ?? "")}"]`)?.focus(); });
+    requestAnimationFrame(() => {
+      if (mounted.current && (document.activeElement === origin || !origin?.isConnected && document.activeElement === document.body))
+        document.querySelector<HTMLButtonElement>(`[data-dock-tab-id="${CSS.escape(nextId ?? "")}"]`)?.focus();
+    });
   };
   const close = (id: string) => {
     if (closingIds.current.has(id)) return;
     const tab = latest.current.tabs.find(item => item.id === id);
+    const origin = document.activeElement;
     if (!tab) return;
     const before = latest.current.onBeforeClose;
-    if (!before) { closeCurrent(id); return; }
+    if (!before) { closeCurrent(id, origin); return; }
     closingIds.current.add(id); setClosing(previous => new Set(previous).add(id));
-    void before(tab).then(allowed => { if (allowed) closeCurrent(id); }, () => {}).finally(() => {
+    void before(tab).then(allowed => { if (allowed) closeCurrent(id, origin); }, () => {}).finally(() => {
       closingIds.current.delete(id);
       if (mounted.current) setClosing(previous => { const next = new Set(previous); next.delete(id); return next; });
     });
   };
+  useImperativeHandle(commandRef, () => ({
+    closeCommand(id) {
+      if (!dragEnabled || !region.open || !region.tabIds.includes(id) || closingIds.current.has(id)) return;
+      const tab = tabs.find(item => item.id === id), presentation = presentationIds?.get(id);
+      if (!tab) return;
+      return () => {
+        if (!mounted.current || !latest.current.dragEnabled || latest.current.dragOwner !== dragOwner || !latest.current.state[destination].open
+          || !latest.current.state[destination].tabIds.includes(id) || latest.current.tabs.find(item => item.id === id) !== tab
+          || latest.current.presentationIds?.get(id) !== presentation) return;
+        close(id);
+      };
+    },
+  }));
   const dropIndex = (root: HTMLElement, id: string, clientX: number) => { const pills = [...root.querySelectorAll<HTMLElement>("[data-dock-content-tab]")].filter(item => item.dataset.dockTabId !== id); const rtl=root.ownerDocument.documentElement.dir === "rtl"; const index = pills.findIndex(item => { const bounds=item.getBoundingClientRect(); return rtl ? clientX > bounds.left + bounds.width/2 : clientX < bounds.left + bounds.width/2; }); return index < 0 ? pills.length : index; };
   const paneDrag=useTaskPaneDrag<DockDragTask>({owner:`${destination}:${dragOwner ?? leadingTab?.id ?? "content"}`,enabled:dragEnabled && (region.open || Boolean(leadingTab)),
     onMove:(task,point)=>onPaneDrag?.(task,point),onEnd:()=>latest.current.onPaneDragEnd?.(),
