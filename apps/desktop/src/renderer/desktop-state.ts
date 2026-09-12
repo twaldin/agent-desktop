@@ -30,7 +30,7 @@ export function useDesktop(bridge: DesktopBridge | undefined, requestedHostId?: 
     network: catalog.network, networkError: catalog.networkError, refreshNetwork: () => catalog.refresh() };
 }
 
-export function useTranscript(bridge: DesktopBridge | undefined, sessionId: string | null, hostId: string | undefined, connected: boolean, localHostId?: string, activitySequence = 0) {
+export function useTranscript(bridge: Pick<DesktopBridge, "getMessages" | "subscribe"> | undefined, sessionId: string | null, hostId: string | undefined, connected: boolean, localHostId?: string, activitySequence = 0) {
   const key = `agent-desktop:transcript:v1:${hostId}:${sessionId}`;
   type Snapshot = { key: string; messages: TranscriptMessage[]; readSequence?: number; loaded: boolean; loading: boolean; error: string | null; cacheWarning: string | null };
   const empty = (): Snapshot => ({ key, messages: [], loaded: false, loading: Boolean(sessionId && connected), error: null, cacheWarning: null });

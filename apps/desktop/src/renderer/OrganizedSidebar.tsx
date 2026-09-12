@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { HostState, Project } from "../../../../packages/shared/src/protocol";
 import type { PreferenceChange, ProjectAppearance, ProjectAppearanceColor, SidebarOrganization } from "../../../../packages/shared/src/preferences";
@@ -49,6 +49,19 @@ export function OrganizedSidebar(props: Props) {
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const [menuPosition, setMenuPosition] = useState({left:0,top:0});
   function toggleMenu(id: string, button: HTMLButtonElement, project?: Project) { clearHover(); menuTrigger.current = button; const bounds = button.getBoundingClientRect(); setMenuPosition({left: Math.min(bounds.right + 4, window.innerWidth - 216), top: Math.max(8, Math.min(bounds.top, window.innerHeight - 248))}); const opening = menu !== id; setMenu(opening ? id : undefined); setMenuProject(opening && project ? { key: id, project: { ...project } } : undefined); }
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) return;
+    const positionMenu = () => {
+      const trigger = menuTrigger.current, popup = menuRef.current;
+      if (!trigger?.isConnected || !popup) { setMenu(undefined); return; }
+      const bounds = trigger.getBoundingClientRect(), size = popup.getBoundingClientRect();
+      const next = { left: Math.max(8, Math.min(bounds.right + 4, window.innerWidth - size.width - 8)), top: Math.max(8, Math.min(bounds.top, window.innerHeight - size.height - 8)) };
+      setMenuPosition(previous => previous.left === next.left && previous.top === next.top ? previous : next);
+    };
+    positionMenu(); const resize = new ResizeObserver(positionMenu); resize.observe(menuRef.current);
+    window.addEventListener("resize", positionMenu);
+    return () => { resize.disconnect(); window.removeEventListener("resize", positionMenu); };
+  }, [menu]);
   const [dialog, setDialog] = useState<{ id?: string; name: string }>();
   const dialogRef = useRef<HTMLDialogElement>(null);
   type ProjectDialog = { token: number; kind: "edit" | "remove"; project: Project; defaultPosition: number; name: string; appearance?: ProjectAppearance; color?: ProjectAppearanceColor; customColor: string; emoji: string; pending: boolean; error?: string };
@@ -230,7 +243,7 @@ export function OrganizedSidebar(props: Props) {
     return <div className={`organized-session ${selected ? "selected" : ""}${props.layout.unread.has(JSON.stringify([session.hostId, session.id])) ? " unread" : ""}`} key={key} onMouseEnter={event => beginHover(item, event.currentTarget)} onMouseLeave={clearHover} onFocus={event => { if (event.target.matches(":focus-visible")) clearHover(); }} onContextMenu={event => { event.preventDefault(); const button = event.currentTarget.querySelector<HTMLButtonElement>(".session-row"); if (button) toggleMenu(key, button); }}>
       <button data-session-id={session.id} data-host-id={session.hostId} className={`session-row ${selected ? "selected" : ""}`} onClick={() => { clearHover(); props.onNavigate(session.id, session.hostId); }} aria-current={selected ? "page" : undefined}>
         <span className="sidebar-session-title">{session.title || "Untitled conversation"}</span>
-        {session.status !== "idle" && <span className={`sidebar-session-status ${session.status}`} aria-label={session.status}/>}
+        {props.layout.unread.has(JSON.stringify([session.hostId, session.id])) ? <span className="sidebar-session-status unread" aria-label="Unread"/> : session.status !== "idle" && <span className={`sidebar-session-status ${session.status}`} aria-label={session.status}/>}
       </button>
       <div className="sidebar-chat-actions">
         <button className="icon-button small" disabled={!writable} aria-label={pinLabel} title={pinLabel} onClick={() => { clearHover(); void move(item, isPinned ? null : "pinned"); }}><SidebarPinIcon pinned={isPinned}/></button>
@@ -247,7 +260,7 @@ export function OrganizedSidebar(props: Props) {
     const expanded = projectExpanded(project);
     const host = groups.find(group => group.hostState.host.id === project.hostId)?.host;
     const appearance = data.entity("project", project.id, project.hostId)?.appearance;
-    return <div className="project-group" data-project-id={project.id} data-host-id={project.hostId} key={sidebarItemKey(item)}><div className={`project-row ${selected ? "selected" : ""}`}><button className="project-label" aria-current={selected ? "page" : undefined} title={`${project.path}\n${host?.name ?? project.hostId}`} onClick={() => props.onToggleProject(key)} aria-expanded={expanded}><span className="sidebar-project-glyph"><ProjectMarker appearance={appearance}/><Icon name="chevron" className={expanded ? "rotated" : ""}/></span><span className="truncate">{project.name}</span></button>{itemMenu(item, list)}<button className="icon-button small project-new" disabled={host?.availability !== "available"} aria-label={`Start new chat in ${project.name}`} title={`Start new chat in ${project.name}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="compose"/></button></div>{expanded && <div className="project-sessions">{children.map(child => child.kind === "session" && sessionRow(child, children))}{!children.length && <p className="sidebar-empty nested">{query ? "No matching conversations" : showArchived ? "No archived conversations" : "No chats"}</p>}</div>}</div>;
+    return <div className="project-group" data-project-id={project.id} data-host-id={project.hostId} key={sidebarItemKey(item)}><div className={`project-row ${selected ? "selected" : ""}`}><button className="project-label" aria-current={selected ? "page" : undefined} title={`${project.path}\n${host?.name ?? project.hostId}`} onClick={() => props.onToggleProject(key)} aria-expanded={expanded}><span className="sidebar-project-glyph"><ProjectMarker appearance={appearance} expanded={expanded}/><Icon name="chevron" className={expanded ? "rotated" : ""}/></span><span className="truncate">{project.name}</span></button>{itemMenu(item, list)}<button className="icon-button small project-new" disabled={host?.availability !== "available"} aria-label={`Start new chat in ${project.name}`} title={`Start new chat in ${project.name}`} onClick={() => props.onNew(project.id, project.hostId)}><Icon name="compose"/></button></div>{expanded && <div className="project-sessions">{children.map(child => child.kind === "session" && sessionRow(child, children))}{!children.length && <p className="sidebar-empty nested">{query ? "No matching conversations" : showArchived ? "No archived conversations" : "No chats"}</p>}</div>}</div>;
   }
   const render = (item: Item, list: Item[]) => item.kind === "project" ? projectRow(item, list) : sessionRow(item, list);
   return <div className="organized-sidebar">

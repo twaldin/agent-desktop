@@ -5,6 +5,7 @@ import { build } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { startHost } from "../../../apps/host/src/server";
+import { NotificationEvents } from "../../../apps/host/src/notification-events";
 import { HostStore } from "../../../apps/host/src/store";
 import { WindowStateStore } from "../../../apps/desktop/src/main/window-state";
 import { defaultWindowView } from "../../../apps/desktop/src/window-state";
@@ -15,6 +16,7 @@ await mkdir(out, { recursive: true });
 const hosts: Awaited<ReturnType<typeof startHost>>[] = [];
 const calls: { host: string; command: string; sessionId?: string; archived?: boolean; accepted: boolean }[] = [];
 const names = new Map<string, string>();
+const notifications = new Map<string, NotificationEvents>();
 const windowStore = new WindowStateStore(join(out, "window"), "fixture");
 let failureHost: string | undefined;
 let fixtureServer: ReturnType<typeof Bun.serve> | undefined;
@@ -30,6 +32,7 @@ try {
     store.close();
     hosts.push(await startHost({ dataDirectory: join(dir,"data"), agentDirectory: join(dir,"omp"), discoveryDirectory: projectDir, port: 0, tailscale: false }));
   }
+  for (const host of hosts) notifications.set(host.connection.hostId,new NotificationEvents({ eventsAfter:(sequence,limit)=>host.store.eventsAfter(sequence,limit), session:id=>host.store.getSession(id), emit:event=>{host.store.appendEvent(event,true);} }));
   const fetchHost = async (hostId: string, path: string, body?: unknown) => {
     const host = hosts.find(host => host.connection.hostId === hostId); if (!host) throw Error("Unknown fixture owner");
     const response = await fetch(`${host.connection.origin}${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${host.connection.token}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -38,7 +41,24 @@ try {
   fixtureServer = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     try {
       const { method, args = [] } = await request.json() as { method: string; args: any[] };
-      if (method === "bootstrap") return Response.json({ groups: await Promise.all(hosts.map(async host => ({ state: await fetchHost(host.connection.hostId, "/v1/state"), name: names.get(host.connection.hostId) }))), view: windowStore.bootstrap().state ?? defaultWindowView() });
+      if (method === "bootstrap") return Response.json({ groups: await Promise.all(hosts.map(async host => ({ state: { ...await fetchHost(host.connection.hostId, "/v1/state"), notifications:notifications.get(host.connection.hostId)!.current() }, name: names.get(host.connection.hostId) }))), view: windowStore.bootstrap().state ?? defaultWindowView() });
+      if (method === "activity" || method === "attention" || method === "running") {
+        const host = hosts.find(host=>names.get(host.connection.hostId)===args[0]);if(!host)throw Error("Missing fixture host");
+        const session=host.store.listSessions().find(session=>session.title===args[1]);if(!session)throw Error("Missing fixture session");
+        if(method==="activity") return Response.json({...host.store.appendEvent({type:"runtime",sessionId:session.id,event:{type:"agent_end"},sessionActivity:true},true),hostId:host.connection.hostId});
+        if(method==="running") host.store.upsertSession({...session,status:args[2]?"running":"idle"});
+        else notifications.get(host.connection.hostId)!.reconcileDetached(session.id,args[2]?[{questionId:"fixture-question",questionEntryId:"fixture-question",originRunId:"fixture-run",openedAt:Date.now(),questions:[{id:"confirm",multi:false,header:"Continue",question:"Continue fixture work?",options:[{label:"Yes",description:"Continue"},{label:"No",description:"Stop"}]}],status:"open",delivery:{status:"waiting"}}]:[]);
+        return Response.json({type:"state",hostId:host.connection.hostId,state:{...await fetchHost(host.connection.hostId,"/v1/state"),notifications:notifications.get(host.connection.hostId)!.current()}});
+      }
+      if (method === "remoteReadMark") {
+        const home=hosts[0]!,work=hosts[1]!,session=work.store.listSessions().find(session=>session.title==="Work older")!;
+        await fetchHost(work.connection.hostId,"/v2/preferences/merge",await fetchHost(home.connection.hostId,"/v2/preferences"));
+        const envelope:CommandEnvelope={id:crypto.randomUUID(),command:{type:"preferences.put",change:{key:`session.read.${session.hostId}.${session.id}`,value:{sequence:session.activitySequence??0,unread:args[0]===true}}}};
+        const result=await fetchHost(work.connection.hostId,"/v1/commands",envelope);if(!result.ok)throw Error(result.error.message);
+        calls.push({host:work.connection.hostId,command:envelope.command.type,accepted:true});
+        await fetchHost(home.connection.hostId,"/v2/preferences/merge",await fetchHost(work.connection.hostId,"/v2/preferences"));
+        return Response.json({type:"preferences",hostId:home.connection.hostId,sequence:home.snapshot().lastEventSequence});
+      }
       if (method === "preferences") return Response.json(await fetchHost(args[0], "/v1/preferences"));
       if (method === "saveView") return Response.json(windowStore.saveView(args[0]));
       if (method === "failNextArchive") { failureHost = args[0]; return Response.json({}); }
