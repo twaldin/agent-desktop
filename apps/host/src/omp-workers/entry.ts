@@ -21,6 +21,7 @@ let plugins: Promise<import("../integrations/plugins").NativePlugins> | undefine
 let ssh: Promise<import("../integrations/ssh").NativeSsh> | undefined;
 let mcp: Promise<import("../integrations/mcp").NativeMcp> | undefined;
 let runtime: OmpRuntime | undefined;
+let mcpOwner: import("../omp/mcp-owner").NativeMcpOwner | undefined;
 let browserOwner: import("../omp-browser/owner").NativeBrowserOwner | undefined;
 const browserCloses = new WorkerBrowserCloses(process.pid, () => browserOwner ?? requireSession());
 const browserObservations = new WorkerBrowserObservations(process.pid, () => browserOwner ?? requireSession());
@@ -140,6 +141,7 @@ function disposeNativeOwners(): Promise<void> {
     const results = await Promise.allSettled([
       ...[...retainedInstalls.values()].map(record => disposeRetainedInstall(record, "Retained browser owner was disposed.")),
       Promise.resolve().then(() => browserOwner?.dispose()),
+      Promise.resolve().then(() => mcpOwner?.dispose()),
       Promise.resolve().then(() => runtime?.dispose()),
       reservations, evaluationResult,
     ]);
@@ -217,6 +219,14 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         // adapter directory, including default session paths. Omitted means
         // ordinary native profile/environment discovery remains unchanged.
         if (init.agentDir) process.env.PI_CODING_AGENT_DIR = init.agentDir;
+        if (init.mode === "mcp-owner") {
+          const { NativeMcpOwner } = await import("../omp/mcp-owner");
+          if (stopping) throw new Error("OMP worker is stopping");
+          mcpOwner = new NativeMcpOwner({ ...init.owner, agentDir: init.agentDir }, emit);
+          if (stopping) throw new Error("OMP worker is stopping");
+          respond(true, { ownerId: mcpOwner.id, cwd: mcpOwner.cwd });
+          break;
+        }
         if (init.mode === "browser") {
           const { NativeBrowserOwner } = await import("../omp-browser/owner");
           if (stopping) throw new Error("OMP worker is stopping");
@@ -349,6 +359,17 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
           run.accepted.then(value => respond(true, value, undefined, "accepted"), error => respond(false, undefined, error, "accepted")),
           run.completion.then(value => respond(true, value, undefined, "completion"), error => respond(false, undefined, error, "completion")),
         ]);
+        break;
+      }
+      case "getMcpOwner":
+      case "mcpOwnerApp":
+      case "listMcpOwnerInteractions":
+      case "respondMcpOwnerInteraction": {
+        if (!mcpOwner) throw new Error("This worker has no original MCP owner.");
+        if (message.operation === "getMcpOwner") respond(true, mcpOwner.read());
+        else if (message.operation === "mcpOwnerApp") respond(true, await mcpOwner.request(parseNativeMcpAppRequest(message.args.request)));
+        else if (message.operation === "listMcpOwnerInteractions") respond(true, mcpOwner.interactions());
+        else { mcpOwner.respond(message.args.id, message.args.response); respond(true); }
         break;
       }
       case "sessionMcpApp": respond(true, await requireSession().sessionMcpApp(parseNativeMcpAppRequest(message.args.request))); break;

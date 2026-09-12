@@ -1,3 +1,4 @@
+import { subscribeMcpResource } from "./mcp-resource-events";
 import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import type { MCPServerConnection, MCPToolDefinition } from "@oh-my-pi/pi-coding-agent/mcp/types";
 import { readResource, listResources, listResourceTemplates } from "@oh-my-pi/pi-coding-agent/mcp/client";
@@ -36,6 +37,7 @@ export function mcpFileViewers(connection: MCPServerConnection): NativeMcpFileVi
   });
 }
 interface Operation { fingerprint: string; promise: Promise<NativeMcpAppResponse>; failure?: unknown }
+interface Subscription { ready: Promise<{ release(): Promise<void> }>; closing?: Promise<void> }
 interface Channel {
   id: string;
   selection: NativeMcpAppSelection;
@@ -50,6 +52,10 @@ interface Channel {
   artifact?: McpArtifact;
   artifactFingerprint?: string;
   cleanupFailures?: unknown[];
+  subscriptions: Map<string, Subscription>;
+  sequence: number;
+  changes: Map<string, number>;
+  eventWaiter?: () => void;
 }
 
 /** One session owns every channel. All native calls use the captured connection
@@ -65,6 +71,7 @@ export class NativeMcpApps {
     artifact?(entryId: string): McpArtifact | undefined;
     filePath?(source: Extract<NativeMcpAppSource, { type: "file" }>): string;
     fileResource?(source: Extract<NativeMcpAppSource, { type: "file" }>, method: "resources/read" | "openai/resources/write", params: Record<string, McpJson>, signal: AbortSignal, assertCurrent: () => void): Promise<unknown>;
+    watchFile?(source: Extract<NativeMcpAppSource, { type: "file" }>, changed: () => void, signal: AbortSignal, current: () => void): Promise<{ release(): Promise<void> }>;
     executeTool(connection: MCPServerConnection, tool: MCPToolDefinition, args: Record<string, unknown>, signal: AbortSignal, assertOwner: () => void, metadata?: Record<string, unknown>): Promise<unknown>;
   }) {
     this.#unsubscribe = options.manager?.addConnectionStatusListener(event => {
@@ -143,7 +150,7 @@ export class NativeMcpApps {
       const artifact = request.source?.type === "artifact" ? this.options.artifact?.(request.source.entryId) : undefined;
       if (request.source?.type === "artifact" && (!artifact || artifact.serverName !== request.selection.serverName || artifact.toolName !== request.selection.toolName || artifact.resourceUri !== request.selection.resourceUri)) return Promise.reject(new Error("The original saved MCP result is unavailable."));
       const channel: Channel = { id: request.channelId, selection: request.selection, connection, abort: new AbortController(), operations: new Map(), retired: false,
-        openingFingerprint: JSON.stringify(request), ...(request.source ? { source: request.source } : {}), ...(artifact ? { artifact, artifactFingerprint: JSON.stringify(artifact) } : {}) };
+        subscriptions: new Map(), sequence: 0, changes: new Map(), openingFingerprint: JSON.stringify(request), ...(request.source ? { source: request.source } : {}), ...(artifact ? { artifact, artifactFingerprint: JSON.stringify(artifact) } : {}) };
       this.#current(channel);
       this.#channels.set(channel.id, channel);
       channel.opened = this.#run(channel, "open", JSON.stringify(request), async signal => {
@@ -164,12 +171,45 @@ export class NativeMcpApps {
     }
     const channel = this.#channels.get(request.channelId);
     if (!channel) return Promise.reject(new Error("The original MCP app channel is unavailable."));
+    if (request.type === "events") return this.#events(channel, request.after);
     return this.#run(channel, request.requestId, JSON.stringify(request), async signal => {
       await channel.opened;
       this.#current(channel);
       let value: unknown;
       const hostResource = typeof request.params.uri === "string" && request.params.uri.startsWith("codex-resource://");
-      if (hostResource || request.method === "openai/resources/write") {
+      if (request.method === "resources/subscribe" || request.method === "resources/unsubscribe") {
+        const uri = request.params.uri;
+        if (typeof uri !== "string" || !uri || uri.length > 16_384 || uri.includes("\0") || Object.keys(request.params).some(key => key !== "uri" && key !== "_meta")) throw new Error("Invalid MCP resource subscription.");
+        if (request.method === "resources/unsubscribe") {
+          const subscription = channel.subscriptions.get(uri);
+          if (subscription) {
+            subscription.closing ??= Promise.resolve().then(async () => { await (await subscription.ready).release(); });
+            await subscription.closing;
+            if (channel.subscriptions.get(uri) === subscription) { channel.subscriptions.delete(uri); channel.changes.delete(uri); }
+          }
+        } else {
+          const previous = channel.subscriptions.get(uri);
+          if (previous?.closing) { await previous.closing; this.#current(channel); if (channel.subscriptions.get(uri) === previous) channel.subscriptions.delete(uri); }
+          if (channel.subscriptions.has(uri)) await channel.subscriptions.get(uri)!.ready;
+          else {
+          if (channel.subscriptions.size >= 128) throw new Error("MCP app subscription limit exceeded.");
+          const changed = () => { try { this.#current(channel); if (channel.subscriptions.has(uri)) { channel.changes.set(uri, ++channel.sequence); channel.eventWaiter?.(); } } catch {} };
+          const subscription = Promise.resolve().then(async () => {
+            this.#current(channel);
+            if (hostResource) {
+              const source = channel.source;
+              if (source?.type !== "file" || !this.options.watchFile || !(uri === source.resourceUri || uri.startsWith(`${source.resourceUri}/`))) throw new Error("This subscription does not belong to the original file viewer.");
+              return this.options.watchFile(source, changed, signal, () => this.#current(channel));
+            }
+            return subscribeMcpResource(channel.connection, uri, changed, signal);
+          });
+          channel.subscriptions.set(uri, { ready: subscription });
+          void subscription.catch(() => {});
+          await subscription;
+          }
+        }
+        value = {};
+      } else if (hostResource || request.method === "openai/resources/write") {
         const source = channel.source;
         if (source?.type !== "file" || !this.options.fileResource || typeof request.params.uri !== "string"
           || !(request.params.uri === source.resourceUri || request.params.uri.startsWith(`${source.resourceUri}/`))
@@ -202,6 +242,20 @@ export class NativeMcpApps {
       return { type: "result", channelId: channel.id, requestId: request.requestId, value: result as Record<string, McpJson> };
     });
   }
+  async #events(channel: Channel, after: number): Promise<NativeMcpAppResponse> {
+    this.#current(channel);
+    if (after > channel.sequence) throw new Error("MCP app event cursor is ahead of its original channel.");
+    if (channel.eventWaiter) throw new Error("An MCP resource event read is already pending.");
+    for (const [uri, sequence] of channel.changes) if (sequence <= after) channel.changes.delete(uri);
+    if (!channel.changes.size) await new Promise<void>(resolve => {
+      const finish = () => { clearTimeout(timer); channel.abort.signal.removeEventListener("abort", finish); if (channel.eventWaiter === finish) channel.eventWaiter = undefined; resolve(); };
+      const timer = setTimeout(finish, 20_000);
+      channel.eventWaiter = finish; channel.abort.signal.addEventListener("abort", finish, { once: true });
+      if (channel.abort.signal.aborted) finish();
+    });
+    this.#current(channel);
+    return { type: "events", channelId: channel.id, sequence: channel.sequence, uris: [...channel.changes.keys()] };
+  }
   #close(channel: Channel): Promise<NativeMcpAppResponse> {
     if (channel.closed) return channel.closed;
     const pending = [...channel.operations.values()].filter(operation => !settledOperations.has(operation));
@@ -210,6 +264,10 @@ export class NativeMcpApps {
       await Promise.allSettled(pending.map(operation => operation.promise));
       const errors = pending.flatMap(operation => operation.failure === undefined ? [] : [operation.failure]);
       channel.cleanupFailures = errors;
+      const cleanup = await Promise.allSettled([...channel.subscriptions.values()].map(async subscription => { await (subscription.closing ??= Promise.resolve().then(async () => { await (await subscription.ready).release(); })); }));
+      const failures = cleanup.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (failures.length) throw new AggregateError(failures, "MCP resource subscription cleanup failed.");
+      channel.subscriptions.clear(); channel.changes.clear();
       // Retirement is confirmed independently of the outcome of dispatched work.
       // Never retry that work or hide its failure behind a successful close.
       return { type: "closed" as const, channelId: channel.id, ...(errors.length ? { operationErrors: errors.length } : {}) };

@@ -1,5 +1,7 @@
 import { parsePullRequestReadRequest } from '../../../../packages/shared/src/pull-requests';
 import { readPullRequests } from './pull-requests-transport';
+import { McpOwnerWindow } from "./mcp-owner-windows";
+import { requestMcpOwner } from "./mcp-owner-transport";
 import { McpAppWindowChannels } from "./mcp-app-window-channels";
 import { readLocalFontFaces } from "./local-fonts";
 import { registerBrowserCloseHandlers } from "./browser-close-ipc";
