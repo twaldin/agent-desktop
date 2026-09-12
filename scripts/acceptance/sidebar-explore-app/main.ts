@@ -68,6 +68,7 @@ async function run() {
     window.setContentSize(1440, 1000);
     window.webContents.on("console-message", (_event, level, message) => { if (level >= 3) errors.push(message); });
     await window.loadFile(join(output, "web/index.html"));
+    window.webContents.focus();
   };
   const socket = new WebSocket(connection.origin.replace("http:", "ws:") + "/v1/events?after=0", ["agent-desktop", connection.token]);
   socket.addEventListener("message", event => { const value = JSON.parse(String(event.data)); if (value.type === "state") void invalidate(); else emit({ ...value, hostId: connection.hostId }); });
@@ -79,7 +80,18 @@ async function run() {
     window.webContents.sendInputEvent({ type: "mouseDown", ...p, button, clickCount: 1 }); window.webContents.sendInputEvent({ type: "mouseUp", ...p, button, clickCount: 1 });
     inputs.push({ selector, button, p }); await delay(180);
   };
-  const key = async (keyCode: string, modifiers: Electron.KeyboardInputEvent["modifiers"] = []) => { window.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers }); window.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers }); inputs.push({ keyCode, modifiers }); await delay(120); };
+  const key = async (requestedKey: string, modifiers: Electron.KeyboardInputEvent["modifiers"] = []) => {
+    const acceleratorKeys: Record<string, string> = { ArrowDown: "Down", ArrowUp: "Up", ArrowLeft: "Left", ArrowRight: "Right", Enter: "Return" };
+    const keyCode = acceleratorKeys[requestedKey] ?? requestedKey;
+    const before = await evaluate("sidebarExploreState()");
+    window.webContents.focus();
+    window.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+    window.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+    await delay(120);
+    const after = await evaluate("sidebarExploreState()");
+    inputs.push({ requestedKey, keyCode, modifiers, before: before.activeElement, after: after.activeElement, received: after.receivedKeys.slice(before.receivedKeys.length) });
+    if (after.receivedKeys.length === before.receivedKeys.length) throw new Error(`Electron did not deliver ${keyCode} to the owned renderer`);
+  };
   const capture = async (name: string) => { await delay(200); const snapshot = await evaluate("sidebarExploreState()"), image = await window.webContents.capturePage(); writeFileSync(join(output, `${name}.png`), image.toPNG()); captures.push({ name, snapshot, bounds: window.getContentBounds(), raster: image.getSize(), source: "Electron webContents.capturePage, not native window raster" }); };
   const customize = async () => { await click('.sidebar-explore'); await key("End"); await key("Enter"); await wait('document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"', "Customize autofocus"); };
   const saved = async () => { await wait('!document.querySelector(".sidebar-navigation-notice")', "confirmed customization save"); };
