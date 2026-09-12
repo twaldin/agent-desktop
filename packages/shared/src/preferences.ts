@@ -146,7 +146,7 @@ export interface PreferenceValues {
   "theme.background": ThemeBackground;
   "general.notifications": NotificationPreferences;
   "general.reduceMotion": boolean;
-  "general.sendBehavior": "enter" | "mod-enter";
+  "general.sendBehavior": "enter" | "mod-enter-if-multiline" | "mod-enter";
   "general.followUpQueueMode": "queue" | "steer";
   "general.bottomPanel": boolean;
   "general.defaultTerminalLocation": "bottom" | "right";
@@ -286,7 +286,7 @@ function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[P
   if (key === "theme.background") return background(value);
   if (key === "general.reduceMotion" || key === "general.bottomPanel") return bool(value);
   if (key === "general.defaultTerminalLocation") return enumeration(value, ["bottom", "right"] as const);
-  if (key === "general.sendBehavior") return enumeration(value, ["enter", "mod-enter"] as const);
+  if (key === "general.sendBehavior") return enumeration(value, ["enter", "mod-enter-if-multiline", "mod-enter"] as const);
   if (key === "general.followUpQueueMode") return enumeration(value, ["queue", "steer"] as const);
   if (key === "general.notifications") {
     const item = object(value, ["turnComplete", "approvalRequired", "sound", "completionPolicy", "questionRequired"]);

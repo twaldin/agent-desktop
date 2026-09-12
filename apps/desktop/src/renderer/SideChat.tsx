@@ -6,6 +6,19 @@ import { Icon } from './Icons';
 import { MarkdownText } from './MarkdownText';
 import './side-chat.css';
 
+export function sideChatFocusCommand(root: HTMLElement, hostId: string, sessionId: string, origin: Element | null): (() => void) | undefined {
+  const owner = JSON.stringify([hostId, sessionId]);
+  const inputs = [...root.querySelectorAll<HTMLTextAreaElement>("textarea[data-side-chat-owner]")]
+    .filter(input => input.dataset.sideChatOwner === owner && !input.closest("[hidden], [inert]") && input.getClientRects().length);
+  const focusedPanel = origin?.closest(".side-chat");
+  const input = inputs.find(input => focusedPanel?.contains(input))
+    ?? inputs.find(input => input.closest('[data-dock-destination="right"]')) ?? inputs[0];
+  if (!input) return;
+  return () => {
+    if (input.isConnected && root.contains(input) && input.dataset.sideChatOwner === owner && !input.closest("[hidden], [inert]")) input.focus();
+  };
+}
+
 export function SideChat({ controller, hostId, session, sessionId, drafts, connected, active, onTitle, onUnread, onPromoted }: {
   controller: BtwState; hostId: string; sessionId: string; session?: SessionSummary;
   drafts: DraftController; connected: boolean; active: boolean; onTitle(title: string): void; onUnread(unread: boolean): void; onPromoted(session: SessionSummary): void;
@@ -56,7 +69,7 @@ export function SideChat({ controller, hostId, session, sessionId, drafts, conne
       {view.status === 'conflict' && <div className="side-chat-conflict" role="alert"><p>This side-chat draft changed on another device.</p><pre>{view.conflict?.text || '(Empty draft)'}</pre><button onClick={() => drafts.resolve(controller.draftId, 'local')}>Keep mine</button><button onClick={() => drafts.resolve(controller.draftId, 'remote')}>Use other draft</button></div>}
       {view.error && <p className="side-chat-notice" role="alert">{view.error}</p>}
       <form className="side-chat-composer" onSubmit={event => { event.preventDefault(); submit(); }}>
-        <textarea ref={textarea} aria-label="Side chat prompt" placeholder="Ask a side question" value={view.draft.text} maxLength={32768} onChange={event => drafts.update(controller.draftId, { text: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }}/>
+        <textarea ref={textarea} data-side-chat-owner={active ? JSON.stringify([hostId, sessionId]) : undefined} aria-label="Side chat prompt" placeholder="Ask a side question" value={view.draft.text} maxLength={32768} onChange={event => drafts.update(controller.draftId, { text: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }}/>
         <div className="side-chat-controls"><span className="side-chat-context" title="Native OMP /btw uses the parent context and model. It answers without running tools or changing the main transcript.">No tools</span><span className="side-chat-model" title="Uses the main conversation’s native model and reasoning settings">{session?.model?.id || 'Parent model'}</span><button className="side-chat-send" type={running ? 'button' : 'submit'} aria-label={running ? 'Stop side chat' : 'Send side question'} disabled={blocked || (!running && !view.draft.text.trim())} onClick={running ? () => void controller.cancel() : undefined}><Icon name={running ? 'stop' : 'arrow'}/></button></div>
       </form>
     </div>

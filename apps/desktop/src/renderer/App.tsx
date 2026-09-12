@@ -41,7 +41,7 @@ import { useCommandBrowserTabs } from "./use-command-browser-tabs";
 import { APPLICATION_COMMANDS } from "../../../../packages/shared/src/application-commands";
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import { useHeaderContextMenu } from "./use-header-context-menu";
-import { followUpDeliveryForEnter } from "./follow-up-submit";
+import { effectiveSendMode, submissionForEnter } from "./follow-up-submit";
 import { createTranscriptImageResolver } from "./transcript-image-source";
 import { remapFileOffsets } from "./composer-document";
 import { appendWholeFile, wholeFileSendIssue, wholeFileOpenTarget } from "./whole-file-composer";
@@ -52,7 +52,9 @@ import { NativeSkillFileController } from "./native-skill-file-state";
 import { NativeSkillFilePanel } from "./NativeSkillFilePanel";
 import type { NativeSkillFileRef } from "@agent-desktop/shared";
 import { PendingMcpAuthorization } from "./SessionMcpAuthorization";
-import { EnvironmentActions } from "./EnvironmentActions";
+import { EnvironmentActions, environmentActionCommands } from "./EnvironmentActions";
+import { branchCreationCommand } from "./BranchSelector";
+import { goToLineCommand } from "./GoToLine";
 import { GoalStrip } from "./GoalStrip";
 import { GoalPanel } from "./GoalPanel";
 import { useId, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -73,8 +75,9 @@ import { useComposerAutocomplete } from "./ComposerAutocomplete";
 import { approvalModes, composerApproval } from "./ComposerPermissions";
 import { DraftSnapshot } from "./DraftSnapshot";
 import { createAttachmentCache } from "./attachment-cache";
-import { AttachmentComposer, attachmentDraftSender, imageSendIssue } from "./attachment-composer";
-import { ComposerImages } from "./ComposerImages";
+import { AttachmentComposer, attachmentDraftSender, imageCapabilityIssue, imageSendIssue } from "./attachment-composer";
+import { ComposerImages, type ComposerImagesHandle } from "./ComposerImages";
+import type { ComposerSelectionPopupHandle } from "./ComposerSelectionPopup";
 import type { AttachmentMediaContext } from "./attachment-media";
 import { installAppShortcuts, type AppShortcutOptions } from "./app-shortcuts";
 import { errorMessage, useDesktop, useTranscript } from "./desktop-state";
@@ -83,7 +86,7 @@ import { TranscriptMessages } from "./Transcript";
 import { useTranscriptScroll } from "./use-transcript-scroll";
 import "./transcript-scroll.css";
 import { AccountsSettings } from "./AccountsSettings";
-import { PendingInteractions } from "./PendingInteractions";
+import { PendingInteractions, approvalCommands } from "./PendingInteractions";
 import { ComposerContext, type ComposerContextHandle } from "./ComposerContext";
 import { PendingDetachedQuestions } from "./DetachedQuestionCard";
 import { WorkspacePanel } from "./WorkspacePanel";
@@ -101,7 +104,8 @@ import { readAppCommandBindings, appCommandShortcutLabel, APP_COMMAND_BINDING_OW
 import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
 import { SidebarNavigationIcon } from "./SidebarNavigationIcon";
 import { OrganizedSidebar } from "./OrganizedSidebar";
-import { sidebarLayout, sidebarChatActions } from "./sidebar-layout";
+import { moveSidebarItem, sidebarLayout, sidebarChatActions } from "./sidebar-layout";
+import { sessionUnreadKey } from "./session-read-state";
 import { NativeSettings } from "./NativeSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { GitSettings } from "./GitSettings";
@@ -118,7 +122,7 @@ import { applyTheme } from "./theme-application";
 import { cssColorToRgba } from "./css-color";
 import { transcriptSources, type RecordedSource } from "./transcript-sources";
 import { ImagePreview } from "./ImagePreview";
-import { DockPanel, type DockAddAction, type DockDragTask } from "./DockPanel";
+import { DockPanel, type DockPanelCommands, type DockAddAction, type DockDragTask } from "./DockPanel";
 import { DockEmptyActions } from "./DockEmptyActions";
 import { dockEmptyActionCatalogue } from "./dock-empty-action-model";
 import { useWindowClose } from "./WindowClose";
@@ -129,16 +133,16 @@ import { dockTabId, moveDockTab, type DockTab, type DockDestination } from "./do
 import { useWorkbenchDock, targetFromDock, type TerminalPreparation } from "./use-workbench-dock";
 import { EnvironmentCard } from "./EnvironmentCard";
 import { useTaskLocation } from "./task-location-state";
-import { SideChat } from "./SideChat";
+import { SideChat, sideChatFocusCommand } from "./SideChat";
 import { BtwState } from "./btw-state";
 import { nativeBtwQuestion } from "../../../../packages/shared/src/btw";
 import { assertComposerOwner } from "./composer-autocomplete";
-import { BrowserPanel } from "./BrowserPanel";
+import { BrowserPanel, browserPanelCommands } from "./BrowserPanel";
 import { BrowserNewTabPanel } from "./BrowserNewTabPanel";
 import { BrowserWorkspaceMenu, browserWorkspaceRows } from "./browser-workspace-menu";
 import { prepareBrowserReplacementFocus, rememberBrowserAddressFocus } from "./browser-replacement-admission";
 import { DockTabIcon } from "./DockTabIcon";
-import { browserAddressFocusOwner, withBrowserAddressShortcut } from "./browser-address-focus";
+import { browserAddressFocusOwner, browserAddressTarget, withBrowserAddressShortcut } from "./browser-address-focus";
 import { useSessionActivity } from "./use-session-activity";
 import { retainWorkspace } from "./workspace-lease";
 import { GitSubmissionDialog, GitSubmissionFeedback } from "./GitSubmissionDialog";
@@ -151,6 +155,10 @@ import { applyProjectExecutionMode, executionModeLabel, projectExecutionModeDraf
 
 export function App() {
   const composerContext = useRef<ComposerContextHandle>(null);
+  const composerSelections = useRef<ComposerSelectionPopupHandle>(null);
+  const composerImages = useRef<ComposerImagesHandle>(null);
+  const rightDockCommands = useRef<DockPanelCommands>(null);
+  const bottomDockCommands = useRef<DockPanelCommands>(null);
   const bridge = window.agentDesktop;
   const [windowRestoration] = useState(readWindowRestoration);
   const [browserWindowCheckpoint] = useState(() => new BrowserWindowCheckpoint());
@@ -183,6 +191,7 @@ export function App() {
   const automationViews = useRef(new Map<string, AutomationPageMemory>());
   const automationCache = useRef(new Map<string, AutomationsSnapshot>());
   const [pluginDirectoryTab,setPluginDirectoryTab]=useState<"plugins"|"skills">(windowRestoration.state.pluginDirectoryTab??"plugins");
+  const [skillRefresh, setSkillRefresh] = useState(0);
   const [integrationSelection,setIntegrationSelection]=useState<{hostId:string;pluginId?:string;marketplace?:{name?:string;add?:boolean}}>();
   const [settingsOpen, setSettingsOpen] = useState(windowRestoration.state.settingsOpen);
   const contentOverlayOpen = settingsOpen || pluginDirectoryOpen || automationsOpen;
@@ -196,6 +205,7 @@ export function App() {
     settingsOriginLabel.current = document.activeElement?.getAttribute("aria-label") ?? null;
     setAutomationsOpen(false); setSettingsOpen(true);
   }, []);
+  const openAutomations = () => { setAutomationsOpen(true); setPluginDirectoryOpen(false); setSettingsOpen(false); };
   useEffect(() => {
     const closing = settingsWasOpen.current && !settingsOpen;
     settingsWasOpen.current = settingsOpen;
@@ -352,6 +362,9 @@ export function App() {
   // selection writes a model override; legacy saved choices remain untouched.
   const view = drafts.get(draftId, selected ? { projectId: selected.projectId } : undefined);
   const draft = view.draft;
+  const sendMode = effectiveSendMode(sendBehavior, draft.text);
+  const normalSendShortcut = sendMode.normal === "mod-enter" ? "Command Enter" : "Enter";
+  const oppositeSendShortcut = sendMode.opposite === "mod-shift-enter" ? "Command Shift Enter" : "Command Enter";
   const project = state?.projects.find(project => project.id === (selected?.projectId ?? draft.projectId));
   const environmentAvailable = state?.localEnvironments?.execution?.commandVersion === 5;
   const environmentCatalog = useMemo(() => !selectedId && draft.projectId && state?.localEnvironments?.configuration
@@ -674,9 +687,51 @@ export function App() {
     });
     return () => cancelAnimationFrame(frame);
   }, [mainTaskFocus, dock.snapshot, hostId, selectedId, settingsOpen, pluginDirectoryOpen, automationsOpen]);
+  const chatRoute = !contentOverlayOpen && !missingSession;
+  const editableDraft = chatRoute && !selected?.archived && !busy && !pendingSubmission && !view.conflict;
+  const writablePreferences = preferences.ready && preferences.connected && !preferences.busy && !preferences.pending.length;
+  const selectedSidebarItem = organizedSidebar.allItems.find(item => item.kind === "session" && item.value.id === selectedId && item.value.hostId === hostId);
+  const chatIndex = organizedSidebar.allChatSlots.findIndex(item => item.hostId === hostId && item.sessionId === selectedId);
+  const adjacentChat = (direction: -1 | 1) => {
+    const slots = organizedSidebar.allChatSlots;
+    if (!slots.length) return;
+    const next = slots[(chatIndex + direction + slots.length) % slots.length]!;
+    navigate(next.sessionId, next.hostId);
+  };
+  const attentionChats = new Set(hostGroups.flatMap(({ hostState }) => (hostState.notifications ?? [])
+    .filter(notice => notice.state === "open" && (notice.kind === "permission" || notice.kind === "question"))
+    .map(notice => sessionUnreadKey(hostState.host.id, notice.sessionId))));
+  const nextAttention = organizedSidebar.allChatSlots.slice(chatIndex + 1).concat(organizedSidebar.allChatSlots.slice(0, Math.max(0, chatIndex)))
+    .find(item => unreadSessions.has(sessionUnreadKey(item.hostId, item.sessionId)) || attentionChats.has(sessionUnreadKey(item.hostId, item.sessionId)));
+  const recentChats = commandMenuRecents(hostGroups.flatMap(({ hostState }) => hostState.sessions.filter(session => !session.archived).map(session => ({
+    hostId: session.hostId, sessionId: session.id, title: session.title, updatedAt: session.updatedAt,
+    pinned: preferences.sectionFor("session", session.id, session.hostId) === "pinned",
+    pinnedPosition: preferences.entity("session", session.id, session.hostId)?.position, hostName: hostState.host.name,
+  }))));
+  const recentActions: AppShortcutOptions["actions"] = {};
+  const recentOwners = ["recent-thread-1", "recent-thread-2", "recent-thread-3", "recent-thread-4", "recent-thread-5", "recent-thread-6"] as const;
+  recentOwners.forEach((owner, index) => { const target = recentChats[index]; if (target) recentActions[owner] = () => navigate(target.sessionId, target.hostId); });
+  const ordinalEfforts = selection.levels.filter(level => level !== "auto" && level !== "off");
+  const effortIndex = ordinalEfforts.indexOf(selection.thinking ?? "");
+  const copyText = (value: string) => { void navigator.clipboard.writeText(value).catch(cause => setActionError(errorMessage(cause))); };
+  const skillTarget = workspaceTarget && !("filePath" in workspaceTarget) ? workspaceTarget : undefined;
+  async function reloadSkills() {
+    if (!connected) return;
+    if (pluginDirectoryOpen && !settingsOpen && !automationsOpen) { setSkillRefresh(value => value + 1); return; }
+    try {
+      const inventory = await bridge.getSkillInventory?.(skillTarget, true, hostId);
+      if (inventory) assertComposerOwner(inventory, hostId, skillTarget);
+      else {
+        if (!bridge.getComposerActions) throw new Error("Update this desktop to reload native skills.");
+        const actions = await bridge.getComposerActions(skillTarget, true, hostId);
+        assertComposerOwner(actions, hostId, skillTarget);
+      }
+    } catch (cause) { if (selectedRef.current === routeKey) setActionError(errorMessage(cause)); }
+  }
   const currentShortcutOptions: AppShortcutOptions = {
     ...(commandKeymap && { bindings: appCommandBindings.bindings }),
     composer: () => textarea.current?.element ?? null,
+    inputActions: ["focus-main-chat"],
     blocked: () => Boolean(dialog || menuOpen || fileSearchOwner || commandMenuMode),
     actions: {
       ...sidebarChatActions(organizedSidebar.chatSlots, navigate),
@@ -685,10 +740,78 @@ export function App() {
       "new-chat": () => newConversation(),
       search: () => openCommandMenu("commands"),
       "search-chats": () => openCommandMenu("chats"),
+      ...(!busy && !submissions.get("new-conversation") && !drafts.get("new-conversation").conflict && {
+        "new-projectless-task": () => {
+          if (submitting.current) return;
+          const view = drafts.get("new-conversation");
+          if (submissions.get("new-conversation") || view.conflict) return;
+          if (worktreesAvailable) selectProjectWithExecutionMode(drafts, "new-conversation", null);
+          else drafts.update("new-conversation", { projectId: null, execution: { type: "local" } });
+          navigate(null, hostId);
+        },
+      }),
       ...(connected && !addingProject && { "open-folder": () => { void addProject(); } }),
       sidebar: () => setSidebarOpen(value => !value),
       settings: () => openSettings(),
       "keyboard-shortcuts": () => { setSettingsPage("keyboard-shortcuts"); openSettings(); },
+      "mcp-settings": () => { setSettingsPage("mcp"); openSettings(); },
+      "manage-tasks": openAutomations,
+      "open-skills": () => { settingsOriginLabel.current = null; setAutomationsOpen(false); setPluginDirectoryTab("skills"); setPluginDirectoryOpen(true); setSettingsOpen(false); },
+      ...(!settingsOpen && !automationsOpen && connected && (bridge.getSkillInventory || bridge.getComposerActions) && { "force-reload-skills": () => { void reloadSkills(); } }),
+      ...recentActions,
+      ...(chatRoute && {
+        "focus-main-chat": () => {
+          const origin = document.activeElement;
+          selectMainTask(mainChat, false);
+          requestAnimationFrame(() => {
+            if (selectedRef.current === routeKey && (document.activeElement === origin || !origin?.isConnected && document.activeElement === document.body)
+              && !textarea.current?.element.closest("[hidden], [inert]")) textarea.current?.focus();
+          });
+        },
+        ...(selected && {
+          "copy-conversation-path": () => copyText(selected.sessionFile),
+          ...(connected && !busy && {
+            "rename-thread": () => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); },
+            ...(!selected.archived && { "archive-thread": () => { void archive(); } }),
+          }),
+          ...(writablePreferences && !sessionRead.busy && { "mark-thread-unread": () => { void sessionRead.mark(selected, true); } }),
+          ...(writablePreferences && selectedSidebarItem && { "toggle-thread-pin": () => { void moveSidebarItem(preferences, organizedSidebar, selectedSidebarItem, organizedSidebar.sectionOf(selectedSidebarItem) === "pinned" ? null : "pinned").catch(cause => setActionError(errorMessage(cause))); } }),
+        }),
+        ...((selected?.cwd ?? project?.path) && { "copy-working-directory": () => copyText((selected?.cwd ?? project?.path)!) }),
+        ...(organizedSidebar.allChatSlots.length > 1 && { "previous-thread": () => adjacentChat(-1), "next-thread": () => adjacentChat(1) }),
+        ...(nextAttention && { "next-thread-needing-attention": () => navigate(nextAttention.sessionId, nextAttention.hostId) }),
+        ...(bottomPanelVisible && { "toggle-bottom-panel": () => dock.toggle("bottom") }),
+        ...(taskLayoutAction && { "toggle-maximize-side-panel": () => taskLayoutAction.onSelect({ fillChat: false, restoreFocus: true }) }),
+        ...(workspace && connected && workspace.status && workspace.restored && !workspace.busy && !workspace.pending && {
+          "git-commit": () => {
+            if (state?.gitSubmissions?.commandVersion === 10) openGitSubmission(workspace);
+            else { dock.open("review"); setCommitRequest({ owner: workspaceOwner!, id: crypto.randomUUID() }); }
+          },
+        }),
+        ...(canSend && { "composer-submit": () => { void submit(); } }),
+        ...(canSend && running && state?.queuedMessages?.submissions?.commandVersion === 13 && {
+          "composer-steer": () => { void submit("steer"); },
+          "composer-queue": () => { void submit("follow-up"); },
+        }),
+      }),
+      ...(editableDraft && {
+        "composer-clear": () => {
+          if (submitting.current) return;
+          while (imageComposer.staging[0]) imageComposer.removeStaged(imageComposer.staging[0].id);
+          textarea.current?.replaceText("");
+          drafts.update(draftId, { text: "", attachments: [], wholeFileAttachments: [], selectedTextAttachments: [] });
+        },
+        ...(!imageCapabilityIssue(state?.imageAttachments) && { "composer-add-photos": () => composerImages.current?.addPhotos() }),
+        ...(!selectedId && {
+          "composer-open-project-picker": () => composerContext.current?.openProjects(),
+        }),
+        ...(!running && {
+          "composer-open-model-picker": () => composerSelections.current?.openModels(),
+          ...(effortIndex >= 0 && effortIndex < ordinalEfforts.length - 1 && { "composer-increase-reasoning-effort": () => drafts.update(draftId, { thinkingLevel: ordinalEfforts[effortIndex + 1] }) }),
+          ...(effortIndex > 0 && { "composer-decrease-reasoning-effort": () => drafts.update(draftId, { thinkingLevel: ordinalEfforts[effortIndex - 1] }) }),
+          ...(selection.levels.length > 1 && { "composer-cycle-reasoning-effort": () => drafts.update(draftId, { thinkingLevel: selection.levels[(selection.levels.indexOf(selection.thinking ?? "") + 1) % selection.levels.length] }) }),
+        }),
+      }),
       // The pinned keyboard command opens search; pointer Files keeps its distinct panel route.
       ...(filesAction && workspaceOwner && { files: () => setFileSearchOwner(workspaceOwner) }),
       ...(sideChatAction && { "side-chat": () => sideChatAction.onSelect("right") }),
@@ -717,7 +840,68 @@ export function App() {
     ? dockSession ? browserAddressFocusOwner(hostId, "session", dockSession.sessionId)
       : draftDockOwner.enabled ? browserAddressFocusOwner(hostId, "draft", draftId) : undefined
     : undefined;
-  const commandMenuShortcutOptions = withBrowserAddressShortcut(currentShortcutOptions, workbenchElement.current, browserAddressOwner, commandMenuMode ? commandMenuOrigin.current : undefined);
+  function withLocalControlShortcuts(options: AppShortcutOptions, origin: Element | null = document.activeElement): AppShortcutOptions {
+    const root = workbenchElement.current;
+    if (!root || !chatRoute) return withBrowserAddressShortcut(options, root, browserAddressOwner, origin);
+    const actions = { ...options.actions };
+    const inputActions = [...(options.inputActions ?? [])];
+    const ownedSurfaceActions = [...(options.ownedSurfaceActions ?? [])];
+    if (editableDraft && !selectedId && worktreesAvailable && project && !modeView?.conflict && composerContext.current?.canToggleWorktree) actions["composer-toggle-worktree-mode"] = () => composerContext.current?.toggleWorktree();
+    const sideFocus = selectedId ? sideChatFocusCommand(root, hostId, selectedId, origin) : undefined;
+    if (sideFocus) {
+      actions["focus-side-chat"] = sideFocus;
+      inputActions.push("focus-side-chat");
+      if (origin?.closest(".side-chat")) ownedSurfaceActions.push("focus-main-chat", "focus-side-chat");
+    }
+    if (origin && textarea.current?.element?.contains(origin)) {
+      inputActions.push("composer-open-model-picker", "composer-open-project-picker", "composer-submit", "composer-steer", "composer-queue", "composer-clear", "composer-add-photos", "composer-increase-reasoning-effort", "composer-decrease-reasoning-effort", "composer-cycle-reasoning-effort", "composer-toggle-worktree-mode");
+    }
+    const browserInput = browserAddressTarget(root, browserAddressOwner, origin);
+    if (browserInput) {
+      Object.assign(actions, browserPanelCommands(browserInput));
+      inputActions.push("reload-browser-page", "navigate-browser-back", "navigate-browser-forward");
+    }
+    const approval = selectedId && connected ? approvalCommands(root, hostId, selectedId, origin) : undefined;
+    if (approval) {
+      Object.assign(actions, approval);
+      inputActions.push("approval-approve", "approval-decline");
+      ownedSurfaceActions.push("approval-approve", "approval-decline");
+    }
+    const line = goToLineCommand(root, origin);
+    if (line) {
+      actions["go-to-line"] = line;
+      inputActions.push("go-to-line"); ownedSurfaceActions.push("go-to-line");
+    }
+    const focusDestination = origin?.closest("[data-dock-destination]")?.getAttribute("data-dock-destination");
+    const chatFocused = Boolean(origin?.closest("[data-main-task-chat], [data-main-task-chat-tab]"));
+    const destination = chatFocused ? undefined : focusDestination === "bottom" ? "bottom" : focusDestination === "right" || mainTaskArea.current === "content" ? "right" : undefined;
+    const region = destination && dock.snapshot.state[destination];
+    const activeTab = region?.open && region.activeTabId ? dock.snapshot.tabs.find(tab => tab.id === region.activeTabId) : undefined;
+    const close = activeTab && destination ? (destination === "right" ? rightDockCommands : bottomDockCommands).current?.closeCommand(activeTab.id) : undefined;
+    if (close) {
+      actions["close-tab"] = close; inputActions.push("close-tab");
+      if (activeTab && activeTab.kind !== "terminal" && origin?.closest("[data-dock-content-id]")?.getAttribute("data-dock-content-id") === activeTab.id) ownedSurfaceActions.push("close-tab");
+    }
+    if (activeTab && (activeTab.kind === "files" || activeTab.kind === "file" && !activeTab.target.startsWith("file:"))) {
+      actions["toggle-file-tree-panel"] = () => setFileTree(value => ({ ...value, open: !value.open }));
+      inputActions.push("toggle-file-tree-panel");
+      if (origin?.closest("[data-dock-content-id]")?.getAttribute("data-dock-content-id") === activeTab.id) ownedSurfaceActions.push("toggle-file-tree-panel");
+    }
+    if (reviewAction) {
+      const id = panelSingleton("review");
+      const destination = id && dock.destinationForTab(id);
+      const closeReview = id && destination ? (destination === "right" ? rightDockCommands : bottomDockCommands).current?.closeCommand(id) : undefined;
+      if (closeReview) actions["toggle-review-tab"] = closeReview;
+      else if (!destination || !dock.snapshot.state[destination].open) actions["toggle-review-tab"] = () => reviewAction.onSelect("right");
+    }
+    if (workspace && connected) {
+      const branch = branchCreationCommand(root, workspace);
+      if (branch) actions["git-create-branch"] = branch;
+      Object.assign(actions, environmentActionCommands(root, workspace));
+    }
+    return withBrowserAddressShortcut({ ...options, actions, inputActions, ownedSurfaceActions }, root, browserAddressOwner, origin);
+  }
+  const commandMenuShortcutOptions = withLocalControlShortcuts(currentShortcutOptions, commandMenuMode ? commandMenuOrigin.current : document.activeElement);
   const commandMenuActions = APPLICATION_COMMANDS.flatMap(definition => {
     const owner = APP_COMMAND_BINDING_OWNERS[definition.id as keyof typeof APP_COMMAND_BINDING_OWNERS];
     const onSelect = owner && commandMenuShortcutOptions.actions[owner];
@@ -726,19 +910,23 @@ export function App() {
     if (definition.id === "nextTab" || definition.id === "previousTab") return [];
     if (!owner || !onSelect || definition.referenceFamily !== "webview" || (definition.numberShortcutFamily === "sidebar" || definition.numberShortcutFamily === "tabs")) return [];
     return [{ id: definition.id, title: definition.title, description: definition.description.replace(/\bCodex\b/g, "Agent Desktop"),
-      group: definition.group, shortcut: appCommandShortcutLabel(appCommandBindings.bindings, owner), deferUntilClose: owner === "browser-address", onSelect }];
+      group: definition.group, shortcut: appCommandShortcutLabel(appCommandBindings.bindings, owner), deferUntilClose: true,
+      onSelect: () => {
+        if (selectedRef.current !== routeKey) return;
+        const current = shortcutOptions.current;
+        current.withControls(current.options, commandMenuOrigin.current).actions[owner]?.();
+      } }];
   });
   const commandMenuHosts = [...desktop.catalog.records].flatMap(([id, record]) => record.state ? [{ id, name: record.state.host.name, connected: record.connected, searchAvailable: record.state.sessionSearch?.version === 1 }] : []);
-  const commandMenuRecentChats = commandMenuRecents([...desktop.catalog.records].flatMap(([hostId, record]) => (record.state?.sessions ?? []).filter(session => !session.archived).map(session => ({ hostId, sessionId: session.id, title: session.title, updatedAt: session.updatedAt,
-    pinned: preferences.sectionFor("session", session.id, hostId) === "pinned", pinnedPosition: preferences.entity("session", session.id, hostId)?.position, hostName: record.state?.host.name }))));
+  const commandMenuRecentChats = recentChats;
   // Settings edits installed owners, not only the actions eligible on this route.
   const supportedShortcutCommands = new Set(Object.keys(APP_COMMAND_BINDING_OWNERS));
-  const shortcutOptions = useRef({ options: currentShortcutOptions, browserAddressOwner });
+  const shortcutOptions = useRef({ options: currentShortcutOptions, withControls: withLocalControlShortcuts });
   const installedShortcuts = useRef<ReturnType<typeof installAppShortcuts> | null>(null);
   // Keep one composition lifetime, while dispatch reads the latest committed eligibility and closures.
-  useLayoutEffect(() => { shortcutOptions.current = { options: currentShortcutOptions, browserAddressOwner }; });
+  useLayoutEffect(() => { shortcutOptions.current = { options: currentShortcutOptions, withControls: withLocalControlShortcuts }; });
   useEffect(() => {
-    const installed = installAppShortcuts(window, () => withBrowserAddressShortcut(shortcutOptions.current.options, workbenchElement.current, shortcutOptions.current.browserAddressOwner));
+    const installed = installAppShortcuts(window, () => shortcutOptions.current.withControls(shortcutOptions.current.options));
     installedShortcuts.current = installed;
     return () => { installedShortcuts.current = null; installed(); };
   }, []);
@@ -1198,7 +1386,7 @@ export function App() {
       <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search" title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} aria-expanded={commandMenuMode === "chats"} onClick={() => openCommandMenu("chats")}><SidebarNavigationIcon name="search"/></button></div>
       <nav className="sidebar-actions" aria-label="Main navigation">
         <button className="nav-action" onClick={() => newConversation()}><SidebarNavigationIcon name="new-chat"/><span>New chat</span><kbd>⌘ N</kbd></button>
-        <button aria-label="Scheduled" className={`nav-action ${automationsOpen ? "selected" : ""}`} aria-current={automationsOpen ? "page" : undefined} onClick={() => { setAutomationsOpen(true); setPluginDirectoryOpen(false); setSettingsOpen(false); }}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.33"><circle cx="10" cy="10" r="7"/><path d="M10 5.5V10l-2.5 2" strokeLinecap="round" strokeLinejoin="round"/></svg><span>Scheduled</span></button>
+        <button aria-label="Scheduled" className={`nav-action ${automationsOpen ? "selected" : ""}`} aria-current={automationsOpen ? "page" : undefined} onClick={openAutomations}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.33"><circle cx="10" cy="10" r="7"/><path d="M10 5.5V10l-2.5 2" strokeLinecap="round" strokeLinejoin="round"/></svg><span>Scheduled</span></button>
         <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setAutomationsOpen(false);setPluginDirectoryOpen(true);setSettingsOpen(false);}}><SidebarNavigationIcon name="plugins"/><span>Plugins</span></button>
       </nav>
       <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} activeProjectId={!contentOverlayOpen && selectedId === null ? project?.id : undefined} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession} onMarkRead={(target, unread) => { const session = hostGroups.find(group => group.hostState.host.id === target.hostId)?.hostState.sessions.find(session => session.id === target.id && session.hostId === target.hostId); return session ? sessionRead.mark(session, unread) : Promise.resolve(false); }} localHostId={desktop.localHostId ?? null} onRenameProject={renameSidebarProject} onRemoveProject={removeSidebarProject} onRevealProject={revealSidebarProject}/></div>
@@ -1237,7 +1425,7 @@ export function App() {
         </div>)}</div>}
       {sessionRead.error && <div className="connection-banner" role="alert"><span>{sessionRead.error}</span>{preferences.pending.length ? <button disabled={!preferences.connected || preferences.busy} onClick={() => void sessionRead.retry()}>Retry read marks</button> : <button onClick={() => sessionRead.dismissError()}>Dismiss</button>}</div>}
       {appCommandBindings.error && <div className="connection-banner" role="alert"><span>Keyboard shortcuts could not be loaded: {appCommandBindings.error}</span></div>}
-      {settingsOpen ? <>{settingsPage === "keyboard-shortcuts" ? <KeyboardShortcutsSettings data={commandKeymap} supportedCommandIds={supportedShortcutCommands} primaryNumberShortcutTarget={commandKeymap?.primaryNumberShortcutTarget} onChangePrimaryNumberShortcutTarget={commandKeymap ? target => commandKeymap.submit({ type: "number-target", target }) : undefined}/> : settingsPage === "connections" ? <ConnectionsSettings preferences={preferences} bridge={bridge} hosts={desktop.hosts} network={desktop.network} networkError={desktop.networkError} localHost={desktop.localHostId ? desktop.catalog.records.get(desktop.localHostId)?.state?.host : undefined} activeHostId={state?.host.id ?? route.hostId} onSelectHost={owner => navigate(null,owner,true)} onRefresh={() => desktop.refreshNetwork()}/> : settingsPage === "general" ? <GeneralSettings preferences={preferences} bridge={bridge}/> : settingsPage === "environments" ? state?.localEnvironments?.configuration ? <LocalEnvironmentSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state.host.name} localHostId={desktop.localHostId} connected={connected} projects={state.projects} initialProjectId={environmentProject?.hostId === hostId ? environmentProject.projectId : project?.id} onSelectProject={projectId => setEnvironmentProject({hostId,projectId})} onAddProject={() => void addProject(true)} onClose={() => setSettingsOpen(false)}/> : <section className="settings-page"><header className="settings-header"><h1>Environments</h1></header><p className="settings-unavailable" role="status">{loading ? "Connecting to the owning host…" : "This host does not support environment configuration. Update its host service to edit environments here."}</p></section> : settingsPage === "plugins" || settingsPage === "mcp" ? <NativeIntegrations onOpenSkillFile={openSkillFile} onTrySkill={trySkill} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} connected={connected} target={workspaceTarget} sessionIdle={Boolean(selected && selected.status === "idle" && !selected.archived)} page={settingsPage} onPageChange={page=>{setIntegrationSelection(undefined);setSettingsPage(page);}} onBrowse={tab=>{settingsOriginLabel.current=null;setPluginDirectoryTab(tab??"plugins");setIntegrationSelection(undefined);setAutomationsOpen(false);setPluginDirectoryOpen(true);setSettingsOpen(false);}} initialPluginId={integrationSelection?.hostId===hostId?integrationSelection.pluginId:undefined} initialMarketplace={integrationSelection?.hostId===hostId?integrationSelection.marketplace:undefined} onClose={() => setSettingsOpen(false)}/> : settingsPage === "appearance" ? <ThemeSettings backdropSupported={bridge.windowBackdropSupported === true} data={theme} preferences={preferences} fonts={localFonts} fontFaces={localFontFaces} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget}/> : settingsPage === "git" ? <GitSettings preferences={preferences} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : automationsOpen ? <AutomationsPage key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} hosts={hostGroups.map(group => group.hostState.host)} connected={connected} supported={state?.automations?.capability === AUTOMATIONS_CAPABILITY} projects={state?.projects ?? []} sessions={state?.sessions ?? []} models={state?.models ?? []} requests={automationRequests} cache={automationCache.current} views={automationViews.current} onSelectHost={owner => setRoute({ hostId: owner, sessionId: null })} onOpenChat={(id, owner) => navigate(id, owner)} onClose={() => { setAutomationsOpen(false); requestAnimationFrame(() => document.querySelector<HTMLElement>('.nav-action[aria-label="Scheduled"]')?.focus()); }}/> : pluginDirectoryOpen ? <NativePluginBrowser onOpenSkillFile={openSkillFile} onTrySkill={trySkill} restoreFocusLabel={settingsOriginLabel.current??undefined} initialTab={pluginDirectoryTab} onTabChange={setPluginDirectoryTab} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name??"Unavailable host"} target={workspaceTarget} connected={connected} onClose={()=>{setPluginDirectoryOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>('.nav-action[aria-label="Plugins"]')?.focus());}} onManage={pluginId=>{setIntegrationSelection({hostId,pluginId});setSettingsPage("plugins");openSettings();}} onMarketplace={name=>{setIntegrationSelection({hostId,marketplace:{name,add:name===undefined}});setSettingsPage("plugins");openSettings();}}/> : <>
+      {settingsOpen ? <>{settingsPage === "keyboard-shortcuts" ? <KeyboardShortcutsSettings data={commandKeymap} supportedCommandIds={supportedShortcutCommands} primaryNumberShortcutTarget={commandKeymap?.primaryNumberShortcutTarget} onChangePrimaryNumberShortcutTarget={commandKeymap ? target => commandKeymap.submit({ type: "number-target", target }) : undefined}/> : settingsPage === "connections" ? <ConnectionsSettings preferences={preferences} bridge={bridge} hosts={desktop.hosts} network={desktop.network} networkError={desktop.networkError} localHost={desktop.localHostId ? desktop.catalog.records.get(desktop.localHostId)?.state?.host : undefined} activeHostId={state?.host.id ?? route.hostId} onSelectHost={owner => navigate(null,owner,true)} onRefresh={() => desktop.refreshNetwork()}/> : settingsPage === "general" ? <GeneralSettings preferences={preferences} bridge={bridge}/> : settingsPage === "environments" ? state?.localEnvironments?.configuration ? <LocalEnvironmentSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state.host.name} localHostId={desktop.localHostId} connected={connected} projects={state.projects} initialProjectId={environmentProject?.hostId === hostId ? environmentProject.projectId : project?.id} onSelectProject={projectId => setEnvironmentProject({hostId,projectId})} onAddProject={() => void addProject(true)} onClose={() => setSettingsOpen(false)}/> : <section className="settings-page"><header className="settings-header"><h1>Environments</h1></header><p className="settings-unavailable" role="status">{loading ? "Connecting to the owning host…" : "This host does not support environment configuration. Update its host service to edit environments here."}</p></section> : settingsPage === "plugins" || settingsPage === "mcp" ? <NativeIntegrations onOpenSkillFile={openSkillFile} onTrySkill={trySkill} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} connected={connected} target={workspaceTarget} sessionIdle={Boolean(selected && selected.status === "idle" && !selected.archived)} page={settingsPage} onPageChange={page=>{setIntegrationSelection(undefined);setSettingsPage(page);}} onBrowse={tab=>{settingsOriginLabel.current=null;setPluginDirectoryTab(tab??"plugins");setIntegrationSelection(undefined);setAutomationsOpen(false);setPluginDirectoryOpen(true);setSettingsOpen(false);}} initialPluginId={integrationSelection?.hostId===hostId?integrationSelection.pluginId:undefined} initialMarketplace={integrationSelection?.hostId===hostId?integrationSelection.marketplace:undefined} onClose={() => setSettingsOpen(false)}/> : settingsPage === "appearance" ? <ThemeSettings backdropSupported={bridge.windowBackdropSupported === true} data={theme} preferences={preferences} fonts={localFonts} fontFaces={localFontFaces} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget}/> : settingsPage === "git" ? <GitSettings preferences={preferences} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : automationsOpen ? <AutomationsPage key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} hosts={hostGroups.map(group => group.hostState.host)} connected={connected} supported={state?.automations?.capability === AUTOMATIONS_CAPABILITY} projects={state?.projects ?? []} sessions={state?.sessions ?? []} models={state?.models ?? []} requests={automationRequests} cache={automationCache.current} views={automationViews.current} onSelectHost={owner => setRoute({ hostId: owner, sessionId: null })} onOpenChat={(id, owner) => navigate(id, owner)} onClose={() => { setAutomationsOpen(false); requestAnimationFrame(() => document.querySelector<HTMLElement>('.nav-action[aria-label="Scheduled"]')?.focus()); }}/> : pluginDirectoryOpen ? <NativePluginBrowser refreshKey={skillRefresh} onOpenSkillFile={openSkillFile} onTrySkill={trySkill} restoreFocusLabel={settingsOriginLabel.current??undefined} initialTab={pluginDirectoryTab} onTabChange={setPluginDirectoryTab} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name??"Unavailable host"} target={workspaceTarget} connected={connected} onClose={()=>{setPluginDirectoryOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>('.nav-action[aria-label="Plugins"]')?.focus());}} onManage={pluginId=>{setIntegrationSelection({hostId,pluginId});setSettingsPage("plugins");openSettings();}} onMarketplace={name=>{setIntegrationSelection({hostId,marketplace:{name,add:name===undefined}});setSettingsPage("plugins");openSettings();}}/> : <>
       <header className="main-header drag-region" onContextMenu={headerContextMenu}>
         {!sidebarOpen && <button className="icon-button no-drag" onClick={() => setSidebarOpen(true)} aria-label="Show sidebar"><Icon name="sidebar"/></button>}
         <div className="header-breadcrumb no-drag" title={project?.path} {...chatPaneDrag.handlers(mainChat)} onContextMenu={event=>void taskPlacementMenu(event,mainChat)}>{selected && <Icon name="folder"/>}{selectedId && <strong className="truncate">{selected?.title ?? (loading ? "Loading conversation…" : "Conversation unavailable")}</strong>}{!showUnifiedStrip && conversationActions}{selected && (selected.archived || selected.status !== "idle") && <span className={`status-label ${selected.status}`}>{selected.archived ? "Archived" : selected.status}</span>}</div>
@@ -1305,13 +1493,13 @@ export function App() {
             {wholeFileIssue && <p className="attachment-notice" role="status">{wholeFileIssue}</p>}
             <ComposerSelectedText attachments={draft.selectedTextAttachments} disabled={Boolean(selected?.archived)} onRemove={ids => { const remove = new Set(ids); drafts.update(draftId, { selectedTextAttachments: (drafts.get(draftId).draft.selectedTextAttachments ?? []).filter(item => !remove.has(item.id)) }); }} onFocusComposer={() => textarea.current?.focus()}/>
             {selectedTextIssue && <p className="attachment-notice" role="status">{selectedTextIssue}</p>}
-            <ComposerImages controller={imageComposer} attachments={draft.attachments} media={attachmentMedia} hostId={hostId} connected={connected} capabilities={state?.imageAttachments} disabled={Boolean(selected?.archived)}/>
+            <ComposerImages key={`${hostId}:${draftId}:${workspaceOwner ?? ""}`} commandRef={composerImages} controller={imageComposer} attachments={draft.attachments} media={attachmentMedia} hostId={hostId} connected={connected} capabilities={state?.imageAttachments} disabled={Boolean(selected?.archived)} />
             {imageIssue && <p className="attachment-notice" role="status">{imageIssue}</p>}
             {imagesStaging && <p className="attachment-notice" role="status">Finish adding or remove the pending images before sending.</p>}
             <label className="sr-only" htmlFor="prompt">Message</label>
             <span id="prompt-keyboard-hint" className="sr-only">{running
-              ? `${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to ${followUpQueueMode === "queue" ? "queue a follow-up" : "steer"}; ${sendBehavior === "mod-enter" ? "Command Shift Enter" : "Command Enter"} does the opposite for one message.`
-              : `${sendBehavior === "mod-enter" ? "Command Enter" : "Enter"} to send. Shift Enter for a new line.`}</span>
+              ? `${normalSendShortcut} to ${followUpQueueMode === "queue" ? "queue a follow-up" : "steer"}; ${oppositeSendShortcut} does the opposite for one message.`
+              : `${normalSendShortcut} to send. Shift Enter for a new line.`}</span>
             <ComposerEditor inputRef={textarea} scope={routeKey+':'+draftId} text={draft.text} files={draft.wholeFileAttachments}
               clipboardHostId={hostId} canPasteFiles={state?.wholeFiles?.inlineMentions?.commandVersion===8} allowRepeatedFiles={state?.wholeFiles?.inlineMentions?.repeatedSources?.commandVersion===9} onPasteError={error=>setActionError(error.message)}
               onOpenFile={source=>{try {
@@ -1325,18 +1513,19 @@ export function App() {
               ariaControls={autocomplete.inputProps['aria-controls']} ariaExpanded={autocomplete.inputProps['aria-expanded']} ariaActiveDescendant={autocomplete.inputProps['aria-activedescendant']}
               placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)}
               onKeyDown={event => { if (autocomplete.onKeyDown(event)) return;
-                const selectedDelivery = followUpQueueMode === "queue" ? "follow-up" : "steer";
-                const activeDelivery = running ? followUpDeliveryForEnter({ key: event.key, altKey: event.altKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey,
-                  shiftKey: event.shiftKey, keyCode: event.keyCode, isComposing: event.nativeEvent.isComposing || autocomplete.composing.current }, sendBehavior, selectedDelivery) : null;
-                const ordinary = !running && event.key === "Enter" && !event.shiftKey && (sendBehavior === "enter" || event.metaKey || event.ctrlKey)
-                  && !event.nativeEvent.isComposing && !autocomplete.composing.current && event.keyCode !== 229;
-                if (activeDelivery || ordinary) { event.preventDefault(); void submit(activeDelivery ?? undefined); } }}/>
+                installedShortcuts.current?.handleKey(event.nativeEvent);
+                if (event.defaultPrevented || event.nativeEvent.defaultPrevented) return;
+                const selectedDelivery = running ? followUpQueueMode === "queue" ? "follow-up" : "steer" : null;
+                const submission = submissionForEnter({ key: event.key, altKey: event.altKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey,
+                  shiftKey: event.shiftKey, keyCode: event.keyCode, isComposing: event.nativeEvent.isComposing || autocomplete.composing.current },
+                  effectiveSendMode(sendBehavior, drafts.get(draftId).draft.text), selectedDelivery);
+                if (submission !== null) { event.preventDefault(); void submit(submission === "send" ? undefined : submission); } }}/>
             {autocomplete.popup}
             <div className="composer-toolbar">
               <div className="composer-selections">
-                <ComposerSelections data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)}/>
+                <ComposerSelections key={`${hostId}:${draftId}:${workspaceOwner ?? ""}`} commandRef={composerSelections} data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)} />
               </div>
-              <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send (Enter)" : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
+              <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : `Send (${normalSendShortcut})` : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
             </div>
           </form>
           <div className="composer-footnote" aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : null}</div>
@@ -1352,7 +1541,7 @@ export function App() {
       <button role="checkbox" aria-checked={workspaceOpen} className={`icon-button ${workspaceOpen ? "active" : ""}`} aria-label="Toggle side panel" title={`${workspaceOpen ? "Hide" : "Show"} side panel (⌥⌘B)`} onClick={() => dock.toggle("right")}><Icon name={workspaceOpen ? "panelRightOpen" : "panelRight"}/></button>
     </div>}
     {(["right", "bottom"] as const).map(destination => <div className={`dock-slot dock-slot-${destination}`} key={destination} style={{display:!contentOverlayOpen && dock.snapshot.state[destination].open ? undefined : "none"}} inert={contentOverlayOpen || !dock.snapshot.state[destination].open || undefined}>
-      <DockPanel presentationIds={dock.presentations.instances} dragEnabled={!contentOverlayOpen} dragOwner={`${hostId}:${selectedId ?? "draft"}`} leadingTab={destination === "right" && showUnifiedStrip ? { id:mainChatTabId,panelId:mainChatPanelId,title:selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "Chat"),selected:taskStrip?.active.kind === "chat",shortcutHint:taskHints?.chat,onSelect:() => selectMainTask(mainChat,false),onContextMenu:event=>void taskPlacementMenu(event,mainChat) } : undefined}
+      <DockPanel commandRef={destination === "right" ? rightDockCommands : bottomDockCommands} presentationIds={dock.presentations.instances} dragEnabled={!contentOverlayOpen} dragOwner={`${hostId}:${selectedId ?? "draft"}`} leadingTab={destination === "right" && showUnifiedStrip ? { id:mainChatTabId,panelId:mainChatPanelId,title:selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "Chat"),selected:taskStrip?.active.kind === "chat",shortcutHint:taskHints?.chat,onSelect:() => selectMainTask(mainChat,false),onContextMenu:event=>void taskPlacementMenu(event,mainChat) } : undefined}
         shortcutHints={destination === "right" ? taskHints?.content : undefined}
         stripContainer={destination === "right" && showUnifiedStrip ? mainStripContainer : undefined}
         stripStart={destination === "right" && showUnifiedStrip && !sidebarOpen ? <button className="icon-button no-drag" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar"/></button> : undefined}

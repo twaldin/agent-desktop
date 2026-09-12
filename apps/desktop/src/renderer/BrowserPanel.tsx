@@ -12,6 +12,14 @@ import { browserAddressLabel, browserExternalAddress, browserNavigationAddress }
 import { framePoint } from "./browser-input";
 import "./browser-panel.css";
 
+type BrowserCommand = "reload-browser-page" | "navigate-browser-back" | "navigate-browser-forward";
+const browserCommands = new WeakMap<HTMLInputElement, () => Partial<Record<BrowserCommand, () => void>>>();
+
+/** The address input identifies one mounted preview; its controller retains all frame admission. */
+export function browserPanelCommands(input: HTMLInputElement): Partial<Record<BrowserCommand, () => void>> {
+  return browserCommands.get(input)?.() ?? {};
+}
+
 interface CommonProps {
   bridge: DesktopBridge;
   active: boolean;
@@ -382,6 +390,24 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       if (mounted.current) setPending(false);
     }
   };
+  useLayoutEffect(() => {
+    const input = addressInput.current;
+    if (!input) return;
+    const ready = () => input.isConnected && activeRef.current && !pausedRef.current && controlsReady
+      && !pendingRef.current && !haltedRef.current && source.current() && committedSource.current === source;
+    const run = (type: "reload" | "back" | "forward") => () => {
+      if (!ready()) return;
+      const navigation = contextRef.current?.navigation;
+      if (type === "back" && !navigation?.canGoBack || type === "forward" && !navigation?.canGoForward) return;
+      void control({ type });
+    };
+    browserCommands.set(input, () => !ready() ? {} : {
+      "reload-browser-page": run("reload"),
+      ...(frame?.context?.navigation?.canGoBack && { "navigate-browser-back": run("back") }),
+      ...(frame?.context?.navigation?.canGoForward && { "navigate-browser-forward": run("forward") }),
+    });
+    return () => { browserCommands.delete(input); };
+  });
 
   const fitControl = useRef(control); fitControl.current = control;
   useLayoutEffect(() => {

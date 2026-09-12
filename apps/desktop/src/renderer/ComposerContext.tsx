@@ -14,7 +14,7 @@ import { retainWorkspace } from "./workspace-lease";
 import "./composer-context.css";
 
 type Menu = "projects" | "hosts" | "environments" | "starting-state";
-export interface ComposerContextHandle { openProjects(anchor: HTMLButtonElement): void; }
+export interface ComposerContextHandle { openProjects(anchor?: HTMLButtonElement): void; canToggleWorktree: boolean; toggleWorktree(): void; }
 export const ComposerContext = forwardRef<ComposerContextHandle, {
   hostId: string; hostName: string; hosts: HostOption[]; projects: Project[]; projectId: string | null; connected: boolean; addingProject: boolean;
   workspace?: WorkspaceState; onProject(id: string | null): void; onHost(id: string): void; onAddProject(): void;
@@ -27,6 +27,7 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
   const [startingInventoryOwner, setStartingInventoryOwner] = useState<{ workspace: WorkspaceState; hostId: string; projectId: string | null }>();
   const [, redraw] = useReducer(value => value + 1, 0);
   const root = useRef<HTMLDivElement>(null), menu = useRef<HTMLDivElement>(null), anchor = useRef<HTMLButtonElement>(null), anchorAlign = useRef<"start" | "center">("start");
+  const projectTrigger = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState<CSSProperties>();
   const project = projects.find(item => item.id === projectId);
   const disabledGit = !connected || !workspace?.status || !workspace.restored || workspace.busy || Boolean(workspace.pending);
@@ -99,7 +100,14 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
     if ((value === "hosts" || value === "starting-state") && connected && workspace?.gitAvailability !== "not-repository") void workspace?.loadWorktrees();
     if (value === "environments" && connected && environmentAvailable) environments?.refresh();
   }
-  useImperativeHandle(ref, () => ({ openProjects(button) { toggle("projects", button, "center"); } }), [open]);
+  useImperativeHandle(ref, () => ({
+    canToggleWorktree: worktreeSelected || !worktreeDisabled,
+    openProjects(button = projectTrigger.current ?? undefined) { if (button?.isConnected) toggle("projects", button, "center"); },
+    toggleWorktree() {
+      if (worktreeSelected) onExecutionMode({ type: "local" });
+      else if (!worktreeDisabled && fallbackStartingState) onExecutionMode({ type: "worktree", startingState: fallbackStartingState });
+    },
+  }));
   function key(event:KeyboardEvent<HTMLDivElement>) {
     if (event.nativeEvent.isComposing) return;
     if (event.key === "Escape") { event.preventDefault(); close(); return; }
@@ -117,7 +125,7 @@ export const ComposerContext = forwardRef<ComposerContextHandle, {
   const selectedEnvironmentName = environment && environments?.items.find(item => item.type === "environment" && item.configPath === environment.configPath);
   const label = open === "projects" ? "Select project" : open === "hosts" ? "Select where to run the chat" : open === "environments" ? "Select a local environment" : "What branch should this chat start from?";
   return <div className="composer-context" ref={root}>
-    <button type="button" aria-label="Select project" aria-haspopup="menu" aria-expanded={open === "projects"} title={project?.path ?? "Choose a project on this host"} onClick={event => toggle("projects",event.currentTarget)}><Icon name="folder"/><span>{project?.name ?? (projectId ? "Unavailable project" : "No project")}</span></button>
+    <button ref={projectTrigger} type="button" aria-label="Select project" aria-haspopup="menu" aria-expanded={open === "projects"} title={project?.path ?? "Choose a project on this host"} onClick={event => toggle("projects",event.currentTarget)}><Icon name="folder"/><span>{project?.name ?? (projectId ? "Unavailable project" : "No project")}</span></button>
     <button type="button" aria-label="Select where to run the chat" aria-haspopup="menu" aria-expanded={open === "hosts"} title={`${worktreeSelected ? "New local worktree" : "Local"} · ${hostName}${connected ? "" : " · Offline"}`} onClick={event => toggle("hosts",event.currentTarget)}><Icon name={worktreeSelected ? "branch" : "laptop"}/><span>{worktreeSelected ? "New local worktree" : "Local"}</span>{!connected && <span className="context-offline">Offline</span>}</button>
     {worktreeSelected && project && environmentAvailable && <button type="button" aria-label="Select a local environment" aria-haspopup="menu" aria-expanded={open === "environments"} title="Select a local environment" onClick={event => toggle("environments",event.currentTarget)}><Icon name="folder"/><span>{environment ? selectedEnvironmentName?.type === "environment" ? selectedEnvironmentName.environment.name : "Environment unavailable" : "No environment"}</span></button>}
     {worktreeSelected && project && workspace?.gitAvailability !== "not-repository" && <button type="button" aria-label="What branch should this chat start from?" aria-haspopup="menu" aria-expanded={open === "starting-state"} disabled={disabledGit || !worktreesAvailable} title={disabledGit || !worktreesAvailable ? "Reconnect to the owning host and wait for Git status." : "What branch should this chat start from?"} onClick={event => toggle("starting-state",event.currentTarget)}><Icon name="branch"/><span>{startingStateLabel(execution.startingState, workspace?.status?.branch, startingInventory.snapshot)}</span></button>}

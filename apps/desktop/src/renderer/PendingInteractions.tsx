@@ -1,7 +1,17 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { DesktopBridge, InteractionAction, OmpInteraction, OmpInteractionResponse } from "../../../../packages/shared/src/protocol";
 import { InteractionsState } from "./interactions-state";
 import { Icon } from "./Icons";
+
+type ApprovalCommands = { "approval-approve": () => void; "approval-decline": () => void };
+const confirmationCommands = new WeakMap<HTMLFormElement, { hostId: string; sessionId: string; actions: ApprovalCommands }>();
+
+export function approvalCommands(root: HTMLElement, hostId: string, sessionId: string, origin: Element | null): ApprovalCommands | undefined {
+  const form = origin?.closest<HTMLFormElement>("form.interaction-card");
+  if (!form || !root.contains(form) || !form.isConnected || form.closest("[hidden], [inert]")) return;
+  const owner = confirmationCommands.get(form);
+  return owner?.hostId === hostId && owner.sessionId === sessionId ? owner.actions : undefined;
+}
 
 export function PendingInteractions({ bridge, hostId, sessionId, localHostId, connected }: { bridge: DesktopBridge; hostId: string; sessionId: string; localHostId?: string; connected: boolean }) {
   const data = useMemo(() => new InteractionsState(bridge, hostId, sessionId, localHostId), [bridge, hostId, sessionId, localHostId]);
@@ -19,14 +29,26 @@ export function PendingInteractions({ bridge, hostId, sessionId, localHostId, co
     {data.loadError && <div className="inline-error" role="alert"><span>Pending requests could not be refreshed: {data.loadError}</span><button disabled={!connected} onClick={() => void data.refresh()}>Retry</button></div>}
     {data.responseError && <div className="inline-error" role="alert"><span>{data.responseError}</span><button className="icon-button small" onClick={() => data.dismissResponseError()} aria-label="Dismiss response error"><Icon name="close"/></button></div>}
     {!connected && pending && <p className="subtle-notice">This host is disconnected. These are the last received requests; reconnect before answering.</p>}
-    {data.requests.map(request => <InteractionCard key={request.id} request={request} disabled={!connected || data.responding.has(request.id)} sending={data.responding.has(request.id)} respond={response => data.respond(request.id, response)}/>)}
+    {data.requests.map(request => <InteractionCard key={`${hostId}:${sessionId}:${request.id}`} hostId={hostId} request={request} disabled={!connected || data.responding.has(request.id)} sending={data.responding.has(request.id)} respond={response => data.respond(request.id, response)}/>)}
   </section>;
 }
 
-function InteractionCard({ request, disabled, sending, respond }: { request: OmpInteraction; disabled: boolean; sending: boolean; respond(response: OmpInteractionResponse): Promise<void> }) {
+function InteractionCard({ hostId, request, disabled, sending, respond }: { hostId: string; request: OmpInteraction; disabled: boolean; sending: boolean; respond(response: OmpInteractionResponse): Promise<void> }) {
   const [value, setValue] = useState(request.prefill ?? "");
   const [index, setIndex] = useState(Math.min(Math.max(request.initialIndex ?? 0, 0), Math.max(0, (request.options?.length ?? 1) - 1)));
   const [now, setNow] = useState(Date.now());
+  const form = useRef<HTMLFormElement>(null);
+  useLayoutEffect(() => {
+    const element = form.current;
+    if (!element || disabled || request.method !== "confirm") return;
+    const answer = (value: boolean) => {
+      if (!element.isConnected || element.closest("[hidden], [inert]") || confirmationCommands.get(element)?.actions !== actions) return;
+      void respond({ value });
+    };
+    const actions = { "approval-approve": () => answer(true), "approval-decline": () => answer(false) };
+    confirmationCommands.set(element, { hostId, sessionId: request.sessionId, actions });
+    return () => { confirmationCommands.delete(element); };
+  }, [hostId, request, disabled, respond]);
   useEffect(() => {
     if (request.expiresAt === undefined) return;
     const interval = setInterval(() => setNow(Date.now()), 1_000);
@@ -39,7 +61,7 @@ function InteractionCard({ request, disabled, sending, respond }: { request: Omp
     else void respond({ value });
   }
   const labels: Record<InteractionAction, string> = { left: "Previous", right: "Next", externalEditor: "Use external editor", timeoutReset: "Reset timer" };
-  return <form className={`interaction-card ${request.outline === false ? "without-outline" : ""}`} onSubmit={submit} aria-labelledby={titleId}>
+  return <form ref={form} className={`interaction-card ${request.outline === false ? "without-outline" : ""}`} onSubmit={submit} aria-labelledby={titleId}>
     <div className="interaction-heading"><strong id={titleId}>{request.title}</strong>{sending && <span className="spinner" aria-label="Sending response"/>}</div>
     {request.message && <p className="interaction-message">{request.message}</p>}
     {request.method === "select" && <div className="interaction-options" role="listbox" aria-label={request.title}>{request.options?.map((option, optionIndex) => {

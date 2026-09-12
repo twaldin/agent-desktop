@@ -5,6 +5,17 @@ import { Icon } from "./Icons";
 import type { WorkspaceState } from "./workspace-state";
 import "./environment-actions.css";
 
+type EnvironmentCommand = `environment-action-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
+const environmentCommands = new WeakMap<HTMLButtonElement, { workspace: WorkspaceState; read(): Partial<Record<EnvironmentCommand, () => void>> }>();
+
+export function environmentActionCommands(root: HTMLElement, workspace: WorkspaceState): Partial<Record<EnvironmentCommand, () => void>> {
+  for (const trigger of root.querySelectorAll<HTMLButtonElement>("[data-environment-action-owner]")) {
+    const owner = environmentCommands.get(trigger);
+    if (owner?.workspace === workspace && trigger.isConnected && !trigger.closest("[hidden], [inert]") && trigger.getClientRects().length) return owner.read();
+  }
+  return {};
+}
+
 export interface EnvironmentActionsProps {
   workspace: WorkspaceState;
   connected: boolean;
@@ -116,13 +127,31 @@ export function EnvironmentActions({ workspace, connected, onTerminal, onSetting
     closeMenu();
     void workspace.mutate({ type: "environment.action", configPath: state.selectedConfigPath, configRevision: state.configRevision, selectionRevision: state.selectionRevision, actionIndex: action.index });
   }
+  useLayoutEffect(() => {
+    const button = trigger.current;
+    if (!button || mutationsDisabled || !state?.selectedConfigPath || !state.configRevision) return;
+    const owner = { workspace, read() {
+      const commands: Partial<Record<EnvironmentCommand, () => void>> = {};
+      const names = ["environment-action-1", "environment-action-2", "environment-action-3", "environment-action-4", "environment-action-5", "environment-action-6", "environment-action-7", "environment-action-8", "environment-action-9"] as const;
+      names.forEach((name, slot) => {
+        const action = state.actions[slot];
+        if (action) commands[name] = () => {
+          if (environmentCommands.get(button) !== owner || !button.isConnected || button.closest("[hidden], [inert]") || workspace.busy || workspace.pending || !workspace.connected) return;
+          runAction(action);
+        };
+      });
+      return commands;
+    } };
+    environmentCommands.set(button, owner);
+    return () => { environmentCommands.delete(button); };
+  });
 
   const status = !state ? workspace.loading.has("environment-actions") ? "Loading actions…" : "Actions unavailable"
     : !state.available ? "Update the owning host to use environment actions."
       : !connected ? "Offline · saved actions" : undefined;
 
   return <div className="environment-actions">
-    <button ref={trigger} className={`icon-button small environment-actions-trigger${open ? " active" : ""}`} type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={open} title="Actions" onClick={openMenu}><Icon name="more"/></button>
+    <button ref={trigger} data-environment-action-owner="" className={`icon-button small environment-actions-trigger${open ? " active" : ""}`} type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={open} title="Actions" onClick={openMenu}><Icon name="more"/></button>
     {primary && state?.selectedConfigPath && <button className="environment-action-primary" type="button" aria-label={`Run: ${primary.name}`} title={primary.name} disabled={mutationsDisabled} onClick={() => runAction(primary)}><ActionIcon icon={primary.icon}/></button>}
     {open && position && createPortal(<>
       <button className="environment-actions-dismiss" type="button" aria-label="Close actions menu" tabIndex={-1} onPointerDown={event => event.preventDefault()} onClick={() => closeMenu(false)}/>

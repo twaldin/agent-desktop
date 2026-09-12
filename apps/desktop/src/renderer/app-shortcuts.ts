@@ -1,7 +1,8 @@
 import { KeyboardAcceleratorMatcher } from "./keyboard-accelerators";
+import type { APP_COMMAND_BINDING_OWNERS } from "./app-command-bindings";
 export type NumberedChatShortcut = `thread-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 export type NumberedTaskShortcut = `task-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
-export type AppShortcut = "step-workspace-layout" | "next-task-tab" | "previous-task-tab" | NumberedTaskShortcut | NumberedChatShortcut | "new-chat" | "search" | "search-chats" | "open-folder" | "sidebar" | "settings" | "keyboard-shortcuts" | "files" | "side-chat" | "browser" | "browser-address" | "terminal" | "review" | "toggle-side-panel";
+export type AppShortcut = (typeof APP_COMMAND_BINDING_OWNERS)[keyof typeof APP_COMMAND_BINDING_OWNERS];
 export type AppShortcutPlatform = "mac" | "other";
 type ShortcutKey = Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "repeat" | "isComposing" | "keyCode" | "defaultPrevented" | "getModifierState">;
 
@@ -43,6 +44,8 @@ export interface AppShortcutOptions {
   composer?: () => HTMLElement | null;
   /** Narrow local input owners, already gated by the current focused surface. */
   inputActions?: readonly AppShortcut[];
+  /** Commands supplied by the currently focused embedded editor or interaction owner. */
+  ownedSurfaceActions?: readonly AppShortcut[];
   /** Explicit React-owned transient state, including menus not yet committed to the DOM. */
   blocked?: () => boolean;
   platform?: AppShortcutPlatform;
@@ -97,12 +100,15 @@ export function installAppShortcuts(window: Window, options: AppShortcutOptions 
     if (visiblePopup(window.document)) { sequences.reset(); return; }
     const composer = options.composer?.();
     const focused = focusedElements(event, window.document);
-    if (focused.some(value => value.closest(ownedSurface) || value.closest('[data-codex-shortcut-capture]'))) { sequences.reset(); return; }
+    if (focused.some(value => value.closest('[data-codex-shortcut-capture]'))) { sequences.reset(); return; }
+    const surfaceOwned = focused.some(value => value.closest(ownedSurface));
     const inputOwned = focused.some(value => ownsInput(value, composer));
     // The Files filter belongs to file search, not an independent editor.
     const fileSearchInput = inputOwned && focused.some(value => value.closest(".workspace-file-tree-filter")?.closest(".workspace-file-browser"));
-    const eligible = (command: AppShortcut) => Boolean(options.actions[command]) && (!inputOwned || options.inputActions?.includes(command) || (command === "files" && fileSearchInput));
-    if (inputOwned && !Object.keys(options.actions).some(command => eligible(command as AppShortcut))) { sequences.reset(); return; }
+    const eligible = (command: AppShortcut) => Boolean(options.actions[command]) && (surfaceOwned
+      ? options.ownedSurfaceActions?.includes(command)
+      : !inputOwned || options.inputActions?.includes(command) || (command === "files" && fileSearchInput));
+    if ((surfaceOwned || inputOwned) && !Object.keys(options.actions).some(command => eligible(command as AppShortcut))) { sequences.reset(); return; }
     if (options.bindings !== undefined) {
       const active = (Object.keys(options.actions) as AppShortcut[]).filter(eligible)
         .map(command => ({ command, keys: options.bindings![command] ?? [], allowsKeyRepeat: command === "next-task-tab" || command === "previous-task-tab" }));

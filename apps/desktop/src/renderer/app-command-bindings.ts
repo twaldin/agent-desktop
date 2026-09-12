@@ -19,7 +19,39 @@ export const APP_COMMAND_BINDING_OWNERS = {
   stepWorkspaceLayout: "step-workspace-layout",
   keyboardShortcuts: "keyboard-shortcuts",
   openCommandMenu: "search", searchChats: "search-chats", openFolder: "open-folder",
-} as const satisfies Record<string, AppShortcut>;
+  copyConversationPath: "copy-conversation-path", copyWorkingDirectory: "copy-working-directory",
+  renameThread: "rename-thread", archiveThread: "archive-thread",
+  markThreadUnread: "mark-thread-unread", toggleThreadPin: "toggle-thread-pin",
+  "composer.openModelPicker": "composer-open-model-picker",
+  "composer.openProjectPicker": "composer-open-project-picker",
+  "composer.submit": "composer-submit", "composer.steer": "composer-steer", "composer.queue": "composer-queue",
+  "composer.clear": "composer-clear", "composer.addPhotos": "composer-add-photos",
+  "composer.increaseReasoningEffort": "composer-increase-reasoning-effort",
+  "composer.decreaseReasoningEffort": "composer-decrease-reasoning-effort",
+  "composer.cycleReasoningEffort": "composer-cycle-reasoning-effort",
+  "composer.toggleWorktreeMode": "composer-toggle-worktree-mode",
+  "git.commit": "git-commit", focusMainChat: "focus-main-chat",
+  previousThread: "previous-thread", nextThread: "next-thread",
+  nextThreadNeedingAttention: "next-thread-needing-attention",
+  recentThread1: "recent-thread-1", recentThread2: "recent-thread-2", recentThread3: "recent-thread-3",
+  recentThread4: "recent-thread-4", recentThread5: "recent-thread-5", recentThread6: "recent-thread-6",
+  mcpSettings: "mcp-settings", openSkills: "open-skills", forceReloadSkills: "force-reload-skills",
+  toggleBottomPanel: "toggle-bottom-panel", toggleMaximizeSidePanel: "toggle-maximize-side-panel",
+  newProjectlessTask: "new-projectless-task",
+  reloadBrowserPage: "reload-browser-page", navigateBrowserBack: "navigate-browser-back",
+  navigateBrowserForward: "navigate-browser-forward",
+  "approval.approve": "approval-approve", "approval.decline": "approval-decline",
+  goToLine: "go-to-line", closeTab: "close-tab",
+  toggleFileTreePanel: "toggle-file-tree-panel", toggleReviewTab: "toggle-review-tab",
+  "git.createBranch": "git-create-branch",
+  environmentAction1: "environment-action-1", environmentAction2: "environment-action-2",
+  environmentAction3: "environment-action-3", environmentAction4: "environment-action-4",
+  environmentAction5: "environment-action-5", environmentAction6: "environment-action-6",
+  environmentAction7: "environment-action-7", environmentAction8: "environment-action-8",
+  environmentAction9: "environment-action-9",
+  focusSideChat: "focus-side-chat",
+  manageTasks: "manage-tasks",
+} as const;
 
 export function appCommandShortcutLabel(bindings: Partial<Record<AppShortcut, readonly string[]>>, owner: AppShortcut): string | undefined {
   const key = bindings[owner]?.[0];
@@ -36,8 +68,9 @@ export function readAppCommandBindings(record: CommandKeymapPreferenceRecord | u
   if (!loaded) return { bindings, unsupportedCommandIds: [] as readonly string[], error: undefined as string | undefined };
   try {
     const resolved = resolveEffectiveApplicationBindings(record && !record.deleted ? record.value : undefined, { primaryNumberShortcutTarget: target });
-    for (const [command, owner] of Object.entries(APP_COMMAND_BINDING_OWNERS)) {
-      bindings[owner] = resolved.bindings.find(binding => binding.command === command)?.keys ?? [];
+    for (const binding of resolved.bindings) {
+      const owner = APP_COMMAND_BINDING_OWNERS[binding.command as keyof typeof APP_COMMAND_BINDING_OWNERS];
+      if (owner) bindings[owner] = binding.keys;
     }
     return { bindings, unsupportedCommandIds: resolved.unsupportedOverrideCommandIds, error: undefined };
   } catch (cause) {

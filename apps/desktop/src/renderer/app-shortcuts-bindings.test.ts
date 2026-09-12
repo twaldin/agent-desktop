@@ -137,3 +137,28 @@ test("focused and shadow editors keep input; composer allows modified singles bu
   expect(input.key("j", { composedPath: () => [captureComposer] })).toBe(false);
   expect(calls).toBe(1); dispose();
 });
+
+test("owned editors admit only their explicit scoped commands and capture revokes admission", () => {
+  const input = inputOwner(); let local = 0, unrelated = 0, captured = false;
+  const editor = { nodeType: 1, isContentEditable: true,
+    closest: (selector: string) => selector.includes(".editor-content") || (captured && selector.includes("[data-codex-shortcut-capture]")) ? editor : null } as unknown as HTMLElement;
+  let options: AppShortcutOptions = {
+    bindings: { review: ["Command+R"], settings: ["Command+,"] },
+    actions: { review: () => local++, settings: () => unrelated++ },
+    ownedSurfaceActions: ["review"],
+  };
+  const dispose = installAppShortcuts(input.window, () => options);
+  const press = (value: string) => input.key(value, { composedPath: () => [editor] });
+  try {
+    expect(press("r")).toBe(true);
+    expect(local).toBe(1);
+    expect(press(",")).toBe(false);
+    expect(unrelated).toBe(0);
+    options = { ...options, ownedSurfaceActions: [] };
+    expect(press("r")).toBe(false);
+    options = { ...options, ownedSurfaceActions: ["review"] };
+    captured = true;
+    expect(press("r")).toBe(false);
+    expect(local).toBe(1);
+  } finally { dispose(); }
+});

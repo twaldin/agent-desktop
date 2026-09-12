@@ -1,16 +1,23 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icons";
 import { filterModelOptions, nextModelOption, type ModelPickerOption } from "./model-picker";
 import "./composer-selection-popup.css";
 
-export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset }: {
+export interface ComposerSelectionPopupHandle { openModels(): void }
+
+export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset, commandRef }: {
   modelValue: string; modelLabel: string; modelTitle: string; models: ModelPickerOption[]; levels: string[]; effort?: string; effectiveEffort?: string; defaultEffortLabel: string; disabled: boolean;
   onModel(value: string): void; onEffort(value?: string): void; onReset(): void;
+  commandRef?: Ref<ComposerSelectionPopupHandle>;
 }) {
   const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null), scrollFrame = useRef<number | undefined>(undefined);
   const [open, setOpen] = useState<"main" | "models" | "effort">(), [query, setQuery] = useState("");
   const [position, setPosition] = useState<CSSProperties>();
+  useImperativeHandle(commandRef, () => ({ openModels() {
+    if (disabled || !trigger.current?.isConnected) return;
+    setQuery(""); setOpen("models");
+  } }), [disabled]);
   useLayoutEffect(() => {
     if (!open || !trigger.current) return;
     const anchor = trigger.current;

@@ -12,6 +12,7 @@ import { authoredOffset, composerDocument, composerSchema, documentPosition, rea
 import 'prosemirror-view/style/prosemirror.css';
 import './composer-editor.css';
 import { parseComposerClipboard, composerClipboardText } from './composer-clipboard';
+import { ComposerCompositionGuard } from './composer-composition';
 
 /** Small shared interface used by both the rich main composer and textarea-only surfaces. */
 export interface ComposerInput {focus():void;readonly selectionStart:number;readonly selectionEnd:number;setSelectionRange(start:number,end:number):void;closest(selector:string):Element|null;getCaretRect?(offset:number):{left:number;top:number;bottom:number}}
@@ -27,9 +28,11 @@ interface Props {
 }
 export function ComposerEditor(props:Props){
  const mount=useRef<HTMLDivElement>(null),viewRef=useRef<EditorView|null>(null),lastPropDocument=useRef<ProseMirrorNode|null>(null),latest=useRef(props);latest.current=props;
+ const compositionGuard=useRef<ComposerCompositionGuard|null>(null);
  const activateFile=(id:string)=>{const view=viewRef.current;if(!view)return;const file=readComposerDocument(view.state.doc).files.find(file=>file.id===id);if(file)latest.current.onOpenFile?.(file.source);};
  useLayoutEffect(()=>{
   const roots=new Set<Root>();let view:EditorView;
+  const keyGuard=new ComposerCompositionGuard();compositionGuard.current=keyGuard;
   const newline=(state:EditorState,dispatch?:EditorView['dispatch'])=>{dispatch?.(state.tr.replaceSelectionWith(composerSchema.nodes.hard_break!.create()).scrollIntoView());return true;};
   view=new EditorView(mount.current!,{
    state:EditorState.create({doc:composerDocument(latest.current.text,latest.current.files),plugins:[history(),keymap({'Mod-z':undo,'Shift-Mod-z':redo,'Mod-y':redo,Enter:newline,'Shift-Enter':newline}),keymap(baseKeymap)]}),
@@ -44,7 +47,7 @@ export function ComposerEditor(props:Props){
     return{dom,selectNode:()=>dom.classList.add('ProseMirror-selectednode'),deselectNode:()=>dom.classList.remove('ProseMirror-selectednode'),destroy:()=>{roots.delete(root);queueMicrotask(()=>root.unmount());}};
    }},
    dispatchTransaction:transaction=>{const state=view.state.apply(transaction);view.updateState(state);if(transaction.docChanged)latest.current.onChange(readComposerDocument(state.doc));if(transaction.selectionSet||transaction.docChanged)latest.current.onSelection?.();},
-   handleDOMEvents:{drop:(_editor,event)=>{if(!event.dataTransfer?.files.length)return false;event.preventDefault();return true;},focus:()=>{latest.current.onFocus?.();return false;},blur:()=>{latest.current.onBlur?.();return false;},compositionstart:()=>{latest.current.onCompositionStart?.();return false;},compositionend:()=>{latest.current.onCompositionEnd?.();return false;}},
+   handleDOMEvents:{drop:(_editor,event)=>{if(!event.dataTransfer?.files.length)return false;event.preventDefault();return true;},focus:()=>{latest.current.onFocus?.();return false;},blur:()=>{keyGuard.reset();latest.current.onBlur?.();return false;},compositionstart:()=>{keyGuard.reset();latest.current.onCompositionStart?.();return false;},compositionend:()=>{latest.current.onCompositionEnd?.();return false;}},
    handlePaste:(editor,event)=>{
     if(!event.clipboardData)return false;if(event.clipboardData.files.length){event.preventDefault();return true;}event.preventDefault();
     try {
@@ -67,7 +70,7 @@ export function ComposerEditor(props:Props){
    if(existing&&!latest.current.allowRepeatedFiles){if(range)tr.deleteSelection();}else tr.replaceSelectionWith(composerSchema.nodes.file!.create({id:file.id,hostId:file.source.hostId,path:file.source.path}));
    view.dispatch(tr.scrollIntoView());view.dispatch(closeHistory(view.state.tr));view.focus();
   }};
-  return()=>{props.inputRef.current=null;viewRef.current=null;view.destroy();for(const root of roots)queueMicrotask(()=>root.unmount());roots.clear();};
+  return()=>{props.inputRef.current=null;viewRef.current=null;compositionGuard.current=null;view.destroy();for(const root of roots)queueMicrotask(()=>root.unmount());roots.clear();};
  },[props.scope]);
  useLayoutEffect(()=>{
   const view=viewRef.current;if(!view)return;const desired=composerDocument(props.text,props.files);
@@ -81,5 +84,10 @@ export function ComposerEditor(props:Props){
   view.setProps({editable:()=>!props.disabled,attributes:{id:'prompt',role:'textbox','aria-label':'Prompt','aria-multiline':'true','aria-describedby':'prompt-keyboard-hint','aria-disabled':String(Boolean(props.disabled)),'aria-autocomplete':'list','aria-controls':props.ariaControls??'','aria-expanded':String(Boolean(props.ariaExpanded)),'aria-activedescendant':props.ariaActiveDescendant??'',spellcheck:'true',class:'composer-rich-input','data-placeholder':props.placeholder,'data-empty':String(!props.text&&!props.files?.length)}});
  // A new scope replaces EditorView even when its draft and controls are identical.
  },[props.scope,props.text,props.files,props.disabled,props.placeholder,props.ariaControls,props.ariaExpanded,props.ariaActiveDescendant]);
- return <div className="composer-editor" ref={mount} onKeyDownCapture={props.onKeyDown}/>;
+ return <div className="composer-editor" ref={mount} onKeyDownCapture={event=>{
+  const disposition=compositionGuard.current?.classify(event.nativeEvent,viewRef.current?.composing);
+  if(disposition==='replay'){event.preventDefault();event.stopPropagation();return;}
+  if(disposition==='composition')return;
+  props.onKeyDown?.(event);
+ }}/>;
 }
