@@ -33,6 +33,8 @@ Object.assign(window, {
   },
   sidebarExploreState() {
     return { documentId, active: document.activeElement?.getAttribute("aria-label"), body: document.body.innerText,
+      activeElement: document.activeElement instanceof HTMLElement ? { tag: document.activeElement.tagName, className: document.activeElement.className, focusVisible: document.activeElement.matches(":focus-visible") } : null,
+      projectActions: [...document.querySelectorAll<HTMLElement>(".project-row")].map(row => ({ hovered: row.matches(":hover"), focusWithin: row.matches(":focus-within"), focusVisible: !!row.querySelector(":focus-visible"), menuOpen: !!row.querySelector('.icon-button[aria-expanded="true"]'), newChatOpacity: getComputedStyle(row.querySelector(".project-new")!).opacity, markerOpacity: getComputedStyle(row.querySelector(".project-marker")!).opacity })),
       navigation: [...document.querySelectorAll('.sidebar-navigation .nav-action')].map(node => node.textContent?.trim()),
       rows: [...document.querySelectorAll('[data-sidebar-destination]')].map(node => node.getAttribute('data-sidebar-destination')),
       geometry: [...document.querySelectorAll('.sidebar, .sidebar-navigation .nav-action, .organized-session.selected')].map(node => ({ className: node.className, text: node.textContent?.trim().slice(0,80), rect: node.getBoundingClientRect().toJSON() })),

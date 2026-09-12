@@ -32,6 +32,7 @@ const sourcePaths = [
   "apps/desktop/src/renderer/sidebar-activity.ts",
   "apps/desktop/src/renderer/OrganizedSidebar.tsx",
   "apps/desktop/src/renderer/organized-sidebar.css",
+  "apps/desktop/src/renderer/styles.css",
   "packages/shared/src/sidebar-navigation.ts",
   "packages/shared/src/preferences.ts",
   "apps/desktop/src/renderer/preferences-state.ts",
