@@ -25,6 +25,10 @@ window.agentDesktopWindow = {
   },
 };
 const bridge: Partial<DesktopBridge> = {
+  pullRequestWrites: {
+    submit: (hostId, input) => api.call("pullRequestWrite", [hostId, "submit", input]),
+    status: (hostId, input) => api.call("pullRequestWrite", [hostId, "status", input]),
+  },
   pullRequests: {
     read: (hostId, input) => api.call("pullRequests", [hostId, input]),
   },

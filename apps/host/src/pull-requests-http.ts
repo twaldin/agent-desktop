@@ -70,7 +70,8 @@ export class PullRequestsHttp {
     request: Request,
     url = new URL(request.url),
   ): Promise<Response | undefined> {
-    if (url.pathname !== "/v1/pull-requests") return undefined;
+    const write = url.pathname === "/v1/pull-requests/submit", status = url.pathname === "/v1/pull-requests/submission-status";
+    if (url.pathname !== "/v1/pull-requests" && !write && !status) return undefined;
     if (request.headers.get(PULL_REQUESTS_HOST_HEADER) !== this.hostId)
       return Response.json(
         {
@@ -80,6 +81,11 @@ export class PullRequestsHttp {
         { status: 409, headers: this.headers() },
       );
     try {
+      if (write || status) {
+        if (request.method !== "POST") throw new PullRequestReadError("METHOD_NOT_ALLOWED", "Use POST for pull request submissions.");
+        const input = await body(request);
+        return Response.json(write ? await this.pullRequests.submit(input, request.signal) : this.pullRequests.status(input), { headers: this.headers() });
+      }
       const input =
         request.method === "GET"
           ? parsePullRequestReadRequest({

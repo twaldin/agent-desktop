@@ -1,3 +1,5 @@
+import { requestPullRequestWrite } from "../../../apps/desktop/src/main/pull-request-write-transport";
+import { runPullRequestWriteFlow } from "./write-flow";
 import { app, BrowserWindow, Menu, ipcMain } from "electron";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -109,6 +111,11 @@ async function run() {
           });
         case "getComposerCompletions":
           return http("/v1/composer/completions", args[0]);
+        case "pullRequestWrite": {
+          if (args[0] !== connection.hostId) throw new Error("Foreign pull request host.");
+          if (args[1] === "submit" && !store.bootstrap().state?.pullRequestComposers?.some(entry => JSON.stringify(entry.request) === JSON.stringify(args[2]))) throw new Error("Submission was not saved before dispatch.");
+          return requestPullRequestWrite(connection, args[1], args[2]);
+        }
         case "pullRequests":
           if (args[0] !== connection.hostId)
             throw new Error("Foreign pull request host.");
@@ -249,6 +256,7 @@ async function run() {
     );
     checkpoints.push("reopen-retains-selection");
     await capture("02-reopened");
+    if (process.argv.includes("--writes")) await runPullRequestWriteFlow({ window, fixture, evaluate, wait, click, capture, checkpoints });
     if (errors.length)
       throw new Error("Renderer errors: " + JSON.stringify(errors));
     passed = true;

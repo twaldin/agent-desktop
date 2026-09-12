@@ -1,7 +1,12 @@
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { appendFile } from "node:fs/promises";
 
 const log = process.env.AGENT_DESKTOP_FAKE_GH_LOG;
 if (!log) throw new Error("Missing controlled GitHub CLI log path.");
+const controlPath = join(dirname(log), "gh-write-control.json"), writtenPath = join(dirname(log), "gh-written.jsonl");
+const control = existsSync(controlPath) ? JSON.parse(readFileSync(controlPath, "utf8")) : {};
+const written = existsSync(writtenPath) ? readFileSync(writtenPath, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 const args = process.argv.slice(2);
 const input = await new Response(Bun.stdin.stream()).text();
 await appendFile(
@@ -18,7 +23,7 @@ await appendFile(
   }) + "\n",
 );
 const now = "2026-09-12T12:00:00Z";
-const head = "b".repeat(40),
+const head = control.head ?? "b".repeat(40),
   base = "a".repeat(40);
 const pullRequest = {
   id: "PR_NATIVE_17",
@@ -90,8 +95,9 @@ else if (args[0] === "api" && args[1] === "graphql") {
                 url: null,
                 author: { login: "reviewer", avatarUrl: null },
               },
+              ...written.filter(item => !item.event).map(item => ({ id: `C_${item.id}`, body: item.body, createdAt: now, url: `https://github.com/example/parity/pull/17#issuecomment-${item.id}`, author: { login: "octocat", avatarUrl: null } })),
             ]),
-            reviews: connection([]),
+            reviews: connection(written.filter(item => item.event).map(item => ({ id: `R_${item.id}`, body: item.body, state: item.event === "APPROVE" ? "APPROVED" : item.event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED", submittedAt: now, createdAt: now, url: `https://github.com/example/parity/pull/17#pullrequestreview-${item.id}`, author: { login: "octocat", avatarUrl: null } }))),
             reviewThreads: connection([]),
             commits: {
               nodes: [
@@ -132,6 +138,12 @@ else if (args[0] === "api" && args[1] === "graphql") {
         },
       },
     };
+} else if (args[0] === "api" && ["repos/example/parity/issues/17/comments", "repos/example/parity/pulls/17/reviews"].includes(args[1] ?? "")) {
+  const body = JSON.parse(input), id = 100 + written.length;
+  await appendFile(writtenPath, JSON.stringify({ ...body, id }) + "\n");
+  value = control.malformed ? { error: "Controlled ambiguous response" } : { id, user: { login: "octocat" }, body: body.body,
+    html_url: `https://github.com/example/parity/pull/17#${body.event ? "pullrequestreview" : "issuecomment"}-${id}`,
+    commit_id: body.commit_id, state: body.event === "APPROVE" ? "APPROVED" : body.event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED" };
 } else if (args[0] === "api" && args[1]?.includes("/pulls/17/files"))
   value = [
     {

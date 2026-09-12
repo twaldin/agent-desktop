@@ -1,3 +1,6 @@
+import { parsePullRequestWriteRequest, parsePullRequestWriteReceipt,
+  type PullRequestWriteRequest, type PullRequestWriteReceipt } from "../../../packages/shared/src/pull-request-write";
+import type { PullRequestWriteRecords } from "./pull-request-write-records";
 import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
@@ -229,6 +232,7 @@ export interface PullRequestsOptions {
   ghPath?: string;
   runner?: GhRunner;
   env?: NodeJS.ProcessEnv;
+  writes?: PullRequestWriteRecords;
 }
 export class PullRequests {
   readonly #hostId: string;
@@ -241,8 +245,13 @@ export class PullRequests {
   #pathIdentity: string | null = null;
   #stopping = false;
   readonly #pending = new Map<AbortController, Promise<void>>();
+  readonly #writes?: PullRequestWriteRecords;
+  readonly #submissions = new Map<string, Promise<PullRequestWriteReceipt>>();
+  readonly #writeTails = new Map<string, Promise<void>>();
+  readonly #writeFailures: unknown[] = [];
   constructor(options: PullRequestsOptions) {
     this.#hostId = options.hostId;
+    this.#writes = options.writes;
     this.#runner = options.runner ?? runGh;
     this.#configuredPath = options.ghPath;
     this.#baseEnv = options.env ?? process.env;
@@ -289,6 +298,79 @@ export class PullRequests {
       );
     await Promise.all(pending.map(([, settled]) => settled));
     this.#accounts = [];
+    if (this.#writeFailures.length) throw new AggregateError(this.#writeFailures, "Pull request submission results could not be saved.");
+  }
+  status(raw: unknown): PullRequestWriteReceipt | null {
+    const request = parsePullRequestWriteRequest(raw), records = this.#writeRecords();
+    const record = records.get(request);
+    return record ? record.receipt ?? records.unresolved(request, this.#submissions.has(request.requestId)) : null;
+  }
+  #writeRecords() {
+    if (!this.#writes) throw new PullRequestReadError("UNAVAILABLE", "This host cannot submit pull requests.");
+    return this.#writes;
+  }
+  async submit(raw: unknown, signal?: AbortSignal): Promise<PullRequestWriteReceipt> {
+    const request = parsePullRequestWriteRequest(raw), records = this.#writeRecords();
+    if (this.#stopping) throw new PullRequestReadError("STOPPING", "The host is stopping.");
+    if (signal?.aborted) throw signal.reason;
+    const prior = records.get(request);
+    if (prior) return parsePullRequestWriteReceipt(await (this.#submissions.get(request.requestId) ?? prior.receipt ?? records.unresolved(request, false)), this.#hostId, request);
+    if (this.#submissions.size >= 16) throw new PullRequestReadError("BUSY", "Wait for pending GitHub submissions to finish.");
+    const claimed = records.claim(request);
+    if (!claimed.fresh) return claimed.record.receipt ?? records.unresolved(request, false);
+    // The durable reservation owns the call after admission, including after the requesting socket closes.
+    const controller = new AbortController();
+    const target = JSON.stringify([request.accountId, request.pullRequest.hostname.toLowerCase(), request.pullRequest.owner.toLowerCase(), request.pullRequest.repository.toLowerCase(), request.pullRequest.number]);
+    const previous = this.#writeTails.get(target);
+    const operation = Promise.resolve().then(async () => {
+      await previous;
+      let dispatched = false;
+      let receipt: PullRequestWriteReceipt;
+      try {
+        controller.signal.throwIfAborted();
+        await this.#availability(true, controller.signal);
+        const credential = await this.#credential(request.accountId, controller.signal);
+        const pr = request.pullRequest;
+        if (credential.account.hostname.toLowerCase() !== pr.hostname.toLowerCase())
+          throw new PullRequestReadError("ACCOUNT_CHANGED", "The selected GitHub account does not own this hostname.");
+        if (request.action !== "comment") {
+        const head = await this.#api(credential, { query: HEAD_QUERY, owner: pr.owner, repo: pr.repository, number: pr.number }, controller.signal);
+        const data = record(head.data);
+        if (text(record(data.viewer).login).toLowerCase() !== credential.account.login.toLowerCase())
+          throw new PullRequestReadError("ACCOUNT_CHANGED", "The selected GitHub account changed.");
+        if (text(record(record(data.repository).pullRequest).headRefOid) !== request.expectedHeadOid)
+          throw new PullRequestReadError("HEAD_CHANGED", "The pull request changed. Refresh and review it before submitting.");
+        }
+        const event = request.action === "approve" ? "APPROVE" : request.action === "request_changes" ? "REQUEST_CHANGES" : "COMMENT";
+        const payload = request.action === "comment" ? { body: request.body } : { body: request.body, event, commit_id: request.expectedHeadOid };
+        const endpoint = `repos/${pr.owner}/${pr.repository}/${request.action === "comment" ? "issues" : "pulls"}/${pr.number}/${request.action === "comment" ? "comments" : "reviews"}`;
+        controller.signal.throwIfAborted();
+        dispatched = true;
+        const result = await this.#api(credential, payload, controller.signal, endpoint, 512 * 1024);
+        const expectedState = event === "APPROVE" ? "APPROVED" : event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED";
+        if (!Number.isSafeInteger(result.id) || Number(result.id) <= 0 ||
+          text(record(result.user).login).toLowerCase() !== credential.account.login.toLowerCase() ||
+          (request.action !== "comment" && (result.commit_id !== request.expectedHeadOid || result.state !== expectedState)))
+          throw new Error("GitHub did not return an exact submission confirmation.");
+        receipt = parsePullRequestWriteReceipt({ hostId: this.#hostId, request, outcome: "succeeded", message: "Submitted to GitHub.", url: result.html_url }, this.#hostId, request);
+      } catch (error) {
+        receipt = { hostId: this.#hostId, request, outcome: dispatched ? "unknown" : "failed", url: null,
+          message: dispatched ? "GitHub may have received this submission. Inspect the original pull request before starting another attempt."
+            : error instanceof PullRequestReadError ? error.message : "The submission stopped before contacting GitHub. Your text is preserved." };
+      }
+      try { return records.finish(request, receipt); }
+      catch (error) { this.#writeFailures.push(error); throw error; }
+    });
+    const settled = operation.then(() => {}, () => {});
+    this.#submissions.set(request.requestId, operation);
+    this.#writeTails.set(target, settled);
+    this.#pending.set(controller, settled);
+    try { return parsePullRequestWriteReceipt(await operation, this.#hostId, request); }
+    finally {
+      this.#pending.delete(controller);
+      this.#submissions.delete(request.requestId);
+      if (this.#writeTails.get(target) === settled) this.#writeTails.delete(target);
+    }
   }
   async #executable() {
     const path =

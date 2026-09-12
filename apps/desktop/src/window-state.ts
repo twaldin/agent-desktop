@@ -1,3 +1,4 @@
+import { parsePullRequestComposers, type PullRequestComposer } from "./pull-request-composer-state";
 import { parsePullRequestWindowViews, type PullRequestWindowView } from './pull-request-window-state';
 import { parseMcpDockApp } from "./renderer/mcp-app-dock";
 import { isPreferenceId } from "../../../packages/shared/src/preferences";
@@ -40,6 +41,7 @@ export interface WindowViewState {
   pluginDirectoryOpen?: boolean;
   pullRequestsOpen?: boolean;
   pullRequestViews?: PullRequestWindowView[];
+  pullRequestComposers?: PullRequestComposer[];
   automationsOpen?: boolean;
   automationRequests?: AutomationWindowRequest[];
   pluginDirectoryTab?: "plugins" | "skills";
@@ -137,6 +139,8 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     return;
   if (value.pluginDirectoryOpen !== undefined && typeof value.pluginDirectoryOpen !== "boolean") return;
   if (value.pullRequestsOpen !== undefined && typeof value.pullRequestsOpen !== 'boolean') return;
+  let pullRequestComposers: PullRequestComposer[] | undefined;
+  if (value.pullRequestComposers !== undefined) { try { pullRequestComposers = parsePullRequestComposers(value.pullRequestComposers); } catch { return; } }
   let pullRequestViews: PullRequestWindowView[] | undefined;
   if (value.pullRequestViews !== undefined) { try { pullRequestViews = parsePullRequestWindowViews(value.pullRequestViews); } catch { return; } }
   if (value.automationsOpen !== undefined && typeof value.automationsOpen !== 'boolean') return;
@@ -194,6 +198,7 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     ...(value.environmentCollapsed === undefined ? {} : { environmentCollapsed: [...new Set(value.environmentCollapsed as EnvironmentSectionKey[])] }),
     ...(typeof value.pluginDirectoryOpen === "boolean" ? {pluginDirectoryOpen:value.pluginDirectoryOpen} : {}),
     ...(typeof value.pullRequestsOpen === 'boolean' ? { pullRequestsOpen: value.pullRequestsOpen } : {}),
+    ...(pullRequestComposers === undefined ? {} : { pullRequestComposers }),
     ...(pullRequestViews === undefined ? {} : { pullRequestViews }),
     ...(typeof value.automationsOpen === 'boolean' ? { automationsOpen: value.automationsOpen } : {}),
     ...(automationRequests === undefined ? {} : { automationRequests }),

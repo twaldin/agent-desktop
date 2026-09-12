@@ -19,6 +19,16 @@ await mkdir(output, { recursive: true });
 if ((await readdir(output)).length)
   throw new Error("Refusing to overwrite prior fixture evidence.");
 const sourcePaths = [
+  "apps/desktop/src/main/pull-request-write-transport.ts",
+  "apps/desktop/src/main/pull-request-write-preload.ts",
+  "apps/desktop/src/pull-request-composer-state.ts",
+  "apps/desktop/src/renderer/PullRequestComposer.tsx",
+  "apps/desktop/src/renderer/pull-request-composers.ts",
+  "apps/desktop/src/renderer/pull-requests.css",
+  "apps/desktop/src/renderer/window-view-state.ts",
+  "apps/host/src/store.ts",
+  "apps/host/src/pull-request-write-records.ts",
+  "packages/shared/src/pull-request-write.ts",
   "apps/desktop/src/main/command-endpoints.ts",
   "apps/desktop/src/main/host-transport.ts",
   "apps/desktop/src/main/pull-requests-transport.ts",
@@ -139,6 +149,7 @@ try {
       join(output, "main.mjs"),
       output,
       fixture,
+      ...(process.argv.includes("--writes") ? ["--writes"] : []),
     ],
     {
       stdout: Bun.file(join(output, "electron.log")),
@@ -175,6 +186,7 @@ try {
       join(fixture, "gh-calls.jsonl"),
       join(output, "gh-calls.jsonl"),
     );
+  if (await Bun.file(join(fixture, "gh-written.jsonl")).exists()) await copyFile(join(fixture, "gh-written.jsonl"), join(output, "gh-written.jsonl"));
   if (JSON.stringify(before) !== JSON.stringify(after))
     throw new Error("Relevant source changed during the fixture.");
   if (hostExit === 0) await rm(fixture, { recursive: true, force: true });

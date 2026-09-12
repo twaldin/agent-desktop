@@ -1,3 +1,5 @@
+import { parsePullRequestWriteRequest } from '../../../../packages/shared/src/pull-request-write';
+import { requestPullRequestWrite } from './pull-request-write-transport';
 import { parsePullRequestReadRequest } from '../../../../packages/shared/src/pull-requests';
 import { readPullRequests } from './pull-requests-transport';
 import { McpAppWindowChannels } from "./mcp-app-window-channels";
@@ -523,6 +525,16 @@ ipcMain.handle("host:queued-messages-mutate", async (event, sessionId: string,
 });
 ipcMain.handle("host:goal-control", async (event, sessionId: string, request: import("@agent-desktop/shared").GoalMutationRequest, hostId?: string) => {
   assertTrustedSender(event); return requestGoalMutation(await endpointFor(hostId), sessionId, request);
+});
+ipcMain.handle('host:pull-request-write', async (event, hostId: string, operation: unknown, value: unknown) => {
+  assertTrustedSender(event);
+  const input = parsePullRequestWriteRequest(value);
+  if (operation !== 'submit' && operation !== 'status') throw new Error('Invalid pull request submission operation.');
+  if (typeof hostId !== 'string' || !hostId || hostId.length > 200) throw new Error('Choose the pull request execution host.');
+  const endpoint = await endpointFor(hostId);
+  assertTrustedSender(event);
+  if (endpoint.hostId !== hostId) throw new Error('The pull request execution host changed.');
+  return requestPullRequestWrite(endpoint, operation, input);
 });
 ipcMain.handle('host:pull-requests', async (event, hostId: string, value: unknown) => {
   assertTrustedSender(event);

@@ -1,3 +1,4 @@
+import { createPullRequestWritesBridge } from './pull-request-write-preload';
 import { createPullRequestsBridge } from './pull-requests-preload';
 import { createBrowserCloseBridge } from "./browser-close-preload";
 import { createAutomationsBridge } from './automations-preload';
@@ -13,6 +14,7 @@ let lastNotificationNavigation: string | undefined;
 let repositoryWatchWindow: Promise<string> | undefined;
 let branchQueryWindow: Promise<string> | undefined;
 const bridge: DesktopBridge = {
+  pullRequestWrites: createPullRequestWritesBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   pullRequests: createPullRequestsBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   automations: createAutomationsBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   draftBrowser: createDraftBrowserBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),

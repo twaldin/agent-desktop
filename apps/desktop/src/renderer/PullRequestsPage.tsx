@@ -1,3 +1,5 @@
+import { PullRequestComposerForm } from "./PullRequestComposer";
+import type { PullRequestComposers } from "./pull-request-composers";
 import { PullRequestIcon, PullRequestFilterIcon } from "./pull-request-icons";
 export { PullRequestIcon } from "./pull-request-icons";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -48,6 +50,8 @@ const message = (error: unknown) =>
     : "The pull request could not be loaded.";
 export function PullRequestsPage({
   bridge,
+  composers,
+  writesSupported = false,
   hostId,
   hostName,
   hosts,
@@ -60,6 +64,8 @@ export function PullRequestsPage({
   onClose,
 }: {
   bridge: DesktopBridge;
+  composers?: PullRequestComposers;
+  writesSupported?: boolean;
   hostId: string;
   hostName: string;
   hosts: { id: string; name: string }[];
@@ -355,6 +361,7 @@ export function PullRequestsPage({
   const rows =
     visibleSections.reduce((sum, section) => sum + section.items.length, 0) ??
     0;
+  const submissionEnabled = Boolean(detail && enabled && writesSupported && accountConfirmed && detail.account.id === view.accountId && !loading.detail && !error.detail && pullRequestKey(detail.summary.pullRequest) === (view.selected ? pullRequestKey(view.selected) : ""));
   return (
     <section className="pull-requests-page" aria-label="Pull requests">
       <div className="pull-requests-inbox">
@@ -601,6 +608,9 @@ export function PullRequestsPage({
                 </span>
               </div>
               <h1>{detail.summary.title}</h1>
+              {composers && <PullRequestComposerForm key={`review:${detail.account.id}:${pullRequestKey(detail.summary.pullRequest)}`} hostId={hostId} detail={detail} mode="review" composers={composers} bridge={bridge.pullRequestWrites}
+                enabled={submissionEnabled}
+                onSubmitted={() => { void loadDetail(); void loadInbox(); }} openExternal={external}/>}
               <button
                 className="secondary-button"
                 onClick={() => void external(detail.summary.url)}
@@ -756,6 +766,9 @@ export function PullRequestsPage({
                           Load more activity
                         </button>
                       )}
+                      {composers && <PullRequestComposerForm key={`comment:${detail.account.id}:${pullRequestKey(detail.summary.pullRequest)}`} hostId={hostId} detail={detail} mode="comment" composers={composers} bridge={bridge.pullRequestWrites}
+                        enabled={submissionEnabled}
+                        onSubmitted={() => { void loadDetail(); void loadInbox(); }} openExternal={external}/>}
                     </section>
                   </>
                 ) : (
