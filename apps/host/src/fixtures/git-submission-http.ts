@@ -27,8 +27,9 @@ async function post(path: string, body: unknown) { return fetch(`${host.connecti
 try {
   const project = host.store.addProject({ path: cwd }), target = { projectId: project.id };
   const query = await post("/v1/workspace/query", { target, query: { type: "git.action-context" } });
-  assert.equal(query.status, 200);
-  const contextResult = await query.json() as { context: GitActionContext };
+  const queryText = await query.text();
+  assert.equal(query.status, 200, queryText);
+  const contextResult = JSON.parse(queryText) as { context: GitActionContext };
   assert.ok(contextResult.context.revision); checks++;
   const envelope: CommandEnvelope = { id: "original-http", commandVersion: 10, command: { type: "workspace.mutate", target,
     action: { type: "git.submit", intent: { operation: "commit", selectionMode: "staged", contextRevision: contextResult.context.revision, message: "" } } } };

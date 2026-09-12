@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 test("HTTP v10 uses native owned generation and durable no-replay receipts in an isolated host", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "compound-http-"))), home = join(root, "home"); await mkdir(home);
   try {
+    const git = Bun.which("git");
+    if (!git) throw new Error("Git executable is required for the HTTP fixture");
     const child = Bun.spawn([process.execPath, new URL("./fixtures/git-submission-http.ts", import.meta.url).pathname], {
-      cwd: root, env: { HOME: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TMPDIR: root, PI_DISABLE_DOTENV: "1",
+      cwd: root, env: { HOME: home, PATH: `${dirname(git)}:/usr/bin:/bin:/usr/sbin:/sbin`, TMPDIR: root, PI_DISABLE_DOTENV: "1",
         GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", COMPOUND_HTTP_ROOT: root,
         COMMIT_WORKER_PID: join(root, "worker-pid"), COMMIT_WORKER_FETCH: join(root, "unexpected-fetch") },
       stdout: "pipe", stderr: "pipe",

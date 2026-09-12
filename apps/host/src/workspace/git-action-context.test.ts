@@ -137,16 +137,18 @@ test("a remote push-URL CLI failure is propagated instead of represented as an a
   const fixture = await repository();
   const remote = createBare(fixture.root, "origin");
   git(fixture.cwd, "remote", "add", "origin", remote);
+  // Forward uninjected calls to the same Git used to create this repository.
+  // macOS runners may install a different Git than the Xcode system shim.
   const bin = join(fixture.root, "bin"), home = join(fixture.root, "child-home"), agent = join(fixture.root, "child-agent"), marker = join(fixture.root, "push-url-invoked");
   await mkdir(bin); await mkdir(home); await mkdir(agent);
-  await writeFile(join(bin, "git"), "#!/bin/sh\ncase \"$*\" in\n  *\"$GIT_ACTION_CONTEXT_FAILURE_PATTERN\"*) : > \"$GIT_ACTION_CONTEXT_FAILURE_MARKER\"; exit 77 ;;\nesac\nexec /usr/bin/git \"$@\"\n");
+  await writeFile(join(bin, "git"), "#!/bin/sh\ncase \"$*\" in\n  *\"$GIT_ACTION_CONTEXT_FAILURE_PATTERN\"*) : > \"$GIT_ACTION_CONTEXT_FAILURE_MARKER\"; exit 77 ;;\nesac\nexec \"$GIT_ACTION_CONTEXT_REAL_GIT\" \"$@\"\n");
   await chmod(join(bin, "git"), 0o755);
   const child = Bun.spawn([process.execPath, "--no-env-file", join(import.meta.dir, "fixtures", "git-action-context-failure.ts")], {
     cwd: fixture.cwd,
     stdout: "pipe",
     stderr: "pipe",
     env: { PATH: bin, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", PI_CODING_AGENT_DIR: agent,
-      GIT_ACTION_CONTEXT_FIXTURE_CWD: fixture.cwd, GIT_ACTION_CONTEXT_FAILURE_MARKER: marker, GIT_ACTION_CONTEXT_FAILURE_PATTERN: "remote get-url --push --all" },
+      GIT_ACTION_CONTEXT_REAL_GIT: Bun.which("git")!, GIT_ACTION_CONTEXT_FIXTURE_CWD: fixture.cwd, GIT_ACTION_CONTEXT_FAILURE_MARKER: marker, GIT_ACTION_CONTEXT_FAILURE_PATTERN: "remote get-url --push --all" },
   });
   const stdout = new Response(child.stdout).text(), stderr = new Response(child.stderr).text();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -169,16 +171,18 @@ test("an upstream CLI failure is propagated instead of represented as an absent 
   const remote = createBare(fixture.root, "origin");
   git(fixture.cwd, "remote", "add", "origin", remote);
   git(fixture.cwd, "push", "-q", "--set-upstream", "origin", "main");
+  // Forward uninjected calls to the same Git used to create this repository.
+  // macOS runners may install a different Git than the Xcode system shim.
   const bin = join(fixture.root, "bin"), home = join(fixture.root, "child-home"), agent = join(fixture.root, "child-agent"), marker = join(fixture.root, "upstream-invoked");
   await mkdir(bin); await mkdir(home); await mkdir(agent);
-  await writeFile(join(bin, "git"), "#!/bin/sh\ncase \"$*\" in\n  *\"$GIT_ACTION_CONTEXT_FAILURE_PATTERN\"*) : > \"$GIT_ACTION_CONTEXT_FAILURE_MARKER\"; exit 77 ;;\nesac\nexec /usr/bin/git \"$@\"\n");
+  await writeFile(join(bin, "git"), "#!/bin/sh\ncase \"$*\" in\n  *\"$GIT_ACTION_CONTEXT_FAILURE_PATTERN\"*) : > \"$GIT_ACTION_CONTEXT_FAILURE_MARKER\"; exit 77 ;;\nesac\nexec \"$GIT_ACTION_CONTEXT_REAL_GIT\" \"$@\"\n");
   await chmod(join(bin, "git"), 0o755);
   const child = Bun.spawn([process.execPath, "--no-env-file", join(import.meta.dir, "fixtures", "git-action-context-failure.ts")], {
     cwd: fixture.cwd,
     stdout: "pipe",
     stderr: "pipe",
     env: { PATH: bin, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", PI_CODING_AGENT_DIR: agent,
-      GIT_ACTION_CONTEXT_FIXTURE_CWD: fixture.cwd, GIT_ACTION_CONTEXT_FAILURE_MARKER: marker, GIT_ACTION_CONTEXT_FAILURE_PATTERN: "rev-parse --verify --quiet --symbolic-full-name @{upstream}" },
+      GIT_ACTION_CONTEXT_REAL_GIT: Bun.which("git")!, GIT_ACTION_CONTEXT_FIXTURE_CWD: fixture.cwd, GIT_ACTION_CONTEXT_FAILURE_MARKER: marker, GIT_ACTION_CONTEXT_FAILURE_PATTERN: "rev-parse --verify --quiet --symbolic-full-name @{upstream}" },
   });
   const stdout = new Response(child.stdout).text(), stderr = new Response(child.stderr).text();
   let timeout: ReturnType<typeof setTimeout> | undefined;

@@ -1,10 +1,20 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Target } from "puppeteer-core";
+
+async function targetId(target: Target) {
+  const raw = target as unknown as { _targetId?: unknown };
+  if (typeof raw._targetId === "string") return raw._targetId;
+  const session = await target.createCDPSession();
+  try { return ((await session.send("Target.getTargetInfo")) as { targetInfo?: { targetId?: string } }).targetInfo?.targetId; }
+  finally { await session.detach().catch(() => undefined); }
+}
 
 async function pageState(name: string) {
   const supervisor = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor");
   const tab = supervisor.getTab(name);
   if (!tab || tab.backend !== "worker") throw new Error("Native browser contract tab is unavailable");
-  const target = tab.browser.browser.targets().find(candidate => (candidate as unknown as { _targetId?: string })._targetId === tab.targetId);
+  let target: Target | undefined;
+  for (const candidate of tab.browser.browser.targets()) if (await targetId(candidate) === tab.targetId) { target = candidate; break; }
   const page = await target?.page();
   if (!page) throw new Error("Native browser contract page is unavailable");
   return { url: page.url(), title: await page.title(), viewport: page.viewport(), state: await page.evaluate(() => (globalThis as unknown as { browserFrameState?: unknown }).browserFrameState) };
@@ -39,7 +49,8 @@ export default function (pi: ExtensionAPI) {
       const { getTab } = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor");
       const tab = getTab(name);
       if (!tab || tab.backend !== "worker") throw new Error("Native browser contract tab is unavailable");
-      const target = tab.browser.browser.targets().find(candidate => (candidate as unknown as { _targetId?: string })._targetId === tab.targetId);
+      let target: Target | undefined;
+      for (const candidate of tab.browser.browser.targets()) if (await targetId(candidate) === tab.targetId) { target = candidate; break; }
       const page = await target?.page();
       if (!page) throw new Error("Native browser contract page is unavailable");
       const destination = new URL("/page2", process.env.BROWSER_FRAME_TEST_URL).href;

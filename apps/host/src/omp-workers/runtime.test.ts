@@ -182,6 +182,8 @@ describe("actual Bun worker lifecycle without provider calls", () => {
     const entries = (await readFile(session.sessionFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(entries.filter(entry => entry.customType === "admission-contract").map(entry => entry.data.args)).toEqual(["throw-after"]);
     expect(entries.some(entry => entry.type === "message")).toBe(false);
+    const noticeDeadline = Date.now() + 2_000;
+    while (!JSON.stringify(notices).includes("failed after side effect") && Date.now() < noticeDeadline) await Bun.sleep(10);
     expect(JSON.stringify(notices)).toContain("failed before side effect");
     expect(JSON.stringify(notices)).toContain("failed after side effect");
     expect(session.workerFailure).toBeUndefined();

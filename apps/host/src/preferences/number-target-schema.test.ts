@@ -10,6 +10,8 @@ function fixture() {
   db.exec("CREATE TABLE metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL); PRAGMA user_version=14");
   const owner = Object.create(HostStore.prototype) as HostStore;
   Object.defineProperties(owner, { db: { value: db }, host: { value: { id: crypto.randomUUID() } } });
+  // Schema 14 requires a persisted device policy, even in this metadata-only fixture.
+  owner.writeMetadata("device-access.v1", { revision: 0, enabled: true, revokedNodeIds: [] });
   return { db, preferences: new PreferencesStore(owner), schema: () => (db.query("PRAGMA user_version").get() as { user_version: number }).user_version };
 }
 
