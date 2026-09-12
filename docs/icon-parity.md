@@ -70,3 +70,13 @@ Skill rows and the dialog use the pinned Lucide Package asset, including its fou
 ## Workspace file-tree toggle
 
 The dedicated file header uses the exact pinned7982 `Jts` / export `Fd` 20×20 filled SVG, rendered through the source `icon-sm` size. The labeled Toggle file tree call in `text-file-editor-tab-content.electron-aa6f541f63a8.js` resolves directly to that artwork. This differs from the folder glyph used by Choose file tree root. Static path data was checked against the extracted app-initial source; this proves artwork provenance, not installed pixel parity.
+
+## Settings navigation shell
+
+The pinned Settings caller is `settings-page-27e621909353.js` (`Wn` → grouped `yn`/`Vn`), with artwork selected by `use-visible-settings-sections-4a5defba89ad.js` (`zt`). Personal, Integrations and Coding are group headings, not page destinations and not icons. Available Personal rows retain General, Appearance, Configuration and Keyboard shortcuts in source-relative order; OMP provider Accounts remains an explicit application adaptation.
+
+General reuses the existing `Icon.settings` gear (`o5r`). Scoped Settings artwork uses Appearance sun `c5o`, Configuration shield/terminal `Mxn`, Keyboard square/lightning `Lt`, Accounts user-circle `jKo`, Plugins static plug-circle `r0`, Connections globe `Yv`, Git branch `zZr` and Environments dock `i`. Their native 16/20/21-point canvases are retained in 16-point row slots. The Settings search uses its actual `KK` glyph at 18 points in the source `rCo` 32-point leading slot; it does not reuse the main sidebar search variant. No main-sidebar or global icon implementation changed.
+
+Actual isolated App captures verify the 275-point sidebar, 30-point rows on a 31-point pitch, 8-point insets, first row at y155 and search at y84. Native CG frames and renderer viewports were both 1440×1000, DPR2/zoom1, with original 2880×2000 window-id PNGs and AX snapshots. Real pointer hover and keyboard navigation/search/Back states were exercised. Exact provenance, source freezes, original failures and per-region comparisons are private in `.data/settings-shell-parity/`.
+
+These results establish the bounded navigation flow and glyph/spacing geometry, not pixel parity. Dark row/icon paint metrics remain above unchanged tolerances despite zero measured translations; Light sidebar material differs substantially. Source exports and native color-profile/foreground behavior require further attribution; no sampled color or opacity patch, rescaling, broad mask or blanket 7868→7982 drift exemption was used. Required missing settings pages remain named dependencies, not inert rows or blanket exclusions.

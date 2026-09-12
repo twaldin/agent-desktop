@@ -209,14 +209,11 @@ export function App() {
   useEffect(() => {
     const closing = settingsWasOpen.current && !settingsOpen;
     settingsWasOpen.current = settingsOpen;
-    if (!settingsOpen && !closing) return;
+    if (!closing) return;
     const frame = requestAnimationFrame(() => {
-      if (settingsOpen) document.querySelector<HTMLElement>(".settings-sidebar-back")?.focus();
-      else {
-        if(skillFileFocusPending.current){const panel=document.querySelector<HTMLElement>(".dock-panel-right .native-skill-file-panel");if(panel){skillFileFocusPending.current=false;panel.focus();return;}}
-        const origin = settingsOriginLabel.current ? document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(settingsOriginLabel.current)}"]`) : null;
-        (origin ?? (settingsPage === "git" ? document.querySelector<HTMLElement>('[aria-label="Switch branch"]') : null) ?? textarea.current)?.focus();
-      }
+      if(skillFileFocusPending.current){const panel=document.querySelector<HTMLElement>(".dock-panel-right .native-skill-file-panel");if(panel){skillFileFocusPending.current=false;panel.focus();return;}}
+      const origin = settingsOriginLabel.current ? document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(settingsOriginLabel.current)}"]`) : null;
+      (origin ?? (settingsPage === "git" ? document.querySelector<HTMLElement>('[aria-label="Switch branch"]') : null) ?? textarea.current)?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [settingsOpen]);
