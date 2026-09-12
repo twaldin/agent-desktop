@@ -1,0 +1,137 @@
+import { expect, test } from "bun:test";
+import { createElement, Fragment, type ReactElement, type ReactNode } from "react";
+import { readFileSync } from "node:fs";
+import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
+import { sidebarItemKey, sidebarLayout } from "./sidebar-layout";
+import type { PreferencesState } from "./preferences-state";
+import type { SidebarSectionKey } from "../window-state";
+import type { HostOption } from "./host-catalog";
+
+// Whole maintained component with controlled React hook storage. Events below are
+// the actual element callbacks; DOM effects, pointer timing and pixels need Electron.
+const source = readFileSync(new URL("./OrganizedSidebar.tsx", import.meta.url), "utf8");
+const compiled = new Bun.Transpiler({ loader: "tsx", tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "createElement", jsxFragmentFactory: "Fragment" } } })
+  .transformSync(source.replace(/^import .*;\n/gm, "").replace("export function OrganizedSidebar", "function OrganizedSidebar"));
+type Element = ReactElement<Record<string, any>>;
+function nodes(node: ReactNode): Element[] {
+  if (Array.isArray(node)) return node.flatMap(nodes);
+  if (!node || typeof node !== "object" || !("props" in node)) return [];
+  const element = node as Element; return [element, ...nodes(element.props.children)];
+}
+function label(node: ReactNode): string {
+  if (Array.isArray(node)) return node.map(label).join("");
+  if (typeof node === "string") return node;
+  return node && typeof node === "object" && "props" in node ? label((node as Element).props.children) : "";
+}
+function fixture() {
+  const project = { hostId: "home", id: "project", name: "Example", path: "/example" } as Project;
+  const chat = (hostId: string, projectId: string | null, status = "idle") => ({ hostId, id: "same", projectId, title: `${hostId} chat`, cwd: "/example", archived: false, status, updatedAt: 1_700_000_000_000 }) as SessionSummary;
+  const groups = [
+    { host: { hostId: "home", key: "home", name: "Home", availability: "available", local: true }, hostState: { host: { id: "home" }, projects: [project], sessions: [chat("home", "project", "running")] } },
+    { host: { hostId: "work", key: "work", name: "Work", availability: "available", local: false }, hostState: { host: { id: "work" }, projects: [], sessions: [chat("work", null)] } },
+  ] as { host: HostOption; hostState: HostState }[];
+  const writes: unknown[] = [], navigations: unknown[] = [], archives: unknown[] = [], newChats: unknown[] = [], toggles: string[] = [];
+  const preferences = {
+    connected: true, busy: false, pending: [],
+    sections: () => [],
+    sectionFor: (_kind: string, _id: string, hostId: string) => hostId === "work" ? "pinned" : null,
+    entity: () => undefined,
+    put: async (change: unknown) => { writes.push(change); },
+  } as unknown as PreferencesState;
+  const expandedProjects = new Set(["home:project"]);
+  const state: unknown[] = [], refs: { current: unknown }[] = []; let cursor = 0, refCursor = 0;
+  const useState = (initial: any) => { const slot = cursor++; if (!(slot in state)) state[slot] = typeof initial === "function" ? initial() : initial; return [state[slot], (next: any) => { state[slot] = typeof next === "function" ? next(state[slot]) : next; }]; };
+  const useRef = (initial: unknown) => refs[refCursor++] ??= { current: initial };
+  const Component = new Function("createElement", "Fragment", "useState", "useRef", "useEffect", "createPortal", "sidebarItemKey", "Icon", "SidebarPinIcon", `${compiled}; return OrganizedSidebar;`)
+    (createElement, Fragment, useState, useRef, () => {}, (node: ReactNode) => node, sidebarItemKey, () => null, () => null);
+  const props = { preferences, groups, activeHostId: "home", selectedId: "same", query: "", showArchived: false, expandedProjects,
+    onNavigate: (...args: unknown[]) => navigations.push(args), onNew: (...args: unknown[]) => newChats.push(args), onArchive: (...args: unknown[]) => archives.push(args),
+    collapsedSections: new Set<SidebarSectionKey>(["recents"]), onToggleSection: (key: SidebarSectionKey) => { const next = new Set(props.collapsedSections); next.has(key) ? next.delete(key) : next.add(key); props.collapsedSections = next; },
+    onToggleProject: (key: string) => toggles.push(key), onAddProject() {}, addingProject: false, connected: true, onToggleArchived() {},
+  };
+  const render = () => { cursor = refCursor = 0; return nodes(Component({ ...props, layout: sidebarLayout(preferences, groups, props.query, props.showArchived, expandedProjects) })); };
+  const button = (name: string) => render().find(node => node.type === "button" && (node.props["aria-label"] ?? label(node.props.children)) === name)!;
+  return { render, button, props, groups, writes, navigations, archives, newChats, toggles };
+}
+
+test("unselected remote chat archive keeps the exact owner and does not navigate", () => {
+  const f = fixture(), tree = f.render();
+  const remoteRow = tree.find(node => node.props["data-host-id"] === "work")!;
+  expect(remoteRow.props["aria-current"]).toBeUndefined();
+  const container = tree.find(node => node.props.className === "organized-session ")!;
+  const archive = nodes(container).find(node => node.props["aria-label"] === "Archive chat")!;
+  archive.props.onClick();
+  expect(f.archives).toEqual([["same", "work", true]]);
+  expect(f.navigations).toEqual([]);
+  expect(f.writes).toEqual([]);
+});
+
+test("pin action changes only organization, while row navigation preserves host identity", async () => {
+  const f = fixture();
+  f.button("Unpin chat").props.onClick();
+  await Promise.resolve();
+  expect(f.writes).toEqual([expect.objectContaining({ key: "sidebar.session.same", value: expect.objectContaining({ hostId: "work", sectionId: null }) })]);
+  expect(f.navigations).toEqual([]);
+  f.render().find(node => node.props["data-host-id"] === "work")!.props.onClick();
+  expect(f.navigations).toEqual([["same", "work"]]);
+});
+
+test("section collapse hides its rows without moving chats or changing numbered slots", () => {
+  const f = fixture();
+  expect(f.button("Pinned").props["aria-expanded"]).toBe(true);
+  expect(f.button("Recents").props["aria-expanded"]).toBe(false);
+  f.button("Pinned").props.onClick();
+  expect(f.button("Pinned").props["aria-expanded"]).toBe(false);
+  expect(f.render().some(node => node.props["data-session-id"] === "same" && node.props["data-host-id"] === "work")).toBe(false);
+  expect(f.render().some(node => node.props["data-session-id"] === "same" && node.props["data-host-id"] === "home")).toBe(true);
+  expect(f.writes).toEqual([]);
+  f.button("Pinned").props.onClick();
+  expect(f.render().filter(node => node.props["data-session-id"] === "same")).toHaveLength(2);
+});
+
+test("a supplied sidebar query reveals matching rows without rewriting saved disclosure state", () => {
+  const f = fixture(), sectionId = "9e9b7f1d-3261-4cad-8e66-fcaa78f14e76";
+  f.props.preferences.sections = () => [{ id: sectionId, name: "Focus", position: 0 }];
+  f.props.preferences.sectionFor = (_kind, id, hostId) => id === "custom" ? sectionId : hostId === "work" ? "pinned" : null;
+  const original = f.groups[0]!.hostState.sessions[0]!;
+  f.groups[0]!.hostState.sessions.push(
+    { ...original, id: "loose", projectId: null, title: "Loose chat" },
+    { ...original, id: "custom", projectId: null, title: "Custom chat" },
+    { ...original, id: "other", projectId: null, title: "Unmatched notes" },
+  );
+  f.props.expandedProjects.clear();
+  const saved: SidebarSectionKey[] = ["pinned", "projects", "recents", `custom:${sectionId}`];
+  f.props.collapsedSections = new Set(saved);
+  const targets = () => f.render().filter(node => node.props["data-session-id"])
+    .map(node => [node.props["data-host-id"], node.props["data-session-id"]]);
+  expect(targets()).toEqual([]);
+  f.props.query = "chat";
+  expect(targets()).toEqual([["work", "same"], ["home", "custom"], ["home", "same"], ["home", "loose"]]);
+  expect([...f.props.collapsedSections]).toEqual(saved);
+  expect([...f.props.expandedProjects]).toEqual([]);
+  f.props.query = "";
+  expect(targets()).toEqual([]);
+  expect(f.writes).toEqual([]);
+  expect(f.navigations).toEqual([]);
+});
+
+test("project label expands instead of creating, and unavailable hosts cannot create or archive", () => {
+  const f = fixture();
+  f.button("Example").props.onClick();
+  expect(f.toggles).toEqual(["home:project"]);
+  expect(f.newChats).toEqual([]);
+  f.button("Start new chat in Example").props.onClick();
+  expect(f.newChats).toEqual([["project", "home"]]);
+  f.groups[0]!.host.availability = "offline";
+  expect(f.button("Start new chat in Example").props.disabled).toBe(true);
+  const home = f.render().find(node => node.props.className === "organized-session selected")!;
+  expect(nodes(home).find(node => node.props["aria-label"] === "Archive chat")!.props.disabled).toBe(true);
+});
+
+test("row structure keeps age out of the idle row and exposes a trailing running status", () => {
+  const f = fixture();
+  expect(f.render().filter(node => node.type === "time")).toHaveLength(0);
+  expect(f.render().filter(node => node.props.className === "sidebar-session-status running")).toHaveLength(1);
+  expect(f.render().filter(node => node.props["aria-label"] === "Pin chat")).toHaveLength(1);
+  expect(f.render().filter(node => node.props["aria-label"] === "Unpin chat")).toHaveLength(1);
+});

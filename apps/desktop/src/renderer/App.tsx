@@ -47,7 +47,7 @@ import { GoalPanel } from "./GoalPanel";
 import { useId, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Draft, Project, SessionSummary } from "../../../../packages/shared/src/protocol";
 import { readWindowRestoration, useWindowViewPersistence } from "./window-view-state";
-import { defaultFileTreeView, type EnvironmentSectionKey, type SettingsPage, type WindowNavigation, type WorkspaceTab } from "../window-state";
+import { defaultFileTreeView, defaultCollapsedSidebarSections, type SidebarSectionKey, type EnvironmentSectionKey, type SettingsPage, type WindowNavigation, type WorkspaceTab } from "../window-state";
 import { prepareSkillDraft } from "./skill-draft";
 import type { ComposerAction } from "@agent-desktop/shared";
 import { DraftController, hasDraftContent } from "./drafts";
@@ -152,6 +152,7 @@ export function App() {
   const [fileSearchOwner, setFileSearchOwner] = useState<string>();
   const [showArchived, setShowArchived] = useState(windowRestoration.state.showArchived);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set(windowRestoration.state.expandedProjects));
+  const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarSectionKey>>(() => new Set(windowRestoration.state.collapsedSidebarSections ?? defaultCollapsedSidebarSections()));
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
@@ -394,7 +395,7 @@ export function App() {
     failed(message: string) { browserWindowCheckpoint.failed(message); terminalRequests.failed(message); draftBrowserOwners.failed(message); draftBrowserPages.failed(message); browserCloses.failed(message); },
   }), [browserWindowCheckpoint, terminalRequests, draftBrowserOwners, draftBrowserPages, browserCloses]);
   const windowWarning = useWindowViewPersistence({ browserCloses: browserCloses.intents, sessionBrowserObservations: browserSearchRegistry.persisted(dock.presentations), draftBrowserPages: draftBrowserPages.intents, draftBrowserOwners: draftBrowserOwners.intents, terminalCreations: terminalRequests.intents, route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,
-    expandedProjects: [...expandedProjects], settingsOpen, settingsPage, dock: dock.persisted, fileTreeOpen: fileTree.open, environmentOpen, environmentCollapsed, pluginDirectoryOpen, pluginDirectoryTab }, windowRestoration, windowSaveObserver);
+    expandedProjects: [...expandedProjects], collapsedSidebarSections: [...collapsedSidebarSections], settingsOpen, settingsPage, dock: dock.persisted, fileTreeOpen: fileTree.open, environmentOpen, environmentCollapsed, pluginDirectoryOpen, pluginDirectoryTab }, windowRestoration, windowSaveObserver);
   const composerTarget = composerTargetKey(workspaceTarget);
   const composer = useMemo(() => new ComposerCatalogState(bridge, hostId, workspaceTarget), [bridge, hostId, composerTarget]);
   useEffect(() => {
@@ -829,6 +830,18 @@ export function App() {
     try { await command({ type: "session.archive", sessionId: selected.id, archived: !selected.archived }); await refresh(); }
     catch (cause) { setActionError(errorMessage(cause)); }
   }
+  async function archiveSidebarSession(sessionId: string, ownerHostId: string, archived: boolean) {
+    setActionError(null);
+    try {
+      const owner = desktop.catalog.records.get(ownerHostId);
+      if (!bridge || !owner?.connected || !owner.state?.sessions.some(session => session.id === sessionId)) {
+        throw new Error("Reconnect to this chat’s host before changing its archive state.");
+      }
+      const result = await bridge.command({ id: crypto.randomUUID(), command: { type: "session.archive", sessionId, archived } }, ownerHostId);
+      if (!result.ok) throw new Error(result.error.message);
+      await desktop.catalog.refreshHost(ownerHostId);
+    } catch (cause) { setActionError(errorMessage(cause)); }
+  }
   async function rename(event: React.FormEvent) {
     event.preventDefault(); if (!selected || !renameTitle.trim()) return;
     try { await command({ type: "session.rename", sessionId: selected.id, title: renameTitle.trim() }); setDialog(null); await refresh(); }
@@ -1057,7 +1070,7 @@ export function App() {
         <button className="nav-action" onClick={() => newConversation()}><Icon name="compose"/><span>New chat</span><kbd>⌘ N</kbd></button>
         <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setPluginDirectoryOpen(true);setSettingsOpen(false);}}><Icon name="folder"/><span>Plugins</span></button>
       </nav>
-      <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} query="" showArchived={showArchived} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)}/></div>
+      <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession}/></div>
       <footer className="sidebar-footer">{profileMenu()}</footer>
     </aside>}
     <div ref={workbenchElement} data-browser-current-owner={browserAddressOwner} data-content-side={contentSide} data-content-column={rightDockColumn} onFocusCapture={event => {

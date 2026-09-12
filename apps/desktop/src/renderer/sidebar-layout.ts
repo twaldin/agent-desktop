@@ -2,6 +2,8 @@ import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
 import { positionOrder, type PreferencesState } from "./preferences-state";
 
 export type SidebarItem = { kind: "project"; value: Project } | { kind: "session"; value: SessionSummary };
+export const sidebarItemKey = (item: SidebarItem) => JSON.stringify([item.kind, item.value.hostId, item.value.id]);
+
 type Organization = Pick<PreferencesState, "sections" | "sectionFor" | "entity">;
 export interface SidebarChatTarget { hostId: string; sessionId: string }
 

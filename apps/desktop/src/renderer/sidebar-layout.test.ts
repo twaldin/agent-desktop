@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { HostState, Project, SessionSummary } from "@agent-desktop/shared";
-import { sidebarChatActions, sidebarLayout } from "./sidebar-layout";
+import { sidebarChatActions, sidebarItemKey, sidebarLayout } from "./sidebar-layout";
 
 const project = (hostId: string, id: string) => ({ hostId, id, name: id, path: `/${id}` }) as Project;
 const session = (hostId: string, id: string, projectId?: string, archived = false, updatedAt = 1) => ({ hostId, id, projectId,
@@ -61,4 +61,13 @@ test("only existing slots receive actions and dispatch retains cross-host destin
   actions["thread-2"]!(); actions["thread-1"]!();
   expect(calls).toEqual(["work:same", "home:same"]);
   expect(sidebarChatActions([], () => { throw new Error("no destination"); })).toEqual({});
+});
+
+
+test("same-named entities on different hosts keep distinct component and organization menu identities", () => {
+  const first = { kind: "session" as const, value: session("home", "same") };
+  const remote = { kind: "session" as const, value: session("work", "same") };
+  const projectItem = { kind: "project" as const, value: project("home", "same") };
+  expect(new Set([first, remote, projectItem].map(sidebarItemKey)).size).toBe(3);
+  expect(sidebarItemKey({ ...first, value: { ...first.value, title: "Renamed" } })).toBe(sidebarItemKey(first));
 });

@@ -1,3 +1,4 @@
+import { isPreferenceId } from "../../../packages/shared/src/preferences";
 import { parseBrowserCloseWindowIntents, type BrowserCloseWindowIntent } from "./browser-close-window-intent";
 import { parseSessionBrowserObservations, matchesSessionBrowserObservation, type SessionBrowserObservation } from "./session-browser-observation";
 import { parseDraftBrowserPageIntents, type DraftBrowserPageIntent } from "./draft-browser-page-intent";
@@ -17,7 +18,12 @@ export interface FileTreeView { open: boolean; width: number }
 export const defaultFileTreeView = (): FileTreeView => ({ open: false, width: 250 });
 export const environmentSectionKeys = ["environment", "side-chats", "subagents", "jobs", "sources"] as const;
 export type EnvironmentSectionKey = typeof environmentSectionKeys[number];
+export type SidebarSectionKey = "pinned" | "projects" | "recents" | `custom:${string}`;
+export const defaultCollapsedSidebarSections = (): SidebarSectionKey[] => ["recents"];
+export const maximumCollapsedSidebarSections = 1003;
 export interface WindowViewState {
+  /** Window-local disclosure state; custom section membership remains shared. */
+  collapsedSidebarSections?: SidebarSectionKey[];
   browserCloses?: BrowserCloseWindowIntent[];
   sessionBrowserObservations?: SessionBrowserObservation[];
   draftBrowserOwners?: DraftBrowserWindowIntent[];
@@ -58,6 +64,7 @@ export const defaultWindowView = (): WindowViewState => ({
   terminalOpen: false,
   showArchived: false,
   expandedProjects: [],
+  collapsedSidebarSections: defaultCollapsedSidebarSections(),
   settingsOpen: false,
   settingsPage: "general",
 });
@@ -102,6 +109,20 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     )
   )
     return;
+  let collapsedSidebarSections: SidebarSectionKey[] | undefined;
+  if (value.collapsedSidebarSections !== undefined) {
+    const saved = value.collapsedSidebarSections;
+    if (!Array.isArray(saved) || saved.length > maximumCollapsedSidebarSections) return;
+    collapsedSidebarSections = [];
+    const seen = new Set<string>();
+    for (let index = 0; index < saved.length; index++) {
+      if (!Object.hasOwn(saved, index)) return;
+      const key = saved[index];
+      if (typeof key !== "string" || seen.has(key) ||
+        !(key === "pinned" || key === "projects" || key === "recents" || key.startsWith("custom:") && isPreferenceId(key.slice(7)))) return;
+      seen.add(key); collapsedSidebarSections.push(key as SidebarSectionKey);
+    }
+  }
   if (
     value.environmentOpen !== undefined &&
     typeof value.environmentOpen !== "boolean"
@@ -164,6 +185,7 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
     terminalOpen: value.terminalOpen as boolean,
     showArchived: value.showArchived as boolean,
     expandedProjects: [...new Set(value.expandedProjects as string[])],
+    ...(collapsedSidebarSections === undefined ? {} : { collapsedSidebarSections }),
     settingsOpen: value.settingsOpen as boolean,
     settingsPage: value.settingsPage as WindowViewState["settingsPage"],
   };
