@@ -1,5 +1,5 @@
 import type { ComposerInput } from "./ComposerEditor";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { DesktopBridge } from "../../../../packages/shared/src/protocol";
@@ -81,7 +81,7 @@ export function useComposerAutocomplete(props: Props) {
     if (!token || item.disabled || pendingAction.current) return;
     const captured = text, capturedScope = scope, capturedKey = key;
     // A stale event cannot replace input edited since this render.
-    if (props.readText() !== captured) return;
+    if (currentScope.current !== capturedScope || props.readText() !== captured) return;
     if (item.action && !tab) {
       pendingAction.current = true; setActionState({ scope, pending: true });
       try {
@@ -112,10 +112,11 @@ export function useComposerAutocomplete(props: Props) {
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>): boolean => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return false;
-    if (!open || event.ctrlKey || event.metaKey || event.altKey) return false;
+    const macMove = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform) && event.ctrlKey && (event.key === "n" || event.key === "p");
+    if (!open || event.metaKey || event.altKey || (event.ctrlKey && !macMove)) return false;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDismissed(key); return true; }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault(); event.stopPropagation(); setHighlight(nextSuggestion(items, selected?.id, event.key === "ArrowDown" ? 1 : -1)); return true;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || macMove) {
+      event.preventDefault(); event.stopPropagation(); setHighlight(nextSuggestion(items, selected?.id, event.key === "ArrowDown" || macMove && event.key === "n" ? 1 : -1)); return true;
     }
     if (token?.kind === "command-argument" && !loading && !selected && !error) return false;
     if ((event.key === "Enter" && !event.shiftKey) || (event.key === "Tab" && !event.shiftKey)) {
@@ -134,7 +135,7 @@ export function useComposerAutocomplete(props: Props) {
       onCompositionEnd: () => { composing.current = false; setComposition(false); observeCaret(); },
       onChange: (event: ChangeEvent<HTMLTextAreaElement>) => { props.updateText(event.target.value); setCaret({ scope, start: event.target.selectionStart, end: event.target.selectionEnd }); setActionState(undefined); },
     }, onKeyDown,
-    popup: open ? <ComposerAutocompletePopup input={input} id={menuId} items={items} selectedId={selected?.id} onHighlight={setHighlight} onSelect={item => void apply(item)} pending={Boolean(pending)} loading={Boolean(loading)} error={error || undefined} notice={notice} onRefresh={() => refresh(value => value + 1)} connected={connected} kind={token!.kind}/> : null,
+    popup: open ? <ComposerAutocompletePopup input={input} anchor={token!.start} id={menuId} items={items} selectedId={selected?.id} onHighlight={setHighlight} onSelect={item => void apply(item)} pending={Boolean(pending)} loading={Boolean(loading)} error={error || undefined} notice={notice} onRefresh={() => refresh(value => value + 1)} connected={connected} kind={token!.kind}/> : null,
   };
 }
 
@@ -144,26 +145,40 @@ function CompletionIcon({ item }: { item: ComposerSuggestion }) {
   // source-matched app icons. Their exact reference variants remain unverified.
   return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">{item.icon === "skill" ? <><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></> : item.icon === "file" ? <><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Z"/><path d="M14 3v5h5"/></> : <><path d="m8 5-4 7 4 7m8-14 4 7-4 7M13.5 4l-3 16"/></>}</svg>;
 }
-function ComposerAutocompletePopup({ input, id, items, selectedId, onHighlight, onSelect, pending, loading, error, notice, onRefresh, connected, kind }: {
-  input: RefObject<ComposerInput | null>; id: string; items: ComposerSuggestion[]; selectedId?: string;
+function ComposerAutocompletePopup({ input, anchor, id, items, selectedId, onHighlight, onSelect, pending, loading, error, notice, onRefresh, connected, kind }: {
+  input: RefObject<ComposerInput | null>; anchor: number; id: string; items: ComposerSuggestion[]; selectedId?: string;
   onHighlight(id: string): void; onSelect(item: ComposerSuggestion): void; pending: boolean; loading: boolean; error?: string; notice?: string; onRefresh(): void; connected: boolean; kind: string;
 }) {
-  const [position, setPosition] = useState<{ left: number; bottom: number; width: number; maxHeight: number }>();
+  const [position, setPosition] = useState<{ container: Element; style: CSSProperties }>();
   const list = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const form = input.current?.closest("form"); if (!form) return;
-    const measure = () => { const box = form.getBoundingClientRect(); setPosition({ left: Math.max(8, box.left), bottom: innerHeight - box.top + 8, width: Math.min(box.width, innerWidth - 16), maxHeight: Math.max(56, Math.min(320, box.top - 16)) }); };
-    measure(); const observer = new ResizeObserver(measure); observer.observe(form); window.addEventListener("resize", measure); window.addEventListener("scroll", measure, true);
+    const editor = input.current?.closest(".composer-rich-input"), form = input.current?.closest("form");
+    if (!editor || !form || !input.current?.getCaretRect) return;
+    const measure = () => {
+      const container = editor.closest(".app-dialog") ?? document.body;
+      const box = container === document.body ? { left: 0, top: 0, width: innerWidth, height: innerHeight } : container.getBoundingClientRect();
+      const caret = input.current!.getCaretRect!(anchor);
+      const above = getComputedStyle(editor).getPropertyValue("--composer-overlay-placement").trim() !== "bottom";
+      const width = Math.min(360, Math.max(box.width - 24, 0));
+      const left = Math.max(12, Math.min(caret.left - box.left, box.width - width - 12));
+      const top = (above ? caret.top : caret.bottom) - box.top + (above ? -8 : 8);
+      const next: { container: Element; style: CSSProperties } = { container, style: { position: container === document.body ? "fixed" : "absolute", left, top, width,
+        transform: above ? "translateY(-100%)" : undefined,
+        maxHeight: Math.max(0, Math.min(320, (above ? top : box.height - top) - 12)) } };
+      setPosition(previous => previous?.container === container && JSON.stringify(previous.style) === JSON.stringify(next.style) ? previous : next);
+    };
+    measure(); const observer = new ResizeObserver(measure); observer.observe(form);
+    window.addEventListener("resize", measure); window.addEventListener("scroll", measure, true);
     return () => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true); };
-  }, [input]);
+  });
   useLayoutEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [selectedId]);
   if (!position) return null;
-  return createPortal(<div className="composer-autocomplete" style={position} data-kind={kind} onMouseDown={event => event.preventDefault()}>
+  return createPortal(<div className="composer-autocomplete" style={position.style} data-composer-overlay-floating-ui data-kind={kind} onMouseDown={event => event.preventDefault()}>
     <div className="composer-autocomplete-list" ref={list} id={id} role="listbox" aria-label={kind === "skill" ? "Skills" : kind === "file" || kind === "reference" ? "Files and references" : "Commands and app actions"} aria-busy={loading || pending}>
       {items.map((item, index) => <button type="button" role="option" id={`${id}-${index}`} key={item.id} className="composer-autocomplete-row" aria-selected={item.id === selectedId} aria-disabled={Boolean(item.disabled || pending)} title={item.disabled ?? `${item.description}${item.native?.source.path ? `\n${item.native.source.path}` : ""}`} onMouseMove={() => { if (!item.disabled) onHighlight(item.id); }} onClick={() => { if (!item.disabled && !pending) onSelect(item); }} tabIndex={-1}>
         <CompletionIcon item={item}/><span className="completion-label">{item.label}</span><span className="completion-description">{item.disabled ?? item.description}</span><span className="completion-origin">{item.origin}</span>
       </button>)}
     </div>
-    {(pending || loading || error || !items.length || notice) && <div className="composer-autocomplete-status" role={error ? "alert" : "status"}>{pending ? "Running app action…" : error || (loading ? "Loading from this workspace…" : !items.length ? "No matching items." : notice)}{error && connected && <button type="button" onClick={onRefresh}>Retry</button>}</div>}
-  </div>, document.body);
+    {(pending || loading || error || !items.length || notice) && <div className="composer-autocomplete-status" role={error ? "alert" : "status"}>{pending ? "Running app action…" : error || (loading ? "Loading from this workspace…" : notice || (!items.length ? "No results" : undefined))}{error && connected && <button type="button" onClick={onRefresh}>Retry</button>}</div>}
+  </div>, position.container);
 }

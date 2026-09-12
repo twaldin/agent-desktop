@@ -14,7 +14,7 @@ import './composer-editor.css';
 import { parseComposerClipboard, composerClipboardText } from './composer-clipboard';
 
 /** Small shared interface used by both the rich main composer and textarea-only surfaces. */
-export interface ComposerInput {focus():void;readonly selectionStart:number;readonly selectionEnd:number;setSelectionRange(start:number,end:number):void;closest(selector:string):Element|null}
+export interface ComposerInput {focus():void;readonly selectionStart:number;readonly selectionEnd:number;setSelectionRange(start:number,end:number):void;closest(selector:string):Element|null;getCaretRect?(offset:number):{left:number;top:number;bottom:number}}
 export interface ComposerEditorHandle extends ComposerInput { readonly element:HTMLElement; replaceText(text:string):void; insertFile(file:WholeFileAttachment,range?:{start:number;end:number}):void }
 interface Props {
  inputRef:RefObject<ComposerEditorHandle|null>; scope:string; text:string; files?:readonly WholeFileAttachment[]; disabled?:boolean;placeholder:string;
@@ -61,7 +61,7 @@ export function ComposerEditor(props:Props){
    clipboardTextSerializer:composerClipboardText,
   });
   viewRef.current=view;lastPropDocument.current=view.state.doc;
-  props.inputRef.current={get element(){return view.dom;},focus:()=>view.focus(),closest:selector=>view.dom.closest(selector),get selectionStart(){return authoredOffset(view.state.doc,view.state.selection.from);},get selectionEnd(){return authoredOffset(view.state.doc,view.state.selection.to);},setSelectionRange:(start,end)=>view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc,documentPosition(view.state.doc,start),documentPosition(view.state.doc,end))).scrollIntoView()),replaceText:text=>{view.dispatch(replaceAuthoredText(view.state,text));},insertFile:(file,range)=>{
+  props.inputRef.current={get element(){return view.dom;},focus:()=>view.focus(),closest:selector=>view.dom.closest(selector),getCaretRect:offset=>view.coordsAtPos(documentPosition(view.state.doc,offset)),get selectionStart(){return authoredOffset(view.state.doc,view.state.selection.from);},get selectionEnd(){return authoredOffset(view.state.doc,view.state.selection.to);},setSelectionRange:(start,end)=>view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc,documentPosition(view.state.doc,start),documentPosition(view.state.doc,end))).scrollIntoView()),replaceText:text=>{view.dispatch(replaceAuthoredText(view.state,text));},insertFile:(file,range)=>{
    const state=view.state;const tr=closeHistory(state.tr);const existing=readComposerDocument(state.doc).files.find(item=>item.source.hostId===file.source.hostId&&item.source.path===file.source.path);
    if(range)tr.setSelection(TextSelection.create(tr.doc,documentPosition(tr.doc,range.start,'before'),documentPosition(tr.doc,range.end)));
    if(existing&&!latest.current.allowRepeatedFiles){if(range)tr.deleteSelection();}else tr.replaceSelectionWith(composerSchema.nodes.file!.create({id:file.id,hostId:file.source.hostId,path:file.source.path}));
