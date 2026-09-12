@@ -21,7 +21,8 @@
 .settings-sidebar-titlebar { position: absolute; inset: 0 0 auto; height: 46px; }
 
 .settings-sidebar-back,
-.settings-sidebar-item {
+.settings-sidebar-item,
+.settings-sidebar-result {
   display: flex;
   align-items: center;
   flex: none;
@@ -39,10 +40,10 @@
 }
 .settings-sidebar-back { margin-bottom: 8px; }
 /* Pinned wJ uses one ghost-hover surface for hover and current destinations. */
-.settings-sidebar .settings-sidebar-back:hover, .settings-sidebar .settings-sidebar-item:hover, .settings-sidebar .settings-sidebar-item.highlighted { background: var(--selected); }
+.settings-sidebar .settings-sidebar-back:hover, .settings-sidebar .settings-sidebar-item:hover, .settings-sidebar-result:hover, .settings-sidebar-result.highlighted { background: var(--selected); }
 .settings-sidebar-back:focus-visible, .settings-sidebar-item:focus-visible, .settings-sidebar-search-clear:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: -2px; }
-.settings-sidebar-back .icon, .settings-sidebar-item .icon { width: calc(var(--icon-size, 20px) * 0.8); height: calc(var(--icon-size, 20px) * 0.8); flex: none; color: var(--text); }
-.settings-sidebar-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-sidebar-back .icon, .settings-sidebar-item .icon, .settings-sidebar-result .icon { width: calc(var(--icon-size, 20px) * 0.8); height: calc(var(--icon-size, 20px) * 0.8); flex: none; color: var(--text); }
+.settings-sidebar-item span, .settings-sidebar-result span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-sidebar .settings-sidebar-item.selected { background: var(--selected); }
 
 /* Pinned lCo/rCo: 32px leading slot, 18px glyph, 18px input line box. */
@@ -58,6 +59,9 @@
 .settings-sidebar-items { display: flex; flex-direction: column; gap: 1px; }
 .settings-sidebar-nav h2 { margin: 0 8px; color: var(--tertiary); font: inherit; font-weight: 500; opacity: .75; }
 .settings-sidebar-results { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+/* Pinned Mn search rows use py-1.5 and icon-sm, not the normal 30px row. */
+.settings-sidebar-result { min-height: 0; padding: 6px 8px; }
+.settings-sidebar-result .icon { width: calc(var(--icon-size, 20px) * 0.9); height: calc(var(--icon-size, 20px) * 0.9); }
 .settings-sidebar-empty { margin: 0; padding: 4px 8px; color: var(--secondary); font-size: calc(var(--font-size, 14px) * 0.9285714285714286); }
 
 /* OMP host control remains outside the scrolling settings destination list. */

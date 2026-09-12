@@ -92,25 +92,8 @@ export function SettingsSidebar({ page, onSelect, onBack, hostControl, environme
     return () => { cancelAnimationFrame(frame); document.removeEventListener("focusin", restore); };
   }, [page]);
 
-  useEffect(() => {
-    const keydown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat) return;
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target?.closest('dialog[open], [role="dialog"], [role="menu"], [role="listbox"]')) return;
-      const primary = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-      if (primary && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
-        event.preventDefault(); searchInput.current?.focus(); searchInput.current?.select();
-      } else if (event.key === "Escape" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-        && !target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
-        event.preventDefault(); onBack();
-      }
-    };
-    window.addEventListener("keydown", keydown);
-    return () => window.removeEventListener("keydown", keydown);
-  }, [onBack]);
-
   const searchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    const macMove = /Mac|iPhone|iPad|iPod/.test(navigator.platform) && event.ctrlKey && (event.key === "n" || event.key === "p");
+    const macMove = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform) && event.ctrlKey && (event.key === "n" || event.key === "p");
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey && !macMove || event.altKey || event.shiftKey) return;
     if (event.key === "Escape" && query.length) { event.preventDefault(); clearSearch(); return; }
     if (!searching || !visible.length) return;
@@ -121,7 +104,7 @@ export function SettingsSidebar({ page, onSelect, onBack, hostControl, environme
       const nextIndex = index < 0 ? direction > 0 ? 0 : visible.length - 1 : (index + direction + visible.length) % visible.length;
       const next = visible[nextIndex];
       setHighlightedPage(next?.id);
-      if (next) results.current?.querySelector<HTMLElement>(`[data-settings-page="${next.id}"]`)?.scrollIntoView({ block: "nearest" });
+      if (next) results.current?.querySelector<HTMLElement>(`[data-settings-result="${next.id}"]`)?.scrollIntoView({ block: "nearest" });
     } else if (event.key === "Enter" && highlighted) {
       event.preventDefault();
       if (highlighted.id !== page) keyboardNavigation.current = { page: highlighted.id, element: event.currentTarget };
@@ -142,7 +125,7 @@ export function SettingsSidebar({ page, onSelect, onBack, hostControl, environme
   const row = (item: SettingsItem) => {
     const selected = item.id === page || item.id === "plugins" && page === "mcp";
     return <button key={item.id} id={`settings-destination-${item.id}`} data-settings-page={item.id} type="button"
-      className={`settings-sidebar-item${selected ? " selected" : ""}${searching && item.id === highlighted?.id ? " highlighted" : ""}`}
+      className={`settings-sidebar-item${selected ? " selected" : ""}`}
       aria-current={selected ? "page" : undefined} onClick={event => {
         if (event.detail === 0 && document.activeElement === event.currentTarget && item.id !== page) {
           keyboardNavigation.current = { page: item.id, element: event.currentTarget };
@@ -159,15 +142,30 @@ export function SettingsSidebar({ page, onSelect, onBack, hostControl, environme
     </button>
     <div className="settings-sidebar-search">
       <span className="settings-sidebar-search-icon">{settingsIcons.search}</span>
-      <input ref={searchInput} type="text" role="searchbox" autoComplete="off" value={query} onChange={event => changeQuery(event.target.value)}
+      <input ref={searchInput} type="text" role="combobox" aria-expanded={searching} aria-autocomplete="list" aria-haspopup="listbox" autoComplete="off" value={query} onChange={event => changeQuery(event.target.value)}
         onKeyDown={searchKeyDown} placeholder="Search settings…" aria-label="Search settings"
         aria-controls={searching ? "settings-search-results" : undefined}
         aria-activedescendant={searching && highlighted ? `settings-destination-${highlighted.id}` : undefined} />
       {query.length > 0 && <button type="button" className="settings-sidebar-search-clear" aria-label="Clear settings search" onClick={clearSearch}><Icon name="close" /></button>}
     </div>
-    <nav className={`settings-sidebar-nav${searching ? " searching" : ""}`} aria-label="Settings" onKeyDown={navigationKeyDown}>
-      {searching ? <div ref={results} id="settings-search-results" className="settings-sidebar-results">
-        {visible.map(row)}
+    <nav className="settings-sidebar-nav" aria-label="Settings" onKeyDown={navigationKeyDown}>
+      {searching ? <div>
+        <div ref={results} id="settings-search-results" role="listbox" aria-label="Matching settings" className="settings-sidebar-results">
+          {visible.map(item => <div key={item.id} id={`settings-destination-${item.id}`} data-settings-result={item.id}
+            role="option" aria-selected={item.id === highlighted?.id}
+            className={`settings-sidebar-result${item.id === highlighted?.id ? " highlighted" : ""}`}
+            onMouseEnter={() => setHighlightedPage(item.id)} onMouseDown={event => event.preventDefault()}
+            onClick={() => {
+              setHighlightedPage(item.id);
+              if (searchInput.current) {
+                searchInput.current.focus();
+                if (item.id !== page) keyboardNavigation.current = { page: item.id, element: searchInput.current };
+              }
+              onSelect(item.id);
+            }}>
+            {item.icon}<span>{item.label}</span>
+          </div>)}
+        </div>
         {!visible.length && <p className="settings-sidebar-empty" role="status">No results found</p>}
       </div> : (["Personal", "Integrations", "Coding"] as const).map(group => {
         const items = visible.filter(item => item.group === group);

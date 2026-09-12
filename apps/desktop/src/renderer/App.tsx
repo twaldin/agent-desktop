@@ -728,9 +728,16 @@ export function App() {
   const currentShortcutOptions: AppShortcutOptions = {
     ...(commandKeymap && { bindings: appCommandBindings.bindings }),
     composer: () => textarea.current?.element ?? null,
-    inputActions: ["focus-main-chat"],
+    inputActions: settingsOpen ? ["focus-main-chat", "find-in-thread"] : ["focus-main-chat"],
     blocked: () => Boolean(dialog || menuOpen || fileSearchOwner || commandMenuMode),
     actions: {
+      ...(settingsOpen && {
+        "find-in-thread": () => {
+          const search = document.querySelector<HTMLInputElement>(".settings-sidebar-search input");
+          search?.focus();
+          search?.select();
+        },
+      }),
       ...sidebarChatActions(organizedSidebar.chatSlots, navigate),
       ...(!contentOverlayOpen ? numberedMainTaskActions(taskTargets, taskDirection, selectMainTask) : {}),
       ...(!contentOverlayOpen && taskTargets.length > 1 ? { "next-task-tab": () => cycleMainTask("next"), "previous-task-tab": () => cycleMainTask("previous") } : {}),
