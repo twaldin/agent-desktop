@@ -8,7 +8,7 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
   modelValue: string; modelLabel: string; modelTitle: string; models: ModelPickerOption[]; levels: string[]; effort?: string; effectiveEffort?: string; defaultEffortLabel: string; disabled: boolean;
   onModel(value: string): void; onEffort(value?: string): void; onReset(): void;
 }) {
-  const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null), scrollFrame = useRef<number | undefined>(undefined);
   const [open, setOpen] = useState<"main" | "models" | "effort">(), [query, setQuery] = useState("");
   const [position, setPosition] = useState<CSSProperties>();
   useLayoutEffect(() => {
@@ -25,12 +25,12 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
     window.addEventListener("resize", measure); window.addEventListener("scroll", measure, true);
     return () => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true); };
   }, [open]);
-  const effortLabel = (value: string) => value.replace(/(^|[ -])([a-z])/g, (_, prefix, letter) => prefix + letter.toUpperCase());
+  const effortLabel = (value: string) => value === "xhigh" || value === "x-high" ? "Extra High" : value.replace(/(^|[ -])([a-z])/g, (_, prefix, letter) => prefix + letter.toUpperCase());
   const ordinal = levels.filter(level => level !== "auto" && level !== "off");
   const activeEffort = effort ?? effectiveEffort;
   const activeOrdinal = ordinal.indexOf(activeEffort ?? "");
-  const close = () => { setOpen(undefined); setQuery(""); trigger.current?.focus({ preventScroll: true }); };
-  useEffect(() => { if (disabled && open) { setOpen(undefined); setQuery(""); } }, [disabled, open]);
+  const close = () => { cancelAnimationFrame(scrollFrame.current!); setOpen(undefined); setQuery(""); trigger.current?.focus({ preventScroll: true }); };
+  useEffect(() => { if (disabled && open) close(); }, [disabled, open]);
   useEffect(() => {
     if (!open) return;
     const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>(open === "models" ? "input" : "input:not(:disabled),button:not(:disabled)")?.focus({ preventScroll: true }));
@@ -38,7 +38,8 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
     addEventListener("pointerdown", outside); return () => { cancelAnimationFrame(frame); removeEventListener("pointerdown", outside); };
   }, [open]);
   const filtered = filterModelOptions(models, query);
-  const visibleModels = filtered.slice(0, 100);
+  const visibleModels = filtered;
+  useEffect(() => { if (open !== "models") return; const node = menu.current, frame = scrollFrame.current = requestAnimationFrame(() => { if (menu.current === node) node?.querySelector<HTMLButtonElement>(`button[aria-checked="true"]`)?.scrollIntoView({ block: "nearest" }); }); return () => cancelAnimationFrame(frame); }, [open, query, modelValue]);
   const chooseModel = (item: ModelPickerOption) => { if (disabled || item.disabled) return; onModel(item.value); close(); };
   const label = `${modelLabel}${activeEffort ? ` ${effortLabel(activeEffort)}` : ""}`;
   const moveMenuFocus = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -49,10 +50,10 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
     if (index < 0) return;
     event.preventDefault();
     const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
-    buttons[next]?.focus({ preventScroll: true });
+    buttons[next]?.focus();
   };
   return <div className="composer-selection-popup" ref={root}>
-    <button ref={trigger} type="button" className="composer-selection-trigger" aria-label="Model and reasoning effort" aria-haspopup="menu" aria-expanded={Boolean(open)} title={modelTitle} disabled={disabled} onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); close(); } }} onClick={() => { if (disabled) return; setOpen(open ? undefined : "main"); }}><span>{label}</span><Icon name="chevron"/></button>
+    <button ref={trigger} type="button" className="composer-selection-trigger" aria-label="Model and reasoning effort" aria-haspopup="menu" aria-expanded={Boolean(open)} title={modelTitle} disabled={disabled} onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); close(); } }} onClick={() => { if (disabled) return; if (open) close(); else setOpen("main") }}><span>{label}</span><Icon name="chevron"/></button>
     {open && position && createPortal(<div style={position} ref={menu} className={`composer-selection-menu ${open === "main" ? "composer-power-menu" : ""}`} role="menu" aria-label={open === "models" ? "Select model" : open === "effort" ? "Select effort" : "Composer selections"} onKeyDown={moveMenuFocus}>
       {open === "main" && <>
         <div className="composer-selection-header">
@@ -67,7 +68,7 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
         </div>}
 
       </>}
-      {open === "models" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select model</strong></div><label className="composer-selection-search"><Icon name="search"/><input type="search" aria-label="Search models" value={query} placeholder="Search model or provider" onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.nativeEvent.isComposing || event.key !== "Enter") return; const next = filtered[nextModelOption(filtered, -1, 1)]; if (next) chooseModel(next); }}/></label><div className="composer-selection-options" role="menu">{visibleModels.map(item => <button role="menuitemradio" aria-checked={item.value === modelValue} aria-disabled={Boolean(item.disabled)} disabled={item.disabled} key={item.value} type="button" onClick={() => chooseModel(item)}><span><b>{item.label}</b>{item.detail && <small>{item.detail}</small>}</span>{item.value === modelValue && <Icon name="check"/>}</button>)}{!filtered.length && <p>No models match this search.</p>}{filtered.length > visibleModels.length && <p>Showing the first 100 of {filtered.length.toLocaleString()} matches. Refine your search.</p>}</div></>}
+      {open === "models" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select model</strong></div><label className="composer-selection-search"><Icon name="search"/><input type="search" aria-label="Search models" value={query} placeholder="Search model or provider" onChange={event => { setQuery(event.target.value); }} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); close(); return; } if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const index = event.key === "ArrowDown" ? nextModelOption(filtered, -1, 1) : nextModelOption(filtered, filtered.length, -1); if (index >= 0) menu.current?.querySelector<HTMLButtonElement>(`button[data-model-index="${index}"]`)?.focus(); return; } if (event.key === "Enter") { event.preventDefault(); const index = nextModelOption(filtered, -1, 1); if (index >= 0) chooseModel(filtered[index]!); } }}/></label><div className="composer-selection-options" role="menu">{visibleModels.map((item, index) => <button data-model-index={index} role="menuitemradio" aria-checked={item.value === modelValue} aria-disabled={Boolean(item.disabled)} disabled={item.disabled} key={item.value} type="button" onClick={() => chooseModel(item)}><span><b>{item.label}</b>{item.detail && <small>{item.detail}</small>}</span>{item.value === modelValue && <Icon name="check"/>}</button>)}{!filtered.length && <p>No models match this search.</p>}</div></>}
       {open === "effort" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select effort</strong></div><button role="menuitemradio" aria-checked={!effort} type="button" onClick={() => { if (disabled) return; onEffort(undefined); close(); }}>{defaultEffortLabel}{!effort && <Icon name="check"/>}</button>{levels.map(level => <button role="menuitemradio" aria-checked={effort === level} key={level} type="button" onClick={() => { if (disabled) return; onEffort(level); close(); }}>{effortLabel(level)}{effort === level && <Icon name="check"/>}</button>)}</>}
     </div>, document.body)}
   </div>;
