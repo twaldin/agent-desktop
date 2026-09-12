@@ -77,6 +77,45 @@ function keyboard(document: ModelDocument) {
   return { window: window as unknown as Window, fire, event, listeners, key(fields: Record<string, unknown> = {}) { const value = event(fields); fire("keydown", value); return value.defaultPrevented; } };
 }
 
+test("Files filter dispatches file search without taking other input owners or commands", () => {
+  const s = scene(), k = keyboard(s.document), dispatched: string[] = [];
+  const files = s.side.content.add("section", { class: "workspace-file-browser" });
+  const filter = files.add("label", { class: "workspace-file-tree-filter" }).add("input");
+  let blocked = false;
+  let options: AppShortcutOptions = {
+    bindings: readAppCommandBindings(undefined, true).bindings,
+    composer: () => s.composer as unknown as HTMLElement, blocked: () => blocked,
+    actions: { files: () => dispatched.push("files"), "new-chat": () => dispatched.push("chat") },
+  };
+  const dispose = installAppShortcuts(k.window, () => withBrowserAddressShortcut(options, s.rootElement, owner));
+  const search = () => k.key({ key: "p", code: "KeyP" });
+  try {
+    filter.focus();
+    expect(search()).toBe(true); expect(dispatched).toEqual(["files"]);
+    expect(k.key({ key: "n", code: "KeyN" })).toBe(false);
+    s.composer.focus();
+    expect(search()).toBe(true); expect(dispatched).toEqual(["files", "files"]);
+    s.root.add("input").focus(); expect(search()).toBe(false);
+    // The editor tree shares the filter class without owning the Files panel.
+    s.root.add("label", { class: "workspace-file-tree-filter" }).add("input").focus();
+    expect(search()).toBe(false);
+    files.add("input").focus(); expect(search()).toBe(false);
+    expect(dispatched).toEqual(["files", "files"]);
+    filter.focus();
+    filter.attributes["data-codex-shortcut-capture"] = ""; expect(search()).toBe(false);
+    delete filter.attributes["data-codex-shortcut-capture"];
+    files.attributes.class = "workspace-file-browser editor-content"; expect(search()).toBe(false);
+    files.attributes.class = "workspace-file-browser";
+    blocked = true; expect(search()).toBe(false); blocked = false;
+    options = { ...options, bindings: { files: ["Command+O"] } };
+    expect(search()).toBe(false);
+    expect(k.key({ key: "o", code: "KeyO" })).toBe(true);
+    options = { ...options, actions: {} };
+    expect(k.key({ key: "o", code: "KeyO" })).toBe(false);
+    expect(dispatched).toEqual(["files", "files", "files"]);
+  } finally { dispose(); }
+});
+
 test("visible browser ownership prefers the side fallback, exact focused browser and main composer", () => {
   const s = scene(), target = (origin?: Node | null) => browserAddressTarget(s.rootElement, owner, origin as unknown as Element) as unknown as Node | undefined;
   expect(target()).toBe(s.side.input);

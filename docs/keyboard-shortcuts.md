@@ -26,6 +26,8 @@ The bubble-phase dispatcher respects `defaultPrevented`, IME events (including k
 
 The composer deliberately retains application commands. Ordinary inputs, selects, rich editors, shadow editors, native terminals and pending-interaction surfaces keep input ownership. `data-app-shortcuts="off"` marks another scoped owner. Visible dialogs/menus block application dispatch; the current `blocked()` closure also covers React transient state before its DOM commits. Hidden/closed popups do not block. Unmodified text, Escape, send/steer and editor save remain outside this dispatcher.
 
+The Files panel's filter is a narrow exception: its configured `searchFiles` binding opens the existing file-search dialog, as it does from the composer. Other application commands remain excluded from that filter. This does not grant file-search ownership to unrelated inputs, file editors, shortcut-recording controls or blocked surfaces.
+
 Local behavior stays with its existing owner: composer submission follows `general.sendBehavior`; ProseMirror owns composer history; file editors own Save, search, selection and Go to line; terminals own terminal input; dock tabs own their navigation and move/close controls. Do not register these globally merely to populate a settings list.
 
 ## Stable listener lifetime

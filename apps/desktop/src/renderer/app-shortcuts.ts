@@ -99,7 +99,9 @@ export function installAppShortcuts(window: Window, options: AppShortcutOptions 
     const focused = focusedElements(event, window.document);
     if (focused.some(value => value.closest(ownedSurface) || value.closest('[data-codex-shortcut-capture]'))) { sequences.reset(); return; }
     const inputOwned = focused.some(value => ownsInput(value, composer));
-    const eligible = (command: AppShortcut) => Boolean(options.actions[command]) && (!inputOwned || options.inputActions?.includes(command));
+    // The Files filter belongs to file search, not an independent editor.
+    const fileSearchInput = inputOwned && focused.some(value => value.closest(".workspace-file-tree-filter")?.closest(".workspace-file-browser"));
+    const eligible = (command: AppShortcut) => Boolean(options.actions[command]) && (!inputOwned || options.inputActions?.includes(command) || (command === "files" && fileSearchInput));
     if (inputOwned && !Object.keys(options.actions).some(command => eligible(command as AppShortcut))) { sequences.reset(); return; }
     if (options.bindings !== undefined) {
       const active = (Object.keys(options.actions) as AppShortcut[]).filter(eligible)
