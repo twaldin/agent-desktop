@@ -171,3 +171,78 @@ test('live MCP inspection reuses cached resources/prompts/notifications and prom
     expect(await empty.completion).toBe(false); expect((await session.getMessages()).length).toBe(messagesBefore);
   } finally { await runtime.dispose(); await rm(root, { recursive: true, force: true }); }
 }, 30000);
+
+/** Own one disposable stdio discovery process. Individual tests decide when
+ * its held tools/list may finish and inspect the actual native consumer. */
+async function gatedMcpDiscovery(withProvider: boolean) {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'agent-mcp-discovery-')));
+  const agentDir = path.join(root, 'agent'), cwd = path.join(root, 'project'), gates = path.join(root, 'gates');
+  const gate = path.join(gates, 'release-tools'), pidFile = path.join(root, 'server-pid');
+  await Promise.all([agentDir, cwd, gates].map(value => mkdir(value)));
+  if (withProvider) await writeFile(path.join(agentDir, 'config.yml'), `extensions:\n  - ${JSON.stringify(path.join(import.meta.dir, 'fixtures/mcp-provider.ts'))}\nretry:\n  enabled: false\n`);
+  await writeFile(path.join(agentDir, 'mcp.json'), JSON.stringify({ mcpServers: { fixture: {
+    command: process.execPath, args: [path.join(import.meta.dir, '../omp/fixtures/mcp-server.ts')],
+    env: { AGENT_DESKTOP_MCP_TEST_TOOLS_GATE: gate, AGENT_DESKTOP_MCP_TEST_PID_FILE: pidFile },
+  } } }));
+  const runtime = new WorkerRuntime({ agentDir, workerPath: path.join(import.meta.dir, 'fixtures/no-provider-worker.ts'),
+    environment: { HOME: root, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, MCP_CONTRACT_GATES: gates, TERM: 'dumb' } });
+  return { cwd, gates, gate, pidFile, runtime, dispose: async () => { await runtime.dispose(); await rm(root, { recursive: true, force: true }); } };
+}
+
+test('tools discovered between the native initial snapshot and session callback are available to the first prompt',async()=>{
+  const fixture = await gatedMcpDiscovery(true), { cwd, gates, runtime } = fixture;
+  try {
+    await mkdir(path.join(cwd, '.omp', 'tools'), { recursive: true });
+    await writeFile(path.join(cwd, '.omp', 'tools', 'startup-gate.ts'), `export { default } from ${JSON.stringify(path.join(import.meta.dir, 'fixtures/mcp-startup-gate.ts'))};`);
+    const session=await runtime.create({cwd,interactions:true,approvalOverride:'yolo'});
+    expect(JSON.parse(await readFile(path.join(gates, 'manager-before-session.json'), 'utf8'))).toContain('mcp__fixture_tool');
+    const before=await session.getSessionMcp();
+    expect(before.servers[0]?.tools).toContain('mcp__fixture_tool');
+    expect(before.available).toBe(true);expect(before.servers[0]?.status).toBe('connected');
+    const model={provider:'mcp-contract',id:'controlled'};
+    expect(await session.prompt('Invoke the disposable MCP tool once.',{model})).toBe(true);
+    const messages=await session.getMessages();
+    expect(JSON.stringify(messages)).toContain('Native MCP tool completed.');
+    expect(JSON.stringify(messages)).toContain('fixture tool invoked');
+    expect(messages.filter(message=>message.tool).every(message=>!message.tool!.isError)).toBe(true);
+    await session.dispose();
+  } finally { await fixture.dispose(); }
+},30000);
+
+test('background MCP discovery remains nonblocking and a later tool publication updates the live session', async () => {
+  const fixture = await gatedMcpDiscovery(true), { cwd, gates, gate, runtime } = fixture;
+  try {
+    // No factory releases this gate: returning a session proves that pending
+    // server tools do not become a new startup barrier.
+    const session = await runtime.create({ cwd, interactions: true, approvalOverride: 'yolo' });
+    expect((await session.getSessionMcp()).servers[0]?.tools).toEqual([]);
+    await session.prompt('/fixture-tool-selection inspect');
+    expect(JSON.parse(await readFile(path.join(gates, 'active-tools.json'), 'utf8'))).not.toContain('mcp__fixture_tool');
+    await writeFile(gate, '');
+    // This is a later asynchronous publication control, not the initial-gap
+    // regression above: observe the native session's own resulting active set.
+    let tools: string[] = [];
+    for (let index = 0; index < 100 && !tools.includes('mcp__fixture_tool'); index++) {
+      await session.prompt('/fixture-tool-selection inspect');
+      tools = JSON.parse(await readFile(path.join(gates, 'active-tools.json'), 'utf8')); if (!tools.includes('mcp__fixture_tool')) await Bun.sleep(10);
+    }
+    expect(tools).toContain('mcp__fixture_tool');
+    expect(await session.prompt('Invoke after the original background connection completed.', { model: { provider: 'mcp-contract', id: 'controlled' } })).toBe(true);
+    expect(JSON.stringify(await session.getMessages())).toContain('Native MCP tool completed.');
+    await session.dispose(); await expect(session.getSessionMcp()).rejects.toThrow();
+  } finally { await fixture.dispose(); }
+}, 30000);
+
+test('disposing a session with held background MCP tools drains that original subprocess', async () => {
+  const fixture = await gatedMcpDiscovery(false), { cwd, gate, pidFile, runtime } = fixture;
+  try {
+    const session = await runtime.create({ cwd, interactions: true });
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+    expect((await session.getSessionMcp()).servers[0]?.tools).toEqual([]);
+    await session.dispose();
+    await writeFile(gate, '');
+    expect(() => process.kill(pid, 0)).toThrow();
+    await expect(session.getSessionMcp()).rejects.toThrow();
+  } finally { await fixture.dispose(); }
+}, 30000);
