@@ -33,6 +33,8 @@ import { hasRepeatedWholeFileSources, serializeRepeatedWholeFilePrompt, serializ
 import { discoverComposerActions, discoverSkillInventory, sessionComposerActions, composerCompletions, type NativeComposerCatalog, type NativeComposerCompletions, type NativeSkillInventoryCatalog } from "./composer-actions";
 import type { ComposerCompletionQuery } from "@agent-desktop/shared";
 import { NativeSteerAdmission, type OmpSteerReceipt } from "./steer";
+import { NativeQueuedMessages } from "./queued-messages";
+import type { NativeQueuedMessageMutation, NativeQueuedMessageMutationReceipt, NativeQueuedMessagesSnapshot } from "../../../../packages/shared/src/queued-messages";
 import { createNativeAccountSelectionBridge } from "../omp-accounts/session-selection";
 import type { SessionAccountList } from "../omp-accounts/types";
 import { nativeApprovalInteractionClassification, OmpInteractionBridge, type OmpBridgeEvent, type OmpInteraction, type OmpInteractionResponse } from "./interactions";
@@ -56,7 +58,7 @@ function detachedQuestionRejected(message: string): Error {
 }
 
 type NativeModel = NonNullable<AgentSession["model"]>;
-export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent;
+export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
 export type OmpEventListener = (event: OmpRuntimeEvent) => void;
 export interface OmpSessionOptions {
   cwd: string;
@@ -114,6 +116,8 @@ export interface OmpSession {
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
   steer(text: string, expectedApprovalMode?: OmpApprovalMode, options?: { images?: PreparedPromptImage[] }): Promise<OmpSteerReceipt>;
+  getQueuedMessages(): NativeQueuedMessagesSnapshot;
+  mutateQueuedMessages(mutation: NativeQueuedMessageMutation): NativeQueuedMessageMutationReceipt;
   abort(): Promise<void>;
   setModel(model: ModelChoice): Promise<void>;
   listAccountChoices(): Promise<SessionAccountList>;
@@ -431,6 +435,7 @@ export class OmpRuntime {
       const btw = new NativeBtwController(session);
       const mcp = new NativeSessionMcp(session, result.mcpManager);
       const steering = new NativeSteerAdmission(session, manager);
+      const queuedMessages = new NativeQueuedMessages(session, steering);
       const auth = context.auth;
       const registry = context.registry;
       const mirror = new TranscriptMirror();
@@ -461,6 +466,10 @@ export class OmpRuntime {
       let promotionCall: Promise<{ cancelled: boolean; sessionId: string; sessionFile: string }> | undefined;
       const listeners = new Set<OmpEventListener>();
       if (options.onEvent) listeners.add(options.onEvent);
+      const unsubscribeQueuedMessages = queuedMessages.subscribe(snapshot => {
+        if (promotionState !== "idle") return;
+        for (const listener of listeners) listener({ type: "queued_messages_changed", snapshot });
+      });
       const emitBridge = (event: OmpBridgeEvent) => {
         // Native branch hooks may ask for input. Keep only those interactions
         // on the still-owned origin; new-branch presentation waits for reopen.
@@ -936,6 +945,8 @@ export class OmpRuntime {
           if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode")) return { kind: "not-recorded", reason: "The running turn uses a different native permission mode. Stop it before changing permissions." };
           return steering.submit(text);
         },
+        getQueuedMessages: () => { assertSessionActive(); return queuedMessages.snapshot(); },
+        mutateQueuedMessages: mutation => { assertSessionActive(); return queuedMessages.mutate(mutation); },
         abort: async () => {
           assertSessionActive(); admissionAbort?.abort(); ui?.cancelAll("aborted"); mcp.cancelAuthorization();
           interruptEpoch++;
@@ -1010,6 +1021,7 @@ export class OmpRuntime {
             finally {
               await steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified");
               await detachedQuestions.settle();
+              unsubscribeQueuedMessages(); queuedMessages.close();
               steering.close();
               unsubscribe(); listeners.clear(); auth.close();
               this.#sessions.delete(handle); for (const file of reservedPaths) this.#reservedFiles.delete(file);

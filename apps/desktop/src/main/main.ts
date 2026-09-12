@@ -27,6 +27,7 @@ import { requestGoalMutation } from "./goal-control-transport";
 import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillFileOpenOptions, requestSkillFileCopy, requestSkillImage } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBtw } from "./btw-transport";
+import { mutateQueuedMessages, requestQueuedMessages } from "./queued-messages-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
 import { requestBrowserMetadata } from "./browser-metadata-transport";
 import { requestBrowserFrame } from "./browser-frame-transport";
@@ -319,7 +320,7 @@ function connectEvents(endpoint: HostEndpoint): void {
     if (current.socket !== next) return;
     try {
       const event = JSON.parse(String(data)) as HostEvent | { type: "terminal"; event: TerminalInvalidation }
-        | { type: "native-terminal"; event: NativeTerminalInvalidation } | RepositoryWatchStatus | BranchQueryMessage;
+        | { type: "native-terminal"; event: NativeTerminalInvalidation } | { type: "queued-messages"; sessionId: string } | RepositoryWatchStatus | BranchQueryMessage;
       if (event.type === "state" && (!Number.isSafeInteger(event.sequence) || event.sequence < 0)) return;
       if (queryEvents.receive(event)) return;
       // The router consumes both connection-local protocols before cursor handling.
@@ -327,6 +328,12 @@ function connectEvents(endpoint: HostEndpoint): void {
       if (event.type === "terminal" || event.type === "native-terminal") {
         const channel = event.type === "terminal" ? "host:terminal-event" : "host:native-terminal-event";
         for (const window of windows) if (!window.isDestroyed()) window.webContents.send(channel, { ...event.event, hostId: endpoint.hostId });
+        return;
+      }
+      if (event.type === "queued-messages") {
+        if (typeof event.sessionId !== "string" || !event.sessionId || event.sessionId.length > 200 || event.sessionId.includes("\0")) return;
+        for (const window of windows) if (!window.isDestroyed()) window.webContents.send("host:queued-messages-changed",
+          { hostId: endpoint.hostId, sessionId: event.sessionId });
         return;
       }
       if (!Number.isSafeInteger(event.sequence) || event.sequence < 0) return;
@@ -478,6 +485,13 @@ ipcMain.handle("host:messages", (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event);
   if (typeof sessionId !== "string" || sessionId.length > 200) throw new Error("Invalid session ID.");
   return request(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`, undefined, hostId);
+});
+ipcMain.handle("host:queued-messages", async (event, sessionId: string, hostId: string) => {
+  assertTrustedSender(event); return requestQueuedMessages(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:queued-messages-mutate", async (event, sessionId: string,
+  mutation: import("@agent-desktop/shared").NativeQueuedMessageMutation, hostId: string) => {
+  assertTrustedSender(event); return mutateQueuedMessages(await endpointFor(hostId), sessionId, mutation);
 });
 ipcMain.handle("host:goal-control", async (event, sessionId: string, request: import("@agent-desktop/shared").GoalMutationRequest, hostId?: string) => {
   assertTrustedSender(event); return requestGoalMutation(await endpointFor(hostId), sessionId, request);

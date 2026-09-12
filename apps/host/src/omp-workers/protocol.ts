@@ -8,7 +8,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 44;
+export const WORKER_PROTOCOL_VERSION = 45;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -83,6 +83,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
   | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode; options?: { images?: PreparedPromptImage[] } } }
+  | { operation: "getQueuedMessages" }
+  | { operation: "mutateQueuedMessages"; args: { mutation: import("../../../../packages/shared/src/queued-messages").NativeQueuedMessageMutation } }
   | { operation: "abort" }
   | { operation: "setModel"; args: { model: ModelChoice } }
   | { operation: "listAccountChoices" }

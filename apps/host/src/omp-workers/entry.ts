@@ -394,6 +394,8 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
       }
       case "steer": respond(true, await requireSession().steer(message.args.text, message.args.expectedApprovalMode, message.args.options)); break;
+      case "getQueuedMessages": respond(true, requireSession().getQueuedMessages()); break;
+      case "mutateQueuedMessages": respond(true, requireSession().mutateQueuedMessages(message.args.mutation)); break;
       case "abort": await requireSession().abort(); respond(true); break;
       case "setModel": await requireSession().setModel(message.args.model); respond(true); break;
       case "listAccountChoices": respond(true, await requireSession().listAccountChoices()); break;

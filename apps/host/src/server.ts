@@ -79,6 +79,7 @@ import { OmpSettingsError } from "./omp-settings";
 import { ApprovalRecovery } from "./approval-recovery";
 import { NotificationEvents } from "./notification-events";
 import { WorkspaceFileOpen, type WorkspaceFileOpenRuntime } from "./workspace-open";
+import { QueuedMessagesHttp } from "./queued-messages-http";
 
 type SocketData = { after: number; remoteAddress?: string; nodeId?: string; repositoryWatches?: RepositoryWatchPeer; branchQueries?: BranchQueryPeer };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -503,11 +504,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
 
   const sessionSearch = new SessionSearch(store.host.id, () => store.listSessions(), readStoredSessionText);
+  const queuedMessages = new QueuedMessagesHttp({ hostId: store.host.id,
+    sessionExists: id => !stopping && Boolean(store.getSession(id)), getHandle });
 
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1 }, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput): void {
@@ -533,6 +536,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function onRuntimeEvent(sessionId: string, event: unknown): void {
     if (stopping) return;
     const value = event as { type?: string; message?: { errorMessage?: string } };
+    if (value.type === "queued_messages_changed") {
+      const payload = JSON.stringify({ type: "queued-messages", sessionId });
+      for (const peer of peers) {
+        if (peer.getBufferedAmount() > 8 * 1024 * 1024) closePeer(peer, 1013, "Reconnect to refresh queued messages");
+        else peer.send(payload);
+      }
+      return;
+    }
     if (value.type === "extension_interaction_requested" || value.type === "extension_interaction_resolved") {
       if (value.type === "extension_interaction_requested") notificationEvents.interactionRequested((value as import('@agent-desktop/shared').OmpBridgeEvent & { type: 'extension_interaction_requested' }).interaction);
       else notificationEvents.interactionResolved(sessionId, (value as import('@agent-desktop/shared').OmpBridgeEvent & { type: 'extension_interaction_resolved' }).id);
@@ -997,6 +1008,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const queuedMessagesResponse = await queuedMessages.route(request, url);
+        if (queuedMessagesResponse) return queuedMessagesResponse;
         const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
         if (mcpAuthorizationResponse) return mcpAuthorizationResponse;
         const mcpResourceResponse = await sessionMcpResources.route(request, url);

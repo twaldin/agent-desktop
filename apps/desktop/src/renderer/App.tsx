@@ -1,3 +1,4 @@
+import { QueuedMessages } from "./QueuedMessages";
 import { BrowserCloseFocus } from "./browser-close-focus";
 import { BrowserCloseDockOwner } from "./browser-close-dock-owner";
 import { BrowserSearchSelection } from "./browser-search-activation";
@@ -1187,6 +1188,7 @@ export function App() {
             }}
             branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }}
             onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}/>}
+          {selected && state?.queuedMessages?.version === 1 && bridge.getQueuedMessages && bridge.mutateQueuedMessages && <QueuedMessages key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} connected={connected} archived={Boolean(selected.archived)}/>}
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
             {remoteExecutionIssue && <p className="attachment-notice" role="status">{remoteExecutionIssue}</p>}
             {wholeFileIssue && <p className="attachment-notice" role="status">{wholeFileIssue}</p>}

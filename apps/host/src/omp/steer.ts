@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentSession, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { sameMessageContent, sessionMessagePersistenceKey } from "@oh-my-pi/pi-coding-agent/session/turn-persistence";
+import { isHiddenUserCompanion } from "@oh-my-pi/pi-coding-agent/session/queued-messages";
 
 export type OmpSteerReceipt =
   | { kind: "user-message"; entryId: string }
@@ -36,6 +37,7 @@ export class NativeSteerAdmission {
   #observer: NonNullable<SessionManager["onEntryAppended"]>;
   #unsubscribe: () => void;
   #timer?: ReturnType<typeof setInterval>;
+  #queueListeners = new Set<() => void>();
   #closed = false;
 
   constructor(private session: AgentSession, private manager: SessionManager) {
@@ -59,6 +61,7 @@ export class NativeSteerAdmission {
       pending.message = message;
       this.#messages.set(message, pending);
       enqueue(message);
+      for (const listener of this.#queueListeners) listener();
     };
     this.#wrapped = message => capture(message, value => this.#original.call(agent, value));
     this.#wrappedFollowUp = message => capture(message, value => this.#originalFollowUp.call(agent, value));
@@ -92,6 +95,24 @@ export class NativeSteerAdmission {
   /** Queue an ordinary user follow-up and verify its exact native entry. */
   async submitFollowUp(text: string): Promise<OmpSteerReceipt> {
     return this.#submit(() => this.session.followUp(text, undefined, { expandPromptTemplates: false }));
+  }
+
+  ownsQueuedMessage(message: NativeMessage): boolean {
+    return this.#messages.has(message);
+  }
+
+  subscribeQueue(listener: () => void): () => void {
+    this.#queueListeners.add(listener);
+    return () => { this.#queueListeners.delete(listener); };
+  }
+
+  /** Settle an owned admission after a queue controller removed its exact object. */
+  settleRemovedQueuedMessage(message: NativeMessage, reason: string): boolean {
+    const pending = this.#messages.get(message);
+    if (!pending || pending.settled) return false;
+    pending.cancelled = reason;
+    this.#finish(pending, { kind: "not-recorded", reason });
+    return true;
   }
 
   async #submit(dispatch: () => Promise<void>): Promise<OmpSteerReceipt> {
@@ -139,6 +160,7 @@ export class NativeSteerAdmission {
     if (this.#timer) clearInterval(this.#timer);
     for (const pending of this.#pending) this.#finish(pending, { kind: "outcome-unknown", reason: "Native steer admission closed without a verified receipt" });
     this.#scope.disable();
+    this.#queueListeners.clear();
   }
 
   #removeQueued(pending: Pending): boolean {
@@ -146,7 +168,15 @@ export class NativeSteerAdmission {
     const steering = this.session.agent.peekSteeringQueue();
     const followUp = this.session.agent.peekFollowUpQueue();
     if (!steering.includes(pending.message) && !followUp.includes(pending.message)) return false;
-    this.session.agent.replaceQueues(steering.filter(message => message !== pending.message), followUp.filter(message => message !== pending.message));
+    const remove = (queue: readonly NativeMessage[]) => {
+      const index = queue.indexOf(pending.message!);
+      if (index < 0) return queue.slice();
+      let start = index;
+      while (start > 0 && isHiddenUserCompanion(queue[start - 1] as never)) start--;
+      return [...queue.slice(0, start), ...queue.slice(index + 1)];
+    };
+    this.session.agent.replaceQueues(remove(steering), remove(followUp));
+    for (const listener of this.#queueListeners) listener();
     return true;
   }
 

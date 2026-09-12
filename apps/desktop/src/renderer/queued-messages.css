@@ -1,0 +1,15 @@
+/* Pinned queue rows use a single 20px text line and actions above the composer.
+   Native OMP queue operations are wired here; drag/edit/pause remain separate flows. */
+.queued-messages { padding: 0 12px 8px; font-size: 13px; }
+.queued-messages ol { list-style: none; margin: 0; padding: 0; max-height: 30dvh; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+.queued-message { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+.queued-message-marker { flex-shrink: 0; color: var(--text-tertiary); }
+.queued-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; color: var(--text-secondary); }
+.queued-message-images { color: var(--text-tertiary); }
+.queued-message-actions { display: flex; flex-shrink: 0; opacity: 0; }
+.queued-message:hover .queued-message-actions, .queued-message:focus-within .queued-message-actions { opacity: 1; }
+.queued-message-actions .icon-button { width: 24px; height: 24px; }
+.queued-message-actions button:has(span) { width: auto; gap: 4px; padding-inline: 4px; }
+.queued-message-marker .icon { width: 12px; height: 12px; }
+.queued-message-actions .queue-down .icon { transform: rotate(180deg); }
+@media (hover: none) { .queued-message-actions { opacity: 1; } }

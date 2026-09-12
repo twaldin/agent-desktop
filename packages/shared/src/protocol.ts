@@ -17,6 +17,7 @@ export * from "./session-mcp-authorization";
 export * from "./session-mcp-resource";
 export * from "./session-mcp";
 export * from "./notifications";
+export * from "./queued-messages";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from './integrations';
 import type { NativeMarketplaceCatalog, NativePluginAcquisition, NativePluginAcquisitionReceipt, NativePluginAcquisitionRequest } from './plugin-acquisition';
 export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation, NativeMcpServer } from './integrations';
@@ -212,6 +213,7 @@ export interface HostState {
   wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number; inlineMentions?: { commandVersion: 8; repeatedSources?: { commandVersion: 9 } } };
   gitSubmissions?: { commandVersion: 10 };
   sessionSearch?: { version: 1 };
+  queuedMessages?: { version: 1 };
   repositoryWatches?: { version: 1 };
   branchQueries?: { version: 1 };
   commandKeybindings?: { commandVersion: 11; snapshotVersion: 2; numberTargetVersion?: 1 };
@@ -405,6 +407,9 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   searchSessions?(input: SessionSearchRequest, hostId: string, requestId?: string): Promise<SessionSearchResult>;
   cancelSessionSearch?(requestId: string, hostId: string): Promise<void>;
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
+  getQueuedMessages?(sessionId: string, hostId: string): Promise<import("./queued-messages").NativeQueuedMessagesResponse>;
+  mutateQueuedMessages?(sessionId: string, mutation: import("./queued-messages").NativeQueuedMessageMutation, hostId: string): Promise<import("./queued-messages").NativeQueuedMessageMutationReceipt>;
+  subscribeQueuedMessages?(listener: (event: { hostId: string; sessionId: string }) => void): () => void;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
   readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;

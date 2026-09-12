@@ -173,6 +173,13 @@ const bridge: DesktopBridge = {
   searchSessions: (input, hostId, requestId) => ipcRenderer.invoke("host:session-search", input, hostId, requestId),
   cancelSessionSearch: (requestId, hostId) => ipcRenderer.invoke("host:session-search-cancel", requestId, hostId),
   getMessages: (sessionId, hostId) => ipcRenderer.invoke("host:messages", sessionId, hostId),
+  getQueuedMessages: (sessionId, hostId) => ipcRenderer.invoke("host:queued-messages", sessionId, hostId),
+  mutateQueuedMessages: (sessionId, mutation, hostId) => ipcRenderer.invoke("host:queued-messages-mutate", sessionId, mutation, hostId),
+  subscribeQueuedMessages: listener => {
+    const callback = (_event: Electron.IpcRendererEvent, value: { hostId: string; sessionId: string }) => listener(value);
+    ipcRenderer.on("host:queued-messages-changed", callback);
+    return () => ipcRenderer.removeListener("host:queued-messages-changed", callback);
+  },
   mutateGoal: (sessionId, request, hostId) => ipcRenderer.invoke("host:goal-control", sessionId, request, hostId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
   readSessionMcpResource: (sessionId, request, hostId) => ipcRenderer.invoke("host:mcp-resource", sessionId, request, hostId),

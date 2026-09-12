@@ -40,7 +40,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -58,6 +58,8 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   cancelSessionMcpAuthorization(authorizationId: string): Promise<NativeMcpAuthorizationSnapshot>;
   getSessionMcp(): Promise<import("@agent-desktop/shared").NativeSessionMcpSnapshot>;
   getBtw(): Promise<NativeBtwSnapshot | null>;
+  getQueuedMessages(): Promise<import("../../../../packages/shared/src/queued-messages").NativeQueuedMessagesSnapshot>;
+  mutateQueuedMessages(mutation: import("../../../../packages/shared/src/queued-messages").NativeQueuedMessageMutation): Promise<import("../../../../packages/shared/src/queued-messages").NativeQueuedMessageMutationReceipt>;
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
   cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
@@ -699,6 +701,8 @@ export class WorkerRuntime {
         if (options?.images?.length) return Promise.reject(new Error("Image attachments are not supported on steering input yet; no input was queued"));
         return client.request({ operation: "steer", args: { text, expectedApprovalMode, options } });
       },
+      getQueuedMessages: () => client.request({ operation: "getQueuedMessages" }),
+      mutateQueuedMessages: mutation => client.request({ operation: "mutateQueuedMessages", args: { mutation } }),
       abort: () => client.request({ operation: "abort" }),
       setModel: model => client.request({ operation: "setModel", args: { model } }),
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),
