@@ -61,6 +61,7 @@ export class PreferencesState {
       this.changed();
     })();
   }
+  private unsupportedV2Endpoint(cause: unknown) { return typeof cause === "object" && cause !== null && "status" in cause && (cause as { status?: unknown }).status === 404 || cause instanceof Error && /\b404\b/.test(cause.message); }
   private persist() {
     if (!this.ready) return;
     const value = JSON.stringify({ version: 1, records: [...this.records.values()] });
@@ -70,7 +71,7 @@ export class PreferencesState {
     if (this.inFlight) { this.again = true; return this.inFlight; }
     this.inFlight = (async () => {
       this.loading = true; this.changed();
-      try { await this.restore(); if (this.bridge.getPreferencesV2) { try { const snapshot = parsePreferencesSnapshotV2(await this.bridge.getPreferencesV2()); this.ingest({ version: 1, records: snapshot.records.filter(record => record.key !== "general.commandKeymap") }); } catch { this.ingest(await this.bridge.getPreferences()); } } else this.ingest(await this.bridge.getPreferences()); this.error = undefined; this.persist(); }
+      try { await this.restore(); if (this.bridge.getPreferencesV2) { try { const snapshot = parsePreferencesSnapshotV2(await this.bridge.getPreferencesV2()); this.ingest({ version: 1, records: snapshot.records.filter(record => record.key !== "general.commandKeymap") }); } catch (cause) { if (!this.unsupportedV2Endpoint(cause)) throw cause; this.ingest(await this.bridge.getPreferences()); } } else this.ingest(await this.bridge.getPreferences()); this.error = undefined; this.persist(); }
       catch (cause) { this.error = message(cause); }
       finally { this.loading = false; this.changed(); }
     })().finally(() => { this.inFlight = undefined; if (this.again) { this.again = false; void this.refresh(); } });

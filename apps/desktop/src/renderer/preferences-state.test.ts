@@ -98,3 +98,13 @@ test("a host without the v2 endpoint falls back to its legacy projection", async
   expect(data.error).toBeUndefined();
   expect(data.sidebarOrganization()).toEqual(expect.objectContaining({ grouping: "project" }));
 });
+
+
+test("a malformed or unavailable v2 response is not silently replaced with v1 data", async () => {
+  const f = fixture();
+  for (const failure of [new Error("Invalid preference snapshot"), new Error("Request timed out")]) {
+    const bridge = { ...f.bridge, getPreferencesV2: async () => { throw failure; } };
+    const data = new PreferencesState(bridge, f.cache, f.receipts); data.setConnection(f.host.host.id, true); await data.refresh();
+    expect(data.error).toContain(failure.message);
+  }
+});
