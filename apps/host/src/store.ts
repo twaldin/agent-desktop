@@ -857,9 +857,16 @@ export class HostStore {
     }).immediate();
   }
 
-  appendEvent(input: EventInput): HostEvent {
-    const inserted = this.db.query("INSERT INTO events (data) VALUES (?)").run(JSON.stringify(input));
-    return { ...input, sequence: Number(inserted.lastInsertRowid) } as HostEvent;
+  appendEvent(input: EventInput, sessionActivity = false): HostEvent {
+    return this.db.transaction(() => {
+      const inserted = this.db.query("INSERT INTO events (data) VALUES (?)").run(JSON.stringify(input));
+      const sequence = Number(inserted.lastInsertRowid);
+      if (sessionActivity) {
+        const session = "sessionId" in input && typeof input.sessionId === "string" ? this.getSession(input.sessionId) : undefined;
+        if (session) this.upsertSession({ ...session, activitySequence: sequence });
+      }
+      return { ...input, sequence } as HostEvent;
+    }).immediate();
   }
 
   eventsAfter(sequence: number, limit = 500): HostEvent[] {

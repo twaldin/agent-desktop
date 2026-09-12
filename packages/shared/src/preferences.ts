@@ -1,3 +1,4 @@
+import { isSessionReadKey, parseSessionReadMark, type SessionReadMark } from "./session-read";
 import { TREE_ICON_THEME_TOKENS } from "./tree-icon-theme";
 export const PREFERENCES_VERSION = 1 as const;
 export const PREFERENCE_LIMITS = { records: 10_000, snapshotBytes: 8 * 1024 * 1024, valueBytes: 64 * 1024 } as const;
@@ -133,6 +134,7 @@ export function notificationPreferences(value?: NotificationPreferences): Requir
 }
 export interface PreferenceValues {
   "sidebar.organization": SidebarOrganization;
+  [key: `session.read.${string}.${string}`]: SessionReadMark;
   "connections.keepAwakeWhilePluggedIn": boolean;
   "git.branchPrefix": string;
   "theme.material": "none" | "sidebar" | "under-window" | "hud";
@@ -251,6 +253,7 @@ function background(value: unknown): ThemeBackground {
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
   if (["sidebar.organization", "connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
+  if (isSessionReadKey(value)) return value;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
   if (!match || !isPreferenceId(match[1])) return invalid("Only allowlisted app preferences and UUID sidebar entities can be shared.");
   return value as PreferenceKey;
@@ -262,6 +265,9 @@ function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[P
     return { grouping: enumeration(item.grouping, ["project", "connection", "list"] as const),
       projectSort: enumeration(item.projectSort, ["priority", "updated_at", "manual"] as const),
       chatSort: enumeration(item.chatSort, ["priority", "updated_at", "manual"] as const) };
+  }
+  if (isSessionReadKey(key)) {
+    try { return parseSessionReadMark(value); } catch { return invalid("Invalid session read mark."); }
   }
   if (key === "git.branchPrefix") {
     if (typeof value !== "string" || value.length > 120 || /[\u0000-\u001f\u007f]/.test(value)) return invalid("A branch prefix is too long or contains control characters.");

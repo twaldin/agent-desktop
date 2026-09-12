@@ -1,3 +1,4 @@
+import { isUnreadSessionEvent } from "../../../packages/shared/src/session-read";
 import { BranchQueryPeer } from "./branch-query-peer";
 import { BRANCH_QUERY_CAPABILITY } from "@agent-desktop/shared";
 import { RepositoryWatchPeer } from "./repository-watch-peer";
@@ -519,9 +520,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       drafts: store.listDrafts(), models, modelsLoading, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
-  function publish(input: EventInput): void {
+  function publish(input: EventInput, sessionActivity = false): void {
     if (stopping) return;
-    const event = store.appendEvent(input);
+    const durable = sessionActivity && (input.type === "runtime" || input.type === "interactions") ? { ...input, sessionActivity: true as const } : input;
+    const event = store.appendEvent(durable, sessionActivity);
     const payload = JSON.stringify(event);
     for (const peer of peers) {
       if (peer.getBufferedAmount() > 8 * 1024 * 1024) closePeer(peer, 1013, "Reconnect to resume events");
@@ -555,13 +557,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       else notificationEvents.interactionResolved(sessionId, (value as import('@agent-desktop/shared').OmpBridgeEvent & { type: 'extension_interaction_resolved' }).id);
       if (value.type === "extension_interaction_resolved") goalContinuations?.request(sessionId);
       if (value.type === "extension_interaction_resolved") questionDeliveries?.request(sessionId);
-      publish({ type: "interactions", sessionId }); return;
+      publish({ type: "interactions", sessionId }, isUnreadSessionEvent(event));
+      return;
     }
     if (value.type === 'goal_updated' || value.type === 'agent_end' || value.type === 'tool_execution_end') goalContinuations?.request(sessionId);
     if (value.type === 'agent_end' || value.type === 'tool_execution_end') questionDeliveries?.request(sessionId);
     if (value.type === 'agent_end' || value.type === 'tool_execution_end') refreshDetachedNotifications(sessionId);
     if (value.type === "message_end" && value.message?.errorMessage) runtimeErrors.set(sessionId, value.message.errorMessage);
-    publish({ type: "runtime", sessionId, event });
+    publish({ type: "runtime", sessionId, event }, isUnreadSessionEvent(event));
   }
   async function getHandle(sessionId: string, locationRecovery = false): Promise<WorkerSession> {
     if (stopping) throw new Error('The host is stopping. Reconnect before opening this session.');

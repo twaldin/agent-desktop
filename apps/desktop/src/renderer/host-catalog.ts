@@ -69,6 +69,15 @@ export class HostCatalog {
       if (!validState(event.state) || hostId !== event.state.host.id) return;
       this.apply(event.state); return;
     }
+    if ((event.type === "runtime" || event.type === "interactions") && event.sessionActivity === true) {
+      const record = this.records.get(hostId);
+      if (!record?.state || !Number.isSafeInteger(event.sequence) || event.sequence <= record.state.lastEventSequence) return;
+      if (!record.state.sessions.some(session => session.id === event.sessionId && session.hostId === hostId)) return;
+      this.observed.set(hostId, ++this.observation);
+      this.records.set(hostId, { ...record, state: { ...record.state, lastEventSequence: event.sequence,
+        sessions: record.state.sessions.map(session => session.id === event.sessionId && session.hostId === hostId ? { ...session, activitySequence: event.sequence } : session) } });
+      this.persist(); this.changed(); return;
+    }
     if (event.type === "connection") {
       this.observed.set(hostId, ++this.observation);
       const previous = this.records.get(hostId);

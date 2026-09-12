@@ -111,6 +111,8 @@ export interface ModelInfo extends ModelChoice {
 export type SessionStatus = "idle" | "running" | "interrupted" | "error";
 
 export interface SessionSummary {
+  /** Latest native output/request cursor, committed with its host event. */
+  activitySequence?: number;
   id: string;
   hostId: string;
   projectId: string | null;
@@ -282,9 +284,9 @@ export type CommandResult =
 
 export type HostEvent =
   | { sequence: number; type: "state"; state: HostState; /** Direct websocket replay barrier; absent on durable state events. */ replayComplete?: true }
-  | { sequence: number; type: "runtime"; sessionId: string; event: unknown }
+  | { sequence: number; type: "runtime"; sessionId: string; event: unknown; sessionActivity?: true }
   | { sequence: number; type: "accounts" }
-  | { sequence: number; type: "interactions"; sessionId: string }
+  | { sequence: number; type: "interactions"; sessionId: string; sessionActivity?: true }
   | { sequence: number; type: "notification"; notification: HostNotification }
   | { sequence: number; type: "workspace"; target: WorkspaceTarget; repositoryChange?: GitRepositoryChange }
   | { sequence: number; type: "preferences" }
