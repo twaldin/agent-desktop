@@ -1,4 +1,5 @@
 import { normalizeAccelerator, parseCommandBindingUpdate, type CommandBindingOverride, type CommandBindingUpdate } from "./command-keybindings";
+import type { NativeTerminalResult } from "./terminals";
 import {
   PREFERENCE_LIMITS, PreferenceError, parsePreferenceRevision, parsePreferencesSnapshot,
   type PreferenceKey, type PreferenceRecord, type PreferenceRevision, type PreferencesSnapshot,
@@ -23,6 +24,8 @@ export type CommandKeymapPreferenceRecord =
 export type PreferenceKeyV2 = PreferenceKey | typeof COMMAND_KEYMAP_PREFERENCE;
 export type PreferenceRecordV2 = PreferenceRecord | CommandKeymapPreferenceRecord;
 export interface PreferencesSnapshotV2 { version: 2; records: PreferenceRecordV2[] }
+/** Structured across Electron IPC so a renderer can distinguish an old host from a failed v2 read. */
+export type PreferencesV2ReadResult = NativeTerminalResult<PreferencesSnapshotV2>;
 export interface PreferenceMergeResultV2 { changedKeys: PreferenceKeyV2[]; snapshot: PreferencesSnapshotV2 }
 export interface CommandKeymapMutation {
   expectedRevision: PreferenceRevision | null;

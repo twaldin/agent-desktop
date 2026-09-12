@@ -42,7 +42,7 @@ import type { AccountInfo, LoginResponse, LoginSnapshot, ProviderCatalog, Sessio
 import type { OmpInteraction, OmpInteractionResponse } from "./interactions";
 import type { WorkspaceMutation, WorkspaceMutationResult, WorkspaceQuery, WorkspaceQueryResult, WorkspaceTarget } from "./workspace-protocol";
 import type { PreferenceChange, PreferenceRecord, PreferencesSnapshot } from "./preferences";
-import type { CommandKeymapMutation, CommandKeymapPreferenceRecord, PreferencesSnapshotV2 } from "./preferences-v2";
+import type { CommandKeymapMutation, CommandKeymapPreferenceRecord, PreferencesSnapshotV2, PreferencesV2ReadResult } from "./preferences-v2";
 import type { ThemeAsset, ThemeDocument, ThemeState, WindowThemeEffects } from "./theme";
 import type { TerminalBridge, NativeTerminalBridge } from "./terminals";
 import type { TerminalCreationBridge } from "./terminal-creation";
@@ -385,7 +385,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   acquireWorkspaceImage?(target: WorkspaceTarget, path: string, hostId: string): Promise<{url: string; id: string}>;
   releaseWorkspaceImage?(id: string): Promise<void>;
   getPreferences(): Promise<PreferencesSnapshot>;
-  getPreferencesV2?(): Promise<PreferencesSnapshotV2>;
+  getPreferencesV2?(): Promise<PreferencesV2ReadResult>;
   getTheme(): Promise<ThemeState>;
   setTheme(document: ThemeDocument, expectedRevision: string): Promise<ThemeState>;
   getLocalFonts(): Promise<string[]>;

@@ -49,6 +49,7 @@ import { app, Notification, BrowserWindow, dialog, ipcMain, nativeImage, protoco
 import { captureDesktop } from "./capture";
 import { WindowStateStore, restoreWindowBounds, trackWindowGeometry } from "./window-state";
 import { nativeTerminalResult, requestHost, type HostEndpoint } from "./host-transport";
+import { registerPreferencesV2Handler } from "./preferences-ipc";
 import { inspectImageAttachment, requestImageAttachmentCapabilities, requestImageAttachment, requestTranscriptImage, uploadImageAttachment } from "./attachment-transport";
 import { requestComposerCatalog } from "./composer-transport";
 import { requestVersionedCommand, requestVersionedControl } from "./command-endpoints";
@@ -612,7 +613,7 @@ ipcMain.handle("host:device-access-update", async (event, input: unknown) => {
   return state;
 });
 ipcMain.handle("host:preferences", event => { assertTrustedSender(event); return request("/v1/preferences"); });
-ipcMain.handle("host:preferences-v2", event => { assertTrustedSender(event); return request("/v2/preferences"); });
+registerPreferencesV2Handler(ipcMain, assertTrustedSender, path => request(path));
 ipcMain.handle("host:theme", event => { assertTrustedSender(event); return request("/v1/theme"); });
 ipcMain.handle("host:theme-set", (event, document: ThemeDocument, expectedRevision: string) => {
   assertTrustedSender(event); return request("/v1/theme", { document, expectedRevision });

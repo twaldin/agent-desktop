@@ -85,7 +85,7 @@ test("pinned sorting restores through the v2 snapshot without changing Recents o
   await f.data.put({ key: "sidebar.pinnedSort", value: "priority" });
   expect(f.data.sidebarOrganization()).toEqual({ grouping: "connection", projectSort: "manual", chatSort: "updated_at" });
   expect(f.data.pinnedSort()).toBe("priority");
-  const v2Bridge = { ...f.bridge, getPreferencesV2: async () => f.native.snapshotV2() };
+  const v2Bridge = { ...f.bridge, getPreferencesV2: async () => ({ ok: true as const, value: f.native.snapshotV2() }) };
   const reopened = new PreferencesState(v2Bridge, f.cache, f.receipts); reopened.setConnection(f.host.host.id, true); await reopened.refresh();
   expect(reopened.pinnedSort()).toBe("priority");
   expect(reopened.sidebarOrganization().chatSort).toBe("updated_at");
@@ -93,18 +93,18 @@ test("pinned sorting restores through the v2 snapshot without changing Recents o
 
 test("a host without the v2 endpoint falls back to its legacy projection", async () => {
   const f = fixture();
-  const bridge = { ...f.bridge, getPreferencesV2: async () => { throw new Error("HTTP 404"); } };
+  const bridge = { ...f.bridge, getPreferencesV2: async () => ({ ok: false as const, error: { message: "Not found", status: 404 } }) };
   const data = new PreferencesState(bridge, f.cache, f.receipts); data.setConnection(f.host.host.id, true); await data.refresh();
   expect(data.error).toBeUndefined();
   expect(data.sidebarOrganization()).toEqual(expect.objectContaining({ grouping: "project" }));
 });
 
 
-test("a malformed or unavailable v2 response is not silently replaced with v1 data", async () => {
+test("a malformed successful response or explicit v2 failure is not silently replaced with v1 data", async () => {
   const f = fixture();
-  for (const failure of [new Error("Invalid preference snapshot"), new Error("Request timed out")]) {
-    const bridge = { ...f.bridge, getPreferencesV2: async () => { throw failure; } };
+  for (const failure of [{ ok: true as const, value: { version: 2 as const, records: [{ key: "bad" }] } }, { ok: false as const, error: { message: "Request timed out" } }]) {
+    const bridge = { ...f.bridge, getPreferencesV2: async () => failure as never };
     const data = new PreferencesState(bridge, f.cache, f.receipts); data.setConnection(f.host.host.id, true); await data.refresh();
-    expect(data.error).toContain(failure.message);
+    expect(data.error).toBeDefined();
   }
 });

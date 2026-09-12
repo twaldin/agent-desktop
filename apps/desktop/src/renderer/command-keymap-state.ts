@@ -1,5 +1,5 @@
 import type { CommandEnvelope, CommandResult, DesktopBridge } from "../../../../packages/shared/src/protocol";
-import { COMMAND_KEYMAP_PREFERENCE, commandKeymapNumberTarget, parseCommandKeymapMutation, parsePreferencesSnapshotV2, type CommandKeymapMutation, type CommandKeymapPreferenceRecord, type PreferencesSnapshotV2 } from "../../../../packages/shared/src/preferences-v2";
+import { COMMAND_KEYMAP_PREFERENCE, commandKeymapNumberTarget, parseCommandKeymapMutation, parsePreferencesSnapshotV2, type CommandKeymapMutation, type CommandKeymapPreferenceRecord, type PreferencesSnapshotV2, type PreferencesV2ReadResult } from "../../../../packages/shared/src/preferences-v2";
 import { comparePreferenceRevisions } from "../../../../packages/shared/src/preferences";
 import type { DraftCache } from "./drafts";
 import type { OfflineCache } from "./offline-cache";
@@ -11,7 +11,7 @@ export interface CommandKeymapEnvelope {
   commandVersion: 11;
   command: { type: "preferences.keymap.mutate"; mutation: CommandKeymapMutation };
 }
-type Bridge = Pick<DesktopBridge, "command"> & { getPreferencesV2?(): Promise<PreferencesSnapshotV2> };
+type Bridge = Pick<DesktopBridge, "command"> & { getPreferencesV2?(): Promise<PreferencesSnapshotV2 | PreferencesV2ReadResult> };
 type SavedPending = { hostId: string; envelope: CommandKeymapEnvelope; edit: CommandKeymapEdit; stale?: true };
 
 const CACHE_PREFIX = "agent-desktop:command-keymap:v2:";
@@ -165,7 +165,9 @@ export class CommandKeymapState {
         await this.restore();
         if (this.hostId !== hostId || this.generation !== generation) return false;
         if (!this.available) throw new Error("Update the owning host before editing keyboard shortcuts.");
-        const snapshot = await this.bridge.getPreferencesV2!();
+        const response = await this.bridge.getPreferencesV2!();
+        if ("ok" in response && !response.ok) throw new Error(response.error.message);
+        const snapshot = "ok" in response ? response.value : response;
         if (this.hostId !== hostId || this.generation !== generation) return false;
         this.ingest(snapshot);
         // An authoritative read can recover an unavailable local cache. Never
