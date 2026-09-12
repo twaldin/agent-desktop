@@ -2926,15 +2926,16 @@ index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da0
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..c10e6354ec308a2fe20210127c79ccc5369ccd06
+index 0000000000000000000000000000000000000000..6126db88e3e54037c62d83808c082bf9dd269e89
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,297 @@
 +import type { Browser, ConnectionTransport } from "puppeteer-core";
 +import type { CdpBrowser } from "puppeteer-core/internal/cdp/Browser.js";
 +import type { Connection } from "puppeteer-core/internal/cdp/Connection.js";
 +import { CdpCDPSession } from "puppeteer-core/internal/cdp/CdpSession.js";
 +import { CDPSessionEvent } from "puppeteer-core/internal/api/CDPSession.js";
++import { TargetCloseError } from "puppeteer-core/internal/common/Errors.js";
 +
 +export interface OwnedCdpTransport extends ConnectionTransport {
 +	/** Copied parent-owned receipts, available even after disposal rejects. */
@@ -3015,6 +3016,7 @@ index 0000000000000000000000000000000000000000..c10e6354ec308a2fe20210127c79ccc5
 +
 +class BrowserWorkerTransport implements OwnedCdpTransport {
 +	readonly #sessions = new Map<string, SessionRecord>();
++	readonly #retiredChildren = new WeakSet<CdpCDPSession>();
 +	readonly #requests = new Map<number, Promise<void>>();
 +	readonly #startupCreations: StartupCreationRecord[] = [];
 +	#trackingStartup = true;
@@ -3095,7 +3097,7 @@ index 0000000000000000000000000000000000000000..c10e6354ec308a2fe20210127c79ccc5
 +		on(CDPSessionEvent.Disconnected, () => {
 +			if (this.#closed) return;
 +			if (session === this.#root) this.#retire(new Error("Original browser session disconnected"));
-+			else this.#forget(session.id());
++			else { this.#retiredChildren.add(session); this.#forget(session.id()); }
 +		});
 +		on("*", (method: unknown, params: unknown) => {
 +			if (this.#closed || typeof method !== "string" || !method.includes(".")) return;
@@ -3169,7 +3171,8 @@ index 0000000000000000000000000000000000000000..c10e6354ec308a2fe20210127c79ccc5
 +					// A session close, timeout, or rejection cannot prove that Chrome created no target.
 +					creation.outcome = { requestId: id as number, status: "unknown", error: error instanceof Error ? error.message : String(error) };
 +					this.#failures.push(error);
-+				} else if (this.#closed) this.#failures.push(error);
++				} else if (this.#closed && !(method === "Runtime.runIfWaitingForDebugger" && session !== this.#root &&
++					this.#retiredChildren.has(session) && error instanceof TargetCloseError)) this.#failures.push(error);
 +				if (!this.#closed) {
 +					try { this.#deliver(JSON.stringify({ id, error: protocolError(error), ...(sessionId === undefined ? {} : { sessionId }) })); }
 +					catch (deliveryError) { this.#retire(deliveryError); }

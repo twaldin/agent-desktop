@@ -21,6 +21,7 @@ class Emitter {
   }
   count() { return [...this.listeners.values()].reduce((count, listeners) => count + listeners.size, 0); }
 }
+class TargetCloseError extends Error {}
 type Call = { connection: string; sessionId?: string; method: string; params: unknown; options: unknown };
 type StartupCreation = Readonly<{ requestId: number } & (
   { status: "pending" } | { status: "created"; targetId: string } | { status: "unknown"; error: string }
@@ -66,7 +67,7 @@ function harness() {
     async send(method: string, params: unknown, options: unknown) { calls.push({ connection: this.origin.name, sessionId: this.id(), method, params, options }); return await read(this, method, params); }
     onClosed() { this.closedCount++; this.detached = true; this.emit(events.Disconnected); closedEffect(this); }
   }
-  const capture = new Function("CdpCDPSession", "CDPSessionEvent", `${compiled}\nreturn captureOwnedCdpTransport;`)(Session, events) as (browser: unknown, timeout: number) => Promise<Transport>;
+  const capture = new Function("CdpCDPSession", "CDPSessionEvent", "TargetCloseError", `${compiled}\nreturn captureOwnedCdpTransport;`)(Session, events, TargetCloseError) as (browser: unknown, timeout: number) => Promise<Transport>;
   const original = new Connection("original"), replacement = new Connection("replacement");
   const browser = { _connection: original, connected: true };
   const transports: Transport[] = [];
@@ -178,6 +179,44 @@ await scenario("pending read can settle while detach is held and valid late repl
   const delivered: string[] = []; transport.onmessage = value => delivered.push(value); transport.send(request(1)); const disposal = tracked(transport.dispose());
   read.resolve({ ok: "late" }); await ticks(); const held = disposal.pending(); detach.resolve({}); const result = await disposal.done(); report({ held, result, delivered });
   assert.equal(held, true); assert.equal(result.ok, true); assert.deepEqual(delivered, []); assert.equal(root.detached, true);
+});
+await scenario("retired child auto-resume rejection does not fail parent cleanup", async (h, report) => {
+  const transport = await h.capture(); const root = h.root(), child = h.child("transient", root);
+  const read = h.gate({}); h.setRead(async () => await read.promise);
+  transport.send(request(1, "Runtime.runIfWaitingForDebugger", child.id())); await ticks();
+  child.onClosed();
+  const disposal = tracked(transport.dispose()); await ticks();
+  read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed"));
+  const result = await disposal.done(); report({ result, childDetached: child.detached });
+  assert.equal(child.detached, true); assert.equal(result.ok, true);
+});
+await scenario("current child target-close rejection remains a cleanup failure", async (h, report) => {
+  const transport = await h.capture(); const child = h.child("current", h.root());
+  const read = h.gate({}); h.setRead(async () => await read.promise);
+  transport.send(request(1, "Runtime.runIfWaitingForDebugger", child.id()));
+  const disposal = tracked(transport.dispose()); await ticks();
+  read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed"));
+  const result = await disposal.done(); report(result);
+  assertFailure(result, /Target closed/);
+});
+await scenario("same-id replacement cannot inherit a retired child's auto-resume allowance", async (h, report) => {
+  const transport = await h.capture(); const root = h.root(), retired = h.child("same-id", root);
+  retired.onClosed(); const replacement = h.child("same-id", root);
+  const read = h.gate({}); h.setRead(async () => await read.promise);
+  transport.send(request(1, "Runtime.runIfWaitingForDebugger", replacement.id()));
+  const disposal = tracked(transport.dispose()); await ticks();
+  read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed"));
+  const result = await disposal.done(); report({ result, retired: retired.detached, replacement: replacement.detached });
+  assert.equal(retired.detached, true); assertFailure(result, /Target closed/);
+});
+await scenario("retired child non-resume rejection remains a cleanup failure", async (h, report) => {
+  const transport = await h.capture(); const child = h.child("retired-other", h.root());
+  const read = h.gate({}); h.setRead(async () => await read.promise);
+  transport.send(request(1, "Runtime.evaluate", child.id())); await ticks(); child.onClosed();
+  const disposal = tracked(transport.dispose()); await ticks();
+  read.reject(new TargetCloseError("Protocol error (Runtime.evaluate): Target closed"));
+  const result = await disposal.done(); report(result);
+  assertFailure(result, /Target closed/);
 });
 await scenario("pending capacity refuses the 257th request without dispatch and reopens after settlement", async (h, report) => {
   const transport = await h.capture(); transport.onmessage = () => {}; const gate = h.gate({}); h.setRead(async () => await gate.promise);
