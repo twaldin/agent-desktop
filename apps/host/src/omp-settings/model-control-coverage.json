@@ -668,18 +668,18 @@
       "field": "temperature",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
-      "status": "pending-stream-control",
+      "status": "bounded-source-awaiting-integration-and-proof",
       "settingsPaths": [],
-      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+      "note": "Typed session/model-bound sampling source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
     },
     {
       "interface": "StreamOptions",
       "field": "topP",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
-      "status": "pending-stream-control",
+      "status": "bounded-source-awaiting-integration-and-proof",
       "settingsPaths": [],
-      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+      "note": "Typed session/model-bound sampling source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
     },
     {
       "interface": "StreamOptions",
@@ -740,9 +740,9 @@
       "field": "maxTokens",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
-      "status": "pending-stream-control",
+      "status": "bounded-source-awaiting-integration-and-proof",
       "settingsPaths": [],
-      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+      "note": "Typed session/model-bound output-limit source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex; clear preserves native model fallback. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
     },
     {
       "interface": "StreamOptions",
