@@ -39,3 +39,4 @@
 .sidebar-activity-copy { min-width:0; display:flex; flex-direction:column; }
 .organized-sidebar .sidebar-activity-row { height:auto; min-height:48px; }
 .sidebar-activity-detail { color:var(--tertiary); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sidebar-customization button[aria-disabled="true"] { opacity:.5; cursor:default; }

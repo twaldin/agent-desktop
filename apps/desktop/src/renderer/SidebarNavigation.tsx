@@ -1,9 +1,8 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Menu from "@radix-ui/react-dropdown-menu";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_SIDEBAR_NAVIGATION, reorderSidebarDestinations, resetSidebarNavigation, setSidebarDestinationHidden, sidebarNavigationLayout, type SidebarDestinationId } from "../../../../packages/shared/src/sidebar-navigation";
 import type { SidebarNavigationState } from "./sidebar-navigation-state";
-import type { SidebarNavigationPreference } from "../../../../packages/shared/src/sidebar-navigation";
 import { Icon } from "./Icons";
 import { SidebarNavigationIcon } from "./SidebarNavigationIcon";
 import { SidebarPinIcon } from "./sidebar-icons";
@@ -28,20 +27,14 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
   useEffect(() => { setDrag(undefined); }, [availableKey, data]);
   useEffect(() => { if (data && !data.writable) setDrag(undefined); }, [data?.writable]);
+  useLayoutEffect(() => {
+    if (drag?.keyboard) nav.current?.querySelector<HTMLButtonElement>(`[data-sidebar-destination="${drag.id}"] .sidebar-reorder`)?.focus();
+  }, [drag]);
   const closeCustomize = () => { setDrag(undefined); setCustomizing(false); requestAnimationFrame(() => exploreButton.current?.focus()); };
   const startCustomize = () => { setContext(undefined); setExplore(false); setCustomizing(true); };
-  const saveFromControl = async (next: SidebarNavigationPreference) => {
-    const origin = document.activeElement;
-    await data?.save(next);
-    requestAnimationFrame(() => {
-      if (document.activeElement !== document.body) return;
-      if (origin instanceof HTMLButtonElement && origin.isConnected && !origin.disabled) origin.focus();
-      else done.current?.focus();
-    });
-  };
   const saveVisibility = (item: SidebarDestination) => {
-    if (!data?.writable) return;
-    void saveFromControl(setSidebarDestinationHidden(value, item.id, !value.hidden.includes(item.id)));
+    if (!data?.writable || drag) return;
+    void data.save(setSidebarDestinationHidden(value, item.id, !value.hidden.includes(item.id)));
   };
   const move = (over: SidebarDestinationId) => {
     if (!drag || drag.id === over) return;
@@ -56,7 +49,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
     const next = reorderSidebarDestinations(value, drag.order);
     setAnnouncement(`${destinations.find(item => item.id === drag.id)?.label} dropped at position ${drag.order.indexOf(drag.id) + 1} of ${drag.order.length}`);
     setDrag(undefined);
-    if (next.order.some((id, index) => id !== value.order[index])) void saveFromControl(next);
+    if (next.order.some((id, index) => id !== value.order[index])) void data.save(next);
   };
   const contextMenu = (x: number, y: number) => { setExplore(false); setContext({ x, y }); };
   const closeHover = () => { clearTimeout(hoverTimer.current); if (hoverOpen.current) hoverTimer.current = setTimeout(() => setExplore(false), 100); };
@@ -70,15 +63,16 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
     </div>)}
     <Dialog.Root open={customizing} onOpenChange={open => { if (!open) closeCustomize(); }}>
       {customizing && <Dialog.Content className="sidebar-customization" aria-describedby={undefined} onOpenAutoFocus={event => { event.preventDefault(); done.current?.focus(); }} onCloseAutoFocus={event => { event.preventDefault(); exploreButton.current?.focus(); }} onEscapeKeyDown={event => {
-        if (drag) { event.preventDefault(); setAnnouncement("Reordering cancelled"); setDrag(undefined); }
+        if (drag) { event.preventDefault(); const handle = nav.current?.querySelector<HTMLButtonElement>(`[data-sidebar-destination="${drag.id}"] .sidebar-reorder`); setAnnouncement("Reordering cancelled"); setDrag(undefined); requestAnimationFrame(() => handle?.focus()); }
       }}>
         <Dialog.Title className="sr-only">Customize sidebar</Dialog.Title>
         <div className="sidebar-customization-header"><span>Customize</span><button ref={done} aria-label="Finish customizing sidebar" onClick={closeCustomize}>Done</button></div>
         <p className="sr-only" id={`${id}-instructions`}>To reorder this sidebar item, press Space or Enter. Use the arrow keys to move it, press Space or Enter to drop it, or press Escape to cancel.</p>
         <div role="list" aria-label="Sidebar destinations">{rows.map(item => <div role="listitem" data-sidebar-destination={item.id} className={`sidebar-customization-row ${drag?.id === item.id ? "reordering" : ""}`} key={item.id} onDragOver={event => { if (drag && !drag.keyboard) { event.preventDefault(); move(item.id); } }} onDrop={event => { event.preventDefault(); drop(); }}>
-          <button className="sidebar-visibility" role="checkbox" aria-label={item.label} aria-checked={!value.hidden.includes(item.id)} disabled={!data?.writable || !!drag} onClick={() => saveVisibility(item)}><span aria-hidden="true">{value.hidden.includes(item.id) ? "○" : "✓"}</span></button>
-          <button className="sidebar-destination-switch" role="switch" aria-label={item.label} aria-checked={!value.hidden.includes(item.id)} disabled={!data?.writable || !!drag} onClick={() => saveVisibility(item)}>{item.icon}<span>{item.label}</span></button>
-          <button className="sidebar-reorder" aria-label={`Reorder ${item.label}`} aria-describedby={`${id}-instructions`} aria-pressed={drag?.id === item.id} draggable={Boolean(data?.writable)} disabled={!data?.writable} onDragStart={event => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", item.id); setDrag({ id: item.id, order: layout.ordered.map(item => item.id), keyboard: false }); }} onDragEnd={() => setDrag(undefined)} onKeyDown={event => {
+          <button className="sidebar-visibility" role="checkbox" aria-label={item.label} aria-checked={!value.hidden.includes(item.id)} aria-disabled={!data?.writable || !!drag} onClick={() => saveVisibility(item)}><span aria-hidden="true">{value.hidden.includes(item.id) ? "○" : "✓"}</span></button>
+          <button className="sidebar-destination-switch" role="switch" aria-label={item.label} aria-checked={!value.hidden.includes(item.id)} aria-disabled={!data?.writable || !!drag} onClick={() => saveVisibility(item)}>{item.icon}<span>{item.label}</span></button>
+          <button className="sidebar-reorder" aria-label={`Reorder ${item.label}`} aria-describedby={`${id}-instructions`} aria-pressed={drag?.id === item.id} draggable={Boolean(data?.writable)} aria-disabled={!data?.writable} onDragStart={event => { if (!data?.writable) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", item.id); setDrag({ id: item.id, order: layout.ordered.map(item => item.id), keyboard: false }); }} onDragEnd={() => setDrag(undefined)} onKeyDown={event => {
+            if (!data?.writable) { if ([" ", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) event.preventDefault(); return; }
             if (event.key === " " || event.key === "Enter") { event.preventDefault(); if (drag) drop(); else { setDrag({ id: item.id, order: layout.ordered.map(item => item.id), keyboard: true }); setAnnouncement(`${item.label} picked up, position ${layout.ordered.indexOf(item) + 1} of ${layout.ordered.length}`); } }
             else if (drag?.id === item.id && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const index = drag.order.indexOf(item.id), delta = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1; const over = drag.order[index + delta]; if (over) move(over); }
           }}><svg aria-hidden="true" width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="4" cy="4" r="1"/><circle cx="8" cy="4" r="1"/><circle cx="4" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="8" cy="12" r="1"/></svg></button>
@@ -97,7 +91,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
         const action = deferred.current; deferred.current = undefined;
         if (action) { event.preventDefault(); action(); } else if (hoverOpen.current) event.preventDefault();
       }}>
-        {layout.more.map(item => <Menu.Item className="sidebar-navigation-menu-item" key={item.id} textValue={item.label} onSelect={() => { deferred.current = item.onSelect; }}>{item.icon}<span>{item.label}</span></Menu.Item>)}
+        {layout.more.map(item => <Menu.Item className="sidebar-navigation-menu-item" key={item.id} textValue={item.label} onSelect={item.onSelect}>{item.icon}<span>{item.label}</span></Menu.Item>)}
         {layout.more.length > 0 && <Menu.Separator className="sidebar-navigation-menu-separator"/>}
         <Menu.Item className="sidebar-navigation-menu-item" onSelect={() => { deferred.current = startCustomize; }}><Icon name="sliders"/><span>Customize</span></Menu.Item>
       </Menu.Content></Menu.Portal>

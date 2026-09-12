@@ -118,6 +118,7 @@ async function run() {
     checkpoints.push("local unread activity navigates to original session; project folder idle/hover and functioning new-chat control");
     await click('.sidebar-explore'); await key("ArrowDown"); await key("Enter");
     await wait(`document.querySelector('.nav-action[aria-label="Archive"][aria-current="page"]')`, "actual Archive route");
+    await wait('document.activeElement?.getAttribute("aria-label") === "Explore"', "Archive menu returns focus to Explore");
     await capture("002-archive-promoted");
     await click('.sidebar-navigation > .nav-action');
     await wait(`!document.querySelector('.nav-action[aria-label="Archive"][aria-current="page"]')`, "New chat exits Archive");
@@ -126,11 +127,13 @@ async function run() {
     await click('.sidebar-navigation-pin[aria-label="Pin Archive to sidebar"]');
     await customize(); await saved();
     await click('.sidebar-reorder[aria-label="Reorder Plugins"]'); await key("Space"); await key("ArrowUp"); await key("ArrowUp"); await key("Space"); await saved();
+    await wait('document.activeElement?.getAttribute("aria-label") === "Reorder Plugins"', "drop retains keyboard handle");
     await capture("003-keyboard-reorder");
     const reordered = await evaluate('sidebarExploreState().rows');
     if (reordered.join("|") !== "plugins|pull-requests|scheduled|archive") throw new Error(`Keyboard order: ${reordered}`);
     await key("Space"); await key("ArrowDown"); await key("Escape");
     if ((await evaluate('sidebarExploreState().rows')).join("|") !== reordered.join("|")) throw new Error("Escape did not cancel reorder");
+    await wait('document.activeElement?.getAttribute("aria-label") === "Reorder Plugins"', "cancel retains keyboard handle");
     await click('.sidebar-visibility[aria-label="Pull requests"]'); await saved(); await capture("004-hidden-pr");
     await click('[aria-label="Finish customizing sidebar"]');
     await wait('document.activeElement?.getAttribute("aria-label") === "Explore"');
