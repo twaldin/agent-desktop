@@ -1,3 +1,9 @@
+import { requestBrowserMetadata } from '../../../apps/desktop/src/main/browser-metadata-transport';
+import { requestBrowserCreate, requestBrowserCreationStatus } from '../../../apps/desktop/src/main/browser-create-transport';
+import { requestBrowserFrame } from '../../../apps/desktop/src/main/browser-frame-transport';
+import { runSuggestedFlow } from "./suggested-flow";
+import { requestSessionOutputs } from "../../../apps/desktop/src/main/session-outputs-transport";
+import { requestTranscriptImage } from "../../../apps/desktop/src/main/attachment-transport";
 import { McpOwnerWindow } from "../../../apps/desktop/src/main/mcp-owner-windows";
 import { requestMcpOwner } from "../../../apps/desktop/src/main/mcp-owner-transport";
 import { runMcpOwnerFlow } from "./mcp-owner-flow";
@@ -40,11 +46,11 @@ const setConnected = (value: boolean) => { online = value; window.webContents.se
 const http = (path: string, body?: unknown) => requestHost(connection, path, body);
 ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) => {
   calls.push({ method, args });
-  const hostIndex: Record<string, number> = { mcpOwner: 0, getSessionMcp: 1, sessionMcpApp: 2, respondInteraction: 3, getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
+  const hostIndex: Record<string, number> = { getBrowserMetadata: 1, createBrowserTab: 2, getBrowserCreationStatus: 2, getBrowserFrame: 2, mcpOwner: 0, getSessionOutputs: 1, getTranscriptImage: 3, getSessionMcp: 1, sessionMcpApp: 2, respondInteraction: 3, getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
   const requestedHost = args[hostIndex[method] ?? -1];
   if (requestedHost !== undefined && requestedHost !== connection.hostId) throw new Error('The fixture cannot route to a foreign host.');
   switch (method) {
-    case 'features': return { terminal: context.terminal, mcp: context.mcp, directoryOwner: context.directoryOwner };
+    case 'features': return { terminal: context.terminal, mcp: context.mcp, directoryOwner: context.directoryOwner, suggested: context.suggested };
     case 'mcpOwner': {
       if (!online && args[1].type !== 'retire') throw new Error('Disposable host transport is offline.');
       if (!directoryDocument) {
@@ -53,6 +59,12 @@ ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) =>
       }
       return directoryDocument.dispatch(args[0], args[1]);
     }
+    case 'getBrowserMetadata': if (!online) throw new Error('Offline'); return requestBrowserMetadata(connection, args[0]);
+    case 'createBrowserTab': if (!online) throw new Error('Offline'); return requestBrowserCreate(connection, args[0], args[1]);
+    case 'getBrowserCreationStatus': if (!online) throw new Error('Offline'); return requestBrowserCreationStatus(connection, args[0], args[1]);
+    case 'getBrowserFrame': if (!online) throw new Error('Offline'); return requestBrowserFrame(connection, args[0], args[1]);
+    case 'getSessionOutputs': if (!online) throw new Error('Disposable host transport is offline.'); return requestSessionOutputs(connection, args[0]);
+    case 'getTranscriptImage': if (!online) throw new Error('Disposable host transport is offline.'); return requestTranscriptImage(connection, args[0], args[1], args[2], args[4]);
     case 'getSessionMcp': if (!online) throw new Error('Disposable host transport is offline.'); return requestSessionMcp(connection, args[0]);
     case 'sessionMcpApp': {
       if (!online) throw new Error('Disposable host transport is offline.');
@@ -121,7 +133,8 @@ try {
   await wait('typeof window.panelState === "function"', 'fixture observation helper');
   await wait(context.directoryOwner ? 'panelState().actions.includes("Connect apps")' : 'panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
   if (context.mcp) {
-    if (context.directoryViewer) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, directoryOwner: true, http });
+    if (context.suggested) await runSuggestedFlow({ window, evaluate, wait, click, key, capture, store, calls, inputs, setConnected, fixture, http, prompt: (text: string) => requestVersionedCommand(http, { id: crypto.randomUUID(), command: { type: "session.prompt", sessionId: context.sessionId, text, model: { provider: "suggested-contract", id: "controlled" }, approvalMode: "yolo" } }) });
+    else if (context.directoryViewer) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, directoryOwner: true, http });
     else if (context.directoryOwner) await runMcpOwnerFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, http });
     else if (context.artifacts) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture });
     else await runMcpFlow({ window, evaluate, wait, click, key, capture, store, calls, connection, http, setConnected, terminal: context.terminal, git: context.git });

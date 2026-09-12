@@ -98,6 +98,7 @@ export function useWorkbenchDock(
       }
     }
   }, [snapshot]);
+  const outputWebsites = useRef(new Map<string, { tab: DockTab; retained: () => boolean }>());
   const browserLaunchers = useRef(new Map<string, BrowserNewTabController>());
   const browserLaunchersMounted = useRef(false);
   useEffect(() => {
@@ -131,6 +132,23 @@ export function useWorkbenchDock(
     }
     controller.connected = online;
     return controller;
+  }
+  useEffect(() => {
+    for (const [id, output] of outputWebsites.current) {
+      outputWebsites.current.delete(id);
+      const tab = snapshot.tabs.find(tab => tab.id === id && tab.browserInstanceId === output.tab.browserInstanceId && tab.browserNewTab);
+      if (!tab || !snapshot.state.right.tabIds.includes(id) || !output.retained()) continue;
+      const controller = browserLauncher(tab, true);
+      controller.observePresentation();
+      void controller.submit(output.retained);
+    }
+  }, [snapshot]);
+  function openOutputWebsite(url: string, owner: string, sessionId: string, admitted: () => boolean, retained: () => boolean) {
+    if (!admitted()) return;
+    const tab = createBrowserNewTab(owner, sessionId);
+    tab.browserNewTab = { status: "idle", draft: url };
+    outputWebsites.current.set(tab.id, { tab, retained });
+    add(tab, "right", admitted);
   }
   const add = (tab: DockTab, destination: DockDestination, guard: () => boolean = () => true) => {
     setReady(previous => guard() ? true : previous);
@@ -190,6 +208,7 @@ export function useWorkbenchDock(
     workspace: WorkspaceTarget,
     destination: DockDestination = "right",
     preview = true,
+    guard: () => boolean = () => true,
   ) {
     if ("filePath" in workspace) {
       let absolutePath: string;
@@ -207,19 +226,21 @@ export function useWorkbenchDock(
       filePath: path,
       title: path.split("/").at(-1)!.slice(0, 1000),
     };
-    setReady(true);
-    setSnapshot(previous => openFileTab(previous, { ...descriptor, id: dockTabId(descriptor) }, destination, preview, canReplacePreview));
+    if (!guard()) return;
+    setReady(previous => guard() ? true : previous);
+    setSnapshot(previous => guard() ? openFileTab(previous, { ...descriptor, id: dockTabId(descriptor) }, destination, preview, canReplacePreview) : previous);
   }
   function openHostFile(
     absolutePath: string,
     owner: string,
     destination: DockDestination = "right",
     preview = true,
+    guard: () => boolean = () => true,
   ) {
     let path: string;
     try { path = parseStandaloneFilePath(absolutePath); }
     catch { onError("Use a canonical absolute file path."); return; }
-    openFile(path.split("/").at(-1)!, owner, { filePath: path }, destination, preview);
+    openFile(path.split("/").at(-1)!, owner, { filePath: path }, destination, preview, guard);
   }
   const destinationForTab = (id: string): DockDestination | undefined =>
     snapshot.state.right.tabIds.includes(id) ? "right" : snapshot.state.bottom.tabIds.includes(id) ? "bottom" : undefined;
@@ -465,7 +486,7 @@ export function useWorkbenchDock(
     openSkillFile,
     terminal, prepareTerminal, publishTerminal,
     bindTerminal,
-    browser, browserLauncher,
+    browser, browserLauncher, openOutputWebsite,
     updateBrowserTitle,
     updateTitle,
     setUnread,

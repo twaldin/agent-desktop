@@ -497,7 +497,8 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         respond(true, projectNativeBrowserFrame(await native.captureTabViewportForOwner(owner, { name: target.name, targetId: target.targetId }), target, owner));
         break;
       }
-      case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex)); break;
+      case "getSessionOutputs": respond(true, await requireSession().getSessionOutputs()); break;
+      case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex, message.args.source)); break;
       case "startPrompt": {
         const run = requireSession().startPrompt(message.args.text, message.args.options);
         // Preserve independent native acceptance and completion, including an

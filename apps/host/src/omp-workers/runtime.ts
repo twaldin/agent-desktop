@@ -943,10 +943,11 @@ export class WorkerRuntime {
         finally { if (client.snapshot?.sessionFile) { const file = path.resolve(client.snapshot.sessionFile); this.#openFiles.add(file); reservedPaths.add(file); } }
       },
       ...this.#browserControls(client, () => client.snapshot!.id),
-      getImage: async (nativeEntryId, blockIndex) => {
+      getSessionOutputs: () => client.request({ operation: "getSessionOutputs" }, 30_000),
+      getImage: async (nativeEntryId, blockIndex, source) => {
         if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");
         imageReads++;
-        try { return await client.request({ operation: "getImage", args: { nativeEntryId, blockIndex } }, 30_000); }
+        try { return await client.request({ operation: "getImage", args: { nativeEntryId, blockIndex, ...(source ? { source } : {}) } }, 30_000); }
         finally { imageReads--; }
       },
       subscribe: listener => client.subscribe(listener),
