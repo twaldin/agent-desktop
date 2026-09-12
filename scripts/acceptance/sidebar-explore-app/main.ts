@@ -97,6 +97,30 @@ async function run() {
     inputs.push({ requestedKey, keyCode, modifiers, before: before.activeElement, after: after.activeElement, received: after.receivedKeys.slice(before.receivedKeys.length) });
     if (after.receivedKeys.length === before.receivedKeys.length) throw new Error(`Electron did not deliver ${keyCode} to the owned renderer`);
   };
+  const drag = async (source: string, target: string) => {
+    const driver = window.webContents.debugger;
+    if (driver.isAttached()) throw new Error("Pointer proof requires sole debugger ownership of its isolated window");
+    let data: unknown;
+    const intercepted = (_event: Electron.Event, method: string, params: { data?: unknown }) => { if (method === "Input.dragIntercepted") data = params.data; };
+    const start = await evaluate(`sidebarExploreTarget(${JSON.stringify(source)})`), end = await evaluate(`sidebarExploreTarget(${JSON.stringify(target)})`);
+    driver.attach("1.3"); driver.on("message", intercepted);
+    try {
+      await driver.sendCommand("Input.setInterceptDrags", { enabled: true });
+      await driver.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...start });
+      await driver.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", ...start, button: "left", buttons: 1, clickCount: 1 });
+      await driver.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: start.x - 12, y: start.y, button: "left", buttons: 1 });
+      const deadline = Date.now() + 5_000;
+      while (!data && Date.now() < deadline) await delay(25);
+      if (!data) throw new Error("The real draggable did not supply Chromium drag data");
+      for (const type of ["dragEnter", "dragOver", "drop"]) { await driver.sendCommand("Input.dispatchDragEvent", { type, ...end, data }); await delay(100); }
+      await driver.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", ...end, button: "left", buttons: 0, clickCount: 1 });
+      inputs.push({ source, target, transport: "Chromium pointer drag with intercepted real drag data", start, end, data });
+    } finally {
+      await driver.sendCommand("Input.cancelDragging").catch(() => {});
+      await driver.sendCommand("Input.setInterceptDrags", { enabled: false }).catch(() => {});
+      driver.removeListener("message", intercepted); driver.detach();
+    }
+  };
   const capture = async (name: string) => { await delay(200); const snapshot = await evaluate("sidebarExploreState()"), image = await window.webContents.capturePage(); writeFileSync(join(output, `${name}.png`), image.toPNG()); captures.push({ name, snapshot, bounds: window.getContentBounds(), raster: image.getSize(), source: "Electron webContents.capturePage, not native window raster" }); };
   const customize = async () => {
     await click('.sidebar-explore'); await key("End"); await key("Enter"); await wait('document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"', "Customize autofocus");
@@ -214,6 +238,16 @@ async function run() {
     const afterRecovery = await readNavigation();
     if (!afterRecovery || afterRecovery.deleted || afterRecovery.key !== "sidebar.navigation" || !afterRecovery.value.hidden.includes("plugins")) throw new Error("Recovered customization could not save");
     await capture("016-recovered-edit"); checkpoints.push("modal portal/backdrop and exposed live announcements; one visibility control per destination; live token growth/default restoration; keyboard Reset focus; rejected intent discard and corrupt intent recovery retain original bytes");
+    await drag('.sidebar-reorder[aria-label="Reorder Plugins"]', '.sidebar-reorder[aria-label="Reorder Pull requests"]'); await saved();
+    await wait(`sidebarExploreState().rows.join("|") === "plugins|pull-requests|scheduled|archive"`, "pointer drop persists reordered destinations");
+    if (!await evaluate(`sidebarExploreState().receivedDrags.some(event => event.type === "dragstart" && event.trusted && event.destination === "plugins") && sidebarExploreState().receivedDrags.some(event => event.type === "drop" && event.trusted && event.text === "plugins")`)) throw new Error("Trusted drag/drop did not reach the production sidebar");
+    const pointerRecord = await readNavigation();
+    if (!pointerRecord || pointerRecord.deleted || pointerRecord.key !== "sidebar.navigation" || pointerRecord.value.order[0] !== "plugins") throw new Error("Pointer reorder was not persisted on the real host");
+    await capture("017-pointer-reorder");
+    await click('.sidebar-reorder[aria-label="Reorder Plugins"]', "right"); await wait(`document.querySelector('[role="menu"][aria-label="Sidebar navigation options"]')`); await capture("018-in-panel-reset-menu");
+    await key("ArrowDown"); await key("Enter"); await saved();
+    await wait(`sidebarExploreState().rows.join("|") === "pull-requests|scheduled|plugins|archive" && document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"`, "in-panel context Reset restores defaults and focus");
+    await capture("019-in-panel-reset"); checkpoints.push("trusted Chromium pointer drag/drop persists on real host; in-panel context Reset works inside the modal and restores Done focus");
     writeFileSync(join(output, "confirmed-preferences.json"), JSON.stringify(await http("/v2/preferences"), null, 2));
     passed = true;
   } catch (cause) { failure = String(cause); errors.push(failure); if (window && !window.isDestroyed()) await capture("failure").catch(error => errors.push(String(error))); }

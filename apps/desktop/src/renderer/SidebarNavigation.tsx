@@ -81,7 +81,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
     {customizing && <div aria-hidden="true" style={{ height: customizationHeight }}/>}
     <Dialog.Root open={customizing} onOpenChange={open => { if (!open) closeCustomize(); }}>
       {customizing && <Dialog.Portal><Dialog.Overlay className="sidebar-customization-overlay"/><Dialog.Content ref={setCustomizationContent} className="sidebar-customization" style={customizationBounds} aria-describedby={undefined} onOpenAutoFocus={event => { event.preventDefault(); done.current?.focus(); }} onCloseAutoFocus={event => { event.preventDefault(); exploreButton.current?.focus(); }} onEscapeKeyDown={event => {
-        if (drag) { event.preventDefault(); const handle = customizationContent?.querySelector<HTMLButtonElement>(`[data-sidebar-destination="${drag.id}"] .sidebar-reorder`); setAnnouncement("Reordering cancelled"); setDrag(undefined); requestAnimationFrame(() => handle?.focus()); }
+        if (drag) { event.preventDefault(); const handle = customizationContent?.querySelector<HTMLButtonElement>(`[data-sidebar-destination="${drag.id}"] .sidebar-reorder`); setAnnouncement(`Reordering ${destinations.find(item => item.id === drag.id)?.label ?? drag.id} cancelled`); setDrag(undefined); requestAnimationFrame(() => handle?.focus()); }
       }}>
         <Dialog.Title className="sr-only">Customize sidebar</Dialog.Title>
         <div className="sidebar-customization-header"><span>Customize</span><button ref={done} aria-label="Finish customizing sidebar" onClick={closeCustomize}>Done</button></div>
@@ -95,7 +95,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
           }}><svg aria-hidden="true" width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="4" cy="4" r="1"/><circle cx="8" cy="4" r="1"/><circle cx="4" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="8" cy="12" r="1"/></svg></button>
         </div>)}</div>
         <button className="sidebar-customization-reset" aria-disabled={!data?.writable || !!drag} onClick={() => { if (data?.writable && !drag) void data.save(resetSidebarNavigation(value, destinations.map(item => item.id))); }}>Reset customization</button>
-        {data?.unavailable && <p className="sidebar-navigation-notice" role="status">{data.unavailable}</p>}
+        {(!data || data.unavailable) && <p className="sidebar-navigation-notice" role="status">{data?.unavailable ?? "Connect this device to a local host to customize the sidebar."}</p>}
         {data?.unsaved && <p className="sidebar-navigation-notice" role="status">{data.busy ? "Saving sidebar changes…" : "Sidebar changes are not yet saved."}{!data.busy && !data.error && <button disabled={!data.canRetry} onClick={() => void data.retry()}>Retry sidebar changes</button>}</p>}
         {data?.error && <div className="sidebar-navigation-notice" role="alert">{data.error}<button disabled={!data.canRetry} onClick={() => void data.retry()}>Retry sidebar changes</button></div>}
         {data?.canDiscard && <div className="sidebar-navigation-notice"><button className="sidebar-discard" onClick={() => { void data.discardUnsaved(); done.current?.focus(); }}>Discard unsaved sidebar changes</button>Original bytes are kept on this device.</div>}
