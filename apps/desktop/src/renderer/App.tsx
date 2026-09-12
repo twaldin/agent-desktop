@@ -590,8 +590,8 @@ export function App() {
     if (!origin) return Promise.resolve({ status: "error", outcome: "not-submitted", message: "The initiating browser is unavailable." } as const);
     const source = dock.snapshot.tabs.find(tab => tab.id === origin.presentation.tabId);
     if (!source?.browserInstanceId) return Promise.resolve({ status: "error", outcome: "not-submitted", message: "The initiating browser identity is unavailable." } as const);
-    return dock.prepareTerminal(false, signal, { kind: "browser", tabId: source.id, browserInstanceId: source.browserInstanceId, title: origin.title, draft: origin.state.draft }, browserMenu.captureSettlement(origin));
-  },onSelect:destination => {void dock.terminal(destination);}} : undefined;
+    return dock.prepareTerminal(true, signal, { kind: "browser", tabId: source.id, browserInstanceId: source.browserInstanceId, title: origin.title, draft: origin.state.draft }, browserMenu.captureSettlement(origin));
+  },onSelect:destination => {void dock.terminal(destination,true);}} : undefined;
   const reviewAction: DockAddAction | undefined = dockWorkspace && workspace?.status ? {preparationTarget,id:"review",label:"Review",icon:"compose",shortcut:commandKeymap ? appCommandShortcutLabel(appCommandBindings.bindings,"review") : "⌃⇧G",singletonTabId:panelSingleton("review"),requiresConnection:false,prepare:preparePanel("review"),onSelect:destination => dock.open("review",destination)} : undefined;
   const hostGroups = desktop.hosts.flatMap(host => { const hostState = host.hostId ? desktop.catalog.records.get(host.hostId)?.state : undefined; return hostState ? [{ host, hostState }] : []; });
   const sessionRead = useSessionReadState(preferences, selected, !settingsOpen && !pluginDirectoryOpen && !(dock.snapshot.state.right.open && dock.snapshot.state.rightLayout === "full"), transcript.loaded && (transcript.readSequence ?? -1) >= (selected?.activitySequence ?? 0));
@@ -680,7 +680,7 @@ export function App() {
       ...(filesAction && workspaceOwner && { files: () => setFileSearchOwner(workspaceOwner) }),
       ...(sideChatAction && { "side-chat": () => sideChatAction.onSelect("right") }),
       ...(browserAction && { browser: () => browserAction.onSelect("right") }),
-      ...(terminalAction && { terminal: () => terminalAction.onSelect(defaultTerminalLocation) }),
+      ...(terminalAction && { terminal: () => { void dock.terminal(defaultTerminalLocation); } }),
       ...(reviewAction && { review: () => reviewAction.onSelect("right") }),
       ...(!settingsOpen && !pluginDirectoryOpen && workspaceLayoutStepAvailable(dock.snapshot, Boolean(browserAction)) && {
         "step-workspace-layout": () => {
@@ -1066,7 +1066,16 @@ export function App() {
       const goalSession = record?.state?.sessions.find(session => session.id === target.sessionId);
       return <GoalPanel key={owner} bridge={bridge} hostId={tab.hostId} sessionId={target.sessionId} connected={online} running={goalSession?.status === "running"} archived={Boolean(goalSession?.archived)} active={active} activity={tab.hostId === hostId && target.sessionId === selected?.id ? activity : undefined} localHostId={desktop.localHostId}/>;
     }
-    if(tab.kind === "terminal") return tab.terminalId ? <DockTerminal bridge={bridge} hostId={tab.hostId} target={target} terminalId={tab.terminalId} connected={online}/> : <p>Saved terminal identity is unavailable.</p>;
+    if(tab.kind === "terminal") return tab.terminalId ? <DockTerminal bridge={bridge} hostId={tab.hostId} target={target} terminalId={tab.terminalId} connected={online} onNewTerminal={() => {
+      const pane = dock.snapshot.state.right.tabIds.includes(tab.id) ? "right"
+        : dock.snapshot.state.bottom.tabIds.includes(tab.id) ? "bottom" : undefined;
+      if (!pane) return;
+      if (!dockWorkspace || tab.hostId !== hostId || tab.target !== workspaceKey(dockWorkspace)) {
+        setActionError("Select this terminal’s workspace before opening another terminal.");
+        return;
+      }
+      void dock.terminal(pane, true);
+    }}/> : <p>Saved terminal identity is unavailable.</p>;
     if (tab.kind === "browser") {
       if (!("sessionId" in target)) return <p>Browser previews require a native session.</p>;
       if (tab.browserNewTab) {

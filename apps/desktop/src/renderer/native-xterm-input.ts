@@ -3,13 +3,26 @@ import metadata from "@xterm/xterm/package.json";
 import type { NativeTerminalInput } from "../../../../packages/shared/src/terminals";
 import { binaryTerminalInput } from "./xterm-input";
 
+const keypad: Readonly<Record<string, string>> = { NumpadEnter: "KPEnter", NumpadAdd: "KP+", NumpadSubtract: "KP-", NumpadMultiply: "KP*", NumpadDivide: "KP/", NumpadDecimal: "KP." };
+const special: Readonly<Record<string, string>> = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Home: "Home", End: "End", Insert: "IC", Delete: "DC", PageUp: "PPage", PageDown: "NPage", Backspace: "BSpace", Enter: "Enter", Tab: "Tab", Escape: "Escape" };
+
 /** Native names are interpreted against the pane's modes, not the outer attach client's modes. */
 export function nativeKey(event: Pick<KeyboardEvent, "key" | "code" | "location" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey" | "isComposing">): string | undefined {
-  if (event.isComposing || event.metaKey) return;
-  const keypad: Record<string, string> = { NumpadEnter: "KPEnter", NumpadAdd: "KP+", NumpadSubtract: "KP-", NumpadMultiply: "KP*", NumpadDivide: "KP/", NumpadDecimal: "KP.", NumpadComma: "KP,", NumpadEqual: "KP=" };
-  const special: Record<string, string> = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Home: "Home", End: "End", Insert: "IC", Delete: "DC", PageUp: "PPage", PageDown: "NPage", Backspace: "BSpace", Enter: "Enter", Tab: event.shiftKey ? "BTab" : "Tab", Escape: "Escape" };
+  if (event.isComposing) return;
+  if (event.metaKey) {
+    if (event.altKey || event.ctrlKey || event.shiftKey) return;
+    switch (event.key) {
+      case "ArrowLeft":
+      case "ArrowUp": return "C-a";
+      case "ArrowRight":
+      case "ArrowDown": return "C-e";
+      case "Backspace": return "C-u";
+      case "Delete": return "C-k";
+      default: return;
+    }
+  }
   let key = event.location === 3 ? keypad[event.code] ?? (/^Numpad[0-9]$/.test(event.code) ? `KP${event.code.at(-1)}` : undefined) : undefined;
-  key ??= special[event.key] ?? (/^F(?:[1-9]|[1-5][0-9]|6[0-3])$/.test(event.key) ? event.key : undefined);
+  key ??= event.key === "Tab" && event.shiftKey ? "BTab" : special[event.key] ?? (/^F(?:[1-9]|1[0-2])$/.test(event.key) ? event.key : undefined);
   if (!key && (event.ctrlKey || event.altKey)) key = event.key === " " ? "Space" : /^[a-zA-Z0-9@\[\]\\^_?]$/.test(event.key) ? event.key : undefined;
   if (!key) return;
   return `${event.ctrlKey ? "C-" : ""}${event.altKey ? "M-" : ""}${event.shiftKey && key !== "BTab" && !/^[A-Z]$/.test(key) ? "S-" : ""}${key}`;
@@ -62,6 +75,7 @@ export function wireNativeXtermInput(term: Terminal, send: (input: NativeTermina
     if (event.isComposing || event.key === "Dead" || event.key === "AltGraph" || core._isThirdLevelShift(core.browser, event)) return true;
     const key = nativeKey(event);
     if (!key) return true;
+    if (event.metaKey) event.stopPropagation();
     event.preventDefault(); emit({ kind: "key", key }); return false;
   });
   return { dispose() {

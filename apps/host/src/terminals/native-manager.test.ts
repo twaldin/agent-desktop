@@ -49,6 +49,19 @@ async function viewer(manager: TmuxTerminalManager, terminalId: string) {
 afterEach(async () => { for (const resource of fixtures.splice(0)) { if (resource.child && resource.child.exitCode === null) { resource.child.kill(); await resource.child.exited; } await resource.manager?.shutdown(); rmSync(resource.directory, { recursive: true, force: true }); } });
 
 describe.skipIf(!bundle)("private bundled tmux integration (actual native programs)", () => {
+  test("UTF-8 attachment output is independent of the owning host locale", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "agent-native-utf8-"));
+    const manager = await TmuxTerminalManager.open({ dataDirectory: directory, hostId: crypto.randomUUID(), bundleDirectory: resolve(bundle!),
+      shell: { application: "/bin/sh", args: ["-c", "printf 'café λ 界\\n'; read hold"], environment: { LANG: "C", LC_ALL: "C" } }, pollIntervalMs: 100 });
+    fixtures.push({ directory, manager });
+    const terminal = await manager.create({ cwd: directory, target: { projectId: crypto.randomUUID() }, cols: 80, rows: 24 });
+    const attached = await viewer(manager, terminal.id);
+    try {
+      await until(async () => { await attached.drain(); return attached.screen().rows.some(row => row?.includes("caf")); }, "native Unicode output");
+      expect(attached.screen().rows.join("\n")).toContain("café λ 界");
+    } finally { await attached.close(); }
+  });
+
   for (const shell of [{ application: "/bin/bash", args: ["--noprofile", "--norc", "-i"] }, ...(existsSync("/bin/zsh") ? [{ application: "/bin/zsh", args: ["-f", "-i"] }, { application: "/bin/zsh", args: ["-f", "-i"], environment: { PROMPT: "fixture " + "long-path/".repeat(27) + " detached at fixture\n❯ " } }] : [])]) test(`completed action output survives a wide, short dock resize without rerunning (${shell.application}${"environment" in shell ? " wrapped prompt" : ""})`, async () => {
     const directory = realpathSync(mkdtempSync(join(tmpdir(), "agent-native-action-resize-")));
     const manager = await TmuxTerminalManager.open({ dataDirectory: directory, hostId: crypto.randomUUID(), bundleDirectory: resolve(bundle!),

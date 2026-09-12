@@ -166,7 +166,7 @@ export class TmuxTerminalManager {
     atomicPrivateText(payload, lines.join("\n")); privateFile(payload);
     return { application: "/bin/sh", args: [payload], payload };
   }
-  private args(...command: string[]): string[] { return [this.bundle.binary, "-S", this.catalog.socket, "-f", this.configPath, ...command]; }
+  private args(...command: string[]): string[] { return [this.bundle.binary, "-u", "-S", this.catalog.socket, "-f", this.configPath, ...command]; }
   private async cli(command: string[], maximumBytes = 256 * 1024): Promise<string> {
     const child = Bun.spawn(this.args(...command), { env: this.environment(), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), 10_000);

@@ -25,6 +25,7 @@ export class NativeTerminalView {
   private refreshing = false;
   private requested = false;
   private fresh = true;
+  private createdEmulator = false;
   private attachmentRevision = 0;
   private ready = false;
   private restoring = true;
@@ -95,11 +96,17 @@ export class NativeTerminalView {
   }
   private async sync(): Promise<void> {
     let replacements = 0;
+    const document = this.element.ownerDocument;
+    let focusBefore: Element | null | undefined, restoreFocus = false;
     do {
       this.requested = false;
       if (!this.alive || !this.connected) return;
       if (this.fresh || !this.attachment) {
         if (++replacements > 3) throw new Error("The terminal is producing output faster than this view can restore. It will retry with a fresh attachment.");
+        if (focusBefore === undefined) {
+          focusBefore = document.activeElement;
+          restoreFocus = !this.createdEmulator || this.element.contains(focusBefore);
+        }
         const revision = this.attachmentRevision, previous = this.attachment; this.attachment = undefined;
         this.disposeEmulator?.(); this.disposeEmulator = undefined;
         if (previous) await this.bridge.nativeTerminalAction({ type: "detach", attachmentId: previous.id }, this.hostId).catch(() => {});
@@ -109,7 +116,11 @@ export class NativeTerminalView {
         this.terminal = newestNativeTerminal(this.terminal, result.terminal);
         if (revision !== this.attachmentRevision || result.attachment.geometryRevision !== this.terminal.geometryRevision || result.attachment.inputEpoch !== this.terminal.inputEpoch) { await this.bridge.nativeTerminalAction({ type: "detach", attachmentId: result.attachment.id }, this.hostId).catch(() => {}); this.requested = true; continue; }
         this.attachment = result.attachment; this.fresh = false;
-        this.createEmulator(result.attachment); this.input.setGeneration(result.attachment);
+        const label = this.element.closest('[role="tabpanel"]')?.getAttribute("aria-labelledby");
+        const initialTab = label ? document.getElementById(label) : undefined;
+        const focus = restoreFocus && (document.activeElement === focusBefore || document.activeElement === document.body
+          || !this.createdEmulator && document.activeElement === initialTab);
+        this.createEmulator(result.attachment, focus); this.input.setGeneration(result.attachment);
       }
       const attachment = this.attachment!;
       const result = await this.bridge.nativeTerminalQuery({ type: "replay", attachmentId: attachment.id, afterSequence: this.cursor!.sequence }, this.hostId);
@@ -128,10 +139,10 @@ export class NativeTerminalView {
       this.ready = true; this.restoring = false; this.error = undefined; this.publish();
     } while (this.requested && this.alive && this.connected);
   }
-  private createEmulator(attachment: NativeTerminalAttachment): void {
+  private createEmulator(attachment: NativeTerminalAttachment, focus: boolean): void {
     this.element.replaceChildren();
     // A fresh emulator also discards any unfinished parser escape sequence from an old PTY.
-    const term = new Terminal({ cols: attachment.cols, rows: attachment.rows, scrollback: 5000, cursorBlink: true, screenReaderMode: true, allowTransparency: true, allowProposedApi: false, disableStdin: true, fontFamily: "monospace", fontSize: 13 });
+    const term = new Terminal({ cols: attachment.cols, rows: attachment.rows, scrollback: 5000, cursorStyle: "bar", cursorBlink: true, letterSpacing: 0, lineHeight: 1.2, screenReaderMode: true, allowTransparency: true, allowProposedApi: false, disableStdin: true, fontFamily: "monospace", fontSize: 13 });
     term.open(this.element); this.term = term; term.textarea?.setAttribute("aria-label", `Interactive ${this.terminal.shell} terminal`);
     const parser = separateXtermReplies(term); this.parser = parser;
     const input = wireNativeXtermInput(term, value => this.input.enqueue(value), () => this.ready && this.input.ready && this.terminal.status === "running", { copy: text => this.copy(text), selectAll: () => term.selectAll() }, focused => {
@@ -151,7 +162,8 @@ export class NativeTerminalView {
     });
     this.cursor.begin(attachment);
     this.disposeEmulator = () => { input.dispose(); parser.dispose(); selection.dispose(); render.dispose(); term.dispose(); if (this.term === term) this.term = undefined; };
-    this.applyTheme(); this.sizeGrid(); term.focus(); this.publish();
+    this.createdEmulator = true;
+    this.applyTheme(); this.sizeGrid(); if (focus) term.focus(); this.publish();
   }
   private sizeGrid = () => {
     const term = this.term, screen = term?.element?.querySelector<HTMLElement>(".xterm-screen");
@@ -166,7 +178,7 @@ export class NativeTerminalView {
     const canvas = document.createElement("canvas"), context = canvas.getContext("2d", { willReadFrequently: true }); canvas.width = canvas.height = 1;
     const color = (value: string) => { if (!context) return value; context.clearRect(0, 0, 1, 1); context.fillStyle = value; context.fillRect(0, 0, 1, 1); const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data; return `rgba(${r},${g},${b},${a! / 255})`; };
     const measure = document.createElement("span"); measure.style.fontSize = token("--terminal-font-size", token("--code-font-size", "13px")); this.element.append(measure); const fontSize = parseFloat(getComputedStyle(measure).fontSize); measure.remove();
-    term.options = { theme: { background: color(token("--terminal-surface", token("--app-surface", "#181818"))), foreground: color(token("--text", "#ededed")), cursor: color(token("--accent", "#72a8ff")), selectionBackground: color(token("--selection-surface", "#ffffff33")) }, fontFamily: token("--terminal-font", token("--code-font", "monospace")), fontSize: Number.isFinite(fontSize) ? fontSize : 13, fontWeight: Number(token("--code-font-weight", "400")), lineHeight: Number(token("--code-line-height", "1.2")) };
+    term.options = { theme: { background: color(token("--terminal-surface", token("--app-surface", "#181818"))), foreground: color(token("--text", "#ededed")), cursor: color(token("--accent", "#72a8ff")), selectionBackground: color(token("--selection-surface", "#ffffff33")) }, fontFamily: token("--terminal-font", token("--code-font", "monospace")), fontSize: Number.isFinite(fontSize) ? fontSize : 13, fontWeight: Number(token("--code-font-weight", "400")), lineHeight: 1.2 };
     this.sizeGrid();
   };
   async usePanelSize(): Promise<void> {

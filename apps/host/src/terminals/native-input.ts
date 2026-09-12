@@ -1,7 +1,7 @@
 import type { NativeTerminalInput } from "../../../../packages/shared/src/terminals";
 import { TerminalError } from "./error";
 
-const NATIVE_KEY = /^(?:(?:C|M|S)-){0,3}(?:Up|Down|Left|Right|Home|End|IC|DC|PPage|NPage|BSpace|Enter|Tab|BTab|Escape|Space|F(?:[1-9]|[1-5][0-9]|6[0-3])|KP(?:[0-9]|Enter|[/*+.,=-])|[a-zA-Z0-9@\[\]\\^_?])$/;
+const NATIVE_KEY = /^(?:(?:C|M|S)-){0,3}(?:Up|Down|Left|Right|Home|End|IC|DC|PPage|NPage|BSpace|Enter|Tab|BTab|Escape|Space|F(?:[1-9]|1[0-2])|KP(?:[0-9]|Enter|[/*+.-])|[a-zA-Z0-9@\[\]\\^_?])$/;
 export function validateNativeInput(input: NativeTerminalInput): void {
   if (!input || typeof input !== "object") throw new TerminalError("INVALID_TERMINAL_INPUT", "A typed terminal input source is required.");
   const keys: Record<NativeTerminalInput["kind"], string[]> = { text: ["kind", "data"], bytes: ["kind", "base64"], key: ["kind", "key"], paste: ["kind", "data"], mouse: ["kind", "button", "col", "row", "release"] };

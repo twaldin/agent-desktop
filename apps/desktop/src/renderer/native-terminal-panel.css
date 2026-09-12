@@ -1,4 +1,9 @@
-.native-terminal-scrollport { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 4px 8px; }
+.native-terminal-scrollport { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 8px 0 12px 16px; scrollbar-color: var(--border) var(--terminal-surface, var(--app-surface)); }
+.native-terminal-scrollport:hover { scrollbar-color: var(--secondary) var(--terminal-surface, var(--app-surface)); }
+.native-terminal-scrollport::-webkit-scrollbar { width: 10px; height: 10px; }
+.native-terminal-scrollport::-webkit-scrollbar-track, .native-terminal-scrollport::-webkit-scrollbar-corner { background: var(--terminal-surface, var(--app-surface)); }
+.native-terminal-scrollport::-webkit-scrollbar-thumb { background: var(--border); }
+.native-terminal-scrollport::-webkit-scrollbar-thumb:hover, .native-terminal-scrollport::-webkit-scrollbar-thumb:active { background: var(--secondary); }
 .terminal-legacy-container { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .terminal-legacy-container > .terminal-panel { flex: 1; min-height: 0; }
 .native-terminal-scrollport[hidden] { display: none; }

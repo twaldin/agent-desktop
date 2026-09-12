@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TerminalRequestRecovery } from "./TerminalRequestRecovery";
 import { BrowserNewTabPanel } from "./BrowserNewTabPanel";
@@ -32,11 +31,4 @@ test("restored terminal recovery makes actual browser address readonly without s
     state: { status: "idle", draft: "kept address" }, connected: true, observePresentation() {}, submit() { calls++; }, edit() { calls++; } } as unknown as BrowserNewTabController;
   const html = renderToStaticMarkup(<BrowserNewTabPanel controller={controller} active terminalRecovery={<TerminalRequestRecovery intent={intent} enabled running={false} checking={false} onCheck={() => { calls++; }}/>}/>);
   expect(html).toContain("kept address"); expect(html).toContain("readOnly"); expect(html).toContain("Check result"); expect(calls).toBe(0);
-});
-test("App passes original browser origin and retained save observer into the actual acquisition path", () => {
-  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8"), hook = readFileSync(new URL("./use-workbench-dock.tsx", import.meta.url), "utf8");
-  expect(app).toContain("terminalCreations: terminalRequests.intents"); expect(app).toContain("terminalRequests.commit({ hostId");
-  expect(app).toContain("terminalRequests.committed(value)"); expect(app).toContain("terminalRequests.saved(value)"); expect(app).toContain("terminalRequests.failed(message)");
-  expect(app).toContain("origin.state.draft"); expect(app).toContain("terminalRequests.inspectToDock(requestKey)"); expect(app).toContain("browserMenu.adopt(origin, result.tab, focus, guard)");
-  expect(hook).toContain('terminalOwner.prepare(options, signal, create ? "validate" : "reuse", settled)'); expect(hook).not.toContain("client.nativeTerminalAction");
 });

@@ -12,6 +12,41 @@ test("native keys preserve modifiers, application keypad provenance, and composi
   expect(nativeKey(key("Dead", { isComposing: true }))).toBeUndefined(); expect(nativeKey(key("λ"))).toBeUndefined();
 });
 
+test("keypad punctuation and unsupported function keys stay on xterm's text path", () => {
+  expect(nativeKey(key("=", { location: 3, code: "NumpadEqual" }))).toBeUndefined();
+  expect(nativeKey(key(",", { location: 3, code: "NumpadComma" }))).toBeUndefined();
+  expect(nativeKey(key("F13"))).toBeUndefined();
+  expect(nativeKey(key(".", { location: 3, code: "NumpadDecimal" }))).toBe("KP.");
+  expect(nativeKey(key("F12"))).toBe("F12");
+});
+
+test("Command line editing consumes one keydown without overriding composition or modified chords", () => {
+  const term = new Terminal(), inputs: NativeTerminalInput[] = [];
+  const core: unknown = Reflect.get(term, "_core");
+  const wired = wireNativeXtermInput(term, input => inputs.push(input), () => true, { copy() {}, selectAll() {} });
+  const event = (value: string, options = {}) => ({
+    ...key(value, { metaKey: true }), type: "keydown", keyCode: 0, getModifierState: () => false,
+    preventDefault() {}, stopPropagation() {}, ...options,
+  });
+  try {
+    if (!core || typeof core !== "object" || !("_customKeyEventHandler" in core) || typeof core._customKeyEventHandler !== "function") {
+      throw new Error("The real xterm key handler was not installed.");
+    }
+    let stopped = 0, prevented = 0;
+    for (const value of ["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown", "Backspace", "Delete"]) {
+      expect(core._customKeyEventHandler(event(value, {
+        preventDefault() { prevented++; }, stopPropagation() { stopped++; },
+      }))).toBe(false);
+    }
+    expect(inputs).toEqual(["C-a", "C-a", "C-e", "C-e", "C-u", "C-k"].map(key => ({ kind: "key", key })));
+    expect(stopped).toBe(6); expect(prevented).toBe(6);
+    for (const options of [{ type: "keyup" }, { altKey: true }, { ctrlKey: true }, { shiftKey: true }, { isComposing: true }]) {
+      expect(core._customKeyEventHandler(event("ArrowLeft", options))).toBe(true);
+    }
+    expect(inputs).toHaveLength(6);
+  } finally { wired.dispose(); term.dispose(); }
+});
+
 test("real xterm paste and mouse sources remain typed while parser replies stay attachment-scoped", async () => {
   const term = new Terminal({ cols: 80, rows: 24 });
   const core = (term as any)._core; core.textarea = { value: "" };

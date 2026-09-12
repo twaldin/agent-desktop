@@ -17,6 +17,14 @@ test("native input cannot smuggle a command, cwd, generic reply or malformed byt
   expect(nativeInputCommand("%0", 80, 24, { kind: "key", key: "C-\\" })).toContain("'C-\\'");
 });
 
+test("unknown tmux key names cannot be accepted as literal shell input", () => {
+  const request = { terminalId: crypto.randomUUID(), attachmentId: crypto.randomUUID(), inputEpoch: crypto.randomUUID(),
+    geometryRevision: 1, clientId: crypto.randomUUID(), sequence: 1 };
+  for (const key of ["KP=", "KP,", "F13", "S-KP="]) {
+    expect(() => parseNativeTerminalInput({ ...request, input: { kind: "key", key } })).toThrow();
+  }
+});
+
 test("durable native ownership refuses symlinked metadata", () => {
   const directory = mkdtempSync(join(tmpdir(), "agent-native-catalog-validation-"));
   try { const store = new NativeTerminalStore(join(directory, "private")); writeFileSync(join(directory, "foreign.json"), "{}"); symlinkSync(join(directory, "foreign.json"), store.catalogPath); expect(() => store.read()).toThrow("private regular file"); }

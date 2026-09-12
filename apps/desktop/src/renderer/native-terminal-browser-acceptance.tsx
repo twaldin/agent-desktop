@@ -52,6 +52,7 @@ export async function nativeTerminalBrowserAcceptance() {
     subscribeNativeTerminals: listener => { listeners.add(listener); return () => listeners.delete(listener); },
   };
   const containers = [0, 1].map(() => { const outer = document.createElement("div"); outer.className = "native-terminal-scrollport"; outer.style.cssText = "width:330px;height:190px;flex:none;border:1px solid gray"; const inner = document.createElement("div"); inner.className = "native-terminal-grid"; outer.append(inner); document.body.append(outer); return { outer, inner }; });
+  const focusTarget = document.createElement("input");
   const states: NativeTerminalViewState[] = [], views = containers.map((container, index) => new NativeTerminalView(container.inner, client, "host-one", { ...panes[0]! }, true, value => { states[index] = value; }));
   const terminal = (index: number) => (views[index] as unknown as { term: Terminal }).term;
   const attached = (index: number) => (views[index] as unknown as { attachment: NativeTerminalAttachment }).attachment;
@@ -88,11 +89,16 @@ export async function nativeTerminalBrowserAcceptance() {
     const beforeGap = attached(0).id, beforeTerm = terminal(0); forceGap = beforeGap; views[0]!.refresh();
     await settle(() => attached(0)?.id !== beforeGap && states[0]!.ready, "fresh view after ring loss");
     requireValue(terminal(0) !== beforeTerm && !text(0).includes("FORBIDDEN"), "Fresh xterm never parses evicted tail"); requireValue(attached(1).id === "attachment-2", "One gap does not replace another viewer"); checks.push("ring loss recreates only affected native attachment and emulator");
+    document.body.append(focusTarget); focusTarget.focus();
     const old = attached(0).id; views[0]!.setConnected(false); requireValue(terminal(0).options.disableStdin, "Disconnect disables real terminal stdin"); views[0]!.setConnected(true);
     await settle(() => attached(0)?.id !== old && states[0]!.ready, "reconnect attaches same pane"); requireValue(inputs.every(input => input.input.kind !== "text" || input.input.data !== "FORBIDDEN"), "Reconnect does not manufacture input"); checks.push("disconnect and reconnect preserve pane and replace only display transport");
+    requireValue(document.activeElement === focusTarget, "Reconnect does not steal another input's focus");
+    focusTarget.remove(); terminal(0).focus();
     const beforeResize = [attached(0).id, attached(1).id]; await views[0]!.usePanelSize();
     await settle(() => states.every(state => state.ready) && attached(0).id !== beforeResize[0] && attached(1).id !== beforeResize[1], "shared resize replaces both attachments");
     requireValue(actions.filter(action => action.type === "resize").length === 1, "Explicit resize sends one shared native resize"); requireValue(terminal(0).cols === terminal(1).cols && terminal(0).rows === terminal(1).rows && terminal(0).cols < 80, "Every actual emulator adopts resized accepted grid"); checks.push("one intentional resize updates every viewer before input acknowledgement");
+    requireValue(document.activeElement === terminal(0).textarea, "Shared resize restores only the previously focused viewer");
+    checks.push("attachment replacement preserves external focus and the focused terminal viewer");
     rejectNextInput = true; terminal(0).textarea!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", code: "ArrowRight", bubbles: true, cancelable: true }));
     await settle(() => states[0]!.inputPaused, "stale input visible"); requireValue(states[0]!.inputError?.includes("STALE_TERMINAL_GEOMETRY"), "Stale native admission surfaces exact code"); requireValue(terminal(0).options.disableStdin, "Stale receipt disables actual stdin"); views[0]!.resumeInput(); await settle(() => !states[0]!.inputPaused, "explicit input resume"); checks.push("stale receipt surfaces and pauses real input without replay");
     naturalExit = true; panes[0]!.status = "exited"; panes[0]!.exitCode = 0; emit({ type: "state", terminal: { ...panes[0]! } });
@@ -103,8 +109,8 @@ export async function nativeTerminalBrowserAcceptance() {
       flushSync(() => root.render(createElement(NativeTerminalPanel, { bridge: client, hostId: "host-one", target: { projectId: "project" }, connected: true, onClose() {} })));
       await settle(() => panel.querySelectorAll('[role="tab"]').length === 2 && panel.querySelector(".xterm") !== null && !panel.textContent?.includes("Attaching to the native pane"), "actual React native panel");
       await capture("panel-wide"); panel.style.width = "330px"; await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); await capture("panel-narrow");
-      const tabs = panel.querySelectorAll<HTMLButtonElement>('[role="tab"]'), attachCount = nextId;
-      tabs[1]!.click(); await settle(() => nextId > attachCount, "switch tab gets its own native view");
+      const inactiveTab = panel.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="false"]')!, attachCount = nextId;
+      inactiveTab.click(); await settle(() => nextId > attachCount, "switch tab gets its own native view");
       const history = [...panel.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "History")!; history.click();
       await settle(() => panel.querySelector(".native-terminal-history pre")?.textContent?.includes("HISTORY IS READ ONLY") === true, "native history rendered as read-only text");
       requireValue(panel.querySelector(".native-terminal-history pre")!.textContent!.includes("\x1b[6n"), "History escape sequences stay text, never parser input");
@@ -113,6 +119,6 @@ export async function nativeTerminalBrowserAcceptance() {
     } finally { root.unmount(); panel.remove(); }
     requireValue(!actions.some(action => action.type === "close" || action.type === "forget"), "Unmounted panel retains underlying panes");
     return { passed: true, checks, actions: { attachments: nextId, sharedResizes: actions.filter(action => action.type === "resize").length, closes: actions.filter(action => action.type === "close").length, replies: actions.filter(action => action.type === "reply").length }, electron: navigator.userAgent, source: "Production native renderer in real Electron DOM/React/xterm; controlled transport fixture, not native tmux or installed-app acceptance" };
-  } finally { for (const view of views) view.dispose(); for (const container of containers) container.outer.remove(); }
+  } finally { focusTarget.remove(); for (const view of views) view.dispose(); for (const container of containers) container.outer.remove(); }
 }
 Object.assign(globalThis, { runNativeTerminalBrowserAcceptance: nativeTerminalBrowserAcceptance });

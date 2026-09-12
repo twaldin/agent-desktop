@@ -68,11 +68,11 @@ export function NativeTerminalPanel({ bridge, target, hostId, connected, onClose
     {error && <p className="terminal-notice error" role="alert">{error}</p>}
     {!connected && <p className="terminal-notice">Offline · input is disabled. Reconnecting restores a fresh view of the same pane.</p>}
     {!active ? <div className="terminal-empty"><Icon name="terminal"/><p>{loading ? "Loading terminals…" : "Open a shell in this workspace."}</p><button className="secondary-button" disabled={!connected || busy || loading} onClick={() => void create()}>{busy ? "Starting…" : "New terminal"}</button></div>
-      : <NativeTerminalViewport key={`${hostId}:${active.id}`} bridge={bridge} hostId={hostId} terminal={active} connected={connected}/>}
+      : <NativeTerminalViewport key={`${hostId}:${active.id}`} bridge={bridge} hostId={hostId} terminal={active} connected={connected} onNewTerminal={() => { if (connected && !busy) void create(); }}/>}
   </section>;
 }
 
-export function NativeTerminalViewport({ bridge, hostId, terminal, connected, embedded = false }: { bridge: NativeTerminalClient; hostId: string; terminal: NativeTerminalInfo; connected: boolean; embedded?: boolean }) {
+export function NativeTerminalViewport({ bridge, hostId, terminal, connected, embedded = false, onNewTerminal }: { bridge: NativeTerminalClient; hostId: string; terminal: NativeTerminalInfo; connected: boolean; embedded?: boolean; onNewTerminal?(): void }) {
   const element = useRef<HTMLDivElement>(null), handle = useRef<NativeTerminalView | undefined>(undefined);
   const current = useRef({ terminal, connected }); current.current = { terminal, connected };
   const [state, setState] = useState<NativeTerminalViewState>({ terminal, ready: false, restoring: running(terminal), inputPaused: false, inputBusy: false, hasSelection: false });
@@ -90,7 +90,11 @@ export function NativeTerminalViewport({ bridge, hostId, terminal, connected, em
     catch (cause) { setHistoryError(errorText(cause)); }
     finally { setHistoryBusy(false); }
   };
-  return <div className="terminal-view native-terminal-view" role={embedded ? undefined : "tabpanel"} id={`native-terminal-view-${terminal.id}`} aria-labelledby={embedded ? undefined : `native-terminal-tab-${terminal.id}`}>
+  return <div className="terminal-view native-terminal-view" role={embedded ? undefined : "tabpanel"} id={`native-terminal-view-${terminal.id}`} aria-labelledby={embedded ? undefined : `native-terminal-tab-${terminal.id}`} onKeyDownCapture={event => {
+    if (!onNewTerminal || event.nativeEvent.isComposing || event.key !== "t" || !event.metaKey || event.altKey || event.ctrlKey || event.shiftKey
+      || !(event.target instanceof Element) || !event.target.closest(".xterm")) return;
+    event.preventDefault(); event.stopPropagation(); onNewTerminal();
+  }}>
     {state.restoring && <p className="terminal-notice" role="status">Attaching to the native pane…</p>}
     {(state.error || state.inputError) && <div className="terminal-view-notices">{state.error && <p className="terminal-notice error" role="alert">{state.error}</p>}{state.inputError && <p className="terminal-notice error" role="alert">{state.inputError}{state.inputPaused && <button className="secondary-button" disabled={!connected || state.inputBusy || !state.ready} onClick={() => handle.current?.resumeInput()}>Resume input</button>}</p>}</div>}
     <div className="native-terminal-scrollport" hidden={historyOpen}><div className="native-terminal-grid" ref={element}/></div>

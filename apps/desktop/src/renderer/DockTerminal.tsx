@@ -10,11 +10,11 @@ import { workspaceKey } from "./workspace-state";
 
 /** A dock tab observes exactly one existing native pane. Mounting/restoring a tab
  * never creates, restarts, closes, or implicitly resizes its owning shell. */
-export function DockTerminal(props: { bridge: DesktopBridge; hostId: string; target: WorkspaceTarget; terminalId: string; connected: boolean }) {
+export function DockTerminal(props: { bridge: DesktopBridge; hostId: string; target: WorkspaceTarget; terminalId: string; connected: boolean; onNewTerminal?(): void }) {
   if (!hasNativeTerminalBridge(props.bridge)) return <p className="terminal-notice" role="status">Update this desktop to restore native terminal tabs.</p>;
   return <DockTerminalBody {...props} client={nativeTerminalClient(props.bridge)}/>;
 }
-function DockTerminalBody({ client, hostId, target, terminalId, connected }: { client: ReturnType<typeof nativeTerminalClient>; hostId: string; target: WorkspaceTarget; terminalId: string; connected: boolean }) {
+function DockTerminalBody({ client, hostId, target, terminalId, connected, onNewTerminal }: { client: ReturnType<typeof nativeTerminalClient>; hostId: string; target: WorkspaceTarget; terminalId: string; connected: boolean; onNewTerminal?(): void }) {
   const [terminal, setTerminal] = useState<NativeTerminalInfo>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -59,6 +59,6 @@ function DockTerminalBody({ client, hostId, target, terminalId, connected }: { c
     {terminal && <details className="dock-terminal-actions"><summary aria-label="Terminal actions" title="Terminal actions"><Icon name="more"/></summary><div><span>{terminal.status}</span><button disabled={!connected || busy} onClick={() => void stopOrForget()}>{["starting","running","closing"].includes(terminal.status) ? "Stop shell for all viewers" : "Forget stopped terminal"}</button></div></details>}
     {error && <p className="terminal-notice error" role="alert">{error}<button disabled={!connected} onClick={() => setRefresh(value => value + 1)}>Retry</button></p>}
     {!connected && <p className="terminal-notice">Offline · reconnect to use this terminal.</p>}
-    {terminal ? <NativeTerminalViewport key={owner} bridge={client} hostId={hostId} terminal={terminal} connected={connected} embedded/> : !error && <p className="terminal-notice" role="status">{connected ? "Restoring terminal…" : "Terminal details are unavailable offline."}</p>}
+    {terminal ? <NativeTerminalViewport key={owner} bridge={client} hostId={hostId} terminal={terminal} connected={connected} embedded onNewTerminal={onNewTerminal}/> : !error && <p className="terminal-notice" role="status">{connected ? "Restoring terminal…" : "Terminal details are unavailable offline."}</p>}
   </section>;
 }
