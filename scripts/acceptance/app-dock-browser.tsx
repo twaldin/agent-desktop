@@ -494,17 +494,17 @@ Object.assign(window, {
     await wait(() => chooserAction("Review") && chooserAction("Files"), "eligible chooser workspace actions");
     chooserAction("Review")!.click(); await wait(() => right.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.includes("Review") && right.querySelector(".review-panel"), "real review tab");
     const selectPanelAction = async (label: string) => {
-      const add = right.querySelector<HTMLButtonElement>('button[aria-label="Open right panel tab"]');
+      const add = right.querySelector<HTMLButtonElement>('button[aria-label="Open side panel tab"]');
       assert(add, "Panel add trigger missing"); add.focus(); add.dispatchEvent(new KeyboardEvent("keydown", { key:"ArrowDown", bubbles:true, cancelable:true }));
-      await wait(() => document.querySelector('[role="menu"][aria-label="Open right panel tab"]'), "portaled panel chooser");
-      const item = [...document.querySelectorAll<HTMLElement>('[role="menu"][aria-label="Open right panel tab"] [role="menuitem"]')].find(item => item.querySelector("span")?.textContent === label);
+      await wait(() => document.querySelector('[role="menu"][aria-label="Open side panel tab"]'), "portaled panel chooser");
+      const item = [...document.querySelectorAll<HTMLElement>('[role="menu"][aria-label="Open side panel tab"] [role="menuitem"]')].find(item => item.querySelector("span")?.textContent === label);
       assert(item, `${label} menu item missing`); item.click();
     };
     await selectPanelAction("Files");
     await wait(() => right.querySelectorAll('[role="tab"]').length === 2 && right.querySelector(".workspace-file-browser") && right.querySelector('[role="tree"][aria-label="Files"]'), "real files tab");
     assert(right.textContent?.includes("Open file") && right.textContent?.includes("Select a file from the workspace tree"), "Files tab did not render the empty Open file tree surface");
     assert(document.activeElement?.getAttribute("placeholder") === "Filter files…", "Open file did not focus the tree filter");
-    menuDismissal.add = !document.querySelector('[role="menu"][aria-label="Open right panel tab"]');
+    menuDismissal.add = !document.querySelector('[role="menu"][aria-label="Open side panel tab"]');
     assert(workspaceCalls.some(call => call.query.type === "git.status") && workspaceCalls.some(call => call.query.type === "files.list"), "workspace tabs did not query controlled Git/files surfaces");
     checks.push("header opens an accessible empty chooser and real Review and Files workspace tabs");
 

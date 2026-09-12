@@ -80,7 +80,7 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: "mouseUp", x: box.x, y: box.y, button: "left", clickCount: 1 });
     await sleep(100);
   };
-  const trigger = (destination) => '[aria-label="Open ' + destination + ' panel tab"]';
+  const trigger = (destination) => '[aria-label="Open ' + (destination === 'right' ? 'side' : destination) + ' panel tab"]';
   const menuFor = (value, destination) => value.menus.find((menu) => menu.destination === destination);
   const focusTrigger = async (destination) => {
     const selector = trigger(destination);
@@ -125,7 +125,7 @@ app.whenReady().then(async () => {
     await key("Escape");
     const escaped = await state();
     assert(escaped.menus.length === 0, "Escape did not close right menu");
-    assert(escaped.active.includes("Open right panel tab"), "Escape did not restore right trigger focus: " + escaped.active);
+    assert(escaped.active.includes("Open side panel tab"), "Escape did not restore right trigger focus: " + escaped.active);
     await observe("right-escape-restored-trigger");
 
     await openByKey("bottom", "Space");

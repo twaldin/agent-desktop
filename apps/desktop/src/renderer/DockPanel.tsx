@@ -9,6 +9,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { DockTabIcon } from "./DockTabIcon";
+import { DockActionIcon } from "./DockActionIcon";
 import { activateDockTab, closeDockTab, hideDock, moveDockTab, otherDock, reorderDockTab, type DockDestination, type DockState, type DockTab, type DockViewport } from "./dock-state";
 import "./dock-panel.css";
 
@@ -133,8 +134,8 @@ export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shor
         <button id={`${panelId}-${tab.id}`} data-dock-tab-id={tab.id} data-dock-content-tab title={tab.kind === "file" ? tab.filePath : undefined} {...paneDrag.handlers(tab)} role="tab" aria-selected={activeId === tab.id} aria-controls={`${panelId}-panel-${tab.id}`} tabIndex={activeId === tab.id ? 0 : -1} onClick={event => {if(!paneDrag.consumeClick(event)) select(tab.id);}} onContextMenu={event=>onTabContextMenu?.(event,tab)} onDoubleClick={() => onPinTab?.(tab.id)} onKeyDown={event => keydown(event, tab.id)} onAuxClick={event => { if (event.button === 1) { event.preventDefault(); close(tab.id); } }}><DockTabIcon tab={tab}/><span>{tab.title}</span>{shortcutHints?.get(tab.id) && <span className="task-shortcut-hint" data-tab-shortcut-hint aria-hidden="true"><kbd>{shortcutHints.get(tab.id)}</kbd></span>}{tab.unread && <i className="dock-unread" aria-label="Unread side-chat answer"/>}</button><button className="dock-tab-close" data-app-shell-tab-close-button aria-label={`Close ${tab.title} tab`} disabled={closing.has(tab.id)} onPointerDown={event => event.stopPropagation()} onClick={() => close(tab.id)}><Icon name="close"/></button>
       </div>)}</div>
       {addActions.length > 0 && <DropdownMenu.Root modal={false} open={addMenuOpen} onOpenChange={changeAddMenuOpen}>
-        <DropdownMenu.Trigger asChild><button type="button" className="dock-add-trigger" aria-label={`Open ${destination} panel tab`} title="Add panel tab"><Icon name="plus"/></button></DropdownMenu.Trigger>
-        <DropdownMenu.Portal><DropdownMenu.Content className="dock-add-menu" data-menu-destination={destination} aria-label={`Open ${destination} panel tab`} side="bottom" align="start" sideOffset={1} collisionPadding={6} loop={false} onCloseAutoFocus={event => {
+        <DropdownMenu.Trigger asChild><button type="button" className="dock-add-trigger" aria-label={`Open ${destination === "right" ? "side" : "bottom"} panel tab`} title="Add panel tab"><Icon name="plus"/></button></DropdownMenu.Trigger>
+        <DropdownMenu.Portal><DropdownMenu.Content className="dock-add-menu" data-menu-destination={destination} aria-label={`Open ${destination === "right" ? "side" : "bottom"} panel tab`} side="bottom" align="start" sideOffset={1} collisionPadding={6} loop={false} onCloseAutoFocus={event => {
           // Files and Browser open their own focus surface after the menu relinquishes focus.
           const select = deferredSelection.current;
           deferredSelection.current = null;
@@ -143,7 +144,7 @@ export function DockPanel({ presentationIds, dragEnabled = true, dragOwner, shor
           {addActions.map(action => <DropdownMenu.Item className="dock-add-item" key={action.id} textValue={action.label} onSelect={() => {
             if (action.deferSelectionUntilDropdownClose) deferredSelection.current = () => action.onSelect(destination);
             else action.onSelect(destination);
-          }}><Icon name={action.icon}/><span>{action.label}</span>{action.shortcut && <kbd>{action.shortcut}</kbd>}</DropdownMenu.Item>)}
+          }}><DockActionIcon action={action}/><span>{action.label}</span>{action.shortcut && <kbd>{action.shortcut}</kbd>}</DropdownMenu.Item>)}
         </DropdownMenu.Content></DropdownMenu.Portal>
       </DropdownMenu.Root>}
 

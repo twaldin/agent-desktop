@@ -37,13 +37,13 @@ app.whenReady().then(async () => {
   const click = async selector => { const point = await js("dockExclusivityTarget(" + JSON.stringify(selector) + ")"); for (const type of ["mouseMove", "mouseDown", "mouseUp"]) win.webContents.sendInputEvent({ type, x: point.x, y: point.y, ...(type === "mouseMove" ? {} : { button: "left", clickCount: 1 }) }); await sleep(100); };
   const focus = async selector => { const focused = await js("document.querySelector(" + JSON.stringify(selector) + ")?.focus(); document.activeElement?.matches(" + JSON.stringify(selector) + ")"); assert(focused, "could not focus " + selector); };
   const key = async value => { const keyCode = ({ Escape: "ESCAPE" })[value] || value; win.focus(); win.webContents.focus(); for (const type of ["keyDown", "keyUp"]) win.webContents.sendInputEvent({ type, keyCode }); await sleep(80); };
-  const trigger = destination => '[aria-label="Open ' + destination + ' panel tab"]';
+  const trigger = destination => '[aria-label="Open ' + (destination === 'right' ? 'side' : destination) + ' panel tab"]';
   const options = destination => '[data-app-shell-tab-strip-controller="' + destination + '"] [aria-label="Dock options"]';
   try {
     await win.loadFile(path.join(output, "web/index.html")); await sleep(250);
     await click(options("right")); assert((await state()).details.right, "right Dock options did not open");
     await click(trigger("right")); let current = await state(); assert(!current.details.right && current.menus.length === 1 && current.menus[0] === "right", "same-dock options -> plus was not exclusive: " + JSON.stringify(current)); await observe("same-dock-options-to-plus");
-    await key("Escape"); current = await state(); assert(!current.menus.length && current.active.includes("Open right panel tab"), "Escape did not close plus and restore trigger: " + JSON.stringify(current)); await observe("escape-restored-trigger");
+    await key("Escape"); current = await state(); assert(!current.menus.length && current.active.includes("Open side panel tab"), "Escape did not close plus and restore trigger: " + JSON.stringify(current)); await observe("escape-restored-trigger");
     await click(options("bottom")); assert((await state()).details.bottom, "bottom Dock options did not open");
     await click(trigger("right")); current = await state(); assert(!current.details.bottom && current.menus.length === 1 && current.menus[0] === "right", "cross-dock options -> plus was not exclusive: " + JSON.stringify(current)); await observe("cross-dock-options-to-plus");
     await click(options("right")); current = await state(); assert(!current.menus.length && current.details.right, "plus -> options did not dismiss plus: " + JSON.stringify(current)); await observe("plus-to-options");
