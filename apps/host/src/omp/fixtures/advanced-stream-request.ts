@@ -31,13 +31,14 @@ await writeFile(configPath, config, { flag: "wx" });
 // Intentionally exercise the native module-loading boundary only after the
 // outbound fetch guard is installed; static imports would run native discovery first.
 const { AgentRegistry, createAgentSession, discoverAuthStorage, ModelRegistry, SessionManager, Settings } = await import("@oh-my-pi/pi-coding-agent");
+const { getBundledModel } = await import("@oh-my-pi/pi-catalog/models");
 const { NativeSessionControls } = await import("../../omp-settings/models");
 const { parseSessionControlMutation } = await import("../../settings-http");
 const auth = await discoverAuthStorage(agentDir);
 const settings = await Settings.loadReadOnly({ agentDir, cwd });
 const registry = new ModelRegistry(auth, path.join(agentDir, "models.yml"), { settings });
 const evidence: Array<Record<string, unknown>> = [];
-const boundaryEvidence: Array<{ provider: string; case: string; supported: boolean; mutation: "unsupported" }> = [];
+const boundaryEvidence: Array<{ provider: string; case: string; supported: boolean; mutation: "unsupported"; effective: { id: string; api: string; baseUrl: string; transport: string | null }; loadedWithoutErrors: true; bundledUnchanged: true }> = [];
 try {
   for (const target of [{ provider: "google", api: "google-generative-ai" }, { provider: "google-vertex", api: "google-vertex" }] as const) {
     const model = registry.find(target.provider, "gemini-2.5-flash");
@@ -76,23 +77,37 @@ try {
       assert.equal(baseline.temperature, 0.35); assert.equal(baseline.topP, 0.8); assert.equal(baseline.maxOutputTokens, model.maxTokens);
       // Exercise real native models.yml overlays, not fabricated in-memory Models.
       // No request is dispatched while an unverified endpoint/model is selected.
+      const customEndpoint = "https://native-stream-custom.invalid/v1beta";
       for (const boundary of [
-        { label: "provider-endpoint-override", id: model.id, configuration: { baseUrl: "https://native-stream-custom.invalid/v1beta" } },
-        { label: "same-id-model-endpoint-override", id: model.id, configuration: { api: model.api, baseUrl: model.baseUrl,
-          models: [{ id: model.id, baseUrl: "https://native-stream-custom.invalid/v1beta" }] } },
-        { label: "unlisted-gemini-id-official-endpoint", id: "gemini-native-stream-unlisted", configuration: { api: model.api, baseUrl: model.baseUrl,
+        { label: "provider-endpoint-override", id: model.id, expectedBaseUrl: customEndpoint, configuration: { baseUrl: customEndpoint } },
+        { label: "same-id-model-endpoint-override", id: model.id, expectedBaseUrl: customEndpoint, configuration: { api: model.api, baseUrl: model.baseUrl,
+          models: [{ id: model.id, baseUrl: customEndpoint }] } },
+        { label: "unlisted-gemini-id-official-endpoint", id: "gemini-native-stream-unlisted", expectedBaseUrl: model.baseUrl, configuration: { api: model.api, baseUrl: model.baseUrl,
           models: [{ id: "gemini-native-stream-unlisted", name: "Owned unlisted model" }] } },
       ]) {
+        const bundledBefore = getBundledModel(target.provider, model.id);
+        const authority = { id: bundledBefore.id, api: bundledBefore.api, baseUrl: bundledBefore.baseUrl, transport: bundledBefore.transport, identity: structuredClone(bundledBefore.identity) };
         const modelConfigPath = path.join(agentDir, `${target.provider}-${boundary.label}.yml`);
-        await writeFile(modelConfigPath, JSON.stringify({ providers: { [target.provider]: boundary.configuration } }), { flag: "wx" });
+        // Native custom model definitions require an explicit auth mode. This
+        // owned no-dispatch registry has no credentials and never changes auth storage.
+        await writeFile(modelConfigPath, JSON.stringify({ providers: { [target.provider]: { auth: "none", ...boundary.configuration } } }), { flag: "wx" });
         const overlayRegistry = new ModelRegistry(auth, modelConfigPath, { settings });
         const overlayModel = overlayRegistry.find(target.provider, boundary.id);
+        assert.equal(overlayRegistry.getError(), undefined, `Controlled native overlay must load: ${overlayRegistry.getError()?.message ?? boundary.label}`);
         assert.ok(overlayModel, "The actual pinned ModelRegistry must admit the controlled overlay.");
+        assert.equal(overlayModel.provider, target.provider);
+        assert.equal(overlayModel.id, boundary.id);
+        assert.equal(overlayModel.api, model.api);
+        assert.equal(overlayModel.baseUrl, boundary.expectedBaseUrl, "The actual native overlay must reach the intended endpoint.");
+        assert.equal(overlayModel.transport, model.transport);
+        const bundledAfter = getBundledModel(target.provider, model.id);
+        assert.deepEqual({ id: bundledAfter.id, api: bundledAfter.api, baseUrl: bundledAfter.baseUrl, transport: bundledAfter.transport, identity: bundledAfter.identity }, authority, "Native overlay composition must not mutate bundled catalog authority.");
         native.session.agent.setModel(overlayModel);
         const snapshot = native.controls.read();
         assert.equal(snapshot.advancedStream!.supported, false, `${boundary.label} must not advertise bundled native stream support.`);
         await assert.rejects(mutate("temperature", "set", 0.4), { code: "unsupported" });
-        boundaryEvidence.push({ provider: target.provider, case: boundary.label, supported: snapshot.advancedStream!.supported, mutation: "unsupported" });
+        boundaryEvidence.push({ provider: target.provider, case: boundary.label, supported: snapshot.advancedStream!.supported, mutation: "unsupported",
+          effective: { id: overlayModel.id, api: overlayModel.api, baseUrl: overlayModel.baseUrl, transport: overlayModel.transport ?? null }, loadedWithoutErrors: true, bundledUnchanged: true });
         native.session.agent.setModel(model);
       }
       const stale = native.controls.read();
