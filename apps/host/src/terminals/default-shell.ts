@@ -7,6 +7,6 @@ const usable = (value: unknown): value is string => typeof value === "string" &&
 export function defaultTerminalShell(): { application: string; args: string[] } {
   let loginShell: unknown;
   try { loginShell = userInfo().shell; } catch { /* Service/isolated accounts may have no passwd metadata. */ }
-  const application = usable(loginShell) ? loginShell : usable(process.env.SHELL) ? process.env.SHELL : "/bin/sh";
+  const application = usable(loginShell) ? loginShell : usable(process.env.SHELL) ? process.env.SHELL : process.platform === "darwin" ? "/bin/zsh" : "/bin/sh";
   return { application, args: ["-l", "-i"] };
 }
