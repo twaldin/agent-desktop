@@ -184,6 +184,7 @@ const bridge: DesktopBridge = {
   },
   mutateGoal: (sessionId, request, hostId) => ipcRenderer.invoke("host:goal-control", sessionId, request, hostId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
+  mcpOwner: { request: (hostId, request) => ipcRenderer.invoke("host:mcp-owner", hostId, request) },
   sessionMcpApp: (sessionId, request, hostId) => ipcRenderer.invoke("host:mcp-app", sessionId, request, hostId),
   readSessionMcpResource: (sessionId, request, hostId) => ipcRenderer.invoke("host:mcp-resource", sessionId, request, hostId),
   getSessionMcp: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-mcp", sessionId, hostId, commandId),

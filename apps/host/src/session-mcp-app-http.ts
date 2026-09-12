@@ -1,6 +1,6 @@
 import { SESSION_MCP_OWNER_HEADER, parseNativeMcpAppRequest, parseNativeMcpAppResponse, type NativeMcpAppRequest, type NativeMcpAppResponse } from "@agent-desktop/shared";
 
-async function readBody(request: Request): Promise<unknown> {
+export async function readMcpAppBody(request: Request): Promise<unknown> {
   if (!request.body) throw new Error("Missing resource request.");
   const reader = request.body.getReader(), chunks: Uint8Array[] = [];
   let size = 0, expired = false;
@@ -36,7 +36,7 @@ export class SessionMcpAppHttp {
     try {
       sessionId = decodeURIComponent(match[1]!);
       if (!sessionId || sessionId.length > 200 || sessionId.includes("\0") || !this.options.sessionExists(sessionId)) return fail(409,"STALE_TARGET","The selected session no longer exists on this host.");
-      input = parseNativeMcpAppRequest(await readBody(request));
+      input = parseNativeMcpAppRequest(await readMcpAppBody(request));
     } catch { return fail(400,"INVALID_MCP_REQUEST","Invalid MCP app request."); }
     try {
       const handle = await this.options.existing(sessionId);

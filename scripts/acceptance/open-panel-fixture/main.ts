@@ -1,3 +1,6 @@
+import { McpOwnerWindow } from "../../../apps/desktop/src/main/mcp-owner-windows";
+import { requestMcpOwner } from "../../../apps/desktop/src/main/mcp-owner-transport";
+import { runMcpOwnerFlow } from "./mcp-owner-flow";
 import { McpAppWindowChannels } from "../../../apps/desktop/src/main/mcp-app-window-channels";
 import { runArtifactFlow } from "./artifact-flow";
 import { runMcpFlow } from "./mcp-flow";
@@ -28,19 +31,28 @@ window.setContentSize(1250, 950);
 const calls: unknown[] = [], errors: unknown[] = [], inputs: unknown[] = [], captures: unknown[] = [];
 window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message); });
 let online = true;
+let directoryDocument: McpOwnerWindow | undefined;
 let mcpDocument: McpAppWindowChannels | undefined;
 const mcpDrains: Promise<void>[] = [];
-const retireMcpDocument = () => { const owner = mcpDocument; mcpDocument = undefined; if (owner) { const drain = owner.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } };
+const retireMcpDocument = () => { const directory = directoryDocument; directoryDocument = undefined; if (directory) { const drain = directory.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } const owner = mcpDocument; mcpDocument = undefined; if (owner) { const drain = owner.retire(); mcpDrains.push(drain); void drain.catch(() => {}); } };
 window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) retireMcpDocument(); });
 const setConnected = (value: boolean) => { online = value; window.webContents.send('panel-event', { type: 'connection', hostId: connection.hostId, connected: value }); };
 const http = (path: string, body?: unknown) => requestHost(connection, path, body);
 ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) => {
   calls.push({ method, args });
-  const hostIndex: Record<string, number> = { getSessionMcp: 1, sessionMcpApp: 2, respondInteraction: 3, getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
+  const hostIndex: Record<string, number> = { mcpOwner: 0, getSessionMcp: 1, sessionMcpApp: 2, respondInteraction: 3, getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
   const requestedHost = args[hostIndex[method] ?? -1];
   if (requestedHost !== undefined && requestedHost !== connection.hostId) throw new Error('The fixture cannot route to a foreign host.');
   switch (method) {
-    case 'features': return { terminal: context.terminal, mcp: context.mcp };
+    case 'features': return { terminal: context.terminal, mcp: context.mcp, directoryOwner: context.directoryOwner };
+    case 'mcpOwner': {
+      if (!online && args[1].type !== 'retire') throw new Error('Disposable host transport is offline.');
+      if (!directoryDocument) {
+        const owner = new McpOwnerWindow({ current: () => directoryDocument === owner, connect: async () => connection, request: requestMcpOwner });
+        directoryDocument = owner;
+      }
+      return directoryDocument.dispatch(args[0], args[1]);
+    }
     case 'getSessionMcp': if (!online) throw new Error('Disposable host transport is offline.'); return requestSessionMcp(connection, args[0]);
     case 'sessionMcpApp': {
       if (!online) throw new Error('Disposable host transport is offline.');
@@ -107,9 +119,11 @@ let passed = false, error: string | undefined;
 try {
   await window.loadFile(join(output, 'web/index.html')); window.webContents.focus();
   await wait('typeof window.panelState === "function"', 'fixture observation helper');
-  await wait('panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
+  await wait(context.directoryOwner ? 'panelState().actions.includes("Connect apps")' : 'panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
   if (context.mcp) {
-    if (context.artifacts) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture });
+    if (context.directoryViewer) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, directoryOwner: true, http });
+    else if (context.directoryOwner) await runMcpOwnerFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture, http });
+    else if (context.artifacts) await runArtifactFlow({ window, evaluate, wait, click, key, capture, store, calls, setConnected, fixture });
     else await runMcpFlow({ window, evaluate, wait, click, key, capture, store, calls, connection, http, setConnected, terminal: context.terminal, git: context.git });
     retireMcpDocument(); await Promise.all(mcpDrains);
     if (errors.length) throw new Error('Renderer errors: ' + JSON.stringify(errors));

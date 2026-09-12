@@ -538,7 +538,7 @@ export class OmpRuntime {
       }, artifact: entryId => {
         const entry = manager.getBranch().find(entry => entry.id === entryId);
         return entry?.type === "message" ? nativeMcpArtifact(entry.id, entry.message) : undefined;
-      }, filePath: source => path.join(mcpFiles.workspace.cwd, source.path), fileResource: (...args) => mcpFiles.request(...args), manager: result.mcpManager, snapshot: () => mcp.read(), assertOwner: () => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are changing."); } });
+      }, filePath: source => path.join(mcpFiles.workspace.cwd, source.path), fileResource: (...args) => mcpFiles.request(...args), watchFile: (...args) => mcpFiles.watch(...args), manager: result.mcpManager, snapshot: () => mcp.read(), assertOwner: () => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are changing."); } });
       const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session);
       const controls = new NativeSessionControls(session, options.approvalOverride);

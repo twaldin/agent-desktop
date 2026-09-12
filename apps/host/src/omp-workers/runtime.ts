@@ -31,6 +31,7 @@ export interface WorkerFailure {
   pid: number;
   sessionId?: string;
   browserOwnerId?: string;
+  mcpOwnerId?: string;
   exitCode?: number | null;
   signalCode?: number | null;
 }
@@ -73,6 +74,19 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   inspectBrowserTab(target: BrowserFrameTarget): Promise<WorkerBrowserObservation>;
   subscribe(listener: WorkerEventListener): () => void;
   subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
+}
+export interface WorkerMcpOwner {
+  readonly id: string;
+  readonly cwd: string;
+  readonly workerPid: number;
+  readonly workerFailure: WorkerFailure | undefined;
+  read(): Promise<import("@agent-desktop/shared").NativeSessionMcpSnapshot>;
+  request(request: import("@agent-desktop/shared").NativeMcpAppRequest): Promise<import("@agent-desktop/shared").NativeMcpAppResponse>;
+  interactions(): Promise<import("@agent-desktop/shared").OmpInteraction[]>;
+  respond(id: string, response: import("@agent-desktop/shared").OmpInteractionResponse): Promise<void>;
+  subscribe(listener: WorkerEventListener): () => void;
+  subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
+  dispose(): Promise<void>;
 }
 export interface WorkerBrowserOwner extends Pick<WorkerSession, "workerPid" | "workerFailure" | "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "closeBrowserTab" | "inspectBrowserTab" | "getBrowserFrame" | "subscribeWorkerFailure" | "dispose"> {
   readonly id: string;
@@ -573,14 +587,17 @@ export class WorkerRuntime {
       ? localEnvironmentForWorker(this.#options.environment ?? process.env, localEnvironment)
       : { ...(this.#options.environment ?? process.env) };
     const browserOwnerId = init.mode === "browser" ? init.owner.id : undefined;
-    const options = init.mode === "browser" && this.#options.onWorkerFailure
+    const mcpOwnerId = init.mode === "mcp-owner" ? init.owner.id : undefined;
+    const options = init.mode === "mcp-owner" && this.#options.onWorkerFailure
+      ? { ...this.#options, onWorkerFailure: (failure: WorkerFailure) => this.#options.onWorkerFailure?.({ ...failure, mcpOwnerId }) }
+      : init.mode === "browser" && this.#options.onWorkerFailure
       ? { ...this.#options, onWorkerFailure: (failure: WorkerFailure) => this.#options.onWorkerFailure?.({ ...failure, browserOwnerId }) }
       : this.#options;
     let startupDirectory: string | undefined;
     if (init.mode === "create") {
       startupDirectory = await requireDirectory(init.options.cwd);
       init = { ...init, options: { ...init.options, cwd: startupDirectory } };
-    } else if (init.mode === "browser") startupDirectory = init.owner.cwd;
+    } else if (init.mode === "browser" || init.mode === "mcp-owner") startupDirectory = init.owner.cwd;
     else if (init.mode === "open") startupDirectory = init.options.expectedIdentity?.directory;
     if (worktreeRoot && startupDirectory && await requireDirectory(worktreeRoot) !== startupDirectory) {
       throw new Error("OMP worker directory does not match its prepared worktree environment");
@@ -599,7 +616,7 @@ export class WorkerRuntime {
       if ((init.mode === "create" || init.mode === "open") && !client.snapshot) throw new Error("OMP worker did not return native session metadata");
       if (init.mode === "create" && client.snapshot!.cwd !== init.options.cwd) throw new Error("OMP worker initialization changed working directory");
       if (init.mode === "open" && (client.snapshot!.id !== init.options.expectedIdentity?.id || client.snapshot!.cwd !== init.options.expectedIdentity.cwd)) throw new Error("OMP worker initialization changed session identity");
-      if (init.mode === "browser" && (client.snapshot || initialized?.ownerId !== init.owner.id || initialized.cwd !== init.owner.cwd)) throw new Error("OMP browser owner initialization changed identity");
+      if ((init.mode === "browser" || init.mode === "mcp-owner") && (client.snapshot || initialized?.ownerId !== init.owner.id || initialized.cwd !== init.owner.cwd)) throw new Error("OMP browser owner initialization changed identity");
       return client;
     } catch (error) {
       try { await client.close(); } finally { this.#clients.delete(client); }
@@ -660,6 +677,28 @@ export class WorkerRuntime {
         const client = await this.#spawn({ mode: "open", agentDir: this.#options.agentDir, options: { sessionFile, expectedIdentity, interactions: capturedOptions.interactions, approvalOverride: capturedOptions.approvalOverride } }, onEvent, localEnvironment);
         return this.#handle(client);
       } catch (error) { this.#openFiles.delete(sessionFile); throw error; }
+    })());
+  }
+
+  /** Explicit native MCP lifetime; no synthetic conversation or model dispatch. */
+  createMcpOwner(owner: { id: string; cwd: string }, options: { signal?: AbortSignal; onEvent?: WorkerEventListener } = {}): Promise<WorkerMcpOwner> {
+    this.#assertActive();
+    const input = { ...owner };
+    return this.#track((async () => {
+      const cwd = await requireDirectory(input.cwd);
+      const client = await this.#spawn({ mode: "mcp-owner", owner: { id: input.id, cwd }, agentDir: this.#options.agentDir }, options.onEvent, undefined, options.signal);
+      this.#assertActive();
+      let closing: Promise<void> | undefined;
+      return {
+        id: input.id, cwd,
+        get workerPid() { return client.pid; }, get workerFailure() { return client.failure; },
+        read: () => client.request({ operation: "getMcpOwner" }),
+        request: request => client.request({ operation: "mcpOwnerApp", args: { request } }, 40_000),
+        interactions: () => client.request({ operation: "listMcpOwnerInteractions" }),
+        respond: (id, response) => client.request({ operation: "respondMcpOwnerInteraction", args: { id, response } }),
+        subscribe: listener => client.subscribe(listener), subscribeWorkerFailure: listener => client.subscribeFailure(listener),
+        dispose: () => closing ??= client.close().finally(() => { this.#clients.delete(client); }),
+      };
     })());
   }
 

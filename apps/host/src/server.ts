@@ -1,3 +1,4 @@
+import { McpOwnerHttp } from "./mcp-owner-http";
 import { isUnreadSessionEvent } from "../../../packages/shared/src/session-read";
 import { BranchQueryPeer } from "./branch-query-peer";
 import { BRANCH_QUERY_CAPABILITY } from "@agent-desktop/shared";
@@ -190,7 +191,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       void failed?.then(handle => handle.dispose()).finally(() => {
         if (handles.get(failure.sessionId!) === failed) handles.delete(failure.sessionId!);
       }).catch(error => console.error("Failed worker cleanup:", errorMessage(error)));
-    } else {
+    } else if (!failure.mcpOwnerId) {
       modelsError = failure.message; modelsLoading = false; publishState();
     }
   } });
@@ -216,6 +217,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const followUpAdmissionTails = new Map<string, Promise<unknown>>();
   const executions = new Map<string, Promise<unknown>>();
   const runtimeErrors = new Map<string, string>();
+  const mcpOwners = new McpOwnerHttp(store, options.discoveryDirectory ?? homedir(), runtime);
   const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
   browserFirstSend = new BrowserFirstSend(store, draftBrowserWorkers);
   const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, runs: environmentRuns, reserve: reserveWorkspaceMutation, browserFirstSend,
@@ -1110,6 +1112,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (queuedMessagesResponse) return queuedMessagesResponse;
         const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
         if (mcpAuthorizationResponse) return mcpAuthorizationResponse;
+        const mcpOwnerResponse = await mcpOwners.route(request, url);
+        if (mcpOwnerResponse) return mcpOwnerResponse;
         const mcpAppResponse = await sessionMcpApps.route(request, url);
         if (mcpAppResponse) return mcpAppResponse;
         const mcpResourceResponse = await sessionMcpResources.route(request, url);
@@ -1344,6 +1348,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
         const terminalCreationDrain = terminalCreationHttp?.dispose();
+        const mcpOwnerDrain = mcpOwners.dispose();
+        void mcpOwnerDrain.catch(() => {});
         const browserCloseDrain = browserCloseRequests?.dispose();
         void browserCloseDrain?.catch(() => {});
         const browserObservationDrain = browserObservations?.dispose();
@@ -1357,7 +1363,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([runtime.dispose(), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
+        const outcomes = await Promise.allSettled([runtime.dispose(), mcpOwnerDrain, networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);

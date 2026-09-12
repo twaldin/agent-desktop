@@ -1,3 +1,5 @@
+import { McpOwnerWindow } from "./mcp-owner-windows";
+import { requestMcpOwner } from "./mcp-owner-transport";
 import { McpAppWindowChannels } from "./mcp-app-window-channels";
 import { readLocalFontFaces } from "./local-fonts";
 import { registerBrowserCloseHandlers } from "./browser-close-ipc";
@@ -92,9 +94,16 @@ function applyNativeWindowTheme(window: BrowserWindow) {
   if (process.platform === "darwin") window.setVibrancy(resolved.vibrancy);
   if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-theme-state", resolved.opaqueWindows);
 }
+const mcpOwnerDocuments = new Map<number, McpOwnerWindow>();
+const mcpOwnerDrains = new Set<McpOwnerWindow>();
 const mcpAppDocuments = new Map<number, McpAppWindowChannels>();
 const mcpAppDocumentDrains = new Set<McpAppWindowChannels>();
 function retireMcpAppDocument(senderId: number) {
+  const directoryOwner = mcpOwnerDocuments.get(senderId);
+  if (directoryOwner) {
+    mcpOwnerDocuments.delete(senderId); mcpOwnerDrains.add(directoryOwner);
+    void directoryOwner.retire().then(() => mcpOwnerDrains.delete(directoryOwner), error => console.error("MCP directory owner cleanup failed:", error));
+  }
   const owner = mcpAppDocuments.get(senderId);
   if (!owner) return;
   mcpAppDocuments.delete(senderId);
@@ -108,7 +117,7 @@ const windowCloseGate = new WindowCloseGate({
   senderIds: () => [...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id),
   prepareQuit: async () => {
     const release = await modifierWatches.pauseAndDrain();
-    try { await Promise.all([...mcpAppDocumentDrains].map(owner => owner.retire())); return release; }
+    try { await Promise.all([...mcpAppDocumentDrains, ...mcpOwnerDrains].map(owner => owner.retire())); return release; }
     catch (error) { release(); throw error; }
   },
   send: (senderId, request) => {
@@ -521,6 +530,20 @@ ipcMain.handle("host:goal-control", async (event, sessionId: string, request: im
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:mcp-owner", (event, hostId: string, request: import("@agent-desktop/shared").McpOwnerRequest) => {
+  assertTrustedSender(event);
+  const sender = event.sender, frame = event.senderFrame;
+  let owner = mcpOwnerDocuments.get(sender.id);
+  if (!owner) {
+    owner = new McpOwnerWindow({
+      current: () => !shuttingDown && !sender.isDestroyed() && sender.mainFrame === frame && mcpOwnerDocuments.get(sender.id) === owner,
+      connect: async host => { const endpoint = await endpointFor(host); assertTrustedSender(event); return endpoint; },
+      request: requestMcpOwner,
+    });
+    mcpOwnerDocuments.set(sender.id, owner);
+  }
+  return owner.dispatch(hostId, request);
 });
 ipcMain.handle("host:mcp-app", (event, sessionId: string, input: import("@agent-desktop/shared").NativeMcpAppRequest, hostId: string) => {
   assertTrustedSender(event);

@@ -18,7 +18,8 @@ export type NativeMcpAppSource = { type: "artifact"; entryId: string } | { type:
 export interface NativeMcpFileViewer extends NativeMcpAppDescriptor { extensions: string[] }
 export type NativeMcpAppRequest =
   | { type: "open"; channelId: string; selection: NativeMcpAppSelection; source?: NativeMcpAppSource }
-  | { type: "request"; channelId: string; requestId: string; method: "tools/call" | "resources/read" | "openai/resources/write" | "resources/list" | "resources/templates/list"; params: Record<string, McpJson> }
+  | { type: "events"; channelId: string; after: number }
+  | { type: "request"; channelId: string; requestId: string; method: "tools/call" | "resources/read" | "resources/subscribe" | "resources/unsubscribe" | "openai/resources/write" | "resources/list" | "resources/templates/list"; params: Record<string, McpJson> }
   | { type: "close"; channelId: string };
 export interface NativeMcpAppResource {
   uri: string;
@@ -28,6 +29,7 @@ export interface NativeMcpAppResource {
   csp?: { connectDomains?: string[]; resourceDomains?: string[]; frameDomains?: string[]; baseUriDomains?: string[] };
 }
 export type NativeMcpAppResponse =
+  | { type: "events"; channelId: string; sequence: number; uris: string[] }
   | { type: "opened"; channelId: string; resource: NativeMcpAppResource; initialResult?: Record<string, McpJson>; initialArguments?: Record<string, McpJson> }
   | { type: "result"; channelId: string; requestId: string; value: Record<string, McpJson> }
   | { type: "closed"; channelId: string; operationErrors?: number };
@@ -112,8 +114,9 @@ export function parseNativeMcpAppRequest(value: unknown): NativeMcpAppRequest {
   const input = record(value), channelId = id(input.channelId);
   if (input.type === "open") { keys(input, ["type", "channelId", "selection", "source"]); return { type: "open", channelId, selection: parseNativeMcpAppSelection(input.selection), ...(input.source === undefined ? {} : { source: parseNativeMcpAppSource(input.source) }) }; }
   if (input.type === "close") { keys(input, ["type", "channelId"]); return { type: "close", channelId }; }
+  if (input.type === "events") { keys(input, ["type", "channelId", "after"]); if (!Number.isSafeInteger(input.after) || Number(input.after) < 0) throw new Error("Invalid MCP app event cursor."); return { type: "events", channelId, after: Number(input.after) }; }
   keys(input, ["type", "channelId", "requestId", "method", "params"]);
-  if (input.type !== "request" || !["tools/call", "resources/read", "openai/resources/write", "resources/list", "resources/templates/list"].includes(String(input.method))) throw new Error("Unsupported MCP app operation.");
+  if (input.type !== "request" || !["tools/call", "resources/read", "resources/subscribe", "resources/unsubscribe", "openai/resources/write", "resources/list", "resources/templates/list"].includes(String(input.method))) throw new Error("Unsupported MCP app operation.");
   return { type: "request", channelId, requestId: id(input.requestId), method: input.method as Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: record(cloneMcpJson(record(input.params), input.method === "openai/resources/write" ? 2 * 1024 * 1024 : 32_768)) as Record<string, McpJson> };
 }
 export function parseNativeMcpAppSource(value: unknown): NativeMcpAppSource {
@@ -152,6 +155,14 @@ export function parseNativeMcpAppResource(value: unknown): NativeMcpAppResource 
 export function parseNativeMcpAppResponse(value: unknown, request: NativeMcpAppRequest): NativeMcpAppResponse {
   const input = record(value);
   if (input.channelId !== request.channelId) throw new Error("MCP app response owner changed.");
+  if (request.type === "events" && input.type === "events") {
+    keys(input, ["type", "channelId", "sequence", "uris"]);
+    if (!Number.isSafeInteger(input.sequence) || Number(input.sequence) < request.after || !Array.isArray(input.uris) || input.uris.length > 128) throw new Error("Invalid MCP resource update batch.");
+    const uris: string[] = []; for (let index = 0; index < input.uris.length; index++) uris.push(text(input.uris[index], 16_384));
+    if (uris.length && Number(input.sequence) === request.after) throw new Error("MCP resource update did not advance its cursor.");
+    if (new Set(uris).size !== uris.length) throw new Error("Duplicate MCP resource update.");
+    return { type: "events", channelId: request.channelId, sequence: Number(input.sequence), uris };
+  }
   if (request.type === "open" && input.type === "opened") {
     keys(input, ["type", "channelId", "resource", "initialResult", "initialArguments"]);
     const resource = parseNativeMcpAppResource(input.resource);

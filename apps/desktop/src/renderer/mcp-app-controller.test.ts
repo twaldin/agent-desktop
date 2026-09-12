@@ -11,7 +11,7 @@ const resource = { uri: app.resourceUri, mimeType: "text/html;profile=mcp-app", 
 function setup() {
   const calls: { session: string; host: string; request: NativeMcpAppRequest }[] = [];
   let dispatch = async (request: NativeMcpAppRequest): Promise<NativeMcpAppResponse> => request.type === "open" ? { type: "opened", channelId: request.channelId, resource }
-    : request.type === "close" ? { type: "closed", channelId: request.channelId } : { type: "result", channelId: request.channelId, requestId: request.requestId, value: { result: "original" } };
+    : request.type === "events" ? { type: "events", channelId: request.channelId, sequence: request.after, uris: [] } : request.type === "close" ? { type: "closed", channelId: request.channelId } : { type: "result", channelId: request.channelId, requestId: request.requestId, value: { result: "original" } };
   const bridge = { sessionMcpApp: async (session: string, request: NativeMcpAppRequest, host: string) => { calls.push({ session, request, host }); return dispatch(request); },
     getSessionMcp: async () => ({ value: { epoch: "worker", revision: 1, canOpenApps: true, servers: [{ name: "original", status: "connected", apps: [app] }] } }) } as unknown as DesktopBridge;
   const controller = new McpAppController(bridge, "host-a", "session-a", app); controller.connected(true);

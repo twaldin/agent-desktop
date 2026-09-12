@@ -45,7 +45,7 @@ function limited<T>(values: readonly T[], kind: string, max = MAX_ITEMS): T[] {
 	return [...values];
 }
 
-function collectServers(manager: MCPManager, failures: ReadonlySet<string>, apps: boolean): NativeSessionMcpServer[] {
+export function collectMcpServers(manager: MCPManager, failures: ReadonlySet<string>, apps: boolean): NativeSessionMcpServer[] {
 	const tools = manager.getTools();
 	return limited(manager.getAllServerNames(), "servers")
 		.slice()
@@ -139,7 +139,7 @@ export class NativeSessionMcp {
 			}
 		}
 		const value = this.manager
-			? { available: true, canReconnect: true, canReadResources: true, ...(this.apps ? { canOpenApps: true } : {}), servers: collectServers(this.manager, this.#failures, this.apps) }
+			? { available: true, canReconnect: true, canReadResources: true, ...(this.apps ? { canOpenApps: true } : {}), servers: collectMcpServers(this.manager, this.#failures, this.apps) }
 			: { available: false, reason: UNAVAILABLE, servers: [] };
 		if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES) throw new Error("Native MCP catalog exceeds its 2 MiB response limit.");
 		return value;
