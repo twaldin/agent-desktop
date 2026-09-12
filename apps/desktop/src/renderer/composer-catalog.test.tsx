@@ -117,6 +117,44 @@ describe("owning-workspace composer selection", () => {
     expect(html).toContain("retained Max"); expect(html).toContain('aria-label="Model and reasoning effort"');
     expect(saved.model?.id).toBe("retained"); failed.stop();
   });
+  test("a bounded retry recovers a cold native catalog timeout without replacing the owner", async () => {
+    let calls = 0; const refreshes: boolean[] = [];
+    const timeout = new Error("Error invoking remote method 'host:composer-catalog': TimeoutError: The operation was aborted due to timeout");
+    const data = new ComposerCatalogState(fixture({ getComposerCatalog: async (_target, refresh) => {
+      refreshes.push(Boolean(refresh));
+      if (++calls === 1) throw timeout;
+      return catalog("second");
+    } }), "owner");
+    data.setConnected(true); await new Promise(resolve => setTimeout(resolve, 0));
+    expect(data.error).toContain("TimeoutError");
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    expect(data.catalog?.default.model?.id).toBe("second"); expect(calls).toBe(2); expect(refreshes).toEqual([true, true]);
+    data.stop();
+  });
+  test("a repeated catalog timeout does not keep retrying in the background", async () => {
+    let calls = 0;
+    const timeout = new Error("Error invoking remote method 'host:composer-catalog': TimeoutError: The operation was aborted due to timeout");
+    const data = new ComposerCatalogState(fixture({ getComposerCatalog: async () => { calls++; throw timeout; } }), "owner");
+    data.setConnected(true); await new Promise(resolve => setTimeout(resolve, 2_100));
+    expect(calls).toBe(2); expect(data.error).toContain("TimeoutError");
+    data.stop();
+  });
+  test("stopping the owner cancels a pending cold-timeout retry", async () => {
+    let calls = 0;
+    const timeout = new Error("Error invoking remote method 'host:composer-catalog': TimeoutError: The operation was aborted due to timeout");
+    const data = new ComposerCatalogState(fixture({ getComposerCatalog: async () => { calls++; throw timeout; } }), "owner");
+    data.setConnected(true); await new Promise(resolve => setTimeout(resolve, 0)); data.stop();
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    expect(calls).toBe(1);
+  });
+  test("an explicit Refresh replaces a queued cold-timeout retry", async () => {
+    let calls = 0;
+    const timeout = new Error("Error invoking remote method 'host:composer-catalog': TimeoutError: The operation was aborted due to timeout");
+    const data = new ComposerCatalogState(fixture({ getComposerCatalog: async () => { calls++; throw timeout; } }), "owner");
+    data.setConnected(true); await new Promise(resolve => setTimeout(resolve, 0)); await data.refresh(true);
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    expect(calls).toBe(2); data.stop();
+  });
   test("a follow-current draft omits model from delivery while explicit choices and later text survive", async () => {
     const requests: any[] = []; let revision = 0;
     const send = async (envelope: any) => {

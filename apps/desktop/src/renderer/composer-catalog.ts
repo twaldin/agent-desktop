@@ -5,6 +5,10 @@ type ComposerWorkspaceTarget = Exclude<WorkspaceTarget, { filePath: string }>;
 export const composerTargetKey = (target?: WorkspaceTarget) => target ? "filePath" in target ? `file:${encodeURIComponent(target.filePath)}` : "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}` : "new";
 type Bridge = Pick<DesktopBridge, "getComposerCatalog" | "getSessionControls" | "subscribe">;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "Native model metadata could not be loaded.";
+const CATALOG_TIMEOUT_RETRY_MS = 1_000;
+// ipcRenderer.invoke wraps the main-process AbortSignal timeout in an ordinary
+// Error whose message retains the original DOMException name and text.
+const composerCatalogTimedOut = (error: unknown) => error instanceof Error && (error.name === "TimeoutError" || /\bTimeoutError:\s*The operation was aborted due to timeout\b/i.test(error.message));
 
 /** One owning host + catalog target. Responses can never move to another draft. */
 export class ComposerCatalogState {
@@ -22,6 +26,8 @@ export class ComposerCatalogState {
   #epoch = 0;
   #stopped = false;
   #sessionModel?: string;
+  #timeoutRetry?: ReturnType<typeof setTimeout>;
+  #timeoutRetryUsed = false;
   constructor(private bridge: Bridge, readonly hostId: string, readonly target?: ComposerWorkspaceTarget) {
     if (target && "filePath" in (target as WorkspaceTarget))
       throw new Error("Standalone files cannot load composer catalogs.");
@@ -42,14 +48,25 @@ export class ComposerCatalogState {
       }
     });
   }
-  stop() { this.#stopped = true; this.connected = false; this.#epoch++; this.#unsubscribe?.(); this.#unsubscribe = undefined; }
+  stop() { this.#stopped = true; this.connected = false; this.#epoch++; clearTimeout(this.#timeoutRetry); this.#timeoutRetry = undefined; this.#unsubscribe?.(); this.#unsubscribe = undefined; }
   setConnected(connected: boolean) {
     if (this.connected === connected) return;
-    this.connected = connected; this.#epoch++; this.#notify();
+    this.connected = connected; this.#epoch++; clearTimeout(this.#timeoutRetry); this.#timeoutRetry = undefined;
+    if (connected) this.#timeoutRetryUsed = false;
+    this.#notify();
     if (connected) void this.refresh(true);
+  }
+  #retryAfterTimeout(error: unknown, reloadNative: boolean) {
+    if (!composerCatalogTimedOut(error) || this.#timeoutRetryUsed || this.#timeoutRetry || !this.connected || this.#stopped) return;
+    this.#timeoutRetryUsed = true;
+    this.#timeoutRetry = setTimeout(() => {
+      this.#timeoutRetry = undefined;
+      if (this.connected && !this.#stopped) void this.refresh(reloadNative);
+    }, CATALOG_TIMEOUT_RETRY_MS);
   }
   refresh(reloadNative = false): Promise<void> {
     if (!this.connected || this.#stopped) return Promise.resolve();
+    if (reloadNative && this.#timeoutRetry) { clearTimeout(this.#timeoutRetry); this.#timeoutRetry = undefined; }
     this.#reloadNative ||= reloadNative;
     if (this.#pending) { this.#again = true; return this.#pending; }
     this.loading = true; this.#notify();
@@ -64,9 +81,10 @@ export class ComposerCatalogState {
         ]);
         if (epoch !== this.#epoch || !this.connected || this.#stopped) continue;
         const [catalog, controls] = results;
-        if (catalog.status === "fulfilled") this.catalog = catalog.value;
+        if (catalog.status === "fulfilled") { this.catalog = catalog.value; this.#timeoutRetryUsed = false; }
         if (controls.status === "fulfilled") this.controls = controls.value;
         this.error = catalog.status === "rejected" ? errorMessage(catalog.reason) : undefined;
+        if (catalog.status === "rejected") this.#retryAfterTimeout(catalog.reason, refresh);
         this.controlsError = controls.status === "rejected" ? errorMessage(controls.reason) : undefined;
         this.#notify();
       } while (this.#again && this.connected && !this.#stopped);
