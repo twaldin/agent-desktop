@@ -2926,10 +2926,10 @@ index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da0
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6126db88e3e54037c62d83808c082bf9dd269e89
+index 0000000000000000000000000000000000000000..6bbba5cf876717ac2d6d0412f1a1a81f6f469bc0
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,298 @@
 +import type { Browser, ConnectionTransport } from "puppeteer-core";
 +import type { CdpBrowser } from "puppeteer-core/internal/cdp/Browser.js";
 +import type { Connection } from "puppeteer-core/internal/cdp/Connection.js";
@@ -3095,9 +3095,12 @@ index 0000000000000000000000000000000000000000..6126db88e3e54037c62d83808c082bf9
 +			} catch (error) { this.#retire(error); }
 +		});
 +		on(CDPSessionEvent.Disconnected, () => {
-+			if (this.#closed) return;
-+			if (session === this.#root) this.#retire(new Error("Original browser session disconnected"));
-+			else { this.#retiredChildren.add(session); this.#forget(session.id()); }
++			if (session !== this.#root) {
++				this.#retiredChildren.add(session);
++				if (!this.#closed) this.#forget(session.id());
++				return;
++			}
++			if (!this.#closed) this.#retire(new Error("Original browser session disconnected"));
 +		});
 +		on("*", (method: unknown, params: unknown) => {
 +			if (this.#closed || typeof method !== "string" || !method.includes(".")) return;
@@ -3197,7 +3200,6 @@ index 0000000000000000000000000000000000000000..6126db88e3e54037c62d83808c082bf9
 +		this.#closed = true;
 +		this.#buffer = []; this.#bufferBytes = 0;
 +		const owned = [...this.#sessions.values()].map(entry => entry.session);
-+		for (const id of [...this.#sessions.keys()]) this.#forget(id);
 +		try { this.#notifyClose(); } catch (error) { this.#failures.push(error); }
 +		const pending = [...this.#requests.values()];
 +		const startupCreations = this.#startupCreations.map(record => record.settled);
@@ -3208,13 +3210,12 @@ index 0000000000000000000000000000000000000000..6126db88e3e54037c62d83808c082bf9
 +			try {
 +				if (!this.#connection._closed) await this.#connection.send("Target.detachFromTarget", { sessionId: this.#root.id() }, { timeout: this.#timeoutMs });
 +			} catch (error) { this.#failures.push(error); }
-+			finally {
-+				for (const session of owned) {
-+					try { if (!session.detached) session.onClosed(); } catch (error) { this.#failures.push(error); }
-+					if (this.#connection._session(session.id()) === session) this.#connection._sessions.delete(session.id());
-+				}
++			finally { await Promise.all(pending); }
++			for (const session of owned) {
++				try { if (!session.detached) session.onClosed(); } catch (error) { this.#failures.push(error); }
++				this.#forget(session.id());
++				if (this.#connection._session(session.id()) === session) this.#connection._sessions.delete(session.id());
 +			}
-+			await Promise.all(pending);
 +			if (this.#failures.length) gate.reject(new AggregateError([...this.#failures], "Owned browser transport cleanup failed"));
 +			else gate.resolve();
 +		})();

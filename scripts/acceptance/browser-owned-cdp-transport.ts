@@ -44,6 +44,7 @@ function harness() {
   let allocationId = "owned-root";
   let closedEffect: (session: Session) => void = () => {};
   let attachGate: Promise<unknown> | undefined, detachGate: Promise<unknown> | undefined;
+  let detachEffect: () => void = () => {};
   let read: (session: Session, method: string, params: unknown) => Promise<unknown> = async (_session, method, params) => ({ method, params });
   class Connection {
     _closed = false;
@@ -53,7 +54,7 @@ function harness() {
     async send(method: string, params: unknown, options: unknown) {
       calls.push({ connection: this.name, method, params, options });
       if (method === "Target.attachToBrowserTarget") return attachGate ? await attachGate : { sessionId: allocationId };
-      if (method === "Target.detachFromTarget") return detachGate ? await detachGate : {};
+      if (method === "Target.detachFromTarget") { detachEffect(); return detachGate ? await detachGate : {}; }
       throw new Error(`Unexpected connection command ${method}`);
     }
   }
@@ -80,6 +81,7 @@ function harness() {
     setAllocation(id: string) { allocationId = id; },
     holdAllocation(promise: Promise<unknown>) { attachGate = promise; },
     holdDetach(promise: Promise<unknown>) { detachGate = promise; },
+    setDetachEffect(callback: () => void) { detachEffect = callback; },
     setRead(callback: typeof read) { read = callback; },
     setClosedEffect(callback: typeof closedEffect) { closedEffect = callback; },
     child(id: string, parent: Session) { const value = session(id, parent); parent.emit(events.SessionAttached, value); return value; },
@@ -188,6 +190,14 @@ await scenario("retired child auto-resume rejection does not fail parent cleanup
   const disposal = tracked(transport.dispose()); await ticks();
   read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed"));
   const result = await disposal.done(); report({ result, childDetached: child.detached });
+  assert.equal(child.detached, true); assert.equal(result.ok, true);
+});
+await scenario("child disconnect observed from parent detach precedes its auto-resume rejection", async (h, report) => {
+  const transport = await h.capture(); const root = h.root(), child = h.child("cleanup-transient", root);
+  const read = h.gate({}); h.setRead(async () => await read.promise);
+  h.setDetachEffect(() => { child.onClosed(); read.reject(new TargetCloseError("Protocol error (Runtime.runIfWaitingForDebugger): Target closed")); });
+  transport.send(request(1, "Runtime.runIfWaitingForDebugger", child.id())); await ticks();
+  const result = await tracked(transport.dispose()).done(); report({ result, childDetached: child.detached });
   assert.equal(child.detached, true); assert.equal(result.ok, true);
 });
 await scenario("current child target-close rejection remains a cleanup failure", async (h, report) => {
