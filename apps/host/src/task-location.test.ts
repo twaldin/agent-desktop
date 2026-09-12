@@ -16,12 +16,13 @@ async function fixture(){
   execFileSync("mkdir",["-p",repo]); git(repo,"init","-b","main"); await writeFile(join(repo,"tracked.txt"),"base\n"); git(repo,"add","."); git(repo,"commit","-m","base"); git(repo,"checkout","-b","feature");
   const project:Project={id:"project",hostId:"host",name:"Project",path:repo,createdAt:1};
   let session:SessionSummary={id:"session",hostId:"host",projectId:project.id,cwd:repo,title:"Task",status:"idle",sessionFile:join(root,"session.jsonl"),model:null,createdAt:1,updatedAt:1,archived:false};
+  const reads:Promise<unknown>[]=[]; let observe=false;
   const metadata=new Map<string,unknown>(); let nativeCwd=repo, failMove=false,failReserve=false,failNativeReady=false,changeDuringReady=false;
   const store={host:{id:"host"},listSessions:()=>[session],getSession:(id:string)=>id===session.id?session:undefined,getProject:(id:string)=>id===project.id?project:undefined,upsertSession:(value:SessionSummary)=>(session=value),readMetadata:<T>(key:string)=>metadata.get(key) as T|undefined,writeMetadata:<T>(key:string,value:T)=>{metadata.set(key,structuredClone(value));}};
   const handle={id:session.id,get cwd(){return nativeCwd;},sessionFile:session.sessionFile,isStreaming:false,hasPostPromptWork:false,assertTaskLocationReady:async()=>{if(changeDuringReady){changeDuringReady=false;await writeFile(join(repo,"during-ready.txt"),"changed\n");}if(failNativeReady){failNativeReady=false;throw new Error("native side work is pending");}},moveSession:async(cwd:string)=>{if(failMove){failMove=false;throw new Error("lost native acknowledgement");}nativeCwd=await import("node:fs/promises").then(fs=>fs.realpath(cwd));return{id:session.id,cwd:nativeCwd,sessionFile:session.sessionFile};}};
-  const dependencies={store,dataDirectory:data,getHandle:async()=>handle as never,publish:()=>{},publishState:()=>{},reserve:()=>{if(failReserve){failReserve=false;throw new Error("workspace reserved");}return()=>{};}};
+  const dependencies={store,dataDirectory:data,getHandle:async()=>handle as never,publish:()=>{if(observe) reads.push(service.get("session").catch(()=>undefined));},publishState:()=>{},reserve:()=>{if(failReserve){failReserve=false;throw new Error("workspace reserved");}return()=>{};}};
   let service=new TaskLocations(dependencies);
-  return{root,repo,data,get service(){return service;},get session(){return session;},get nativeCwd(){return nativeCwd;},setStatus(status:SessionSummary["status"]){session={...session,status};},failNextMove(){failMove=true;},failNextReserve(){failReserve=true;},failNextNativeReady(){failNativeReady=true;},changeOnNativeReady(){changeDuringReady=true;},restartWithRunningRecord(){const key=`task-location.v1:${session.id}`;const value=structuredClone(metadata.get(key)) as {status:string};value.status="running";metadata.set(key,value);service=new TaskLocations(dependencies);},rewindUnknownToCapture(){const key=`task-location.v1:${session.id}`;const value=structuredClone(metadata.get(key)) as {step:string;status:string;stashCommit?:string};value.step="capture-changes";value.status="unknown";delete value.stashCommit;metadata.set(key,value);}};
+  return{root,repo,data,observeMoves(){observe=true;},async settleReads(){await Promise.all(reads);},get service(){return service;},get session(){return session;},get nativeCwd(){return nativeCwd;},setStatus(status:SessionSummary["status"]){session={...session,status};},failNextMove(){failMove=true;},failNextReserve(){failReserve=true;},failNextNativeReady(){failNativeReady=true;},changeOnNativeReady(){changeDuringReady=true;},restartWithRunningRecord(){const key=`task-location.v1:${session.id}`;const value=structuredClone(metadata.get(key)) as {status:string};value.status="running";metadata.set(key,value);service=new TaskLocations(dependencies);},rewindUnknownToCapture(){const key=`task-location.v1:${session.id}`;const value=structuredClone(metadata.get(key)) as {step:string;status:string;stashCommit?:string};value.step="capture-changes";value.status="unknown";delete value.stashCommit;metadata.set(key,value);}};
 }
 
 test("moves one existing native task to a managed worktree and back with index and files intact",async()=>{
@@ -159,3 +160,29 @@ test("reconciles its exact captured and already-applied stash after ambiguous ph
   expect(await readFile(join(receipt.session.cwd,"untracked.txt"),"utf8")).toBe("untracked\n");
   expect(git(receipt.session.cwd,"diff","--cached","--","tracked.txt")).toContain("+staged");
 },15_000);
+
+
+test("reading task locations does not refresh the shared Git index",async()=>{
+  const f=await fixture(), file=join(f.repo,"tracked.txt"), index=join(f.repo,".git","index");
+  const before=await readFile(index);
+  const metadata=await stat(file);
+  await utimes(file,metadata.atime,new Date(metadata.mtimeMs+10_000));
+  const snapshot=await f.service.get("session");
+  expect(snapshot.current.dirty).toBe(false);
+  expect(await readFile(index)).toEqual(before);
+});
+
+
+test("location observation can overlap both moves without blocking Git writes",async()=>{
+  const f=await fixture();
+  await writeFile(join(f.repo,"tracked.txt"),"working\n");
+  const before=await f.service.get("session"); f.observeMoves();
+  try {
+    const moved=await f.service.move("observed-out","session",before.revision,{kind:"worktree",branch:"feature",localCheckoutBranch:"main"});
+    expect(moved.operation.status).toBe("succeeded");
+    const current=await f.service.get("session");
+    const returned=await f.service.move("observed-back","session",current.revision,{kind:"local",branch:"feature"});
+    expect(returned.operation.status).toBe("succeeded");
+    expect(await readFile(join(f.repo,"tracked.txt"),"utf8")).toBe("working\n");
+  } finally { await f.settleReads(); }
+},30_000);

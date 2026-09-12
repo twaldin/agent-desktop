@@ -64,7 +64,7 @@ export class TaskLocations {
     }
   }
   private async git(cwd:string,args:string[], valid=[0], extraEnv:Record<string,string>={}):Promise<string> {
-    try { const result=await execute("git",["-C",cwd,...args],{encoding:"utf8",timeout:30_000,maxBuffer:8*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:"0",LC_ALL:"C",...extraEnv}}); return result.stdout; }
+    try { const result=await execute("git",["-C",cwd,...args],{encoding:"utf8",timeout:30_000,maxBuffer:8*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:"0",GIT_OPTIONAL_LOCKS:"0",LC_ALL:"C",...extraEnv}}); return result.stdout; }
     catch(error){ const e=error as NodeJS.ErrnoException & {code?:number|string;stderr?:string}; if(typeof e.code==="number"&&valid.includes(e.code)) return ""; throw new TaskLocationError("GIT_FAILED",String(e.stderr||e.message).slice(0,4096)); }
   }
   private async matchesAppliedStash(cwd:string,stash:string):Promise<boolean> {
