@@ -37,14 +37,19 @@ const inspectionPause = () => new Promise<void>(resolve => setTimeout(resolve, 5
 /** Called only after the destination's retained evaluator activation response.
  * IPC ordering means every startup frame was forwarded before this inspection;
  * the loop then joins those exact operations instead of sleeping optimistically. */
-async function waitForEvaluationIdle(client: BrowserEvaluationClient, binding: BrowserEvaluationBinding, timeoutMs: number): Promise<void> {
+async function waitForEvaluationIdle(client: BrowserEvaluationClient, expected: BrowserEvaluationDescriptor, timeoutMs: number): Promise<void> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000) throw new Error("Invalid browser evaluation idle timeout.");
+  const binding = copyEvaluationBinding(expected.binding);
+  const expectedIdentity = JSON.stringify(copyEvaluationDescriptor(expected, binding));
   const deadline = performance.now() + timeoutMs;
   while (true) {
     const remaining = deadline - performance.now();
     if (remaining <= 0) throw unknownOutcome(new Error("Original browser evaluation startup did not drain before handoff."));
-    const state = await client.request<EvaluationInspection>({ operation: "inspectOpenBrowserEvaluation", args: { binding: { ...binding } } }, remaining);
+    let state: EvaluationInspection;
+    try { state = await client.request<EvaluationInspection>({ operation: "inspectOpenBrowserEvaluation", args: { binding: { ...binding } } }, remaining); }
+    catch (error) { throw unknownOutcome(error); }
     const descriptor = copyEvaluationDescriptor(state.descriptor, binding);
+    if (JSON.stringify(descriptor) !== expectedIdentity) throw unknownOutcome(new Error("Original browser evaluation descriptor changed before handoff."));
     if (descriptor.backend === "cdp" && !state.started) throw new Error("Original CDP evaluation was not active before handoff.");
     if (!Number.isSafeInteger(state.pending) || state.pending < 0 || !Number.isSafeInteger(state.unacknowledged) || state.unacknowledged < 0)
       throw new Error("Invalid browser evaluation idle inspection.");
@@ -132,9 +137,15 @@ class EvaluationRecord {
   }
 
   async waitForIdle(timeoutMs: number): Promise<void> {
-    this.#current();
-    await waitForEvaluationIdle(this.client, this.binding, timeoutMs);
-    this.#current();
+    try {
+      this.#current();
+      if (!this.#descriptor) throw new Error("Original browser evaluation descriptor is unavailable.");
+      await waitForEvaluationIdle(this.client, this.#descriptor, timeoutMs);
+      this.#current();
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "OUTCOME_UNKNOWN") throw error;
+      throw unknownOutcome(error);
+    }
   }
 
   start(post: (frame: BrowserEvaluationFrame) => void): Promise<void> {
@@ -281,7 +292,7 @@ export function recoverWorkerBrowserEvaluation(client: BrowserEvaluationClient, 
       if (closed || !unsubscribe) throw new Error("Recovered browser evaluation is not active.");
       client.postBrowserEvaluationFrame(binding, copyEvaluationFrame(value, descriptor.descriptor.channel));
     },
-    waitForIdle: async (timeoutMs: number) => { if (closed) throw new Error("Recovered browser evaluation is closed."); await waitForEvaluationIdle(client, binding, timeoutMs); if (closed) throw new Error("Recovered browser evaluation is closed."); },
+    waitForIdle: async (timeoutMs: number) => { if (closed) throw new Error("Recovered browser evaluation is closed."); await waitForEvaluationIdle(client, descriptor, timeoutMs); if (closed) throw new Error("Recovered browser evaluation is closed."); },
     dispose: async () => { if (closed) return; closed = true; unsubscribe?.(); await client.request({ operation: "disposeBrowserEvaluation", args: { binding } }); },
   });
   let sequence = lastSequence;
@@ -291,7 +302,7 @@ export function recoverWorkerBrowserEvaluation(client: BrowserEvaluationClient, 
       if (closed || sequence >= Number.MAX_SAFE_INTEGER) throw new Error("Recovered browser evaluation is unavailable.");
       return copyEvaluationValue(await client.request({ operation: "requestBrowserEvaluation", args: { binding, sequence: ++sequence, method, params: copyEvaluationValue(params), options } })) as Record<string, unknown>;
     },
-    waitForIdle: async (timeoutMs: number) => { if (closed) throw new Error("Recovered browser evaluation is closed."); await waitForEvaluationIdle(client, binding, timeoutMs); if (closed) throw new Error("Recovered browser evaluation is closed."); },
+    waitForIdle: async (timeoutMs: number) => { if (closed) throw new Error("Recovered browser evaluation is closed."); await waitForEvaluationIdle(client, descriptor, timeoutMs); if (closed) throw new Error("Recovered browser evaluation is closed."); },
     dispose: async () => { if (closed) return; closed = true; await client.request({ operation: "disposeBrowserEvaluation", args: { binding } }); },
   });
 }
