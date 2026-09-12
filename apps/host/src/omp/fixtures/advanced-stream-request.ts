@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { OmpStreamField } from "@agent-desktop/shared";
+import type { Model } from "@oh-my-pi/pi-catalog/types";
 
 const root = path.resolve(process.argv[2] ?? "");
 if (!process.argv[2] || process.env.HOME !== root || !root.includes("native-stream")) throw new Error("Use an explicitly owned native-stream directory as both HOME and argv[2].");
@@ -85,8 +86,8 @@ try {
         { label: "unlisted-gemini-id-official-endpoint", id: "gemini-native-stream-unlisted", expectedBaseUrl: model.baseUrl, configuration: { api: model.api, baseUrl: model.baseUrl,
           models: [{ id: "gemini-native-stream-unlisted", name: "Owned unlisted model" }] } },
       ]) {
-        const bundledBefore = getBundledModel(target.provider, model.id);
-        const authority = { id: bundledBefore.id, api: bundledBefore.api, baseUrl: bundledBefore.baseUrl, transport: bundledBefore.transport, identity: structuredClone(bundledBefore.identity) };
+        const bundledBefore: Model = getBundledModel(target.provider, model.id);
+        const authority: Pick<Model, "id" | "api" | "baseUrl" | "transport" | "identity"> = { id: bundledBefore.id, api: bundledBefore.api, baseUrl: bundledBefore.baseUrl, transport: bundledBefore.transport, identity: structuredClone(bundledBefore.identity) };
         const modelConfigPath = path.join(agentDir, `${target.provider}-${boundary.label}.yml`);
         // Native custom model definitions require an explicit auth mode. This
         // owned no-dispatch registry has no credentials and never changes auth storage.
@@ -100,7 +101,7 @@ try {
         assert.equal(overlayModel.api, model.api);
         assert.equal(overlayModel.baseUrl, boundary.expectedBaseUrl, "The actual native overlay must reach the intended endpoint.");
         assert.equal(overlayModel.transport, model.transport);
-        const bundledAfter = getBundledModel(target.provider, model.id);
+        const bundledAfter: Model = getBundledModel(target.provider, model.id);
         assert.deepEqual({ id: bundledAfter.id, api: bundledAfter.api, baseUrl: bundledAfter.baseUrl, transport: bundledAfter.transport, identity: bundledAfter.identity }, authority, "Native overlay composition must not mutate bundled catalog authority.");
         native.session.agent.setModel(overlayModel);
         const snapshot = native.controls.read();
