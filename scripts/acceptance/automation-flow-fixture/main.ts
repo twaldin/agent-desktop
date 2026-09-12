@@ -1,0 +1,133 @@
+import { app, BrowserWindow, Menu, ipcMain } from 'electron';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { listAutomations, mutateAutomation } from '../../../apps/desktop/src/main/automations-transport';
+import { requestHost } from '../../../apps/desktop/src/main/host-transport';
+import { requestVersionedCommand } from '../../../apps/desktop/src/main/command-endpoints';
+import { requestComposerActions, requestComposerCompletions } from '../../../apps/desktop/src/main/composer-actions-transport';
+import { requestBtw } from '../../../apps/desktop/src/main/btw-transport';
+import { WindowStateStore } from '../../../apps/desktop/src/main/window-state';
+import { createDockState } from '../../../apps/desktop/src/renderer/dock-state';
+import { defaultWindowView } from '../../../apps/desktop/src/window-state';
+
+const [output, fixture] = process.argv.slice(2) as [string, string];
+const connection = JSON.parse(readFileSync(join(fixture, 'connection.json'), 'utf8'));
+const context = JSON.parse(readFileSync(join(fixture, 'context.json'), 'utf8'));
+app.setPath('userData', join(fixture, 'electron'));
+const store = new WindowStateStore(join(fixture, 'window'), 'automation-flow');
+if (!store.bootstrap().state) { const result = store.saveView({ ...defaultWindowView(), route: { hostId: connection.hostId, sessionId: context.sessionId }, workspaceOpen: false, dock: { tabs: [], state: { ...createDockState(), right: { tabIds: [], open: false } } } }); if (result.error) throw new Error(result.error); }
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+async function run() {
+await app.whenReady(); Menu.setApplicationMenu(null);
+const window = new BrowserWindow({ show: false, width: 1250, height: 950, webPreferences: { preload: join(output, 'preload.cjs'), sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+window.setContentSize(1250, 950);
+let releaseCompletions: (() => void) | undefined;
+const calls: unknown[] = [], errors: unknown[] = [], inputs: unknown[] = [], captures: unknown[] = [];
+window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message); });
+const http = (path: string, body?: unknown) => requestHost(connection, path, body);
+ipcMain.on('automation-flow-save',(event,value)=>{event.returnValue=store.saveView(value);});
+ipcMain.handle('automation-flow-call', async (_event, method: string, args: any[] = []) => {
+  calls.push({ method, args });
+  const hostIndex: Record<string, number> = { listAutomations:0, mutateAutomation:0, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1, getComposerActions: 2, getComposerCompletions: 1 };
+  const requestedHost = args[hostIndex[method] ?? -1];
+  if (requestedHost !== undefined && requestedHost !== connection.hostId) throw new Error('The fixture cannot route to a foreign host.');
+  switch (method) {
+    case 'bootstrap': return store.bootstrap();
+    case 'save': return store.saveView(args[0]);
+    case 'listAutomations': return listAutomations(connection,args[1]);
+    case 'mutateAutomation': return mutateAutomation(connection,args[1]);
+    case 'getState': return http('/v1/state');
+    case 'getHosts': return http('/v1/peers');
+    case 'getPreferences': return http('/v1/preferences');
+    case 'getTheme': return http('/v1/theme');
+    case 'getComposerCatalog': return http('/v1/models/composer', { target: args[0], refresh: args[1] });
+    case 'getMessages': return http(`/v1/sessions/${encodeURIComponent(args[0])}/messages`);
+    case 'getInteractions': return http(`/v1/sessions/${encodeURIComponent(args[0])}/interactions`);
+    case 'getSessionControls': return http(`/v1/sessions/${encodeURIComponent(args[0])}/controls`);
+    case 'getComposerActions': { const value = await requestComposerActions(connection, args[0], args[1]); calls.push({ method: 'composer-actions-result', value }); return value; }
+    case 'getComposerCompletions': if (args[0].query === 'held') await new Promise<void>(resolve => { releaseCompletions = resolve; }); return requestComposerCompletions(connection, args[0]);
+    case 'getBtw': return requestBtw(connection, args[0]);
+    case 'workspaceQuery': return http('/v1/workspace/query', { target: args[0], query: args[1] });
+    case 'command': return requestVersionedCommand(http, args[0]);
+    default: throw new Error(`Unsupported fixture bridge method ${method}`);
+  }
+});
+const connectEvents = () => {
+  const next = new WebSocket(connection.origin.replace('http:', 'ws:') + '/v1/events?after=0', ['agent-desktop', connection.token]);
+  const emit = (event: unknown) => { if (!window.isDestroyed()) window.webContents.send('automation-flow-event', event); };
+  next.addEventListener('message', event => emit({...JSON.parse(String(event.data)),hostId:connection.hostId}));
+  next.addEventListener('open', () => emit({hostId: connection.hostId, sequence: 0, type: 'connection', connected: true}));
+  next.addEventListener('close', () => emit({hostId: connection.hostId, sequence: 0, type: 'connection', connected: false}));
+  return next;
+};
+let socket = connectEvents();
+const evaluate = (script: string) => window.webContents.executeJavaScript(script, true);
+const wait = async (expression: string, label: string) => { const start = Date.now(); while (Date.now() - start < 20_000) { if (await evaluate(expression)) return; await delay(50); } throw new Error(`Timed out: ${label}`); };
+const click = async (selector: string, text?: string) => { const p = await evaluate(`automationFlowTarget(${JSON.stringify(selector)},${JSON.stringify(text)})`); window.webContents.sendInputEvent({ type: 'mouseMove', ...p }); window.webContents.sendInputEvent({ type: 'mouseDown', ...p, button: 'left', clickCount: 1 }); window.webContents.sendInputEvent({ type: 'mouseUp', ...p, button: 'left', clickCount: 1 }); inputs.push({ type: 'pointer', selector, text, p }); await delay(150); };
+const key = async (keyCode: string, modifiers: NonNullable<Electron.KeyboardInputEvent['modifiers']> = []) => { window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); inputs.push({ type: 'key', keyCode, modifiers }); await delay(150); };
+const capture = async (name: string) => { await delay(250); const state = await evaluate(`automationFlowState()`); const image = await window.webContents.capturePage(); writeFileSync(join(output, `${name}.png`), image.toPNG()); captures.push({ name, state, contentBounds: window.getContentBounds(), raster: image.getSize() }); };
+let passed=false, failure:string|undefined;
+const checkpoints:string[]=[];
+const fill=async(selector:string,text:string)=>{await click(selector);window.webContents.selectAll();await window.webContents.insertText(text);await delay(100);};
+try {
+  await window.loadFile(join(output,'web/index.html'));window.webContents.focus();
+  await wait(`!automationFlowState().body.includes("Loading conversation") && !!document.querySelector('button[aria-label="Scheduled"]')`,'App host ready');
+  await click('button','Scheduled'); await wait(`!!document.querySelector('.automations-page')`,'Scheduled page');
+  await click('button','New scheduled task'); await wait(`!!document.querySelector('.automation-editor')`,'creation editor');
+  await fill('[aria-label="Scheduled task title"]','Native scheduled task');
+  await fill('[aria-label="Scheduled task prompt"]','/automation-flow manual-run');
+  await click('button','Close scheduled task details');await wait(`!!document.querySelector('dialog[open]')`,'unsaved draft confirmation');
+  await click('dialog button','Keep editing');await wait(`!document.querySelector('dialog[open]')`,'kept draft');
+  if(await evaluate(`document.querySelector('[aria-label="Scheduled task prompt"]').value !== '/automation-flow manual-run'`))throw new Error('Keep editing lost prompt');checkpoints.push('unsaved-draft-confirmation');
+  await capture('01-new-task'); await click('button.primary-button','Create');
+  await wait(`!!document.querySelector('.automation-details h1') && document.querySelector('.automation-details h1').textContent === "Native scheduled task"`,'durable new task');
+  let snapshot=await listAutomations(connection); const task=snapshot.tasks.find(task=>task.name==='Native scheduled task');
+  if(!task||task.destination.kind!=='heartbeat')throw new Error('Creation did not bind one original heartbeat conversation.');
+  if(snapshot.runs.length)throw new Error('Creating a future schedule ran it prematurely.');checkpoints.push('create-one-original-chat-no-premature-run');
+  await click('button','Pause'); await wait(`automationFlowState().body.includes("Resume")`,'pause receipt');
+  snapshot=await listAutomations(connection);if(snapshot.tasks.find(value=>value.id===task.id)?.status!=='paused')throw new Error('Pause not durable');checkpoints.push('pause');
+  await click('button','Edit'); await fill('[aria-label="Scheduled task title"]','Edited scheduled task'); await click('button.primary-button','Save');
+  await wait(`document.querySelector('.automation-details h1')?.textContent === "Edited scheduled task"`,'edit receipt');
+  snapshot=await listAutomations(connection);const edited=snapshot.tasks.find(value=>value.id===task.id);if(edited?.destination.kind!=='heartbeat'||edited.destination.sessionId!==task.destination.sessionId)throw new Error('Editing replaced original conversation');checkpoints.push('edit-preserves-original-session');
+  await click('button','Edit'); await fill('[aria-label="Scheduled task title"]','');
+  const mutationsBeforeInvalid=calls.filter((value:any)=>value.method==='mutateAutomation').length;
+  await click('button','Run history'); await wait(`!!document.querySelector('.automation-details [role=alert]')`,'invalid existing edit stays visible');
+  if(!await evaluate(`!!document.querySelector('.automation-editor')`)||calls.filter((value:any)=>value.method==='mutateAutomation').length!==mutationsBeforeInvalid)throw new Error('Invalid edit navigated or dispatched');
+  checkpoints.push('invalid-existing-edit-no-navigation-or-dispatch');
+  await fill('[aria-label="Scheduled task title"]','Saved on navigation');
+  await click('button','Run history'); await wait(`!document.querySelector('.automation-editor') && document.querySelector('.automation-details h1')?.textContent === 'Scheduled tasks'`,'existing edit saves before navigation');
+  const navigationSaved=(await listAutomations(connection)).tasks.find(value=>value.id===task.id);
+  if(navigationSaved?.name!=='Saved on navigation'||navigationSaved.destination.kind!=='heartbeat'||navigationSaved.destination.sessionId!==task.destination.sessionId)throw new Error('Navigation lost changes or replaced original chat');
+  checkpoints.push('existing-edit-navigation-save');
+  await click('button.automation-task'); await click('button','Edit'); await fill('[aria-label="Scheduled task title"]','Edited scheduled task'); await click('button.primary-button','Save');
+  await wait(`document.querySelector('.automation-details h1')?.textContent === "Edited scheduled task"`,'explicit save after navigation');
+  await capture('02-edited'); await click('button','Run now');
+  await wait(`!!document.querySelector('.automation-run') && !["reserved","running"].includes(document.querySelector('.automation-run strong')?.textContent)`,'native run settles');
+  snapshot=await listAutomations(connection);const run=snapshot.runs.find(run=>run.automationId===task.id);if(run?.status!=='completed'||run.sessionId!==task.destination.sessionId)throw new Error('Native command run failed: '+JSON.stringify(run));checkpoints.push('real-native-command-completed');
+  await capture('03-run-history'); await click('button','Archive run'); await wait(`!document.querySelector('.automation-run')`,'archive receipt');
+  snapshot=await listAutomations(connection);if(snapshot.runs.find(value=>value.id===run.id)?.archivedAt===null)throw new Error('Run was not archived');checkpoints.push('archive-history');
+  await click('.automation-history-header input[type=checkbox]');await wait(`!!document.querySelector('.automation-run')`,'archived run visible');
+  await click('button','Unarchive');await wait(`automationFlowState().body.includes('Archive run')`,'unarchive receipt');
+  const restoredRun=(await listAutomations(connection)).runs.find(value=>value.id===run.id);if(restoredRun?.archivedAt!==null)throw new Error('Unarchive not persisted');checkpoints.push('unarchive-history');
+  await click('button','Archive run');await wait(`automationFlowState().body.includes('Unarchive')`,'archive again');
+  await window.webContents.reload(); await wait(`!!document.querySelector('.automations-page') && automationFlowState().body.includes("Edited scheduled task")`,'window reopen retains schedule route');
+  await click('button.automation-task'); await wait(`!!document.querySelector('.automation-details h1')`,'restored selection');checkpoints.push('window-reload');
+  await click('button','Edit'); await fill('[aria-label="Scheduled task title"]','Offline retained edit');
+  socket.close();await wait(`automationFlowState().body.includes("is offline")`,'offline state');
+  const mutationsBeforeOffline=calls.filter((value:any)=>value.method==='mutateAutomation').length;
+  await click('button','Run history'); await wait(`automationFlowState().body.includes('Reconnect to save')`,'offline edit retained');
+  if(!await evaluate(`!!document.querySelector('.automation-editor') && document.querySelector('[aria-label="Scheduled task title"]').value === 'Offline retained edit'`)||calls.filter((value:any)=>value.method==='mutateAutomation').length!==mutationsBeforeOffline)throw new Error('Offline edit lost or dispatched');
+  checkpoints.push('offline-existing-edit-no-navigation-or-dispatch');await capture('04-offline');
+  if(await evaluate(`!document.querySelector('.automation-task')`))throw new Error('Offline erased cached task');checkpoints.push('offline-cache');
+  socket=connectEvents();await wait(`!automationFlowState().body.includes("is offline")`,'reconnected');
+  await click('button','Run history');await wait(`!document.querySelector('.automation-editor')`,'fresh deliberate navigation after reconnect saves');
+  if((await listAutomations(connection)).tasks.find(value=>value.id===task.id)?.name!=='Offline retained edit')throw new Error('Reconnect did not save retained edit');
+  await click('button.automation-task');
+  await click('button','Delete');await wait(`!!document.querySelector('dialog[open]')`,'delete confirmation');await click('dialog button.primary-button','Delete');
+  await wait(`!document.querySelector('.automation-task')`,'deleted task');snapshot=await listAutomations(connection);
+  if(snapshot.tasks.some(value=>value.id===task.id)||!snapshot.runs.some(value=>value.id===run.id))throw new Error('Delete must retain recorded history');checkpoints.push('delete-retains-run');
+  await capture('05-deleted');if(errors.length)throw new Error('Renderer errors: '+JSON.stringify(errors));passed=true;
+} catch(error) {failure=error instanceof Error?error.stack:String(error);await capture('failure').catch(()=>{});}
+finally {socket.close();window.destroy();writeFileSync(join(output,'result.json'),JSON.stringify({passed,failure,checkpoints,errors,calls,inputs,captures},null,2));app.exit(passed?0:1);}
+}
+void run().catch(error=>{writeFileSync(join(output,'startup-error.txt'),String(error.stack??error));app.exit(1);});

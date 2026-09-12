@@ -28,6 +28,8 @@ import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondS
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
 import type { NativePluginAcquisition, NativePluginAcquisitionRequest } from "@agent-desktop/shared";
 import { requestGoalMutation } from "./goal-control-transport";
+import { listAutomations, mutateAutomation } from './automations-transport';
+import { parseAutomationMutation, parseAutomationsQuery } from '../../../../packages/shared/src/automations';
 import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillFileOpenOptions, requestSkillFileCopy, requestSkillImage } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestBtw } from "./btw-transport";
@@ -518,6 +520,24 @@ ipcMain.handle("host:queued-messages-mutate", async (event, sessionId: string,
 });
 ipcMain.handle("host:goal-control", async (event, sessionId: string, request: import("@agent-desktop/shared").GoalMutationRequest, hostId?: string) => {
   assertTrustedSender(event); return requestGoalMutation(await endpointFor(hostId), sessionId, request);
+});
+ipcMain.handle('host:automations', async (event, hostId: string, query: unknown) => {
+  assertTrustedSender(event);
+  const input = parseAutomationsQuery(query);
+  if (typeof hostId !== 'string' || !hostId || hostId.length > 256) throw new Error('Choose the scheduled task host.');
+  const endpoint = await endpointFor(hostId);
+  assertTrustedSender(event);
+  if (endpoint.hostId !== hostId) throw new Error('The scheduled task host changed.');
+  return listAutomations(endpoint, input);
+});
+ipcMain.handle('host:automation-mutate', async (event, hostId: string, value: unknown) => {
+  assertTrustedSender(event);
+  const input = parseAutomationMutation(value);
+  if (typeof hostId !== 'string' || !hostId || hostId.length > 256) throw new Error('Choose the scheduled task host.');
+  const endpoint = await endpointFor(hostId);
+  assertTrustedSender(event);
+  if (endpoint.hostId !== hostId) throw new Error('The scheduled task host changed.');
+  return mutateAutomation(endpoint, input);
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);

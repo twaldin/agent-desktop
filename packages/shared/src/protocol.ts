@@ -204,6 +204,7 @@ export interface TranscriptMessage {
 }
 
 export interface HostState {
+  automations?: { capability: typeof import('./automations').AUTOMATIONS_CAPABILITY };
   protocolVersion: typeof PROTOCOL_VERSION;
   host: HostIdentity;
   projects: Project[];
@@ -287,6 +288,7 @@ export type HostEvent =
   | { sequence: number; type: "state"; state: HostState; /** Direct websocket replay barrier; absent on durable state events. */ replayComplete?: true }
   | { sequence: number; type: "runtime"; sessionId: string; event: unknown; sessionActivity?: true }
   | { sequence: number; type: "accounts" }
+  | { sequence: number; type: "automations" }
   | { sequence: number; type: "interactions"; sessionId: string; sessionActivity?: true }
   | { sequence: number; type: "notification"; notification: HostNotification }
   | { sequence: number; type: "workspace"; target: WorkspaceTarget; repositoryChange?: GitRepositoryChange }
@@ -334,6 +336,7 @@ export type NativeModifier = "meta" | "control" | "alt";
 export type ModifierReleaseResult = "released" | "unavailable" | "cancelled";
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge>, Partial<TerminalCreationBridge> {
+  automations?: import('./automations').AutomationsBridge;
   watchModifierRelease?(modifier: NativeModifier, requestId: string): Promise<ModifierReleaseResult>;
   cancelModifierRelease?(requestId: string): Promise<void>;
   showContextMenu?(items:import("./context-menu").DesktopMenuItem[]):Promise<string|null>;

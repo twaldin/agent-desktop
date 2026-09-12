@@ -220,6 +220,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const sessionTails = new Map<string, Promise<unknown>>();
   const followUpAdmissionTails = new Map<string, Promise<unknown>>();
   const executions = new Map<string, Promise<unknown>>();
+  const automationCommands = new WeakSet<CommandEnvelope>();
   const automationPromptCompletions = new Map<string, Promise<"completed" | "failed" | "stopped">>();
   const runtimeErrors = new Map<string, string>();
   const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
@@ -526,7 +527,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     sessionExists: id => !stopping && Boolean(store.getSession(id)), getHandle });
   automations = new AutomationService({
     records: store.automations,
-    dispatch: (envelope, version) => dispatch(envelope, version),
+    dispatch: (envelope, version) => { automationCommands.add(envelope); return dispatch(envelope, version); },
     waitForPrompt: async commandId => {
       const completion = automationPromptCompletions.get(commandId);
       if (!completion) return "unknown";
@@ -989,10 +990,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         executions.set(command.sessionId, completion);
         const accepted = await turn.accepted;
         if (!accepted) { automationPromptCompletions.delete(envelope.id); return fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying."); }
-        if (envelope.id.startsWith("automation:")) automationPromptCompletions.set(envelope.id,
+        if (automationCommands.has(envelope)) automationPromptCompletions.set(envelope.id,
           accepted.kind === "native-command" ? Promise.resolve("completed") : completion.then(() => notificationOutcome));
+        const automationOwned = automationCommands.has(envelope);
         if (accepted.kind !== 'native-command') void completion.then(() => {
-          if (!stopping && !envelope.id.startsWith("automation:")) notificationEvents.completion(command.sessionId, `completion:${command.sessionId}:command:${envelope.id}`, notificationOutcome);
+          if (!stopping && !automationOwned) notificationEvents.completion(command.sessionId, `completion:${command.sessionId}:command:${envelope.id}`, notificationOutcome);
         }).catch(() => {});
         goalContinuations?.explicitWork(command.sessionId);
         questionDeliveries?.request(command.sessionId);

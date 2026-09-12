@@ -2,6 +2,9 @@ import { useMcpAppCatalogue } from "./use-mcp-app-catalogue";
 import { mcpAppActionId, mcpAppDockTab } from "./mcp-app-dock";
 import { McpAppController } from "./mcp-app-controller";
 import { McpAppPanel } from "./McpAppPanel";
+import { AutomationsPage, type AutomationPageMemory } from './AutomationsPage';
+import { AutomationRequests } from './automation-requests';
+import { AUTOMATIONS_CAPABILITY, type AutomationsSnapshot } from '../../../../packages/shared/src/automations';
 import { useSessionReadState } from "./use-session-read-state";
 import { loadThemeFonts } from "./theme-fonts";
 import { QueuedMessages } from "./QueuedMessages";
@@ -174,9 +177,15 @@ export function App() {
   const [renameTitle, setRenameTitle] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [pluginDirectoryOpen,setPluginDirectoryOpen]=useState(windowRestoration.state.pluginDirectoryOpen??false);
+  const [automationsOpen, setAutomationsOpen] = useState(windowRestoration.state.automationsOpen ?? false);
+  const [, redrawAutomations] = useState(0);
+  const [automationRequests] = useState(() => new AutomationRequests(windowRestoration.state.automationRequests ?? [], () => redrawAutomations(value => value + 1)));
+  const automationViews = useRef(new Map<string, AutomationPageMemory>());
+  const automationCache = useRef(new Map<string, AutomationsSnapshot>());
   const [pluginDirectoryTab,setPluginDirectoryTab]=useState<"plugins"|"skills">(windowRestoration.state.pluginDirectoryTab??"plugins");
   const [integrationSelection,setIntegrationSelection]=useState<{hostId:string;pluginId?:string;marketplace?:{name?:string;add?:boolean}}>();
   const [settingsOpen, setSettingsOpen] = useState(windowRestoration.state.settingsOpen);
+  const contentOverlayOpen = settingsOpen || pluginDirectoryOpen || automationsOpen;
   const [settingsPage, setSettingsPage] = useState<SettingsPage>(windowRestoration.state.settingsPage);
   const [environmentProject, setEnvironmentProject] = useState<{hostId:string;projectId:string}>();
   const projectAddContext = useRef<{hostId:string;environments:boolean} | undefined>(undefined);
@@ -185,7 +194,7 @@ export function App() {
   const skillFileFocusPending = useRef(false);
   const openSettings = useCallback(() => {
     settingsOriginLabel.current = document.activeElement?.getAttribute("aria-label") ?? null;
-    setSettingsOpen(true);
+    setAutomationsOpen(false); setSettingsOpen(true);
   }, []);
   useEffect(() => {
     const closing = settingsWasOpen.current && !settingsOpen;
@@ -363,8 +372,8 @@ export function App() {
   const closeBrowserDock = useRef<(source: import("./dock-presentations").DockPresentationRef, tab: DockTab, allowed: () => boolean, focusId?: string) => void>(() => {});
   const [browserCloses] = useState(() => new BrowserCloseDockOwner(bridge, windowRestoration.state.browserCloses ?? [], () => redrawBrowserMenu(value => value + 1),
     (source, tab, allowed, focusId) => { closeBrowserDock.current(source, tab, allowed, focusId); browserCloseFocus.queued(focusId); }, windowRestoration.error));
-  const draftDockOwner = useMemo(() => ({ drafts, draftId, hostId, enabled: !selectedId && !settingsOpen && !pluginDirectoryOpen && !busy && !submitting.current && !submissions.get(draftId) }),
-    [drafts, draftId, hostId, selectedId, settingsOpen, pluginDirectoryOpen, busy, Boolean(submissions.get(draftId))]);
+  const draftDockOwner = useMemo(() => ({ drafts, draftId, hostId, enabled: !selectedId && !contentOverlayOpen && !busy && !submitting.current && !submissions.get(draftId) }),
+    [drafts, draftId, hostId, selectedId, settingsOpen, pluginDirectoryOpen, automationsOpen, busy, Boolean(submissions.get(draftId))]);
   const committedDraftDockOwner = useRef<typeof draftDockOwner | undefined>(undefined);
   useLayoutEffect(() => { committedDraftDockOwner.current = draftDockOwner; });
   const workspaceTarget: WorkspaceTarget | undefined = selectedId ? selected ? { sessionId: selected.id } : undefined : project ? { projectId: project.id } : undefined;
@@ -392,12 +401,12 @@ export function App() {
   const workspaceOpen = dock.snapshot.state.right.open;
   const terminalOpen = dock.snapshot.state.bottom.open;
   const bottomPanelVisible = preferences.get("general.bottomPanel") !== false;
-  const headerContextMenu = useHeaderContextMenu(bridge, preferences, !settingsOpen && !pluginDirectoryOpen, setActionError);
+  const headerContextMenu = useHeaderContextMenu(bridge, preferences, !contentOverlayOpen, setActionError);
   const defaultTerminalLocation = bottomPanelVisible ? preferences.get("general.defaultTerminalLocation") ?? "bottom" : "right";
   useLayoutEffect(() => { terminalRequests.commit({ hostId, target: workspaceTarget && !("filePath" in workspaceTarget) ? workspaceTarget : undefined,
-    connected, enabled: !settingsOpen && !pluginDirectoryOpen, presentations: dock.presentations }); });
+    connected, enabled: !contentOverlayOpen, presentations: dock.presentations }); });
   useLayoutEffect(() => { const context = { drafts, draftId, connected,
-    enabled: !selectedId && !settingsOpen && !pluginDirectoryOpen && !busy && !submitting.current && !submissions.get(draftId) };
+    enabled: !selectedId && !contentOverlayOpen && !busy && !submitting.current && !submissions.get(draftId) };
     draftBrowserOwners.commit(context); draftBrowserPages.commit(context);
     for (const [key, controller] of draftBrowserDocks) {
       controller.commit({ ...context, presentations: dock.presentations });
@@ -409,18 +418,18 @@ export function App() {
   useLayoutEffect(() => {
     closeBrowserDock.current = dock.closeBrowser;
     browserCloseFocus.commit({ presentations: dock.presentations, root: workbenchElement.current, route: JSON.stringify([hostId, selectedId]),
-      enabled: !settingsOpen && !pluginDirectoryOpen, connected: new Set([...desktop.catalog.records].filter(([, record]) => record.connected).map(([id]) => id)) });
-    browserCloses.commit({ route: JSON.stringify([hostId, selectedId]), enabled: !settingsOpen && !pluginDirectoryOpen,
+      enabled: !contentOverlayOpen, connected: new Set([...desktop.catalog.records].filter(([, record]) => record.connected).map(([id]) => id)) });
+    browserCloses.commit({ route: JSON.stringify([hostId, selectedId]), enabled: !contentOverlayOpen,
       connected: new Set([...desktop.catalog.records].filter(([, record]) => record.connected).map(([id]) => id)),
       presentations: dock.presentations, drafts: draftBrowserDocks, pages: draftBrowserPages.intents, launcher: dock.browserCloseState,
       protected: tab => browserMenu.retainsSource(dock.presentations, tab.id) || terminalRequests.retainsSource(dock.presentations, tab.id) });
   });
   const windowSaveObserver = useMemo(() => ({
-    committed(value: import("../window-state").WindowViewState) { browserWindowCheckpoint.committed(value); terminalRequests.committed(value); draftBrowserOwners.committed(value); draftBrowserPages.committed(value); browserCloses.committed(value); },
-    saved(value: import("../window-state").WindowViewState) { browserWindowCheckpoint.saved(value); terminalRequests.saved(value); draftBrowserOwners.saved(value); draftBrowserPages.saved(value); browserCloses.saved(value); },
-    failed(message: string) { browserWindowCheckpoint.failed(message); terminalRequests.failed(message); draftBrowserOwners.failed(message); draftBrowserPages.failed(message); browserCloses.failed(message); },
-  }), [browserWindowCheckpoint, terminalRequests, draftBrowserOwners, draftBrowserPages, browserCloses]);
-  const windowWarning = useWindowViewPersistence({ browserCloses: browserCloses.intents, sessionBrowserObservations: browserSearchRegistry.persisted(dock.presentations), draftBrowserPages: draftBrowserPages.intents, draftBrowserOwners: draftBrowserOwners.intents, terminalCreations: terminalRequests.intents, route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,
+    committed(value: import("../window-state").WindowViewState) { automationRequests.committed(value); browserWindowCheckpoint.committed(value); terminalRequests.committed(value); draftBrowserOwners.committed(value); draftBrowserPages.committed(value); browserCloses.committed(value); },
+    saved(value: import("../window-state").WindowViewState) { automationRequests.saved(value); browserWindowCheckpoint.saved(value); terminalRequests.saved(value); draftBrowserOwners.saved(value); draftBrowserPages.saved(value); browserCloses.saved(value); },
+    failed(message: string) { automationRequests.failed(message); browserWindowCheckpoint.failed(message); terminalRequests.failed(message); draftBrowserOwners.failed(message); draftBrowserPages.failed(message); browserCloses.failed(message); },
+  }), [automationRequests, browserWindowCheckpoint, terminalRequests, draftBrowserOwners, draftBrowserPages, browserCloses]);
+  const windowWarning = useWindowViewPersistence({ automationsOpen, automationRequests: automationRequests.intents, browserCloses: browserCloses.intents, sessionBrowserObservations: browserSearchRegistry.persisted(dock.presentations), draftBrowserPages: draftBrowserPages.intents, draftBrowserOwners: draftBrowserOwners.intents, terminalCreations: terminalRequests.intents, route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,
     expandedProjects: [...expandedProjects], collapsedSidebarSections: [...collapsedSidebarSections], settingsOpen, settingsPage, dock: dock.persisted, fileTreeOpen: fileTree.open, environmentOpen, environmentCollapsed, pluginDirectoryOpen, pluginDirectoryTab }, windowRestoration, windowSaveObserver);
   const composerTarget = composerTargetKey(workspaceTarget);
   const composer = useMemo(() => new ComposerCatalogState(bridge, hostId, workspaceTarget), [bridge, hostId, composerTarget]);
@@ -443,10 +452,10 @@ export function App() {
   }
   const workspaceOwner = workspaceTarget ? `${hostId}:${workspaceKey(workspaceTarget)}` : undefined;
   useLayoutEffect(() => {
-    branchSwitchOwner.current = { workspace, enabled: connected && !settingsOpen && !pluginDirectoryOpen };
+    branchSwitchOwner.current = { workspace, enabled: connected && !contentOverlayOpen };
     setBranchSwitch(undefined);
     return () => { branchSwitchOwner.current = { enabled: false }; };
-  }, [workspace, connected, settingsOpen, pluginDirectoryOpen]);
+  }, [workspace, connected, settingsOpen, pluginDirectoryOpen, automationsOpen]);
   function openBranchSwitch(request: BranchSwitchRequest) {
     const owner = branchSwitchOwner.current;
     if (!owner.enabled || owner.workspace !== request.data || request.data.checkoutRefusal !== request.refusal) return;
@@ -547,7 +556,7 @@ export function App() {
   const canSend = connected && Boolean(state) && !busy && !missingSession && !pendingSubmission?.preparation && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !selectedTextIssue && !wholeFileIssue && !imagesStaging && !remoteExecutionIssue && executionReady && environmentReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
 
   const navigate = useCallback((id: string | null, owner = route.hostId ?? state?.host.id ?? desktop.localHostId, keepSettings = false, focusComposer = true) => {
-    settingsOriginLabel.current = null; setRoute({ sessionId: id, hostId: owner }); if(!keepSettings)setPluginDirectoryOpen(false);setIntegrationSelection(undefined); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false);
+    settingsOriginLabel.current = null; setAutomationsOpen(false); setRoute({ sessionId: id, hostId: owner }); if(!keepSettings)setPluginDirectoryOpen(false);setIntegrationSelection(undefined); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false);
     expandAfterNavigation.current = id ? `${owner ?? ""}:${id}` : undefined;
     if (focusComposer) requestAnimationFrame(() => textarea.current?.focus());
   }, [route.hostId, state?.host.id, desktop.localHostId]);
@@ -556,7 +565,7 @@ export function App() {
   // explicit unavailable remote owner with the local machine.
   useEffect(() => { if (!route.hostId && desktop.localHostId) setRoute(previous => previous.hostId ? previous : { ...previous, hostId: desktop.localHostId }); }, [route.hostId, desktop.localHostId]);
   useLayoutEffect(() => { browserSearchSelection.commit({ presentations: dock.presentations, pages: committedDraftSearchPages.current,
-    route, settingsOpen, pluginDirectoryOpen, root: workbenchElement.current, navigate }); });
+    route, settingsOpen, pluginDirectoryOpen: pluginDirectoryOpen || automationsOpen, root: workbenchElement.current, navigate }); });
   useEffect(() => () => browserSearchSelection.cancel(), [browserSearchSelection]);
   const newConversation = useCallback((projectId?: string, owner = route.hostId ?? state?.host.id ?? desktop.localHostId) => {
     navigate(null, owner);
@@ -598,7 +607,7 @@ export function App() {
   },onSelect:destination => {void dock.terminal(destination,true);}} : undefined;
   const reviewAction: DockAddAction | undefined = dockWorkspace && workspace?.status ? {preparationTarget,id:"review",label:"Review",icon:"compose",shortcut:commandKeymap ? appCommandShortcutLabel(appCommandBindings.bindings,"review") : "⌃⇧G",singletonTabId:panelSingleton("review"),requiresConnection:false,prepare:preparePanel("review"),onSelect:destination => dock.open("review",destination)} : undefined;
   const hostGroups = desktop.hosts.flatMap(host => { const hostState = host.hostId ? desktop.catalog.records.get(host.hostId)?.state : undefined; return hostState ? [{ host, hostState }] : []; });
-  const sessionRead = useSessionReadState(preferences, selected, !settingsOpen && !pluginDirectoryOpen && !(dock.snapshot.state.right.open && dock.snapshot.state.rightLayout === "full"), transcript.loaded && (transcript.readSequence ?? -1) >= (selected?.activitySequence ?? 0));
+  const sessionRead = useSessionReadState(preferences, selected, !contentOverlayOpen && !(dock.snapshot.state.right.open && dock.snapshot.state.rightLayout === "full"), transcript.loaded && (transcript.readSequence ?? -1) >= (selected?.activitySequence ?? 0));
   const unreadSessions = sessionRead.unreadKeys(hostGroups.flatMap(group => group.hostState.sessions));
   const organizedSidebar = sidebarLayout(preferences, hostGroups, "", showArchived, expandedProjects, unreadSessions);
   const mainChatPanelId = useId();
@@ -611,25 +620,25 @@ export function App() {
   const taskStrip = unifiedMainTaskStrip(dock.snapshot,mainChat);
   const taskLayoutChange = mainTaskLayoutChange(dock.snapshot,mainChat);
   const taskLayoutAction = taskLayoutChange ? {label:taskLayoutChange.label,onSelect:(activation?:TaskLayoutActivation) => {
-    if(settingsOpen || pluginDirectoryOpen) return;
+    if(contentOverlayOpen) return;
     const change=mainTaskLayoutChange(dock.snapshot,mainChat,activation?.fillChat);
     if(!change) return;
     dock.change(change.state);
     mainTaskArea.current=change.focusTarget.kind;
     setMainTaskFocus(activation?.restoreFocus ? {target:change.focusTarget} : undefined);
   }} : undefined;
-  const showUnifiedStrip = !settingsOpen && !pluginDirectoryOpen && Boolean(taskStrip);
-  const taskHintsVisible = useTaskShortcutHints(commandKeymap?.primaryNumberShortcutTarget === "sidebar" ? "control" : "meta", !settingsOpen && !pluginDirectoryOpen && taskTargets.length > 1);
+  const showUnifiedStrip = !contentOverlayOpen && Boolean(taskStrip);
+  const taskHintsVisible = useTaskShortcutHints(commandKeymap?.primaryNumberShortcutTarget === "sidebar" ? "control" : "meta", !contentOverlayOpen && taskTargets.length > 1);
   const taskHints = taskHintsVisible ? taskShortcutHintLabels(taskTargets,taskDirection,appCommandBindings.bindings) : undefined;
   const selectMainTask = (target: MainTaskTarget, focus = true) => {
     const next = activateMainTask(dock.snapshot, mainChat, target);
-    if (!next || settingsOpen || pluginDirectoryOpen) return;
+    if (!next || contentOverlayOpen) return;
     if (next !== dock.snapshot.state) dock.change(next);
     mainTaskArea.current = target.kind;
     setMainTaskFocus(focus ? { target } : undefined);
   };
   const [paneDrag,setPaneDrag]=useState<{target:MainTaskTarget;point:{clientX:number;clientY:number}}>();
-  useEffect(()=>{setPaneDrag(undefined);},[settingsOpen,pluginDirectoryOpen,hostId,selectedId]);
+  useEffect(()=>{setPaneDrag(undefined);},[settingsOpen,pluginDirectoryOpen,automationsOpen,hostId,selectedId]);
   const dragTarget=(task:DockDragTask):MainTaskTarget=>task==="chat"?mainChat:{kind:"content",tabId:task.id,hostId:task.hostId,target:task.target};
   const applyPlacement=(change:NonNullable<ReturnType<typeof placeTask>>)=>{
     dock.change(change.state);
@@ -638,8 +647,8 @@ export function App() {
       requestAnimationFrame(()=>document.querySelector<HTMLElement>(`[data-dock-destination="bottom"] [data-dock-tab-id="${CSS.escape(id)}"]`)?.focus());
     } else { mainTaskArea.current=change.focusTarget.kind;setMainTaskFocus({target:change.focusTarget}); }
   };
-  const taskPlacementMenu = useTaskPlacementMenu(bridge,dock.snapshot,mainChat,!settingsOpen && !pluginDirectoryOpen,applyPlacement,setActionError);
-  const chatPaneDrag=useTaskPaneDrag<MainChatTarget>({owner:`${hostId}:${selectedId ?? "draft"}`,enabled:!settingsOpen && !pluginDirectoryOpen && !showUnifiedStrip && taskTargets.length>1,
+  const taskPlacementMenu = useTaskPlacementMenu(bridge,dock.snapshot,mainChat,!contentOverlayOpen,applyPlacement,setActionError);
+  const chatPaneDrag=useTaskPaneDrag<MainChatTarget>({owner:`${hostId}:${selectedId ?? "draft"}`,enabled:!contentOverlayOpen && !showUnifiedStrip && taskTargets.length>1,
     onMove:(target,point)=>setPaneDrag({target,point}),onEnd:()=>setPaneDrag(undefined),
     onDrop:(target,point)=>{
       const side=paneDropAt(taskDropGeometry(dock.snapshot,mainChat,target,dockViewport),point);
@@ -656,23 +665,23 @@ export function App() {
     if (!mainTaskFocus) return;
     const frame = requestAnimationFrame(() => {
       if (mainTaskFocus.isCurrent && !mainTaskFocus.isCurrent()) { setMainTaskFocus(undefined); return; }
-      if (mainTaskFocus.onlyWhenContentClosed && !settingsOpen && !pluginDirectoryOpen
+      if (mainTaskFocus.onlyWhenContentClosed && !contentOverlayOpen
         && mainTaskFocus.target.kind === "chat" && mainTaskFocus.target.hostId === mainChat.hostId && mainTaskFocus.target.sessionId === mainChat.sessionId) {
         mainTaskArea.current = dock.snapshot.state.right.open ? "content" : "chat";
       }
-      if (!settingsOpen && !pluginDirectoryOpen && workbenchElement.current && (!mainTaskFocus.onlyWhenContentClosed || !dock.snapshot.state.right.open)) focusMainTask(workbenchElement.current, dock.snapshot, mainChat, mainTaskFocus.target);
+      if (!contentOverlayOpen && workbenchElement.current && (!mainTaskFocus.onlyWhenContentClosed || !dock.snapshot.state.right.open)) focusMainTask(workbenchElement.current, dock.snapshot, mainChat, mainTaskFocus.target);
       setMainTaskFocus(undefined);
     });
     return () => cancelAnimationFrame(frame);
-  }, [mainTaskFocus, dock.snapshot, hostId, selectedId, settingsOpen, pluginDirectoryOpen]);
+  }, [mainTaskFocus, dock.snapshot, hostId, selectedId, settingsOpen, pluginDirectoryOpen, automationsOpen]);
   const currentShortcutOptions: AppShortcutOptions = {
     ...(commandKeymap && { bindings: appCommandBindings.bindings }),
     composer: () => textarea.current?.element ?? null,
     blocked: () => Boolean(dialog || menuOpen || fileSearchOwner || commandMenuMode),
     actions: {
       ...sidebarChatActions(organizedSidebar.chatSlots, navigate),
-      ...(!settingsOpen && !pluginDirectoryOpen ? numberedMainTaskActions(taskTargets, taskDirection, selectMainTask) : {}),
-      ...(!settingsOpen && !pluginDirectoryOpen && taskTargets.length > 1 ? { "next-task-tab": () => cycleMainTask("next"), "previous-task-tab": () => cycleMainTask("previous") } : {}),
+      ...(!contentOverlayOpen ? numberedMainTaskActions(taskTargets, taskDirection, selectMainTask) : {}),
+      ...(!contentOverlayOpen && taskTargets.length > 1 ? { "next-task-tab": () => cycleMainTask("next"), "previous-task-tab": () => cycleMainTask("previous") } : {}),
       "new-chat": () => newConversation(),
       search: () => openCommandMenu("commands"),
       "search-chats": () => openCommandMenu("chats"),
@@ -686,7 +695,7 @@ export function App() {
       ...(browserAction && { browser: () => browserAction.onSelect("right") }),
       ...(terminalAction && { terminal: () => { void dock.terminal(defaultTerminalLocation); } }),
       ...(reviewAction && { review: () => reviewAction.onSelect("right") }),
-      ...(!settingsOpen && !pluginDirectoryOpen && workspaceLayoutStepAvailable(dock.snapshot, Boolean(browserAction)) && {
+      ...(!contentOverlayOpen && workspaceLayoutStepAvailable(dock.snapshot, Boolean(browserAction)) && {
         "step-workspace-layout": () => {
           const draftOwner = mainChat.sessionId === null ? {
             draftId,
@@ -704,7 +713,7 @@ export function App() {
       "toggle-side-panel": () => dock.toggle("right"),
     },
   };
-  const browserAddressOwner = !settingsOpen && !pluginDirectoryOpen
+  const browserAddressOwner = !contentOverlayOpen
     ? dockSession ? browserAddressFocusOwner(hostId, "session", dockSession.sessionId)
       : draftDockOwner.enabled ? browserAddressFocusOwner(hostId, "draft", draftId) : undefined
     : undefined;
@@ -988,7 +997,7 @@ export function App() {
       }}/>;
   }
   const browserMenuMounted = useRef(false), browserMenuFocus = useRef<number | undefined>(undefined);
-  const browserMenuContext = {presentations:dock.presentations,owner:mainChat,enabled:!settingsOpen && !pluginDirectoryOpen,
+  const browserMenuContext = {presentations:dock.presentations,owner:mainChat,enabled:!contentOverlayOpen,
     connected,actions:dockActions,chatTitle:selected?.title || "Chat",replace:dock.replaceBrowserDestination};
   // Commit observers run even while the source panel is hidden. Render values
   // alone cannot cancel a preparation during an away-and-back transition.
@@ -1180,18 +1189,19 @@ export function App() {
   // The right dock occupies the top-right corner of the titlebar band only when it renders as its own column.
   const conversationActions = selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button onClick={() => { dock.open("side-chat"); setMenuOpen(false); }}>Side chat</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>;
   const environmentAction = workspace && <button role="checkbox" aria-checked={environmentOpen} className={`icon-button ${environmentOpen ? "active" : ""}`} aria-label="Environment" title={environmentOpen ? "Hide environment" : "Show environment"} onClick={() => setEnvironmentOpen(value => !value)}><Icon name="sliders"/></button>;
-  const fullWidthContent = !settingsOpen && !pluginDirectoryOpen && workspaceOpen && dock.snapshot.state.rightLayout === "full";
+  const fullWidthContent = !contentOverlayOpen && workspaceOpen && dock.snapshot.state.rightLayout === "full";
   const contentSide = resolveContentSide(dock.snapshot.state,taskDirection);
-  const rightDockColumn = !settingsOpen && !pluginDirectoryOpen && workspaceOpen && dockViewport.width >= 672;
+  const rightDockColumn = !contentOverlayOpen && workspaceOpen && dockViewport.width >= 672;
   return <><div ref={shell} className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
     {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={profileMenu("settings-host")}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
       <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search" title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} aria-expanded={commandMenuMode === "chats"} onClick={() => openCommandMenu("chats")}><SidebarNavigationIcon name="search"/></button></div>
       <nav className="sidebar-actions" aria-label="Main navigation">
         <button className="nav-action" onClick={() => newConversation()}><SidebarNavigationIcon name="new-chat"/><span>New chat</span><kbd>⌘ N</kbd></button>
-        <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setPluginDirectoryOpen(true);setSettingsOpen(false);}}><SidebarNavigationIcon name="plugins"/><span>Plugins</span></button>
+        <button aria-label="Scheduled" className={`nav-action ${automationsOpen ? "selected" : ""}`} aria-current={automationsOpen ? "page" : undefined} onClick={() => { setAutomationsOpen(true); setPluginDirectoryOpen(false); setSettingsOpen(false); }}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.33"><circle cx="10" cy="10" r="7"/><path d="M10 5.5V10l-2.5 2" strokeLinecap="round" strokeLinejoin="round"/></svg><span>Scheduled</span></button>
+        <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setAutomationsOpen(false);setPluginDirectoryOpen(true);setSettingsOpen(false);}}><SidebarNavigationIcon name="plugins"/><span>Plugins</span></button>
       </nav>
-      <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} activeProjectId={!settingsOpen && !pluginDirectoryOpen && selectedId === null ? project?.id : undefined} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession} onMarkRead={(target, unread) => { const session = hostGroups.find(group => group.hostState.host.id === target.hostId)?.hostState.sessions.find(session => session.id === target.id && session.hostId === target.hostId); return session ? sessionRead.mark(session, unread) : Promise.resolve(false); }} localHostId={desktop.localHostId ?? null} onRenameProject={renameSidebarProject} onRemoveProject={removeSidebarProject} onRevealProject={revealSidebarProject}/></div>
+      <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} activeProjectId={!contentOverlayOpen && selectedId === null ? project?.id : undefined} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession} onMarkRead={(target, unread) => { const session = hostGroups.find(group => group.hostState.host.id === target.hostId)?.hostState.sessions.find(session => session.id === target.id && session.hostId === target.hostId); return session ? sessionRead.mark(session, unread) : Promise.resolve(false); }} localHostId={desktop.localHostId ?? null} onRenameProject={renameSidebarProject} onRemoveProject={removeSidebarProject} onRevealProject={revealSidebarProject}/></div>
       <footer className="sidebar-footer">{profileMenu()}</footer>
     </aside>}
     <div ref={workbenchElement} data-browser-current-owner={browserAddressOwner} data-content-side={contentSide} data-content-column={rightDockColumn} onFocusCapture={event => {
@@ -1209,10 +1219,10 @@ export function App() {
     <main id={mainChatPanelId} role={showUnifiedStrip ? "tabpanel" : undefined} aria-labelledby={showUnifiedStrip ? mainChatTabId : undefined} className="main-panel" data-main-task-chat tabIndex={-1} inert={fullWidthContent || undefined}>
       {appliedTheme.background.kind === "asset" && themeImage.sha256 === imageHash && themeImage.dataUrl && <div className="theme-image-background" aria-hidden="true" style={{ backgroundImage: `url("${themeImage.dataUrl}")`, backgroundSize: appliedTheme.background.fit === "tile" ? "auto" : appliedTheme.background.fit, backgroundRepeat: appliedTheme.background.fit === "tile" ? "repeat" : "no-repeat", opacity: appliedTheme.background.opacity, filter: `blur(${appliedTheme.background.blur}px)` }}/> }
       {windowWarning && <div className="connection-banner" role="status"><span>{windowWarning}</span></div>}
-      {!settingsOpen && !pluginDirectoryOpen && terminalRequests.intents.filter(intent => (intent.source.kind === "dock" || !terminalRequests.hasRecoveryBrowser(`${intent.hostId}:${intent.request.requestId}`, dock.presentations)) && intent.hostId === hostId
+      {!contentOverlayOpen && terminalRequests.intents.filter(intent => (intent.source.kind === "dock" || !terminalRequests.hasRecoveryBrowser(`${intent.hostId}:${intent.request.requestId}`, dock.presentations)) && intent.hostId === hostId
         && workspaceTarget && !("filePath" in workspaceTarget) && workspaceKey(intent.request.target) === workspaceKey(workspaceTarget))
         .map(intent => <div className="connection-banner" key={intent.request.requestId}>{terminalRecovery(intent, connected, intent.source.kind === "browser")}</div>)}
-      {!settingsOpen && !pluginDirectoryOpen && (browserCloses.message || browserCloses.intents.some(intent => intent.hostId === hostId)) && <div data-browser-close-history role="group" aria-label="Browser Close history" tabIndex={-1}>
+      {!contentOverlayOpen && (browserCloses.message || browserCloses.intents.some(intent => intent.hostId === hostId)) && <div data-browser-close-history role="group" aria-label="Browser Close history" tabIndex={-1}>
       {browserCloses.message && <div className="connection-banner" role="status"><span>{browserCloses.message}</span></div>}
       {browserCloses.intents.filter(intent => intent.hostId === hostId).map(intent =>
         <div className="connection-banner" key={`close:${intent.owner.kind}:${intent.request.requestId}`}>
@@ -1227,7 +1237,7 @@ export function App() {
         </div>)}</div>}
       {sessionRead.error && <div className="connection-banner" role="alert"><span>{sessionRead.error}</span>{preferences.pending.length ? <button disabled={!preferences.connected || preferences.busy} onClick={() => void sessionRead.retry()}>Retry read marks</button> : <button onClick={() => sessionRead.dismissError()}>Dismiss</button>}</div>}
       {appCommandBindings.error && <div className="connection-banner" role="alert"><span>Keyboard shortcuts could not be loaded: {appCommandBindings.error}</span></div>}
-      {settingsOpen ? <>{settingsPage === "keyboard-shortcuts" ? <KeyboardShortcutsSettings data={commandKeymap} supportedCommandIds={supportedShortcutCommands} primaryNumberShortcutTarget={commandKeymap?.primaryNumberShortcutTarget} onChangePrimaryNumberShortcutTarget={commandKeymap ? target => commandKeymap.submit({ type: "number-target", target }) : undefined}/> : settingsPage === "connections" ? <ConnectionsSettings preferences={preferences} bridge={bridge} hosts={desktop.hosts} network={desktop.network} networkError={desktop.networkError} localHost={desktop.localHostId ? desktop.catalog.records.get(desktop.localHostId)?.state?.host : undefined} activeHostId={state?.host.id ?? route.hostId} onSelectHost={owner => navigate(null,owner,true)} onRefresh={() => desktop.refreshNetwork()}/> : settingsPage === "general" ? <GeneralSettings preferences={preferences} bridge={bridge}/> : settingsPage === "environments" ? state?.localEnvironments?.configuration ? <LocalEnvironmentSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state.host.name} localHostId={desktop.localHostId} connected={connected} projects={state.projects} initialProjectId={environmentProject?.hostId === hostId ? environmentProject.projectId : project?.id} onSelectProject={projectId => setEnvironmentProject({hostId,projectId})} onAddProject={() => void addProject(true)} onClose={() => setSettingsOpen(false)}/> : <section className="settings-page"><header className="settings-header"><h1>Environments</h1></header><p className="settings-unavailable" role="status">{loading ? "Connecting to the owning host…" : "This host does not support environment configuration. Update its host service to edit environments here."}</p></section> : settingsPage === "plugins" || settingsPage === "mcp" ? <NativeIntegrations onOpenSkillFile={openSkillFile} onTrySkill={trySkill} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} connected={connected} target={workspaceTarget} sessionIdle={Boolean(selected && selected.status === "idle" && !selected.archived)} page={settingsPage} onPageChange={page=>{setIntegrationSelection(undefined);setSettingsPage(page);}} onBrowse={tab=>{settingsOriginLabel.current=null;setPluginDirectoryTab(tab??"plugins");setIntegrationSelection(undefined);setPluginDirectoryOpen(true);setSettingsOpen(false);}} initialPluginId={integrationSelection?.hostId===hostId?integrationSelection.pluginId:undefined} initialMarketplace={integrationSelection?.hostId===hostId?integrationSelection.marketplace:undefined} onClose={() => setSettingsOpen(false)}/> : settingsPage === "appearance" ? <ThemeSettings backdropSupported={bridge.windowBackdropSupported === true} data={theme} preferences={preferences} fonts={localFonts} fontFaces={localFontFaces} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget}/> : settingsPage === "git" ? <GitSettings preferences={preferences} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : pluginDirectoryOpen ? <NativePluginBrowser onOpenSkillFile={openSkillFile} onTrySkill={trySkill} restoreFocusLabel={settingsOriginLabel.current??undefined} initialTab={pluginDirectoryTab} onTabChange={setPluginDirectoryTab} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name??"Unavailable host"} target={workspaceTarget} connected={connected} onClose={()=>{setPluginDirectoryOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>('.nav-action[aria-label="Plugins"]')?.focus());}} onManage={pluginId=>{setIntegrationSelection({hostId,pluginId});setSettingsPage("plugins");openSettings();}} onMarketplace={name=>{setIntegrationSelection({hostId,marketplace:{name,add:name===undefined}});setSettingsPage("plugins");openSettings();}}/> : <>
+      {settingsOpen ? <>{settingsPage === "keyboard-shortcuts" ? <KeyboardShortcutsSettings data={commandKeymap} supportedCommandIds={supportedShortcutCommands} primaryNumberShortcutTarget={commandKeymap?.primaryNumberShortcutTarget} onChangePrimaryNumberShortcutTarget={commandKeymap ? target => commandKeymap.submit({ type: "number-target", target }) : undefined}/> : settingsPage === "connections" ? <ConnectionsSettings preferences={preferences} bridge={bridge} hosts={desktop.hosts} network={desktop.network} networkError={desktop.networkError} localHost={desktop.localHostId ? desktop.catalog.records.get(desktop.localHostId)?.state?.host : undefined} activeHostId={state?.host.id ?? route.hostId} onSelectHost={owner => navigate(null,owner,true)} onRefresh={() => desktop.refreshNetwork()}/> : settingsPage === "general" ? <GeneralSettings preferences={preferences} bridge={bridge}/> : settingsPage === "environments" ? state?.localEnvironments?.configuration ? <LocalEnvironmentSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state.host.name} localHostId={desktop.localHostId} connected={connected} projects={state.projects} initialProjectId={environmentProject?.hostId === hostId ? environmentProject.projectId : project?.id} onSelectProject={projectId => setEnvironmentProject({hostId,projectId})} onAddProject={() => void addProject(true)} onClose={() => setSettingsOpen(false)}/> : <section className="settings-page"><header className="settings-header"><h1>Environments</h1></header><p className="settings-unavailable" role="status">{loading ? "Connecting to the owning host…" : "This host does not support environment configuration. Update its host service to edit environments here."}</p></section> : settingsPage === "plugins" || settingsPage === "mcp" ? <NativeIntegrations onOpenSkillFile={openSkillFile} onTrySkill={trySkill} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} connected={connected} target={workspaceTarget} sessionIdle={Boolean(selected && selected.status === "idle" && !selected.archived)} page={settingsPage} onPageChange={page=>{setIntegrationSelection(undefined);setSettingsPage(page);}} onBrowse={tab=>{settingsOriginLabel.current=null;setPluginDirectoryTab(tab??"plugins");setIntegrationSelection(undefined);setAutomationsOpen(false);setPluginDirectoryOpen(true);setSettingsOpen(false);}} initialPluginId={integrationSelection?.hostId===hostId?integrationSelection.pluginId:undefined} initialMarketplace={integrationSelection?.hostId===hostId?integrationSelection.marketplace:undefined} onClose={() => setSettingsOpen(false)}/> : settingsPage === "appearance" ? <ThemeSettings backdropSupported={bridge.windowBackdropSupported === true} data={theme} preferences={preferences} fonts={localFonts} fontFaces={localFontFaces} fontsError={fontsError} effectsError={themeEffectsError} image={themeImage} onImportImage={() => bridge.importThemeBackground()} onOpenFile={() => bridge.openThemeFile()} onRefreshFonts={refreshFonts} onClose={() => setSettingsOpen(false)}/> : settingsPage === "omp" ? <NativeSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} target={workspaceTarget}/> : settingsPage === "git" ? <GitSettings preferences={preferences} onClose={() => setSettingsOpen(false)}/> : <AccountsSettings key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} localHostId={desktop.localHostId} connected={connected} session={selected} onClose={() => setSettingsOpen(false)} onChanged={() => void refresh()}/>}</> : automationsOpen ? <AutomationsPage key={hostId} bridge={bridge} hostId={hostId} hostName={state?.host.name ?? "Unavailable host"} hosts={hostGroups.map(group => group.hostState.host)} connected={connected} supported={state?.automations?.capability === AUTOMATIONS_CAPABILITY} projects={state?.projects ?? []} sessions={state?.sessions ?? []} models={state?.models ?? []} requests={automationRequests} cache={automationCache.current} views={automationViews.current} onSelectHost={owner => setRoute({ hostId: owner, sessionId: null })} onOpenChat={(id, owner) => navigate(id, owner)} onClose={() => { setAutomationsOpen(false); requestAnimationFrame(() => document.querySelector<HTMLElement>('.nav-action[aria-label="Scheduled"]')?.focus()); }}/> : pluginDirectoryOpen ? <NativePluginBrowser onOpenSkillFile={openSkillFile} onTrySkill={trySkill} restoreFocusLabel={settingsOriginLabel.current??undefined} initialTab={pluginDirectoryTab} onTabChange={setPluginDirectoryTab} key={`${hostId}:${JSON.stringify(workspaceTarget)}`} bridge={bridge} hostId={hostId} hostName={state?.host.name??"Unavailable host"} target={workspaceTarget} connected={connected} onClose={()=>{setPluginDirectoryOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>('.nav-action[aria-label="Plugins"]')?.focus());}} onManage={pluginId=>{setIntegrationSelection({hostId,pluginId});setSettingsPage("plugins");openSettings();}} onMarketplace={name=>{setIntegrationSelection({hostId,marketplace:{name,add:name===undefined}});setSettingsPage("plugins");openSettings();}}/> : <>
       <header className="main-header drag-region" onContextMenu={headerContextMenu}>
         {!sidebarOpen && <button className="icon-button no-drag" onClick={() => setSidebarOpen(true)} aria-label="Show sidebar"><Icon name="sidebar"/></button>}
         <div className="header-breadcrumb no-drag" title={project?.path} {...chatPaneDrag.handlers(mainChat)} onContextMenu={event=>void taskPlacementMenu(event,mainChat)}>{selected && <Icon name="folder"/>}{selectedId && <strong className="truncate">{selected?.title ?? (loading ? "Loading conversation…" : "Conversation unavailable")}</strong>}{!showUnifiedStrip && conversationActions}{selected && (selected.archived || selected.status !== "idle") && <span className={`status-label ${selected.status}`}>{selected.archived ? "Archived" : selected.status}</span>}</div>
@@ -1335,25 +1345,25 @@ export function App() {
       </>}
 
     </main>
-      {environmentOpen && workspace && !settingsOpen && !pluginDirectoryOpen && <div className="environment-overlay"><EnvironmentCard onCheckoutBlocked={openBranchSwitch} taskLocation={selected ? taskLocation : undefined} compoundGit={state?.gitSubmissions?.commandVersion === 10} branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }} collapsedSections={environmentCollapsed} onToggleSection={key => setEnvironmentCollapsed(previous => previous.includes(key) ? previous.filter(value => value !== key) : [...previous, key])} showEmptySources={!project} sideChats={dock.snapshot.tabs.filter(tab => tab.kind === "side-chat" && tab.hostId === hostId && tab.target === `session:${selectedId}`).map(tab => ({ id:tab.id,title:tab.title,unread:Boolean(tab.unread),onOpen:() => dock.open("side-chat") }))} actions={state?.localEnvironments?.actions ? <EnvironmentActions workspace={workspace} connected={connected} onTerminal={(terminal,title) => dock.bindTerminal(terminal.id,hostId,workspace.target,defaultTerminalLocation,title)} onSettings={() => { if(project?.id) setEnvironmentProject({hostId,projectId:project.id}); setSettingsPage("environments"); openSettings(); }}/> : undefined} key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd,true); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { if (state?.gitSubmissions?.commandVersion === 10) openGitSubmission(workspace!); else { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); } }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal(defaultTerminalLocation)} onHost={() => { setSidebarOpen(true); requestAnimationFrame(() => { const trigger = document.getElementById("active-host"); trigger?.focus(); trigger?.click(); }); }}/></div>}
-    {!settingsOpen && !pluginDirectoryOpen && <div className="header-panel-actions no-drag" onContextMenu={headerContextMenu}>
+      {environmentOpen && workspace && !contentOverlayOpen && <div className="environment-overlay"><EnvironmentCard onCheckoutBlocked={openBranchSwitch} taskLocation={selected ? taskLocation : undefined} compoundGit={state?.gitSubmissions?.commandVersion === 10} branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }} collapsedSections={environmentCollapsed} onToggleSection={key => setEnvironmentCollapsed(previous => previous.includes(key) ? previous.filter(value => value !== key) : [...previous, key])} showEmptySources={!project} sideChats={dock.snapshot.tabs.filter(tab => tab.kind === "side-chat" && tab.hostId === hostId && tab.target === `session:${selectedId}`).map(tab => ({ id:tab.id,title:tab.title,unread:Boolean(tab.unread),onOpen:() => dock.open("side-chat") }))} actions={state?.localEnvironments?.actions ? <EnvironmentActions workspace={workspace} connected={connected} onTerminal={(terminal,title) => dock.bindTerminal(terminal.id,hostId,workspace.target,defaultTerminalLocation,title)} onSettings={() => { if(project?.id) setEnvironmentProject({hostId,projectId:project.id}); setSettingsPage("environments"); openSettings(); }}/> : undefined} key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd,true); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { if (state?.gitSubmissions?.commandVersion === 10) openGitSubmission(workspace!); else { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); } }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal(defaultTerminalLocation)} onHost={() => { setSidebarOpen(true); requestAnimationFrame(() => { const trigger = document.getElementById("active-host"); trigger?.focus(); trigger?.click(); }); }}/></div>}
+    {!contentOverlayOpen && <div className="header-panel-actions no-drag" onContextMenu={headerContextMenu}>
       {taskLayoutAction && <button className="icon-button" aria-label={taskLayoutAction.label} title={taskLayoutAction.label === "Fullscreen" ? `Fullscreen content · ${navigator.platform.toLowerCase().includes("mac") ? "Option" : "Alt"}-click for Chat` : taskLayoutAction.label} onClick={event => taskLayoutAction.onSelect(readTaskLayoutActivation(event))}><Icon name={taskLayoutAction.label === "Restore split" ? "restoreSplit" : "fullWidth"}/></button>}
       {bottomPanelVisible && <button role="checkbox" aria-checked={terminalOpen} className={`icon-button ${terminalOpen ? "active" : ""}`} aria-label="Toggle bottom panel" title={terminalOpen ? "Hide bottom panel" : "Show bottom panel"} onClick={() => dock.toggle("bottom")}><Icon name="panelBottom"/></button>}
       <button role="checkbox" aria-checked={workspaceOpen} className={`icon-button ${workspaceOpen ? "active" : ""}`} aria-label="Toggle side panel" title={`${workspaceOpen ? "Hide" : "Show"} side panel (⌥⌘B)`} onClick={() => dock.toggle("right")}><Icon name={workspaceOpen ? "panelRightOpen" : "panelRight"}/></button>
     </div>}
-    {(["right", "bottom"] as const).map(destination => <div className={`dock-slot dock-slot-${destination}`} key={destination} style={{display:!settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open ? undefined : "none"}} inert={settingsOpen || pluginDirectoryOpen || !dock.snapshot.state[destination].open || undefined}>
-      <DockPanel presentationIds={dock.presentations.instances} dragEnabled={!settingsOpen && !pluginDirectoryOpen} dragOwner={`${hostId}:${selectedId ?? "draft"}`} leadingTab={destination === "right" && showUnifiedStrip ? { id:mainChatTabId,panelId:mainChatPanelId,title:selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "Chat"),selected:taskStrip?.active.kind === "chat",shortcutHint:taskHints?.chat,onSelect:() => selectMainTask(mainChat,false),onContextMenu:event=>void taskPlacementMenu(event,mainChat) } : undefined}
+    {(["right", "bottom"] as const).map(destination => <div className={`dock-slot dock-slot-${destination}`} key={destination} style={{display:!contentOverlayOpen && dock.snapshot.state[destination].open ? undefined : "none"}} inert={contentOverlayOpen || !dock.snapshot.state[destination].open || undefined}>
+      <DockPanel presentationIds={dock.presentations.instances} dragEnabled={!contentOverlayOpen} dragOwner={`${hostId}:${selectedId ?? "draft"}`} leadingTab={destination === "right" && showUnifiedStrip ? { id:mainChatTabId,panelId:mainChatPanelId,title:selected?.title ?? (selectedId ? loading ? "Loading conversation…" : "Conversation unavailable" : "Chat"),selected:taskStrip?.active.kind === "chat",shortcutHint:taskHints?.chat,onSelect:() => selectMainTask(mainChat,false),onContextMenu:event=>void taskPlacementMenu(event,mainChat) } : undefined}
         shortcutHints={destination === "right" ? taskHints?.content : undefined}
         stripContainer={destination === "right" && showUnifiedStrip ? mainStripContainer : undefined}
         stripStart={destination === "right" && showUnifiedStrip && !sidebarOpen ? <button className="icon-button no-drag" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar"/></button> : undefined}
         stripActions={destination === "right" && showUnifiedStrip ? <>{selected && (selected.archived || selected.status !== "idle") && <span className={`status-label ${selected.status}`}>{selected.archived ? "Archived" : selected.status}</span>}{conversationActions}{environmentAction}</> : undefined}
         onStripContextMenu={destination === "right" && showUnifiedStrip ? headerContextMenu : undefined}
-        onSwapSides={destination === "right" && workspaceOpen && !fullWidthContent && !settingsOpen && !pluginDirectoryOpen ? () => dock.change(setContentSide(dock.snapshot.state,contentSide === "left" ? "right" : "left")) : undefined}
+        onSwapSides={destination === "right" && workspaceOpen && !fullWidthContent && !contentOverlayOpen ? () => dock.change(setContentSide(dock.snapshot.state,contentSide === "left" ? "right" : "left")) : undefined}
         onEmpty={emptied => {if (emptied === "right") {mainTaskArea.current="chat";setMainTaskFocus({target:mainChat});}}}
-        onPaneDrag={(task,point)=>{if(!settingsOpen && !pluginDirectoryOpen)setPaneDrag({target:dragTarget(task),point});}}
+        onPaneDrag={(task,point)=>{if(!contentOverlayOpen)setPaneDrag({target:dragTarget(task),point});}}
         onPaneDragEnd={()=>setPaneDrag(undefined)}
         onPaneDrop={(task,point)=>{
-          if(settingsOpen || pluginDirectoryOpen) return;
+          if(contentOverlayOpen) return;
           const target=dragTarget(task),side=paneDropAt(taskDropGeometry(dock.snapshot,mainChat,target,dockViewport),point);
           if(!side) return;
           const change=placeTask(dock.snapshot,mainChat,target,side);if(change) applyPlacement(change);
@@ -1363,18 +1373,18 @@ export function App() {
           const tab=dock.snapshot.tabs.find(tab=>tab.id===id);if(!tab) return;
           if(to!==_from && !taskDropDestinations(dock.snapshot,mainChat,dragTarget(tab)).includes(to==="right"?contentSide:"bottom")) return;
           dock.change(moveDockTab(dock.snapshot.state,id,to,index));
-        }} addActions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
+        }} addActions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !contentOverlayOpen && dock.snapshot.state[destination].open)}/>
       {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination}/>}
     </div>)}
     </div>
-    {paneDrag && !settingsOpen && !pluginDirectoryOpen && <TaskPaneDropPreview geometry={taskDropGeometry(dock.snapshot,mainChat,paneDrag.target,dockViewport)} point={paneDrag.point}/>}
+    {paneDrag && !contentOverlayOpen && <TaskPaneDropPreview geometry={taskDropGeometry(dock.snapshot,mainChat,paneDrag.target,dockViewport)} point={paneDrag.point}/>}
     {commandMenuMode && <CommandMenu bridge={bridge} hosts={commandMenuHosts} actions={commandMenuActions} recentChats={commandMenuRecentChats} mode={commandMenuMode} onModeChange={setCommandMenuMode}
       browserTabs={commandBrowserTabs.map(tab => ({ ...tab, ownerTitle: tab.sessionId === null ? "New conversation" : desktop.catalog.records.get(tab.hostId)?.state?.sessions.find(session => session.id === tab.sessionId)?.title }))}
       onSelectBrowserTab={tab => {
         const next = activateBrowserSearchTab(dock.snapshot, tab, dock.presentations, committedDraftSearchPages.current);
         if (!next) { setActionError("This browser tab is no longer open in this window."); return; }
         const id = dock.activateBrowserSearch(tab, () => committedDraftSearchPages.current);
-        browserSearchSelection.begin(id, tab, { route, settingsOpen, pluginDirectoryOpen });
+        browserSearchSelection.begin(id, tab, { route, settingsOpen, pluginDirectoryOpen: pluginDirectoryOpen || automationsOpen });
       }}
       onClose={() => setCommandMenuMode(undefined)} onSelectSession={(owner, sessionId) => navigate(sessionId, owner)}/>}
     {fileSearchOwner && fileSearchOwner === workspaceOwner && workspace && workspaceTarget && <WorkspaceFileSearch key={workspaceOwner} data={workspace} connected={connected}
@@ -1390,7 +1400,7 @@ export function App() {
         setGitDialog(undefined); setGitFeedback({ data, label: label ?? record?.state?.host.name ?? data.hostId });
         void data.submitGit(intent);
       }}/>} 
-    {branchSwitch && workspace === branchSwitch.request.data && connected && !settingsOpen && !pluginDirectoryOpen && <BranchSwitchDialog
+    {branchSwitch && workspace === branchSwitch.request.data && connected && !contentOverlayOpen && <BranchSwitchDialog
       key={branchSwitch.request.refusal.commandId} request={branchSwitch.request}
       isCurrent={() => branchSwitchOwner.current === branchSwitch.owner && branchSwitch.owner.enabled}
       supported={state?.gitSubmissions?.commandVersion === 10} branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"}

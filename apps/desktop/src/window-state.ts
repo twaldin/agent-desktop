@@ -1,5 +1,6 @@
 import { parseMcpDockApp } from "./renderer/mcp-app-dock";
 import { isPreferenceId } from "../../../packages/shared/src/preferences";
+import { parseAutomationWindowRequests, type AutomationWindowRequest } from './automation-window-state';
 import { parseBrowserCloseWindowIntents, type BrowserCloseWindowIntent } from "./browser-close-window-intent";
 import { parseSessionBrowserObservations, matchesSessionBrowserObservation, type SessionBrowserObservation } from "./session-browser-observation";
 import { parseDraftBrowserPageIntents, type DraftBrowserPageIntent } from "./draft-browser-page-intent";
@@ -36,6 +37,8 @@ export interface WindowViewState {
   environmentOpen?: boolean;
   environmentCollapsed?: EnvironmentSectionKey[];
   pluginDirectoryOpen?: boolean;
+  automationsOpen?: boolean;
+  automationRequests?: AutomationWindowRequest[];
   pluginDirectoryTab?: "plugins" | "skills";
   sidebarOpen: boolean;
   workspaceOpen: boolean;
@@ -130,6 +133,11 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
   )
     return;
   if (value.pluginDirectoryOpen !== undefined && typeof value.pluginDirectoryOpen !== "boolean") return;
+  if (value.automationsOpen !== undefined && typeof value.automationsOpen !== 'boolean') return;
+  let automationRequests: AutomationWindowRequest[] | undefined;
+  if (value.automationRequests !== undefined) {
+    try { automationRequests = parseAutomationWindowRequests(value.automationRequests); } catch { return; }
+  }
   if (value.environmentCollapsed !== undefined && (!Array.isArray(value.environmentCollapsed) || value.environmentCollapsed.length > environmentSectionKeys.length || value.environmentCollapsed.some(key => !environmentSectionKeys.includes(key)))) return;
   if (value.pluginDirectoryTab !== undefined && value.pluginDirectoryTab !== "plugins" && value.pluginDirectoryTab !== "skills") return;
   const dock = parseDockSnapshot(value.dock);
@@ -179,6 +187,8 @@ export function parseWindowView(value: unknown): WindowViewState | undefined {
       : {}),
     ...(value.environmentCollapsed === undefined ? {} : { environmentCollapsed: [...new Set(value.environmentCollapsed as EnvironmentSectionKey[])] }),
     ...(typeof value.pluginDirectoryOpen === "boolean" ? {pluginDirectoryOpen:value.pluginDirectoryOpen} : {}),
+    ...(typeof value.automationsOpen === 'boolean' ? { automationsOpen: value.automationsOpen } : {}),
+    ...(automationRequests === undefined ? {} : { automationRequests }),
     ...(value.pluginDirectoryTab === undefined ? {} : {pluginDirectoryTab:value.pluginDirectoryTab as "plugins"|"skills"}),
     sidebarOpen: value.sidebarOpen as boolean,
     workspaceOpen: value.workspaceOpen as boolean,

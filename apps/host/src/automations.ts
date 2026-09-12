@@ -47,6 +47,7 @@ export class AutomationService {
   private schedulerError: unknown;
   private readonly activeRuns = new Map<string, Promise<void>>();
   private readonly activeMutations = new Set<Promise<unknown>>();
+  private readonly mutationTails = new Map<string, Promise<unknown>>();
   private readonly activeSessions = new Set<string>();
   private stopping = false;
 
@@ -75,8 +76,9 @@ export class AutomationService {
 
   async mutate(mutation: AutomationMutation): Promise<AutomationMutationResult> {
     if (this.stopping) throw new AutomationHttpError(503, "The host is stopping. Reconnect before changing automations.");
-    const call = this.mutateInner(mutation); this.activeMutations.add(call);
-    try { return await call; } finally { this.activeMutations.delete(call); }
+    const key=mutation.type==="history"?`run:${mutation.runId}`:`task:${mutation.id}`,prior=this.mutationTails.get(key);
+    const call=(prior??Promise.resolve()).catch(()=>{}).then(()=>this.mutateInner(mutation));this.mutationTails.set(key,call);this.activeMutations.add(call);
+    try { return await call; } finally { this.activeMutations.delete(call);if(this.mutationTails.get(key)===call)this.mutationTails.delete(key); }
   }
 
   private async mutateInner(mutation: AutomationMutation): Promise<AutomationMutationResult> {
@@ -96,16 +98,22 @@ export class AutomationService {
       }
       if (mutation.type === "save") {
         const current = this.options.records.get(mutation.id);
+        if (mutation.expectedRevision === 0 ? current !== undefined : !current || current.revision !== mutation.expectedRevision || current.status === "deleted")
+          throw new AutomationConflictError("The automation changed. Reload it before saving.");
         const previousStart = current?.rrule.match(/^DTSTART[^\r\n]*$/mi)?.[0];
         const recurrence = previousStart && !/^DTSTART(?:;|:)/mi.test(mutation.input.rrule)
           ? `${previousStart}\n${mutation.input.rrule.trim()}` : mutation.input.rrule;
         const schedule = parseAutomationSchedule(recurrence, this.now());
-        const input = { ...await this.resolveDestination(mutation), rrule: schedule.source };
+        const resolved=await this.resolveDestination(mutation);
+        const input = { ...resolved, rrule: schedule.source };
         const next = input.status === "active"
           ? current?.status === "active" && current.rrule === input.rrule ? current.nextRunAt : this.next(mutation.id, input, this.now())
           : null;
         if (input.status === "active" && next === null) throw new Error("The active automation recurrence has no future occurrence.");
-        const done = this.options.records.save(mutation, input, next); this.options.changed();
+        let done;
+        try { done=this.options.records.save(mutation, input, next); }
+        catch(error){if(mutation.input.destination.kind==="heartbeat-new")throw Object.assign(new Error(`The original conversation was created, but saving its automation was not confirmed. Retry this exact request ID to recover it. ${error instanceof Error?error.message:String(error)}`),{code:"OUTCOME_UNKNOWN"});throw error;}
+        this.options.changed();
         return this.result(mutation.requestId, done.task, done.run);
       }
       const task = this.options.records.get(mutation.id);
