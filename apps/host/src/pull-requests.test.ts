@@ -56,6 +56,9 @@ function fixture(
     changeHeadAtEnd?: boolean;
     hold?: boolean;
     nestedThreadComments?: boolean;
+    reviewThreads?: (
+      variables: Record<string, unknown>,
+    ) => ReturnType<typeof connection>;
     throwOnStatus?: boolean;
     graphqlError?: boolean;
     noTeamMetadata?: boolean;
@@ -160,30 +163,32 @@ function fixture(
             },
           ]),
           reviews: connection([]),
-          reviewThreads: connection(
-            options.nestedThreadComments
-              ? [
-                  {
-                    id: "T1",
-                    isResolved: false,
-                    path: "src/a.ts",
-                    line: 2,
-                    comments: {
-                      nodes: [
-                        {
-                          id: "RC1",
-                          body: "Thread body",
-                          createdAt: node.createdAt,
-                          url: null,
-                          author: { login: "reviewer", avatarUrl: null },
-                        },
-                      ],
-                      pageInfo: { hasNextPage: true },
+          reviewThreads:
+            options.reviewThreads?.(variables) ??
+            connection(
+              options.nestedThreadComments
+                ? [
+                    {
+                      id: "T1",
+                      isResolved: false,
+                      path: "src/a.ts",
+                      line: 2,
+                      comments: {
+                        nodes: [
+                          {
+                            id: "RC1",
+                            body: "Thread body",
+                            createdAt: node.createdAt,
+                            url: null,
+                            author: { login: "reviewer", avatarUrl: null },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: true },
+                      },
                     },
-                  },
-                ]
-              : [],
-          ),
+                  ]
+                : [],
+            ),
           commits: {
             nodes: [
               {
@@ -486,6 +491,130 @@ describe("native GitHub pull request reads", () => {
     if (threads.type !== "detail") throw 0;
     expect(threads.discussion.items[0]?.kind).toBe("review_comment");
     expect(threads.discussion.pageInfo.truncated).toBe(true);
+  });
+
+  test("loads every page of a long thread before advancing, with original thread and revision fences", async () => {
+    let replacement = false,
+      repeat = false;
+    const calls: Record<string, unknown>[] = [];
+    const f = fixture({
+      reviewThreads(variables) {
+        calls.push(variables);
+        const second = variables.threadsAfter === "thread-1";
+        const nested = variables.threadCommentsAfter === "comment-50";
+        return connection(
+          [
+            {
+              id: replacement ? "REPLACED" : second ? "T2" : "T1",
+              path: second ? "src/b.ts" : "src/a.ts",
+              line: 2,
+              isResolved: second,
+              comments: connection(
+                Array.from(
+                  { length: second ? 1 : nested ? 2 : 50 },
+                  (_, index) => ({
+                    id: second ? "RC53" : `RC${index + (nested ? 51 : 1)}`,
+                    body: second
+                      ? "second thread"
+                      : `comment ${index + (nested ? 51 : 1)}`,
+                    createdAt: node.createdAt,
+                    author: { login: "reviewer", avatarUrl: null },
+                    url: null,
+                  }),
+                ),
+                !second && (!nested || repeat),
+                !second && (!nested || repeat) ? "comment-50" : null,
+              ),
+            },
+          ],
+          !second,
+          !second ? "thread-1" : null,
+        );
+      },
+    });
+    const accounts = await f.service.read({ type: "accounts", refresh: true });
+    if (accounts.type !== "accounts") throw 0;
+    const request = {
+      type: "detail" as const,
+      accountId: accounts.availability.activeAccountId!,
+      pullRequest: {
+        hostname: "github.com",
+        owner: "openai",
+        repository: "codex",
+        number: 42,
+      },
+      pageSize: 50 as const,
+    };
+    const first = await f.service.read(request);
+    if (first.type !== "detail") throw 0;
+    const cursor = (value: Record<string, unknown>) =>
+      Buffer.from(
+        JSON.stringify({
+          kind: "discussion",
+          revision: first.revision,
+          ...value,
+        }),
+      ).toString("base64url");
+    const read = async (after: string) => {
+      const result = await f.service.read({
+        ...request,
+        expectedRevision: first.revision,
+        after: { discussion: after },
+      });
+      if (result.type !== "detail") throw 0;
+      return result;
+    };
+    const thread = await read(cursor({ source: "reviewThreads" }));
+    expect(thread.discussion.items).toHaveLength(50);
+    expect(thread.discussion.pageInfo.truncated).toBe(false);
+    const next = thread.discussion.pageInfo.endCursor!;
+    replacement = true;
+    await expect(read(next)).rejects.toMatchObject({ code: "HEAD_CHANGED" });
+    replacement = false;
+    repeat = true;
+    await expect(read(next)).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+    });
+    repeat = false;
+    const tail = await read(next);
+    expect(tail.discussion.items.map((item) => item.id)).toEqual([
+      "RC51",
+      "RC52",
+    ]);
+    expect(
+      tail.discussion.items.every(
+        (item) => item.path === "src/a.ts" && item.resolved === false,
+      ),
+    ).toBe(true);
+    expect(calls.at(-1)?.threadsAfter).toBeUndefined();
+    expect(calls.at(-1)?.threadCommentsAfter).toBe("comment-50");
+    const second = await read(tail.discussion.pageInfo.endCursor!);
+    expect(calls.at(-1)?.threadsAfter).toBe("thread-1");
+    expect(calls.at(-1)?.threadCommentsAfter).toBeUndefined();
+    expect(
+      second.discussion.items.map((item) => [
+        item.id,
+        item.path,
+        item.resolved,
+      ]),
+    ).toEqual([["RC53", "src/b.ts", true]]);
+    expect(second.discussion.pageInfo.hasNextPage).toBe(false);
+    expect(second.discussion.pageInfo.truncated).toBe(false);
+    await expect(
+      read(
+        cursor({
+          source: "comments",
+          threadId: "T1",
+          threadCommentsAfter: "comment-50",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+    await expect(
+      read(
+        cursor({ source: "reviewThreads", threadCommentsAfter: "comment-50" }),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+    await f.service.dispose();
   });
 
   test("sanitizes an operational runner failure", async () => {

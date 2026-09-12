@@ -221,7 +221,7 @@ const actor = (value: unknown) => {
 };
 
 const INBOX_QUERY = `query($searchQuery:String!,$first:Int!,$after:String){viewer{login} search(type:ISSUE,query:$searchQuery,first:$first,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{... on PullRequest{id number url title state isDraft createdAt updatedAt additions deletions baseRefName headRefName headRefOid reviewDecision author{login avatarUrl} repository{name owner{login}} reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name slug}}}}}}}}`;
-const DETAIL_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$commentsAfter:String,$reviewsAfter:String,$threadsAfter:String,$checksAfter:String){viewer{login} repository(owner:$owner,name:$repo){pullRequest(number:$number){id number url title state isDraft createdAt updatedAt additions deletions baseRefName baseRefOid headRefName headRefOid reviewDecision body changedFiles author{login avatarUrl} comments(first:50,after:$commentsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body createdAt url author{login avatarUrl}}}reviews(first:50,after:$reviewsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body state submittedAt createdAt url author{login avatarUrl}}}reviewThreads(first:50,after:$threadsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved path line originalLine comments(first:50){nodes{id body createdAt url author{login avatarUrl}}pageInfo{hasNextPage}}}}commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:50,after:$checksAfter){totalCount pageInfo{hasNextPage endCursor}nodes{__typename ... on CheckRun{id name status conclusion startedAt completedAt detailsUrl checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{id context state createdAt description targetUrl}}}}}}}}}}`;
+const DETAIL_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$commentsAfter:String,$reviewsAfter:String,$threadsAfter:String,$threadCommentsAfter:String,$checksAfter:String){viewer{login} repository(owner:$owner,name:$repo){pullRequest(number:$number){id number url title state isDraft createdAt updatedAt additions deletions baseRefName baseRefOid headRefName headRefOid reviewDecision body changedFiles author{login avatarUrl} comments(first:50,after:$commentsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body createdAt url author{login avatarUrl}}}reviews(first:50,after:$reviewsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body state submittedAt createdAt url author{login avatarUrl}}}reviewThreads(first:1,after:$threadsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved path line originalLine comments(first:50,after:$threadCommentsAfter){nodes{id body createdAt url author{login avatarUrl}}pageInfo{hasNextPage endCursor}}}}commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:50,after:$checksAfter){totalCount pageInfo{hasNextPage endCursor}nodes{__typename ... on CheckRun{id name status conclusion startedAt completedAt detailsUrl checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{id context state createdAt description targetUrl}}}}}}}}}}`;
 const HEAD_QUERY = `query($owner:String!,$repo:String!,$number:Int!){viewer{login}repository(owner:$owner,name:$repo){pullRequest(number:$number){headRefOid baseRefOid updatedAt}}}`;
 
 export interface PullRequestsOptions {
@@ -810,7 +810,14 @@ export class PullRequests {
       repo: request.pullRequest.repository,
       number: request.pullRequest.number,
       ...(discussionCursor?.value
-        ? { [`${discussionCursor.source}After`]: discussionCursor.value }
+        ? {
+            [discussionCursor.source === "reviewThreads"
+              ? "threadsAfter"
+              : `${discussionCursor.source}After`]: discussionCursor.value,
+          }
+        : {}),
+      ...(discussionCursor?.threadCommentsAfter
+        ? { threadCommentsAfter: discussionCursor.threadCommentsAfter }
         : {}),
       ...(checksCursor ? { checksAfter: checksCursor.value } : {}),
     };
@@ -854,60 +861,68 @@ export class PullRequests {
         "The pull request changed. Refresh before continuing.",
       );
     const source = discussionCursor?.source ?? "comments",
-      connection = record(pr[source]),
-      discussionItems =
-        source === "comments"
+      connection = record(pr[source]);
+    if (
+      discussionCursor?.threadId &&
+      text(record(list(connection.nodes)[0]).id) !== discussionCursor.threadId
+    )
+      throw new PullRequestReadError(
+        "HEAD_CHANGED",
+        "The review thread changed. Refresh before continuing.",
+      );
+    const discussionItems =
+      source === "comments"
+        ? list(connection.nodes).map((item) => {
+            const c = record(item);
+            return {
+              id: text(c.id) || `comment:${text(c.url)}`,
+              kind: "comment" as const,
+              author: actor(c.author),
+              body: text(c.body),
+              createdAt: iso(c.createdAt),
+              url: typeof c.url === "string" ? c.url : null,
+              path: null,
+              line: null,
+              resolved: null,
+            };
+          })
+        : source === "reviews"
           ? list(connection.nodes).map((item) => {
               const c = record(item);
               return {
-                id: text(c.id) || `comment:${text(c.url)}`,
-                kind: "comment" as const,
+                id: text(c.id) || `review:${text(c.url)}`,
+                kind: "review" as const,
                 author: actor(c.author),
                 body: text(c.body),
-                createdAt: iso(c.createdAt),
+                createdAt: iso(c.submittedAt ?? c.createdAt),
                 url: typeof c.url === "string" ? c.url : null,
                 path: null,
                 line: null,
                 resolved: null,
               };
             })
-          : source === "reviews"
-            ? list(connection.nodes).map((item) => {
-                const c = record(item);
+          : list(connection.nodes).flatMap((item) => {
+              const thread = record(item);
+              return list(record(thread.comments).nodes).map((comment) => {
+                const c = record(comment);
                 return {
-                  id: text(c.id) || `review:${text(c.url)}`,
-                  kind: "review" as const,
+                  id: text(c.id) || `review-comment:${text(c.url)}`,
+                  kind: "review_comment" as const,
                   author: actor(c.author),
                   body: text(c.body),
-                  createdAt: iso(c.submittedAt ?? c.createdAt),
+                  createdAt: iso(c.createdAt),
                   url: typeof c.url === "string" ? c.url : null,
-                  path: null,
-                  line: null,
-                  resolved: null,
+                  path: typeof thread.path === "string" ? thread.path : null,
+                  line:
+                    typeof thread.line === "number"
+                      ? thread.line
+                      : typeof thread.originalLine === "number"
+                        ? thread.originalLine
+                        : null,
+                  resolved: thread.isResolved === true,
                 };
-              })
-            : list(connection.nodes).flatMap((item) => {
-                const thread = record(item);
-                return list(record(thread.comments).nodes).map((comment) => {
-                  const c = record(comment);
-                  return {
-                    id: text(c.id) || `review-comment:${text(c.url)}`,
-                    kind: "review_comment" as const,
-                    author: actor(c.author),
-                    body: text(c.body),
-                    createdAt: iso(c.createdAt),
-                    url: typeof c.url === "string" ? c.url : null,
-                    path: typeof thread.path === "string" ? thread.path : null,
-                    line:
-                      typeof thread.line === "number"
-                        ? thread.line
-                        : typeof thread.originalLine === "number"
-                          ? thread.originalLine
-                          : null,
-                    resolved: thread.isResolved === true,
-                  };
-                });
               });
+            });
     const checkConnection = record(
       record(list(record(pr.commits).nodes).at(-1)).commit,
     );
@@ -928,18 +943,20 @@ export class PullRequests {
       nextFile = fileHasNext
         ? encodeCursor("files", { page: (fileCursor?.page ?? 1) + 1, revision })
         : null;
-    const discussionPage = nextDiscussionPage(
-        source,
-        connection,
-        discussionItems.length,
-        revision,
-      ),
-      nestedThreadCommentsTruncated =
-        source === "reviewThreads" &&
-        list(connection.nodes).some(
-          (item) =>
-            record(record(record(item).comments).pageInfo).hasNextPage === true,
-        );
+    const discussionPage =
+      source === "reviewThreads"
+        ? nextThreadPage(
+            connection,
+            discussionCursor,
+            discussionItems.length,
+            revision,
+          )
+        : nextDiscussionPage(
+            source,
+            connection,
+            discussionItems.length,
+            revision,
+          );
     const result: PullRequestDetailResult = {
       type: "detail",
       account: credential.account,
@@ -948,10 +965,7 @@ export class PullRequests {
       body: text(pr.body),
       discussion: {
         items: discussionItems,
-        pageInfo: {
-          ...discussionPage,
-          truncated: discussionPage.truncated || nestedThreadCommentsTruncated,
-        },
+        pageInfo: discussionPage,
       },
       checks: {
         items: checkItems,
@@ -1050,10 +1064,16 @@ function decodeCursor(
     );
   }
 }
+interface DiscussionCursor {
+  source: "comments" | "reviews" | "reviewThreads";
+  value?: string;
+  threadId?: string;
+  threadCommentsAfter?: string;
+}
 function decodeDiscussionCursor(
   value: string | undefined,
   expectedRevision?: string,
-): { source: "comments" | "reviews" | "reviewThreads"; value?: string } | null {
+): DiscussionCursor | null {
   if (value === undefined) return null;
   try {
     const parsed = record(
@@ -1065,10 +1085,31 @@ function decodeDiscussionCursor(
       !["comments", "reviews", "reviewThreads"].includes(text(parsed.source))
     )
       throw 0;
-    if (parsed.value !== undefined && typeof parsed.value !== "string") throw 0;
+    if (
+      parsed.value !== undefined &&
+      (typeof parsed.value !== "string" || !parsed.value)
+    )
+      throw 0;
+    const nested =
+      parsed.threadId !== undefined || parsed.threadCommentsAfter !== undefined;
+    if (
+      nested &&
+      (parsed.source !== "reviewThreads" ||
+        typeof parsed.threadId !== "string" ||
+        !parsed.threadId ||
+        typeof parsed.threadCommentsAfter !== "string" ||
+        !parsed.threadCommentsAfter)
+    )
+      throw 0;
     return {
       source: parsed.source as "comments" | "reviews" | "reviewThreads",
       ...(typeof parsed.value === "string" ? { value: parsed.value } : {}),
+      ...(nested
+        ? {
+            threadId: parsed.threadId as string,
+            threadCommentsAfter: parsed.threadCommentsAfter as string,
+          }
+        : {}),
     };
   } catch {
     throw new PullRequestReadError(
@@ -1076,6 +1117,42 @@ function decodeDiscussionCursor(
       "The pull request cursor is invalid.",
     );
   }
+}
+// Page a single thread at a time so a long thread remains resumable without
+// retaining a server-side queue or trusting a caller-supplied foreign node ID.
+function nextThreadPage(
+  connection: Json,
+  cursor: DiscussionCursor | null,
+  count: number,
+  revision: string,
+) {
+  const thread = record(list(connection.nodes)[0]);
+  const comments = page(record(thread.comments), count);
+  if (comments.hasNextPage) {
+    const threadId = text(thread.id);
+    if (!threadId || comments.endCursor === cursor?.threadCommentsAfter)
+      throw new PullRequestReadError(
+        "INVALID_RESPONSE",
+        "GitHub returned an invalid review comment continuation.",
+      );
+    return {
+      ...comments,
+      endCursor: encodeCursor("discussion", {
+        source: "reviewThreads",
+        ...(cursor?.value ? { value: cursor.value } : {}),
+        threadId,
+        threadCommentsAfter: comments.endCursor,
+        revision,
+      }),
+    };
+  }
+  const next = nextDiscussionPage("reviewThreads", connection, count, revision);
+  if (next.hasNextPage && page(connection, count).endCursor === cursor?.value)
+    throw new PullRequestReadError(
+      "INVALID_RESPONSE",
+      "GitHub repeated a review thread continuation.",
+    );
+  return { ...next, truncated: next.truncated || comments.truncated };
 }
 function graphqlPage(
   connection: Json,
@@ -1119,7 +1196,7 @@ function nextDiscussionPage(
       hasNextPage: true,
       endCursor: encodeCursor("discussion", { source: next, revision }),
       totalCount: count,
-      truncated: false,
+      truncated: current.truncated,
     };
   return { ...current, endCursor: null };
 }
