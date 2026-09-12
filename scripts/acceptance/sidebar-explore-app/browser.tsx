@@ -33,7 +33,7 @@ for (const type of ["dragstart", "dragenter", "dragover", "dragleave", "drop", "
   if (type === "dragstart") sidebarExploreDragSource = event.target instanceof Element ? event.target.closest("[draggable]") : null;
   const entry = { type, trusted: event.isTrusted, destination: event.target instanceof Element ? event.target.closest<HTMLElement>("[data-sidebar-destination]")?.dataset.sidebarDestination : undefined, text: drag.dataTransfer?.getData("text/plain") ?? "", prevented: event.defaultPrevented, sourceConnected: sidebarExploreDragSource?.isConnected ?? false };
   receivedDrags.push(entry);
-  queueMicrotask(() => { entry.prevented = event.defaultPrevented; entry.sourceConnected = sidebarExploreDragSource?.isConnected ?? false; });
+  setTimeout(() => { entry.prevented = event.defaultPrevented; entry.sourceConnected = sidebarExploreDragSource?.isConnected ?? false; }, 0);
 }, true);
 Object.assign(window, {
   sidebarExploreTarget(selector: string) {

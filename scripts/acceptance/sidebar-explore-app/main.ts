@@ -251,6 +251,9 @@ async function run() {
     if (!pointerRecord || pointerRecord.deleted || pointerRecord.key !== "sidebar.navigation" || pointerRecord.value.order[0] !== "plugins") throw new Error("Pointer reorder was not persisted on the real host");
     await capture("017-pointer-reorder");
     await click('.sidebar-reorder[aria-label="Reorder Plugins"]', "right"); await wait(`document.querySelector('[role="menu"][aria-label="Sidebar navigation options"]')`); await capture("018-in-panel-reset-menu");
+    await key("Escape");
+    await wait(`document.querySelector(".sidebar-customization") && !document.querySelector('[role="menu"][aria-label="Sidebar navigation options"]') && document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"`, "Escape closes the child menu without dismissing its modal");
+    await click('.sidebar-reorder[aria-label="Reorder Plugins"]', "right"); await wait(`document.querySelector('[role="menu"][aria-label="Sidebar navigation options"]')`);
     await key("ArrowDown"); await key("Enter"); await saved();
     await wait(`sidebarExploreState().rows.join("|") === "pull-requests|scheduled|plugins|archive" && document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"`, "in-panel context Reset restores defaults and focus");
     await capture("019-in-panel-reset"); checkpoints.push("trusted Chromium pointer drag/drop persists on real host; in-panel context Reset works inside the modal and restores Done focus");

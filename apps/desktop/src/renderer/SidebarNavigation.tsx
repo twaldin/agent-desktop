@@ -48,7 +48,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
     window.addEventListener("resize", measure);
     return () => { resize.disconnect(); window.removeEventListener("resize", measure); };
   }, [customizing, customizationContent]);
-  const closeCustomize = () => { setDrag(undefined); setCustomizing(false); requestAnimationFrame(() => exploreButton.current?.focus()); };
+  const closeCustomize = () => { setContext(undefined); setDrag(undefined); setCustomizing(false); requestAnimationFrame(() => exploreButton.current?.focus()); };
   const startCustomize = () => { setContext(undefined); setExplore(false); setCustomizing(true); };
   const saveVisibility = (item: SidebarDestination) => {
     if (!data?.writable || drag) return;
@@ -82,6 +82,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
     {customizing && <div aria-hidden="true" style={{ height: customizationHeight }}/>}
     <Dialog.Root open={customizing} onOpenChange={open => { if (!open) closeCustomize(); }}>
       {customizing && <Dialog.Portal><Dialog.Overlay className="sidebar-customization-overlay"/><Dialog.Content ref={setCustomizationContent} className="sidebar-customization" style={customizationBounds} aria-describedby={undefined} onOpenAutoFocus={event => { event.preventDefault(); done.current?.focus(); }} onCloseAutoFocus={event => { event.preventDefault(); exploreButton.current?.focus(); }} onEscapeKeyDown={event => {
+        if (context) { event.preventDefault(); setContext(undefined); return; }
         if (drag) { event.preventDefault(); const handle = customizationContent?.querySelector<HTMLButtonElement>(`[data-sidebar-destination="${drag.id}"] .sidebar-reorder`); setAnnouncement(`Reordering ${destinations.find(item => item.id === drag.id)?.label ?? drag.id} cancelled`); setDrag(undefined); requestAnimationFrame(() => handle?.focus()); }
       }}>
         <Dialog.Title className="sr-only">Customize sidebar</Dialog.Title>
@@ -117,7 +118,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
       </Menu.Content></Menu.Portal>
     </Menu.Root>}
     <Menu.Root modal={false} open={!!context} onOpenChange={open => { if (!open) setContext(undefined); }}><Menu.Trigger asChild><span aria-hidden="true" className="sidebar-navigation-context-anchor" style={{ left: context?.x, top: context?.y }}/></Menu.Trigger>
-      <Menu.Portal><Menu.Content className="sidebar-navigation-menu" aria-label="Sidebar navigation options" side="right" sideOffset={0} align="start" collisionPadding={8} onCloseAutoFocus={event => { event.preventDefault(); const action = deferred.current; deferred.current = undefined; if (action) action(); else if (customizing) done.current?.focus(); else exploreButton.current?.focus(); }}>
+      <Menu.Portal container={customizing ? customizationContent : undefined}><Menu.Content className="sidebar-navigation-menu" aria-label="Sidebar navigation options" side="right" sideOffset={0} align="start" collisionPadding={8} onCloseAutoFocus={event => { event.preventDefault(); const action = deferred.current; deferred.current = undefined; if (action) action(); else if (customizing) done.current?.focus(); else exploreButton.current?.focus(); }}>
         <Menu.Item className="sidebar-navigation-menu-item" disabled={customizing && (!data?.writable || !!drag)} onSelect={() => { deferred.current = customizing ? () => { void data?.save(resetSidebarNavigation(value, destinations.map(item => item.id))); done.current?.focus(); } : startCustomize; }}>{customizing ? "Reset customization" : "Customize"}</Menu.Item>
       </Menu.Content></Menu.Portal>
     </Menu.Root>
