@@ -1,3 +1,4 @@
+import { DISCUSSION_NODE_QUERY, discussionMutation, validateInlinePatch, PullRequestDiscussionError } from "./pull-request-discussion-write";
 import { parsePullRequestWriteRequest, parsePullRequestWriteReceipt,
   type PullRequestWriteRequest, type PullRequestWriteReceipt } from "../../../packages/shared/src/pull-request-write";
 import type { PullRequestWriteRecords } from "./pull-request-write-records";
@@ -12,6 +13,7 @@ import {
   type PullRequestAccount,
   type PullRequestDetailRequest,
   type PullRequestDetailResult,
+  type PullRequestDiscussionItem,
   type PullRequestInboxRequest,
   type PullRequestInboxResult,
   type PullRequestInboxSection,
@@ -224,7 +226,7 @@ const actor = (value: unknown) => {
 };
 
 const INBOX_QUERY = `query($searchQuery:String!,$first:Int!,$after:String){viewer{login} search(type:ISSUE,query:$searchQuery,first:$first,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{... on PullRequest{id number url title state isDraft createdAt updatedAt additions deletions baseRefName headRefName headRefOid reviewDecision author{login avatarUrl} repository{name owner{login}} reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name slug}}}}}}}}`;
-const DETAIL_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$commentsAfter:String,$reviewsAfter:String,$threadsAfter:String,$threadCommentsAfter:String,$checksAfter:String){viewer{login} repository(owner:$owner,name:$repo){pullRequest(number:$number){id number url title state isDraft createdAt updatedAt additions deletions baseRefName baseRefOid headRefName headRefOid reviewDecision body changedFiles author{login avatarUrl} comments(first:50,after:$commentsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body createdAt url author{login avatarUrl}}}reviews(first:50,after:$reviewsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body state submittedAt createdAt url author{login avatarUrl}}}reviewThreads(first:1,after:$threadsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved path line originalLine comments(first:50,after:$threadCommentsAfter){nodes{id body createdAt url author{login avatarUrl}}pageInfo{hasNextPage endCursor}}}}commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:50,after:$checksAfter){totalCount pageInfo{hasNextPage endCursor}nodes{__typename ... on CheckRun{id name status conclusion startedAt completedAt detailsUrl checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{id context state createdAt description targetUrl}}}}}}}}}}`;
+const DETAIL_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$commentsAfter:String,$reviewsAfter:String,$threadsAfter:String,$threadCommentsAfter:String,$checksAfter:String){viewer{login} repository(owner:$owner,name:$repo){pullRequest(number:$number){id number url title state isDraft createdAt updatedAt additions deletions baseRefName baseRefOid headRefName headRefOid reviewDecision body changedFiles author{login avatarUrl} comments(first:50,after:$commentsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body createdAt url viewerCanUpdate viewerCanDelete author{login avatarUrl}}}reviews(first:50,after:$reviewsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id body state submittedAt createdAt url viewerCanUpdate author{login avatarUrl}}}reviewThreads(first:1,after:$threadsAfter){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved path line originalLine startLine originalStartLine diffSide startDiffSide viewerCanReply viewerCanResolve viewerCanUnresolve comments(first:50,after:$threadCommentsAfter){nodes{id body createdAt url viewerCanUpdate viewerCanDelete author{login avatarUrl}}pageInfo{hasNextPage endCursor}}}}commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:50,after:$checksAfter){totalCount pageInfo{hasNextPage endCursor}nodes{__typename ... on CheckRun{id name status conclusion startedAt completedAt detailsUrl checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{id context state createdAt description targetUrl}}}}}}}}}}`;
 const HEAD_QUERY = `query($owner:String!,$repo:String!,$number:Int!){viewer{login}repository(owner:$owner,name:$repo){pullRequest(number:$number){headRefOid baseRefOid updatedAt}}}`;
 
 export interface PullRequestsOptions {
@@ -333,7 +335,7 @@ export class PullRequests {
         const pr = request.pullRequest;
         if (credential.account.hostname.toLowerCase() !== pr.hostname.toLowerCase())
           throw new PullRequestReadError("ACCOUNT_CHANGED", "The selected GitHub account does not own this hostname.");
-        if (request.action !== "comment") {
+        if (["review_comment", "approve", "request_changes", "inline_comment"].includes(request.action)) {
         const head = await this.#api(credential, { query: HEAD_QUERY, owner: pr.owner, repo: pr.repository, number: pr.number }, controller.signal);
         const data = record(head.data);
         if (text(record(data.viewer).login).toLowerCase() !== credential.account.login.toLowerCase())
@@ -341,22 +343,52 @@ export class PullRequests {
         if (text(record(record(data.repository).pullRequest).headRefOid) !== request.expectedHeadOid)
           throw new PullRequestReadError("HEAD_CHANGED", "The pull request changed. Refresh and review it before submitting.");
         }
-        const event = request.action === "approve" ? "APPROVE" : request.action === "request_changes" ? "REQUEST_CHANGES" : "COMMENT";
-        const payload = request.action === "comment" ? { body: request.body } : { body: request.body, event, commit_id: request.expectedHeadOid };
-        const endpoint = `repos/${pr.owner}/${pr.repository}/${request.action === "comment" ? "issues" : "pulls"}/${pr.number}/${request.action === "comment" ? "comments" : "reviews"}`;
-        controller.signal.throwIfAborted();
-        dispatched = true;
-        const result = await this.#api(credential, payload, controller.signal, endpoint, 512 * 1024);
-        const expectedState = event === "APPROVE" ? "APPROVED" : event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED";
-        if (!Number.isSafeInteger(result.id) || Number(result.id) <= 0 ||
-          text(record(result.user).login).toLowerCase() !== credential.account.login.toLowerCase() ||
-          (request.action !== "comment" && (result.commit_id !== request.expectedHeadOid || result.state !== expectedState)))
-          throw new Error("GitHub did not return an exact submission confirmation.");
-        receipt = parsePullRequestWriteReceipt({ hostId: this.#hostId, request, outcome: "succeeded", message: "Submitted to GitHub.", url: result.html_url }, this.#hostId, request);
+        let url: unknown;
+        if (request.target) {
+          const node = await this.#api(credential, { query: DISCUSSION_NODE_QUERY, id: request.target.id }, controller.signal);
+          const mutation = discussionMutation(request, node, credential.account.login);
+          controller.signal.throwIfAborted();
+          dispatched = true;
+          url = mutation.confirm(await this.#api(credential, mutation.payload, controller.signal, "graphql", 512 * 1024));
+        } else if (request.inline) {
+          const files: unknown[] = [];
+          for (let page = 1; page <= 60; page++) {
+            const batch = await this.#restArray(credential, `repos/${pr.owner}/${pr.repository}/pulls/${pr.number}/files?per_page=50&page=${page}`, controller.signal);
+            files.push(...batch);
+            if (batch.length < 50) break;
+            if (page === 60) throw new Error("The changed-file list is truncated.");
+          }
+          validateInlinePatch(request.inline, files);
+          const finish = record((await this.#api(credential, { query: HEAD_QUERY, owner: pr.owner, repo: pr.repository, number: pr.number }, controller.signal)).data);
+          this.#viewer(finish, credential);
+          if (record(record(finish.repository).pullRequest).headRefOid !== request.expectedHeadOid) throw new PullRequestReadError("HEAD_CHANGED", "The pull request changed. Refresh its diff before commenting.");
+          const selection = request.inline;
+          const payload = { body: request.body, commit_id: request.expectedHeadOid, path: selection.path, side: selection.side, line: selection.line,
+            ...(selection.startLine !== undefined ? { start_line: selection.startLine, start_side: selection.startSide } : {}) };
+          controller.signal.throwIfAborted(); dispatched = true;
+          const result = await this.#api(credential, payload, controller.signal, `repos/${pr.owner}/${pr.repository}/pulls/${pr.number}/comments`, 512 * 1024);
+          if (!Number.isSafeInteger(result.id) || Number(result.id) <= 0 || result.commit_id !== request.expectedHeadOid ||
+            result.path !== selection.path || result.side !== selection.side || result.line !== selection.line ||
+            (selection.startLine !== undefined && (result.start_line !== selection.startLine || result.start_side !== selection.startSide)) ||
+            text(record(result.user).login).toLowerCase() !== credential.account.login.toLowerCase()) throw new Error("GitHub did not confirm the original inline comment.");
+          url = result.html_url;
+        } else {
+          const event = request.action === "approve" ? "APPROVE" : request.action === "request_changes" ? "REQUEST_CHANGES" : "COMMENT";
+          const payload = request.action === "comment" ? { body: request.body } : { body: request.body, event, commit_id: request.expectedHeadOid };
+          const endpoint = `repos/${pr.owner}/${pr.repository}/${request.action === "comment" ? "issues" : "pulls"}/${pr.number}/${request.action === "comment" ? "comments" : "reviews"}`;
+          controller.signal.throwIfAborted(); dispatched = true;
+          const result = await this.#api(credential, payload, controller.signal, endpoint, 512 * 1024);
+          const expectedState = event === "APPROVE" ? "APPROVED" : event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED";
+          if (!Number.isSafeInteger(result.id) || Number(result.id) <= 0 ||
+            text(record(result.user).login).toLowerCase() !== credential.account.login.toLowerCase() ||
+            (request.action !== "comment" && (result.commit_id !== request.expectedHeadOid || result.state !== expectedState))) throw new Error("GitHub did not return an exact submission confirmation.");
+          url = result.html_url;
+        }
+        receipt = parsePullRequestWriteReceipt({ hostId: this.#hostId, request, outcome: "succeeded", message: "Submitted to GitHub.", url }, this.#hostId, request);
       } catch (error) {
         receipt = { hostId: this.#hostId, request, outcome: dispatched ? "unknown" : "failed", url: null,
           message: dispatched ? "GitHub may have received this submission. Inspect the original pull request before starting another attempt."
-            : error instanceof PullRequestReadError ? error.message : "The submission stopped before contacting GitHub. Your text is preserved." };
+            : error instanceof PullRequestReadError || error instanceof PullRequestDiscussionError ? error.message : "The submission stopped before contacting GitHub. Your text is preserved." };
       }
       try { return records.finish(request, receipt); }
       catch (error) { this.#writeFailures.push(error); throw error; }
@@ -952,7 +984,7 @@ export class PullRequests {
         "HEAD_CHANGED",
         "The review thread changed. Refresh before continuing.",
       );
-    const discussionItems =
+    const discussionItems: PullRequestDiscussionItem[] =
       source === "comments"
         ? list(connection.nodes).map((item) => {
             const c = record(item);
@@ -961,6 +993,7 @@ export class PullRequests {
               kind: "comment" as const,
               author: actor(c.author),
               body: text(c.body),
+              canUpdate: c.viewerCanUpdate === true, canDelete: c.viewerCanDelete === true,
               createdAt: iso(c.createdAt),
               url: typeof c.url === "string" ? c.url : null,
               path: null,
@@ -976,6 +1009,7 @@ export class PullRequests {
                 kind: "review" as const,
                 author: actor(c.author),
                 body: text(c.body),
+              canUpdate: c.viewerCanUpdate === true, canDelete: c.viewerCanDelete === true,
                 createdAt: iso(c.submittedAt ?? c.createdAt),
                 url: typeof c.url === "string" ? c.url : null,
                 path: null,
@@ -992,6 +1026,7 @@ export class PullRequests {
                   kind: "review_comment" as const,
                   author: actor(c.author),
                   body: text(c.body),
+              canUpdate: c.viewerCanUpdate === true, canDelete: c.viewerCanDelete === true,
                   createdAt: iso(c.createdAt),
                   url: typeof c.url === "string" ? c.url : null,
                   path: typeof thread.path === "string" ? thread.path : null,
@@ -1002,6 +1037,12 @@ export class PullRequests {
                         ? thread.originalLine
                         : null,
                   resolved: thread.isResolved === true,
+                  thread: { id: text(thread.id), side: thread.diffSide === "LEFT" || thread.diffSide === "RIGHT" ? thread.diffSide : null,
+                    startSide: thread.startDiffSide === "LEFT" || thread.startDiffSide === "RIGHT" ? thread.startDiffSide : null,
+                    startLine: typeof thread.startLine === "number" ? thread.startLine : null,
+                    originalLine: typeof thread.originalLine === "number" ? thread.originalLine : null,
+                    originalStartLine: typeof thread.originalStartLine === "number" ? thread.originalStartLine : null,
+                    canReply: thread.viewerCanReply === true, canResolve: thread.viewerCanResolve === true, canUnresolve: thread.viewerCanUnresolve === true },
                 };
               });
             });

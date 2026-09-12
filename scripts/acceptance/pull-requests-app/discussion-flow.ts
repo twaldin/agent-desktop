@@ -1,0 +1,120 @@
+import type { BrowserWindow } from "electron";
+import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+
+/** Full App, original window saves, authenticated host and real disposable gh processes. */
+export async function runPullRequestDiscussionFlow({ window, fixture, evaluate, wait, click, capture, checkpoints, setConnected }: {
+  window: BrowserWindow; fixture: string; evaluate(script: string): Promise<any>; wait(expression: string, label: string): Promise<void>;
+  click(selector: string, text?: string): Promise<void>; capture(name: string): Promise<void>; checkpoints: string[]; setConnected(connected: boolean): void;
+}) {
+  const log = join(fixture, "discussion-written.jsonl"), control = join(fixture, "gh-write-control.json");
+  const writes = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+  const type = async (value: string) => {
+    await click('[role=dialog] textarea');
+    window.webContents.selectAll();
+    await wait(`(()=>{const t=document.querySelector('[role=dialog] textarea');return t&&t.selectionStart===0&&t.selectionEnd===t.value.length;})()`, "native select-all in original textarea");
+    await window.webContents.insertText(value);
+    await wait(`document.querySelector('[role=dialog] textarea')?.value===${JSON.stringify(value)}`, "typed original discussion draft");
+  };
+  const ready = async () => wait(`document.querySelector('.pull-request-detail')?.getAttribute('aria-busy')==='false'`, "original detail ready");
+  const threads = async () => {
+    await ready();
+    for (let page = 0; page < 5; page++) {
+      if (await evaluate(`!!document.querySelector('[data-thread-id="T_NATIVE"]')`)) return;
+      await wait(`!!document.querySelector('[data-thread-id="T_NATIVE"]')||[...document.querySelectorAll('.pull-request-discussion button')].some(b=>b.textContent==='Load more activity'&&!b.disabled)`, "discussion next original page");
+      if (await evaluate(`!!document.querySelector('[data-thread-id="T_NATIVE"]')`)) return;
+      await click('.pull-request-discussion button', 'Load more activity');
+      await ready();
+    }
+    throw new Error("Thread page did not load");
+  };
+  const dialog = async () => wait(`!!document.querySelector('[role=dialog]')`, "discussion dialog");
+  const post = async () => { await wait(`!!document.querySelector('[role=dialog] button[type=submit]')&&!document.querySelector('[role=dialog] button[type=submit]').disabled`, "discussion submit enabled"); await click('[role=dialog] button[type=submit]'); await wait(`!document.querySelector('[role=dialog]')`, "confirmed original mutation"); await ready(); };
+  await click('[data-comment-id="C_NATIVE"] button', 'Edit'); await dialog(); await type("Edited original issue comment");
+  await click('[role=dialog] button', 'Cancel'); if (writes().length) throw new Error("Cancel dispatched edit");
+  await click('[data-comment-id="C_NATIVE"] button', 'Edit'); await dialog();
+  await wait(`document.querySelector('[role=dialog] textarea')?.value==='Edited original issue comment'`, "cancel preserves edit");
+  await post(); await wait(`document.querySelector('[data-comment-id="C_NATIVE"]')?.innerText.includes('Edited original issue comment')`, "edited issue confirmed");
+  checkpoints.push("server-permission-edit-other-author-cancel-text-retained"); await capture("discussion01-issue-edit");
+  await threads();
+  await click('[data-comment-id="R_NATIVE"] button', 'Edit'); await dialog(); await type("Edited original review"); await post(); await threads();
+  await click('[data-comment-id="RC_NATIVE"] button', 'Edit'); await dialog(); await type("Edited original inline comment"); await post(); await threads();
+  checkpoints.push("original-review-and-review-comment-edit-kinds"); await capture("discussion02-thread-kinds");
+  await click('[data-thread-id="T_NATIVE"] button', 'Reply'); await dialog(); await type("Retained reply after cancel");
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" }); window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
+  await wait(`!document.querySelector('[role=dialog]')`, "keyboard close preserves reply"); await click('[data-thread-id="T_NATIVE"] button', 'Reply'); await dialog();
+  await wait(`document.querySelector('[role=dialog] textarea')?.value==='Retained reply after cancel'`, "reply draft retained");
+  const beforeIme = writes().length;
+  await evaluate(`document.querySelector('[role=dialog] textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,isComposing:true,bubbles:true}))`);
+  if (writes().length !== beforeIme) throw new Error("Composing Enter submitted a reply");
+  await post(); await threads();
+  await wait(`document.querySelector('[data-thread-id="T_NATIVE"]')?.innerText.includes('Retained reply after cancel')`, "thread reply visible");
+  checkpoints.push("reply-native-node-cancel-and-composing-enter"); await capture("discussion03-reply");
+  await click('[data-thread-id="T_NATIVE"] button', 'Resolve conversation'); await dialog(); await post(); await threads();
+  await wait(`document.querySelector('[data-thread-id="T_NATIVE"] > header')?.innerText.includes('Resolved')`, "resolved state confirmed");
+  await click('[data-thread-id="T_NATIVE"] button', 'Unresolve conversation'); await dialog(); await post(); await threads();
+  checkpoints.push("resolve-and-unresolve-original-thread"); await capture("discussion04-unresolved");
+  const beforeDelete = writes().length;
+  await click('[data-comment-id="RC_NATIVE"] button', 'Delete comment'); await dialog();
+  await wait(`document.querySelector('[role=dialog]')?.innerText.includes('This comment will be permanently deleted from GitHub')`, "delete confirmation description");
+  await click('[role=dialog] button', 'Cancel'); if (writes().length !== beforeDelete) throw new Error("Cancelled deletion reached GitHub");
+  await click('[data-comment-id="RC_NATIVE"] button', 'Delete comment'); await dialog();
+  writeFileSync(control, JSON.stringify({ hold: true })); rmSync(join(fixture, "release-discussion"), { force: true });
+  await click('[role=dialog] button[type=submit]');
+  await wait(`document.querySelector('[role=dialog] form')?.getAttribute('aria-busy')==='true'`, "pending deletion");
+  if (!await evaluate(`[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent==='Cancel')?.disabled`)) throw new Error("Pending delete allowed cancellation");
+  await capture("discussion05-pending-delete"); writeFileSync(join(fixture, "release-discussion"), "release");
+  await wait(`!document.querySelector('[role=dialog]')`, "saved delete confirmation"); writeFileSync(control, "{}"); await ready(); await threads();
+  if (await evaluate(`!!document.querySelector('[data-comment-id="RC_NATIVE"]')`)) throw new Error("Confirmed deletion kept original visible comment");
+  checkpoints.push("delete-confirm-cancel-pending-disable-and-confirmed-removal");
+  // The actual rendered Pierre gutter owns selection; no component callback is invoked by this driver.
+  await click('button', 'Files changed 1');
+  await wait(`!![...document.querySelectorAll('diffs-container')].find(n=>n.shadowRoot?.querySelector('[data-column-number="1"][data-line-type="change-addition"]')) || !![...document.querySelectorAll('diffs-container')].find(n=>n.shadowRoot?.querySelector('[data-column-number="1"]'))`, "actual Pierre gutter");
+  const point = await evaluate(`(()=>{const root=[...document.querySelectorAll('diffs-container')].find(n=>n.shadowRoot?.querySelector('[data-column-number="1"]')).shadowRoot;const nodes=[...root.querySelectorAll('[data-column-number="1"]')];const node=nodes.find(n=>n.closest('[data-code]')?.getAttribute('data-code')==='additions')??nodes.at(-1);node.scrollIntoView({block:'center'});const r=node.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+  window.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 }); window.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
+  await wait(`!!document.querySelector('.pull-request-inline-action button')`, "real selected inline action");
+  await click('.pull-request-inline-action button'); await dialog(); await type("Actual selected diff comment"); await post();
+  if (writes().at(-1)?.method !== "inline" || writes().at(-1)?.input.path !== "src/native.ts" || writes().at(-1)?.input.side !== "RIGHT" || writes().at(-1)?.input.commit_id !== 'b'.repeat(40)) throw new Error("Inline source identity changed");
+  checkpoints.push("actual-pierre-line-to-original-head-inline-rest-comment"); await capture("discussion06-inline");
+  await click('button', 'Overview'); await threads();
+  // Permission changes occur after a real editable node was displayed; native preflight must reject.
+  await click('[data-thread-id="T_NATIVE"] button', 'Reply'); await dialog(); await type("Permission lost keeps this reply"); writeFileSync(control, JSON.stringify({ deny: true }));
+  const beforeDenied = writes().length; await click('[role=dialog] button[type=submit]');
+  await wait(`document.querySelector('[role=dialog]')?.innerText.includes('The original request and your text are saved')`, "permission refusal preserves request");
+  if (writes().length !== beforeDenied) throw new Error("Denied current permission mutated GitHub");
+  await capture("discussion07-permission-refusal");
+  await click('[role=dialog] button', 'I checked GitHub; start a new attempt'); writeFileSync(control, JSON.stringify({ malformed: true }));
+  await type("Unknown reply survives reload"); await click('[role=dialog] button[type=submit]');
+  await wait(`document.querySelector('[role=dialog]')?.innerText.includes('GitHub may have received')`, "ambiguous response");
+  const sent = writes().length, documentId = await evaluate('pullRequestsAppState().documentId'); window.webContents.reload();
+  await wait(`pullRequestsAppState().documentId!==${JSON.stringify(documentId)}&&!!document.querySelector('.pull-request-heading')`, "discussion actual reload");
+  await threads(); await click('[data-thread-id="T_NATIVE"] button', 'Reply'); await dialog();
+  await wait(`document.querySelector('[role=dialog]')?.innerText.includes('GitHub may have received')`, "saved unknown visible");
+  await click('[role=dialog] button', 'Check submission status');
+  await wait(`document.querySelector('[role=dialog] form')?.getAttribute('aria-busy')==='false'`, "original status settled");
+  if (writes().length !== sent) throw new Error("Reload/status repeated a GitHub mutation");
+  checkpoints.push("permission-loss-then-unknown-reload-status-no-replay"); await capture("discussion08-unknown-reload");
+  writeFileSync(control, "{}");
+  await click('[role=dialog] button', 'Cancel');
+  await click('[data-comment-id="C_NATIVE"] button', 'Edit'); await dialog(); await type("Offline edit remains original");
+  const beforeOffline = writes().length; setConnected(false);
+  await wait(`document.querySelector('[role=dialog] button[type=submit]')?.disabled&&document.querySelector('[role=dialog] textarea')?.value==='Offline edit remains original'`, "offline disables only submission");
+  await capture("discussion09-offline-edit");
+  await click('[role=dialog] button', 'Cancel'); setConnected(true);
+  await wait(`!!document.querySelector('[data-comment-id="C_NATIVE"] button')&&!document.querySelector('[data-comment-id="C_NATIVE"] button.secondary-button')?.disabled`, "original owner reconnected");
+  await click('[data-comment-id="C_NATIVE"] button', 'Edit'); await dialog();
+  await wait(`document.querySelector('[role=dialog] textarea')?.value==='Offline edit remains original'`, "reconnect retains original text");
+  if (writes().length !== beforeOffline) throw new Error("Offline/reconnect posted retained text");
+  await post(); checkpoints.push("offline-reconnect-original-draft-deliberate-submit");
+  await click('[data-comment-id="C_NATIVE"] button', 'Delete comment'); await dialog(); writeFileSync(control, JSON.stringify({ malformed: true }));
+  await click('[role=dialog] button[type=submit]'); await wait(`document.querySelector('[role=dialog]')?.innerText.includes('GitHub may have received')`, "unknown delete retained");
+  const deleted = writes().length, priorDocument = await evaluate('pullRequestsAppState().documentId'); window.webContents.reload();
+  await wait(`pullRequestsAppState().documentId!==${JSON.stringify(priorDocument)}&&!!document.querySelector('.pull-request-saved-discussion')`, "missing original retains saved deletion recovery");
+  await click('.pull-request-saved-discussion button', 'Delete comment'); await dialog();
+  await wait(`![...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent==='Check submission status')?.disabled`, "read-only original status available");
+  await click('[role=dialog] button', 'Check submission status');
+  await wait(`document.querySelector('[role=dialog] form')?.getAttribute('aria-busy')==='false'`, "missing node status settled");
+  if (writes().length !== deleted || await evaluate(`!!document.querySelector('[data-comment-id="C_NATIVE"]')`)) throw new Error("Missing original replayed or rebound deletion");
+  checkpoints.push("unknown-deletion-missing-node-reload-retains-status-only"); await capture("discussion10-missing-original-recovery");
+  writeFileSync(control, "{}");
+}

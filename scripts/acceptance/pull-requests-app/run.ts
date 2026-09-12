@@ -41,6 +41,8 @@ const sourcePaths = [
   "apps/desktop/src/window-state.ts",
   "apps/host/src/pull-requests-http.ts",
   "apps/host/src/pull-requests.ts",
+  "apps/host/src/pull-request-discussion-write.ts",
+  "apps/desktop/src/renderer/ReviewDiff.tsx",
   "apps/host/src/server.ts",
   "packages/shared/src/protocol.ts",
   "packages/shared/src/pull-requests.ts",
@@ -69,6 +71,7 @@ const fixture = await realpath(
   ),
   bin = join(fixture, "bin");
 await mkdir(bin, { recursive: true });
+if (process.argv.includes("--discussions")) await writeFile(join(fixture, "discussion-state.json"), "{}");
 const host = Bun.spawn(
   [process.execPath, join(import.meta.dir, "host.ts"), fixture],
   {
@@ -150,13 +153,14 @@ try {
       output,
       fixture,
       ...(process.argv.includes("--writes") ? ["--writes"] : []),
+      ...(process.argv.includes("--discussions") ? ["--discussions"] : []),
     ],
     {
       stdout: Bun.file(join(output, "electron.log")),
       stderr: Bun.file(join(output, "electron-errors.log")),
     },
   );
-  const timer = setTimeout(() => electron!.kill("SIGTERM"), 90_000),
+  const timer = setTimeout(() => electron!.kill("SIGTERM"), 180_000),
     code = await electron.exited;
   clearTimeout(timer);
   if (code) throw new Error(`Electron flow failed (${code}); see ${output}`);

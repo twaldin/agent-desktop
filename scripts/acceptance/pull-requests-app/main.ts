@@ -1,3 +1,4 @@
+import { runPullRequestDiscussionFlow } from "./discussion-flow";
 import { requestPullRequestWrite } from "../../../apps/desktop/src/main/pull-request-write-transport";
 import { runPullRequestWriteFlow } from "./write-flow";
 import { app, BrowserWindow, Menu, ipcMain } from "electron";
@@ -256,6 +257,7 @@ async function run() {
     );
     checkpoints.push("reopen-retains-selection");
     await capture("02-reopened");
+    if (process.argv.includes("--discussions")) await runPullRequestDiscussionFlow({ window, fixture, evaluate, wait, click, capture, checkpoints, setConnected: connected => emit({ hostId: connection.hostId, sequence: 0, type: "connection", connected }) });
     if (process.argv.includes("--writes")) await runPullRequestWriteFlow({ window, fixture, evaluate, wait, click, capture, checkpoints });
     if (errors.length)
       throw new Error("Renderer errors: " + JSON.stringify(errors));
