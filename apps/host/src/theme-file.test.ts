@@ -158,3 +158,23 @@ test("the real filesystem watcher adopts valid edits without a UI request", asyn
   }
   expect(preferences.store.get("theme.mode")).toMatchObject({ value: "dark" });
 });
+
+test("Appearance variants replicate and reopen through the actual theme file while old v2 stays readable", async () => {
+  const { defaultAppearance } = await import("../../../packages/shared/src/appearance");
+  const { theme, preferences, store, directory } = await fixture();
+  const original = await theme.refresh(); const appearance = defaultAppearance();
+  appearance.dark.accent = "#ff2244"; appearance.light.opaqueWindows = true;
+  const saved = await theme.set({ ...original.document, appearance }, original.revision);
+  expect(preferences.store.get("theme.appearance")).toMatchObject({ deleted: false, value: appearance });
+  expect(JSON.parse(await readFile(theme.filePath, "utf8")).appearance).toEqual(appearance);
+  const reopened = new ThemeFile({ dataDirectory: directory, store, preferences, changed() {} });
+  expect((await reopened.refresh()).document.appearance).toEqual(appearance);
+  const remote = structuredClone(appearance); remote.dark.fonts.ui.family = "serif";
+  preferences.put({ key: "theme.appearance", value: remote });
+  expect((await reopened.refresh()).document.appearance).toEqual(remote);
+  await expect(theme.set(saved.document, saved.revision)).rejects.toBeInstanceOf(ThemeConflictError);
+  await reopened.dispose();
+  const next = await theme.refresh(); await theme.set(DEFAULT_THEME, next.revision);
+  expect((await theme.refresh()).document).toEqual(DEFAULT_THEME);
+  expect(preferences.store.get("theme.appearance")?.deleted).toBe(true);
+});

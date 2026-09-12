@@ -1,3 +1,4 @@
+import { readLocalFontFaces } from "./local-fonts";
 import { registerBrowserCloseHandlers } from "./browser-close-ipc";
 import { registerBrowserObservationHandlers } from "./browser-observation-ipc";
 import { registerDraftBrowserHandlers } from "./draft-browser-ipc";
@@ -622,6 +623,7 @@ ipcMain.handle("desktop:fonts", async event => {
   if (!Array.isArray(families) || families.some(item => typeof item !== "string")) throw new Error("The system font catalog could not be read.");
   return [...new Set(["system-ui", "ui-sans-serif", "ui-serif", "ui-monospace", "sans-serif", "serif", "monospace", ...families as string[]])].sort();
 });
+ipcMain.handle("desktop:font-faces", event => { assertTrustedSender(event); return readLocalFontFaces(); });
 ipcMain.handle("desktop:open-theme", async event => {
   assertTrustedSender(event);
   await request("/v1/theme") as ThemeState;

@@ -2,7 +2,8 @@ import { useEditorScroll } from "./use-editor-scroll";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { File } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/edit";
-import { REVIEW_SHADOW_CSS, REVIEW_THEMES } from "./review-theme";
+import { REVIEW_SHADOW_CSS } from "./review-theme";
+import { useCodeTheme } from "./use-code-theme";
 import { fileLocation } from "./transcript-links";
 import { GoToLine } from "./GoToLine";
 import "./pierre-source-editor.css";
@@ -29,8 +30,9 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
   const frame = useRef<HTMLDivElement>(null), container = useRef<HTMLDivElement>(null), current = useRef(props);
   current.current = props;
   const instance = useRef<{ file: File; editor: Editor<undefined>; sync(): void; label(): void; reveal(): void;
+    setTheme(themes: { light: string; dark: string }, type: "light" | "dark"): void;
     openLine(): boolean; goToLine(line: number, focus: boolean): void; closeLine(cancel: boolean, focus: boolean): void } | null>(null);
-  const themeType = usePierreTheme();
+  const { themeType, themes } = useCodeTheme();
   const [selectionAction, setSelectionAction] = useState<{ owner: string; document: string; start: unknown; end: unknown; rect: DOMRect; selection: FileTextSelection }>();
   useLayoutEffect(() => {
     const element = container.current!;
@@ -91,9 +93,10 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
         if (input.getAttribute("aria-readonly") !== "false") input.setAttribute("aria-readonly", "false");
       }
     };
-    const file = new File({ theme: REVIEW_THEMES, themeType, overflow: "scroll", disableFileHeader: true, unsafeCSS: SOURCE_SHADOW_CSS,
+    const fileOptions = { theme: themes, themeType, overflow: "scroll", disableFileHeader: true, unsafeCSS: SOURCE_SHADOW_CSS,
       onPostRender: () => queueMicrotask(() => { label(); reveal(); positionLine(); }),
-    });
+    } as const;
+    const file = new File(fileOptions);
     const sync = () => {
       if (!alive) return;
       if (current.current.readOnly) {
@@ -119,7 +122,8 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
     const observer = new MutationObserver(label), shadow = element.querySelector("diffs-container")?.shadowRoot;
     if (shadow) observer.observe(shadow, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "contenteditable"] });
     const detach = props.readOnly ? undefined : editor.edit(file);
-    instance.current = { file, editor, sync, label, reveal, openLine, goToLine, closeLine };
+    instance.current = { file, editor, sync, label, reveal, openLine, goToLine, closeLine,
+      setTheme: (theme, type) => { file.setOptions({ ...fileOptions, theme, themeType: type }); file.onThemeChange(); label(); } };
     const save = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault(); event.stopPropagation(); if (!current.current.readOnly) current.current.onSave();
@@ -132,8 +136,8 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
   useEffect(() => {
     const value = instance.current;
     if (!value) return;
-    value.file.setThemeType(themeType); value.file.rerender(); value.label();
-  }, [themeType]);
+    value.setTheme(themes, themeType);
+  }, [themes, themeType]);
   useEffect(() => { if (props.active !== false) { instance.current?.file.rerender(); instance.current?.label(); instance.current?.reveal(); } }, [props.active, props.revealRequest]);
   useEditorScroll(container, props);
   useEffect(() => {
@@ -165,19 +169,4 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
       onCommit={line => instance.current?.goToLine(line, true)} onClose={(cancel, focus) => instance.current?.closeLine(cancel, focus)}/>
     {selectionAction && props.onAddToChat && <EditorSelectionToolbar anchor={selectionAction.rect} selection={selectionAction.selection} onAddToChat={selection => { const current = instance.current?.editor.getText(), state = instance.current?.editor.getState(), picked = state?.selections?.[0]; if (props.active === false || selectionAction.owner !== props.documentKey || selectionAction.document !== current || !current || !picked || JSON.stringify(picked.start) !== JSON.stringify(selectionAction.start) || JSON.stringify(picked.end) !== JSON.stringify(selectionAction.end)) return; const fresh = fileTextSelection(current, rawOffsetAt(current, picked.start), rawOffsetAt(current, picked.end)); if (!fresh || fresh.text !== selection.text || JSON.stringify(fresh.range) !== JSON.stringify(selection.range)) return; props.onAddToChat?.(selection); setSelectionAction(undefined); }}/>}
   </div>;
-}
-
-function usePierreTheme(): "dark" | "light" {
-  const read = () => document.documentElement.dataset.theme === "light" ? "light" as const
-    : document.documentElement.dataset.theme === "dark" ? "dark" as const
-      : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" as const : "light" as const;
-  const [theme, setTheme] = useState(read);
-  useEffect(() => {
-    const change = () => setTheme(read());
-    const observer = new MutationObserver(change);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
-    const media = matchMedia("(prefers-color-scheme: dark)"); media.addEventListener("change", change);
-    return () => { observer.disconnect(); media.removeEventListener("change", change); };
-  }, []);
-  return theme;
 }

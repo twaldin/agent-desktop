@@ -1,0 +1,32 @@
+# Appearance controls and saved themes
+
+Appearance has separate light and dark palettes, the pinned code-theme catalogue, local font families/styles, color and contrast controls, sharing, and immediate saving. Code theme changes update the existing editor and diff renderer without replacing an open document or its undo history. Advanced theme tokens, backgrounds and material controls remain available with explicit preview/save.
+
+## Required flow
+
+1. Open Appearance and recover the saved theme, including legacy v1/v2 profiles. System/light/dark mode and both variants remain independent. A preset chooses the matching code registration and seeds its chrome palette; manual changes survive later reads and reloads.
+2. Provide all 28 pinned families/43 available variants, with searchable code selection and keyboard selection. Local font families/styles use the actual device catalogue. Code fonts require every face in a family to be monospaced. When discovery is unavailable, retain the saved family/fallback and allow a custom CSS family. A face is stored as family/fullName/postscriptName and loaded from local fonts, never a supplied URL.
+3. Accent/background/foreground accept six-digit hex text with incomplete text retained only until blur. The saturation/hue popover supports pointer and keyboard input. Contrast ranges from 0 to 100. Translucency is saved per variant; unavailable capability disables the request without rewriting it.
+4. Copy and import use the pinned `codex-theme-v1:` envelope, including the variant, code-theme ID, palette, semantic colors and font face descriptors. Wrong variants, unsupported fields and malformed values fail visibly without saving. Reset only the selected variant.
+5. UI font size (11–16), code font size (8–24), smoothing, pointer cursors and reduced motion (system/on/off) persist. Existing `general.reduceMotion` is preserved when first creating Appearance settings. Open editors and worker-backed diffs change theme in place.
+6. Normal changes save immediately through the existing ThemeEditor → desktop theme bridge → ThemeFile/preferences path. Concurrent changes retain the newest preview and save against the accepted revision. Failure keeps the preview and offers deliberate retry; conflicting saved state requires an explicit choice. A remote update must not overwrite local edits.
+7. Advanced previews retain explicit-save semantics, including when edited during an automatic save. They cannot be silently committed by an unrelated Appearance control. Advanced global colors/font tokens continue to take precedence, including alpha/non-sRGB values. Clearing their precedence is an explicit action affecting both variants; unrelated tokens remain intact. The advanced JSON editor keeps unapplied text separately.
+
+## Pinned sources
+
+Reference is Codex 26.901.41600 build 7982. Only inert source inspection was used; the reference application was not launched or controlled. Original asset names below are under `full-package-v3/tree/webview/assets` in the private reference inventory.
+
+- `general-settings-611c673c036d.js`: Appearance layout and variant controls, code preset selection, `Si` hex editing/color popover, `Wi` family/style controls and `Gi` all-faces-monospaced filter, sharing and preferences.
+- `app-initial-86767c3d23e5.js`: `tY` active defaults, 28-family/43-variant catalogue, `Cva` palette seed, `C_a/D_a/O_a/A_a/M_a` chrome arithmetic, share envelope, font-face application. The earlier `h_a` defaults are not substituted for active `tY`.
+- `theme-font-family-550a581dca1f.js` and `theme-font-face-loader-1d47d562eb8e.js`: CSS-family escaping, exact selected local face alias and FontFace load/cache. Agent Desktop uses its own alias prefix.
+- `appearance-presets.json` is full literal registration data for the exact catalogue, statically parsed from the matching assets. No source module was evaluated. Private `preset-source-index.json` records each of the 43 complete asset hashes and lengths; extraction preserves token rules, settings, editor colors and custom chrome fields. Runtime names are changed to Agent Desktop registration names. Existing legacy Codex registrations remain available.
+
+The chrome projection targets Agent Desktop's existing token names. Advanced custom tokens are an intentional application feature. ChatGPT account accent mutation requires excluded OpenAI application authentication; local custom accents work without it, and imported account-linked colors become explicit local colors. This does not claim account theme replication. Local fonts are device capabilities; unavailable fonts use their saved fallback and show a notice. No font bytes are transferred.
+
+## Validation and limits
+
+The maintained acceptance runner `bun scripts/acceptance/appearance.ts <empty-output-directory>` builds the actual ThemeSettings, ThemeEditor, PierreSourceEditor and worker-backed ReviewDiff components in an isolated Electron profile. It uses a temporary real ThemeFile/SQLite/preferences owner through an explicit loopback fixture transport, actual macOS font enumeration/FontFace, native input, clipboard, system scheme changes, and saved-state reload. Write failure and capability availability are controlled boundaries. Editor text/undo and actual rendered diff colors are checked across preset changes. Eleven checkpoints pass in the final native009 recording with stable before/after source maps. Editing selection uses Electron’s `webContents.selectAll()` after real pointer focus; an earlier synthetic Cmd+A did not select the hidden fixture field. This is editing-command coverage, not proof of the physical application menu shortcut. Its source maps and intermediate failures remain private evidence.
+
+`sidebar-capability.ts` is migrated to the per-variant immediate-save flow; its previous immutable evidence is not rewritten. Controlled unit tests cover all registrations/share validation, held automatic saves, advanced-save isolation, conflicts, retry, actual host file/SQLite persistence and preference replication.
+
+These checks do not establish mounted full-App IPC, physical window vibrancy, cross-device installed font rendering, or whole-window pixel parity. Those remain required integrated acceptance work. The new font IPC is source/typechecked; native font enumeration is exercised separately. Preset source equality is not a screenshot equality claim. The full product goal remains open.

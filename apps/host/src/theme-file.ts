@@ -8,7 +8,7 @@ import type { PreferencesSync } from "./preferences-sync";
 import type { HostStore } from "./store";
 
 const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
-const THEME_FIELDS = ["mode", "material", "opaqueWindows", "tokens", "background"] as const;
+const THEME_FIELDS = ["mode", "material", "opaqueWindows", "tokens", "background", "appearance"] as const;
 const serialize = (document: ThemeDocument) => JSON.stringify(document, null, 2) + "\n";
 export class ThemeConflictError extends Error { constructor() { super("The theme changed elsewhere. Reload it before saving; your edits have been retained."); } }
 
@@ -65,7 +65,7 @@ export class ThemeFile {
     const current = this.#document();
     const changes = THEME_FIELDS.filter(field => JSON.stringify(document[field]) !== JSON.stringify(current[field])
       || field === "opaqueWindows" && !this.options.preferences.store.get("theme.opaqueWindows"))
-      .map(field => ({ key: `theme.${field}`, value: document[field] }) as PreferenceChange);
+      .map(field => (document[field] === undefined ? { key: `theme.${field}`, deleted: true } : { key: `theme.${field}`, value: document[field] }) as PreferenceChange);
     if (changes.length) this.options.preferences.putMany(changes);
   }
   async #writeManaged(document: ThemeDocument): Promise<void> {

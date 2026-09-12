@@ -57,3 +57,53 @@ describe("theme preview and saved-file revisions", () => {
     expect(() => themePresentation({ ...DEFAULT_THEME, tokens: { "--ui-font": "url(/private/font)" } })).toThrow();
   });
 });
+
+describe("immediate Appearance saves", () => {
+  test("automatic controls cannot implicitly save an advanced preview, including edits during an in-flight save", async () => {
+    const f = fixture(); await f.data.refresh();
+    f.data.edit({ ...f.data.draft, tokens: { "--app-surface": "rgba(12, 34, 56, .5)", "--radius": "20px" } });
+    expect(await f.data.commit({ ...f.data.draft, mode: "dark" })).toBe(false);
+    expect(f.saves).toHaveLength(0); expect(f.data.draft.mode).toBe("system");
+    await f.data.save(); expect(f.data.manualDirty).toBe(false);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; }), original = f.storage.setTheme;
+    f.storage.setTheme = async (document, revision) => { await gate; return original(document, revision); };
+    const automatic = f.data.commit({ ...f.data.draft, mode: "dark" });
+    f.data.edit({ ...f.data.draft, tokens: { ...f.data.draft.tokens, "--radius": "24px" } });
+    release(); expect(await automatic).toBe(false); expect(f.data.manualDirty).toBe(true);
+    expect(f.current().document.tokens["--radius"]).toBe("20px"); expect(f.data.draft.tokens["--radius"]).toBe("24px");
+    await f.data.save(); expect(f.current().document.tokens["--radius"]).toBe("24px");
+    expect(f.current().document.tokens["--app-surface"]).toBe("rgba(12, 34, 56, .5)");
+  });
+
+  test("held saves coalesce newer edits against the accepted revision without losing either variant", async () => {
+    const f = fixture(); await f.data.refresh();
+    const original = f.storage.setTheme;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let calls = 0;
+    f.storage.setTheme = async (document, revision) => { if (++calls === 1) await gate; return original(document, revision); };
+    const appearance = (await import("../../../../packages/shared/src/appearance")).defaultAppearance();
+    const first = f.data.commit({ ...f.data.draft, appearance });
+    const next = structuredClone(appearance); next.dark.accent = "#ff5533";
+    const second = f.data.commit({ ...f.data.draft, appearance: next });
+    expect(f.data.preview.appearance?.dark.accent).toBe("#ff5533"); expect(calls).toBe(1);
+    release(); expect(await first).toBe(true); expect(await second).toBe(true);
+    expect(f.saves.map(save => save.revision)).toEqual(["one", "one+"]);
+    expect(f.current().document.appearance).toEqual(next); expect(f.data.dirty).toBe(false);
+    const reopened = new ThemeEditor(f.storage); await reopened.refresh(); expect(reopened.preview.appearance).toEqual(next);
+  });
+  test("failed immediate writes retain edits and require deliberate retry", async () => {
+    const f = fixture(); await f.data.refresh(); const original = f.storage.setTheme;
+    let attempts = 0; f.storage.setTheme = async () => { attempts++; throw new Error("Disk unavailable"); };
+    expect(await f.data.commit({ ...f.data.draft, mode: "dark" })).toBe(false);
+    expect(attempts).toBe(1); expect(f.data.error).toContain("Disk unavailable"); expect(f.data.dirty).toBe(true); expect(f.current().document.mode).toBe("system");
+    f.storage.setTheme = original; expect(await f.data.commit(f.data.draft)).toBe(true); expect(f.current().document.mode).toBe("dark");
+  });
+  test("remote conflict stops immediate writes until the user chooses the saved version or local edits", async () => {
+    const f = fixture(); await f.data.refresh(); f.setCurrent(state("remote", { "--radius": "8px" }));
+    expect(await f.data.commit({ ...f.data.draft, mode: "light" })).toBe(false);
+    expect(f.data.conflict?.revision).toBe("remote"); expect(f.current().document.mode).toBe("system");
+    f.data.resolve("local"); expect(await f.data.commit(f.data.draft)).toBe(true);
+    expect(f.current().document.mode).toBe("light"); expect(f.saves.at(-1)?.revision).toBe("remote");
+  });
+});

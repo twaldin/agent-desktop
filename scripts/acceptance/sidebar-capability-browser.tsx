@@ -52,9 +52,9 @@ createRoot(document.getElementById("root")!).render(<Fixture/>);
 const visible = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)].filter(node => node.getClientRects().length);
 Object.assign(window, {
   capability(value: boolean) { setCapability(value); },
-  target(selector: string, label?: string, index = 0) { const node = visible(selector).filter(item => label === undefined || item.textContent?.trim() === label || item.getAttribute("aria-label") === label)[index]; if (!node) throw new Error(`Missing ${selector} ${label ?? ""}`); const box = node.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; },
+  target(selector: string, label?: string, index = 0) { const node = visible(selector).filter(item => label === undefined || item.textContent?.trim() === label || item.getAttribute("aria-label") === label)[index]; if (!node) throw new Error(`Missing ${selector} ${label ?? ""}`); node.scrollIntoView({ block: "center" }); const box = node.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; },
   state() {
-    const switchControl = document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Translucent sidebar"]'), material = [...document.querySelectorAll<HTMLSelectElement>("select")].find(node => node.parentElement?.textContent?.includes("macOS window material")), save = [...document.querySelectorAll<HTMLButtonElement>("button")].find(node => node.textContent === "Save theme");
+    const switchControl = document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Dark translucent sidebar"]'), material = [...document.querySelectorAll<HTMLSelectElement>("select")].find(node => node.parentElement?.textContent?.includes("macOS window material")), save = [...document.querySelectorAll<HTMLButtonElement>("button")].find(node => node.textContent === "Save theme");
     return {
       supported: !switchControl?.disabled,
       switch: switchControl && { checked: switchControl.ariaChecked, disabled: switchControl.disabled, rect: switchControl.getBoundingClientRect().toJSON() },

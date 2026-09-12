@@ -1,4 +1,5 @@
 import { isSessionReadKey, parseSessionReadMark, type SessionReadMark } from "./session-read";
+import { parseAppearance, type Appearance } from "./appearance";
 import { TREE_ICON_THEME_TOKENS } from "./tree-icon-theme";
 export const PREFERENCES_VERSION = 1 as const;
 export const PREFERENCE_LIMITS = { records: 10_000, snapshotBytes: 8 * 1024 * 1024, valueBytes: 64 * 1024 } as const;
@@ -137,6 +138,7 @@ export interface PreferenceValues {
   [key: `session.read.${string}.${string}`]: SessionReadMark;
   "connections.keepAwakeWhilePluggedIn": boolean;
   "git.branchPrefix": string;
+  "theme.appearance": Appearance;
   "theme.material": "none" | "sidebar" | "under-window" | "hud";
   "theme.opaqueWindows": boolean;
   "theme.mode": "system" | "light" | "dark";
@@ -252,7 +254,7 @@ function background(value: unknown): ThemeBackground {
 
 export function parsePreferenceKey(value: unknown): PreferenceKey {
   if (typeof value !== "string") return invalid("A preference key is required.");
-  if (["sidebar.organization", "connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
+  if (["sidebar.organization", "connections.keepAwakeWhilePluggedIn", "git.branchPrefix", "theme.mode", "theme.appearance", "theme.material", "theme.opaqueWindows", "theme.tokens", "theme.background", "general.notifications", "general.reduceMotion", "general.sendBehavior", "general.followUpQueueMode", "general.bottomPanel", "general.defaultTerminalLocation"].includes(value)) return value as PreferenceKey;
   if (isSessionReadKey(value)) return value;
   const match = /^sidebar\.(?:section|project|session)\.(.+)$/.exec(value);
   if (!match || !isPreferenceId(match[1])) return invalid("Only allowlisted app preferences and UUID sidebar entities can be shared.");
@@ -276,6 +278,7 @@ function preferenceValue(key: PreferenceKey, value: unknown): PreferenceValues[P
     return text;
   }
   if (key === "connections.keepAwakeWhilePluggedIn") return bool(value);
+  if (key === "theme.appearance") return parseAppearance(value);
   if (key === "theme.mode") return enumeration(value, ["system", "light", "dark"] as const);
   if (key === "theme.material") return enumeration(value, ["none", "sidebar", "under-window", "hud"] as const);
   if (key === "theme.opaqueWindows") return bool(value);

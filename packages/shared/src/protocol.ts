@@ -380,6 +380,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getTheme(): Promise<ThemeState>;
   setTheme(document: ThemeDocument, expectedRevision: string): Promise<ThemeState>;
   getLocalFonts(): Promise<string[]>;
+  getLocalFontFaces?(): Promise<import("./appearance").LocalFontFace[]>;
   openThemeFile(): Promise<void>;
   /** Local desktop backing support, independent of temporary focus/size fallback. */
   readonly windowBackdropSupported?: boolean;

@@ -106,6 +106,7 @@ const bridge: DesktopBridge = {
   getTheme: () => ipcRenderer.invoke("host:theme"),
   setTheme: (document, expectedRevision) => ipcRenderer.invoke("host:theme-set", document, expectedRevision),
   getLocalFonts: () => ipcRenderer.invoke("desktop:fonts"),
+  getLocalFontFaces: () => ipcRenderer.invoke("desktop:font-faces"),
   openThemeFile: () => ipcRenderer.invoke("desktop:open-theme"),
   applyWindowTheme: effects => ipcRenderer.invoke("desktop:window-theme", effects),
   subscribeWindowTheme: listener => {

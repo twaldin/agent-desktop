@@ -11,6 +11,8 @@ export class ThemeEditor {
   baseRevision?: string;
   conflict?: ThemeState;
   dirty = false;
+  /** Advanced preview edits require an explicit save, including during an automatic write. */
+  manualDirty = false;
   loading = false;
   saving = false;
   error?: string;
@@ -20,6 +22,8 @@ export class ThemeEditor {
   advanced?: { text: string; dirty: boolean; error?: string };
   private epoch = 0;
   private pending?: Promise<void>;
+  private savingPromise?: Promise<void>;
+  private committing?: Promise<boolean>;
   private again = false;
   private listeners = new Set<() => void>();
   constructor(private storage: ThemeStorage, private cache?: DraftCache) {
@@ -33,21 +37,23 @@ export class ThemeEditor {
     const valid = { ...state, document: themePresentation(state.document).document };
     this.current = valid;
     if (this.dirty && this.baseRevision !== state.revision) this.conflict = valid;
-    else if (!this.dirty) { this.draft = structuredClone(valid.document); this.preview = structuredClone(valid.document); this.baseRevision = valid.revision; this.conflict = undefined; this.validationError = undefined; }
+    else if (!this.dirty) { this.manualDirty = false; this.draft = structuredClone(valid.document); this.preview = structuredClone(valid.document); this.baseRevision = valid.revision; this.conflict = undefined; this.validationError = undefined; }
     this.cacheCurrent(); this.changed();
   }
-  edit(document: ThemeDocument) {
-    this.draft = document; this.dirty = JSON.stringify(document) !== JSON.stringify(this.current?.document ?? DEFAULT_THEME); this.error = undefined;
+  edit(document: ThemeDocument, manual = true) {
+    this.error = undefined;
+    try { this.draft = themePresentation(document).document; this.preview = this.draft; this.validationError = undefined; }
+    catch (cause) { this.draft = document; this.validationError = message(cause); }
+    this.dirty = JSON.stringify(this.draft) !== JSON.stringify(this.current?.document ?? DEFAULT_THEME);
+    this.manualDirty = this.dirty && (manual || this.manualDirty);
     if (!this.dirty && this.current) { this.baseRevision = this.current.revision; this.conflict = undefined; }
-    try { this.preview = themePresentation(document).document; this.validationError = undefined; }
-    catch (cause) { this.validationError = message(cause); }
     this.changed();
   }
   resolve(choice: "local" | "remote") {
     if (!this.current) return;
     this.baseRevision = this.current.revision; this.conflict = undefined;
     if (choice === "remote") { this.dirty = false; this.ingest(this.current); }
-    else this.edit(this.draft);
+    else this.edit(this.draft, this.manualDirty);
     this.changed();
   }
   reset() { this.edit(structuredClone(DEFAULT_THEME)); }
@@ -61,7 +67,26 @@ export class ThemeEditor {
     });
     return this.pending;
   }
-  async save() {
+  /** Normal Appearance controls save immediately; consecutive edits keep their latest snapshot. */
+  commit(document: ThemeDocument): Promise<boolean> {
+    if (this.manualDirty) return Promise.resolve(false);
+    this.edit(document, false);
+    if (this.committing) return this.committing;
+    this.committing = (async () => {
+      do {
+        await this.save();
+        if (this.error || this.conflict || this.validationError || this.manualDirty || !this.baseRevision) return false;
+      } while (this.dirty);
+      return true;
+    })().finally(() => { this.committing = undefined; });
+    return this.committing;
+  }
+  save(): Promise<void> {
+    if (this.savingPromise) return this.savingPromise;
+    this.savingPromise = this.saveCurrent().finally(() => { this.savingPromise = undefined; });
+    return this.savingPromise;
+  }
+  private async saveCurrent() {
     if (this.saving || !this.baseRevision || this.conflict || this.validationError || !this.dirty) return;
     const snapshot = parseThemeDocument(this.draft); const revision = this.baseRevision;
     this.saving = true; this.error = undefined; this.epoch++; this.changed();
@@ -70,7 +95,7 @@ export class ThemeEditor {
       this.epoch++;
       const newer = JSON.stringify(this.draft) !== JSON.stringify(snapshot);
       this.current = { ...result, document: parseThemeDocument(result.document) }; this.baseRevision = result.revision; this.conflict = undefined;
-      if (!newer) { this.draft = structuredClone(result.document); this.preview = structuredClone(result.document); this.dirty = false; this.validationError = undefined; }
+      if (!newer) { this.draft = structuredClone(result.document); this.preview = structuredClone(result.document); this.dirty = false; this.manualDirty = false; this.validationError = undefined; }
       else this.dirty = JSON.stringify(this.draft) !== JSON.stringify(result.document);
       this.cacheCurrent();
     } catch (cause) { this.error = message(cause); await this.refresh(); this.error = message(cause); }

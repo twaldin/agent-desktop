@@ -1,8 +1,10 @@
+import { themeFontFamily } from "./theme-fonts";
+import { appearanceColors } from "./appearance-colors";
 import { THEME_TOKEN_DEFINITIONS } from "../../../../packages/shared/src/preferences";
 import { parseThemeDocument, type ThemeDocument } from "../../../../packages/shared/src/theme";
 
 /** The shared parser excludes URLs, paths and arbitrary CSS from token values. */
-export function themePresentation(input: ThemeDocument) {
+export function themePresentation(input: ThemeDocument, variant?: "light" | "dark") {
   const document = parseThemeDocument(input);
   if (typeof CSS !== "undefined") {
     for (const [name, value] of Object.entries(document.tokens)) {
@@ -12,15 +14,34 @@ export function themePresentation(input: ThemeDocument) {
     const colors = document.background.kind === "color" ? [document.background.color] : document.background.kind === "gradient" ? document.background.stops.map(stop => stop.color) : [];
     if (colors.some(color => !CSS.supports("color", color))) throw new Error("This device cannot render one of the background colors.");
   }
-  const styles: Record<string, string> = { ...document.tokens };
+  const active = variant ?? (document.mode === "system" ? (typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : document.mode);
+  const appearance = document.appearance?.[active];
+  const styles: Record<string, string> = appearance ? appearanceColors(appearance, active) : {};
+  if (appearance) {
+    for (const role of ["ui", "content", "code"] as const) {
+      const face = appearance.fonts[role];
+      const family = themeFontFamily(face);
+      if (family) styles[`--${role}-font`] = family;
+    }
+  }
+  Object.assign(styles, document.tokens);
   if (document.background.kind === "color") styles["--theme-background-color"] = document.background.color;
   else if (document.background.kind === "gradient") styles["--theme-background-image"] = `linear-gradient(${document.background.angle}deg, ${document.background.stops.map(stop => `${stop.color} ${stop.position * 100}%`).join(", ")})`;
-  return { document, styles };
+  return { document, styles, variant: active };
 }
 export function applyTheme(input: ThemeDocument, root: HTMLElement = document.documentElement) {
-  const { document: theme, styles } = themePresentation(input);
-  for (const name of [...Object.keys(THEME_TOKEN_DEFINITIONS), "--theme-background-color", "--theme-background-image"]) root.style.removeProperty(name);
+  const { document: theme, styles, variant } = themePresentation(input);
+  for (const name of [...Object.keys(THEME_TOKEN_DEFINITIONS), "--theme-background-color", "--theme-background-image", "--content-font", "--content-font-weight", "--content-font-style", "--ui-font-style", "--code-font-style"]) root.style.removeProperty(name);
   for (const [name, value] of Object.entries(styles)) root.style.setProperty(name, value);
   root.dataset.theme = theme.mode; root.dataset.material = theme.material;
-  root.dataset.opaqueWindowSurface = String(theme.opaqueWindows);
+  const opaqueWindows = theme.appearance?.[variant].opaqueWindows ?? theme.opaqueWindows;
+  root.dataset.opaqueWindowSurface = String(opaqueWindows);
+  root.dataset.fontSmoothing = String(theme.appearance?.fontSmoothing ?? true);
+  root.dataset.pointerCursors = String(theme.appearance?.pointerCursors ?? false);
+  root.dataset.codeTheme = theme.appearance?.[variant].codeThemeId ?? "codex";
+  root.dataset.resolvedTheme = variant;
+  root.dataset.codeThemeLight = theme.appearance?.light.codeThemeId ?? "";
+  root.dataset.codeThemeDark = theme.appearance?.dark.codeThemeId ?? "";
+  return { ...theme, opaqueWindows };
+
 }
