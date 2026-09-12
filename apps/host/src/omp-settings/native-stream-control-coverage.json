@@ -1,0 +1,1091 @@
+{
+  "base": "f23e7dd4a06fe82047459e51728cf7c8adec775c",
+  "ompVersion": "18.1.10",
+  "sourceCommit": "f241301c83726afe75a847e919b89977a54dafbe",
+  "fields": [
+    {
+      "interface": "StreamOptions",
+      "field": "temperature",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
+      "status": "bounded-source-awaiting-integration-and-proof",
+      "settingsPaths": [],
+      "note": "Native SDK snapshots settings.temperature >=0 into Agent; AgentLoop passes temperature (Harmony retries add 0.05). Model-bound override precedes SDK streamFn; direct Google builder writes generationConfig.temperature. Other APIs/models remain required.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/sdk.ts",
+          "lines": "3548-3587",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/sdk.ts#L3548-L3587"
+        },
+        {
+          "file": "packages/agent/src/agent.ts",
+          "lines": "634-654",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/agent/src/agent.ts#L634-L654"
+        },
+        {
+          "file": "packages/agent/src/agent-loop.ts",
+          "lines": "1700-1765",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/agent/src/agent-loop.ts#L1700-L1765"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1977-2018",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1977-L2018"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "804-825",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L804-L825"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "topP",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
+      "status": "bounded-source-awaiting-integration-and-proof",
+      "settingsPaths": [],
+      "note": "SDK startup setting -> Agent.topP -> AgentLoop config -> mapOptionsForApi base -> direct Google generationConfig.topP. Other APIs/models remain required.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/sdk.ts",
+          "lines": "3557-3563",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/sdk.ts#L3557-L3563"
+        },
+        {
+          "file": "packages/agent/src/agent.ts",
+          "lines": "648-654",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/agent/src/agent.ts#L648-L654"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1984-1991",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1984-L1991"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "813-819",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L813-L819"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "topK",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L401",
+      "status": "required",
+      "settingsPaths": [],
+      "note": "SDK startup setting and public Agent setter; mapper base forwards; Google writes topK; Anthropic and OpenAI sampling compatibility may suppress. No new control in bounded subset.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/sdk.ts",
+          "lines": "3559-3559",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/sdk.ts#L3559-L3559"
+        },
+        {
+          "file": "packages/agent/src/agent.ts",
+          "lines": "656-663",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/agent/src/agent.ts#L656-L663"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1987-1987",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1987-L1987"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "816-816",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L816-L816"
+        },
+        {
+          "file": "packages/ai/src/providers/anthropic.ts",
+          "lines": "4084-4094",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/anthropic.ts#L4084-L4094"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "minP",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L402",
+      "status": "required",
+      "settingsPaths": [],
+      "note": "SDK startup setting and Agent property; mapper forwards; Google writes minP, OpenAI only with supportsSamplingParams; transport recognition is not universal API acceptance.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/sdk.ts",
+          "lines": "3560-3560",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/sdk.ts#L3560-L3560"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1988-1988",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1988-L1988"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "817-817",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L817-L817"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-completions.ts",
+          "lines": "1675-1699",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-completions.ts#L1675-L1699"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "presencePenalty",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L403",
+      "status": "required",
+      "settingsPaths": [],
+      "note": "SDK maps only nonnegative configured values; Agent property; Google forwards; OpenAI gated by sampling and penalty compatibility. Negative native sentinel differs from provider penalty ranges.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/sdk.ts",
+          "lines": "3561-3561",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/sdk.ts#L3561-L3561"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1989-1989",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1989-L1989"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "818-818",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L818-L818"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-completions.ts",
+          "lines": "1688-1699",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-completions.ts#L1688-L1699"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "repetitionPenalty",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L404",
+      "status": "required",
+      "settingsPaths": [],
+      "note": "SDK startup setting -> Agent property -> mapper base. Google forwards, OpenAI compatibility gates. Native default -1 is omitted.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/sdk.ts",
+          "lines": "3562-3562",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/sdk.ts#L3562-L3562"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1990-1990",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1990-L1990"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "819-819",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L819-L819"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-shared.ts",
+          "lines": "3588-3596",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-shared.ts#L3588-L3596"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "stopSequences",
+      "type": "string[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L411",
+      "status": "required-native-simple-mapping-gap",
+      "settingsPaths": [],
+      "note": "Declared in StreamOptions and consumed by direct Anthropic/OpenAI-completions builders (max4) and Devin; missing in mapOptionsForApi base and the selected Google builder. OpenAI Responses deliberately drops. Cannot claim session support from declaration/direct-builder support.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1977-2432",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1977-L2432"
+        },
+        {
+          "file": "packages/ai/src/providers/anthropic.ts",
+          "lines": "4095-4106",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/anthropic.ts#L4095-L4106"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-completions.ts",
+          "lines": "1700-1703",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-completions.ts#L1700-L1703"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "1215-1218",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L1215-L1218"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "frequencyPenalty",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L416",
+      "status": "required-native-simple-mapping-gap",
+      "settingsPaths": [],
+      "note": "Direct OpenAI-completions supports penalty compatibility; SimpleStreamOptions mapper base does not forward this field. OpenAI Responses deliberately drops it. No Agent setter/native core setting found.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1977-2018",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1977-L2018"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-completions.ts",
+          "lines": "1688-1699",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-completions.ts#L1688-L1699"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "1217-1218",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L1217-L1218"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "maxTokens",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
+      "status": "bounded-source-awaiting-integration-and-proof",
+      "settingsPaths": [],
+      "note": "No native sampling setting/Agent public maxTokens setter found. Model maxTokens supplies mapper fallback; model-bound wrapper supplies explicit SimpleStreamOptions.maxTokens before native mapper. Direct Google APIs do not inflate this limit for thinking; CCA does and is outside subset.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1991-1991",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1991-L1991"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2236-2384",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2236-L2384"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "814-814",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L814-L814"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "anthropicCacheRefresh",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L428",
+      "status": "native-owned-primary-loop",
+      "settingsPaths": [],
+      "note": "SDK unconditionally enables primary-loop ownership. streamSimple cache-refresh wrapper manages warm requests with shared providerSessionState. Not safe as independent generic checkbox: advisors/side requests must not claim primary ownership. Applicability proof remains source-only.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/sdk.ts",
+          "lines": "3584-3587",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/sdk.ts#L3584-L3587"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1363-1439",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1363-L1439"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "anthropicPrefixMismatchBehavior",
+      "type": "\"drop_block\" | \"error\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L433",
+      "status": "required-provider-scoped",
+      "settingsPaths": [],
+      "note": "Mapper forwards; Anthropic only binding-capable models with supportsThinkingBindingControls; defaults drop_block, error avoids automatic retry. Bedrock binding replay consumes separately. No independent session control implemented.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2016-2016",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2016-L2016"
+        },
+        {
+          "file": "packages/ai/src/providers/anthropic.ts",
+          "lines": "2049-2051",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/anthropic.ts#L2049-L2051"
+        },
+        {
+          "file": "packages/ai/src/providers/anthropic.ts",
+          "lines": "2958-2962",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/anthropic.ts#L2958-L2962"
+        },
+        {
+          "file": "packages/ai/src/providers/amazon-bedrock.ts",
+          "lines": "413-415",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/amazon-bedrock.ts#L413-L415"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "providerOptions",
+      "type": "Readonly<Record<string, unknown>>",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L463",
+      "status": "required-provider-descriptors",
+      "settingsPaths": [],
+      "note": "Provider-owned dictionary interpreted by registered mapSimpleOptions; generic transports do not forward bag. Bedrock Mantle has typed region/profile/bearerToken fields with account ownership. Arbitrary JSON form explicitly prohibited; descriptor-driven provider-specific mapping remains required.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1983-2017",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1983-L2017"
+        },
+        {
+          "file": "packages/ai/src/providers/bedrock-mantle.ts",
+          "lines": "35-98",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/bedrock-mantle.ts#L35-L98"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "include",
+      "type": "OpenAIResponseInclude[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L465",
+      "status": "required-native-simple-mapping-gap",
+      "settingsPaths": [],
+      "note": "Direct Responses/Codex builder includes listed response fields. Not forwarded by ordinary mapOptionsForApi Responses/Codex mappings; do not confuse source declaration with session consumption.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2194-2234",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2194-L2234"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "1198-1198",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L1198-L1198"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-codex-responses.ts",
+          "lines": "1586-1589",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-codex-responses.ts#L1586-L1589"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "promptCacheKey",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L489",
+      "status": "required-session-identity-scoped",
+      "settingsPaths": [],
+      "note": "Agent/session owns identity, fork inheritance and side-request affinity. Mapper forwards; OpenAI normalizes promptCacheKey ?? sessionId unless cache disabled. Editing requires preserving cache ownership, not generic global preference.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/session/agent-session.ts",
+          "lines": "4249-4261",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/agent-session.ts#L4249-L4261"
+        },
+        {
+          "file": "packages/coding-agent/src/session/session-advisors.ts",
+          "lines": "902-910",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/session-advisors.ts#L902-L910"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2001-2001",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2001-L2001"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-shared.ts",
+          "lines": "469-472",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-shared.ts#L469-L472"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "promptCache",
+      "type": "OpenAIPromptCacheOptions",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L495",
+      "status": "required-provider-scoped",
+      "settingsPaths": [],
+      "note": "Mapper forwards OpenAI completions/Responses/Azure but not Codex. Explicit mode locally rejected on incompatible endpoints unless pi-native/cache disabled; breakpoint/ttl policy owned by compatible Responses builder.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1959-1974",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1959-L1974"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2166-2218",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2166-L2218"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "1099-1120",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L1099-L1120"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "statefulResponses",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L501",
+      "status": "required-provider-scoped",
+      "settingsPaths": [],
+      "note": "Mapper forwards Responses/Azure plus routed Responses branch. Official OpenAI defaults on; false disables; requires routing session and provider state. Not a cross-provider preference.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2194-2218",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2194-L2218"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "266-278",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L266-L278"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "467-472",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L467-L472"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "codexCompaction",
+      "type": "CodexCompactionRequestContext",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L514",
+      "status": "native-owned-compaction-context",
+      "settingsPaths": [],
+      "note": "Native maintenance/advisor constructs trigger/reason/phase on actual compaction; mapper forwards only Codex. Provider isolates compaction transport and marks request kind. Not editable user sampling data; compaction UI coverage remains separate required work.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/session/session-maintenance.ts",
+          "lines": "1025-1052",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/session-maintenance.ts#L1025-L1052"
+        },
+        {
+          "file": "packages/coding-agent/src/session/session-advisors.ts",
+          "lines": "1664-1708",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/session-advisors.ts#L1664-L1708"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2223-2234",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2223-L2234"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-codex-responses.ts",
+          "lines": "1457-1487",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-codex-responses.ts#L1457-L1487"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "StreamOptions",
+      "field": "codexSseMaxAttempts",
+      "type": "number",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L579",
+      "status": "required-transport-scoped",
+      "settingsPaths": [],
+      "note": "Mapper base forwards; Codex SSE uses bounded attempts independently of websocket/outer retries. Native advisor deliberately sets its own cap, which a main-session control must not override.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/session/session-advisors.ts",
+          "lines": "950-952",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/session-advisors.ts#L950-L952"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2004-2004",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2004-L2004"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-codex-responses.ts",
+          "lines": "1943-1947",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-codex-responses.ts#L1943-L1947"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "hideThinkingSummary",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L633",
+      "status": "required-existing-setting-mapping",
+      "settingsPaths": [],
+      "note": "Native settings-aware wrapper reads omitThinking per request only when caller value absent. Mapper maps Anthropic display, Responses summary, Google hideThinkingSummary; does not disable internal reasoning. Existing settings mapping needs independent functioning coverage.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/session/settings-stream-fn.ts",
+          "lines": "86-89",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/settings-stream-fn.ts#L86-L89"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2033-2036",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2033-L2036"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2194-2234",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2194-L2234"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "858-872",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L858-L872"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "guardrailIdentifier",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L656",
+      "status": "required-model-precedence",
+      "settingsPaths": [],
+      "note": "Bedrock mapper and pi-native transport prefer model field to request option; provider builds guardrail only when identifier truthy, version defaults DRAFT. No generic account mutation.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1616-1619",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1616-L1619"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2124-2127",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2124-L2127"
+        },
+        {
+          "file": "packages/ai/src/providers/amazon-bedrock.ts",
+          "lines": "1157-1163",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/amazon-bedrock.ts#L1157-L1163"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "guardrailVersion",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L657",
+      "status": "required-model-precedence",
+      "settingsPaths": [],
+      "note": "Model-level guardrailVersion wins request option; no guardrail config without identifier; native fallback DRAFT.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1616-1619",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1616-L1619"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2124-2127",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2124-L2127"
+        },
+        {
+          "file": "packages/ai/src/providers/amazon-bedrock.ts",
+          "lines": "1157-1163",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/amazon-bedrock.ts#L1157-L1163"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "guardrailTrace",
+      "type": "\"enabled\" | \"disabled\" | \"enabled_full\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L658",
+      "status": "required-model-precedence",
+      "settingsPaths": [],
+      "note": "Model guardrailTrace wins request option; enabled/disabled/enabled_full; omitted leaves provider default. Requires applicable Bedrock/forwarding transport.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1616-1619",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1616-L1619"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2124-2127",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2124-L2127"
+        },
+        {
+          "file": "packages/ai/src/providers/amazon-bedrock.ts",
+          "lines": "1157-1163",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/amazon-bedrock.ts#L1157-L1163"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "toolChoice",
+      "type": "ToolChoice",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L667",
+      "status": "required-session-tool-ownership",
+      "settingsPaths": [],
+      "note": "Session consumes queued hard/soft tool choices; Agent refreshes against active tools; loop resolves forced/native tool-choice precedence, owned dialect suppresses native choice. Mapper translates format-specific variants, Google only sends with tools.",
+      "consumptionWindows": [
+        {
+          "file": "packages/agent/src/agent.ts",
+          "lines": "69-90",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/agent/src/agent.ts#L69-L90"
+        },
+        {
+          "file": "packages/agent/src/agent-loop.ts",
+          "lines": "1702-1704",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/agent/src/agent-loop.ts#L1702-L1704"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2033-2033",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2033-L2033"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "835-856",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L835-L856"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "syntheticApiFormat",
+      "type": "\"openai\" | \"anthropic\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L673",
+      "status": "required-provider-scoped",
+      "settingsPaths": [],
+      "note": "streamSimple special Synthetic routing picks options.syntheticApiFormat ?? openai before generic API mapper; native provider config precedence must be retained. No independent control implemented.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1710-1726",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1710-L1726"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "preferWebsockets",
+      "type": "boolean",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L675",
+      "status": "required-transport-scoped",
+      "settingsPaths": [],
+      "note": "Session captures provider setting, side requests/advisors inherit or intentionally disable. Mapper Codex forwards; provider transport selection considers environment, request hint and model preference. Not applicable as universal API checkbox.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/session/session-handoff.ts",
+          "lines": "161-165",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/session-handoff.ts#L161-L165"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2223-2234",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2223-L2234"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-codex-responses.ts",
+          "lines": "3290-3299",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-codex-responses.ts#L3290-L3299"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "cachedContent",
+      "type": "string",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L691",
+      "status": "required-google-resource-lifecycle",
+      "settingsPaths": [],
+      "note": "Only direct Gemini/Vertex mapper forwards. Caller owns cache lifecycle/model/project compatibility; builder rejects blank resource and conflicts with systemInstruction/tools/toolConfig. This is resource ownership UI, not string-only sampling control.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2236-2278",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2236-L2278"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2342-2384",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2342-L2384"
+        },
+        {
+          "file": "packages/ai/src/providers/google-shared.ts",
+          "lines": "881-898",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/google-shared.ts#L881-L898"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "SimpleStreamOptions",
+      "field": "fallbacks",
+      "type": "FallbackParam[]",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L700",
+      "status": "required-existing-setting-mapping",
+      "settingsPaths": [],
+      "note": "Settings wrapper supplies fixed chain only for official anthropic Fable/Mythos and opt-in setting, caller-supplied chain wins. Mapper base forwards; Anthropic sanitizes unsupported effort and adds required beta headers. Remaining descriptor-driven controls required.",
+      "consumptionWindows": [
+        {
+          "file": "packages/coding-agent/src/session/settings-stream-fn.ts",
+          "lines": "52-87",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/coding-agent/src/session/settings-stream-fn.ts#L52-L87"
+        },
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "2013-2013",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L2013-L2013"
+        },
+        {
+          "file": "packages/ai/src/providers/anthropic.ts",
+          "lines": "2057-2065",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/anthropic.ts#L2057-L2065"
+        },
+        {
+          "file": "packages/ai/src/providers/anthropic.ts",
+          "lines": "2142-2154",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/anthropic.ts#L2142-L2154"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "OpenAIPromptCacheOptions",
+      "field": "mode",
+      "type": "\"implicit\" | \"explicit\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L382",
+      "status": "required-provider-scoped",
+      "settingsPaths": [],
+      "note": "Nested promptCache explicit/implicit policy; only supported Responses breakpoint endpoints. Explicit locally errors on incompatible endpoints; no Codex mapping.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/stream.ts",
+          "lines": "1959-1974",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/stream.ts#L1959-L1974"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "1099-1120",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L1099-L1120"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "OpenAIPromptCacheOptions",
+      "field": "ttl",
+      "type": "\"30m\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L384",
+      "status": "required-provider-scoped",
+      "settingsPaths": [],
+      "note": "Nested promptCache ttl has only 30m declaration; used with explicit compatible Responses caching, not generic cache retention setting.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/types.ts",
+          "lines": "379-386",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L379-L386"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "1099-1120",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L1099-L1120"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    },
+    {
+      "interface": "OpenAIPromptCacheOptions",
+      "field": "breakpoint",
+      "type": "\"latest-stable-message\" | \"none\"",
+      "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L386",
+      "status": "required-provider-scoped",
+      "settingsPaths": [],
+      "note": "Nested promptCache breakpoint latest-stable-message default vs none; Responses stream cache policy resolves it before request, explicit mode required.",
+      "consumptionWindows": [
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "467-470",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L467-L470"
+        },
+        {
+          "file": "packages/ai/src/providers/openai-responses.ts",
+          "lines": "1099-1120",
+          "url": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/providers/openai-responses.ts#L1099-L1120"
+        }
+      ],
+      "ownership": "owning-host native session; provider/API scope as noted",
+      "verification": "source-inspected; native request/UI proof not yet run",
+      "required": true
+    }
+  ],
+  "extensionSettings": {
+    "status": "required-session-registry-descriptors",
+    "coreSchema": "not-in-core-schema, not an exclusion",
+    "descriptors": "PluginManifest.settings exposes string/number/boolean/enum with secret/env/default and numeric bounds; plugin runtime settings are keyed by package and setting in omp-plugins.lock.json.",
+    "existingManifestBridge": "apps/host/src/integrations/plugins.ts:231-247 already projects installed PluginManifest.settings, masks secret values/defaults, preserves project override ownership and numeric/enum descriptors. packages/shared/src/integrations.ts exposes application=new-sessions. This is distinct from complete active-session extension-registry descriptor coverage; do not duplicate or claim the existing plugin bridge is absent.",
+    "sources": [
+      "sources/packages/coding-agent/src/extensibility/plugins/types.ts:27-93",
+      "sources/packages/coding-agent/src/extensibility/plugins/types.ts:137-145",
+      "sources/packages/coding-agent/src/modes/components/plugin-settings.ts:300-375"
+    ],
+    "remaining": "Enumerate the owning session enabled extension registry, reconcile descriptors with the existing manifest plugin bridge, and prove live applicable descriptor/validation/secret ownership. This flow does not inspect personal registries, waive dynamic descriptors, or claim an empty active registry."
+  },
+  "constraint": "All30 remain required until functioning support or exact justified applicability; bounded subset explicitly authorized",
+  "scope": {
+    "fields": [
+      "temperature",
+      "topP",
+      "maxTokens"
+    ],
+    "providers": [
+      {
+        "provider": "google",
+        "api": "google-generative-ai"
+      },
+      {
+        "provider": "google-vertex",
+        "api": "google-vertex"
+      }
+    ],
+    "modelScope": "Native registry gemini-* ids, excluding pi-native transport; no claim of remote provider acceptance for arbitrary custom endpoints/models",
+    "persistence": "native custom receipt agent-desktop.advanced-stream.v1 on owning session branch, model/API-bound; inherit returns original native Agent/SDK options; sampling null explicitly omits the parameter",
+    "precedence": "native Agent/SDK options -> model-bound desktop selection -> unchanged native streamSimple mapper -> provider builder; native auth/model settings never changed",
+    "implementation": [
+      "apps/host/src/omp-settings/advanced-stream.ts",
+      "apps/desktop/src/renderer/AdvancedStreamControls.tsx",
+      "apps/desktop/src/renderer/advanced-stream-state.ts"
+    ],
+    "wrapperRationale": "Native Agent exposes temperature/topP setters but no maxTokens setter. Global Agent sampling setters would leak model-bound intent into retry models. Install once per owned native AgentSession around its existing streamFn; read current native branch at each request. Native disposal fences requests; reopen constructs a fresh Agent. No auth/header/providerOptions/model-definition changes."
+  },
+  "complete": false,
+  "verification": {
+    "sourceTrace": "18 consumption files byte-identical to exact pinned upstream; installed native package reports 18.1.10",
+    "nativeRequest": "prepared fixture; not run (Main owns gates)",
+    "appUi": "blocked on Root-owned outside-form App mount, Main build and explicit native lease",
+    "independentReviews": "pending one dedicated different-family Standards/Spec pair"
+  },
+  "sourceProvenance": [
+    {
+      "upstreamPath": "packages/coding-agent/src/sdk.ts",
+      "observedSha256": "5591dfd741439b7620bc42ee9c3755e72030129cc510c6f4259f6c53ce551767",
+      "pinnedUpstreamSha256": "5591dfd741439b7620bc42ee9c3755e72030129cc510c6f4259f6c53ce551767",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/agent/src/agent.ts",
+      "observedSha256": "70a8f287055255e46d6e36794ab097fe316a38c8779b09b4335a6f39a76f115f",
+      "pinnedUpstreamSha256": "70a8f287055255e46d6e36794ab097fe316a38c8779b09b4335a6f39a76f115f",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/agent/src/agent-loop.ts",
+      "observedSha256": "c21bcfac241553a5dc331ed4aa36fb5d61dc73df51e7695d3bfbe8aa506b0fe1",
+      "pinnedUpstreamSha256": "c21bcfac241553a5dc331ed4aa36fb5d61dc73df51e7695d3bfbe8aa506b0fe1",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/stream.ts",
+      "observedSha256": "e800eba8fef91716664ccda7ec39f3a2212013a1f5c7ad1a2ade43747ed7b3b8",
+      "pinnedUpstreamSha256": "e800eba8fef91716664ccda7ec39f3a2212013a1f5c7ad1a2ade43747ed7b3b8",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/google-shared.ts",
+      "observedSha256": "9b75c376e5474acc04641e1217389f957176c34ce85f0d9f4508cafc30afb247",
+      "pinnedUpstreamSha256": "9b75c376e5474acc04641e1217389f957176c34ce85f0d9f4508cafc30afb247",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/anthropic.ts",
+      "observedSha256": "833cee3c77b4d95a4e5989959ebbc5220d7865a7b6c659a4806e44255f88bdaf",
+      "pinnedUpstreamSha256": "833cee3c77b4d95a4e5989959ebbc5220d7865a7b6c659a4806e44255f88bdaf",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai-completions.ts",
+      "observedSha256": "3828f9cadf402ef9f4c74db8b043a57617d71eb2ded382d663d3a26c58491c52",
+      "pinnedUpstreamSha256": "3828f9cadf402ef9f4c74db8b043a57617d71eb2ded382d663d3a26c58491c52",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai-shared.ts",
+      "observedSha256": "100f3086f29a737ee2a6aefb61239a9764f6039295693a466f0727c9cfcab7bd",
+      "pinnedUpstreamSha256": "100f3086f29a737ee2a6aefb61239a9764f6039295693a466f0727c9cfcab7bd",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai-responses.ts",
+      "observedSha256": "4ea4425742557f18862e9f572d5712738a1ec92bd2c75dce454e08dfa5d62ad5",
+      "pinnedUpstreamSha256": "4ea4425742557f18862e9f572d5712738a1ec92bd2c75dce454e08dfa5d62ad5",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/amazon-bedrock.ts",
+      "observedSha256": "e0877c6b597f2efb86ce36de73a05b38c347d36cd5e588a7c5538c7e769dce65",
+      "pinnedUpstreamSha256": "e0877c6b597f2efb86ce36de73a05b38c347d36cd5e588a7c5538c7e769dce65",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/bedrock-mantle.ts",
+      "observedSha256": "c563afe6fedb086aae32cb7379d8b60c845bd60af0b02071f3b7809b8250e8da",
+      "pinnedUpstreamSha256": "c563afe6fedb086aae32cb7379d8b60c845bd60af0b02071f3b7809b8250e8da",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai-codex-responses.ts",
+      "observedSha256": "d90e95812ebe04d94d4ed6761c0787425496474512ded2325c6d2e69f661292b",
+      "pinnedUpstreamSha256": "d90e95812ebe04d94d4ed6761c0787425496474512ded2325c6d2e69f661292b",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/session/agent-session.ts",
+      "observedSha256": "4cf6d8074a361490bc9f8e51a728a57f51a0eee2f4b736caf308226becafd6fb",
+      "pinnedUpstreamSha256": "4cf6d8074a361490bc9f8e51a728a57f51a0eee2f4b736caf308226becafd6fb",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/session/session-advisors.ts",
+      "observedSha256": "26ce334775c1786c4149f2d655a41481ef41e1e4b3dbe9d689398c071303ac2d",
+      "pinnedUpstreamSha256": "26ce334775c1786c4149f2d655a41481ef41e1e4b3dbe9d689398c071303ac2d",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/session/session-maintenance.ts",
+      "observedSha256": "38b6bfd5d5b14d9164cf71b979cccda697146680b103d00d984f8cf6aa667980",
+      "pinnedUpstreamSha256": "38b6bfd5d5b14d9164cf71b979cccda697146680b103d00d984f8cf6aa667980",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/session/settings-stream-fn.ts",
+      "observedSha256": "86ae6eff4d2db80389943c83a4cbf004680d0f8231003471032198198589fce6",
+      "pinnedUpstreamSha256": "86ae6eff4d2db80389943c83a4cbf004680d0f8231003471032198198589fce6",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/session/session-handoff.ts",
+      "observedSha256": "f634233ccf1a5203794447e13eac1f8247121c22988a5a2464361c6a9e8ba42c",
+      "pinnedUpstreamSha256": "f634233ccf1a5203794447e13eac1f8247121c22988a5a2464361c6a9e8ba42c",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    },
+    {
+      "upstreamPath": "packages/ai/src/types.ts",
+      "observedSha256": "c10eeef373fc38551e6f8b73f49566cbc3eed1e32426d137140c80629be259b7",
+      "pinnedUpstreamSha256": "c10eeef373fc38551e6f8b73f49566cbc3eed1e32426d137140c80629be259b7",
+      "matchesPinnedUpstream": true,
+      "windowsReferTo": "observed selected-SSH installed/source snapshot"
+    }
+  ]
+}

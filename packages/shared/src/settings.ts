@@ -128,6 +128,22 @@ export interface OmpModelCapabilities {
   excludedSensitiveFields: string[];
   unmappedCapabilityFields: string[];
 }
+export type OmpStreamField = "temperature" | "topP" | "maxTokens";
+export interface OmpStreamSelection {
+  /** Omitted follows the native session; null explicitly uses provider sampling defaults. */
+  temperature?: number | null;
+  topP?: number | null;
+  /** Omitted follows the native request/model output limit. */
+  maxTokens?: number;
+}
+export interface OmpAdvancedStreamControls {
+  supported: boolean;
+  reason: string;
+  model: { provider: string; id: string; api: string } | null;
+  selection: OmpStreamSelection;
+  native: { temperature: number | null; topP: number | null; maxTokens: number | null };
+  persistence: "owning-session-branch-model-api";
+}
 export interface OmpSessionControls {
   revision: string;
   sessionId: string;
@@ -135,6 +151,8 @@ export interface OmpSessionControls {
   thinkingLevel?: string;
   serviceTiers: Record<string, string | undefined>;
   capabilities: OmpModelCapabilities | null;
+  /** Absent on older hosts; never infer support from model names in the renderer. */
+  advancedStream?: OmpAdvancedStreamControls;
   settings: OmpSettingState[];
   overrides: string[];
   /** App-owned session policy restored by its host before native startup. */
@@ -146,6 +164,7 @@ export type OmpSessionControlMutation = { expectedRevision: string } & (
   | { operation: "model"; model: { provider: string; id: string } }
   | { operation: "thinking"; level?: string }
   | { operation: "service-tier"; family: "openai" | "anthropic" | "google"; tier?: "auto" | "default" | "flex" | "scale" | "priority" }
+  | { operation: "advanced-stream"; model: { provider: string; id: string; api: string }; field: OmpStreamField; action: "inherit" | "provider-default" | "set"; value?: number }
   | { operation: "override"; path: string; value: SettingJson }
   | { operation: "clear-override"; path: string }
 );
