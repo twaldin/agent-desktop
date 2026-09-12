@@ -93,3 +93,18 @@ test("confirmed close error is visible before deliberate dismissal, and reentran
   expect(fixture.calls.map(value => value.request.type)).toEqual(["open", "close"]);
   await fixture.controller.dispose();
 });
+
+test("retained result restoration sends saved input/result and never calls the historical tool", async () => {
+  const f = setup(), source = { type: "artifact" as const, entryId: "entry" };
+  const controller = new McpAppController(f.controller.bridge, "host-a", "session-a", { ...app, source }); controller.connected(true);
+  f.change(async input => input.type === "open" ? { type: "opened", channelId: input.channelId, resource, initialArguments: { actual: 3 }, initialResult: { content: [], structuredContent: { saved: 8 } } } : { type: "closed", channelId: input.channelId });
+  await controller.open(); expect(controller.initialArguments()).toEqual({ actual: 3 });
+  expect(await controller.initialResult()).toEqual({ content: [], structuredContent: { saved: 8 } });
+  expect(f.calls.map(value => value.request.type)).toEqual(["open"]); expect(f.calls[0]?.request).toMatchObject({ source });
+  await controller.dispose();
+});
+test("an older host without saved-result support fails explicitly without replaying the tool", async () => {
+  const f = setup(); const controller = new McpAppController(f.controller.bridge, "host-a", "session-a", { ...app, source: { type: "artifact", entryId: "entry" } }); controller.connected(true);
+  await expect(controller.open()).rejects.toThrow("cannot be replayed"); await controller.dispose();
+  expect(f.calls.map(value => value.request.type)).toEqual(["open", "close"]);
+});

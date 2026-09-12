@@ -1,14 +1,13 @@
 import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import type { MCPServerConnection, MCPToolDefinition } from "@oh-my-pi/pi-coding-agent/mcp/types";
 import { readResource, listResources, listResourceTemplates } from "@oh-my-pi/pi-coding-agent/mcp/client";
-import { cloneMcpJson, parseNativeMcpAppDescriptor, parseNativeMcpAppRequest, parseNativeMcpAppResource,
-  type McpJson, type NativeMcpAppDescriptor, type NativeMcpAppRequest, type NativeMcpAppResponse, type NativeMcpAppSelection } from "../../../../packages/shared/src/session-mcp-app";
+import { cloneMcpJson, parseNativeMcpAppDescriptor, parseNativeMcpFileViewer, mcpViewerExtension, parseNativeMcpAppRequest, parseNativeMcpAppResource,
+  type McpJson, type NativeMcpFileViewer, type NativeMcpAppDescriptor, type NativeMcpAppRequest, type NativeMcpAppResponse, type NativeMcpAppSelection, type NativeMcpAppSource } from "../../../../packages/shared/src/session-mcp-app";
+import { mcpUiResourceUri, type McpArtifact } from "../../../../packages/shared/src/mcp-artifact";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
 export function mcpToolResource(tool: MCPToolDefinition): string | undefined {
-  const meta = tool._meta, ui = asRecord(meta?.ui);
-  const resource = ui?.resourceUri ?? meta?.["ui/resourceUri"] ?? meta?.["openai/outputTemplate"];
-  return typeof resource === "string" && resource.startsWith("ui://") ? resource : undefined;
+  return mcpUiResourceUri(tool._meta);
 }
 /** Pinned thread entrypoints are distinct from generic tools and resources. */
 export function mcpAppDescriptors(connection: MCPServerConnection): NativeMcpAppDescriptor[] {
@@ -26,6 +25,16 @@ export function mcpAppDescriptors(connection: MCPServerConnection): NativeMcpApp
     catch { return []; }
   });
 }
+export function mcpFileViewers(connection: MCPServerConnection): NativeMcpFileViewer[] {
+  return (connection.tools ?? []).flatMap(tool => {
+    const entries = asRecord(tool._meta?.["openai/ui"])?.entrypoints, resourceUri = mcpToolResource(tool);
+    if (!resourceUri || !Array.isArray(entries)) return [];
+    const extensions = entries.flatMap(value => { const entry = asRecord(value); return entry?.type === "file" && Array.isArray(entry.extensions) ? entry.extensions : []; });
+    if (!extensions.length) return [];
+    try { return [parseNativeMcpFileViewer({ toolName: tool.name, title: tool.title || tool.annotations?.title || tool.name, resourceUri, extensions })]; }
+    catch { return []; }
+  });
+}
 interface Operation { fingerprint: string; promise: Promise<NativeMcpAppResponse>; failure?: unknown }
 interface Channel {
   id: string;
@@ -36,6 +45,10 @@ interface Channel {
   opened?: Promise<NativeMcpAppResponse>;
   closed?: Promise<NativeMcpAppResponse>;
   retired: boolean;
+  openingFingerprint: string;
+  source?: NativeMcpAppSource;
+  artifact?: McpArtifact;
+  artifactFingerprint?: string;
   cleanupFailures?: unknown[];
 }
 
@@ -49,7 +62,10 @@ export class NativeMcpApps {
     manager?: Pick<MCPManager, "addConnectionStatusListener" | "getConnectionStatus" | "getConnection">;
     snapshot(): { epoch: string; revision: number };
     assertOwner(): void;
-    executeTool(connection: MCPServerConnection, tool: MCPToolDefinition, args: Record<string, unknown>, signal: AbortSignal, assertOwner: () => void): Promise<unknown>;
+    artifact?(entryId: string): McpArtifact | undefined;
+    filePath?(source: Extract<NativeMcpAppSource, { type: "file" }>): string;
+    fileResource?(source: Extract<NativeMcpAppSource, { type: "file" }>, method: "resources/read" | "openai/resources/write", params: Record<string, McpJson>, signal: AbortSignal, assertCurrent: () => void): Promise<unknown>;
+    executeTool(connection: MCPServerConnection, tool: MCPToolDefinition, args: Record<string, unknown>, signal: AbortSignal, assertOwner: () => void, metadata?: Record<string, unknown>): Promise<unknown>;
   }) {
     this.#unsubscribe = options.manager?.addConnectionStatusListener(event => {
       for (const channel of this.#channels.values()) {
@@ -65,10 +81,18 @@ export class NativeMcpApps {
     if (this.#disposed || channel.retired || channel.abort.signal.aborted || !manager
       || manager.getConnectionStatus(channel.selection.serverName) !== "connected"
       || manager.getConnection(channel.selection.serverName) !== channel.connection
-      || !mcpAppDescriptors(channel.connection).some(app => app.toolName === channel.selection.toolName && app.resourceUri === channel.selection.resourceUri)) {
+      || !this.#sourceCurrent(channel)) {
       channel.abort.abort();
       throw new Error("The original MCP app connection is unavailable. Reopen the app deliberately after reconnecting.");
     }
+  }
+  #sourceCurrent(channel: Channel): boolean {
+    const source = channel.source;
+    if (source?.type === "file") return Boolean(this.options.fileResource && this.options.filePath && mcpFileViewers(channel.connection).some(viewer => viewer.toolName === channel.selection.toolName
+      && viewer.resourceUri === channel.selection.resourceUri && mcpViewerExtension(source.path, viewer.extensions)));
+    if (!channel.artifact) return mcpAppDescriptors(channel.connection).some(app => app.toolName === channel.selection.toolName && app.resourceUri === channel.selection.resourceUri);
+    try { return JSON.stringify(this.options.artifact?.(channel.artifact.entryId)) === channel.artifactFingerprint; }
+    catch { return false; }
   }
   #run(channel: Channel, requestId: string, fingerprint: string, work: (signal: AbortSignal) => Promise<NativeMcpAppResponse>): Promise<NativeMcpAppResponse> {
     try { this.#current(channel); } catch (error) { return Promise.reject(error); }
@@ -106,7 +130,7 @@ export class NativeMcpApps {
     if (request.type === "open") {
       const existing = this.#channels.get(request.channelId);
       if (existing) {
-        if (JSON.stringify(existing.selection) !== JSON.stringify(request.selection)) return Promise.reject(new Error("MCP app channel identity was reused."));
+        if (existing.openingFingerprint !== JSON.stringify(request)) return Promise.reject(new Error("MCP app channel identity was reused."));
         try { this.#current(existing); } catch (error) { return Promise.reject(error); }
         return existing.opened!;
       }
@@ -116,7 +140,10 @@ export class NativeMcpApps {
       if (this.#channels.size >= 4096 || [...this.#channels.values()].filter(channel => !channel.retired).length >= 32) return Promise.reject(new Error("This session has reached its MCP app channel limit."));
       const connection = manager.getConnection(request.selection.serverName);
       if (!connection) return Promise.reject(new Error("MCP app server is not connected."));
-      const channel: Channel = { id: request.channelId, selection: request.selection, connection, abort: new AbortController(), operations: new Map(), retired: false };
+      const artifact = request.source?.type === "artifact" ? this.options.artifact?.(request.source.entryId) : undefined;
+      if (request.source?.type === "artifact" && (!artifact || artifact.serverName !== request.selection.serverName || artifact.toolName !== request.selection.toolName || artifact.resourceUri !== request.selection.resourceUri)) return Promise.reject(new Error("The original saved MCP result is unavailable."));
+      const channel: Channel = { id: request.channelId, selection: request.selection, connection, abort: new AbortController(), operations: new Map(), retired: false,
+        openingFingerprint: JSON.stringify(request), ...(request.source ? { source: request.source } : {}), ...(artifact ? { artifact, artifactFingerprint: JSON.stringify(artifact) } : {}) };
       this.#current(channel);
       this.#channels.set(channel.id, channel);
       channel.opened = this.#run(channel, "open", JSON.stringify(request), async signal => {
@@ -129,7 +156,9 @@ export class NativeMcpApps {
           html: "text" in content ? content.text : new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(typeof content.blob === "string" ? content.blob : "", "base64")),
           ...(ui?.csp === undefined ? {} : { csp: ui.csp }) });
         if (resource.uri !== request.selection.resourceUri) throw new Error("MCP app resource owner changed.");
-        return { type: "opened", channelId: channel.id, resource };
+        return { type: "opened", channelId: channel.id, resource,
+          ...(request.source?.type === "file" ? { initialArguments: { file: { name: request.source.path.split("/").at(-1)!, resourceUri: request.source.resourceUri } } } : {}), ...(artifact ? { initialResult: artifact.result,
+          ...(artifact.arguments ? { initialArguments: artifact.arguments } : {}) } : {}) };
       });
       return channel.opened;
     }
@@ -139,7 +168,18 @@ export class NativeMcpApps {
       await channel.opened;
       this.#current(channel);
       let value: unknown;
-      if (request.method === "tools/call") {
+      const hostResource = typeof request.params.uri === "string" && request.params.uri.startsWith("codex-resource://");
+      if (hostResource || request.method === "openai/resources/write") {
+        const source = channel.source;
+        if (source?.type !== "file" || !this.options.fileResource || typeof request.params.uri !== "string"
+          || !(request.params.uri === source.resourceUri || request.params.uri.startsWith(`${source.resourceUri}/`))
+          || !["resources/read", "openai/resources/write"].includes(request.method)) throw new Error("This resource does not belong to the original file viewer.");
+        value = await this.options.fileResource(source, request.method as "resources/read" | "openai/resources/write", request.params, signal, () => this.#current(channel));
+        if (request.method === "resources/read") {
+          const viewer = mcpFileViewers(channel.connection).find(viewer => viewer.toolName === channel.selection.toolName && viewer.resourceUri === channel.selection.resourceUri);
+          value = { ...asRecord(value), extension: viewer ? mcpViewerExtension(source.path, viewer.extensions) : undefined };
+        }
+      } else if (request.method === "tools/call") {
         const name = request.params.name;
         const tool = channel.connection.tools?.find(tool => tool.name === name);
         const visibility = asRecord(tool?._meta?.ui)?.visibility;
@@ -150,7 +190,7 @@ export class NativeMcpApps {
           const current = channel.connection.tools?.find(value => value.name === tool.name);
           const currentVisibility = asRecord(current?._meta?.ui)?.visibility;
           if (current !== tool || Array.isArray(currentVisibility) && !currentVisibility.includes("app")) throw new Error("The original MCP tool changed before dispatch.");
-        });
+        }, channel.source?.type === "file" ? { "openai/resource": { path: this.options.filePath!(channel.source) } } : undefined);
       } else if (request.method === "resources/read") {
         if (typeof request.params.uri !== "string" || request.params.uri.length > 16_384) throw new Error("Invalid MCP app resource request.");
         value = await readResource(channel.connection, request.params.uri, { signal });

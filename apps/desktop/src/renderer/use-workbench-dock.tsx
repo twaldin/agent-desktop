@@ -448,6 +448,17 @@ export function useWorkbenchDock(
     leaveBrowserConversation,
     replaceBrowserDestination,
     acknowledgeBrowserReplacements: (ids: readonly string[]) => updatePresentations(previous => ({ ...acknowledgeBrowserAdmissions(previous, ids), browserSearchAdmission: previous.browserSearchAdmission })),
+    addMcpFileViewer: (tab: DockTab, guard: (presentations?: DockPresentations) => boolean) => {
+      const source = tab.mcpApp?.source;
+      if (tab.kind !== "mcp-app" || source?.type !== "file") throw new Error("Invalid MCP file viewer.");
+      setReady(previous => guard() ? true : previous);
+      setSnapshot((previous, presentations) => {
+        if (!guard(presentations)) return previous;
+        const existing = previous.tabs.find(value => value.kind === "mcp-app" && value.hostId === tab.hostId && value.target === tab.target
+          && value.mcpApp?.source?.type === "file" && value.mcpApp.source.path === source.path);
+        return { tabs: existing ? previous.tabs : [...previous.tabs, tab], state: insertDockTab(previous.state, existing ?? tab, "right") };
+      });
+    },
     addMcpApp: (tab: DockTab, guard: () => boolean) => { if (tab.kind !== "mcp-app" || !tab.mcpApp) throw new Error("Invalid MCP app panel."); add(tab, "right", guard); },
     open, prepareOpen, openDraftBrowser, updateDraftBrowserAddress, updateDraftBrowserTitle,
     openFile, openHostFile, destinationForTab, pinFile, selectFile,

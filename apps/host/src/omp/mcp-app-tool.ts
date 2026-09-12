@@ -11,7 +11,8 @@ import { cloneMcpJson } from "../../../../packages/shared/src/session-mcp-app";
  * tool policy. Only the final transport is bound to the captured connection. */
 export async function executeMcpAppTool(session: AgentSession, ui: OmpInteractionBridge | undefined,
   connection: MCPServerConnection, definition: MCPToolDefinition, args: Record<string, unknown>,
-  signal: AbortSignal, assertOwner: () => void): Promise<unknown> {
+  signal: AbortSignal, assertOwner: () => void, metadata?: Record<string, unknown>): Promise<unknown> {
+  const ownedMetadata = metadata === undefined ? undefined : cloneMcpJson(metadata, 32_768);
   const runner = session.extensionRunner;
   if (!runner || !ui) throw new Error("This session cannot approve MCP app tool calls.");
   const native = new MCPTool(connection, definition);
@@ -22,7 +23,9 @@ export async function executeMcpAppTool(session: AgentSession, ui: OmpInteractio
     async execute(_id: string, input: unknown) {
       if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid MCP app tool arguments.");
       signal.throwIfAborted(); assertOwner();
-      const result = await callTool(connection, definition.name, input as Record<string, unknown>, { signal });
+      const result = ownedMetadata === undefined
+        ? await callTool(connection, definition.name, input as Record<string, unknown>, { signal })
+        : await connection.transport.request<MCPToolCallResult>("tools/call", { name: definition.name, arguments: input, _meta: ownedMetadata }, { signal });
       // Extensions receive the complete result as details, and a text projection
       // they can replace. Never discard a tool_result content override.
       const details = cloneMcpJson(result) as unknown as MCPToolCallResult;

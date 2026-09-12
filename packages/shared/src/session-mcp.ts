@@ -1,4 +1,4 @@
-import { parseNativeMcpAppDescriptor, type NativeMcpAppDescriptor } from "./session-mcp-app";
+import { parseNativeMcpAppDescriptor, parseNativeMcpFileViewer, type NativeMcpFileViewer, type NativeMcpAppDescriptor } from "./session-mcp-app";
 /** Live state belongs to one native session manager generation, not to the
  * saved user/project configuration catalog. */
 export interface NativeSessionMcpServer {
@@ -9,6 +9,7 @@ export interface NativeSessionMcpServer {
   canAuthorize?: boolean;
   tools: string[];
   apps?: NativeMcpAppDescriptor[];
+  fileViewers?: NativeMcpFileViewer[];
   resourceCount: number | null;
   promptCount: number | null;
   resources?: Array<{uri:string;name:string;description?:string;mimeType?:string}> | null;
@@ -86,7 +87,7 @@ export function parseNativeSessionMcpSnapshot(value: unknown): NativeSessionMcpS
   if (typeof input.available !== 'boolean' || !Array.isArray(input.servers) || input.servers.length > 4096) throw new Error('Invalid native MCP catalog.');
   const servers = input.servers.map(raw => {
     const server = record(raw);
-    exactKeys(server,['name','status','source','canAuthorize','tools','apps','resourceCount','promptCount','resources','resourceTemplates','prompts','notifications','error'],'Unsupported native MCP server field.');
+    exactKeys(server,['name','status','source','canAuthorize','tools','apps','fileViewers','resourceCount','promptCount','resources','resourceTemplates','prompts','notifications','error'],'Unsupported native MCP server field.');
     if (server.canAuthorize !== undefined && typeof server.canAuthorize !== 'boolean') throw new Error('Invalid native MCP authorization capability.');
     if (!['connected','connecting','disconnected'].includes(String(server.status)) || !Array.isArray(server.tools) || server.tools.length > 16384) throw new Error('Invalid native MCP server.');
     let apps: NativeMcpAppDescriptor[] | undefined;
@@ -96,13 +97,20 @@ export function parseNativeSessionMcpSnapshot(value: unknown): NativeSessionMcpS
       for (let index = 0; index < server.apps.length; index++) apps.push(parseNativeMcpAppDescriptor(server.apps[index]));
       if (new Set(apps.map(app => app.toolName)).size !== apps.length) throw new Error('Duplicate native MCP app.');
     }
+    let fileViewers: NativeMcpFileViewer[] | undefined;
+    if (server.fileViewers !== undefined) {
+      if (!Array.isArray(server.fileViewers) || server.fileViewers.length > 4096) throw new Error('Invalid native file viewer catalogue.');
+      fileViewers = [];
+      for (let index = 0; index < server.fileViewers.length; index++) fileViewers.push(parseNativeMcpFileViewer(server.fileViewers[index]));
+      if (new Set(fileViewers.map(viewer => viewer.toolName)).size !== fileViewers.length) throw new Error('Duplicate native file viewer.');
+    }
     const resources = optionalArray(server.resources,4096,rawResource=>{const resource=record(rawResource);exactKeys(resource,['uri','name','description','mimeType'],'Unsupported native MCP resource field.');return {uri:text(resource.uri,16384),name:text(resource.name),...(resource.description===undefined?{}:{description:optionalText(resource.description,4096)!}),...(resource.mimeType===undefined?{}:{mimeType:optionalText(resource.mimeType,1024)!})};});
     const resourceTemplates = optionalArray(server.resourceTemplates,4096,rawTemplate=>{const template=record(rawTemplate);exactKeys(template,['uriTemplate','name','description','mimeType'],'Unsupported native MCP resource template field.');return {uriTemplate:text(template.uriTemplate,16384),name:text(template.name),...(template.description===undefined?{}:{description:optionalText(template.description,4096)!}),...(template.mimeType===undefined?{}:{mimeType:optionalText(template.mimeType,1024)!})};});
     const prompts = optionalArray(server.prompts,4096,rawPrompt=>{const prompt=record(rawPrompt);exactKeys(prompt,['name','description','arguments'],'Unsupported native MCP prompt field.');const args=optionalArray(prompt.arguments,256,rawArgument=>{const argument=record(rawArgument);exactKeys(argument,['name','description','required'],'Unsupported native MCP prompt argument field.');if(typeof argument.required!=='boolean')throw new Error('Invalid native MCP prompt argument.');return {name:text(argument.name),...(argument.description===undefined?{}:{description:optionalText(argument.description,4096)!}),required:argument.required};});if(args===null)throw new Error('Invalid native MCP prompt arguments.');return {name:text(prompt.name),...(prompt.description===undefined?{}:{description:optionalText(prompt.description,4096)!}),...(args===undefined?{}:{arguments:args})};});
     let notifications: NativeSessionMcpServer['notifications'];
     if(server.notifications===null) notifications=null;
     else if(server.notifications!==undefined){const rawNotifications=record(server.notifications);exactKeys(rawNotifications,['enabled','toolsListChanged','resourcesListChanged','promptsListChanged','resourceSubscribe','subscriptions'],'Unsupported native MCP notification field.');if(typeof rawNotifications.enabled!=='boolean'||typeof rawNotifications.toolsListChanged!=='boolean'||typeof rawNotifications.resourcesListChanged!=='boolean'||typeof rawNotifications.promptsListChanged!=='boolean'||typeof rawNotifications.resourceSubscribe!=='boolean'||!Array.isArray(rawNotifications.subscriptions)||rawNotifications.subscriptions.length>4096)throw new Error('Invalid native MCP notification state.');notifications={enabled:rawNotifications.enabled,toolsListChanged:rawNotifications.toolsListChanged,resourcesListChanged:rawNotifications.resourcesListChanged,promptsListChanged:rawNotifications.promptsListChanged,resourceSubscribe:rawNotifications.resourceSubscribe,subscriptions:rawNotifications.subscriptions.map(uri=>text(uri,16384))};}
-    return {name:text(server.name),status:server.status as NativeSessionMcpServer['status'],source:text(server.source),...(server.canAuthorize === undefined ? {} : {canAuthorize:server.canAuthorize}),tools:server.tools.map(name=>text(name)),...(apps === undefined ? {} : {apps}),resourceCount:server.resourceCount === null ? null : integer(server.resourceCount),promptCount:server.promptCount === null ? null : integer(server.promptCount),...(resources===undefined?{}:{resources}),...(resourceTemplates===undefined?{}:{resourceTemplates}),...(prompts===undefined?{}:{prompts}),...(notifications===undefined?{}:{notifications}),...(server.error === undefined ? {} : {error:text(server.error,4096)})};
+    return {name:text(server.name),status:server.status as NativeSessionMcpServer['status'],source:text(server.source),...(server.canAuthorize === undefined ? {} : {canAuthorize:server.canAuthorize}),tools:server.tools.map(name=>text(name)),...(apps === undefined ? {} : {apps}),...(fileViewers === undefined ? {} : {fileViewers}),resourceCount:server.resourceCount === null ? null : integer(server.resourceCount),promptCount:server.promptCount === null ? null : integer(server.promptCount),...(resources===undefined?{}:{resources}),...(resourceTemplates===undefined?{}:{resourceTemplates}),...(prompts===undefined?{}:{prompts}),...(notifications===undefined?{}:{notifications}),...(server.error === undefined ? {} : {error:text(server.error,4096)})};
   });
   if (new Set(servers.map(server=>server.name)).size !== servers.length) throw new Error('Duplicate native MCP server.');
   const parsed = {...(input.canReadResources === undefined ? {} : {canReadResources:input.canReadResources}),...(input.canOpenApps === undefined ? {} : {canOpenApps:input.canOpenApps}),epoch:text(input.epoch,200),revision:integer(input.revision),available:input.available,...(input.canReconnect === undefined ? {} : {canReconnect:input.canReconnect}),servers,...(input.reason === undefined ? {} : {reason:text(input.reason,4096)})};

@@ -1,5 +1,5 @@
 import { useMcpAppCatalogue } from "./use-mcp-app-catalogue";
-import { mcpAppActionId, mcpAppDockTab } from "./mcp-app-dock";
+import { mcpAppActionId, mcpAppDockTab, mcpArtifactDockTab, mcpFileViewerForPath, mcpFileViewerDockTab } from "./mcp-app-dock";
 import { McpAppController } from "./mcp-app-controller";
 import { McpAppPanel } from "./McpAppPanel";
 import { useSessionReadState } from "./use-session-read-state";
@@ -33,6 +33,7 @@ import { CommandMenu } from "./CommandMenu";
 import { activateBrowserSearchTab } from "./command-browser-tabs";
 import { BrowserSearchRegistry } from "./browser-search-registry";
 import { browserSearchPresentationKey } from "./command-browser-tabs";
+import { captureDockPresentation, isCurrentDockPresentation, type DockPresentationRef } from "./dock-presentations";
 import { draftBrowserSearchEntries } from "./draft-browser-search";
 import { useCommandBrowserTabs } from "./use-command-browser-tabs";
 import { APPLICATION_COMMANDS } from "../../../../packages/shared/src/application-commands";
@@ -491,6 +492,7 @@ export function App() {
     cwd: selected?.cwd,
     openExternal: url => bridge.openExternal(url),
     openFile: (file, options) => {
+      if (selected?.id && !file.path.startsWith("/") && openMcpFileViewer(hostId, selected.id, file.path)) return;
       if (file.path.startsWith("/")) {
         const data = transcriptFileWorkspace(file);
         const owner = `${hostId}:${workspaceKey(data.target)}`;
@@ -946,6 +948,40 @@ export function App() {
   });
 
   const mcpCatalogue = useMcpAppCatalogue(bridge, hostId, selected?.archived ? undefined : selected?.id, connected);
+  const committedArtifactOwner = useRef({ hostId, sessionId: selected?.id, enabled: false, messages: transcript.messages, presentations: dock.presentations });
+  useLayoutEffect(() => { committedArtifactOwner.current = { hostId, sessionId: selected?.id, enabled: connected && !settingsOpen && !pluginDirectoryOpen, messages: transcript.messages, presentations: dock.presentations }; });
+  const openMcpArtifact = (artifact: import("@agent-desktop/shared").McpArtifact) => {
+    const original = committedArtifactOwner.current;
+    const current = () => {
+      const owner = committedArtifactOwner.current;
+      return Boolean(original.sessionId && owner.enabled && owner.hostId === original.hostId && owner.sessionId === original.sessionId
+        && mcpCatalogue.current() && owner.messages.some(message => message.nativeId === artifact.entryId && message.mcpArtifact?.serverName === artifact.serverName
+          && message.mcpArtifact.toolName === artifact.toolName && message.mcpArtifact.resourceUri === artifact.resourceUri));
+    };
+    const catalogue = mcpCatalogue.snapshot;
+    if (!current() || !original.sessionId || !catalogue?.canOpenApps) { setActionError("This app result is unavailable from its original conversation."); return; }
+    const tab = mcpArtifactDockTab(original.hostId, original.sessionId, artifact);
+    tab.mcpAppSelection = { epoch: catalogue.epoch, expectedRevision: catalogue.revision, serverName: artifact.serverName, toolName: artifact.toolName, resourceUri: artifact.resourceUri };
+    mcpOpeningFocus.current.set(tab.id, document.activeElement);
+    dock.addMcpApp(tab, current);
+  };
+  const openMcpFileViewer = (ownerHost: string, ownerSession: string, path: string, origin?: DockPresentationRef): boolean => {
+    const original = committedArtifactOwner.current, catalogue = mcpCatalogue.snapshot;
+    const selectedViewer = mcpFileViewerForPath(catalogue, path);
+    if (!selectedViewer || !catalogue || original.hostId !== ownerHost || original.sessionId !== ownerSession) return false;
+    const current = (presentations = committedArtifactOwner.current.presentations) => {
+      const owner = committedArtifactOwner.current;
+      return owner.enabled && owner.hostId === ownerHost && owner.sessionId === ownerSession && mcpCatalogue.current()
+        && (!origin || isCurrentDockPresentation(presentations, origin));
+    };
+    if (!current()) return true;
+    const tab = mcpFileViewerDockTab(ownerHost, ownerSession, path, selectedViewer.viewer, selectedViewer.serverName);
+    tab.mcpAppSelection = { epoch: catalogue.epoch, expectedRevision: catalogue.revision, serverName: selectedViewer.serverName,
+      toolName: selectedViewer.viewer.toolName, resourceUri: selectedViewer.viewer.resourceUri };
+    mcpOpeningFocus.current.set(tab.id, document.activeElement);
+    dock.addMcpFileViewer(tab, current);
+    return true;
+  };
   const mcpOpeningFocus = useRef(new Map<string, Element | null>());
   const mcpPanels = useRef(new Map<string, McpAppController>());
   useEffect(() => {
@@ -1123,13 +1159,18 @@ export function App() {
     const ownerSession = "sessionId" in target ? record?.state?.sessions.find(value => value.id === target.sessionId) : undefined;
     const ownerProject = record?.state?.projects.find(value => value.id === ("projectId" in target ? target.projectId : ownerSession?.projectId));
     const fileRoot = "filePath" in target ? target.filePath.slice(0,target.filePath.lastIndexOf("/")) || "/" : ownerSession?.cwd ?? ownerProject?.path;
+    const filePresentation = captureDockPresentation(dock.presentations, tab.id);
     if (tab.kind === "files") return <WorkspaceFileBrowser key={tab.id} data={data} connected={online} active={active} cwd={fileRoot ?? ""} view={fileTree} onChange={setFileTree}
       onAddFile={canAddWholeFile && tab.hostId === hostId && fileRoot ? path => addWholeFile(tab.hostId, `${fileRoot.replace(/\/$/, "")}/${path}`) : undefined}
       onOpenFile={path => {
+        if (!filePresentation || !isCurrentDockPresentation(committedArtifactOwner.current.presentations, filePresentation)) return;
+        if ("sessionId" in target && openMcpFileViewer(tab.hostId, target.sessionId, path, filePresentation)) return;
         setWorkspaceFileRequest({ owner, request: { id: crypto.randomUUID(), path } });
         dock.selectFile(tab.id, path);
       }}/>
     return <WorkspacePanel onCommit={record?.state?.gitSubmissions?.commandVersion === 10 ? () => openGitSubmission(data!) : undefined} onAddFile={canAddWholeFile && tab.hostId === hostId && fileRoot ? relativePath => addWholeFile(tab.hostId, `${(fileRoot ?? "").replace(/\/$/, "")}/${relativePath}`) : undefined} onFileEdit={() => dock.pinFile(tab.id)} onAddToChat={canAddSelection && fileRoot ? (relativePath, selection) => addSelection(tab.hostId, `${(fileRoot ?? "").replace(/\/$/, "")}/${relativePath}`, selection) : undefined} embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location, options) => {
+      if (!filePresentation || !isCurrentDockPresentation(committedArtifactOwner.current.presentations, filePresentation)) return;
+      if ("sessionId" in target && openMcpFileViewer(tab.hostId, target.sessionId, path, filePresentation)) return;
       const destination = tab.kind !== "file" ? "right" : dock.destinationForTab(tab.id);
       if (!destination) return;
       if ("filePath" in target) {
@@ -1235,7 +1276,7 @@ export function App() {
             {transcript.cacheWarning && <p className="subtle-notice">{transcript.cacheWarning}</p>}
             {selected?.error && <div className="inline-error" role="alert">{selected.error}</div>}
             {!transcript.messages.length && <div className="empty-transcript"><Icon name="compose"/><h2>{transcript.loading ? "Loading conversation…" : !selected ? "Conversation unavailable" : "Start the conversation"}</h2><p>{connected ? "Send a prompt to begin working in this session." : "No transcript is cached on this device."}</p></div>}
-            <TranscriptMessages messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }}/>
+            <TranscriptMessages messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }} onOpenArtifact={mcpCatalogue.snapshot?.canOpenApps ? openMcpArtifact : undefined}/>
             {running && <div className="working-state" role="status"><span className="working-dot"/>Working…</div>}
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={anchor => composerContext.current?.openProjects(anchor)}/>}

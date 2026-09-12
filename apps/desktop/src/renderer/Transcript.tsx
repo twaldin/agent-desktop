@@ -1,7 +1,7 @@
 import { ComposerSelectedText } from "./ComposerSelectedText";
 import { TranscriptFileMentions } from "./TranscriptFileMentions";
 import { createContext, useContext, useId, useMemo, useState, type ReactNode } from "react";
-import type { TranscriptBlock, TranscriptMessage } from "../../../../packages/shared/src/protocol";
+import type { McpArtifact, TranscriptBlock, TranscriptMessage } from "../../../../packages/shared/src/protocol";
 import { Icon } from "./Icons";
 import { GoalIcon } from "./GoalIcons";
 import { messageBlocks, toolLinks, toolOutcome, TranscriptDisclosureState, type ToolLink } from "./transcript-state";
@@ -14,22 +14,26 @@ import type { AttachmentMediaContext } from "./attachment-media";
 
 export interface TranscriptImages { media: AttachmentMediaContext; hostId: string; sessionId: string }
 const ImageContext = createContext<TranscriptImages | undefined>(undefined);
+const ArtifactContext = createContext<((artifact: McpArtifact) => void) | undefined>(undefined);
 
-export function TranscriptMessages({ messages, contextKey, connected, linkActions, images }: { messages: TranscriptMessage[]; contextKey: string; connected: boolean; linkActions?: TranscriptLinkActions; images?: TranscriptImages }) {
+export function TranscriptMessages({ messages, contextKey, connected, linkActions, images, onOpenArtifact }: { messages: TranscriptMessage[]; contextKey: string; connected: boolean; linkActions?: TranscriptLinkActions; images?: TranscriptImages; onOpenArtifact?(artifact: McpArtifact): void }) {
   const disclosures = useMemo(() => new TranscriptDisclosureState(), [contextKey]);
   const markdownViews = useMemo(() => new MarkdownViewState(), [contextKey]);
   const links = useMemo(() => toolLinks(messages), [messages]);
-  return <ImageContext value={images}><TranscriptMarkdownContext value={{ actions: linkActions, views: markdownViews }}>{messages.map(message => <TranscriptItem key={message.id} message={message} connected={connected} disclosures={disclosures} calls={links.calls} linkedCall={links.results.get(message.id)}/>)}</TranscriptMarkdownContext></ImageContext>;
+  return <ArtifactContext value={onOpenArtifact}><ImageContext value={images}><TranscriptMarkdownContext value={{ actions: linkActions, views: markdownViews }}>{messages.map(message => <TranscriptItem key={message.id} message={message} connected={connected} disclosures={disclosures} calls={links.calls} linkedCall={links.results.get(message.id)}/>)}</TranscriptMarkdownContext></ImageContext></ArtifactContext>;
 }
 export function TranscriptItem({ message, connected, disclosures, calls, linkedCall }: { message: TranscriptMessage; connected: boolean; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; linkedCall?: ToolLink }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const images = useContext(ImageContext);
+  const openArtifact = useContext(ArtifactContext);
   const blocks = messageBlocks(message);
   if (message.role === "fileMention" && message.fileReferences) return <TranscriptFileMentions message={message} images={images} connected={connected}/>;
   const renderBlock = (block: TranscriptBlock, index: number) => <Block key={index} block={block} blockKey={`${message.id}:block:${index}`} nativeEntryId={message.nativeId} disclosures={disclosures} calls={calls} connected={connected} streaming={message.lifecycle === "streaming"} allowWideBlocks={message.role === "assistant" || message.role === "user"} toolOutput={message.role === "toolResult" || message.role === "tool"}/>;
   if (message.role === "toolResult" || message.role === "tool") {
     const outcome = toolOutcome(message, connected), name = message.tool?.name ?? linkedCall?.call.name ?? "Tool";
     return <div className="transcript-tool-result" data-message-id={message.id} data-native-id={message.nativeId}>
+      {message.mcpArtifact && <button className="transcript-artifact-open" disabled={!connected || !openArtifact} onClick={() => openArtifact?.(message.mcpArtifact!)}>Open {message.mcpArtifact.toolName} result</button>}
+      {message.mcpArtifactError && <p role="status">{message.mcpArtifactError}</p>}
       <Disclosure state={disclosures} stateKey={message.id} running={outcome.tone === "running"} label={`${name} result`} tone={outcome.tone} status={outcome.label}>
         {linkedCall && <a className="transcript-call-reference" href={`#${encodeURIComponent(callAnchor(linkedCall.key))}`}>View {name} invocation</a>}
         {blocks.length ? blocks.map(renderBlock) : <p className="transcript-empty-output">{message.tool?.isError ? "The tool failed without output." : message.tool?.status === "completed" ? "No output was returned." : "No output has been received."}</p>}

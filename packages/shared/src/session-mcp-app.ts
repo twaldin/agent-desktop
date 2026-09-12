@@ -14,9 +14,11 @@ export interface NativeMcpAppDescriptor {
   icon?: { light: string; dark: string };
 }
 export type McpJson = null | boolean | number | string | McpJson[] | { [key: string]: McpJson };
+export type NativeMcpAppSource = { type: "artifact"; entryId: string } | { type: "file"; path: string; resourceUri: string };
+export interface NativeMcpFileViewer extends NativeMcpAppDescriptor { extensions: string[] }
 export type NativeMcpAppRequest =
-  | { type: "open"; channelId: string; selection: NativeMcpAppSelection }
-  | { type: "request"; channelId: string; requestId: string; method: "tools/call" | "resources/read" | "resources/list" | "resources/templates/list"; params: Record<string, McpJson> }
+  | { type: "open"; channelId: string; selection: NativeMcpAppSelection; source?: NativeMcpAppSource }
+  | { type: "request"; channelId: string; requestId: string; method: "tools/call" | "resources/read" | "openai/resources/write" | "resources/list" | "resources/templates/list"; params: Record<string, McpJson> }
   | { type: "close"; channelId: string };
 export interface NativeMcpAppResource {
   uri: string;
@@ -26,7 +28,7 @@ export interface NativeMcpAppResource {
   csp?: { connectDomains?: string[]; resourceDomains?: string[]; frameDomains?: string[]; baseUriDomains?: string[] };
 }
 export type NativeMcpAppResponse =
-  | { type: "opened"; channelId: string; resource: NativeMcpAppResource }
+  | { type: "opened"; channelId: string; resource: NativeMcpAppResource; initialResult?: Record<string, McpJson>; initialArguments?: Record<string, McpJson> }
   | { type: "result"; channelId: string; requestId: string; value: Record<string, McpJson> }
   | { type: "closed"; channelId: string; operationErrors?: number };
 
@@ -88,13 +90,43 @@ export function parseNativeMcpAppDescriptor(value: unknown): NativeMcpAppDescrip
   }
   return { toolName: text(input.toolName), title: text(input.title), resourceUri, ...(icon ? { icon } : {}) };
 }
+export function parseNativeMcpFileViewer(value: unknown): NativeMcpFileViewer {
+  const input = record(value), { extensions, ...descriptor } = input;
+  if (!Array.isArray(extensions) || !extensions.length || extensions.length > 128) throw new Error("Invalid file viewer extensions.");
+  const parsed: string[] = [];
+  for (let index = 0; index < extensions.length; index++) parsed.push(text(extensions[index], 256).trim());
+  if (parsed.some(extension => !extension)) throw new Error("Invalid file viewer extension.");
+  return { ...parseNativeMcpAppDescriptor(descriptor), extensions: parsed };
+}
+/** Longest normalized suffix wins; declaration order breaks ties. */
+export function mcpViewerExtension(path: string, extensions: string[]): string | undefined {
+  const name = path.split("/").at(-1)!.toLowerCase();
+  let selected: string | undefined;
+  for (const extension of extensions) {
+    const normalized = extension.trim().replace(/^\.+/, "").toLowerCase();
+    if (normalized && name.endsWith(`.${normalized}`) && normalized.length > (selected?.length ?? 0)) selected = normalized;
+  }
+  return selected;
+}
 export function parseNativeMcpAppRequest(value: unknown): NativeMcpAppRequest {
   const input = record(value), channelId = id(input.channelId);
-  if (input.type === "open") { keys(input, ["type", "channelId", "selection"]); return { type: "open", channelId, selection: parseNativeMcpAppSelection(input.selection) }; }
+  if (input.type === "open") { keys(input, ["type", "channelId", "selection", "source"]); return { type: "open", channelId, selection: parseNativeMcpAppSelection(input.selection), ...(input.source === undefined ? {} : { source: parseNativeMcpAppSource(input.source) }) }; }
   if (input.type === "close") { keys(input, ["type", "channelId"]); return { type: "close", channelId }; }
   keys(input, ["type", "channelId", "requestId", "method", "params"]);
-  if (input.type !== "request" || !["tools/call", "resources/read", "resources/list", "resources/templates/list"].includes(String(input.method))) throw new Error("Unsupported MCP app operation.");
-  return { type: "request", channelId, requestId: id(input.requestId), method: input.method as Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: record(cloneMcpJson(record(input.params), 32_768)) as Record<string, McpJson> };
+  if (input.type !== "request" || !["tools/call", "resources/read", "openai/resources/write", "resources/list", "resources/templates/list"].includes(String(input.method))) throw new Error("Unsupported MCP app operation.");
+  return { type: "request", channelId, requestId: id(input.requestId), method: input.method as Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: record(cloneMcpJson(record(input.params), input.method === "openai/resources/write" ? 2 * 1024 * 1024 : 32_768)) as Record<string, McpJson> };
+}
+export function parseNativeMcpAppSource(value: unknown): NativeMcpAppSource {
+  const input = record(value);
+  if (input.type === "artifact") { keys(input, ["type", "entryId"]); return { type: "artifact", entryId: id(input.entryId) }; }
+  if (input.type === "file") {
+    keys(input, ["type", "path", "resourceUri"]);
+    const path = text(input.path, 16_384), resourceUri = text(input.resourceUri, 256);
+    if (path.startsWith("/") || path.includes("\\") || path.split("/").some(segment => !segment || segment === "." || segment === "..")
+      || !/^codex-resource:\/\/[a-zA-Z0-9-]{1,200}$/.test(resourceUri)) throw new Error("Invalid original viewer file.");
+    return { type: "file", path, resourceUri };
+  }
+  throw new Error("Unsupported MCP app source.");
 }
 export function parseNativeMcpAppResource(value: unknown): NativeMcpAppResource {
   const input = record(value); keys(input, ["uri", "mimeType", "html", "csp"]);
@@ -120,7 +152,18 @@ export function parseNativeMcpAppResource(value: unknown): NativeMcpAppResource 
 export function parseNativeMcpAppResponse(value: unknown, request: NativeMcpAppRequest): NativeMcpAppResponse {
   const input = record(value);
   if (input.channelId !== request.channelId) throw new Error("MCP app response owner changed.");
-  if (request.type === "open" && input.type === "opened") { keys(input, ["type", "channelId", "resource"]); const resource = parseNativeMcpAppResource(input.resource); if (resource.uri !== request.selection.resourceUri) throw new Error("MCP app resource identity changed."); return { type: "opened", channelId: request.channelId, resource }; }
+  if (request.type === "open" && input.type === "opened") {
+    keys(input, ["type", "channelId", "resource", "initialResult", "initialArguments"]);
+    const resource = parseNativeMcpAppResource(input.resource);
+    if (resource.uri !== request.selection.resourceUri) throw new Error("MCP app resource identity changed.");
+    if (request.source?.type === "artifact" && input.initialResult === undefined) throw new Error("The saved app result is unavailable. Its tool cannot be replayed.");
+    if (request.source?.type === "file" && (input.initialArguments === undefined || input.initialResult !== undefined)) throw new Error("Invalid original file viewer input.");
+    if (!request.source && (input.initialResult !== undefined || input.initialArguments !== undefined)) throw new Error("Unexpected saved MCP result.");
+    return { type: "opened", channelId: request.channelId, resource,
+      ...(input.initialResult === undefined ? {} : { initialResult: record(cloneMcpJson(input.initialResult)) as Record<string, McpJson> }),
+      ...(input.initialArguments === undefined ? {} : { initialArguments: record(cloneMcpJson(input.initialArguments, 32_768)) as Record<string, McpJson> }),
+    };
+  }
   if (request.type === "close" && input.type === "closed") { keys(input, ["type", "channelId", "operationErrors"]);
     if (input.operationErrors !== undefined && (!Number.isSafeInteger(input.operationErrors) || Number(input.operationErrors) < 1 || Number(input.operationErrors) > 1024)) throw new Error("Invalid MCP app cleanup outcome.");
     return { type: "closed", channelId: request.channelId, ...(input.operationErrors === undefined ? {} : { operationErrors: Number(input.operationErrors) }) }; }
