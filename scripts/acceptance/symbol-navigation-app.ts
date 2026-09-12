@@ -17,7 +17,7 @@ interface SymbolAppSnapshot {
 /** Run against the REAL App page after opening symbol-source.ts from the disposable
  * workspace created by symbol-navigation-fixture.ts. No fake bridge or renderer.
  * The caller owns browser/host lifetime and the explicit private output directory. */
-export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, output: string) {
+export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, output: string, options: { restoredPullRequests?: boolean } = {}) {
   await mkdir(output, { recursive: true, mode: 0o700 });
   if ((await readdir(output)).length) throw new Error("Acceptance output must be a new empty directory; frozen evidence is never overwritten.");
   const checks: string[] = [], errors: string[] = [];
@@ -59,11 +59,20 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
       focus: selection ? selection.direction === "backward" ? selection.start : selection.end : null,
     } };
   };
-  const wait = async (predicate: (state: SymbolAppSnapshot) => boolean) => {
+  const wait = async (predicate: (state: SymbolAppSnapshot) => boolean, stage = "expected symbol state") => {
     for (let attempt = 0; attempt < 500; attempt++) { const value = await snapshot(); if (predicate(value)) return value; await Bun.sleep(50); }
-    throw new Error("The actual App did not reach the expected symbol state: " + JSON.stringify(await snapshot()));
+    throw new Error(`The actual App did not reach ${stage}: ` + JSON.stringify(await snapshot()));
+  };
+  const retainSelection = async (text: string, stage: string) => {
+    for (let frame = 0; frame < 8; frame++) {
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+      const selected = await snapshot();
+      if (selected.selection.text !== text) throw new Error(`${stage} changed after input: ${JSON.stringify(selected.selection)}`);
+    }
   };
   const click = async (label: string) => {
+    await page.waitForFunction((label: string) => [...document.querySelectorAll<HTMLButtonElement>(".symbol-navigation button")]
+      .some(node => node.getClientRects().length && !node.disabled && (node.textContent?.trim() === label || node.getAttribute("aria-label") === label)), { timeout: 5000 }, label);
     const point = await page.evaluate((label: string) => {
       const button = [...document.querySelectorAll<HTMLButtonElement>(".symbol-navigation button")].find(node => node.getClientRects().length && !node.disabled && (node.textContent?.trim() === label || node.getAttribute("aria-label") === label));
       if (!button) throw new Error("No enabled symbol action: " + label);
@@ -89,6 +98,23 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     await writeFile(join(output, name + ".json"), JSON.stringify(await snapshot(), null, 2));
   };
   try {
+    if (options.restoredPullRequests) {
+      const close = await page.waitForSelector('button[aria-label="Close pull requests"]', { visible: true });
+      if (!close) throw new Error("The restored Pull requests page did not open.");
+      const restored = await page.evaluate(() => ({
+        initial: window.agentDesktopWindow?.initial,
+        editors: [...document.querySelectorAll<HTMLElement>(".pierre-source-editor-frame[data-symbol-owner]")]
+          .map(frame => ({ visible: Boolean(frame.getClientRects().length),
+            label: frame.querySelector("diffs-container")?.shadowRoot?.querySelector('[contenteditable="true"]')?.getAttribute("aria-label") })),
+      }));
+      if (!restored.initial?.state?.pullRequestsOpen || restored.initial.error || restored.editors.some(editor => editor.visible))
+        throw new Error("The file editor was not restored behind the saved Pull requests page.");
+      await page.screenshot({ path: join(output, "00-restored-pull-requests.png") });
+      await writeFile(join(output, "00-restored-pull-requests.json"), JSON.stringify(restored, null, 2));
+      await close.click();
+      await wait(value => value.label === "Edit symbol-source.ts");
+      checks.push("A new App process restores Pull requests open, then first displays the original file editor when that page closes.");
+    }
     await wait(value => value.label === "Edit symbol-source.ts");
     // A retained target misses the first-render focus race. Close the clean
     // disposable target, and require its actual editor to be unmounted.
@@ -131,6 +157,21 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     }
     await capture("01b-definition-after-pull-requests");
     checks.push("Opening and closing the actual Pull requests page preserves the original declaration selection across queued frames.");
+    // Retained editors also receive late native selection events after their
+    // focus frames. Exercise real history navigation, not just first mount.
+    for (let round = 0; round < 30; round++) {
+      await click("Back to symbol");
+      await wait(value => value.label === "Edit symbol-source.ts" && JSON.stringify(value.selection) === JSON.stringify(origin.selection));
+      await click("Forward to symbol");
+      await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "first");
+      for (let frame = 0; frame < 8; frame++) {
+        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+        const selected = await snapshot();
+        if (selected.label !== "Edit symbol-target.ts" || selected.selection.text !== "first")
+          throw new Error(`Retained declaration selection collapsed in history round ${round + 1}: ${JSON.stringify(selected.selection)}`);
+      }
+    }
+    checks.push("Thirty real Back/Forward cycles retain the declaration range through subsequent frames.");
     await click("Back to symbol");
     await wait(value => value.label === "Edit symbol-source.ts" && !value.buttons.find(button => button.text === "Forward to symbol")?.disabled && JSON.stringify(value.selection) === JSON.stringify(origin.selection));
     checks.push("Back restores the exact original native cursor and selection.");
@@ -176,6 +217,26 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     try { await page.keyboard.press("z"); } finally { await page.keyboard.up(modifier); }
     await wait(value => value.label === "Edit symbol-target.ts" && value.text === targetBeforeEdit.text);
     await capture("07-unsaved-buffer-native-undo"); checks.push("Back/forward retain the unsaved target and Pierre's original undo timeline; native Undo restores the exact pre-edit text.");
+    const pointer = await page.evaluate(() => {
+      const frame = [...document.querySelectorAll<HTMLElement>(".pierre-source-editor-frame[data-symbol-owner]")].find(node => node.getClientRects().length);
+      const token = [...(frame?.querySelector("diffs-container")?.shadowRoot?.querySelectorAll<HTMLElement>('[data-line="1"] [data-char]') ?? [])].find(node => node.textContent === "first");
+      if (!token) throw new Error("The retained editor's native pointer target is missing.");
+      const rect = token.getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    });
+    await page.mouse.click(pointer.x, pointer.y);
+    await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "" && value.selection.anchor?.line === 1 && value.selection.anchor.column >= 17 && value.selection.anchor.column <= 22, "native pointer caret");
+    await page.keyboard.down("Shift");
+    try { await page.keyboard.press("ArrowRight"); } finally { await page.keyboard.up("Shift"); }
+    const shifted = await wait(value => value.selection.text?.length === 1, "Shift/ArrowRight selection");
+    await retainSelection(shifted.selection.text!, "Shift/ArrowRight selection");
+    await page.keyboard.down(modifier);
+    try { await page.keyboard.press("a"); } finally { await page.keyboard.up(modifier); }
+    await wait(value => value.selection.text === value.text, "native Select All");
+    await retainSelection(targetBeforeEdit.text!, "Native Select All");
+    await page.keyboard.press("ArrowRight");
+    await wait(value => value.selection.text === "");
+    await capture("08-native-selection-input");
+    checks.push("Native pointer, Shift/Arrow and Select All/Arrow replace the managed selection after navigation.");
     if (errors.length) throw new Error(errors.join("\n"));
     const result = { passed: true, checks, errors, scope: "Actual App page, production WorkspacePanel/Pierre, existing GoToLine and native Chromium pointer/keyboard input. Requires Main's authenticated disposable host setup. No provider/session or physical-pixel parity claim." };
     await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2)); return result;

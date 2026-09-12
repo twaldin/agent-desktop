@@ -10,6 +10,7 @@ import { defaultWindowView } from "../../apps/desktop/src/window-state";
 import { WindowStateStore } from "../../apps/desktop/src/main/window-state";
 
 const repo = resolve(import.meta.dir, "../.."), output = resolve(process.argv[2] ?? `.data/symbol-app-${Date.now()}`);
+const restorePullRequests = process.argv.includes("--restore-pull-requests");
 await mkdir(output, { recursive: true, mode: 0o700 });
 if ((await readdir(output)).length) throw new Error("Acceptance output must be a new empty private directory.");
 if (!await Bun.file(join(repo, "apps/desktop/dist/main.cjs")).exists()) throw new Error("Build the current production desktop before running symbol acceptance.");
@@ -51,20 +52,45 @@ try {
   const tab = { ...descriptor, id: dockTabId(descriptor) };
   const saved = new WindowStateStore(env.AGENT_DESKTOP_PROFILE_DIR, "primary").saveView({ ...defaultWindowView(), route: { hostId: ready.connection.hostId, sessionId: null }, dock: { state: insertDockTab(createDockState(), tab, "right"), tabs: [tab] } });
   if (saved.error) throw new Error(saved.error);
-  electron = Bun.spawn([electronPath, join(import.meta.dir, "symbol-navigation-electron.cjs"), repo], { cwd: repo, env, stdout: Bun.file(join(output, "electron.log")), stderr: Bun.file(join(output, "electron-errors.log")) });
-  let port: string | undefined;
-  while (!port) {
-    port = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(await readFile(join(output, "electron-errors.log"), "utf8"))?.[1];
-    if (electron.exitCode !== null || Date.now() > deadline) throw new Error("The owned Electron debugger did not start.");
-    if (!port) await Bun.sleep(50);
+  const openApp = async (name: string) => {
+    const deadline = Date.now() + 40_000, errors = join(output, `${name}-errors.log`);
+    electron = Bun.spawn([electronPath, join(import.meta.dir, "symbol-navigation-electron.cjs"), repo], { cwd: repo, env, stdout: Bun.file(join(output, `${name}.log`)), stderr: Bun.file(errors) });
+    let port: string | undefined;
+    while (!port) {
+      port = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(await readFile(errors, "utf8"))?.[1];
+      if (electron.exitCode !== null || Date.now() > deadline) throw new Error("The owned Electron debugger did not start.");
+      if (!port) await Bun.sleep(50);
+    }
+    browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: 10_000 });
+    let page = (await browser.pages()).find(page => page.url().startsWith("file:"));
+    while (!page) {
+      if (Date.now() > deadline) throw new Error("The production App page did not open.");
+      await Bun.sleep(50); page = (await browser.pages()).find(page => page.url().startsWith("file:"));
+    }
+    return page;
+  };
+  let page = await openApp("electron");
+  if (restorePullRequests) {
+    const open = await page.waitForSelector('.nav-action[aria-label="Pull requests"]', { visible: true });
+    if (!open) throw new Error("The production Pull requests action did not mount.");
+    await open.click();
+    await page.waitForSelector('button[aria-label="Close pull requests"]', { visible: true });
+    const saveDeadline = Date.now() + 5_000;
+    while (!new WindowStateStore(env.AGENT_DESKTOP_PROFILE_DIR, "primary").bootstrap().state?.pullRequestsOpen) {
+      if (Date.now() > saveDeadline) throw new Error("The actual App did not persist the open Pull requests page.");
+      await Bun.sleep(50);
+    }
+    await page.screenshot({ path: join(output, "before-restart-pull-requests.png") });
+    await writeFile(join(output, "before-restart-window.json"), JSON.stringify(new WindowStateStore(env.AGENT_DESKTOP_PROFILE_DIR, "primary").bootstrap(), null, 2));
+    const first = electron!;
+    await browser!.close(); browser = undefined;
+    if (await first.exited !== 0 || host.exitCode !== null) throw new Error("The first App process did not close cleanly with its host retained.");
+    await writeFile(join(output, "restart.json"), JSON.stringify({ firstAppPid: first.pid, firstAppExit: first.exitCode, hostPid: host.pid, hostRetained: true }));
+    electron = undefined;
+    page = await openApp("restored-electron");
+    if (electron!.pid === first.pid) throw new Error("The restored App must be a fresh process.");
   }
-  browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: 10_000 });
-  let page = (await browser.pages()).find(page => page.url().startsWith("file:"));
-  while (!page) {
-    if (Date.now() > deadline) throw new Error("The production App page did not open.");
-    await Bun.sleep(50); page = (await browser.pages()).find(page => page.url().startsWith("file:"));
-  }
-  await exerciseSymbolNavigationApp(page, join(output, "app"));
+  await exerciseSymbolNavigationApp(page, join(output, "app"), { restoredPullRequests: restorePullRequests });
   passed = true;
 } finally {
   let browserCloseError: string | undefined;
