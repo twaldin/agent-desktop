@@ -100,6 +100,7 @@ test("startup admission waits until the exact source evaluator has no in-flight 
 
 test("startup admission rejects a changed source descriptor and transport loss as unknown", async () => {
   const changed = model("cdp"), first = cdp(await open(changed, "cdp")); await first.start(() => {});
+  if (changed.descriptor.backend !== "cdp") throw new Error("CDP descriptor expected");
   changed.inspect({ pending: 0, unacknowledged: 0, descriptor: { ...changed.descriptor, descriptor: { ...changed.descriptor.descriptor, channel: "replacement-channel" } } });
   await assert.rejects(first.waitForIdle(500), error => (error as { code?: string }).code === "OUTCOME_UNKNOWN");
   await first.dispose();
