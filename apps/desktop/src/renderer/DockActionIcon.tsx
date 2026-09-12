@@ -17,4 +17,3 @@ export function DockActionIcon({ action }: { action: DockAddAction }) {
   }
   return <Icon name={action.icon}/>;
 }
-
