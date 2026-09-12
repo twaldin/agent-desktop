@@ -2,8 +2,8 @@ import { expect, test } from 'bun:test';
 import type { DesktopBridge } from '@agent-desktop/shared';
 import { HtmlPreviewViews } from './html-preview-views';
 const leaseId = '12345678-1234-1234-1234-123456789012';
-const output = { kind: 'html-preview' as const, path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' };
-const lease = { leaseId, epoch: 'epoch', entryId: 'entry', revision: output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 11, validForMs: 10000, expiresAt: Date.now() + 10000 };
+const output = { kind: 'html-preview' as const, branch: 'b'.repeat(64), path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' };
+const lease = { leaseId, epoch: 'epoch', branch: 'b'.repeat(64), entryId: 'entry', revision: output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 11, validForMs: 10000, expiresAt: Date.now() + 10000 };
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 test('source loss during native preparation releases original lease without a browser queue', async () => {
   const pending = deferred<typeof lease>(), releases: any[] = []; let current = true, queued = 0;

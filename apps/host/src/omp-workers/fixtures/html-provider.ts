@@ -15,10 +15,10 @@ export default function(pi: ExtensionAPI) {
       const steps = prompt.includes('html-prepare') ? [
         { name: 'write', arguments: { path: 'site/index.html', content: '<!doctype html><title>Original HTML</title><link rel="stylesheet" href="style.css"><h1 id="heading">Before edit</h1><img src="image.svg"><a style="position:absolute;left:8px;top:120px;width:200px;height:40px" href="about.html">About saved output</a><script src="app.js"></script>' } },
         { name: 'write', arguments: { path: 'site/about.html', content: '<!doctype html><title>Saved relative page</title><h1>Saved relative page</h1><a href="index.html">Return</a>' } },
-        { name: 'write', arguments: { path: 'site/style.css', content: 'h1 { color: rgb(12, 100, 180); }' } },
+        { name: 'write', arguments: { path: 'xd://write', content: JSON.stringify({ path: 'site/style.css', content: 'h1 { color: rgb(12, 100, 180); }' }) } },
         { name: 'write', arguments: { path: 'site/app.js', content: 'document.body.dataset.script = "original-recorded-script"; document.querySelector("#heading").textContent += " / linked JS";' } },
         { name: 'write', arguments: { path: 'site/image.svg', content: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="green"/></svg>' } },
-      ] : [{ name: 'edit', arguments: { path: 'site/index.html', old_string: 'Before edit', new_string: 'Actual native edited HTML' } }];
+      ] : prompt.includes('html-branch-advance') ? [] : [{ name: 'edit', arguments: { path: 'site/index.html', old_string: 'Before edit', new_string: 'Actual native edited HTML' } }];
       const tool = steps[results.length];
       if (tool && process.env.HTML_PROVIDER_LOG) appendFileSync(process.env.HTML_PROVIDER_LOG, JSON.stringify(tool) + '\n');
       const message: AssistantMessage = { role: 'assistant', content: tool ? [{ type: 'toolCall', id: crypto.randomUUID(), ...tool }] : [{ type: 'text', text: 'The edited website is ready.' }], api: model.api, provider: model.provider, model: model.id,

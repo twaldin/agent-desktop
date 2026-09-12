@@ -4,7 +4,7 @@ export const MAX_SESSION_OUTPUTS = 100;
 interface OutputIdentity { entryId: string; turnId: string; revision: string; label: string }
 export type SessionOutput = OutputIdentity & (
   | { kind: 'file'; path: string }
-  | { kind: 'html-preview'; path: string }
+  | { kind: 'html-preview'; path: string; branch: string }
   | { kind: 'generated-image'; path: string; imageIndex: number; mimeType: ImageAttachmentMimeType; bytes: number; sha256: string }
   | { kind: 'mcp'; serverName: string; toolName: string; resourceUri: string }
   | { kind: 'website'; url: string }
@@ -32,7 +32,8 @@ export function parseSessionOutputs(value: unknown): SessionOutputs {
     if (r.kind === 'file' || r.kind === 'html-preview' || r.kind === 'generated-image') {
       const path = text(r.path, 16_384);
       if (!path.startsWith('/') || path.split('/').some(part => part === '.' || part === '..') || path.includes('//')) throw new Error('Invalid saved output path.');
-      if (r.kind === 'file' || r.kind === 'html-preview') output = { ...base, kind: r.kind, path };
+      if (r.kind === 'file') output = { ...base, kind: r.kind, path };
+      else if (r.kind === 'html-preview') output = { ...base, kind: r.kind, path, branch: digest(r.branch) };
       else {
         if (!Number.isSafeInteger(r.imageIndex) || (r.imageIndex as number) < 0 || (r.imageIndex as number) >= 100
           || !Number.isSafeInteger(r.bytes) || (r.bytes as number) < 1 || (r.bytes as number) > MAX_IMAGE_ATTACHMENT_BYTES

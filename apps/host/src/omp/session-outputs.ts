@@ -9,6 +9,7 @@ import { readNativeImage, type OmpRecordedImage } from './images';
 export interface OutputEntry { id: string; type?: string; message?: unknown }
 const record = (v: unknown): Record<string, unknown> | undefined => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : undefined;
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+export const sessionOutputBranch = (entries: readonly OutputEntry[]) => hash(entries.map(entry => entry.id));
 const fileExtensions = new Set('avif csv doc docx gif jpeg jpg md mdx pdf png ppt pptx tsv webp xls xlsm xlsx'.split(' '));
 const documentExtensions = new Set(['.docx', '.pdf', '.pptx', '.xlsx']);
 function outputPath(cwd: string, value: unknown): string | undefined {
@@ -33,7 +34,7 @@ export function recordedOutputFiles(entry: OutputEntry, cwd: string): string[] {
   const name = dispatch?.mode === 'execute' ? dispatch.tool : message.toolName;
   const value = dispatch?.mode === 'execute' ? record(dispatch.inner) : details;
   let paths: unknown[] = [];
-  if (name === 'write' && !dispatch) paths = [value?.resolvedPath];
+  if (name === 'write') paths = [value?.resolvedPath];
   if (name === 'edit') {
     const files = Array.isArray(value?.perFileResults) ? value.perFileResults : [value];
     paths = files.flatMap(raw => { const f = record(raw); return f && ['create', 'update'].includes(String(f.op)) ? [f.path] : []; });
@@ -60,7 +61,7 @@ function messageText(message: Record<string, unknown>): string {
 /** Pinned reference distinguishes explicit outputs from source/read mentions.
  * OMP supplies successful-write and image-generation metadata directly. */
 export function projectSessionOutputs(entries: readonly OutputEntry[], cwd: string): { outputs: SessionOutput[]; warnings: string[]; truncated: boolean } {
-  const warnings = new Set<string>();
+  const warnings = new Set<string>(), branch = sessionOutputBranch(entries);
   type Generated = { entryId: string; turnId: string; revision: string; label: string; kind: 'generated-image'; path: string; imageIndex: number; entry: OutputEntry };
   type Candidate = Exclude<SessionOutput, { kind: 'generated-image' }> | Generated;
   type Turn = { id: string; outputs: Candidate[]; reads: Set<string>; html: Map<string, Candidate>; final?: { entry: OutputEntry; text: string }; complete: boolean };
@@ -81,7 +82,7 @@ export function projectSessionOutputs(entries: readonly OutputEntry[], cwd: stri
     const details = record(m.details), call = calls.get(String(m.toolCallId)), args = record(call?.arguments);
     if (m.toolName === 'read') { const path = outputPath(cwd, details?.resolvedPath ?? args?.path); if (path) turn.reads.add(path); }
     for (const path of recordedOutputFiles(entry, cwd)) {
-      if (/\.html?$/i.test(path)) turn.html.set(path, { ...base, kind: 'html-preview', path, label: basename(path) });
+      if (/\.html?$/i.test(path)) turn.html.set(path, { ...base, kind: 'html-preview', path, branch, label: basename(path) });
     }
     if (m.toolName === 'write' && !details?.xdev) {
       const path = outputPath(cwd, details?.resolvedPath);

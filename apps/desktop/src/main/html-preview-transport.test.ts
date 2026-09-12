@@ -2,9 +2,9 @@ import { expect, test } from 'bun:test';
 import { SESSION_OUTPUTS_OWNER_HEADER } from '@agent-desktop/shared';
 import { HtmlPreviewHttp } from '../../../host/src/html-preview-http';
 import { requestHtmlPreview } from './html-preview-transport';
-const input = { epoch: 'epoch', output: { kind: 'html-preview' as const, path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
+const input = { epoch: 'epoch', output: { kind: 'html-preview' as const, branch: 'b'.repeat(64), path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
 const leaseId = '12345678-1234-1234-1234-123456789012';
-const lease = { leaseId, epoch: 'epoch', entryId: 'entry', revision: input.output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 10, expiresAt: 100, validForMs: 1000 };
+const lease = { leaseId, epoch: 'epoch', branch: 'b'.repeat(64), entryId: 'entry', revision: input.output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 10, expiresAt: 100, validForMs: 1000 };
 test('actual fetch/host route preserves original ownership and confirms explicit release', async () => {
   const releases: string[] = [];
   const owner = { openHtmlPreview: async () => lease, releaseHtmlPreview: async (id: string) => { releases.push(id); } };

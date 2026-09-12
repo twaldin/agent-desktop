@@ -1,6 +1,6 @@
 import { HtmlPreviews } from './html-previews';
 import { parseHtmlPreviewRequest, type HtmlPreviewRequest, type HtmlPreviewLease } from '../../../../packages/shared/src/html-preview';
-import { inspectSessionOutputs, recordedGeneratedImage } from "./session-outputs";
+import { inspectSessionOutputs, recordedGeneratedImage, sessionOutputBranch } from "./session-outputs";
 import { executeMcpAppTool } from "./mcp-app-tool";
 import { McpFileResources } from "./mcp-file-resource";
 import { NativeMcpApps } from "./mcp-apps";
@@ -827,6 +827,7 @@ export class OmpRuntime {
           assertSessionActive();
           const request = parseHtmlPreviewRequest(input), cwd = manager.getCwd(), branch = manager.getBranch();
           if (request.epoch !== outputEpoch) throw new Error("The original output worker changed.");
+          if (request.output.branch !== sessionOutputBranch(branch)) throw new Error("The original output branch changed. Refresh the Suggested output.");
           const retained = branch.map(entry => entry.id);
           const current = async () => {
             assertSessionActive();

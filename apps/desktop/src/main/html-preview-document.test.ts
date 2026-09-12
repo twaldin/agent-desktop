@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 import { HtmlPreviewDocument } from './html-preview-document';
-const request = { epoch: 'epoch', output: { kind: 'html-preview' as const, path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
+const request = { epoch: 'epoch', output: { kind: 'html-preview' as const, branch: 'b'.repeat(64), path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
 const leaseId = '12345678-1234-1234-1234-123456789012';
-const lease = { leaseId, epoch: 'epoch', entryId: 'entry', revision: request.output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 10, validForMs: 10000, expiresAt: 100 };
+const lease = { leaseId, epoch: 'epoch', branch: 'b'.repeat(64), entryId: 'entry', revision: request.output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 10, validForMs: 10000, expiresAt: 100 };
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 test('retiring during open retains original endpoint and drains late acquired lease', async () => {
   const open = deferred<typeof lease>(), release = deferred<undefined>(), calls: any[] = [];

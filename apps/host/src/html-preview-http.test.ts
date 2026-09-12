@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
 import { HtmlPreviewHttp } from './html-preview-http';
 import { SESSION_OUTPUTS_OWNER_HEADER } from '@agent-desktop/shared';
-const input = { epoch: 'epoch', output: { kind: 'html-preview' as const, path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
+const input = { epoch: 'epoch', output: { kind: 'html-preview' as const, branch: 'b'.repeat(64), path: '/task/index.html', entryId: 'entry', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
 const leaseId = '12345678-1234-1234-1234-123456789012';
-const lease = { leaseId, epoch: 'epoch', entryId: 'entry', revision: input.output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 10, expiresAt: 100, validForMs: 1000 };
+const lease = { leaseId, epoch: 'epoch', branch: 'b'.repeat(64), entryId: 'entry', revision: input.output.revision, url: `http://127.0.0.1:5555/${leaseId}/index.html`, workerPid: 10, expiresAt: 100, validForMs: 1000 };
 const request = (body: unknown = input, owner = 'host', signal?: AbortSignal) => new Request('http://localhost/v1/sessions/session/html-preview/open', { method: 'POST', headers: { [SESSION_OUTPUTS_OWNER_HEADER]: owner }, body: JSON.stringify(body), signal });
 test('wrong host, missing original worker and oversized body cannot acquire another owner', async () => {
   let lookups = 0;

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HtmlPreviews } from './html-previews';
-const request = { epoch: 'epoch', output: { kind: 'html-preview' as const, path: '', entryId: 'html', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
+const request = { epoch: 'epoch', output: { kind: 'html-preview' as const, branch: 'b'.repeat(64), path: '', entryId: 'html', turnId: 'turn', revision: 'a'.repeat(64), label: 'index.html' } };
 const saved = (id: string, path: string) => ({ id, message: { role: 'toolResult', toolName: 'write', isError: false, details: { resolvedPath: path } } });
 async function setup() {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), 'html-preview-'))); await writeFile(join(cwd, 'index.html'), '<h1>Original</h1>');
@@ -65,5 +65,14 @@ test('ownership loss in the final read check retires the URL permanently even af
     expect((await fetch(lease.url)).status).toBe(410); expect(checks).toBe(3); expect(f.previews.active).toBe(false);
     loseAtFinalRead = false;
     expect((await fetch(lease.url)).status).toBe(410); expect(checks).toBe(3);
+  } finally { await f.previews.dispose(); await rm(f.cwd, { recursive: true, force: true }); }
+});
+
+test('the reused workspace reader enforces its 2 MiB bound before issuing any preview URL', async () => {
+  const f = await setup();
+  try {
+    await writeFile(join(f.cwd, 'large.js'), Buffer.alloc(2 * 1024 * 1024 + 1));
+    await expect(f.previews.open(f.input, f.cwd, [...f.entries, saved('large', join(f.cwd, 'large.js'))], async () => true)).rejects.toThrow('2097152-byte');
+    expect(f.previews.active).toBe(false);
   } finally { await f.previews.dispose(); await rm(f.cwd, { recursive: true, force: true }); }
 });

@@ -45,7 +45,7 @@ export class HtmlPreviews {
     if (!assets.has(original) || this.#disposed || !stillCurrent) throw new Error('The original HTML output is no longer available.');
     this.#server ??= Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: req => this.#request(req) });
     const leaseId = crypto.randomUUID(), expiresAt = Date.now() + LIFETIME;
-    const receipt: HtmlPreviewLease = { leaseId, epoch: request.epoch, entryId: request.output.entryId, revision: request.output.revision,
+    const receipt: HtmlPreviewLease = { leaseId, epoch: request.epoch, branch: request.output.branch, entryId: request.output.entryId, revision: request.output.revision,
       url: new URL(`/${leaseId}/${original}`, this.#server.url).href, workerPid: process.pid, expiresAt, validForMs: LIFETIME };
     const timer = setTimeout(() => this.release(leaseId), LIFETIME); timer.unref();
     this.#leases.set(leaseId, { receipt, workspace, assets, current, timer });

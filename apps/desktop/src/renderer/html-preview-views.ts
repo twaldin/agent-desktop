@@ -1,3 +1,4 @@
+import type { HtmlPreviewAdmission } from "../../../../packages/shared/src/html-preview";
 import type { DesktopBridge } from '@agent-desktop/shared';
 import { parseHtmlPreviewLease, parseHtmlPreviewRequest, type HtmlPreviewOutput, type HtmlPreviewLease } from '../../../../packages/shared/src/html-preview';
 type Held = { lease: HtmlPreviewLease; bridge: DesktopBridge; hostId: string; sessionId: string; tabId?: string; pending: boolean; current(): boolean; release?: Promise<void> };
@@ -14,7 +15,7 @@ export class HtmlPreviewViews {
     for (const held of this.#held) if (!held.current() || !held.pending && (!held.tabId || !this.#tabs.has(held.tabId))) void this.#release(held).catch(() => {});
   }
   async open(options: { bridge: DesktopBridge; hostId: string; sessionId: string; epoch: string; output: HtmlPreviewOutput; admitted(): boolean; retained(): boolean;
-    queue(url: string, current: () => boolean, preview: { workerPid: number; expiresAt: number }): { tabId: string; queued: Promise<boolean> } | undefined }) {
+    queue(url: string, current: () => boolean, preview: HtmlPreviewAdmission): { tabId: string; queued: Promise<boolean> } | undefined }) {
     if (!this.#live || !options.admitted()) throw new Error('The original saved HTML is no longer selected.');
     if (!options.bridge.openHtmlPreview || !options.bridge.releaseHtmlPreview) throw new Error('Update the desktop and owning host to preview saved HTML.');
     const startedAt = Date.now(), generation = this.#generation, current = () => this.#live && this.#generation === generation && options.retained();

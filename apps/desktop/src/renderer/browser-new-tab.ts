@@ -1,3 +1,4 @@
+import type { HtmlPreviewAdmission } from "../../../../packages/shared/src/html-preview";
 import { parseBrowserCreateRequest, parseBrowserNavigationUrl, parseNativeBrowserTabMetadata,
   type BrowserCreateRequest, type BrowserCreateReceipt, type NativeBrowserTabMetadata, type BrowserFrameTarget, type DesktopBridge } from "@agent-desktop/shared";
 import { dockTabId, type DockTab } from "./dock-state";
@@ -9,7 +10,7 @@ export interface BrowserNewTabState {
   /** Presence matters: an explicitly empty draft is still an edit. */
   draft?: string;
   request?: BrowserCreateRequest;
-  preview?: { workerPid: number; expiresAt: number };
+  preview?: HtmlPreviewAdmission;
   message?: string;
 }
 

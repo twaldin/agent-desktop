@@ -13,9 +13,14 @@ test('actual EditTool saved outcome serves only original recorded HTML and relat
     let session = await runtime.create({ cwd, interactions: true, approvalOverride: 'yolo' });
     await session.prompt('html-prepare', { model: { provider: 'html-contract', id: 'controlled' } });
     await session.prompt('html-edit', { model: { provider: 'html-contract', id: 'controlled' } });
-    const outputs = await session.getSessionOutputs(), output = outputs.outputs.find(value => value.kind === 'html-preview');
+    let outputs = await session.getSessionOutputs(), output = outputs.outputs.find(value => value.kind === 'html-preview');
     if (process.env.HTML_EVIDENCE_DIRECTORY) { await mkdir(process.env.HTML_EVIDENCE_DIRECTORY, { recursive: true }); await writeFile(join(process.env.HTML_EVIDENCE_DIRECTORY, 'native.jsonl'), await readFile(session.sessionFile)); await writeFile(join(process.env.HTML_EVIDENCE_DIRECTORY, 'outputs.json'), JSON.stringify(outputs)); }
     expect(output?.kind).toBe('html-preview'); if (output?.kind !== 'html-preview') throw new Error('Missing actual EditTool HTML output');
+    await session.prompt('html-branch-advance', { model: { provider: 'html-contract', id: 'controlled' } });
+    await expect(session.openHtmlPreview({ epoch: outputs.epoch, output })).rejects.toThrow('branch changed');
+    const priorBranch = output.branch; outputs = await session.getSessionOutputs(); output = outputs.outputs.find(value => value.kind === 'html-preview');
+    if (output?.kind !== 'html-preview') throw new Error('Missing current edited HTML');
+    expect(output.branch).not.toBe(priorBranch);
     const preview = await session.openHtmlPreview({ epoch: outputs.epoch, output });
     const main = await fetch(preview.url); expect(main.status).toBe(200); expect(await main.text()).toContain('Actual native edited HTML');
     for (const [name, expected] of [['style.css', 'rgb(12, 100, 180)'], ['app.js', 'original-recorded-script'], ['image.svg', '<svg'], ['about.html', 'Saved relative page']]) {

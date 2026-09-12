@@ -75,3 +75,13 @@ test('HTML fallback consumes successful native edit outcomes, excludes deletions
   expect(project([result('ast', 'ast_edit', { applied: true, fileReplacements: [{ path: 'index.html', count: 1 }] })])).toMatchObject([{ kind: 'html-preview', entryId: 'ast' }]);
   expect(project([result('edit', 'edit', { path: 'index.html', op: 'update' }), result('doc', 'write', { resolvedPath: '/task/report.pdf' })]).map(row => row.kind)).toEqual(['file']);
 });
+
+test('wrapped native writes retain only successful execute metadata and capture discovery branch', () => {
+  const wrapped = result('wrapped', 'write', { xdev: { mode: 'execute', tool: 'write', inner: { resolvedPath: '/task/index.html' } } });
+  const first = projectSessionOutputs([user(), wrapped, final()], '/task').outputs[0]!;
+  expect(first).toMatchObject({ kind: 'html-preview', path: '/task/index.html', entryId: 'wrapped' });
+  const changed = projectSessionOutputs([user(), wrapped, final(), { id: 'new-branch-entry' }], '/task').outputs[0]!;
+  if (first.kind !== 'html-preview' || changed.kind !== 'html-preview') throw new Error('Missing HTML output');
+  expect(changed.branch).not.toBe(first.branch);
+  expect(projectSessionOutputs([user(), result('help', 'write', { xdev: { mode: 'help', tool: 'write', inner: { resolvedPath: '/task/index.html' } } }), final()], '/task').outputs).toEqual([]);
+});
