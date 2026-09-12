@@ -213,6 +213,7 @@ export class DraftBrowserWorkers {
             try { current(); } catch (error) { throw browserReservationOutcomeUnknown(error); }
           },
           receive: (frame: Parameters<typeof channel.receive>[0]) => { if (frame.kind === "data" || frame.kind === "ack") current(); channel.receive(frame); },
+          waitForIdle: async (timeoutMs: number) => { current(); await channel.waitForIdle(timeoutMs); current(); },
           dispose,
         });
           evaluations.set(channel, wrapped); return wrapped;
@@ -223,7 +224,7 @@ export class DraftBrowserWorkers {
             current(); const result = await channel.request(...args);
             try { current(); } catch (error) { throw browserReservationOutcomeUnknown(error); }
             return result;
-          }, dispose,
+          }, waitForIdle: async (timeoutMs: number) => { current(); await channel.waitForIdle(timeoutMs); current(); }, dispose,
         });
         evaluations.set(channel, wrapped); return wrapped;
       },

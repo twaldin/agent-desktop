@@ -251,7 +251,7 @@ test("evaluator publication loss disposes only its returned channel and reports 
   const pending = outcome(handle.openBrowserEvaluation({ workerPid: 1234, name: "page", targetId: "surface" }, "evaluation", "cmux", 100));
   await tick(); await f.registry.retire(f.request);
   gate.resolve({ backend: "cmux", state: { version: 1, surfaceId: "surface", url: "about:blank", viewport: { width: 1, height: 1 }, elementRefs: [] },
-    request: async () => { throw new Error("No dispatch after publication loss"); }, dispose: async () => { channelCloses++; } });
+    request: async () => { throw new Error("No dispatch after publication loss"); }, waitForIdle: async () => {}, dispose: async () => { channelCloses++; } });
   const result = await pending;
   expect(result.error).toMatchObject({ code: "OUTCOME_UNKNOWN" });
   expect(opens).toBe(1); expect(channelCloses).toBe(1);
@@ -264,7 +264,7 @@ test("retained evaluator callbacks preserve terminal drain after draft admission
   let closes = 0; const delivered: string[] = [];
   const f = fixture(async input => worker(input.id, input.cwd, { openBrowserEvaluation: async () => ({ backend: "cdp",
     descriptor: { version: 1, channel: "native-channel", targetId: "target", activateForScreenshot: false },
-    start: async post => { if (sink && sink !== post) throw new Error("Changed original receiver"); sink = post; }, receive: () => { throw new Error("No unexpected outbound frames"); }, dispose: async () => { closes++; },
+    start: async post => { if (sink && sink !== post) throw new Error("Changed original receiver"); sink = post; }, receive: () => { throw new Error("No unexpected outbound frames"); }, waitForIdle: async () => {}, dispose: async () => { closes++; },
   }) }).handle);
   const handle = await f.registry.acquire(f.request), channel = await handle.openBrowserEvaluation({ workerPid: 1234, name: "page", targetId: "target" }, "evaluation", "cdp", 100);
   if (channel.backend !== "cdp") throw new Error("Expected original CDP channel");

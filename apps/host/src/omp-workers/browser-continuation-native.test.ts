@@ -62,17 +62,20 @@ test("the installed native cmux facade keeps the captured surface on its control
   const extension=fileURLToPath(new URL("./fixtures/browser-continuation-extension.ts",import.meta.url));
   await writeFile(join(agentDir,"config.yml"),`extensions:\n  - ${JSON.stringify(extension)}\nretry:\n  enabled: false\n`,{mode:0o600});
   const runtime=new WorkerRuntime({agentDir,workerPath:fileURLToPath(new URL("./fixtures/local-browser-worker.ts",import.meta.url)),environment:{HOME:root,PATH:process.env.PATH,TMPDIR:tmpdir(),PI_CODING_AGENT_DIR:agentDir,TERM:"dumb",PI_BROWSER_CMUX:"0",PI_BROWSER_RELAY:"0"}});
-  let requests=0,disposed=0;
+  let requests=0,disposed=0,idleChecks=0;const idleEntered=Promise.withResolvers<void>(),idleRelease=Promise.withResolvers<void>();
   try{
     const destination=await runtime.create({cwd,interactions:true}),target={workerPid:12345,name:"desktop-cmux-continuation",targetId:"surface-one"};
     const evaluation={backend:"cmux" as const,state:{version:1 as const,surfaceId:target.targetId,url:"https://cmux.invalid/retained",title:"Retained cmux surface",viewport:{width:900,height:700},elementRefs:[]},
       request:async(method:string,params:Record<string,unknown>)=>{requests++;expect(method).toBe("browser.eval");expect(params.surface_id).toBe(target.targetId);return{surface_id:target.targetId,value:{__ompOk:{url:"https://cmux.invalid/retained",title:"Retained cmux surface",state:{token:"same-surface",count:11,evidence:"controlled-cmux-channel"},cookie:"retained=cmux"}}};},
+      waitForIdle:async()=>{idleChecks++;idleEntered.resolve();await idleRelease.promise;},
       dispose:async()=>{disposed++;}};
-    await destination.installBrowserContinuation({sourceOwnerId:"draft-cmux-owner",operationId:crypto.randomUUID(),target,kindTag:"cmux"},evaluation);
+    const installation=destination.installBrowserContinuation({sourceOwnerId:"draft-cmux-owner",operationId:crypto.randomUUID(),target,kindTag:"cmux"},evaluation);
+    expect(await Promise.race([idleEntered.promise.then(()=>"idle" as const),installation.then(()=>"published" as const)])).toBe("idle");
+    idleRelease.resolve();await installation;
     expect(await destination.getBrowserMetadata()).toMatchObject({availability:"running",workerPid:destination.workerPid,tabs:[{name:target.name,targetId:target.targetId,backend:"cmux",url:evaluation.state.url}]});
     const inspected=destination.startPrompt(`/inspect-retained-browser-contract ${target.name}`);await inspected.accepted;await inspected.completion;
     const entries=(await readFile(destination.sessionFile,"utf8")).trim().split("\n").map(line=>JSON.parse(line));
     expect(entries.find(entry=>entry.customType==="browser-continuation-contract")?.data).toMatchObject({url:evaluation.state.url,state:{token:"same-surface",count:11,evidence:"controlled-cmux-channel"},cookie:"retained=cmux"});
-    expect(requests).toBe(1);await destination.dispose();expect(disposed).toBe(1);
+    expect(requests).toBe(1);expect(idleChecks).toBe(1);await destination.dispose();expect(disposed).toBe(1);
   }finally{await runtime.dispose();await rm(root,{recursive:true,force:true});}
 },30_000);
