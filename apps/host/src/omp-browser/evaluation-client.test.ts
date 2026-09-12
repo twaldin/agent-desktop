@@ -29,7 +29,7 @@ function model(backend: "cdp" | "cmux") {
     : { binding: binding(backend), backend, state: { version: 1, surfaceId: target.targetId, url: "https://original.invalid/", title: "Original", viewport: { width: 800, height: 600, deviceScaleFactor: 2 }, elementRefs: [{ id: 7, ref: "@e7", name: "Original" }] } };
   const hooks: { start?: () => void; dispose?: () => Promise<void> } = {};
   let unsubscribed = false, ownerDestructions = 0;
-  const inspections: Array<{ pending: number; unacknowledged: number }> = [];
+  const inspections: Array<{ pending: number; unacknowledged: number; descriptor?: BrowserEvaluationDescriptor }> = [];
   const client: BrowserEvaluationClient & { destroyOwner(): void } = {
     pid: target.workerPid,
     subscribeBrowserEvaluation(value, receiver, onLost) {
@@ -56,7 +56,7 @@ function model(backend: "cdp" | "cmux") {
         }
         case "inspectOpenBrowserEvaluation": {
           const state = inspections.shift() ?? { pending: 0, unacknowledged: 0 };
-          return Promise.resolve({ descriptor, started, sequence: 0, ...state } as T);
+          return Promise.resolve({ descriptor: state.descriptor ?? descriptor, started, sequence: 0, ...state } as T);
         }
         case "inspectRetainedBrowserEvaluation": throw new Error("Unexpected retained inspection in ordinary evaluation fixture");
       }
@@ -66,7 +66,7 @@ function model(backend: "cdp" | "cmux") {
   return { client, descriptor, requests, sent, order, actual, entered64, hooks,
     emit(frame: BrowserEvaluationFrame) { assert(post); post(frame); },
     lose(error: unknown) { assert(lost); lost(error); for (const request of actual) request.gate.reject(error); },
-    inspect(...states: Array<{ pending: number; unacknowledged: number }>) { inspections.push(...states); },
+    inspect(...states: Array<{ pending: number; unacknowledged: number; descriptor?: BrowserEvaluationDescriptor }>) { inspections.push(...states); },
     unsubscribed: () => unsubscribed, ownerDestructions: () => ownerDestructions };
 }
 async function open(h: ReturnType<typeof model>, backend: "cdp" | "cmux") {
@@ -96,6 +96,17 @@ test("startup admission waits until the exact source evaluator has no in-flight 
   await handle.waitForIdle(500);
   assert.equal(h.requests.filter(row => row.operation === "inspectOpenBrowserEvaluation").length, 3);
   await handle.dispose();
+});
+
+test("startup admission rejects a changed source descriptor and transport loss as unknown", async () => {
+  const changed = model("cdp"), first = cdp(await open(changed, "cdp")); await first.start(() => {});
+  changed.inspect({ pending: 0, unacknowledged: 0, descriptor: { ...changed.descriptor, descriptor: { ...changed.descriptor.descriptor, channel: "replacement-channel" } } });
+  await assert.rejects(first.waitForIdle(500), error => (error as { code?: string }).code === "OUTCOME_UNKNOWN");
+  await first.dispose();
+  const lost = model("cdp"), second = cdp(await open(lost, "cdp")); await second.start(() => {});
+  lost.lose(new Error("source transport lost during idle admission"));
+  await assert.rejects(second.waitForIdle(500), error => (error as { code?: string }).code === "OUTCOME_UNKNOWN");
+  await assert.rejects(second.dispose());
 });
 
 test("close-first nested drained callback then throw retains the callback and native errors through repeated disposal", async () => {

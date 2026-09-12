@@ -487,8 +487,10 @@ export class WorkerClient {
         if (this.#retainedEvaluations.get(key) === record) this.#send({ type: "retainedBrowserFrame", binding, frame: copyEvaluationFrame(frame) });
       });
       await this.request({ operation: "activateRetainedBrowserEvaluation", args: { binding } }, 60_000);
-      // Activation is the destination's startup boundary. Join every source
-      // operation it emitted before publishing a restart-recoverable binding.
+      // Activation is the destination's startup boundary. Its response follows
+      // every startup frame forwarded to the source. The new session is not yet
+      // published to prompt, heartbeat, or guest callers, so this joins only
+      // that closed startup set before exposing a restart-recoverable binding.
       await evaluation.waitForIdle(15_000);
     } catch (error) {
       if (this.#retainedEvaluations.get(key) === record) this.#retainedEvaluations.delete(key);
