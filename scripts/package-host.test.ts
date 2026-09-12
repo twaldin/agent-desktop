@@ -33,7 +33,7 @@ test("new package declares schema1 through 20 and hashes the standalone guard; i
     await mkdir(dirname(join(native, file)), { recursive: true }); await writeFile(join(native, file), value); files[file] = hash(value);
   }
   await chmod(join(native, "bin/tmux"), 0o700);
-  await writeFile(join(native, "manifest.json"), JSON.stringify({ schema: 1, protocol: "tmux-v1", platform: "darwin-arm64", sources: TMUX_BUNDLE_SOURCES, files, compiler: "metadata-fixture", runtimeLibraries: [], minimumOS: "fixture", builtAt: "fixture" }));
+  await writeFile(join(native, "manifest.json"), JSON.stringify({ schema: 1, protocol: "tmux-v1", platform: `${process.platform}-${process.arch}`, sources: TMUX_BUNDLE_SOURCES, files, compiler: "metadata-fixture", runtimeLibraries: [], minimumOS: "fixture", builtAt: "fixture" }));
   const output = join(root, "contract-source12.tar.gz");
   const result = await packageHost({ version: "contract-source12", output, repository, nativeBundles: [native] });
   const unpacked = join(root, "unpacked"); await mkdir(unpacked);

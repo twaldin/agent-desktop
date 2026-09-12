@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import React from "react";
-import type { GitBranch, GitStatus, NewChatExecution, Project, WorkspaceQuery, WorkspaceQueryResult } from "@agent-desktop/shared";
+import type { GitBranch, GitStatus, NewChatExecution, Project } from "@agent-desktop/shared";
+import { controlledBranchQueryObserverFactory } from "./branch-inventory-fixture";
 import { ComposerContext } from "./ComposerContext";
 import type { WorkspaceState } from "./workspace-state";
 
@@ -18,7 +19,7 @@ function fixture(execution: NewChatExecution = saved) {
   const replacements = { window: { addEventListener() {}, removeEventListener() {} }, document: { body: { nodeType: 1 } }, innerWidth: 1440, innerHeight: 1000,
     ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: () => 1, cancelAnimationFrame() {} };
   for (const name of globalNames) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: replacements[name] });
-  const queries: { input: WorkspaceQuery; result: ReturnType<typeof deferred<WorkspaceQueryResult>> }[] = [];
+  const observers = controlledBranchQueryObserverFactory();
   const originalSetInterval = globalThis.setInterval, originalClearInterval = globalThis.clearInterval;
   globalThis.setInterval = (() => 1) as unknown as typeof setInterval;
   globalThis.clearInterval = (() => {}) as typeof clearInterval;
@@ -31,7 +32,7 @@ function fixture(execution: NewChatExecution = saved) {
     subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; },
     setConnected(value: boolean) { data.connected = value; notify(); },
     start() {}, stop() {}, restore: async () => {},
-    query(input: WorkspaceQuery) { const result = deferred<WorkspaceQueryResult>(); queries.push({ input, result }); return result.promise; },
+    createBranchQueryObserver: observers.createBranchQueryObserver,
     async loadGit() { const result = await git.promise; data.status = result; notify(); },
     async loadWorktrees() {
       catalogReads++; data.loading.add("worktrees"); notify();
@@ -73,7 +74,7 @@ function fixture(execution: NewChatExecution = saved) {
   }
   async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); render(); }
   render();
-  return { data, queries, watches, changes, render, settle, get props() { return props; }, get tree() { return tree; },
+  return { data, queries: observers.requests, watches, changes, render, settle, get props() { return props; }, get tree() { return tree; },
     get catalogReads() { return catalogReads; },
     git(value = status()) { git.resolve(value); }, catalog(rows = [branch("main"), branch("feature/saved")]) { catalog.resolve(rows); },
     failCatalog() { catalog.reject(new Error("Branch catalog unavailable")); },
@@ -166,18 +167,18 @@ test("actual composer retains first-open reads after close and retires the permi
   const trigger = () => visit(f.tree).find(node => node.props["aria-label"] === "What branch should this chat start from?");
   const click = () => { trigger().props.onClick({ currentTarget: { getBoundingClientRect: () => ({ top: 700, left: 500, bottom: 728, width: 100 }), focus() {} } }); f.render(); };
   const answer = () => { for (const q of f.queries) {
-    if (q.input.type === "git.base-branch") q.result.resolve({ type: q.input.type, base: { local: "main", remote: "origin" } });
-    else if (q.input.type === "git.recent-branches") q.result.resolve({ type: q.input.type, branches: ["main"] });
-    else throw new Error(`Unexpected query ${q.input.type}`);
+    if (q.query.type === "git.base-branch") q.response.resolve({ type: q.query.type, base: { local: "main", remote: "origin" } });
+    else if (q.query.type === "git.recent-branches") q.response.resolve({ type: q.query.type, branches: ["main"] });
+    else throw new Error(`Unexpected query ${q.query.type}`);
   } };
   try {
     f.git(); f.catalog(); await f.settle(); expect(f.queries).toEqual([]);
     expect(trigger().props.children[1].props.children).toBe("main");
-    click(); expect(f.queries).toHaveLength(2); expect(f.watches.size).toBe(1); await f.settle(); click();
+    click(); await f.settle(); expect(f.queries).toHaveLength(2); expect(f.watches.size).toBe(1); click();
     expect(trigger().props["aria-expanded"]).toBe(false); expect(f.watches.size).toBe(1);
     answer(); await f.settle(); expect(trigger().props.children[1].props.children).toBe("origin/main");
     const saved = f.props.execution; f.render({ execution: { type: "local" } }); f.render({ execution: saved }); await f.settle();
     expect(f.queries).toHaveLength(2); expect(f.watches.size).toBe(0); expect(trigger().props.children[1].props.children).toBe("main");
-    click(); expect(f.queries).toHaveLength(4); expect(f.changes).toEqual([]);
+    click(); await f.settle(); expect(f.queries).toHaveLength(4); expect(f.changes).toEqual([]);
   } finally { f.dispose(); }
 });

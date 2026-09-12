@@ -13,6 +13,7 @@ test("keymap migration commits its downgrade fence, survives reopen and rejects 
   const open = () => { const host = new HostStore(root); hosts.push(host); return new PreferencesStore(host); };
   try {
     const first = open(), second = open();
+    const originalPolicy = hosts[0]!.getDeviceAccessPolicy();
     first.put({ key: "theme.mode", value: "dark" });
     const oldManifest = { stateSchemaVersions: Array.from({ length: 13 }, (_, i) => i + 1) };
     expect(checkHostStateCompatibility(oldManifest, root).checkedSchemaVersion).toBe(1);
@@ -23,6 +24,7 @@ test("keymap migration commits its downgrade fence, survives reopen and rejects 
     expect(second.snapshotV2().records).toContainEqual(record);
     hosts.splice(0).forEach(host => host.close());
     const reopened = open(); expect(reopened.snapshotV2().records).toContainEqual(record);
+    expect(hosts[0]!.getDeviceAccessPolicy()).toEqual(originalPolicy);
     reopened.mutateCommandKeymap({ expectedRevision: record.revision, edit: { type: "reset-all" } }, definitions);
     expect(reopened.snapshot().records).toHaveLength(1);
     expect(() => checkHostStateCompatibility(oldManifest, root)).toThrow("schema 14 is incompatible");
@@ -37,6 +39,7 @@ test("failed durable writes roll back the preference value and schema fence toge
     db.exec("CREATE TRIGGER fail_keymap_insert BEFORE INSERT ON metadata WHEN NEW.key = 'preferences.v1' BEGIN SELECT RAISE(ABORT, 'keymap-write-blocked'); END");
     expect(() => preferences.mutateCommandKeymap({ expectedRevision: null, edit: { type: "reset-all" } }, definitions)).toThrow("keymap-write-blocked");
     expect(host.readPreferencesState()).toBeUndefined();
+    expect(host.readMetadata("device-access.v1")).toBeUndefined();
     expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(1);
   } finally { db.close(); host.close(); rmSync(root, { recursive: true, force: true }); }
 });

@@ -138,10 +138,13 @@ test('cancellation stops before dispatch, and loss after sent fetch remains unkn
 
 test('explicit remote must still exist; nested remote uses longest configured prefix', async () => {
   const f = await fixture(); const next = await f.advance();
-  git(f.source, 'remote', 'add', 'origin/team', f.remote);
+  // Newer Git refuses `remote add` for a slash-qualified name that overlaps an
+  // existing remote, but older repositories can still contain this valid config.
+  git(f.source, 'config', 'remote.origin/team.url', f.remote);
+  git(f.source, 'config', 'remote.origin/team.fetch', '+refs/heads/*:refs/remotes/origin/team/*');
   expect(await f.service.resolveWorktreeStartingCommit({ type: 'branch', branchName: 'topic', remoteRef: 'refs/remotes/origin/team/topic' })).toBe(next);
   expect(f.calls.filter(args => args[0] === 'fetch')).toEqual([['fetch', '--', 'origin/team', '+refs/heads/topic:refs/remotes/origin/team/topic']]);
-  git(f.source, 'remote', 'remove', 'origin/team'); git(f.source, 'remote', 'remove', 'origin');
+  git(f.source, 'config', '--remove-section', 'remote.origin/team'); git(f.source, 'remote', 'remove', 'origin');
   f.calls.length = 0;
   await expect(f.service.resolveWorktreeStartingCommit({ type: 'branch', branchName: 'topic', remoteRef: 'refs/remotes/origin/team/topic' })).rejects.toMatchObject({ code: 'REMOTE_CHANGED' });
   expect(f.calls.filter(args => args[0] === 'fetch')).toHaveLength(0);

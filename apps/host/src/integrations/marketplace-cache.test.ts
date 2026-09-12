@@ -55,12 +55,13 @@ describe("patched native marketplace cache reuse", () => {
       await symlink("file.txt", path.join(source, "link"));
       const target = await cachePlugin(source, cache, "market", "sample", version);
       const before = await lstat(target);
+      const cachedLink = await readlink(path.join(target, "link"));
       await mutate(source);
       await expect(cachePlugin(source, cache, "market", "sample", version, { reuseExisting: true })).rejects.toThrow("differs");
       expect((await lstat(target)).ino).toBe(before.ino);
       expect(await readFile(path.join(target, "file.txt"), "utf8")).toBe("original");
       expect((await lstat(path.join(target, "file.txt"))).mode & 0o777).toBe(0o644);
-      expect(await readlink(path.join(target, "link"))).toBe("file.txt");
+      expect(await readlink(path.join(target, "link"))).toBe(cachedLink);
       expect(await stagingNames(cache)).toEqual([]);
     }
   });

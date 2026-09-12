@@ -10,7 +10,8 @@
     "dev": "bun scripts/dev-desktop.ts",
     "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun scripts/test.ts"
+    "test": "bun scripts/test.ts",
+    "test:reference": "bun test ./scripts/private/upstream-reference.test.ts"
   },
   "dependencies": {
     "@oh-my-pi/pi-ai": "18.1.10",

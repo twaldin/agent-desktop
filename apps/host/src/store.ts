@@ -277,7 +277,11 @@ export class HostStore {
     return this.db.transaction(() => {
       const { state, result } = update(this.readPreferencesState());
       // Commit the downgrade fence with the first v2 record; legacy-only writes do not migrate the database.
-      if (state.version === 2) this.requireVersion(state.records.some(record => record.key === "general.commandKeymap" && !record.deleted && record.value.version === 2) ? 15 : 14);
+      if (state.version === 2) {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(state.records.some(record => record.key === "general.commandKeymap" && !record.deleted && record.value.version === 2) ? 15 : 14);
+      }
       this.db.query("INSERT INTO metadata (key, data) VALUES ('preferences.v1', ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data").run(JSON.stringify(state));
       return result;
     }).immediate();

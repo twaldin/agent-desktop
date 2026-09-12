@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readGitActionContext } from "./git-action-context";
@@ -15,7 +15,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function repository(commit = true) {
-  const root = await mkdtemp(join(tmpdir(), "agent-desktop-git-action-context-")); roots.push(root);
+  const root = await realpath(await mkdtemp(join(tmpdir(), "agent-desktop-git-action-context-"))); roots.push(root);
   const cwd = join(root, "project"), hooks = join(root, "hooks");
   await mkdir(cwd); await mkdir(hooks);
   git(cwd, "init", "-q", "--initial-branch=main");

@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("HTTP v10 uses native owned generation and durable no-replay receipts in an isolated host", async () => {
-  const root = await mkdtemp(join(tmpdir(), "compound-http-")), home = join(root, "home"); await mkdir(home);
+  const root = await realpath(await mkdtemp(join(tmpdir(), "compound-http-"))), home = join(root, "home"); await mkdir(home);
   try {
     const child = Bun.spawn([process.execPath, new URL("./fixtures/git-submission-http.ts", import.meta.url).pathname], {
       cwd: root, env: { HOME: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TMPDIR: root, PI_DISABLE_DOTENV: "1",

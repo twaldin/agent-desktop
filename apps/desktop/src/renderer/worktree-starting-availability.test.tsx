@@ -69,12 +69,14 @@ test("actual App submit rechecks the owning host after the saved-draft await", a
     const saved = new Promise<Draft>(resolve => { release = resolve; });
     const owner = { connected: true, state: { ...capabilities, drafts: [] } };
     const records = new Map([["host-a", owner]]);
-    let dispatched = 0; const errors: unknown[] = [];
+    let dispatched = 0; const errors: unknown[] = []; const beforeSubmission = { owners: 0, pages: 0, docks: 0 };
     const values = {
       canSend: true, submitting: { current: false }, setBusy() {}, setActionError(value: unknown) { if (value) errors.push(value); }, draftId: remote.id, selectedRef: { current: "host-a:new" }, hostId: "host-a",
       submissions: { get() { return undefined; }, async submit(snapshot: Draft) { dispatched++; return { submitted: snapshot, sessionId: "new-session", commandId: "send-id" }; } },
       drafts: { async prepareSubmission() { return saved; }, beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: remote }; }, ingest() {} },
       hasDraftContent, hasRemoteExecution, remoteWorktreeIssue, desktop: { catalog: { records } }, selectedId: null, running: false, nativeBtwQuestion() { return undefined; },
+      draftBrowserOwners: { beforeSubmission() { beforeSubmission.owners++; } }, draftBrowserPages: { beforeSubmission() { beforeSubmission.pages++; } },
+      draftBrowserDocks: new Map([["fixture", { beforeSubmission() { beforeSubmission.docks++; } }]]),
       async refresh() {}, transcript: { refresh() {} }, navigate() {}, textarea: { current: { focus() {} } }, EnvironmentPreparationPause, errorMessage: String,
     };
     const run = appHandler("submit", values)();
@@ -84,6 +86,7 @@ test("actual App submit rechecks the owning host after the saved-draft await", a
     release(remote); await run;
     expect(dispatched).toBe(loss === "unchanged" ? 1 : 0);
     expect(errors).toHaveLength(loss === "unchanged" ? 0 : 1);
+    expect(beforeSubmission).toEqual({ owners: 1, pages: 1, docks: 1 });
     expect(values.submitting.current).toBe(false);
   }
 });
@@ -111,15 +114,18 @@ test("actual preparation card disables new continuation with an explanation, kee
 
 test("actual App resume consults live capture and capabilities before dispatching a new continuation", async () => {
   for (const checking of [false, true]) {
-    let dispatched = 0; const errors: unknown[] = [];
+    let dispatched = 0; const errors: unknown[] = []; const beforeSubmission = { owners: 0, pages: 0, docks: 0 };
     const current = { ...pending, uncertain: true, ...(checking ? { resume: resumeEnvelope } : {}) };
     const values = { submitting: { current: false }, connected: true, pendingSubmission: pending, draftId: remote.id, selectedRef: { current: "host-a:new" }, hostId: "host-a",
       submissions: { get() { return current; }, async resumeEnvironment() { dispatched++; return { submitted: remote, sessionId: "new-session", commandId: "send-id" }; } },
       desktop: { catalog: { records: new Map([["host-a", { connected: true, state: { drafts: [] } }]]) } }, remoteWorktreeResumeIssue,
+      draftBrowserOwners: { beforeSubmission() { beforeSubmission.owners++; } }, draftBrowserPages: { beforeSubmission() { beforeSubmission.pages++; } },
+      draftBrowserDocks: new Map([["fixture", { beforeSubmission() { beforeSubmission.docks++; } }]]),
       setActionError(value: unknown) { if (value) errors.push(value); }, setBusy() {}, drafts: { beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: remote }; } },
       async refresh() {}, transcript: { refresh() {} }, hasDraftContent, navigate() {}, EnvironmentPreparationPause, errorMessage: String,
     };
     await appHandler("resumeEnvironment", values)();
     expect(dispatched).toBe(checking ? 1 : 0); expect(errors).toHaveLength(checking ? 0 : 1);
+    expect(beforeSubmission).toEqual(checking ? { owners: 1, pages: 1, docks: 1 } : { owners: 0, pages: 0, docks: 0 });
   }
 });

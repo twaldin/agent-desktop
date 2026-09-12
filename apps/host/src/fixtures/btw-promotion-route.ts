@@ -15,6 +15,10 @@ const options={dataDirectory:path.join(root,'data'),agentDirectory:agentDir,disc
 let host=await startHost(options);
 async function request(url:string,body?:unknown,owner=false){const response=await fetch(host.connection.origin+url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${host.connection.token}`,'Content-Type':'application/json',...(owner?{'X-Agent-Host-Id':host.store.host.id}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});assert.equal(response.status,200,await response.clone().text());return response.json() as Promise<any>;}
 const command=(envelope:CommandEnvelope)=>request('/v1/commands',envelope) as Promise<CommandResult>;
+// These requests intentionally remain pending while the fixture answers the
+// native confirmation. Attach rejection ownership immediately so a fast peer
+// close cannot become an unhandled rejection before the later assertion awaits it.
+function deferred<T>(promise:Promise<T>){void promise.catch(()=>undefined);return promise;}
 async function until<T>(read:()=>Promise<T>,accept:(v:T)=>boolean){const deadline=Date.now()+8000;let v=await read();while(!accept(v)&&Date.now()<deadline){await Bun.sleep(10);v=await read();}assert(accept(v),JSON.stringify(v));return v;}
 const side=(id:string)=>request(`/v1/sessions/${id}/btw`,undefined,true) as Promise<NativeBtwResponse>;
 async function answer(id:string,value:boolean){const questions=await until(()=>request(`/v1/sessions/${id}/interactions`),v=>v.some((q:any)=>q.title==='Promote side answer'));const q=questions.find((q:any)=>q.title==='Promote side answer');await request(`/v1/sessions/${id}/interactions`,{interactionId:q.id,response:{value}});}
@@ -31,13 +35,13 @@ try{
  for(const prefix of ['session','btw'])assert((await command({id:`draft-${prefix}`,command:{type:'draft.put',expectedRevision:0,draft:{id:`${prefix}:${original.id}`,text:`Keep ${prefix}`,projectId:null,model:null}}})).ok);
  const draftBytes=JSON.stringify(host.store.listDrafts());
  const cancel:CommandEnvelope={id:'promote-cancel',command:{type:'session.btw.promote',sessionId:original.id,runId:'side-success'}};
- const cancelling=command(cancel);await answer(original.id,false);const cancelled=await cancelling;
+ const cancelling=deferred(command(cancel));await answer(original.id,false);const cancelled=await cancelling;
  assert(cancelled.ok && cancelled.value && 'type' in cancelled.value && cancelled.value.type==='session.btw.promote' && cancelled.value.cancelled);
  assert.deepEqual(await command(cancel),cancelled);assert.equal((await side(original.id)).value?.canPromote,true);
  const promote:CommandEnvelope={id:'promote-success',command:{type:'session.btw.promote',sessionId:original.id,runId:'side-success'}};
- const promoting=command(promote),duplicate=command(promote);await until(()=>request(`/v1/sessions/${original.id}/interactions`),v=>v.length>0);
+ const promoting=deferred(command(promote)),duplicate=deferred(command(promote));await until(()=>request(`/v1/sessions/${original.id}/interactions`),v=>v.length>0);
  assert.equal((await side(original.id)).value?.canPromote,false);
- const competing=command({id:'promote-competing',command:promote.command});await answer(original.id,true);
+ const competing=deferred(command({id:'promote-competing',command:promote.command}));await answer(original.id,true);
  const result=await promoting;assert(result.ok && result.value && 'type' in result.value && result.value.type==='session.btw.promote');
  if(!result.ok || !result.value || !('type' in result.value) || result.value.type!=='session.btw.promote')throw new Error('Missing promotion receipt');
  const child=result.value.session;assert(!result.value.cancelled);assert.notEqual(child.id,original.id);assert.notEqual(child.sessionFile,original.sessionFile);
@@ -51,7 +55,7 @@ try{
  const db=new Database(path.join(root,'data','state.sqlite'));
  db.exec("CREATE TRIGGER reject_promotion_receipt BEFORE UPDATE ON commands WHEN OLD.id = 'promote-lost' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END");
  const lostEnvelope:CommandEnvelope={id:'promote-lost',command:{type:'session.btw.promote',sessionId:failure.id,runId:'side-failure'}};
- const lost=command(lostEnvelope);await answer(failure.id,true);const unknown=await lost;assert(!unknown.ok);assert.equal(unknown.error.code,'OUTCOME_UNKNOWN');
+ const lost=deferred(command(lostEnvelope));await answer(failure.id,true);const unknown=await lost;assert(!unknown.ok);assert.equal(unknown.error.code,'OUTCOME_UNKNOWN');
  assert.equal(host.store.listSessions().length,3);assert.equal(host.store.getCommand('promote-lost')?.state,'pending');
  db.exec('DROP TRIGGER reject_promotion_receipt');db.close();
  assert.equal((await command(lostEnvelope)).ok,false);assert.equal((await command({id:'lost-new-id',command:lostEnvelope.command})).ok,false);

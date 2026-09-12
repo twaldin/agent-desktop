@@ -118,9 +118,9 @@ describe("HostStore local-environment persistence", () => {
 
     const future = root();
     const database = new Database(join(future, "state.sqlite"), { create: true, strict: true });
-    database.exec("PRAGMA user_version = 9");
+    database.exec("PRAGMA user_version = 21");
     database.close();
-    expect(() => open(future)).toThrow("Unsupported host state schema version 9");
+    expect(() => open(future)).toThrow("Unsupported host state schema version 21");
   });
 
   test("raises schema 5 only when the first owned preparation commits", () => {

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { once } from "node:events";
 import { IMAGE_ATTACHMENT_OWNER_HEADER, MAX_IMAGE_ATTACHMENT_BYTES, type ImageAttachmentRef } from "@agent-desktop/shared";
 import { ImageAttachmentsHttp } from "./attachment-http";
@@ -165,11 +165,21 @@ test("binary downloads validate hashes and bounds; scoped native routes never re
 
   // Bun.serve corrects Content-Length to the supplied body's size. A raw HTTP
   // peer is necessary to actually deliver a dishonest oversized declaration.
-  const raw = createServer(socket => socket.once("data", () => socket.end(`HTTP/1.1 200 OK\r\n${IMAGE_ATTACHMENT_OWNER_HEADER}: owner\r\nContent-Type: image/png\r\nContent-Length: ${MAX_IMAGE_ATTACHMENT_BYTES + 1}\r\nX-Image-Sha256: ${hash(png)}\r\nConnection: close\r\n\r\n`)));
+  const peers = new Set<Socket>();
+  const raw = createServer(socket => {
+    peers.add(socket); socket.once("close", () => peers.delete(socket));
+    socket.once("data", () => {
+      socket.write(`HTTP/1.1 200 OK\r\n${IMAGE_ATTACHMENT_OWNER_HEADER}: owner\r\nContent-Type: image/png\r\nContent-Length: ${MAX_IMAGE_ATTACHMENT_BYTES + 1}\r\nX-Image-Sha256: ${hash(png)}\r\nConnection: close\r\n\r\n`);
+      socket.write(Buffer.alloc(1));
+    });
+  });
   raw.listen(0, "127.0.0.1"); await once(raw, "listening");
   try {
     const address = raw.address();
     if (!address || typeof address === "string") throw new Error("Missing isolated HTTP listener");
     await expect(requestImageAttachment({ ...target, origin: `http://127.0.0.1:${address.port}` }, hash(png))).rejects.toThrow("headers");
-  } finally { await new Promise<void>(resolve => raw.close(() => resolve())); }
+  } finally {
+    for (const socket of peers) socket.destroy();
+    await new Promise<void>(resolve => raw.close(() => resolve()));
+  }
 });

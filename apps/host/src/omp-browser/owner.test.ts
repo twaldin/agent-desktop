@@ -73,8 +73,12 @@ describe("isolated native browser owner", () => {
     let releases = 0;
     const h = fixture({ release: async () => { releases++; throw new Error("Native release failed"); } });
     await h.owner.ready(); await h.owner.createBrowserTab("desktop-one");
-    await expect(h.owner.dispose()).rejects.toThrow("Native release failed");
-    await expect(h.owner.dispose()).rejects.toThrow("Native release failed");
+    for (const observation of [await outcome(h.owner.dispose()), await outcome(h.owner.dispose())]) {
+      expect(observation.error).toBeInstanceOf(AggregateError);
+      const error = observation.error as AggregateError;
+      expect(error.message).toBe("Browser owner reservation cleanup failed");
+      expect(error.errors.map(value => value instanceof Error ? value.message : String(value))).toContain("Native release failed");
+    }
     expect(releases).toBe(1);
   });
 

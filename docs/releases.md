@@ -6,6 +6,8 @@ With native CI enabled, every successful push to `main` creates an immutable `de
 
 The GitHub Actions workflow installs the checked-in lockfile with Bun 1.3.14, typechecks the owned source, builds the pinned terminal runtime on macOS ARM64 and Linux x64, and runs the owned test suites. It then packages a macOS ARM64 desktop and a host archive containing both terminal runtimes. Failed checks prevent publication; private `.data` capsules never supply CI inputs.
 
+Public CI uses portable fixtures for the static upstream comparison tools. The separately named `bun run test:reference` suite retains the exact private `.reference` archive assertions and requires those original local captures. It is not run or credited by public CI; those reference-acceptance checks remain separate from release readiness. No reference application archive is published with this repository.
+
 Those native build jobs are gated by `ENABLE_NATIVE_RELEASE_BUILDS=true`, explicitly authorized by Tim on September 11. If disabled, the pipeline performs source archival only and publishes clearly labeled source-only prereleases. It does not claim those releases passed native build or test checks.
 
 Successful native builds include the desktop ZIP, host archive, build commit metadata and SHA256SUMS. Source archives have separate SOURCE-SHA256SUMS. The desktop is ad-hoc signed, not notarized. Packaging does not constitute physical-device, provider, native-browser, visual parity or full-GOAL acceptance. See [status](status.md).

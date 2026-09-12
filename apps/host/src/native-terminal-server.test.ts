@@ -47,15 +47,19 @@ describe.skipIf(!bundle)("host server with verified native terminal bundle", () 
     const input = { terminalId: terminal.id, attachmentId: attachment.id, inputEpoch: attachment.inputEpoch, geometryRevision: attachment.geometryRevision, clientId };
     expect((await json("/v2/terminals/input", { ...input, sequence: 1, input: { kind: "text", data: `printf '%s\\n' '${marker}'` } })).outcome).toBe("accepted");
     expect((await json("/v2/terminals/input", { ...input, sequence: 2, input: { kind: "key", key: "Enter" } })).outcome).toBe("accepted");
+    const outputReceived = () => events.some(event => event.type === "native-terminal" && event.event.type === "output" && event.event.attachmentId === attachment.id);
+    const stateReceived = () => events.some(event => event.type === "native-terminal" && event.event.type === "state" && event.event.terminal.id === terminal.id);
     const deadline = Date.now() + 10_000; let found = false;
     while (Date.now() < deadline) {
       const history = (await json("/v2/terminals/query", { type: "history", terminalId: terminal.id })).history;
-      if ([history.history, history.screen ?? ""].join("\n").split("\n").some((line: string) => line.trim() === marker)) { found = true; break; }
+      if ([history.history, history.screen ?? ""].join("\n").split("\n").some((line: string) => line.trim() === marker)) found = true;
+      // HTTP history and WebSocket delivery are independent observations.
+      if (found && outputReceived() && stateReceived()) break;
       await Bun.sleep(50);
     }
     expect(found).toBe(true);
-    expect(events.some(event => event.type === "native-terminal" && event.event.type === "output" && event.event.attachmentId === attachment.id)).toBe(true);
-    expect(events.some(event => event.type === "native-terminal" && event.event.type === "state" && event.event.terminal.id === terminal.id)).toBe(true);
+    expect(outputReceived()).toBe(true);
+    expect(stateReceived()).toBe(true);
     await json("/v2/terminals/action", { type: "close", terminalId: terminal.id });
     const closed = (await json("/v2/terminals/query", { type: "list" })).terminals.find((entry: NativeTerminalInfo) => entry.id === terminal.id);
     expect(closed.exitedAt).toBeNumber();

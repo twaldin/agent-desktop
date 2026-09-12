@@ -8,15 +8,20 @@ set -euo pipefail
 artifact_directory=${1:?Artifact directory required}
 notes=${2:?Release notes required}
 
+# Draft releases do not guarantee that their tag ref is published yet. Establish
+# the immutable target first, then require the release to use that existing tag.
+if ! actual_commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha 2>/dev/null); then
+  gh api --method POST "repos/$GH_REPO/git/refs" \
+    -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" >/dev/null || true
+  actual_commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+fi
+[[ "$actual_commit" == "$GITHUB_SHA" ]] || { echo "Release tag points to another commit." >&2; exit 1; }
 if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-  gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --draft --prerelease \
+  gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
     --title "Agent Desktop $RELEASE_VERSION" --notes-file "$notes"
 fi
 
-# Resolve annotated and lightweight tags through the commits endpoint. An existing
-# release is not evidence that it belongs to this commit or has complete assets.
-actual_commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
-[[ "$actual_commit" == "$GITHUB_SHA" ]] || { echo "Release tag points to another commit." >&2; exit 1; }
+# An existing release is not evidence that it has complete matching assets.
 existing=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
