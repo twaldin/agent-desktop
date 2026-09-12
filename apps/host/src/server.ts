@@ -85,11 +85,14 @@ import { ApprovalRecovery } from "./approval-recovery";
 import { NotificationEvents } from "./notification-events";
 import { WorkspaceFileOpen, type WorkspaceFileOpenRuntime } from "./workspace-open";
 import { QueuedMessagesHttp } from "./queued-messages-http";
+import { AutomationService } from "./automations";
+import { AutomationsHttp } from "./automations-http";
+import { AUTOMATIONS_CAPABILITY } from "../../../packages/shared/src/automations";
 
 type SocketData = { after: number; remoteAddress?: string; nodeId?: string; repositoryWatches?: RepositoryWatchPeer; branchQueries?: BranchQueryPeer };
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string; skillFileReveal?: (canonicalPath: string) => Promise<void>; workspaceFileOpen?: WorkspaceFileOpenRuntime } = {}) {
+export async function startHost(options: { dataDirectory?: string; port?: number; agentDirectory?: string; discoveryDirectory?: string; tailscale?: boolean; workerPath?: string; nativeTerminalBundle?: string; skillFileReveal?: (canonicalPath: string) => Promise<void>; workspaceFileOpen?: WorkspaceFileOpenRuntime; automationTickMs?: number } = {}) {
   const dataDirectory = options.dataDirectory ?? getDataDirectory();
   const lease = acquireHostLease(dataDirectory);
   const environmentAbort = new AbortController();
@@ -129,6 +132,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let themeAssets: ThemeAssets | undefined;
   let goalContinuations: GoalContinuationController | undefined;
   let questionDeliveries: QuestionDeliveryController | undefined;
+  let automations: AutomationService | undefined;
   let server: ReturnType<typeof Bun.serve<SocketData>> | undefined;
   let publishedConnection = false;
   let tailServer: ReturnType<typeof Bun.serve<SocketData>> | undefined;
@@ -216,6 +220,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const sessionTails = new Map<string, Promise<unknown>>();
   const followUpAdmissionTails = new Map<string, Promise<unknown>>();
   const executions = new Map<string, Promise<unknown>>();
+  const automationPromptCompletions = new Map<string, Promise<"completed" | "failed" | "stopped">>();
   const runtimeErrors = new Map<string, string>();
   const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
   browserFirstSend = new BrowserFirstSend(store, draftBrowserWorkers,join(dataDirectory,"browser-recovery"));
@@ -519,11 +524,41 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const sessionSearch = new SessionSearch(store.host.id, () => store.listSessions(), readStoredSessionText);
   const queuedMessages = new QueuedMessagesHttp({ hostId: store.host.id,
     sessionExists: id => !stopping && Boolean(store.getSession(id)), getHandle });
+  automations = new AutomationService({
+    records: store.automations,
+    dispatch: (envelope, version) => dispatch(envelope, version),
+    waitForPrompt: async commandId => {
+      const completion = automationPromptCompletions.get(commandId);
+      if (!completion) return "unknown";
+      try { return await completion; }
+      finally { automationPromptCompletions.delete(commandId); }
+    },
+    sessionState: async sessionId => {
+      const session = store.getSession(sessionId);
+      if (!session) return { session: undefined, busy: false, hasDraft: false, hasInteraction: false };
+      const handle = await getHandle(sessionId);
+      const draft = store.getDraft(`session:${sessionId}`);
+      return { session, busy: executions.has(sessionId) || handle.isStreaming || handle.hasPostPromptWork,
+        hasDraft: Boolean(draft && (draft.text.trim() || draft.attachments?.length || draft.selectedTextAttachments?.length || draft.wholeFileAttachments?.length)),
+        hasInteraction: (await handle.listInteractions()).length > 0 || (await handle.listQuestions()).some(question => question.status === "open") };
+    },
+    validateDestination: destination => {
+      if (destination.kind === "heartbeat") return;
+      if (destination.projectId && !store.getCataloguedProject(destination.projectId)) throw new Error("The automation project is unavailable on this host.");
+      if (destination.model && !models.some(model => model.provider === destination.model!.provider && model.id === destination.model!.id))
+        throw new Error(modelsLoading ? "The model catalog is still loading. Try again when it is ready." : "The automation model is unavailable on this host.");
+    },
+    changed: () => publish({ type: "automations" }),
+    notify: run => { if (run.sessionId) notificationEvents.completion(run.sessionId, `automation:${run.id}`, run.status === "completed" ? "completed" : "failed", run.completedAt ?? run.updatedAt); },
+    tickMs: options.automationTickMs,
+  });
+  const automationsHttp = new AutomationsHttp(store.host.id, automations);
+  automations.start();
 
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
-      drafts: store.listDrafts(), models, modelsLoading, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput, sessionActivity = false): void {
@@ -953,9 +988,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }).finally(() => { if (executions.get(command.sessionId) === completion) executions.delete(command.sessionId); questionDeliveries?.request(command.sessionId); goalContinuations?.request(command.sessionId); });
         executions.set(command.sessionId, completion);
         const accepted = await turn.accepted;
-        if (!accepted) return fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying.");
+        if (!accepted) { automationPromptCompletions.delete(envelope.id); return fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying."); }
+        if (envelope.id.startsWith("automation:")) automationPromptCompletions.set(envelope.id,
+          accepted.kind === "native-command" ? Promise.resolve("completed") : completion.then(() => notificationOutcome));
         if (accepted.kind !== 'native-command') void completion.then(() => {
-          if (!stopping) notificationEvents.completion(command.sessionId, `completion:${command.sessionId}:command:${envelope.id}`, notificationOutcome);
+          if (!stopping && !envelope.id.startsWith("automation:")) notificationEvents.completion(command.sessionId, `completion:${command.sessionId}:command:${envelope.id}`, notificationOutcome);
         }).catch(() => {});
         goalContinuations?.explicitWork(command.sessionId);
         questionDeliveries?.request(command.sessionId);
@@ -1160,6 +1197,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (activityResponse) return activityResponse;
         const queuedMessagesResponse = await queuedMessages.route(request, url);
         if (queuedMessagesResponse) return queuedMessagesResponse;
+        const automationsResponse = await automationsHttp.route(request, url);
+        if (automationsResponse) return automationsResponse;
         const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
         if (mcpAuthorizationResponse) return mcpAuthorizationResponse;
         const mcpAppResponse = await sessionMcpApps.route(request, url);
@@ -1409,7 +1448,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
+        const outcomes = await Promise.allSettled([automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
@@ -1435,7 +1474,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([browserObservations?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await Promise.allSettled([automations?.dispose(), browserObservations?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
       await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
     }
     finally {

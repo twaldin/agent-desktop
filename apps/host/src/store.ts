@@ -41,6 +41,7 @@ import {
 import type { LocalEnvironmentWorkerEnvironment } from "./local-environments/environment";
 import type { GitSubmissionReceipt, GitSubmissionTarget } from "../../../packages/shared/src/git-submissions";
 import type { WorkspaceTarget } from "../../../packages/shared/src/workspace";
+import { AutomationRecords, initializeAutomationRecords } from "./automation-records";
 
 export type { DraftInput } from "../../../packages/shared/src/protocol";
 import type { DraftInput } from "../../../packages/shared/src/protocol";
@@ -115,6 +116,7 @@ export class HostStore {
   readonly draftBrowserCreations: DraftBrowserCreationRecords;
   readonly terminalCreations: TerminalCreationRecords;
   readonly environmentPreparations: EnvironmentPreparationAccessor;
+  readonly automations: AutomationRecords;
   private readonly db: Database;
   private readonly environmentPreparationStore: LocalEnvironmentPreparations;
 
@@ -126,7 +128,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 22) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 23) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -139,6 +141,7 @@ export class HostStore {
           CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);
         `);
         initializeLocalEnvironmentPreparations(this.db);
+        initializeAutomationRecords(this.db);
         if (version === 0) this.db.exec("PRAGMA user_version = 1");
       }).immediate();
       this.host = this.db.transaction(() => {
@@ -196,12 +199,18 @@ export class HostStore {
       });
       this.environmentPreparationStore = new LocalEnvironmentPreparations(this.db, this.host.id);
       this.environmentPreparations = this.environmentPreparationStore;
+      this.automations = new AutomationRecords(this.db, this.host.id, () => {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(23);
+      });
       this.getDeviceAccessPolicy(); // Refuse corrupt or missing restrictions before serving any connection.
       this.recoverInterruptedSessions();
       this.recoverInterruptedGitSubmissions();
       this.recoverInterruptedQueuedSubmissions();
       this.recoverInterruptedBrowserContinuations();
       this.environmentPreparationStore.reconcileInterrupted();
+      this.automations.reconcileInterrupted();
     } catch (error) {
       this.db.close();
       throw error;
@@ -1038,9 +1047,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 22) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 23) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }
