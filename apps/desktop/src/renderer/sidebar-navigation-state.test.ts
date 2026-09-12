@@ -68,6 +68,7 @@ test("a lost write is retained through capability loss and restart and retried o
   const f = fixture(), data = f.reopen(); await data.refresh(); f.fail("lost");
   const value = setSidebarDestinationHidden(DEFAULT_SIDEBAR_NAVIGATION, "plugins", true);
   await data.save(value); expect(data.unsaved).toBe(true);
+  await data.save(DEFAULT_SIDEBAR_NAVIGATION); expect(data.value).toEqual(value); expect(f.deliveries).toHaveLength(1);
   const revision = f.store.get("sidebar.navigation")!.revision;
   data.setConnection(crypto.randomUUID(), true, true); await data.retry();
   expect(f.deliveries).toHaveLength(1);
@@ -84,7 +85,15 @@ test("a definitive failure preserves intended visibility across reopen for expli
   const reopened = f.reopen(); await reopened.refresh(); expect(reopened.value).toEqual(value); expect(reopened.unsaved).toBe(true);
   await reopened.retry(); expect(reopened.unsaved).toBe(false); expect(f.store.get("sidebar.navigation")).toMatchObject({ value });
 });
-test("storage failure prevents submission and corrupt intent is retained instead of reset", async () => {
+test("a definitively rejected intent can be edited without discarding the remaining choices", async () => {
+  const f = fixture(), data = f.reopen(); await data.refresh(); f.fail("rejected");
+  await data.save(setSidebarDestinationHidden(DEFAULT_SIDEBAR_NAVIGATION, "scheduled", true));
+  const corrected = setSidebarDestinationHidden(data.value, "plugins", true);
+  await data.save(corrected);
+  expect(f.store.get("sidebar.navigation")).toMatchObject({ value: corrected });
+  expect(data.unsaved).toBe(false);
+});
+test("corrupt intent requires explicit recovery and retains its original bytes even if archival fails", async () => {
   const f = fixture(), data = f.reopen(); await data.refresh();
   const write = f.receipts.write; f.receipts.write = () => { throw new Error("disk full"); };
   await data.save(setSidebarDestinationHidden(DEFAULT_SIDEBAR_NAVIGATION, "plugins", true));
@@ -93,6 +102,25 @@ test("storage failure prevents submission and corrupt intent is retained instead
   const key = `agent-desktop:sidebar-navigation:${encodeURIComponent(f.host.host.id)}:intent:v1`;
   write(key, "{corrupt"); const reopened = f.reopen(); await reopened.refresh(); await reopened.save(DEFAULT_SIDEBAR_NAVIGATION);
   expect(reopened.writable).toBe(false); expect(f.receipts.read(key)).toBe("{corrupt"); expect(f.deliveries).toEqual([]);
+  f.receipts.write = () => { throw new Error("disk full"); };
+  await reopened.discardUnsaved(); expect(f.receipts.read(key)).toBe("{corrupt"); expect(reopened.writable).toBe(false);
+  f.receipts.write = write;
+  await reopened.discardUnsaved(); expect(f.receipts.read(key)).toBe("null"); expect([...f.values.values()]).toContain("{corrupt");
+  const recovered = f.reopen(); await recovered.refresh(); await recovered.save(setSidebarDestinationHidden(DEFAULT_SIDEBAR_NAVIGATION, "plugins", true));
+  expect(f.store.get("sidebar.navigation")).toMatchObject({ value: { hidden: ["plugins", "archive"] } });
+});
+test("corrupt intent cannot discard an uncertain command and does not prevent its original receipt retry", async () => {
+  const f = fixture(), data = f.reopen(); await data.refresh(); f.fail("lost");
+  const value = setSidebarDestinationHidden(DEFAULT_SIDEBAR_NAVIGATION, "plugins", true);
+  await data.save(value);
+  const key = `agent-desktop:sidebar-navigation:${encodeURIComponent(f.host.host.id)}:intent:v1`;
+  f.receipts.write(key, "{corrupt");
+  const reopened = f.reopen(); await reopened.refresh(); await reopened.discardUnsaved();
+  expect(f.receipts.read(key)).toBe("{corrupt"); expect(f.deliveries).toHaveLength(1);
+  await reopened.retry(); expect(f.deliveries[1]!.envelope.id).toBe(f.deliveries[0]!.envelope.id);
+  await reopened.discardUnsaved();
+  expect(reopened.value).toEqual(value); expect([...f.values.values()]).toContain("{corrupt");
+  expect(f.deliveries).toHaveLength(2);
 });
 test("schema rejects incomplete, duplicate and unsupported destinations before persistence", () => {
   const f = fixture();

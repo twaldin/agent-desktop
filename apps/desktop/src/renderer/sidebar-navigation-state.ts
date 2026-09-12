@@ -38,18 +38,19 @@ export class SidebarNavigationState {
       subscribe: bridge.subscribe.bind(bridge),
     }, { read: key => cache.read(prefix + key), write: (key, value) => cache.write(prefix + key, value) },
     { read: key => receipts.read(prefix + key), write: (key, value) => receipts.write(prefix + key, value) });
-    try { const saved = receipts.read(this.intentKey); if (saved && saved !== "null") this.intent = parseSidebarNavigation(JSON.parse(saved)); }
+    try { const saved = receipts.read(this.intentKey); if (saved !== null && saved !== "null") this.intent = parseSidebarNavigation(JSON.parse(saved)); }
     catch (cause) { this.recoveryError = `Saved sidebar changes could not be recovered. Original bytes were retained. ${String(cause)}`; }
     this.preferences.subscribe(() => this.changed());
   }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private changed() { for (const listener of this.listeners) listener(); }
   get value() { return this.intent ?? this.preferences.get(SIDEBAR_NAVIGATION_PREFERENCE) ?? DEFAULT_SIDEBAR_NAVIGATION; }
-  get error() { return this.recoveryError ?? this.storageError ?? this.preferences.error ?? this.preferences.cacheWarning; }
+  get error() { return this.storageError ?? this.recoveryError ?? this.preferences.error ?? this.preferences.cacheWarning; }
   get unsaved() { return Boolean(this.intent || this.preferences.pending.length); }
   get busy() { return this.preferences.busy; }
-  get writable() { return this.active && this.supported && this.loaded && !this.busy && !this.unsaved && !this.recoveryError; }
-  get canRetry() { return this.active && this.supported && !this.busy && !this.recoveryError; }
+  get writable() { return this.active && this.supported && this.loaded && !this.busy && !this.preferences.pending.length && !this.recoveryError; }
+  get canRetry() { return this.active && this.supported && !this.busy && (!this.recoveryError || this.preferences.pending.length > 0); }
+  get canDiscard() { return !this.busy && !this.preferences.pending.length && Boolean(this.intent || this.recoveryError); }
   get unavailable() { return !this.active ? "Reconnect to this device’s host to save sidebar changes." : !this.supported ? "Update this device’s host to save sidebar customization. Your saved choices are retained." : !this.loaded ? "Loading sidebar customization…" : undefined; }
   setConnection(localHostId: string | undefined, connected: boolean, supported: boolean) {
     this.active = localHostId === this.owner && connected;
@@ -61,6 +62,19 @@ export class SidebarNavigationState {
   async refresh() {
     await this.preferences.refresh();
     if (!this.preferences.error) this.loaded = true;
+    this.changed();
+  }
+  async discardUnsaved() {
+    if (!this.canDiscard) return;
+    try {
+      const original = this.receipts.read(this.intentKey) ?? JSON.stringify(this.intent) ?? "null";
+      this.receipts.write(`${this.intentKey}:discarded:${crypto.randomUUID()}`, original);
+      this.receipts.write(this.intentKey, "null");
+      this.intent = undefined;
+      this.recoveryError = undefined;
+      this.storageError = undefined;
+      if (this.active && this.supported) await this.refresh();
+    } catch (cause) { this.storageError = `Sidebar changes could not be discarded safely: ${String(cause)}`; }
     this.changed();
   }
   async save(value: SidebarNavigationPreference) {

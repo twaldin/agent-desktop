@@ -10,7 +10,7 @@
 .organized-sidebar .organized-session:hover,
 .organized-sidebar .organized-session.selected { background:var(--selected); }
 .organized-sidebar .project-row.selected { background:var(--selected); }
-.organized-sidebar .project-row { height:30px; min-height:30px; }
+.organized-sidebar .project-row { height:auto; min-height:calc(30px * var(--spacing-scale, 1)); }
 .organized-sidebar .session-row { height:30px; gap:6px; padding:5px 10px; }
 .organized-sidebar .sidebar-session-title { min-width:0; overflow:hidden; white-space:nowrap; mask-image:linear-gradient(to right,#000 calc(100% - 12px),transparent); }
 .organized-sidebar .sidebar-session-status { margin-left:auto; flex-shrink:0; width:5px; height:5px; border-radius:50%; }
@@ -44,7 +44,7 @@
 .sidebar-chat-card time { margin-left:auto; flex-shrink:0; }
 @keyframes sidebar-running { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .organized-sidebar .sidebar-session-status.running { animation:none; } }
-.organized-sidebar .project-label { padding-left:10px; }
+.organized-sidebar .project-label { height:auto; min-height:calc(28px * var(--spacing-scale, 1)); padding-left:10px; }
 .organized-sidebar .sidebar-project-glyph { position:relative; display:flex; width:17px; height:17px; flex-shrink:0; }
 .organized-sidebar .project-marker { display:flex; align-items:center; justify-content:center; width:17px; height:17px; color:var(--secondary); }
 .organized-sidebar .project-marker svg { width:16px; height:16px; }

@@ -98,7 +98,11 @@ async function run() {
     if (after.receivedKeys.length === before.receivedKeys.length) throw new Error(`Electron did not deliver ${keyCode} to the owned renderer`);
   };
   const capture = async (name: string) => { await delay(200); const snapshot = await evaluate("sidebarExploreState()"), image = await window.webContents.capturePage(); writeFileSync(join(output, `${name}.png`), image.toPNG()); captures.push({ name, snapshot, bounds: window.getContentBounds(), raster: image.getSize(), source: "Electron webContents.capturePage, not native window raster" }); };
-  const customize = async () => { await click('.sidebar-explore'); await key("End"); await key("Enter"); await wait('document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"', "Customize autofocus"); };
+  const customize = async () => {
+    await click('.sidebar-explore'); await key("End"); await key("Enter"); await wait('document.activeElement?.getAttribute("aria-label") === "Finish customizing sidebar"', "Customize autofocus");
+    await wait(`(() => { const panel = document.querySelector(".sidebar-customization"), live = panel?.querySelector('[aria-live="polite"]'), overlay = document.querySelector(".sidebar-customization-overlay"); return panel && !panel.closest(".sidebar") && live && !live.closest('[aria-hidden="true"]') && overlay?.getBoundingClientRect().width === innerWidth && overlay?.getBoundingClientRect().height === innerHeight; })()`, "modal portal, full backdrop and exposed announcements");
+    if (!await evaluate(`Array.from(document.querySelectorAll("[data-sidebar-destination]")).every(row => row.querySelectorAll('[role="checkbox"], [role="switch"]').length === 1)`)) throw new Error("Destination has duplicate visibility controls");
+  };
   const saved = async () => { await wait('!document.querySelector(".sidebar-navigation-notice")', "confirmed customization save"); };
   let passed = false, failure: string | undefined;
   try {
@@ -107,6 +111,7 @@ async function run() {
     const navigation = await evaluate('sidebarExploreState().navigation');
     if (navigation.slice(1).join("|") !== "Pull requests|Scheduled|Plugins|Explore") throw new Error(`Unexpected default order: ${navigation}`);
     if (await evaluate('document.querySelector(".sidebar").getBoundingClientRect().width') !== 275) throw new Error("Sidebar width changed");
+    if (!await evaluate('Array.from(document.querySelectorAll(".sidebar-navigation .nav-action")).every(row => row.getBoundingClientRect().height === 30)')) throw new Error("Default navigation row is not 30px");
     await capture("001-default-navigation"); checkpoints.push("default PR-before-Scheduled-before-Plugins, exact275px");
     await click('[aria-label="View activity"]'); await wait('document.querySelector(".sidebar-activity-row")'); await capture("001a-local-activity");
     await click('.sidebar-activity-row'); await wait(`document.querySelector(".header-breadcrumb")?.textContent.includes("Unread sidebar activity fixture")`);
@@ -131,6 +136,12 @@ async function run() {
     await wait(`document.querySelector('.nav-action[aria-label="Archive"][aria-current="page"]')`);
     await click('.sidebar-navigation-pin[aria-label="Pin Archive to sidebar"]');
     await customize(); await saved();
+    const originalTokens = await evaluate(`["--font-size", "--spacing-scale"].map(name => [name, document.documentElement.style.getPropertyValue(name)])`);
+    await evaluate(`document.documentElement.style.setProperty("--font-size", "28px"); document.documentElement.style.setProperty("--spacing-scale", "1.5")`);
+    await wait('Array.from(document.querySelectorAll(".sidebar-customization-row, .sidebar-navigation > .nav-action, .project-row")).every(row => row.getBoundingClientRect().height > 30)', "rows grow with live font and spacing tokens");
+    await capture("002a-large-theme-tokens");
+    await evaluate(`for (const [name, value] of ${JSON.stringify(originalTokens)}) { if (value) document.documentElement.style.setProperty(name, value); else document.documentElement.style.removeProperty(name); }`);
+    await wait('Array.from(document.querySelectorAll(".sidebar-customization-row, .sidebar-navigation > .nav-action, .project-row")).every(row => row.getBoundingClientRect().height === 30)', "default token geometry restored");
     await click('.sidebar-reorder[aria-label="Reorder Plugins"]'); await key("Space"); await key("ArrowUp"); await key("ArrowUp"); await key("Space"); await saved();
     await wait('document.activeElement?.getAttribute("aria-label") === "Reorder Plugins"', "drop retains keyboard handle");
     await capture("003-keyboard-reorder");
@@ -150,8 +161,8 @@ async function run() {
     await capture("005-reopened-customization"); checkpoints.push("archive route/promote/pin; keyboard reorder/drop/cancel; hide persists on actual window reopen");
     capability = false; await invalidate(); await wait(`!document.querySelector('[data-sidebar-destination="pull-requests"]')`);
     await click('.sidebar-reorder[aria-label="Reorder Archive"]'); await key("Space"); await key("ArrowUp"); await key("Space"); await saved();
-    preferenceCapability = false; await invalidate(); await wait('document.querySelector(".sidebar-customization-reset")?.disabled'); await capture("006-capability-loss");
-    preferenceCapability = true; capability = true; await invalidate(); await wait(`document.querySelector('[data-sidebar-destination="pull-requests"]') && !document.querySelector(".sidebar-customization-reset").disabled`);
+    preferenceCapability = false; await invalidate(); await wait('document.querySelector(".sidebar-customization-reset")?.getAttribute("aria-disabled") === "true"'); await capture("006-capability-loss");
+    preferenceCapability = true; capability = true; await invalidate(); await wait(`document.querySelector('[data-sidebar-destination="pull-requests"]') && document.querySelector(".sidebar-customization-reset").getAttribute("aria-disabled") === "false"`);
     if (await evaluate(`document.querySelector('.sidebar-visibility[aria-label="Pull requests"]').getAttribute("aria-checked")`) !== "false") throw new Error("Unavailable intent erased");
     await capture("007-capability-recovery"); checkpoints.push("availability projection and preference capability loss/recovery retain unavailable intent and ordering");
     const readNavigation = async () => parsePreferencesSnapshotV2(await http("/v2/preferences")).records.find(record => record.key === "sidebar.navigation");
@@ -164,6 +175,7 @@ async function run() {
     writeFailure = "lost"; await click('.sidebar-visibility[aria-label="Scheduled"]');
     await wait('document.querySelector(".sidebar-navigation-notice button:not(:disabled)")', "uncertain mutation exposes recovery");
     const uncertainCommand = navigationCommands.at(-1)!, uncertainRecord = await readNavigation();
+    if (await evaluate('!!document.querySelector(".sidebar-discard")')) throw new Error("Uncertain command was offered for discard");
     if (!uncertainRecord || uncertainRecord.deleted || uncertainRecord.key !== "sidebar.navigation" || !uncertainRecord.value.hidden.includes("scheduled")) throw new Error("Lost receipt did not leave a committed host preference");
     await capture("009-lost-receipt-retained");
     window.destroy(); await makeWindow(); await wait('document.querySelector(".sidebar-explore")'); await customize(); await click('.sidebar-navigation-notice button'); await saved();
@@ -171,7 +183,11 @@ async function run() {
     if (recoveredCommand.envelope.id !== uncertainCommand.envelope.id || recoveredCommand.owner !== uncertainCommand.owner || JSON.stringify(await readNavigation()) !== JSON.stringify(uncertainRecord)) throw new Error("Uncertain recovery changed command owner/id or reapplied the saved write");
     for (const label of ["Pull requests", "Scheduled", "Plugins", "Archive"]) { if (await evaluate(`document.querySelector('.sidebar-visibility[aria-label="${label}"]').getAttribute('aria-checked') === 'true'`)) { await click(`.sidebar-visibility[aria-label="${label}"]`); await saved(); } }
     await click('[aria-label="Finish customizing sidebar"]'); await capture("010-all-hidden-recovery"); await customize();
-    await click('.sidebar-customization-reset'); await saved(); await capture("011-reset");
+    for (let tab = 0; tab < 9; tab++) await key("Tab");
+    await wait('document.activeElement?.classList.contains("sidebar-customization-reset")', "single visibility toggle and reorder handle per destination lead to Reset");
+    await key("Space"); await saved();
+    await wait('document.activeElement?.classList.contains("sidebar-customization-reset")', "keyboard Reset retains focus during save");
+    await capture("011-reset");
     await click('[aria-label="Finish customizing sidebar"]');
     await click('.nav-action[aria-label="Pull requests"]'); await wait('document.querySelector(".pull-requests-page")'); await capture("012-actual-pr-route");
     await click('.nav-action[aria-label="Scheduled"]'); await wait('document.querySelector(".automations-page")'); await capture("013-actual-scheduled-route");
@@ -180,6 +196,24 @@ async function run() {
     await capture("014-actual-plugin-route");
     await click('.nav-action[aria-label="Plugins"]', "right"); await key("ArrowDown"); await key("Enter"); await wait('document.querySelector(".sidebar-customization")'); await key("Escape");
     checkpoints.push("rejection/retry; lost receipt/reopen/retry; all-hidden Explore recovery; reset; actual PR/Scheduled/Plugins callbacks; context Customize and Escape");
+    await customize(); await saved();
+    const beforeDiscard = await readNavigation();
+    writeFailure = "rejected"; await click('.sidebar-visibility[aria-label="Archive"]');
+    await wait('document.querySelector(".sidebar-discard")', "known rejection exposes explicit discard");
+    await click(".sidebar-discard"); await saved();
+    if (JSON.stringify(await readNavigation()) !== JSON.stringify(beforeDiscard)) throw new Error("Discard changed the confirmed host preference");
+    const corruptIntent = "{corrupt-sidebar-acceptance";
+    const intentKey = await evaluate(`Object.keys(localStorage).find(key => key.startsWith("agent-desktop:sidebar-navigation:") && key.endsWith(":intent:v1"))`);
+    if (!intentKey) throw new Error("The production navigation intent was not persisted");
+    await evaluate(`localStorage.setItem(${JSON.stringify(intentKey)}, ${JSON.stringify(corruptIntent)})`);
+    window.destroy(); await makeWindow(); await wait('document.querySelector(".sidebar-explore")'); await customize();
+    await wait('document.querySelector(".sidebar-discard")', "corrupt intent exposes explicit recovery"); await capture("015-corrupt-intent-recovery");
+    await click(".sidebar-discard"); await saved();
+    if (!await evaluate(`localStorage.getItem(${JSON.stringify(intentKey)}) === "null" && Object.values(localStorage).includes(${JSON.stringify(corruptIntent)})`)) throw new Error("Explicit recovery did not retain the original corrupt bytes");
+    await click('.sidebar-visibility[aria-label="Plugins"]'); await saved();
+    const afterRecovery = await readNavigation();
+    if (!afterRecovery || afterRecovery.deleted || afterRecovery.key !== "sidebar.navigation" || !afterRecovery.value.hidden.includes("plugins")) throw new Error("Recovered customization could not save");
+    await capture("016-recovered-edit"); checkpoints.push("modal portal/backdrop and exposed live announcements; one visibility control per destination; live token growth/default restoration; keyboard Reset focus; rejected intent discard and corrupt intent recovery retain original bytes");
     writeFileSync(join(output, "confirmed-preferences.json"), JSON.stringify(await http("/v2/preferences"), null, 2));
     passed = true;
   } catch (cause) { failure = String(cause); errors.push(failure); if (window && !window.isDestroyed()) await capture("failure").catch(error => errors.push(String(error))); }
