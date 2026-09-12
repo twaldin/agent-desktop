@@ -1,5 +1,7 @@
+import { GitFileHistoryState } from "./git-file-history-state";
+import { WorkspaceGitFilePanel } from "./WorkspaceGitFilePanel";
 import type { FileTextSelection } from "@agent-desktop/shared";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { defaultFileTreeView, type FileTreeView, type WorkspaceTab } from "../window-state";
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
@@ -65,6 +67,17 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
   const [localTree, setLocalTree] = useState(defaultFileTreeView);
   const tree = fileTree ?? localTree, changeTree = onFileTreeChange ?? setLocalTree;
   const opened = filePath ?? data.opened;
+  const gitFile = useMemo(() => opened && !data.standalonePath ? new GitFileHistoryState(data, opened) : undefined, [data, opened]);
+  const [, redrawGitFile] = useReducer(value => value + 1, 0);
+  useEffect(() => {
+    if (!gitFile) return;
+    const off = gitFile.subscribe(redrawGitFile);
+    return () => { off(); gitFile.dispose(); };
+  }, [gitFile]);
+  useEffect(() => {
+    if (!gitFile?.enabled || !active) return;
+    return data.retainRepositoryWatch();
+  }, [data, gitFile, gitFile?.enabled, active]);
   const [localMode, setLocalMode] = useState<"markdown" | "source">("markdown");
   const markdownFile = Boolean(filePath && /\.(?:md|markdown|mdx)$/i.test(filePath));
   const mode = markdownFile ? fileMode ?? localMode : "source";
@@ -111,6 +124,7 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
         <div className={`editor-toolbar ${filePath ? "workspace-file-toolbar" : ""}`}>{filePath && !data.standalonePath ? <WorkspaceFileBreadcrumbs data={data} filePath={filePath} workspaceName={workspaceName} active={active} onOpenFile={open}/> : <span className="truncate" title={data.standalonePath??opened}>{opened}</span>}{markdownFile && <button type="button" className="workspace-markdown-mode" disabled={switchingMode || !document || !editable} onClick={() => void switchMode()}>{mode === "markdown" ? "View source" : "View preview"}</button>}{filePath && !data.standalonePath && <button type="button" className="icon-button file-tree-toggle" aria-label="Toggle file tree" title="Toggle file tree" aria-pressed={tree.open} onClick={() => changeTree({ ...tree, open: !tree.open })}><Icon name="fileTree"/></button>}{filePath && <WorkspaceFileOpen key={`${data.cacheKey}:${filePath}`} data={data} path={filePath} active={active} disabled={disabled}/>}{!filePath && <button className="secondary-button" disabled={disabled || !document?.dirty || document.conflict !== undefined || !editable} onClick={() => void data.saveFile(opened!)}>Save <kbd>⌘S</kbd></button>}</div>
       </>}
       <div className="workspace-file-body" hidden={!opened}><div className={`workspace-file-main ${markdownFile ? "workspace-markdown-main" : ""}`}>
+      {gitFile && <WorkspaceGitFilePanel key={`${data.cacheKey}:${opened}`} state={gitFile} active={active}/>}
       {opened && <>
         {fileError && <p className="workspace-notice" role="alert">{fileError}</p>}{modeError && <p className="workspace-notice" role="alert">{modeError}</p>}
         {locationNotice?.path === opened && locationNotice?.id === fileRequest?.id && <p className="workspace-notice" role="status">{locationNotice.message}</p>}
@@ -120,7 +134,7 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
       </>}
       {markdownFile && document && editable && <div className="workspace-markdown-actions"><MarkdownCopyButton key={`${data.cacheKey}:${filePath}`} text={document.text}/></div>}
       {/* Keep each open file's native history and selection while another tab is visible. */}
-      {markdownFile && document && editable && <RichMarkdownEditor documentKey={`${data.cacheKey}:${filePath}:markdown`} value={document.text} label={`Edit Markdown ${filePath}`} active={active && mode === "markdown"} revealRequest={revealRequest} onReveal={(id, error) => setLocationNotice(error ? { id, path: filePath!, message: error } : undefined)}
+      {markdownFile && document && editable && <RichMarkdownEditor documentKey={`${data.cacheKey}:${filePath}:markdown`} value={document.text} label={`Edit Markdown ${filePath}`} active={active && mode === "markdown" && !gitFile?.selected} revealRequest={revealRequest} onReveal={(id, error) => setLocationNotice(error ? { id, path: filePath!, message: error } : undefined)}
         onAddToChat={onAddToChat ? selection => onAddToChat(filePath!, selection) : undefined} imageGeneration={data.imageGeneration}
         resolveImage={href => { const path = markdownImagePath(href, markdownPath, markdownRoot); return path === null ? null : { key: `${data.cacheKey}:${data.imageGeneration}:${path}`, load: () => data.acquireImage(data.standalonePath ? `/${path}` : path) }; }}
         openLink={async href => {
@@ -134,7 +148,8 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
       <div className="workspace-source-editors" hidden={!editable || mode === "markdown"}>
         {[...data.documents].filter(([path, item]) => (!filePath || path === filePath) && (!item.content || item.content.kind === "text")).map(([path, item]) =>
           <PierreSourceEditor key={path} documentKey={`${data.cacheKey}:${path}`} name={path} value={item.text}
-            onAddToChat={onAddToChat ? selection => onAddToChat(path, selection) : undefined} label={`Edit ${path}`} active={active && opened === path && mode === "source"}
+            gitBlame={opened === path ? gitFile?.blame : undefined}
+            onAddToChat={onAddToChat ? selection => onAddToChat(path, selection) : undefined} label={`Edit ${path}`} active={active && opened === path && mode === "source" && !gitFile?.selected}
             onChange={text => edit(path, text, true)} onSave={() => { if (!disabled) void data.saveFile(path); }}
             revealRequest={opened === path ? revealRequest : undefined}
             onReveal={(id, error) => {

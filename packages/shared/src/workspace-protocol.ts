@@ -1,3 +1,5 @@
+import type { GitFileOrigin, GitFileLocation, GitFileInspection, GitFileHistoryPage, GitFileRevision } from "./git-file-history";
+export * from "./git-file-history";
 import type { NativeTerminalInfo } from "./terminals";
 import type { GitSelectionSummary, GitSubmissionIntent, GitSubmissionReceipt } from "./git-submissions";
 export type * from "./git-submissions";
@@ -87,6 +89,9 @@ export type WorkspaceQuery =
   | { type: "file.open-options"; path: string }
   | { type: "file.copy-info"; path: string }
   | { type: "file.copy-chunk"; path: string; revision: string; offset: number }
+  | { type: "git.file-inspect"; path: string; expression: string }
+  | { type: "git.file-history"; origin: GitFileOrigin; start: GitFileLocation }
+  | { type: "git.file-revision"; origin: GitFileOrigin; location: GitFileLocation }
   | { type: "git.status" }
   | { type: "git.action-context" }
   | { type: "git.selection-summary"; contextRevision: string; selectionMode: GitSelectionSummary["selectionMode"] }
@@ -115,6 +120,9 @@ export type WorkspaceQueryResult =
   | { type: "file.open-options"; path: string; targets: WorkspaceOpenTarget[]; preferredTargetId?: string; availabilityReason?: string }
   | { type: "file.copy-info"; path: string; absolutePath: string; size: number; revision: string }
   | { type: "file.copy-chunk"; path: string; size: number; revision: string; offset: number; dataBase64: string }
+  | { type: "git.file-inspect"; inspection: GitFileInspection }
+  | { type: "git.file-history"; history: GitFileHistoryPage }
+  | { type: "git.file-revision"; revision: GitFileRevision }
   /** A host-proven absence of repository metadata is distinct from a Git read failure. */
   | { type: "git.status"; availability?: "repository"; status: GitStatus }
   | { type: "git.status"; availability: "not-repository" }

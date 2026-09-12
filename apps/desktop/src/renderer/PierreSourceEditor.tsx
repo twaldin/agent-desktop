@@ -1,5 +1,7 @@
+import { PierreGitBlame } from "./PierreGitBlame";
+import type { PierreGitBlame as PierreGitBlameData } from "./git-file-history-state";
 import { useEditorScroll } from "./use-editor-scroll";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { File } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/edit";
 import { REVIEW_SHADOW_CSS } from "./review-theme";
@@ -23,6 +25,7 @@ export interface PierreSourceEditorProps {
   revealRequest?: { id: string; line?: number; column?: number; endLine?: number };
   onReveal?(id: string, error?: string): void;
   onAddToChat?(selection: FileTextSelection): void;
+  gitBlame?: PierreGitBlameData;
 }
 
 /** Pierre owns its document and history. Parent echoes must never reinitialize it. */
@@ -34,6 +37,10 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
     openLine(): boolean; goToLine(line: number, focus: boolean): void; closeLine(cancel: boolean, focus: boolean): void } | null>(null);
   const { themeType, themes } = useCodeTheme();
   const [selectionAction, setSelectionAction] = useState<{ owner: string; document: string; start: unknown; end: unknown; rect: DOMRect; selection: FileTextSelection }>();
+  const blameSelection = useCallback(() => {
+    const editor = instance.current?.editor, picked = editor?.getState().selections?.[0];
+    return editor && picked ? { text: editor.getText(), line: (picked.direction < 0 ? picked.start.line : picked.end.line) + 1 } : undefined;
+  }, []);
   useLayoutEffect(() => {
     const element = container.current!;
     let alive = true, synchronizing = false, attached = false, readVersion = 0;
@@ -72,6 +79,19 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
     };
     const reveal = () => {
       const request = current.current.revealRequest;
+      if (alive && current.current.readOnly && current.current.active !== false && request && request.id !== appliedReveal) {
+        if (request.line !== undefined) {
+          const location = fileLocation(current.current.value, request.line, request.column, request.endLine);
+          if ("error" in location) { appliedReveal = request.id; current.current.onReveal?.(request.id, location.error); return; }
+          const row = element.querySelector("diffs-container")?.shadowRoot?.querySelector<HTMLElement>(`[data-line="${request.line}"]`);
+          if (!row?.getClientRects().length) return;
+          const bounds = row.getBoundingClientRect(), viewport = element.getBoundingClientRect();
+          element.scrollTop += bounds.top - viewport.top - element.clientHeight / 2;
+          row.tabIndex = -1; row.focus({ preventScroll: true });
+        }
+        appliedReveal = request.id; current.current.onReveal?.(request.id);
+        return;
+      }
       if (!alive || !attached || current.current.active === false || !request || request.id === appliedReveal) return;
       appliedReveal = request.id;
       editor.focus({ preventScroll: true });
@@ -167,6 +187,7 @@ export function PierreSourceEditor(props: PierreSourceEditorProps) {
     <GoToLine frame={frame} active={props.active !== false && !props.readOnly} value={props.value}
       onOpen={() => instance.current?.openLine() ?? false} onPreview={line => instance.current?.goToLine(line, false)}
       onCommit={line => instance.current?.goToLine(line, true)} onClose={(cancel, focus) => instance.current?.closeLine(cancel, focus)}/>
+    {props.gitBlame && !props.readOnly && <PierreGitBlame blame={props.gitBlame} container={container} active={props.active !== false} value={props.value} selection={blameSelection}/>}
     {selectionAction && props.onAddToChat && <EditorSelectionToolbar anchor={selectionAction.rect} selection={selectionAction.selection} onAddToChat={selection => { const current = instance.current?.editor.getText(), state = instance.current?.editor.getState(), picked = state?.selections?.[0]; if (props.active === false || selectionAction.owner !== props.documentKey || selectionAction.document !== current || !current || !picked || JSON.stringify(picked.start) !== JSON.stringify(selectionAction.start) || JSON.stringify(picked.end) !== JSON.stringify(selectionAction.end)) return; const fresh = fileTextSelection(current, rawOffsetAt(current, picked.start), rawOffsetAt(current, picked.end)); if (!fresh || fresh.text !== selection.text || JSON.stringify(fresh.range) !== JSON.stringify(selection.range)) return; props.onAddToChat?.(selection); setSelectionAction(undefined); }}/>}
   </div>;
 }
