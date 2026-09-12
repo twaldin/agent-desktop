@@ -178,7 +178,7 @@ export class NativeTerminalView {
     const canvas = document.createElement("canvas"), context = canvas.getContext("2d", { willReadFrequently: true }); canvas.width = canvas.height = 1;
     const color = (value: string) => { if (!context) return value; context.clearRect(0, 0, 1, 1); context.fillStyle = value; context.fillRect(0, 0, 1, 1); const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data; return `rgba(${r},${g},${b},${a! / 255})`; };
     const measure = document.createElement("span"); measure.style.fontSize = token("--terminal-font-size", token("--code-font-size", "13px")); this.element.append(measure); const fontSize = parseFloat(getComputedStyle(measure).fontSize); measure.remove();
-    term.options = { theme: { background: color(token("--terminal-surface", token("--app-surface", "#181818"))), foreground: color(token("--text", "#ededed")), cursor: color(token("--accent", "#72a8ff")), selectionBackground: color(token("--selection-surface", "#ffffff33")) }, fontFamily: token("--terminal-font", token("--code-font", "monospace")), fontSize: Number.isFinite(fontSize) ? fontSize : 13, fontWeight: Number(token("--code-font-weight", "400")), lineHeight: 1.2 };
+    term.options = { theme: { background: color(token("--terminal-surface", token("--app-surface", "#181818"))), foreground: color(token("--text", "#ededed")), cursor: color(token("--accent", "#72a8ff")), selectionBackground: color(token("--selection-surface", "#ffffff33")) }, fontFamily: token("--terminal-font", token("--code-font", "monospace")), fontSize: Number.isFinite(fontSize) ? fontSize : 13, fontWeight: Number(token("--code-font-weight", "400")), lineHeight: Number(token("--code-line-height", "1.2")) };
     this.sizeGrid();
   };
   async usePanelSize(): Promise<void> {

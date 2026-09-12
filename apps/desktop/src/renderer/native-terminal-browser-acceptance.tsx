@@ -65,6 +65,16 @@ export async function nativeTerminalBrowserAcceptance() {
     requireValue(terminal(0).cols === 80 && terminal(1).cols === 80, "Both xterms adopt accepted columns");
     await settle(() => containers.every(({ outer }) => outer.scrollWidth > outer.clientWidth && outer.scrollHeight > outer.clientHeight), "small panels scroll the full accepted grid");
     requireValue(!actions.some(action => action.type === "resize"), "Mounting differently sized viewers never silently resizes pane"); checks.push("independent attachments, live parser reply routing and full-grid DOM overflow");
+    const originalTerms = [terminal(0), terminal(1)], originalHeight = terminal(0).element!.querySelector<HTMLElement>(".xterm-screen")!.getBoundingClientRect().height;
+    const previousLineHeight = document.documentElement.style.getPropertyValue("--code-line-height");
+    try {
+      document.documentElement.style.setProperty("--code-line-height", "1.8");
+      await settle(() => terminal(0).options.lineHeight === 1.8 && terminal(1).options.lineHeight === 1.8, "saved line-height reaches both existing emulators");
+      await settle(() => terminal(0).element!.querySelector<HTMLElement>(".xterm-screen")!.getBoundingClientRect().height > originalHeight, "line-height changes actual rendered grid");
+      requireValue(terminal(0) === originalTerms[0] && terminal(1) === originalTerms[1] && terminal(0).cols === 80 && terminal(0).rows === 24 && !actions.some(action => action.type === "resize"), "Theme geometry preserves emulators and accepted PTY dimensions");
+    } finally { if (previousLineHeight) document.documentElement.style.setProperty("--code-line-height", previousLineHeight); else document.documentElement.style.removeProperty("--code-line-height"); }
+    await settle(() => terminal(0).options.lineHeight === 1.2 && terminal(1).options.lineHeight === 1.2, "removed override restores pinned fallback");
+    checks.push("saved line-height updates real existing grids without resizing PTYs; removal restores the pinned fallback");
     await capture("two-viewers");
     terminal(0).textarea!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", bubbles: true, cancelable: true }));
     terminal(0).textarea!.dispatchEvent(new KeyboardEvent("keypress", { key: "λ", charCode: 955, keyCode: 955, bubbles: true, cancelable: true }));
