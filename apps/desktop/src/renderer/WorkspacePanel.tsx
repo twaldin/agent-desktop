@@ -1,5 +1,6 @@
 import { GitFileHistoryState } from "./git-file-history-state";
 import { WorkspaceGitFilePanel } from "./WorkspaceGitFilePanel";
+import { workspaceSymbolNavigation } from "./symbol-navigation";
 import type { FileTextSelection } from "@agent-desktop/shared";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { defaultFileTreeView, type FileTreeView, type WorkspaceTab } from "../window-state";
@@ -58,6 +59,9 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
 
 function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, onFileEdit, onAddToChat, onAddFile, openExternal, fileTree, onFileTreeChange, workspaceName, workspacePath, active }: { data: WorkspaceState; disabled: boolean; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string, location?: Omit<WorkspaceFileLink, "path">, options?: {preview?:boolean}): void; onFileEdit?(path:string):void; onAddToChat?(path: string, selection: FileTextSelection): void; onAddFile?(path:string):void; openExternal?(url: string): Promise<void>; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; workspaceName: string; workspacePath: string; active: boolean }) {
   const markdownPath = data.standalonePath?.slice(1) ?? filePath!;
+  const navigation = workspaceSymbolNavigation(data);
+  const [, redrawSymbols] = useReducer(value => value + 1, 0);
+  useEffect(() => navigation.subscribe(redrawSymbols), [navigation]);
   const markdownRoot = data.standalonePath ? "/" : workspacePath;
   const edit = (path:string,text:string,autosave?:boolean) => { onFileEdit?.(path); data.edit(path,text,autosave); };
   useEffect(() => {
@@ -110,7 +114,10 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
   useEffect(() => { setFolder(data.directory); }, [data.directory]);
   const fileError = opened && data.errors[`file:${opened}`];
   const readingLinkedFile = Boolean(opened && data.loading.has(`file:${opened}`));
-  const revealRequest = active && data.restored && !readingLinkedFile && (!fileError || !data.connected && editable) && opened === fileRequest?.path ? fileRequest : undefined;
+  const symbolReveal = navigation.pending?.request;
+  const suppressedFileReveal = useRef<string | undefined>(undefined);
+  const revealRequest = active && data.restored && !readingLinkedFile && (!fileError || !data.connected && editable)
+    ? symbolReveal?.path === opened ? symbolReveal : opened === fileRequest?.path && fileRequest?.id !== suppressedFileReveal.current ? fileRequest : undefined : undefined;
   return <div className="files-view" hidden={!active}>
     {!filePath && <section className="file-browser" aria-label="Workspace directory">
       <form className="workspace-path-form" onSubmit={event => { event.preventDefault(); void data.list(folder || "."); }}><label className="sr-only" htmlFor="workspace-directory">Directory relative to workspace</label><input id="workspace-directory" value={folder} onChange={event => setFolder(event.target.value)} autoComplete="off"/><button disabled={!data.connected}>Go</button><button type="button" title="New file" aria-label="New file" className="icon-button small" disabled={!data.restored} onClick={() => setAdding(value => !value)}><Icon name="plus"/></button></form>
@@ -150,9 +157,14 @@ function Files({ data, disabled, fileRequest, filePath, fileMode, onFileModeChan
           <PierreSourceEditor key={path} documentKey={`${data.cacheKey}:${path}`} name={path} value={item.text}
             gitBlame={opened === path ? gitFile?.blame : undefined}
             onAddToChat={onAddToChat ? selection => onAddToChat(path, selection) : undefined} label={`Edit ${path}`} active={active && opened === path && mode === "source" && !gitFile?.selected}
+            symbolNavigation={{ navigation, path, open: location => {
+              if (onOpenFile) onOpenFile(location.path, undefined, { preview: false });
+              else void data.open(location.path);
+            } }}
             onChange={text => edit(path, text, true)} onSave={() => { if (!disabled) void data.saveFile(path); }}
             revealRequest={opened === path ? revealRequest : undefined}
             onReveal={(id, error) => {
+              if (navigation.pending?.request.id === id) { suppressedFileReveal.current = fileRequest?.id; navigation.revealed(id, error); return; }
               if (opened !== path || fileRequest?.id !== id) return;
               const message = error ?? (item.dirty && fileRequest.line !== undefined ? `File link opened at line ${fileRequest.line} in your unsaved buffer.` : undefined);
               setLocationNotice(message ? { id, path, message } : undefined);
