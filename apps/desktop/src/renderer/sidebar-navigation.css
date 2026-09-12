@@ -22,6 +22,7 @@
 .sidebar-customization { position:fixed; z-index:90; padding:4px; overflow-y:auto; border-radius:12px; border:1px solid var(--border); background:var(--menu-surface); box-shadow:0 8px 24px #0003; outline:none; }
 .sidebar-customization-header { min-height:calc(30px * var(--spacing-scale, 1)); padding:0 var(--spacing-sm, 8px); display:flex; align-items:center; justify-content:space-between; color:var(--tertiary); }
 .sidebar-customization-header button, .sidebar-customization-reset { color:var(--accent); }
+.sidebar-customization-list { display:flex; flex-direction:column; }
 .sidebar-customization-row { min-height:calc(30px * var(--spacing-scale, 1)); display:flex; align-items:center; gap:var(--spacing-sm, 8px); padding:0 var(--spacing-sm, 8px); border-radius:8px; }
 .sidebar-customization-row:hover { background:var(--hover); }
 .sidebar-customization-row.reordering { outline:1px solid var(--accent); opacity:.7; }

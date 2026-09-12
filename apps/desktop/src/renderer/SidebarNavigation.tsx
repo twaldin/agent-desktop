@@ -26,7 +26,8 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
   const value = data?.value ?? DEFAULT_SIDEBAR_NAVIGATION;
   const layout = sidebarNavigationLayout(value, destinations);
   const availableKey = destinations.map(item => item.id).join("|");
-  const rows = drag ? drag.order.flatMap(id => { const item = destinations.find(item => item.id === id); return item ? [item] : []; }) : layout.ordered;
+  // Reinserting the source DOM node cancels native HTML5 drag; preview pointer order in CSS until drop.
+  const rows = drag?.keyboard ? drag.order.flatMap(id => { const item = destinations.find(item => item.id === id); return item ? [item] : []; }) : layout.ordered;
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
   useEffect(() => { setDrag(undefined); }, [availableKey, data]);
   useEffect(() => { if (data && !data.writable) setDrag(undefined); }, [data?.writable]);
@@ -86,7 +87,7 @@ export function SidebarNavigation({ data, destinations, onNew, newShortcut }: Pr
         <Dialog.Title className="sr-only">Customize sidebar</Dialog.Title>
         <div className="sidebar-customization-header"><span>Customize</span><button ref={done} aria-label="Finish customizing sidebar" onClick={closeCustomize}>Done</button></div>
         <p className="sr-only" id={`${id}-instructions`}>To reorder this sidebar item, press Space or Enter. Use the arrow keys to move it, press Space or Enter to drop it, or press Escape to cancel.</p>
-        <div role="list" aria-label="Sidebar destinations">{rows.map(item => <div role="listitem" data-sidebar-destination={item.id} className={`sidebar-customization-row ${drag?.id === item.id ? "reordering" : ""}`} key={item.id} onDragOver={event => { if (drag && !drag.keyboard) { event.preventDefault(); move(item.id); } }} onDrop={event => { event.preventDefault(); drop(); }}>
+        <div className="sidebar-customization-list" role="list" aria-label="Sidebar destinations">{rows.map(item => <div role="listitem" data-sidebar-destination={item.id} className={`sidebar-customization-row ${drag?.id === item.id ? "reordering" : ""}`} style={drag && !drag.keyboard ? { order: drag.order.indexOf(item.id) } : undefined} key={item.id} onDragOver={event => { if (drag && !drag.keyboard) { event.preventDefault(); move(item.id); } }} onDrop={event => { event.preventDefault(); drop(); }}>
           <button className="sidebar-visibility sidebar-destination-switch" role="checkbox" aria-label={item.label} aria-checked={!value.hidden.includes(item.id)} aria-disabled={!data?.writable || !!drag} onClick={() => saveVisibility(item)}><span className="sidebar-visibility-indicator" aria-hidden="true">{value.hidden.includes(item.id) ? "○" : "✓"}</span>{item.icon}<span>{item.label}</span></button>
           <button className="sidebar-reorder" aria-label={`Reorder ${item.label}`} aria-describedby={`${id}-instructions`} aria-pressed={drag?.id === item.id} draggable={Boolean(data?.writable)} aria-disabled={!data?.writable} onDragStart={event => { if (!data?.writable) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", item.id); setDrag({ id: item.id, order: layout.ordered.map(item => item.id), keyboard: false }); }} onDragEnd={() => setDrag(undefined)} onKeyDown={event => {
             if (!data?.writable) { if ([" ", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) event.preventDefault(); return; }
