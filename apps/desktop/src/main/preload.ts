@@ -6,10 +6,10 @@ import { createBrowserObservationBridge } from "./browser-observation-preload";
 import { createDraftBrowserBridge } from "./draft-browser-preload";
 import { createProjectRevealBridge } from "./project-reveal-preload";
 import { createPreferencesV2Bridge } from "./preferences-preload";
+import { createNotificationNavigationBridge } from "./notification-navigation-preload";
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge, DesktopEvent, DesktopTerminalEvent, NativeTerminalInvalidation } from "@agent-desktop/shared";
 
-let lastNotificationNavigation: string | undefined;
 // This cache belongs to one isolated preload/document, never a successor navigation.
 let repositoryWatchWindow: Promise<string> | undefined;
 let branchQueryWindow: Promise<string> | undefined;
@@ -30,17 +30,7 @@ const bridge: DesktopBridge = {
     const callback = () => listener(); ipcRenderer.on("desktop:notification-status", callback);
     return () => ipcRenderer.removeListener("desktop:notification-status", callback);
   },
-  subscribeNotificationNavigation: listener => {
-    let active = true;
-    const callback = (_event: Electron.IpcRendererEvent, message: {id:string;target:{hostId:string;sessionId:string}}) => {
-      if (!active) return;
-      if (lastNotificationNavigation !== message.id) { listener(message.target); lastNotificationNavigation = message.id; }
-      ipcRenderer.send("desktop:notification-ack", message.id);
-    };
-    ipcRenderer.on("desktop:notification-navigate", callback);
-    void ipcRenderer.invoke("desktop:notification-ready").catch(() => {});
-    return () => { active = false; ipcRenderer.removeListener("desktop:notification-navigate", callback); ipcRenderer.send("desktop:notification-unready"); };
-  },
+  ...createNotificationNavigationBridge(ipcRenderer),
   inspectImageAttachment: data => ipcRenderer.invoke("desktop:image-inspect", data),
   getImageAttachmentCapabilities: hostId => ipcRenderer.invoke("host:image-capabilities", hostId),
   uploadImageAttachment: (sha256, data, hostId) => ipcRenderer.invoke("host:image-upload", sha256, data, hostId),

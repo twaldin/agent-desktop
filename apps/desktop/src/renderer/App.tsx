@@ -13,6 +13,7 @@ import { AutomationsPage, type AutomationPageMemory } from './AutomationsPage';
 import { AutomationRequests } from './automation-requests';
 import { AUTOMATIONS_CAPABILITY, type AutomationsSnapshot } from '../../../../packages/shared/src/automations';
 import { useSessionReadState } from "./use-session-read-state";
+import { NotificationNavigationOwner } from "./notification-navigation-owner";
 import { loadThemeFonts } from "./theme-fonts";
 import { QueuedMessages } from "./QueuedMessages";
 import { BrowserCloseFocus } from "./browser-close-focus";
@@ -396,6 +397,7 @@ export function App() {
   const [draftBrowserOwners] = useState(() => new DraftBrowserWindowOwner(bridge.draftBrowser, windowRestoration.state.draftBrowserOwners ?? [], () => redrawBrowserMenu(value => value + 1), windowRestoration.error));
   const [draftBrowserPages] = useState(() => new DraftBrowserWindowPages(bridge.draftBrowser, draftBrowserOwners, windowRestoration.state.draftBrowserPages ?? [], () => redrawBrowserMenu(value => value + 1), windowRestoration.error));
   const [draftBrowserDocks] = useState(() => new Map<string, DraftBrowserDockController>());
+  const [notificationNavigation] = useState(() => new NotificationNavigationOwner(bridge, redraw));
   const closeBrowserDock = useRef<(source: import("./dock-presentations").DockPresentationRef, tab: DockTab, allowed: () => boolean, focusId?: string) => void>(() => {});
   const [browserCloses] = useState(() => new BrowserCloseDockOwner(bridge, windowRestoration.state.browserCloses ?? [], () => redrawBrowserMenu(value => value + 1),
     (source, tab, allowed, focusId) => { closeBrowserDock.current(source, tab, allowed, focusId); browserCloseFocus.queued(focusId); }, windowRestoration.error));
@@ -452,10 +454,10 @@ export function App() {
       protected: tab => browserMenu.retainsSource(dock.presentations, tab.id) || terminalRequests.retainsSource(dock.presentations, tab.id) });
   });
   const windowSaveObserver = useMemo(() => ({
-    committed(value: import("../window-state").WindowViewState) { pullRequestComposers.committed(value); automationRequests.committed(value); browserWindowCheckpoint.committed(value); terminalRequests.committed(value); draftBrowserOwners.committed(value); draftBrowserPages.committed(value); browserCloses.committed(value); },
-    saved(value: import("../window-state").WindowViewState) { pullRequestComposers.saved(value); automationRequests.saved(value); browserWindowCheckpoint.saved(value); terminalRequests.saved(value); draftBrowserOwners.saved(value); draftBrowserPages.saved(value); browserCloses.saved(value); },
-    failed(message: string) { pullRequestComposers.failed(message); automationRequests.failed(message); browserWindowCheckpoint.failed(message); terminalRequests.failed(message); draftBrowserOwners.failed(message); draftBrowserPages.failed(message); browserCloses.failed(message); },
-  }), [pullRequestComposers, automationRequests, browserWindowCheckpoint, terminalRequests, draftBrowserOwners, draftBrowserPages, browserCloses]);
+    committed(value: import("../window-state").WindowViewState) { pullRequestComposers.committed(value); automationRequests.committed(value); browserWindowCheckpoint.committed(value); terminalRequests.committed(value); draftBrowserOwners.committed(value); draftBrowserPages.committed(value); browserCloses.committed(value); notificationNavigation.committed(value); },
+    saved(value: import("../window-state").WindowViewState) { pullRequestComposers.saved(value); automationRequests.saved(value); browserWindowCheckpoint.saved(value); terminalRequests.saved(value); draftBrowserOwners.saved(value); draftBrowserPages.saved(value); browserCloses.saved(value); notificationNavigation.saved(value); },
+    failed(message: string) { pullRequestComposers.failed(message); automationRequests.failed(message); browserWindowCheckpoint.failed(message); terminalRequests.failed(message); draftBrowserOwners.failed(message); draftBrowserPages.failed(message); browserCloses.failed(message); notificationNavigation.failed(message); },
+  }), [pullRequestComposers, automationRequests, browserWindowCheckpoint, terminalRequests, draftBrowserOwners, draftBrowserPages, browserCloses, notificationNavigation]);
   const windowWarning = useWindowViewPersistence({ pullRequestComposers: pullRequestComposers.drafts, pullRequestsOpen, pullRequestViews, automationsOpen, automationRequests: automationRequests.intents, browserCloses: browserCloses.intents, sessionBrowserObservations: browserSearchRegistry.persisted(dock.presentations), draftBrowserPages: draftBrowserPages.intents, draftBrowserOwners: draftBrowserOwners.intents, terminalCreations: terminalRequests.intents, route, sidebarOpen, workspaceOpen, workspaceTab: dock.workspaceTab, terminalOpen, showArchived,
     expandedProjects: [...expandedProjects], collapsedSidebarSections: [...collapsedSidebarSections], settingsOpen, settingsPage, dock: dock.persisted, fileTreeOpen: fileTree.open, environmentOpen, environmentCollapsed, pluginDirectoryOpen, pluginDirectoryTab }, windowRestoration, windowSaveObserver);
   const composerTarget = composerTargetKey(workspaceTarget);
@@ -588,7 +590,8 @@ export function App() {
     expandAfterNavigation.current = id ? `${owner ?? ""}:${id}` : undefined;
     if (focusComposer) requestAnimationFrame(() => textarea.current?.focus());
   }, [route.hostId, state?.host.id, desktop.localHostId]);
-  useEffect(() => bridge.subscribeNotificationNavigation?.(target => navigate(target.sessionId, target.hostId)), [bridge, navigate]);
+  useLayoutEffect(() => notificationNavigation.setNavigate(target => navigate(target.sessionId, target.hostId)), [notificationNavigation, navigate]);
+  useEffect(() => { notificationNavigation.start(); return () => notificationNavigation.dispose(); }, [notificationNavigation]);
   // Bind legacy/new local routes once identity is known; never replace an
   // explicit unavailable remote owner with the local machine.
   useEffect(() => { if (!route.hostId && desktop.localHostId) setRoute(previous => previous.hostId ? previous : { ...previous, hostId: desktop.localHostId }); }, [route.hostId, desktop.localHostId]);
