@@ -124,11 +124,11 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     await page.keyboard.down(modifier);
     try { await page.mouse.click(token.x, token.y); } finally { await page.keyboard.up(modifier); }
     await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "first");
-    await capture("04-native-token-click"); checks.push("Pierre's real token modifier-click uses semantic definitions, not a text search.");
+    await capture("05-native-token-click"); checks.push("Pierre's real token modifier-click uses semantic definitions, not a text search.");
     await click("Back to symbol");
     await wait(value => value.label === "Edit symbol-source.ts" && value.selection.anchor?.line === 2 && value.selection.anchor.column === 1
       && value.selection.focus?.line === 2 && value.selection.focus.column === 1);
-    await capture("04-away-caret-origin");
+    await capture("06-away-caret-origin");
     checks.push("Modifier-click away from the old caret records the clicked token as Back's origin, not the stale caret.");
     await click("Forward to symbol"); await wait(value => value.label === "Edit symbol-target.ts" && value.selection.text === "first");
     const targetBeforeEdit = await snapshot();
@@ -139,7 +139,7 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
     await page.keyboard.down(modifier);
     try { await page.keyboard.press("z"); } finally { await page.keyboard.up(modifier); }
     await wait(value => value.label === "Edit symbol-target.ts" && value.text === targetBeforeEdit.text);
-    await capture("05-unsaved-buffer-native-undo"); checks.push("Back/forward retain the unsaved target and Pierre's original undo timeline; native Undo restores the exact pre-edit text.");
+    await capture("07-unsaved-buffer-native-undo"); checks.push("Back/forward retain the unsaved target and Pierre's original undo timeline; native Undo restores the exact pre-edit text.");
     if (errors.length) throw new Error(errors.join("\n"));
     const result = { passed: true, checks, errors, scope: "Actual App page, production WorkspacePanel/Pierre, existing GoToLine and native Chromium pointer/keyboard input. Requires Main's authenticated disposable host setup. No provider/session or physical-pixel parity claim." };
     await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2)); return result;

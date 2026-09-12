@@ -18,6 +18,7 @@ interface CapturedFile { text: string; revision: string; canonical: string }
 class DefinitionFiles {
   readonly files = new Map<string, CapturedFile>();
   private bytes = 0;
+  private callbackFailure?: Error;
   constructor(readonly root: string, readonly overlays: Map<string, string>) {}
   private owned(path: string): string | null {
     const lexical = resolve(this.root, path);
@@ -51,20 +52,32 @@ class DefinitionFiles {
       return value;
     } finally { closeSync(file); }
   }
+  private compilerCallback<T>(operation: (path: string) => T, unavailable: (path: string) => T): (path: string) => T {
+    return path => {
+      try { return operation(path); }
+      catch (error) {
+        // TypeScript 7.0.2 panics on callback RPC errors. Complete that RPC
+        // without file data, then reject the whole lookup in verify().
+        this.callbackFailure ??= error instanceof Error ? error : new Error(String(error));
+        return unavailable(path);
+      }
+    };
+  }
   readonly fs: FileSystem = {
-    readFile: path => { const file = this.capture(path); return file ? this.overlays.get(file.canonical) ?? file.text : null; },
-    fileExists: path => { const owned = this.owned(path); return owned !== null && statSync(owned).isFile(); },
-    directoryExists: path => { const owned = this.owned(path); return owned !== null && statSync(owned).isDirectory(); },
-    getAccessibleEntries: path => {
+    readFile: this.compilerCallback(path => { const file = this.capture(path); return file ? this.overlays.get(file.canonical) ?? file.text : null; }, () => null),
+    fileExists: this.compilerCallback(path => { const owned = this.owned(path); return owned !== null && statSync(owned).isFile(); }, () => false),
+    directoryExists: this.compilerCallback(path => { const owned = this.owned(path); return owned !== null && statSync(owned).isDirectory(); }, () => false),
+    getAccessibleEntries: this.compilerCallback(path => {
       const owned = this.owned(path);
       if (!owned || !statSync(owned).isDirectory()) return { files: [], directories: [] };
       const entries = readdirSync(owned, { withFileTypes: true });
       if (entries.length > 20_000) throw new Error("The compiler directory exceeds 20000 entries.");
       return { files: entries.filter(entry => entry.isFile()).map(entry => entry.name), directories: entries.filter(entry => entry.isDirectory() && entry.name !== ".git").map(entry => entry.name) };
-    },
-    realpath: path => this.owned(path) ?? resolve(path),
+    }, () => ({ files: [], directories: [] })),
+    realpath: this.compilerCallback(path => this.owned(path) ?? resolve(path), path => resolve(path)),
   };
   async verify(workspace: WorkspaceService): Promise<void> {
+    if (this.callbackFailure) throw this.callbackFailure;
     for (const [path, captured] of this.files) {
       const current = await workspace.readText(relative(this.root, path));
       if (current.revision !== captured.revision || await workspace.externalFilePath(relative(this.root, path)) !== captured.canonical)
