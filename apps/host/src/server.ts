@@ -66,6 +66,8 @@ import { BrowserCloseHttp } from "./browser-close-http";
 import { BrowserCloseRequests } from "./browser-close-requests";
 import { BrowserControlHttp } from "./browser-control-http";
 import { BrowserHistoryHttp } from "./browser-history-http";
+import { BrowserAutocompleteHttp } from "./browser-autocomplete-http";
+import { BrowserAutocompleteService, type BrowserAutocompleteHandle } from "./browser-autocomplete-service";
 import { BrowserFrameHttp } from "./browser-frame-http";
 import { BrowserCreateHttp } from "./browser-create-http";
 import { DraftBrowserHttp } from "./draft-browser-http";
@@ -102,6 +104,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let draftBrowsers: DraftBrowserHttp | undefined;
   let browserObservations: BrowserObservationHttp | undefined;
   let browserHistory: BrowserHistoryHttp | undefined;
+  let browserAutocomplete: BrowserAutocompleteHttp | undefined;
   let browserCloseRequests: BrowserCloseRequests | undefined;
   let workspaces!: HostWorkspaces;
   let browserFirstSend!: BrowserFirstSend;
@@ -455,10 +458,30 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         ...(result && !result.ok ? {message:result.error.message} : {})};
     }});
   const btwHttp = new BtwHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)), service: btw });
+  const browserAutocompleteService = new BrowserAutocompleteService(store.host.id, store.browserAutocomplete);
+  const autocompleteHandles = new WeakMap<object, BrowserAutocompleteHandle>();
+  const autocompleteHandle = (handle: Awaited<ReturnType<typeof getHandle>> | undefined) => {
+    if (!handle?.getBrowserHistory) return undefined;
+    let projected = autocompleteHandles.get(handle);
+    if (!projected) {
+      projected = { workerPid: handle.workerPid, get workerFailure() { return handle.workerFailure; }, getBrowserHistory: target => handle.getBrowserHistory!(target) };
+      autocompleteHandles.set(handle, projected);
+    }
+    return projected;
+  };
   const browserControls = new BrowserControlHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
-    getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; } });
+    getExistingHandle: async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; },
+    afterCompletedNavigation: async (id,input) => {
+      const pending=handles.get(id),handle=pending?await pending.catch(()=>undefined):undefined;
+      if (!handle?.getBrowserHistory) return;
+      await browserAutocompleteService.observeNavigation({kind:"session",id},input.target,
+        {workerPid:handle.workerPid,workerFailure:handle.workerFailure,getBrowserHistory:target=>handle.getBrowserHistory!(target)},
+        async()=>!stopping&&Boolean(store.getSession(id))&&await handles.get(id)?.catch(()=>undefined)===handle);
+    } });
   browserHistory = new BrowserHistoryHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getExistingHandle: async id => { const pending = handles.get(id),handle=pending?await pending.catch(()=>undefined):undefined;return handle?.getBrowserHistory?{workerPid:handle.workerPid,workerFailure:handle.workerFailure,getBrowserHistory:target=>handle.getBrowserHistory!(target)}:undefined; } });
+  browserAutocomplete = new BrowserAutocompleteHttp({ hostId: store.host.id, service: browserAutocompleteService, sessionExists: id => Boolean(store.getSession(id)),
+    getExistingHandle: async id => { const pending=handles.get(id),handle=pending?await pending.catch(()=>undefined):undefined;return autocompleteHandle(handle); } });
   browserCloseRequests = new BrowserCloseRequests(store.browserCloses, store.host.id, browserControls.epoch);
   const browserClose = new BrowserCloseHttp(browserCloseRequests, store.host.id, id => Boolean(store.getSession(id)),
     async id => { const pending = handles.get(id); return pending ? await pending.catch(() => undefined) : undefined; });
@@ -470,7 +493,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try { return await pending; }
       catch { return { workerFailure: { message: "The native session worker is unavailable." }, getBrowserMetadata: async () => ({ availability: "unavailable" as const, reason: "The native session worker is unavailable." }) }; }
     } });
-  draftBrowsers = new DraftBrowserHttp(store, draftBrowserWorkers, browserControls.epoch);
+  draftBrowsers = new DraftBrowserHttp(store, draftBrowserWorkers, browserControls.epoch, Date.now, browserAutocompleteService);
   browserObservations = new BrowserObservationHttp({ hostId: store.host.id,
     sessionExists: id => !stopping && Boolean(store.getSession(id)),
     getSessionHandle: async id => handles.get(id)?.catch(() => undefined),
@@ -1232,6 +1255,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (browserControlResponse) return browserControlResponse;
         const browserHistoryResponse = await browserHistory!.route(request, url);
         if (browserHistoryResponse) return browserHistoryResponse;
+        const browserAutocompleteResponse = await browserAutocomplete!.route(request, url);
+        if (browserAutocompleteResponse) return browserAutocompleteResponse;
         const browserFrameResponse = await browserFrames.route(request, url);
         if (browserFrameResponse) return browserFrameResponse;
         const acquisitionResponse = await acquisitions!.route(request,url);
@@ -1450,6 +1475,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         void browserObservationDrain?.catch(() => {});
         const browserHistoryDrain = browserHistory?.dispose();
         void browserHistoryDrain?.catch(() => {});
+        const browserAutocompleteDrain = browserAutocomplete?.dispose();
+        void browserAutocompleteDrain?.catch(() => {});
         const draftBrowserDrain = draftBrowsers?.dispose();
         void draftBrowserDrain?.catch(() => {}); // Retain failure for the aggregate after configuration drains.
         // Configuration writes are bounded, local operations. Drain them before
@@ -1459,7 +1486,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain,
+        const outcomes = await Promise.allSettled([automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain, browserAutocompleteDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
@@ -1485,7 +1512,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await Promise.allSettled([automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
       await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
     }
     finally {

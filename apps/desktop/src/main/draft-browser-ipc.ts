@@ -1,5 +1,5 @@
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
-import { parseBrowserCreateRequest, parseBrowserControlRequest, parseBrowserHistoryRequest, parseDraftBrowserOwnerReference, validBrowserFrameTarget } from "@agent-desktop/shared";
+import { parseBrowserAutocompleteRequest, parseBrowserCreateRequest, parseBrowserControlRequest, parseBrowserHistoryRequest, parseDraftBrowserOwnerReference, validBrowserFrameTarget } from "@agent-desktop/shared";
 import { DraftBrowserTransport } from "./draft-browser-transport";
 import type { HostEndpoint } from "./host-transport";
 
@@ -26,6 +26,9 @@ export function registerDraftBrowserHandlers(ipc: Pick<IpcMain, "handle">,
     (await connect(event, reference, hostId)).metadata());
   ipc.handle("host:draft-browser-history", async (event, reference: unknown, request: unknown, hostId: unknown) => {
     assertTrusted(event); return (await connect(event, reference, hostId)).history(parseBrowserHistoryRequest(request));
+  });
+  ipc.handle("host:draft-browser-autocomplete", async (event, reference: unknown, request: unknown, hostId: unknown) => {
+    assertTrusted(event); return (await connect(event, reference, hostId)).autocomplete(parseBrowserAutocompleteRequest(request));
   });
   ipc.handle("host:draft-browser-create", async (event, reference: unknown, request: unknown, hostId: unknown) => {
     assertTrusted(event);

@@ -6,11 +6,11 @@ const context = { documentId: 'document', width: 640, height: 480, scrollX: 0, s
   navigation: { entryId: 7, canGoBack: true, canGoForward: false } };
 const target = { workerPid: 42, name: 'main', targetId: 'native-target' };
 const result = { name: 'main', targetId: 'native-target', context, url: 'http://localhost/page', title: '' };
-function setup(control = async (_: BrowserControlRequest) => result) {
+function setup(control = async (_: BrowserControlRequest) => result, afterCompletedNavigation?: (sessionId:string,input:BrowserControlRequest)=>Promise<void>) {
   let now = 1_000_000, calls = 0;
   const handle = { workerPid: 42, controlBrowser: async (input: BrowserControlRequest) => { calls++; return control(input); } };
   let current: typeof handle | undefined = handle;
-  const http = new BrowserControlHttp({ hostId: 'owner', sessionExists: () => true, getExistingHandle: async () => current, now: () => now });
+  const http = new BrowserControlHttp({ hostId: 'owner', sessionExists: () => true, getExistingHandle: async () => current, afterCompletedNavigation, now: () => now });
   const input: BrowserControlRequest = { requestId: crypto.randomUUID(), controlEpoch: http.epoch, capturedAt: now, target, context, action: { type: 'text', text: 'private input' } };
   const request = (value: unknown = input, owner = 'owner') => new Request('http://localhost/v1/sessions/session/browser-control', { method: 'POST', headers: { [BROWSER_METADATA_OWNER_HEADER]: owner }, body: JSON.stringify(value) });
   return { http, input, request, calls: () => calls, advance: (ms: number) => now += ms, replace: () => { current = undefined; } };
@@ -25,6 +25,15 @@ test('browser actions reject invalid owner, stale host/worker/document inputs be
   expect((await s.http.route(s.request({ ...s.input, action: { type: 'resize', width: 16_384, height: 16_384 } })))?.status).toBe(400);
   s.advance(61_000); expect((await (await s.http.route(s.request()))!.json()).outcome).toBe('rejected');
   expect(s.calls()).toBe(0);
+});
+test('completed navigation observes host-owned history before returning but observation failure cannot erase its receipt', async () => {
+  const observed:BrowserControlRequest[]=[];
+  const s=setup(undefined,async(sessionId,input)=>{expect(sessionId).toBe('session');observed.push(input)});
+  const navigation={...s.input,action:{type:'navigate' as const,url:'http://localhost/two'}};
+  expect((await (await s.http.route(s.request(navigation)))!.json()).outcome).toBe('completed');expect(observed).toEqual([navigation]);
+  expect((await (await s.http.route(s.request(navigation)))!.json()).outcome).toBe('completed');expect(observed).toEqual([navigation]);
+  const failing=setup(undefined,async()=>{throw new Error('history unavailable')});
+  expect((await (await failing.http.route(failing.request({...failing.input,action:{type:'navigate',url:'http://localhost/two'}})))!.json()).outcome).toBe('completed');
 });
 test('explicit resize admission preserves the exact native history and resulting viewport context', async () => {
   const resized = { ...context, width: 800, height: 600 };

@@ -37,6 +37,7 @@ import { mutateQueuedMessages, requestQueuedMessages } from "./queued-messages-t
 import { requestDetachedQuestions } from './detached-questions-transport';
 import { requestBrowserMetadata } from "./browser-metadata-transport";
 import { requestBrowserHistory } from "./browser-history-transport";
+import { requestBrowserAutocomplete } from "./browser-autocomplete-transport";
 import { requestBrowserFrame } from "./browser-frame-transport";
 import { requestBrowserControl } from "./browser-control-transport";
 import { requestBrowserCreate, requestBrowserCreationStatus } from "./browser-create-transport";
@@ -592,6 +593,9 @@ ipcMain.handle("host:browser-metadata", async (event, sessionId: string, hostId?
 });
 ipcMain.handle("host:browser-history", async (event, sessionId: string, request: import("@agent-desktop/shared").BrowserHistoryRequest, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserHistory(await endpointFor(hostId), sessionId, request);
+});
+ipcMain.handle("host:browser-autocomplete", async (event, sessionId: string, request: import("@agent-desktop/shared").BrowserAutocompleteRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestBrowserAutocomplete(await endpointFor(hostId), sessionId, request);
 });
 ipcMain.handle("host:browser-create", async (event, sessionId: string, request: BrowserCreateRequest, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserCreate(await endpointFor(hostId), sessionId, request);

@@ -3,6 +3,7 @@ import {
   validBrowserFrameTarget,
   type BrowserFrameTarget,
   type BrowserHumanAction,
+  type BrowserAutocompleteRequest,
   type DesktopBridge,
   type NativeBrowserTabMetadata,
 } from "../../../../packages/shared/src/protocol";
@@ -62,6 +63,8 @@ function modifiers(event: {
 interface AddressRow extends BrowserAddressSuggestion {
   address: string;
   subtitle?: string;
+  acceptToken?: string;
+  deleteToken?: string;
 }
 
 export function browserBackendCapabilities(backend: NativeBrowserTabMetadata["backend"] | undefined, context?: PreviewFrame["context"]) {
@@ -120,6 +123,9 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   const addressInput = useRef<HTMLInputElement>(null);
   const addressForm = useRef<HTMLFormElement>(null);
   const [addressSuggestions, setAddressSuggestions] = useState<AddressRow[]>([]);
+  const [autocompleteRefresh, setAutocompleteRefresh] = useState(0);
+  const addressEditingSession = useRef<string | undefined>(undefined);
+  const autocompleteRequest = useRef<BrowserAutocompleteRequest | undefined>(undefined);
   const optionsMenu = useRef<HTMLDetailsElement>(null);
   const blankPageFocused = useRef(false);
   const [queuedText, setQueuedText] = useState(0);
@@ -153,59 +159,30 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   useLayoutEffect(() => { if (addressFocused && !addressDirty.current) addressInput.current?.select(); }, [addressFocused]);
 
   useEffect(() => {
-    if (!addressFocused || !selected || !source.current()) {
+    if (!addressFocused || !selected || !source.current() || !source.canAutocomplete || !nativeHistoryAvailable) {
       setAddressSuggestions([]);
       return;
     }
     const query = address === "about:blank" ? "" : address;
     const target = { ...selected };
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const localSearchRow = (): AddressRow[] => {
-      try {
-        const parsed = parseBrowserAddress(query);
-        return parsed.kind === "search" ? [{
-          id: `search:${query}`,
-          title: `Search for ${query.trim()}`,
-          address: parsed.address,
-          canBeDefault: true,
-          icon: <Icon name="search" />,
-        }] : [];
-      } catch { return []; }
-    };
-    if (!nativeHistoryAvailable || !source.canHistory) {
-      setAddressSuggestions(localSearchRow());
-      return () => { disposed = true; };
-    }
+    const editingSessionId = addressEditingSession.current ??= crypto.randomUUID();
+    let disposed = false; let timer: ReturnType<typeof setTimeout>; let ownedRequest: BrowserAutocompleteRequest | undefined;
     const load = (attempt: number) => {
       const requestId = crypto.randomUUID();
-      void source.history({ requestId, target, query }).then(
+      const request: BrowserAutocompleteRequest = { action:"start", editingSessionId, requestId, target, query, cursorPosition: query.length, preventInlineAutocomplete:false };
+      ownedRequest = request;
+      autocompleteRequest.current = request;
+      void source.autocomplete(request).then(
         (result) => {
-          if (disposed || !source.current() || !same(selectedRef.current, target)) return;
-          const needle = query.trim().toLocaleLowerCase();
-          const seen = new Set<string>();
-          const rows: AddressRow[] = [];
-          rows.push(...localSearchRow());
-          for (const item of [...result.entries].reverse()) {
-            const label = `${item.title}\n${item.url}`.toLocaleLowerCase();
-            if (seen.has(item.url) || item.url === "about:blank" || (needle && !label.includes(needle))) continue;
-            seen.add(item.url);
-            rows.push({
-              id: `history:${item.id}:${item.url}`,
-              title: item.title || item.url,
-              address: item.url,
-              subtitle: item.title ? item.url : undefined,
-              canBeDefault: false,
-              icon: <Icon name="globe" />,
-            });
-            if (rows.length >= 8) break;
-          }
-          setAddressSuggestions(rows.slice(0, 8));
+          if (disposed || result.state!=="matches" || autocompleteRequest.current!==request || !source.current() || !same(selectedRef.current, target)) return;
+          setAddressSuggestions((result.matches??[]).map(item=>({id:item.id,title:item.isSearch?`Search the web for ‘${item.fillIntoEdit}’`:item.title,
+            address:item.destinationURL,subtitle:item.description,canBeDefault:item.canBeDefault,acceptToken:item.acceptToken,deleteToken:item.deleteToken,
+            deleteLabel:item.deletable?`Remove suggestion for ${item.title||item.destinationURL}`:undefined,icon:<Icon name={item.isSearch?"search":"globe"}/>})));
         },
         () => {
           if (disposed) return;
           if (attempt < 2) timer = setTimeout(() => load(attempt + 1), 200);
-          else setAddressSuggestions([]);
+          else if (!disposed) setAddressSuggestions([]);
         },
       );
     };
@@ -213,8 +190,9 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     return () => {
       disposed = true;
       clearTimeout(timer);
+      if (ownedRequest) void source.autocomplete({action:"stop",editingSessionId,requestId:ownedRequest.requestId,target}).catch(()=>{});
     };
-  }, [address, addressFocused, selected?.workerPid, selected?.name, selected?.targetId, source, nativeHistoryAvailable]);
+  }, [address, addressFocused, selected?.workerPid, selected?.name, selected?.targetId, source, nativeHistoryAvailable, autocompleteRefresh]);
 
   const holdInput = (extra?: BrowserHumanAction) => {
     const waiting = [...(extra ? [extra] : []), ...textQueue.current];
@@ -399,7 +377,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   const control = async (
     action: BrowserHumanAction,
     queued = false,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const image = frameRef.current;
     const target = selectedRef.current;
     if (
@@ -411,9 +389,9 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       !target ||
       !same(image, target)
     )
-      return;
+      return false;
     const context = contextRef.current ?? image.context;
-    if (!context) return;
+    if (!context) return false;
     const requestId = crypto.randomUUID();
     // Invalidates a capture already in progress before this native mutation.
     const revision = ++selectionRevision.current;
@@ -426,20 +404,20 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       const receipt = await source.control({
         requestId, controlEpoch: image.controlEpoch, capturedAt: image.capturedAt, target, context, action,
       });
-      if (!mounted.current || revision !== selectionRevision.current || committedSource.current !== source || !source.current()) return;
+      if (!mounted.current || revision !== selectionRevision.current || committedSource.current !== source || !source.current()) return false;
       if (receipt.outcome === "unknown") {
         haltedRef.current = true; holdInput(); setActionError(
           receipt.message ||
             "The browser action outcome is unknown. It was not replayed.",
         );
-        return;
+        return false;
       }
       if (receipt.outcome === "rejected") {
         haltedRef.current = true; holdInput(action); setActionError(receipt.message || "The browser action was rejected.");
-        return;
+        return false;
       }
       contextRef.current = receipt.context ?? context;
-      if (!activeRef.current || pausedRef.current) { holdInput(); return; }
+      if (!activeRef.current || pausedRef.current) { holdInput(); return false; }
       if (action.type === "navigate") addressDirty.current = false;
       const next = textQueue.current.shift();
       setQueuedText(
@@ -450,11 +428,11 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
         ),
       );
       if (next) {
-        await control(next, true);
-        return;
+        return await control(next, true);
       }
       setError(undefined);
       setRefresh((value) => value + 1);
+      return true;
     } catch (cause) {
       if (mounted.current && revision === selectionRevision.current) {
         haltedRef.current = true; holdInput(); setActionError(
@@ -463,6 +441,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
             : "The browser action could not be confirmed; inspect the page before acting again.",
         );
       }
+      return false;
     } finally {
       pendingRef.current = false;
       if (navigation) setPendingNavigation(false);
@@ -580,7 +559,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     if (!controlsReady) return;
     try {
       const url = browserNavigationAddress(address);
-      if (url) { setToolbarError(undefined); addressInput.current?.blur(); void control({ type: "navigate", url }); }
+      if (url) { setToolbarError(undefined); void control({ type: "navigate", url }).then(completed=>{if(completed)addressInput.current?.blur();}); }
     } catch (cause) { setToolbarError(cause instanceof Error ? cause.message : 'The page address could not be opened.'); }
   };
   const pointer = (event: React.MouseEvent<HTMLImageElement>) => {
@@ -727,17 +706,26 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
             disabled={!selected || !active}
             readOnly={false}
             suggestions={addressSuggestions}
-            onFocus={() => { addressFocusRef.current = true; setAddressFocused(true); }}
-            onBlur={() => { addressFocusRef.current = false; setAddressFocused(false); if (!addressDirty.current) setAddress(frameRef.current?.url ?? address); }}
+            onFocus={() => { addressEditingSession.current=crypto.randomUUID();addressFocusRef.current = true; setAddressFocused(true); }}
+            onBlur={() => { addressEditingSession.current=undefined;addressFocusRef.current = false; setAddressFocused(false); if (!addressDirty.current) setAddress(frameRef.current?.url ?? address); }}
             onChange={(value) => { addressDirty.current = true; setAddress(value); }}
-            onCancel={() => { addressFocusRef.current = false; setAddressFocused(false); addressDirty.current = false; setAddress(frameRef.current?.url ?? ""); }}
+            onCancel={() => { addressEditingSession.current=undefined;addressFocusRef.current = false; setAddressFocused(false); addressDirty.current = false; setAddress(frameRef.current?.url ?? ""); }}
             onSubmit={() => submitAddress()}
             onChoose={(row) => {
               setToolbarError(undefined);
               addressDirty.current = false;
               setAddress(row.address);
-              addressInput.current?.blur();
-              void control({ type: "navigate", url: row.address });
+              const request=autocompleteRequest.current;
+              void (async()=>{
+                if(request?.action==="start"&&row.acceptToken)await source.autocomplete({action:"accept",editingSessionId:request.editingSessionId,requestId:request.requestId,target:request.target,acceptToken:row.acceptToken});
+                if(await control({type:"navigate",url:row.address}))addressInput.current?.blur();
+              })().catch(cause=>setToolbarError(cause instanceof Error?cause.message:"The browser suggestion could not be opened."));
+            }}
+            onDelete={(row)=>{
+              const request=autocompleteRequest.current;if(request?.action!=="start"||!row.deleteToken)return;
+              void source.autocomplete({action:"delete",editingSessionId:request.editingSessionId,requestId:request.requestId,target:request.target,deleteToken:row.deleteToken})
+                .then(()=>{setAutocompleteRefresh(value=>value+1);requestAnimationFrame(()=>addressInput.current?.focus());})
+                .catch(cause=>setToolbarError(cause instanceof Error?cause.message:"The browser suggestion could not be removed."));
             }} />
           <button
             aria-label="Open in external browser"

@@ -1,5 +1,5 @@
-import { BROWSER_CREATE_MAX_AGE_MS, BROWSER_HISTORY_PROTOCOL_VERSION, BROWSER_METADATA_OWNER_HEADER, parseBrowserCreateRequest, parseBrowserControlRequest, parseBrowserHistoryRequest, parseNativeBrowserFrame, parseNativeBrowserTabMetadata, validBrowserFrameTarget,
-  type BrowserCreateRequest, type BrowserControlRequest, type BrowserFrameTarget, type BrowserHistoryRequest, type BrowserMetadataAvailability, type NativeBrowserFrame } from "@agent-desktop/shared";
+import { BROWSER_AUTOCOMPLETE_OWNER_HEADER, BROWSER_CREATE_MAX_AGE_MS, BROWSER_HISTORY_PROTOCOL_VERSION, BROWSER_METADATA_OWNER_HEADER, parseBrowserAutocompleteRequest, parseBrowserCreateRequest, parseBrowserControlRequest, parseBrowserHistoryRequest, parseNativeBrowserFrame, parseNativeBrowserTabMetadata, validBrowserFrameTarget,
+  type BrowserAutocompleteRequest, type BrowserCreateRequest, type BrowserControlRequest, type BrowserFrameTarget, type BrowserHistoryRequest, type BrowserMetadataAvailability, type NativeBrowserFrame } from "@agent-desktop/shared";
 import { parseBrowserCloseRequest, type BrowserCloseRequest } from "../../../packages/shared/src/browser-close";
 import { BrowserCloseInputMismatch } from "./browser-close-records";
 import { browserHistoryRevision } from "./browser-history-revision";
@@ -12,6 +12,7 @@ import type { DraftBrowserAdmissionRequest } from "./browser-draft-admission";
 import type { DraftBrowserWorkers } from "./browser-draft-workers";
 import type { DraftBrowserCreationReceipt } from "./draft-browser-creation-records";
 import type { HostStore } from "./store";
+import type { BrowserAutocompleteService } from "./browser-autocomplete-service";
 
 /** Invoked only after the host's existing local-token or authorized-tailnet gate. */
 export class DraftBrowserHttp {
@@ -22,26 +23,26 @@ export class DraftBrowserHttp {
   private readonly closes: BrowserCloseRequests;
   private closing?: Promise<void>;
   constructor(private readonly store: HostStore, private readonly workers: DraftBrowserWorkers,
-    private readonly epoch: string, private readonly now = Date.now) {
+    private readonly epoch: string, private readonly now = Date.now, private readonly autocomplete?: BrowserAutocompleteService) {
     this.controls = new BrowserControlRequests(now);
     this.closes = new BrowserCloseRequests(store.browserCloses, store.host.id, epoch, now);
   }
 
   async route(request: Request, url = new URL(request.url)): Promise<Response | undefined> {
-    const match = /^\/v1\/draft-browser-owners\/([^/]+)\/(acquire|status|retire|create|open|creation-status|metadata|history|frame|control|close|close-status)$/.exec(url.pathname);
+    const match = /^\/v1\/draft-browser-owners\/([^/]+)\/(acquire|status|retire|create|open|creation-status|metadata|history|autocomplete|frame|control|close|close-status)$/.exec(url.pathname);
     if (!match) return;
-    const headers = { "Cache-Control": "no-store", [BROWSER_METADATA_OWNER_HEADER]: this.store.host.id };
+    const headers = { "Cache-Control": "no-store", [BROWSER_METADATA_OWNER_HEADER]: this.store.host.id, [BROWSER_AUTOCOMPLETE_OWNER_HEADER]: this.store.host.id };
     const error = (code: string, message: string, status = 400) => Response.json({ error: { code, message } }, { status, headers });
     if (request.headers.get(BROWSER_METADATA_OWNER_HEADER) !== this.store.host.id) return error("OWNER_MISMATCH", "The draft browser belongs to another host", 409);
     if (request.method !== "POST") return error("INVALID_REQUEST", "Use POST for this request", 405);
-    let owner: DraftBrowserAdmissionRequest, creation: BrowserCreateRequest | undefined, target: BrowserFrameTarget | undefined, history: BrowserHistoryRequest | undefined, control: BrowserControlRequest | undefined, close: BrowserCloseRequest | undefined;
+    let owner: DraftBrowserAdmissionRequest, creation: BrowserCreateRequest | undefined, target: BrowserFrameTarget | undefined, history: BrowserHistoryRequest | undefined, autocomplete: BrowserAutocompleteRequest | undefined, control: BrowserControlRequest | undefined, close: BrowserCloseRequest | undefined;
     const action = match[2]!;
     try {
       const ownerId = decodeURIComponent(match[1]!);
       const body = await (action === "control" ? readBrowserControlBody(request) : readBrowserCreateBody(request)) as {
-        draftId: string; draftRevision: number; creation?: BrowserCreateRequest; target?: BrowserFrameTarget; history?: BrowserHistoryRequest; control?: BrowserControlRequest; close?: BrowserCloseRequest };
+        draftId: string; draftRevision: number; creation?: BrowserCreateRequest; target?: BrowserFrameTarget; history?: BrowserHistoryRequest; autocomplete?: BrowserAutocompleteRequest; control?: BrowserControlRequest; close?: BrowserCloseRequest };
       const creates = action === "create" || action === "open" || action === "creation-status";
-      if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["draftId", "draftRevision", ...(creates ? ["creation"] : []), ...(action === "frame" ? ["target"] : []), ...(action === "history" ? ["history"] : []), ...(action === "control" ? ["control"] : []), ...(["close", "close-status"].includes(action) ? ["close"] : [])].includes(key))
+      if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["draftId", "draftRevision", ...(creates ? ["creation"] : []), ...(action === "frame" ? ["target"] : []), ...(action === "history" ? ["history"] : []), ...(action === "autocomplete" ? ["autocomplete"] : []), ...(action === "control" ? ["control"] : []), ...(["close", "close-status"].includes(action) ? ["close"] : [])].includes(key))
         || ![ownerId, body.draftId].every(id => typeof id === "string" && id.length > 0 && id.length <= 200 && !/[\u0000-\u001f\u007f]/.test(id))
         || !Number.isSafeInteger(body.draftRevision) || body.draftRevision < 1) throw new Error("Invalid owner request");
       owner = { hostId: this.store.host.id, ownerId, draftId: body.draftId, draftRevision: body.draftRevision };
@@ -54,6 +55,7 @@ export class DraftBrowserHttp {
         target = { workerPid: body.target.workerPid, name: body.target.name, targetId: body.target.targetId };
       }
       if (action === "history") history = parseBrowserHistoryRequest(body.history);
+      if (action === "autocomplete") autocomplete = parseBrowserAutocompleteRequest(body.autocomplete);
       if (action === "control") control = parseBrowserControlRequest(body.control);
       if (action === "close" || action === "close-status") close = parseBrowserCloseRequest(body.close);
     } catch { return error("INVALID_REQUEST", "Invalid draft browser request"); }
@@ -76,10 +78,17 @@ export class DraftBrowserHttp {
           const result = await this.controls.execute(owner.ownerId, control, {
             isCurrent: () => !this.closing && this.workers.inspect(owner).state === "ready",
             getExistingHandle: () => this.workers.getExisting(owner),
+          },async()=>{
+            if (!this.autocomplete) return;
+            const handle=await this.workers.getExisting(owner);if(!handle?.getBrowserHistory)return;
+            await this.autocomplete.observeNavigation({kind:"draft",id:owner.ownerId},control.target,
+              {workerPid:handle.workerPid,getBrowserHistory:target=>handle.getBrowserHistory!(target)},
+              async()=>!this.closing&&this.workers.inspect(owner).state==="ready"&&await this.workers.getExisting(owner)===handle);
           });
           return Response.json({ ...result, hostId: owner.hostId, ownerKind: "draft", ownerId: owner.ownerId }, { headers });
         }
         if (history) return await this.history(owner, history, headers);
+        if (autocomplete) return await this.autocompleteRequest(owner, autocomplete, headers);
         if (action === "metadata" || action === "frame") return await this.observation(owner, target, headers);
         if (creation) return Response.json(await this.creation(owner, creation, action === "creation-status"), { headers });
         if (action === "acquire") await this.workers.acquire(owner);
@@ -106,6 +115,17 @@ export class DraftBrowserHttp {
       if (this.closing || current !== handle) return error("The draft browser owner changed during the history read.", 409);
       return Response.json({ protocolVersion:BROWSER_HISTORY_PROTOCOL_VERSION,hostId:owner.hostId,owner:{kind:"draft",id:owner.ownerId},requestId:input.requestId,target:input.target,query:input.query,revision:browserHistoryRevision(entries),entries }, { headers });
     } catch { return error("The draft browser history is unavailable."); }
+  }
+
+  private async autocompleteRequest(owner: DraftBrowserAdmissionRequest, input: BrowserAutocompleteRequest, headers: Record<string,string>): Promise<Response> {
+    const error = (message: string, status = 503) => Response.json({ error: { code: "DRAFT_BROWSER_AUTOCOMPLETE_FAILED", message } }, { status, headers });
+    if (!this.autocomplete) return error("Browser autocomplete is unavailable.");
+    try {
+      this.workers.inspect(owner); const handle = await this.workers.getExisting(owner);
+      if (this.closing || !handle || handle.workerPid !== input.target.workerPid) return error("The draft browser worker changed.", 409);
+      const value = await this.autocomplete.execute({kind:"draft",id:owner.ownerId},input,handle,async()=>!this.closing&&this.workers.inspect(owner).state==="ready"&&await this.workers.getExisting(owner)===handle);
+      return Response.json(value,{headers});
+    } catch(cause) { return error(cause instanceof Error?cause.message:"Draft browser autocomplete is unavailable.",409); }
   }
 
   private async observation(owner: DraftBrowserAdmissionRequest, target: BrowserFrameTarget | undefined, headers: Record<string, string>): Promise<Response> {
