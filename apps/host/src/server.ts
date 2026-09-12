@@ -2,6 +2,7 @@ import { PULL_REQUEST_WRITES_CAPABILITY } from "../../../packages/shared/src/pul
 import { PullRequests } from "./pull-requests";
 import { PullRequestsHttp } from "./pull-requests-http";
 import { PULL_REQUESTS_CAPABILITY } from "../../../packages/shared/src/pull-requests";
+import { McpOwnerHttp } from "./mcp-owner-http";
 import { isUnreadSessionEvent } from "../../../packages/shared/src/session-read";
 import { BranchQueryPeer } from "./branch-query-peer";
 import { BRANCH_QUERY_CAPABILITY } from "@agent-desktop/shared";
@@ -200,7 +201,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       void failed?.then(handle => handle.dispose()).finally(() => {
         if (handles.get(failure.sessionId!) === failed) handles.delete(failure.sessionId!);
       }).catch(error => console.error("Failed worker cleanup:", errorMessage(error)));
-    } else {
+    } else if (!failure.mcpOwnerId) {
       modelsError = failure.message; modelsLoading = false; publishState();
     }
   } });
@@ -228,6 +229,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const automationCommands = new WeakSet<CommandEnvelope>();
   const automationPromptCompletions = new Map<string, Promise<"completed" | "failed" | "stopped">>();
   const runtimeErrors = new Map<string, string>();
+  const mcpOwners = new McpOwnerHttp(store, options.discoveryDirectory ?? homedir(), runtime);
   const draftBrowserWorkers = new DraftBrowserWorkers(store, resolve(options.discoveryDirectory ?? homedir()), runtime);
   browserFirstSend = new BrowserFirstSend(store, draftBrowserWorkers,join(dataDirectory,"browser-recovery"));
   const environmentSessions = new EnvironmentSessions({ store, workspaces, runtime, runs: environmentRuns, reserve: reserveWorkspaceMutation, browserFirstSend,
@@ -1213,6 +1215,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (automationsResponse) return automationsResponse;
         const mcpAuthorizationResponse = await sessionMcpAuthorization.route(request, url);
         if (mcpAuthorizationResponse) return mcpAuthorizationResponse;
+        const mcpOwnerResponse = await mcpOwners.route(request, url);
+        if (mcpOwnerResponse) return mcpOwnerResponse;
         const mcpAppResponse = await sessionMcpApps.route(request, url);
         if (mcpAppResponse) return mcpAppResponse;
         const mcpResourceResponse = await sessionMcpResources.route(request, url);
@@ -1449,6 +1453,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const pullRequestsDrain = pullRequests?.dispose();
         void pullRequestsDrain?.catch(() => {});
         const terminalCreationDrain = terminalCreationHttp?.dispose();
+        const mcpOwnerDrain = mcpOwners.dispose();
+        void mcpOwnerDrain.catch(() => {});
         const browserCloseDrain = browserCloseRequests?.dispose();
         void browserCloseDrain?.catch(() => {});
         const browserObservationDrain = browserObservations?.dispose();
@@ -1462,7 +1468,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([pullRequestsDrain, automations?.dispose(), runtime.dispose({preserveReconnect:true}), networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
+        const outcomes = await Promise.allSettled([pullRequestsDrain, automations?.dispose(), runtime.dispose({preserveReconnect:true}), mcpOwnerDrain, networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain,
           accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);

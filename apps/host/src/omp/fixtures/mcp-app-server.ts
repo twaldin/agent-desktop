@@ -1,6 +1,7 @@
 /** Disposable, real stdio MCP provider used by worker and rendered acceptance. */
 import { appendFileSync, readFileSync } from "node:fs";
 let enabled = false, count = 0;
+const subscriptions = new Set<string>();
 const uri = "ui://fixture/counter";
 const send = (id: unknown, result: unknown) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 const fail = (id: unknown, message: string) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } }) + "\n");
@@ -10,7 +11,7 @@ async function handle(value: { id?: number | string; method: string; params?: an
   if (process.env.MCP_APP_TEST_LOG) appendFileSync(process.env.MCP_APP_TEST_LOG, JSON.stringify({ method, params }) + "\n");
   if (method === "initialize") {
     enabled = params?.capabilities?.extensions?.["io.modelcontextprotocol/ui"]?.mimeTypes?.includes("text/html;profile=mcp-app") === true;
-    send(id, { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: true }, resources: { listChanged: true } },
+    send(id, { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: true }, resources: { listChanged: true, subscribe: true } },
       serverInfo: { name: "fixture-apps", title: "Fixture Apps", version: "1.0.0", icons: [{ src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%235a8dee'/%3E%3C/svg%3E", sizes: ["any"] }] } }); return;
   }
   if (method === "tools/list") {
@@ -20,10 +21,16 @@ async function handle(value: { id?: number | string; method: string; params?: an
       { name: "model_only", inputSchema: { type: "object" }, _meta: { ui: { visibility: ["model"] } } },
     ] : [])] }); return;
   }
-  if (method === "resources/list") { send(id, { resources: enabled ? [{ uri, name: "Counter interface", mimeType: "text/html;profile=mcp-app" }, { uri: "fixture://notes", name: "Provider notes", mimeType: "text/plain" }] : [] }); return; }
+  if (method === "resources/list") { send(id, { resources: enabled ? [{ uri, name: "Counter interface", mimeType: "text/html;profile=mcp-app" }, { uri: "fixture://notes", name: "Provider notes", mimeType: "text/plain" }, { uri: "fixture://counter", name: "Counter updates", mimeType: "text/plain" }] : [] }); return; }
+  if (method === "resources/subscribe" || method === "resources/unsubscribe") {
+    if (params?.uri !== "fixture://counter") { fail(id, "Unknown subscription resource"); return; }
+    if (method === "resources/subscribe") subscriptions.add(params.uri); else subscriptions.delete(params.uri);
+    send(id, {}); return;
+  }
   if (method === "resources/templates/list") { send(id, { resourceTemplates: [] }); return; }
   if (method === "resources/read") {
     if (params?.uri === uri && enabled) send(id, { contents: [{ uri, mimeType: "text/html;profile=mcp-app", text: process.env.MCP_APP_TEST_HTML ? readFileSync(process.env.MCP_APP_TEST_HTML, "utf8") : "<h1>Counter app</h1>" }] });
+    else if (params?.uri === "fixture://counter") send(id, { contents: [{ uri: params.uri, mimeType: "text/plain", text: `Resource count ${count}` }] });
     else if (params?.uri === "fixture://notes") send(id, { contents: [{ uri: params.uri, mimeType: "text/plain", text: "Notes from the original MCP provider" }] });
     else fail(id, "Resource not found");
     return;
@@ -31,7 +38,9 @@ async function handle(value: { id?: number | string; method: string; params?: an
   if (method === "tools/call") {
     if (params?.name === "increment") count += typeof params.arguments?.by === "number" ? params.arguments.by : 1;
     else if (params?.name !== "counter" && params?.name !== "ordinary" && params?.name !== "model_only") { fail(id, "Unknown tool"); return; }
-    send(id, { content: [{ type: "text", text: `Count ${count}` }], structuredContent: { count } }); return;
+    send(id, { content: [{ type: "text", text: `Count ${count}` }], structuredContent: { count } });
+    if (params?.name === "increment" && subscriptions.has("fixture://counter")) process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/resources/updated", params: { uri: "fixture://counter" } }) + "\n");
+    return;
   }
   fail(id, "Method not found");
 }

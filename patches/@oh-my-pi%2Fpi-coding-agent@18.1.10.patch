@@ -123,10 +123,15 @@ index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67
      addedAt: string;
      updatedAt: string;
 diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
-index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..fe34b47ef176c0db02946c5c38d430a63750d5c9 100644
+index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d396253e88b 100644
 --- a/dist/types/mcp/client.d.ts
 +++ b/dist/types/mcp/client.d.ts
-@@ -11,6 +11,7 @@ export declare class MCPConnectionTimeoutError extends Error {
+@@ -1,3 +1,4 @@
++export { retainResourceSubscription, type MCPResourceSubscription } from "./resource-subscriptions";
+ import type { MCPGetPromptResult, MCPPrompt, MCPRequestOptions, MCPResource, MCPResourceReadResult, MCPResourceTemplate, MCPServerCapabilities, MCPServerConfig, MCPServerConnection, MCPToolCallResult, MCPToolDefinition } from "./types.js";
+ /** Identifies an MCP server whose initial handshake exceeded its configured timeout. */
+ export declare class MCPConnectionTimeoutError extends Error {
+@@ -11,6 +12,7 @@ export declare class MCPConnectionTimeoutError extends Error {
   * Set OMP_MCP_TIMEOUT_MS=0 to disable MCP client-side timeouts.
   */
  export declare function connectToServer(name: string, config: MCPServerConfig, options?: {
@@ -172,18 +177,20 @@ index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf031
      onStatus?: (event: McpConnectionStatusEvent) => void;
      /** Whether to load project-level config (default: true) */
 diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index 9933dc7374a3560fb62f234463a714a332863a78..523ea1bef2048b9e9b6cfcdd5bfad85a8f7f160f 100644
+index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e9f515cdf 100644
 --- a/dist/types/mcp/manager.d.ts
 +++ b/dist/types/mcp/manager.d.ts
-@@ -39,6 +39,7 @@ export interface MCPLoadResult {
+@@ -39,6 +39,9 @@ export interface MCPLoadResult {
  }
  /** Options for discovering and connecting to MCP servers */
  export interface MCPDiscoverOptions {
++    /** Explicit owner discovery may await its initial catalogue. */
++    awaitInitialCatalogue?: boolean;
 +    enableApps?: boolean;
      /** Whether to load project-level config (default: true) */
      enableProjectConfig?: boolean;
      /** Whether to filter out Exa MCP servers (default: true) */
-@@ -50,8 +51,14 @@ export interface MCPDiscoverOptions {
+@@ -50,8 +53,14 @@ export interface MCPDiscoverOptions {
      /** Called when MCP server connection state changes. */
      onStatus?: (event: McpConnectionStatusEvent) => void;
  }
@@ -199,7 +206,7 @@ index 9933dc7374a3560fb62f234463a714a332863a78..523ea1bef2048b9e9b6cfcdd5bfad85a
  /**
   * MCP Server Manager.
   *
-@@ -228,6 +235,7 @@ export declare class MCPManager {
+@@ -228,6 +237,7 @@ export declare class MCPManager {
      reconnectServer(name: string, options?: {
          manual?: boolean;
          authChallenge?: MCPAuthChallenge;
@@ -207,6 +214,16 @@ index 9933dc7374a3560fb62f234463a714a332863a78..523ea1bef2048b9e9b6cfcdd5bfad85a
      }): Promise<MCPServerConnection | null>;
      /**
       * Refresh tools from a specific server.
+diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
+new file mode 100755
+index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e04e8a9c45
+--- /dev/null
++++ b/dist/types/mcp/resource-subscriptions.d.ts
+@@ -0,0 +1,4 @@
++import type { MCPRequestOptions, MCPServerConnection } from "./types";
++export interface MCPResourceSubscription { release(): Promise<void> }
++export declare function setManagedResourceSubscription(connection: MCPServerConnection, uri: string, enabled: boolean, options?: MCPRequestOptions): Promise<void>;
++export declare function retainResourceSubscription(connection: MCPServerConnection, uri: string, options?: MCPRequestOptions): Promise<MCPResourceSubscription>;
 diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
 index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d46cc55212 100644
 --- a/dist/types/mcp/tool-bridge.d.ts
@@ -1082,10 +1099,16 @@ index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d5547412
  	addedAt: string;
  	updatedAt: string;
 diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0ed6abea78 100644
+index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2fba12efc0 100644
 --- a/src/mcp/client.ts
 +++ b/src/mcp/client.ts
-@@ -70,7 +70,7 @@ async function defaultRequestHandler(method: string, _params: unknown): Promise<
+@@ -1,3 +1,5 @@
++import { setManagedResourceSubscription } from "./resource-subscriptions";
++export { retainResourceSubscription, type MCPResourceSubscription } from "./resource-subscriptions";
+ /**
+  * MCP Client.
+  *
+@@ -70,7 +72,7 @@ async function defaultRequestHandler(method: string, _params: unknown): Promise<
  /**
   * Create a transport for the given server config.
   */
@@ -1094,7 +1117,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0e
  	const serverType = config.type ?? "stdio";
  
  	switch (serverType) {
-@@ -79,7 +79,7 @@ async function createTransport(config: MCPServerConfig): Promise<MCPTransport> {
+@@ -79,7 +81,7 @@ async function createTransport(config: MCPServerConfig): Promise<MCPTransport> {
  		case "http":
  			return createHttpTransport(config as MCPHttpServerConfig);
  		case "sse":
@@ -1103,7 +1126,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0e
  		default:
  			throw new Error(`Unknown server type: ${serverType}`);
  	}
-@@ -91,6 +91,8 @@ async function createTransport(config: MCPServerConfig): Promise<MCPTransport> {
+@@ -91,6 +93,8 @@ async function createTransport(config: MCPServerConfig): Promise<MCPTransport> {
  async function initializeConnection(
  	transport: MCPTransport,
  	options?: {
@@ -1112,7 +1135,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0e
  		signal?: AbortSignal;
  		/** Called after notifications/initialized succeeds. */
  		onInitialized?: () => void | Promise<void>;
-@@ -100,6 +102,7 @@ async function initializeConnection(
+@@ -100,6 +104,7 @@ async function initializeConnection(
  		protocolVersion: MCP_PROTOCOL_VERSION,
  		capabilities: {
  			roots: { listChanged: false },
@@ -1120,7 +1143,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0e
  		},
  		clientInfo: CLIENT_INFO,
  	};
-@@ -151,6 +154,8 @@ export async function connectToServer(
+@@ -151,6 +156,8 @@ export async function connectToServer(
  	name: string,
  	config: MCPServerConfig,
  	options?: {
@@ -1129,7 +1152,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0e
  		signal?: AbortSignal;
  		onNotification?: (method: string, params: unknown) => void;
  		onRequest?: (method: string, params: unknown) => Promise<unknown>;
-@@ -161,7 +166,7 @@ export async function connectToServer(
+@@ -161,7 +168,7 @@ export async function connectToServer(
  	let transport: MCPTransport | undefined;
  
  	const connect = async (): Promise<MCPServerConnection> => {
@@ -1138,7 +1161,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0e
  		if (options?.onNotification) {
  			transport.onNotification = options.onNotification;
  		}
-@@ -173,6 +178,7 @@ export async function connectToServer(
+@@ -173,6 +180,7 @@ export async function connectToServer(
  
  		try {
  			const initResult = await initializeConnection(transport, {
@@ -1146,6 +1169,38 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..9f107a58d00c80449b316ef65cbdde0e
  				signal: options?.signal,
  				async onInitialized() {
  					// Open the optional GET SSE stream only after the initialized
+@@ -405,14 +413,7 @@ export async function subscribeToResources(
+ ): Promise<void> {
+ 	if (uris.length === 0 || !connection.capabilities.resources?.subscribe) return;
+ 	const results = await Promise.allSettled(
+-		uris.map(uri => {
+-			const params: MCPResourceSubscribeParams = { uri };
+-			return connection.transport.request(
+-				"resources/subscribe",
+-				params as unknown as Record<string, unknown>,
+-				options,
+-			);
+-		}),
++		uris.map(uri => setManagedResourceSubscription(connection, uri, true, options)),
+ 	);
+ 	for (const result of results) {
+ 		if (result.status === "rejected") {
+@@ -431,14 +432,7 @@ export async function unsubscribeFromResources(
+ ): Promise<void> {
+ 	if (uris.length === 0 || !connection.capabilities.resources?.subscribe) return;
+ 	const results = await Promise.allSettled(
+-		uris.map(uri => {
+-			const params: MCPResourceSubscribeParams = { uri };
+-			return connection.transport.request(
+-				"resources/unsubscribe",
+-				params as unknown as Record<string, unknown>,
+-				options,
+-			);
+-		}),
++		uris.map(uri => setManagedResourceSubscription(connection, uri, false, options)),
+ 	);
+ 	for (const result of results) {
+ 		if (result.status === "rejected") {
 diff --git a/src/mcp/errors.ts b/src/mcp/errors.ts
 index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6dab5207bb 100644
 --- a/src/mcp/errors.ts
@@ -1225,7 +1280,7 @@ index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e31
  			enableProjectConfig: options?.enableProjectConfig,
  			filterExa: options?.filterExa,
 diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc889b45974 100644
+index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fdd25740bb 100644
 --- a/src/mcp/manager.ts
 +++ b/src/mcp/manager.ts
 @@ -7,7 +7,7 @@
@@ -1237,7 +1292,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  import type { EffectiveExtensionRoots, SourceMeta } from "../capability/types";
  import { resolveConfigValue } from "../config/resolve-config-value";
  import type { CustomTool } from "../extensibility/custom-tools/types";
-@@ -175,8 +175,20 @@ export interface MCPLoadResult {
+@@ -175,8 +175,22 @@ export interface MCPLoadResult {
  	exaApiKeys: string[];
  }
  
@@ -1253,12 +1308,14 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
 +
  /** Options for discovering and connecting to MCP servers */
  export interface MCPDiscoverOptions {
++	/** Explicit directory-owner discovery waits for this initial catalogue; ordinary sessions retain fast startup. */
++	awaitInitialCatalogue?: boolean;
 +	/** Owning host implements the MCP Apps UI protocol. Disabled by default. */
 +	enableApps?: boolean;
  	/** Whether to load project-level config (default: true) */
  	enableProjectConfig?: boolean;
  	/** Whether to filter out Exa MCP servers (default: true) */
-@@ -189,8 +201,19 @@ export interface MCPDiscoverOptions {
+@@ -189,8 +203,19 @@ export interface MCPDiscoverOptions {
  	onStatus?: (event: McpConnectionStatusEvent) => void;
  }
  
@@ -1279,7 +1336,15 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  
  /**
   * MCP Server Manager.
-@@ -610,6 +633,7 @@ export class MCPManager {
+@@ -565,6 +590,7 @@ export class MCPManager {
+ 
+ 		// Prepare connection tasks
+ 		const connectionTasks: ConnectionTask[] = [];
++		const catalogueTasks: Promise<void>[] = [];
+ 
+ 		for (const [name, config] of Object.entries(configs)) {
+ 			if (sources[name]) {
+@@ -610,6 +636,7 @@ export class MCPManager {
  			const connectionPromise = (async () => {
  				const resolvedConfig = await this.#resolveAuthConfig(config);
  				return connectToServer(name, resolvedConfig, {
@@ -1287,7 +1352,12 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  					onNotification: (method, params) => {
  						this.#handleServerNotification(name, method, params);
  					},
-@@ -696,9 +720,9 @@ export class MCPManager {
+@@ -692,13 +719,13 @@ export class MCPManager {
+ 			const tracked = trackPromise(toolsPromise);
+ 			connectionTasks.push({ name, config, tracked, toolsPromise });
+ 
+-			void toolsPromise
++			const catalogueTask = toolsPromise
  				.then(async ({ connection, serverTools }) => {
  					if (this.#pendingToolLoads.get(name) !== toolsPromise) return;
  					this.#pendingToolLoads.delete(name);
@@ -1299,7 +1369,25 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  					this.#replaceServerTools(name, customTools);
  					void this.#onToolsChanged?.(this.#tools);
  					void this.toolCache?.set(name, config, serverTools);
-@@ -773,8 +797,9 @@ export class MCPManager {
+@@ -728,6 +755,7 @@ export class MCPManager {
+ 						else void retry;
+ 					}
+ 				});
++			catalogueTasks.push(catalogueTask);
+ 		}
+ 
+ 		// Notify about servers we're connecting to, including configs that fail fast.
+@@ -739,7 +767,8 @@ export class MCPManager {
+ 		}
+ 
+ 		if (connectionTasks.length > 0) {
+-			await Promise.race([
++			if (this.#discoverOptions?.awaitInitialCatalogue) await Promise.allSettled(catalogueTasks);
++			else await Promise.race([
+ 				Promise.allSettled(connectionTasks.map(task => task.tracked.promise)),
+ 				delay(STARTUP_TIMEOUT_MS),
+ 			]);
+@@ -773,8 +802,9 @@ export class MCPManager {
  					if (!value) continue;
  					const { connection, serverTools } = value;
  					connectedServers.add(name);
@@ -1311,7 +1399,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  				} else if (task.tracked.status === "rejected") {
  					const message =
  						task.tracked.reason instanceof Error ? task.tracked.reason.message : String(task.tracked.reason);
-@@ -784,10 +809,11 @@ export class MCPManager {
+@@ -784,10 +814,11 @@ export class MCPManager {
  					const cached = cachedTools.get(name);
  					if (cached) {
  						const source = this.#sources.get(name);
@@ -1325,7 +1413,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  						);
  					}
  				}
-@@ -1107,7 +1133,7 @@ export class MCPManager {
+@@ -1107,7 +1138,7 @@ export class MCPManager {
  	 */
  	async reconnectServer(
  		name: string,
@@ -1334,7 +1422,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  	): Promise<MCPServerConnection | null> {
  		if (options?.manual) {
  			this.#reconnectHistory.delete(name);
-@@ -1120,7 +1146,7 @@ export class MCPManager {
+@@ -1120,7 +1151,7 @@ export class MCPManager {
  			return null;
  		}
  
@@ -1343,7 +1431,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  		this.#pendingReconnections.set(name, attempt);
  		return attempt.finally(() => {
  			if (this.#pendingReconnections.get(name) === attempt) {
-@@ -1172,89 +1198,118 @@ export class MCPManager {
+@@ -1172,89 +1203,118 @@ export class MCPManager {
  		return false;
  	}
  
@@ -1528,7 +1616,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  	}
  
  	/** Establish a new connection to a server, wire handlers, load tools. */
-@@ -1263,9 +1318,12 @@ export class MCPManager {
+@@ -1263,9 +1323,12 @@ export class MCPManager {
  		config: MCPServerConfig,
  		source: SourceMeta | undefined,
  		reconnectEpoch: number,
@@ -1541,7 +1629,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  			onNotification: (method, params) => {
  				this.#handleServerNotification(name, method, params);
  			},
-@@ -1304,9 +1362,9 @@ export class MCPManager {
+@@ -1304,9 +1367,9 @@ export class MCPManager {
  			void this.reconnectServer(name);
  		};
  		try {
@@ -1554,7 +1642,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  			void this.toolCache?.set(name, config, serverTools);
  			this.#replaceServerTools(name, customTools);
  			void this.#onToolsChanged?.(this.#tools);
-@@ -1355,8 +1413,8 @@ export class MCPManager {
+@@ -1355,8 +1418,8 @@ export class MCPManager {
  
  		// Reload tools
  		const serverTools = await listTools(connection);
@@ -1565,6 +1653,93 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..cd084660f9e5be3c13212b11c809afc8
  		void this.toolCache?.set(name, connection.config, serverTools);
  
  		// Replace tools from this server
+diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
+new file mode 100755
+index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba0687268aea9
+--- /dev/null
++++ b/src/mcp/resource-subscriptions.ts
+@@ -0,0 +1,81 @@
++import type { MCPRequestOptions, MCPServerConnection } from "./types";
++
++export interface MCPResourceSubscription { release(): Promise<void> }
++interface Entry {
++  managed: boolean;
++  owners: Set<symbol>;
++  state: boolean | "unknown";
++  pending: boolean;
++  target: boolean;
++  tail: Promise<void>;
++}
++const connections = new WeakMap<MCPServerConnection, Map<string, Entry>>();
++function entryFor(connection: MCPServerConnection, uri: string): Entry {
++  if (!connection.capabilities.resources?.subscribe) throw new Error("The MCP server does not support resource subscriptions.");
++  if (!uri || uri.length > 16_384 || uri.includes("\0")) throw new Error("Invalid MCP resource URI.");
++  let entries = connections.get(connection);
++  if (!entries) { entries = new Map(); connections.set(connection, entries); }
++  let entry = entries.get(uri);
++  if (!entry) {
++    if (entries.size >= 4096) throw new Error("MCP resource subscription limit exceeded.");
++    entry = { managed: false, owners: new Set(), state: false, pending: false, target: false, tail: Promise.resolve() };
++    entries.set(uri, entry);
++  }
++  return entry;
++}
++function transition(connection: MCPServerConnection, uri: string, entry: Entry, target: boolean, options?: MCPRequestOptions): Promise<void> {
++  if (entry.pending && entry.target === target) return entry.tail;
++  const previous = entry.tail;
++  // Reserve the exact transition before any transport callback. New acquisition
++  // after a pending release waits for that unsubscribe before subscribing again.
++  entry.pending = true; entry.target = target;
++  const operation = previous.catch(() => {}).then(async () => {
++    if (entry.state === target) return;
++    try {
++      // A caller's abort releases only its own claim. It cannot cancel a wire
++      // transition also needed by another viewer or the manager's subscriptions.
++      const response = await connection.transport.request(target ? "resources/subscribe" : "resources/unsubscribe", { uri }, { signal: AbortSignal.timeout(30_000) });
++      if (!response || typeof response !== "object" || Array.isArray(response)) throw new Error("Malformed MCP subscription response.");
++      entry.state = target;
++    } catch (error) { entry.state = "unknown"; throw error; }
++  });
++  entry.tail = operation;
++  void operation.then(() => settled(), () => settled());
++  function settled() {
++    if (entry.tail !== operation) return;
++    entry.pending = false;
++    if (!entry.managed && !entry.owners.size && entry.state === false) connections.get(connection)?.delete(uri);
++  }
++  return operation;
++}
++/** The manager owns a single idempotent claim for each URI; its refresh and
++ * notifications switch cannot unsubscribe an independently retained viewer. */
++export function setManagedResourceSubscription(connection: MCPServerConnection, uri: string, enabled: boolean, options?: MCPRequestOptions): Promise<void> {
++  const entry = entryFor(connection, uri); entry.managed = enabled;
++  return transition(connection, uri, entry, enabled || entry.owners.size > 0, options);
++}
++/** Retain one original connection/URI. Readiness and cleanup preserve dispatched
++ * errors; the caller never receives a replacement connection or shared signal. */
++export function retainResourceSubscription(connection: MCPServerConnection, uri: string, options?: MCPRequestOptions): Promise<MCPResourceSubscription> {
++  options?.signal?.throwIfAborted();
++  const entry = entryFor(connection, uri), owner = Symbol("MCP resource viewer");
++  if (entry.owners.size >= 4096) throw new Error("MCP resource observer limit exceeded.");
++  entry.owners.add(owner);
++  let releasePromise: Promise<void> | undefined;
++  const release = () => {
++    if (releasePromise) return releasePromise;
++    options?.signal?.removeEventListener("abort", abort);
++    entry.owners.delete(owner);
++    return releasePromise = transition(connection, uri, entry, entry.managed || entry.owners.size > 0, options);
++  };
++  const abort = () => { void release().catch(() => {}); };
++  options?.signal?.addEventListener("abort", abort, { once: true });
++  const ready = transition(connection, uri, entry, true, options);
++  return ready.then(async () => {
++    if (options?.signal?.aborted) { await release(); options.signal.throwIfAborted(); }
++    return { release };
++  }, async error => {
++    try { await release(); } catch (cleanup) { throw new AggregateError([error, cleanup], "MCP resource subscription and cleanup failed."); }
++    throw error;
++  });
++}
 diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
 index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b464568a987 100644
 --- a/src/mcp/tool-bridge.ts
@@ -8657,5 +8832,11 @@ diff --git a/src/tools/browser/target-observation.ts b/src/tools/browser/target-
 old mode 100755
 new mode 100644
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
+old mode 100755
+new mode 100644
+diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
+old mode 100755
+new mode 100644
+diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
 old mode 100755
 new mode 100644

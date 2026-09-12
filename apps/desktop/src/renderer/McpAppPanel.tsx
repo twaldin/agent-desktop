@@ -33,6 +33,8 @@ function McpFrame({ controller, resource, onError }: { controller: McpAppControl
       assertCurrent(); const result = await controller.request(method, cloneMcpJson(params, method === "openai/resources/write" ? 2 * 1024 * 1024 : 32_768) as Record<string, McpJson>); assertCurrent(); return result;
     };
     host.oncalltool = async params => CallToolResultSchema.parse(await call("tools/call", params));
+    host.setRequestHandler("resources/subscribe", { params: ReadResourceRequestSchema.shape.params }, params => call("resources/subscribe", params));
+    host.setRequestHandler("resources/unsubscribe", { params: ReadResourceRequestSchema.shape.params }, params => call("resources/unsubscribe", params));
     host.onreadresource = async params => ReadResourceResultSchema.parse(await call("resources/read", params));
     host.setRequestHandler("openai/resources/write", { params: ReadResourceRequestSchema.shape.params.passthrough() }, params => call("openai/resources/write", params));
     host.onlistresources = async params => ListResourcesResultSchema.parse(await call("resources/list", params ?? {}));
@@ -40,6 +42,14 @@ function McpFrame({ controller, resource, onError }: { controller: McpAppControl
     host.oninitialized = () => {
       if (!alive) return;
       void (async () => {
+        let cursor = 0;
+        void (async () => {
+          while (alive) {
+            const batch = await controller.events(cursor); assertCurrent();
+            for (const uri of batch.uris) { assertCurrent(); await host.notification({ method: "notifications/resources/updated", params: { uri } }); }
+            cursor = batch.sequence;
+          }
+        })().catch(error => { if (alive) report.current(message(error)); });
         const arguments_ = controller.initialArguments();
         if (arguments_ !== undefined) { await host.sendToolInput({ arguments: arguments_ }); assertCurrent(); }
         const result = CallToolResultSchema.parse(await controller.initialResult()); assertCurrent();

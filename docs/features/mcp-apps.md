@@ -1,6 +1,6 @@
 # MCP Apps in Open panel
 
-The right-hand Open panel list includes real thread entrypoints advertised by the selected session's connected native MCP servers. These actions use the provider's title and theme icon. Generic tools and resources are not invented as app rows. The built-in action order is preserved; app actions follow it and are not offered in Bottom.
+The right-hand Open panel list includes real thread entrypoints advertised by the selected session’s connected native MCP servers or an explicitly connected native directory owner. These actions use the provider's title and theme icon. Generic tools and resources are not invented as app rows. The built-in action order is preserved; app actions follow it and are not offered in Bottom.
 
 This flow implements standard MCP Apps HTML resources using the pinned MCP Apps SDK 2.0.0. Legacy `text/html+skybridge` and `window.openai` applications are not supported by this adapter. Retained tool results and declared file viewers are described in [Artifact viewers](artifact-viewers.md). Arbitrary formats and complete historical Apps compatibility remain separate work; this feature does not complete the parity goal.
 
@@ -28,6 +28,20 @@ Tool/resource results are bounded JSON. A session admits at most 32 live channel
 
 External links require a separate user decision and allow only HTTP(S). Cancel and Escape reject the request without opening a browser. Hide retains the original app and state. Explicit close drains the original channel. Connection loss removes the live iframe and disables opening; reconnect requires a new deliberate Open. Saved window state contains the original descriptor and presentation ID, never a live channel or admission ticket. Document reload restores that descriptor without executing the entrypoint until the user opens it again.
 
+## Apps without a conversation
+
+On a new-chat route, **Connect apps** acquires an isolated native MCP owner for the selected project directory or the host’s default directory. **App connections** shows that exact host/directory, pending native startup permissions, configured app/viewer declarations and errors. Projectless does not mean global configuration: native cwd-scoped settings, extensions, authentication and `mcp.enableProjectConfig` retain their normal meaning. Discovery uses an in-memory extension context and never runs a model or creates a durable conversation.
+
+The owner becomes addressable before extension startup finishes, so an extension can request approval through the original window before discovery or an iframe is ready. The explicit directory flow waits for its initial catalogue; existing session discovery keeps its 250ms background policy. App tool calls still use the native permission, input/result hooks and original connection. Native MCP notifications also reach that owner’s extension runner.
+
+Saved directory descriptors retain host/project/cwd and the declared app/file source, not worker or channel IDs. A restored descriptor, offline return or reopened app requires a deliberate Open before acquiring another owner. Hide can retain the live owner. Disconnect, host/capability loss and document retirement drain the original attempt; failed cleanup remains visible and retry first targets the original retirement. Closing a panel cancels its own permission and channel without disconnecting sibling apps.
+
+## Resource subscriptions
+
+Apps can subscribe to an original server resource and receive bounded, monotonic per-channel URI notifications before resyncing with `resources/read`. Separate viewers and native manager subscriptions hold independent claims over the same connection/URI wire subscription. A single viewer’s cancellation cannot unsubscribe remaining owners. New acquisition waits for a pending unsubscribe, and close joins held subscription and notification work. Old-connection and foreign-URI events cannot become current document updates.
+
+Declared local file viewers can subscribe to their original `codex-resource://` file. The host watches the captured canonical parent/file authority and checks revisions, including edits between metadata capture and watcher readiness. Resource notifications report a change; they do not overwrite an unsaved editor. The existing revisioned file writer and deliberate refresh/conflict behavior remain authoritative.
+
 ## Acceptance and limits
 
 The maintained worker test launches the real WorkerRuntime and a disposable stdio MCP provider without a model or personal credentials. It exercises native capability negotiation, raw entrypoint discovery, app-only model filtering, approval/denial/cancellation, configured denial, extension blocking/input revision/result replacement, exact request deduplication and reconnect invalidation.
@@ -35,3 +49,5 @@ The maintained worker test launches the real WorkerRuntime and a disposable stdi
 The Open panel acceptance runner's `--mcp` mode mounts the actual App in Electron and uses a real authenticated disposable host, native worker, stdio provider, WindowStateStore and the production app transport/document owner. Trusted Chromium input reaches both parent controls and the out-of-process SDK iframe. Fourteen captures cover opening, mutation, denial, resource read, link cancellation, hide/reopen, close/fresh presentation, offline/explicit recovery, document reload and pending-permission cancellation. The provider log independently checks that denied/cancelled increments did not execute. Read-only frame inspection supplies assertions; it never activates DOM handlers. This is Chromium input and rendered behavior, not an OS mouse/physical-focus claim.
 
 The fixture's IPC registration and connection-loss delivery are disposable adapters; production main/preload registrations are typechecked and source-reviewed. It does not contact a personal MCP server, perform OAuth, launch an external browser, exercise all declared remote CSP endpoints, prove power-loss/restart durability, or establish complete native/visual/whole-goal acceptance. Keep failed runs, installation provenance, exact final source maps and both independent review reports outside the maintained source tree.
+
+The `--mcp-owner` fixture exercises the no-conversation flow through actual App/Electron/native worker and stdio configuration: startup permission, app approval/denial, subscription event/resync, hide, offline recovery, actual renderer reload and pending-permission close. `--mcp-owner-viewer` exercises project-owned native file-viewer discovery, actual Files selection, save/change notification/conflict/refresh/binary handling, foreign-resource refusal and restore. Both retain source maps and trusted pointer geometry; no personal server or model is involved. Their current runtime evidence uses a qualified private native module overlay. Clean frozen installation of the composed native additions is a separate required integration gate and is not established by those runs.

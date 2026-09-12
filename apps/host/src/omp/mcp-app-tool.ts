@@ -9,7 +9,7 @@ import { cloneMcpJson } from "../../../../packages/shared/src/session-mcp-app";
 /** App calls have JSON protocol arguments, not model-generated harness arguments.
  * They still pass the native extension hooks and the original session's exact
  * tool policy. Only the final transport is bound to the captured connection. */
-export async function executeMcpAppTool(session: AgentSession, ui: OmpInteractionBridge | undefined,
+export async function executeMcpAppTool(session: Pick<AgentSession, "extensionRunner" | "settings" | "sessionManager">, ui: OmpInteractionBridge | undefined,
   connection: MCPServerConnection, definition: MCPToolDefinition, args: Record<string, unknown>,
   signal: AbortSignal, assertOwner: () => void, metadata?: Record<string, unknown>): Promise<unknown> {
   const ownedMetadata = metadata === undefined ? undefined : cloneMcpJson(metadata, 32_768);

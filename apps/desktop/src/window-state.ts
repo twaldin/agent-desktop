@@ -253,7 +253,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
     if (draftId !== undefined && item.kind !== "browser") return;
     let mcpApp;
     if (item.mcpApp !== undefined) { try { mcpApp = parseMcpDockApp(item.mcpApp); } catch { return; } }
-    if ((item.kind === "mcp-app") !== Boolean(mcpApp) || mcpApp && !item.target.startsWith("session:")) return;
+    if ((item.kind === "mcp-app") !== Boolean(mcpApp) || mcpApp && (mcpApp.directory ? item.target !== (mcpApp.directory.projectId === null ? "host" : `project:${mcpApp.directory.projectId}`) : !item.target.startsWith("session:"))) return;
     let skillFile;
     if (item.skillFile !== undefined) {
       try { skillFile = parseNativeSkillFileRef(item.skillFile); } catch { return; }
@@ -262,7 +262,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       const expected = !target ? "host" : "sessionId" in target ? `session:${target.sessionId}` : `project:${target.projectId}`;
       if (item.target !== expected) return;
     }
-    if ((item.kind === "skill-file") !== Boolean(skillFile) || (item.target === "host" && item.kind !== "skill-file")) return;
+    if ((item.kind === "skill-file") !== Boolean(skillFile) || (item.target === "host" && item.kind !== "skill-file" && item.kind !== "mcp-app")) return;
     let filePath: string | undefined;
     if (item.kind === "file") {
       if (standalonePath !== undefined) {
