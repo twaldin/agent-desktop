@@ -7,11 +7,11 @@ export interface AttachmentMediaContext {
 }
 export type AttachmentMediaSource =
   | { kind: "attachment"; attachment: ImageAttachmentRef }
-  | { kind: "transcript"; sessionId: string; nativeEntryId: string; blockIndex: number; sha256?: string; mimeType?: string; bytes?: number };
+  | { kind: "transcript"; sessionId: string; nativeEntryId: string; blockIndex: number; source?: "generated"; sha256?: string; mimeType?: string; bytes?: number };
 export interface AttachmentMedia { blob: Blob; sha256: string; mimeType: ImageAttachmentMimeType; bytes: number }
 
 export function attachmentSourceKey(source: AttachmentMediaSource): string {
-  return source.kind === "attachment" ? JSON.stringify([source.kind, source.attachment]) : JSON.stringify([source.kind, source.sessionId, source.nativeEntryId, source.blockIndex, source.sha256, source.mimeType, source.bytes]);
+  return source.kind === "attachment" ? JSON.stringify([source.kind, source.attachment]) : JSON.stringify([source.kind, source.sessionId, source.nativeEntryId, source.blockIndex, source.source, source.sha256, source.mimeType, source.bytes]);
 }
 function validateMetadata(value: { sha256?: string; mimeType?: string; bytes?: number }) {
   if (value.sha256 !== undefined && !/^[a-f0-9]{64}$/.test(value.sha256)) throw new Error("Invalid image identity.");
@@ -39,7 +39,7 @@ export async function loadAttachmentMedia(media: AttachmentMediaContext, source:
     recorded = await media.bridge.getImageAttachment(source.attachment.sha256, hostId);
   } else {
     if (!media.bridge.getTranscriptImage) throw new Error("Update this desktop to load native transcript images.");
-    recorded = await media.bridge.getTranscriptImage(source.sessionId, source.nativeEntryId, source.blockIndex, hostId);
+    recorded = await media.bridge.getTranscriptImage(source.sessionId, source.nativeEntryId, source.blockIndex, hostId, source.source);
   }
   validateMetadata(recorded);
   if (!(recorded.data instanceof Uint8Array) || recorded.data.byteLength !== recorded.bytes || !recorded.sha256 || !recorded.mimeType

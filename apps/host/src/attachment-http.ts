@@ -17,7 +17,7 @@ export class ImageAttachmentsHttp {
     maxImagePixels: MAX_IMAGE_ATTACHMENT_PIXELS, mimeTypes: IMAGE_ATTACHMENT_MIME_TYPES });
   #active = 0;
   constructor(private options: { dataDirectory: string; hostId: string;
-    getNativeImage: (sessionId: string, nativeEntryId: string, blockIndex: number) => Promise<OmpRecordedImage>;
+    getNativeImage: (sessionId: string, nativeEntryId: string, blockIndex: number, source?: "generated") => Promise<OmpRecordedImage>;
     readTimeoutMs?: number }) { this.store = new ImageAttachmentStore(options.dataDirectory); }
 
   /** Hold the same bound through native preparation/admission, not just disk reads. */
@@ -63,8 +63,10 @@ export class ImageAttachmentsHttp {
           if (!/^[0-9]+$/.test(native[3]!)) fail("INVALID_IMAGE_BLOCK", "Invalid native image block index.");
           const blockIndex = Number(native[3]);
           if (!sessionId || sessionId.length > 200 || !entryId || entryId.length > 200 || !Number.isSafeInteger(blockIndex)) fail("INVALID_IMAGE_BLOCK", "Invalid native image identity.");
-          const image = await this.options.getNativeImage(sessionId, entryId, blockIndex);
-          return imageResponse(image, this.options.hostId);
+          const source = url.searchParams.get("source");
+          if (source !== null && source !== "generated") fail("INVALID_IMAGE_BLOCK", "Invalid saved image namespace.");
+          const image = await this.options.getNativeImage(sessionId, entryId, blockIndex, source === "generated" ? source : undefined);
+          return imageResponse(image, this.options.hostId, source === "generated" ? source : undefined);
         }
         return Response.json({ code: "METHOD_NOT_ALLOWED", error: "This image operation is not supported." }, { status: 405, headers: privateHeaders });
       });
@@ -81,11 +83,11 @@ export class ImageAttachmentsHttp {
   }
 }
 
-function imageResponse(image: OmpRecordedImage, hostId: string): Response {
+function imageResponse(image: OmpRecordedImage, hostId: string, source?: "generated"): Response {
   if (!(image.data instanceof Uint8Array) || image.data.length !== image.bytes || image.bytes <= 0 || image.bytes > MAX_IMAGE_ATTACHMENT_BYTES
     || !IMAGE_ATTACHMENT_MIME_TYPES.includes(image.mimeType as typeof IMAGE_ATTACHMENT_MIME_TYPES[number]) || !/^[a-f0-9]{64}$/.test(image.sha256)) fail("INVALID_RECORDED_IMAGE", "The recorded native image is unavailable.", 422);
   return new Response(Uint8Array.from(image.data).buffer, { headers: { ...privateHeaders, [IMAGE_ATTACHMENT_OWNER_HEADER]: hostId, "Content-Type": image.mimeType,
-    "Content-Length": String(image.bytes), "X-Image-Sha256": image.sha256 } });
+    "Content-Length": String(image.bytes), "X-Image-Sha256": image.sha256, ...(source ? { "X-Agent-Image-Source": source } : {}) } });
 }
 
 async function readImageBody(request: Request, timeoutMs: number): Promise<Uint8Array> {

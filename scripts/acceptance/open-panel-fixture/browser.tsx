@@ -23,6 +23,14 @@ const bridge: Partial<DesktopBridge> = {
     observeTerminalCreation: (request: unknown, host: string) => api.call('observeTerminalCreation', [request, host]),
     subscribeNativeTerminals: (listener: (event: NativeTerminalInvalidation & { hostId: string }) => void) => api.subscribeNative(listener),
   } : {}),
+  ...(features.suggested ? {
+    getBrowserMetadata: (id: string, host?: string) => api.call('getBrowserMetadata', [id, host]),
+    createBrowserTab: (id: string, request: unknown, host: string) => api.call('createBrowserTab', [id, request, host]),
+    getBrowserCreationStatus: (id: string, request: unknown, host: string) => api.call('getBrowserCreationStatus', [id, request, host]),
+    getBrowserFrame: (id: string, target: unknown, host?: string) => api.call('getBrowserFrame', [id, target, host]),
+    getSessionOutputs: (sessionId: string, hostId: string) => api.call('getSessionOutputs', [sessionId, hostId]),
+    getTranscriptImage: (sessionId: string, entryId: string, index: number, hostId: string, source?: "generated") => api.call('getTranscriptImage', [sessionId, entryId, index, hostId, source]),
+  } : {}),
   ...(features.directoryOwner ? { mcpOwner: { request: (host: string, request: unknown) => api.call("mcpOwner", [host, request]) } } : {}),
   ...(features.mcp ? {
     getSessionMcp: (id: string, host?: string) => api.call('getSessionMcp', [id, host]),

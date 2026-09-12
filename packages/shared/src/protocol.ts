@@ -1,3 +1,4 @@
+export * from "./session-outputs";
 export * from "./branch-query-transport";
 export * from "./browser-observation";
 export * from "./browser-continuation";
@@ -358,7 +359,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getImageAttachmentCapabilities?(hostId: string): Promise<ImageAttachmentCapabilities | null>;
   uploadImageAttachment?(sha256: string, data: Uint8Array, hostId: string): Promise<UploadedImageMetadata>;
   getImageAttachment?(sha256: string, hostId: string): Promise<RecordedImageBytes>;
-  getTranscriptImage?(sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string): Promise<RecordedImageBytes>;
+  getTranscriptImage?(sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string, source?: "generated"): Promise<RecordedImageBytes>;
+  getSessionOutputs?(sessionId: string, hostId: string): Promise<import("./session-outputs").SessionOutputs>;
   getState(hostId?: string): Promise<HostState>;
   getHosts(): Promise<NetworkState>;
   /** Local machine only; these calls intentionally accept no remote host selector. */

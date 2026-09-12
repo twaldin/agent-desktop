@@ -89,7 +89,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "activateRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "disposeRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "getBrowserFrame"; args: { target: BrowserFrameTarget } }
-  | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
+  | { operation: "getSessionOutputs" }
+  | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number; source?: "generated" } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
   | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode; options?: { images?: PreparedPromptImage[] } } }
   | { operation: "startFollowUp"; args: { text: string; delivery: import("@agent-desktop/shared").FollowUpDelivery; expectedApprovalMode?: OmpApprovalMode } }

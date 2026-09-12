@@ -16,6 +16,7 @@ import { PluginAcquisitionHttp } from "./integrations/acquisition-http";
 import { SessionMcpAuthorizationHttp } from "./session-mcp-authorization-http";
 import { SessionMcpAppHttp } from "./session-mcp-app-http";
 import { SessionMcpResourceHttp } from "./session-mcp-resource-http";
+import { SessionOutputsHttp } from "./session-outputs-http";
 import { SessionMcpHttp } from "./session-mcp-http";
 import { BtwPromotionService } from "./btw-promotion";
 import { LocalEnvironmentActions } from "./local-environments/actions";
@@ -236,7 +237,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   notificationEvents.settleStaleInteractions();
   themeAssets = new ThemeAssets(dataDirectory);
   const attachments = new ImageAttachmentsHttp({ dataDirectory, hostId: store.host.id,
-    getNativeImage: async (sessionId, nativeEntryId, blockIndex) => (await getHandle(sessionId)).getImage(nativeEntryId, blockIndex) });
+    getNativeImage: async (sessionId, nativeEntryId, blockIndex, source) => (await getHandle(sessionId)).getImage(nativeEntryId, blockIndex, source) });
   function syncThemeAsset(): void {
     const background = preferences?.store.get("theme.background");
     if (background && !background.deleted && background.key === "theme.background" && background.value.kind === "asset") {
@@ -437,6 +438,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     sessionExists: id => !stopping && Boolean(store.getSession(id)),
     existing: async id => handles.get(id)?.catch(() => undefined),
   });
+  const sessionOutputs = new SessionOutputsHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
   const sessionMcpHttp = new SessionMcpHttp({hostId:store.host.id, sessionExists:id=>!stopping && Boolean(store.getSession(id)),
     existing:async id=>handles.get(id)?.catch(()=>undefined),
     receipt:(sessionId,commandId)=>{
@@ -1118,6 +1120,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (mcpAppResponse) return mcpAppResponse;
         const mcpResourceResponse = await sessionMcpResources.route(request, url);
         if (mcpResourceResponse) return mcpResourceResponse;
+        const outputsResponse = await sessionOutputs.route(request, url);
+        if (outputsResponse) return outputsResponse;
         const mcpStateResponse = await sessionMcpHttp.route(request, url);
         if (mcpStateResponse) return mcpStateResponse;
         const btwResponse = await btwHttp.route(request, url);

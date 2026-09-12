@@ -105,16 +105,17 @@ export async function uploadImageAttachment(endpoint: HostEndpoint, sha256: stri
 export async function requestImageAttachment(endpoint: HostEndpoint, sha256: string): Promise<RecordedImageBytes> {
   return requestImage(endpoint, `/v1/attachments/images/${digest(sha256)}`, sha256);
 }
-export async function requestTranscriptImage(endpoint: HostEndpoint, sessionId: string, nativeEntryId: string, blockIndex: number): Promise<RecordedImageBytes> {
+export async function requestTranscriptImage(endpoint: HostEndpoint, sessionId: string, nativeEntryId: string, blockIndex: number, source?: "generated"): Promise<RecordedImageBytes> {
   if (!Number.isSafeInteger(blockIndex) || blockIndex < 0) throw new Error("Invalid image block index.");
-  return requestImage(endpoint, `/v1/sessions/${id(sessionId)}/images/${id(nativeEntryId)}/${blockIndex}`);
+  if (source !== undefined && source !== "generated") throw new Error("Invalid saved image namespace.");
+  return requestImage(endpoint, `/v1/sessions/${id(sessionId)}/images/${id(nativeEntryId)}/${blockIndex}${source ? "?source=generated" : ""}`, undefined, source);
 }
-async function requestImage(endpoint: HostEndpoint, path: string, expectedHash?: string): Promise<RecordedImageBytes> {
+async function requestImage(endpoint: HostEndpoint, path: string, expectedHash?: string, source?: "generated"): Promise<RecordedImageBytes> {
   return scheduleImageDownload(endpoint, async signal => {
     let delayMs = 150;
     while (true) {
       signal.throwIfAborted();
-      try { return await requestImageAttempt(endpoint, path, signal, expectedHash); }
+      try { return await requestImageAttempt(endpoint, path, signal, expectedHash, source); }
       catch (error) {
         // Only the host's explicit contention response is retryable. Commands,
         // authentication, missing images, and uncertain failures are never replayed.
@@ -125,10 +126,11 @@ async function requestImage(endpoint: HostEndpoint, path: string, expectedHash?:
     }
   });
 }
-async function requestImageAttempt(endpoint: HostEndpoint, path: string, signal: AbortSignal, expectedHash?: string): Promise<RecordedImageBytes> {
+async function requestImageAttempt(endpoint: HostEndpoint, path: string, signal: AbortSignal, expectedHash?: string, source?: "generated"): Promise<RecordedImageBytes> {
   const response = await fetch(`${endpoint.origin}${path}`, { headers: headersFor(endpoint), redirect: "error", signal });
   await requireSuccess(response);
   requireImageOwner(response, endpoint);
+  if (source && response.headers.get("X-Agent-Image-Source") !== source) { await response.body?.cancel(); throw new Error("This host does not confirm the generated-image namespace."); }
   const mimeType = response.headers.get("content-type"), sha256 = response.headers.get("x-image-sha256"), length = response.headers.get("content-length");
   const bytes = Number(length);
   if (!imageMime(mimeType) || !sha256 || !/^[a-f0-9]{64}$/.test(sha256) || (expectedHash !== undefined && sha256 !== expectedHash)
