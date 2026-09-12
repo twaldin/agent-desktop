@@ -1,3 +1,4 @@
+import { inspectSessionOutputs, recordedGeneratedImage } from "./session-outputs";
 import { executeMcpAppTool } from "./mcp-app-tool";
 import { McpFileResources } from "./mcp-file-resource";
 import { NativeMcpApps } from "./mcp-apps";
@@ -121,7 +122,8 @@ export interface OmpSession {
   promoteBtw(runId: string, operationId?: string): Promise<{ cancelled: boolean; sessionId: string; sessionFile: string }>;
   getComposerActions(): Promise<NativeComposerCatalog>;
   getComposerCompletions(query: ComposerCompletionQuery): Promise<NativeComposerCompletions>;
-  getImage(nativeEntryId: string, blockIndex: number): Promise<OmpRecordedImage>;
+  getSessionOutputs(): Promise<import("@agent-desktop/shared").SessionOutputs>;
+  getImage(nativeEntryId: string, blockIndex: number, source?: "generated"): Promise<OmpRecordedImage>;
   createBrowserTab(name: string, initialUrl?: string): Promise<OmpBrowserTabCreateResult>;
   installRetainedBrowserEvaluation(input: {
     sourceOwnerId: string; operationId: string; name: string; targetId: string; kindTag: NativeBrowserTabMetadata["kindTag"]; safeDir: string;
@@ -524,6 +526,8 @@ export class OmpRuntime {
       let interruptEpoch = 0;
       let accountMutation = false;
       let goalMutation = false;
+      const outputEpoch = crypto.randomUUID();
+      let outputRead: Promise<import("@agent-desktop/shared").SessionOutputs> | undefined;
       const mcpReads = new Set<Promise<NativeSessionMcpResourceResult>>();
       let mcpMutation: Promise<unknown> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
@@ -552,7 +556,7 @@ export class OmpRuntime {
       };
       const assertTaskLocationReady = () => {
         assertIdle();
-        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || mcpApps.pending) throw new Error("Resolve queued messages, questions, side answers, MCP reads, and interrupts before moving this task.");
+        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || outputRead || mcpApps.pending) throw new Error("Resolve queued messages, questions, side answers, MCP reads, and interrupts before moving this task.");
       };
       const taskLocationOutcomeUnknown = (message: string) => Object.assign(new Error(message), { name: "TaskLocationOutcomeUnknown", code: "OUTCOME_UNKNOWN" });
       const trackMcpMutation = <T>(run: Promise<T>) => {
@@ -814,10 +818,28 @@ export class OmpRuntime {
         },
         getComposerActions: async () => { assertSessionActive(); return sessionComposerActions(session, result.extensionsResult?.extensions ?? []); },
         getComposerCompletions: async query => { assertSessionActive(); return composerCompletions(sessionComposerActions(session, result.extensionsResult?.extensions ?? []), query, session, result.mcpManager); },
-        getImage: async (nativeEntryId, blockIndex) => {
+        getSessionOutputs: () => {
+          assertSessionActive();
+          if (outputRead) return outputRead;
+          const branch = manager.getBranch(), cwd = manager.getCwd();
+          const identity = JSON.stringify(branch.map(entry => entry.id));
+          const pending = (async () => {
+            const value = await inspectSessionOutputs(branch, cwd, outputEpoch);
+            assertSessionActive();
+            if (manager.getCwd() !== cwd || JSON.stringify(manager.getBranch().map(entry => entry.id)) !== identity) throw new Error("The saved outputs changed during inspection. Refresh the original task.");
+            return value;
+          })();
+          outputRead = pending;
+          const settled = () => { if (outputRead === pending) outputRead = undefined; };
+          void pending.then(settled, settled);
+          return pending;
+        },
+        getImage: async (nativeEntryId, blockIndex, source) => {
           assertSessionActive();
           if (typeof nativeEntryId !== "string" || nativeEntryId.length > 200 || !Number.isSafeInteger(blockIndex) || blockIndex < 0) throw new Error("Invalid native image identity");
-          const entry = manager.getEntry(nativeEntryId);
+          const entry = manager.getBranch().find(entry => entry.id === nativeEntryId);
+          if (source !== undefined && source !== "generated") throw new Error("Invalid saved image namespace.");
+          if (source === "generated") return recordedGeneratedImage(entry, blockIndex);
           if (entry?.type === "message" && entry.message.role === "fileMention") {
             const image = lookupFileMentionImage(entry.message, blockIndex);
             if (!image) throw new Error("Native referenced image is unavailable");
@@ -1091,7 +1113,7 @@ export class OmpRuntime {
             const mcpDrains = await mcpDisposal;
             await extensionStartup?.catch(() => {});
             await mcpMutation?.catch(() => {});
-            await Promise.allSettled([...mcpReads]);
+            await Promise.allSettled([...mcpReads, ...(outputRead ? [outputRead] : [])]);
             const cleanupErrors = mcpDrains.flatMap(result => result.status === "rejected" ? [result.reason] : []);
             const clean = async (work: () => unknown) => { try { await work(); } catch (error) { cleanupErrors.push(error); } };
             await clean(() => session.beginDispose());

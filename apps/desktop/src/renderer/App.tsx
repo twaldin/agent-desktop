@@ -126,6 +126,7 @@ import { cssColorToRgba } from "./css-color";
 import { transcriptSources, type RecordedSource } from "./transcript-sources";
 import { ImagePreview } from "./ImagePreview";
 import { DockPanel, type DockAddAction, type DockDragTask } from "./DockPanel";
+import { useSuggestedOutputs } from "./use-suggested-outputs";
 import { DockEmptyActions } from "./DockEmptyActions";
 import { dockEmptyActionCatalogue } from "./dock-empty-action-model";
 import { useWindowClose } from "./WindowClose";
@@ -226,7 +227,7 @@ export function App() {
   const [fileTree, setFileTree] = useState({ ...defaultFileTreeView(), open: windowRestoration.state.fileTreeOpen ?? false });
   const [environmentOpen, setEnvironmentOpen] = useState(windowRestoration.state.environmentOpen ?? false);
   const [environmentCollapsed, setEnvironmentCollapsed] = useState<EnvironmentSectionKey[]>(windowRestoration.state.environmentCollapsed ?? []);
-  const [sourcePreview, setSourcePreview] = useState<{hostId:string;source:Extract<RecordedSource,{kind:"image"}>}>();
+  const [sourcePreview, setSourcePreview] = useState<{hostId:string;source:Extract<RecordedSource,{kind:"image"}>;current?:()=>boolean}>();
   const [commitRequest, setCommitRequest] = useState<{owner:string;id:string}>();
   const [gitDialog, setGitDialog] = useState<{ data: WorkspaceState; navigationOwner?: string; id: string }>();
   const branchSwitchOwner = useRef<{ workspace?: WorkspaceState; enabled: boolean }>({ enabled: false });
@@ -976,11 +977,11 @@ export function App() {
   const mcpCatalogue = useMcpAppCatalogue(bridge, hostId, selected?.archived ? undefined : selected?.id, connected);
   const committedArtifactOwner = useRef({ hostId, sessionId: selected?.id, enabled: false, messages: transcript.messages, presentations: dock.presentations });
   useLayoutEffect(() => { committedArtifactOwner.current = { hostId, sessionId: selected?.id, enabled: connected && !contentOverlayOpen, messages: transcript.messages, presentations: dock.presentations }; });
-  const openMcpArtifact = (artifact: import("@agent-desktop/shared").McpArtifact) => {
+  const openMcpArtifact = (artifact: import("@agent-desktop/shared").McpArtifact, sourceCurrent: () => boolean = () => true) => {
     const original = committedArtifactOwner.current;
     const current = () => {
       const owner = committedArtifactOwner.current;
-      return Boolean(original.sessionId && owner.enabled && owner.hostId === original.hostId && owner.sessionId === original.sessionId
+      return Boolean(sourceCurrent() && original.sessionId && owner.enabled && owner.hostId === original.hostId && owner.sessionId === original.sessionId
         && mcpCatalogue.current() && owner.messages.some(message => message.nativeId === artifact.entryId && message.mcpArtifact?.serverName === artifact.serverName
           && message.mcpArtifact.toolName === artifact.toolName && message.mcpArtifact.resourceUri === artifact.resourceUri));
     };
@@ -991,13 +992,13 @@ export function App() {
     mcpOpeningFocus.current.set(tab.id, document.activeElement);
     dock.addMcpApp(tab, current);
   };
-  const openMcpFileViewer = (ownerHost: string, ownerSession: string, path: string, origin?: DockPresentationRef): boolean => {
+  const openMcpFileViewer = (ownerHost: string, ownerSession: string, path: string, origin?: DockPresentationRef, sourceCurrent: () => boolean = () => true): boolean => {
     const original = committedArtifactOwner.current, catalogue = mcpCatalogue.snapshot;
     const selectedViewer = mcpFileViewerForPath(catalogue, path);
     if (!selectedViewer || !catalogue || original.hostId !== ownerHost || original.sessionId !== ownerSession) return false;
     const current = (presentations = committedArtifactOwner.current.presentations) => {
       const owner = committedArtifactOwner.current;
-      return owner.enabled && owner.hostId === ownerHost && owner.sessionId === ownerSession && mcpCatalogue.current()
+      return sourceCurrent() && owner.enabled && owner.hostId === ownerHost && owner.sessionId === ownerSession && mcpCatalogue.current()
         && (!origin || isCurrentDockPresentation(presentations, origin));
     };
     if (!current()) return true;
@@ -1058,6 +1059,29 @@ export function App() {
       if (!directoryMcp.current() && !directoryMcp.loading) void directoryMcp.acquire().catch(() => {});
     },
   }];
+  const suggestedOutputs = useSuggestedOutputs({ bridge, hostId, sessionId: selected?.id,
+    connected, active: Boolean(selected && !reviewAction && workspaceOpen && !dock.snapshot.state.right.tabIds.length && !contentOverlayOpen),
+    entryIds: transcript.messages.flatMap(message => message.nativeId ? [message.nativeId] : []),
+  });
+  const openSuggestedOutput = (output: import("@agent-desktop/shared").SessionOutput, current: () => boolean) => {
+    const original = committedArtifactOwner.current;
+    const retained = suggestedOutputs.capture(output, true);
+    if (!current() || !retained || !original.sessionId) return;
+    if (output.kind === "generated-image") {
+      setSourcePreview({ hostId: original.hostId, current: retained, source: { id: `generated:${output.entryId}:${output.imageIndex}`, kind: "image", label: output.label,
+        image: { kind: "transcript", source: "generated", sessionId: original.sessionId, nativeEntryId: output.entryId, blockIndex: output.imageIndex, mimeType: output.mimeType, sha256: output.sha256, bytes: output.bytes } } });
+    } else if (output.kind === "mcp") {
+      const artifact = original.messages.find(message => message.nativeId === output.entryId)?.mcpArtifact;
+      if (!artifact || artifact.serverName !== output.serverName || artifact.toolName !== output.toolName || artifact.resourceUri !== output.resourceUri) throw new Error("The original saved app output is unavailable.");
+      openMcpArtifact(artifact, current);
+    } else if (output.kind === "website") {
+      dock.openOutputWebsite(output.url, original.hostId, original.sessionId, current, retained);
+    } else {
+      const cwd = selected?.cwd.replace(/\/$/, ""), relative = cwd && output.path.startsWith(`${cwd}/`) ? output.path.slice(cwd.length + 1) : undefined;
+      if (relative && openMcpFileViewer(original.hostId, original.sessionId, relative, undefined, current)) return;
+      dock.openHostFile(output.path, original.hostId, "right", false, current);
+    }
+  };
   const mcpActions = [...sessionMcpActions, ...directoryMcpActions];
   // Pinned Git workspaces prioritize Review and Terminal; other workspaces retain the provider order.
   const dockActions: DockAddAction[] = dockEmptyActionCatalogue(
@@ -1480,7 +1504,7 @@ export function App() {
           if(to!==_from && !taskDropDestinations(dock.snapshot,mainChat,dragTarget(tab)).includes(to==="right"?contentSide:"bottom")) return;
           dock.change(moveDockTab(dock.snapshot.state,id,to,index));
         }} addActions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !contentOverlayOpen && dock.snapshot.state[destination].open)}/>
-      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination}/>}
+      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination} suggested={destination === "right" && selected && !reviewAction ? { owner: suggestedOutputs, images: { hostId, sessionId: selected.id, media: attachmentMedia }, onOpen: openSuggestedOutput } : undefined}/>}
     </div>)}
     </div>
     {paneDrag && !contentOverlayOpen && <TaskPaneDropPreview geometry={taskDropGeometry(dock.snapshot,mainChat,paneDrag.target,dockViewport)} point={paneDrag.point}/>}
@@ -1515,7 +1539,7 @@ export function App() {
     {gitFeedback && <GitSubmissionFeedback data={gitFeedback.data} ownerLabel={gitFeedback.label} onDismiss={() => setGitFeedback(undefined)}/>}
     {connectingDirectory && <McpDirectoryConnection owner={connectingDirectory.owner} closeWhenReady={connectingDirectory.connecting} hostLabel={desktop.catalog.records.get(connectingDirectory.owner.hostId)?.state?.host.name ?? connectingDirectory.owner.hostId} onClose={() => setConnectingDirectory(undefined)}/>}
     {fileClose.dialog}
-    {sourcePreview && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}
+    {sourcePreview && (!sourcePreview.current || sourcePreview.current()) && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>
       {dialog === "project" ? <form onSubmit={addRemoteProject}><p className="subtle-notice">Enter an existing absolute folder path on {state?.host.name}. The project and its sessions stay on that machine.</p>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="remote-project-path">Folder path</label><input id="remote-project-path" className="text-field" value={remotePath} onChange={event => setRemotePath(event.target.value)} placeholder="/home/you/projects/example" autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!remotePath.trim() || !connected || addingProject}>{addingProject ? "Adding…" : "Add project"}</button></div></form> : dialog === "rename" ? <form onSubmit={rename}>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="conversation-title">Name</label><input id="conversation-title" className="text-field" value={renameTitle} onChange={event => setRenameTitle(event.target.value)} autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!renameTitle.trim() || !connected}>Save</button></div></form> : <div className="build-status"><p>This connected desktop flow includes host selection and an aggregate project sidebar: projects, revisioned drafts, sessions, model selection, streaming, steering, stopping, rename, and archive.</p><p>Accounts, native OMP settings and pending requests, file/editor/Git/worktree panels, and terminal sessions use the owning host’s APIs. Shared sidebar organization and the theme file are connected. Attachments, richer review, browser panels, plugins, automations, remain incomplete.</p><p>The layout uses the pinned package and measured colors from the supplied screenshot. Full visual parity and physical cross-device acceptance remain pending.</p><p>{desktop.networkError ?? desktop.network?.error ?? (desktop.network?.status === "connected" ? "Tailscale discovery is connected." : "Tailscale discovery is not connected.")}</p><button className="secondary-button" onClick={() => void desktop.refreshNetwork()}>Refresh machines</button><div className="build-host">{state?.host.name ?? "Host unavailable"} · {state?.host.platform ?? "Unknown platform"}</div></div>}

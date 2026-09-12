@@ -29,6 +29,7 @@ import { requestSessionMcpApp } from "./session-mcp-app-transport";
 import { parseNativeMcpAppRequest } from "@agent-desktop/shared";
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { closePluginAcquisitionRequest, requestMarketplaceCatalog, requestPluginAcquisitionOperations, reviewPluginAcquisition, startPluginAcquisition } from "./plugin-acquisition-transport";
+import { requestSessionOutputs } from "./session-outputs-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
 import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondSessionMcpAuthorization } from "./session-mcp-authorization-transport";
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
@@ -42,6 +43,8 @@ import { requestBtw } from "./btw-transport";
 import { mutateQueuedMessages, requestQueuedMessages } from "./queued-messages-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
 import { requestBrowserMetadata } from "./browser-metadata-transport";
+import { requestBrowserHistory } from "./browser-history-transport";
+import { requestBrowserAutocomplete } from "./browser-autocomplete-transport";
 import { requestBrowserFrame } from "./browser-frame-transport";
 import { requestBrowserControl } from "./browser-control-transport";
 import { requestBrowserCreate, requestBrowserCreationStatus } from "./browser-create-transport";
@@ -486,8 +489,8 @@ ipcMain.handle("host:image-upload", async (event, sha256: string, data: Uint8Arr
 ipcMain.handle("host:image-read", async (event, sha256: string, hostId: string) => {
   assertTrustedSender(event); return requestImageAttachment(await endpointFor(requireImageOwner(hostId)), sha256);
 });
-ipcMain.handle("host:transcript-image", async (event, sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string) => {
-  assertTrustedSender(event); return requestTranscriptImage(await endpointFor(requireImageOwner(hostId)), sessionId, nativeEntryId, blockIndex);
+ipcMain.handle("host:transcript-image", async (event, sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string, source?: "generated") => {
+  assertTrustedSender(event); return requestTranscriptImage(await endpointFor(requireImageOwner(hostId)), sessionId, nativeEntryId, blockIndex, source);
 });
 const sessionSearchRequests = new SessionSearchRequests();
 const searchOwners = new WeakSet<Electron.WebContents>();
@@ -586,6 +589,12 @@ ipcMain.handle("host:mcp-app", (event, sessionId: string, input: import("@agent-
 ipcMain.handle("host:mcp-resource", async (event, sessionId: string, request: import("@agent-desktop/shared").NativeSessionMcpResourceRequest, hostId?: string) => {
   assertTrustedSender(event); return requestSessionMcpResource(await endpointFor(hostId), sessionId, request);
 });
+ipcMain.handle("host:session-outputs", async (event, sessionId: string, hostId: string) => {
+  assertTrustedSender(event);
+  const endpoint = await endpointFor(requireImageOwner(hostId));
+  assertTrustedSender(event);
+  return requestSessionOutputs(endpoint, sessionId);
+});
 ipcMain.handle("host:session-mcp", async (event, sessionId: string, hostId?: string, commandId?: string) => {
   assertTrustedSender(event); return requestSessionMcp(await endpointFor(hostId), sessionId, commandId);
 });
@@ -614,6 +623,12 @@ registerBrowserObservationHandlers(ipcMain, assertTrustedSender, endpointFor);
 
 ipcMain.handle("host:browser-metadata", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserMetadata(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:browser-history", async (event, sessionId: string, request: import("@agent-desktop/shared").BrowserHistoryRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestBrowserHistory(await endpointFor(hostId), sessionId, request);
+});
+ipcMain.handle("host:browser-autocomplete", async (event, sessionId: string, request: import("@agent-desktop/shared").BrowserAutocompleteRequest, hostId?: string) => {
+  assertTrustedSender(event); return requestBrowserAutocomplete(await endpointFor(hostId), sessionId, request);
 });
 ipcMain.handle("host:browser-create", async (event, sessionId: string, request: BrowserCreateRequest, hostId?: string) => {
   assertTrustedSender(event); return requestBrowserCreate(await endpointFor(hostId), sessionId, request);

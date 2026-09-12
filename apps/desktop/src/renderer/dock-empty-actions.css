@@ -50,3 +50,20 @@
    established; the right launcher is the source-backed vertical list. */
 .dock-slot-bottom>.dock-empty-panel-actions { max-width:720px; margin:auto; padding:var(--spacing-md,12px); }
 .dock-slot-bottom .dock-empty-panel-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); max-width:none; padding:0; gap:4px 8px; }
+.dock-empty-panel-actions.has-suggested .dock-empty-panel-content { justify-content:flex-start; padding-top:16px; }
+.dock-empty-panel-header.has-scroll-shadow { box-shadow:0 12px 16px -16px color-mix(in srgb,var(--text) 50%,transparent); }
+.dock-suggested-heading { box-sizing:border-box; width:100%; max-width:576px; margin:0 auto; padding:0 30px 8px; font-size:var(--dock-empty-label-size); color:var(--dock-empty-secondary); }
+.dock-suggested-sentinel { height:1px; flex:none; }
+.dock-suggested-list { box-sizing:border-box; width:100%; max-width:576px; margin:0 auto; padding:0 20px; list-style:none; }
+.dock-suggested-list>li { position:relative; }
+.dock-suggested-list>li+li::before { content:""; position:absolute; inset:0 10px auto; height:1px; background:var(--dock-empty-border); }
+.dock-suggested-list>li:hover::before,.dock-suggested-list>li:focus-within::before,.dock-suggested-list>li:hover+li::before,.dock-suggested-list>li:focus-within+li::before { opacity:0; }
+.dock-suggested-list button { display:flex; align-items:center; gap:8px; width:100%; min-height:40px; padding:8px 10px; border:0; border-radius:var(--radius-small,6px); background:transparent; color:var(--dock-empty-foreground); text-align:start; font:var(--dock-empty-label-size)/1.43 var(--ui-font,system-ui); }
+.dock-suggested-list button>span:nth-child(2) { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; flex:1; }
+.dock-suggested-list button:enabled:hover { background:var(--dock-empty-row-hover); }
+.dock-suggested-list button:focus-visible { outline:2px solid currentColor; outline-offset:0; }
+.dock-suggested-list button:disabled { opacity:.5; }
+.dock-suggested-icon { display:flex; width:16px; height:16px; flex:none; color:var(--dock-empty-secondary); }
+.dock-suggested-icon>img { width:100%; height:100%; object-fit:cover; border-radius:2px; }
+.dock-suggested-icon>.icon { width:100%; height:100%; }
+.dock-suggested-message { width:100%; max-width:516px; margin:8px auto; color:var(--dock-empty-secondary); font-size:var(--dock-empty-label-size); }

@@ -135,16 +135,17 @@ test("window projection rejects mixed native/launcher identity and never upgrade
 });
 
 /** Version-bound controlled hook slots, not a React mount/commit or DOM proof. */
-function hookDriver() {
+function hookDriver(deferred = false) {
+  const pending: Array<() => void> = [];
   const slots: any[] = []; let cursor = 0;
   const internals = (React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
   const dispatcher = {
     useState(initial: unknown) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === "function" ? (initial as () => unknown)() : initial;
-      return [slots[i], (next: any) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }]; },
+      return [slots[i], (next: any) => { const apply = () => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }; if (deferred) pending.push(apply); else apply(); }]; },
     useRef(initial: unknown) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
     useEffect() {},
   };
-  return { render<T>(callback: () => T): T { cursor = 0; const old = internals.H; internals.H = dispatcher;
+  return { flush() { for (const apply of pending.splice(0)) apply(); }, render<T>(callback: () => T): T { cursor = 0; const old = internals.H; internals.H = dispatcher;
     try { return callback(); } finally { internals.H = old; } } };
 }
 
@@ -205,4 +206,28 @@ test("isolated dock without window persistence ownership refuses browser dispatc
   let dock = render(); dock.open("browser"); dock = render(); const controller = dock.browserLauncher(dock.snapshot.tabs[0]!, true);
   controller.edit("https://example.invalid"); await controller.submit();
   expect(creates).toBe(0); expect(controller.state).toMatchObject({ status: "rejected", message: "Window save acknowledgement is unavailable for browser creation." });
+});
+
+test("Suggested original-source loss across metadata and dispatched creation cannot rebind or publish", async () => {
+  const ticket = Promise.withResolvers<BrowserMetadataSnapshot>(); let retained = true;
+  const a = fixture({ metadata: () => ticket.promise }); a.controller.edit('http://localhost:8080/');
+  const reading = a.controller.submit(() => retained); retained = false; ticket.resolve(metadata()); await reading;
+  expect(a.calls).toHaveLength(1); expect(a.controller.state.status).toBe('rejected'); expect(a.materialized).toEqual([]);
+  retained = true; const dispatch = Promise.withResolvers<BrowserCreateRequest>(), receipt = Promise.withResolvers<BrowserCreateReceipt>();
+  const b = fixture({ create: async request => { dispatch.resolve(request); return receipt.promise; } }); b.controller.edit('http://localhost:8080/');
+  const creating = b.controller.submit(() => retained); const request = await dispatch.promise; retained = false; receipt.resolve(completed(request)); await creating;
+  expect(b.calls).toHaveLength(2); expect(b.controller.state.status).toBe('unknown'); expect(b.materialized).toEqual([]);
+  await b.controller.submit(() => true); expect(b.calls).toHaveLength(2);
+});
+
+test("Suggested file and website queued admission rechecks the original source, while a fresh selection remains usable", async () => {
+  const slots = hookDriver(true); let current = true, calls = 0;
+  const bridge = { getBrowserMetadata: async () => { calls++; return metadata(); } } as unknown as DesktopBridge;
+  const render = () => slots.render(() => useWorkbenchDock(bridge, defaultWindowView(), 'owner', { sessionId: 'session' }, true, () => {}));
+  let dock = render();
+  dock.openOutputWebsite('http://localhost:8080/', 'owner', 'session', () => current, () => current);
+  await dock.openHostFile('/task/report.pdf', 'owner', 'right', false, () => current);
+  current = false; slots.flush(); dock = render(); expect(dock.snapshot.tabs).toEqual([]); expect(calls).toBe(0);
+  current = true; dock.openOutputWebsite('http://localhost:8080/', 'owner', 'session', () => current, () => current);
+  slots.flush(); dock = render(); expect(dock.snapshot.tabs).toHaveLength(1); expect(dock.snapshot.tabs[0]?.browserNewTab).toEqual({ status: 'idle', draft: 'http://localhost:8080/' }); expect(calls).toBe(0);
 });

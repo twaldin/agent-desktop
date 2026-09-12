@@ -1,5 +1,8 @@
+export * from "./session-outputs";
 export * from "./branch-query-transport";
 export * from "./browser-observation";
+export * from "./browser-history";
+export * from "./browser-autocomplete";
 export * from "./browser-continuation";
 import type { GitRepositoryChange } from "./repository-changes";
 export * from "./repository-changes";
@@ -365,7 +368,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getImageAttachmentCapabilities?(hostId: string): Promise<ImageAttachmentCapabilities | null>;
   uploadImageAttachment?(sha256: string, data: Uint8Array, hostId: string): Promise<UploadedImageMetadata>;
   getImageAttachment?(sha256: string, hostId: string): Promise<RecordedImageBytes>;
-  getTranscriptImage?(sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string): Promise<RecordedImageBytes>;
+  getTranscriptImage?(sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string, source?: "generated"): Promise<RecordedImageBytes>;
+  getSessionOutputs?(sessionId: string, hostId: string): Promise<import("./session-outputs").SessionOutputs>;
   getState(hostId?: string): Promise<HostState>;
   getHosts(): Promise<NetworkState>;
   /** Local machine only; these calls intentionally accept no remote host selector. */
@@ -451,6 +455,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   browserClose?: import("./browser-close").BrowserCloseBridge;
   browserObservation?: import("./browser-observation").BrowserObservationBridge;
   getBrowserMetadata?(sessionId: string, hostId?: string): Promise<BrowserMetadataSnapshot | null>;
+  getBrowserHistory?(sessionId: string, request: import("./browser-history").BrowserHistoryRequest, hostId?: string): Promise<import("./browser-history").BrowserHistoryResult>;
+  browserAutocomplete?(sessionId: string, request: import("./browser-autocomplete").BrowserAutocompleteRequest, hostId?: string): Promise<import("./browser-autocomplete").BrowserAutocompleteResult>;
   createBrowserTab?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateReceipt>;
   getBrowserCreationStatus?(sessionId: string, request: BrowserCreateRequest, hostId?: string): Promise<BrowserCreateObservation>;
   controlBrowser?(sessionId: string, request: BrowserControlRequest, hostId?: string): Promise<BrowserControlReceipt>;

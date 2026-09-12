@@ -8,7 +8,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 51;
+export const WORKER_PROTOCOL_VERSION = 52;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -80,6 +80,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "cancelBtw"; args: { runId: string } }
   | { operation: "promoteBtw"; args: { runId: string; operationId?: string } }
   | { operation: "getBrowserMetadata" }
+  | { operation: "getBrowserHistory"; args: { target: BrowserFrameTarget } }
   | { operation: "createBrowserTab"; args: { name: string; initialUrl?: string } }
   | { operation: "controlBrowser"; args: { request: BrowserControlRequest } }
   | { operation: "closeBrowserTab"; args: { target: BrowserFrameTarget } }
@@ -90,7 +91,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "activateRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "disposeRetainedBrowserEvaluation"; args: { binding: BrowserEvaluationBinding } }
   | { operation: "getBrowserFrame"; args: { target: BrowserFrameTarget } }
-  | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number } }
+  | { operation: "getSessionOutputs" }
+  | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number; source?: "generated" } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
   | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode; options?: { images?: PreparedPromptImage[] } } }
   | { operation: "startFollowUp"; args: { text: string; delivery: import("@agent-desktop/shared").FollowUpDelivery; expectedApprovalMode?: OmpApprovalMode } }

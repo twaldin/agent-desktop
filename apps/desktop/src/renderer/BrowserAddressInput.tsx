@@ -1,14 +1,17 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { addressSuggestionPosition, addressSuggestionSelection, moveAddressSuggestion, type AddressKeyboardSelection } from "./browser-address-suggestion-state";
+import { Icon } from "./Icons";
 import "./browser-address-suggestions.css";
 
 export interface BrowserAddressSuggestion {
   id: string;
   title: string;
+  subtitle?: string;
   icon?: ReactNode;
   ariaLabel?: string;
   canBeDefault: boolean;
+  deleteLabel?: string;
 }
 export interface BrowserAddressInputProps<T extends BrowserAddressSuggestion> {
   inputRef: RefObject<HTMLInputElement | null>;
@@ -20,11 +23,14 @@ export interface BrowserAddressInputProps<T extends BrowserAddressSuggestion> {
   readOnly: boolean;
   suggestions?: readonly T[];
   onChange(value: string): void;
+  onFocus?(): void;
+  onBlur?(): void;
   onCancel(): void;
   onSubmit(): void;
   /** Selection is an intent. The caller revalidates source/destination ownership
    * and owns completion; this field never closes/replaces a launcher itself. */
   onChoose?(row: T): void;
+  onDelete?(row: T): void;
 }
 
 export function BrowserAddressInput<T extends BrowserAddressSuggestion>(props: BrowserAddressInputProps<T>) {
@@ -74,9 +80,12 @@ export function BrowserAddressInput<T extends BrowserAddressSuggestion>(props: B
       aria-activedescendant={expanded && view.selectedIndex >= 0 ? `${listId}-option-${view.selectedIndex}` : undefined}
       spellCheck={false} autoComplete="off" maxLength={8192} placeholder="Search or enter a URL"
       disabled={props.disabled} readOnly={props.readOnly} value={props.value}
-      onFocus={() => { setFocused(true); setKeyboard(undefined); }}
+      onFocus={() => { setFocused(true); setKeyboard(undefined); props.onFocus?.(); }}
       onPointerDown={() => { if (enabled) setFocused(true); }}
-      onBlur={() => { setFocused(false); setKeyboard(undefined); composing.current = false; setInComposition(false); }}
+      onBlur={event => {
+        if ((event.relatedTarget as HTMLElement | null)?.dataset?.browserSidebarAutocompleteDelete === "true") return;
+        setFocused(false); setKeyboard(undefined); composing.current = false; setInComposition(false); props.onBlur?.();
+      }}
       onChange={event => { setKeyboard(undefined); props.onChange(event.currentTarget.value); }}
       onCompositionStart={() => { composing.current = true; setInComposition(true); setKeyboard(undefined); }}
       onCompositionEnd={() => { composing.current = false; setInComposition(false); }}
@@ -107,14 +116,18 @@ export function BrowserAddressInput<T extends BrowserAddressSuggestion>(props: B
       }}/>
     {expanded && createPortal(<div ref={list} id={listId} role="listbox" aria-label="Address suggestions"
       className="browser-address-suggestions" style={position}>
-      {view.rows.map((row, index) => <button key={row.id} id={`${listId}-option-${index}`} type="button" role="option"
-        aria-label={row.ariaLabel} aria-selected={index === view.selectedIndex} tabIndex={-1}
-        data-browser-sidebar-skip-address-commit="true"
-        onPointerDown={event => event.preventDefault()}
-        onClick={() => { if (enabled && !composing.current) props.onChoose?.(row); }}>
-        {row.icon && <span className="browser-address-suggestion-icon" aria-hidden="true">{row.icon}</span>}
-        <span className="browser-address-suggestion-title">{row.title}</span>
-      </button>)}
+      {view.rows.map((row, index) => <div key={row.id} id={`${listId}-option-${index}`} role="option"
+        aria-label={row.ariaLabel} aria-selected={index === view.selectedIndex}>
+        <button type="button" tabIndex={-1} data-browser-sidebar-skip-address-commit="true"
+          onPointerDown={event => event.preventDefault()}
+          onClick={() => { if (enabled && !composing.current) props.onChoose?.(row); }}>
+          {row.icon && <span className="browser-address-suggestion-icon" aria-hidden="true">{row.icon}</span>}
+          <span className="browser-address-suggestion-copy"><span className="browser-address-suggestion-title">{row.title}</span>{row.subtitle&&<span className="browser-address-suggestion-subtitle">{row.subtitle}</span>}</span>
+        </button>
+        {row.deleteLabel && props.onDelete && <button type="button" className="browser-address-suggestion-delete" aria-label={row.deleteLabel}
+          data-browser-sidebar-autocomplete-delete="true"
+          onClick={event => { event.stopPropagation(); if (enabled && !composing.current) props.onDelete?.(row); }}><Icon name="close"/></button>}
+      </div>)}
     </div>, document.body)}
   </>;
 }

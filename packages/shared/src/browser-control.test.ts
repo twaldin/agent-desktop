@@ -14,15 +14,26 @@ test("browser document context preserves bounded native history state", () => {
     { entryId: 1.5, canGoBack: true, canGoForward: false },
     { entryId: 1, canGoBack: "yes", canGoForward: false },
   ]) expect(() => parseBrowserDocumentContext({ ...context, navigation: invalid })).toThrow();
+  expect(parseBrowserDocumentContext({ ...context, navigation: undefined, opaqueHistoryTraversal: true })).toEqual({
+    ...context, navigation: undefined, opaqueHistoryTraversal: true,
+  });
+  expect(() => parseBrowserDocumentContext({ ...context, opaqueHistoryTraversal: true })).toThrow("Contradictory");
+  expect(() => parseBrowserDocumentContext({ ...context, navigation: undefined, opaqueHistoryTraversal: false })).toThrow("opaque");
 });
 
 test("browser resize and history actions require a current native history context", () => {
   expect(parseBrowserControlRequest(request({ type: "resize", width: 800, height: 600 })).action).toEqual({ type: "resize", width: 800, height: 600 });
   expect(parseBrowserControlRequest(request({ type: "back" })).action).toEqual({ type: "back" });
   const legacy = { ...context, navigation: undefined };
+  const opaque = { ...legacy, opaqueHistoryTraversal: true as const };
+  expect(parseBrowserControlRequest(request({ type: "forward" }, opaque)).action).toEqual({ type: "forward" });
   expect(() => parseBrowserControlRequest(request({ type: "resize", width: 800, height: 600 }, legacy))).toThrow("Refresh");
   expect(() => parseBrowserControlRequest(request({ type: "forward" }, legacy))).toThrow("Refresh");
   for (const size of [[0, 600], [800, 0], [16_384, 16_384], [640.5, 480]]) {
     expect(() => parseBrowserControlRequest(request({ type: "resize", width: size[0], height: size[1] }))).toThrow();
   }
+});
+
+test("stop loading retains the captured owner context",()=>{
+  expect(parseBrowserControlRequest(request({type:"stop"})).action).toEqual({type:"stop"});
 });

@@ -4,8 +4,9 @@ import type { DraftBrowserOwnerRecord } from "./browser-draft-owner-records";
 import type { WorkerBrowserOwner, WorkerRuntime } from "./omp-workers";
 import { browserReservationOutcomeUnknown } from "./omp-browser/reservation";
 import type { HostStore } from "./store";
+import type { BrowserFrameTarget, BrowserHistoryEntry } from "@agent-desktop/shared";
 
-export type DraftBrowserHandle = Pick<WorkerBrowserOwner, "id" | "cwd" | "workerPid" | "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "getBrowserFrame" | "closeBrowserTab" | "inspectBrowserTab" | "reserveBrowserEvaluation" | "inspectBrowserEvaluationReservation" | "openBrowserEvaluation" | "enableBrowserRecovery">;
+export type DraftBrowserHandle = Pick<WorkerBrowserOwner, "id" | "cwd" | "workerPid" | "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "getBrowserFrame" | "closeBrowserTab" | "inspectBrowserTab" | "reserveBrowserEvaluation" | "inspectBrowserEvaluationReservation" | "openBrowserEvaluation" | "enableBrowserRecovery"> & {getBrowserHistory(target:BrowserFrameTarget):Promise<BrowserHistoryEntry[]>};
 interface Entry {
   admission: DraftBrowserAdmission;
   setup: Promise<WorkerBrowserOwner>;
@@ -172,6 +173,7 @@ export class DraftBrowserWorkers {
       getBrowserMetadata: () => run(() => worker.getBrowserMetadata()),
       createBrowserTab: (name: string, url?: string) => run(() => worker.createBrowserTab(name, url)),
       controlBrowser: (request: Parameters<WorkerBrowserOwner["controlBrowser"]>[0]) => run(() => worker.controlBrowser(request)),
+      getBrowserHistory: (target: BrowserFrameTarget) => run(() => { if(!worker.getBrowserHistory)throw new Error("Native browser history is unavailable.");return worker.getBrowserHistory(target); }),
       getBrowserFrame: (target: Parameters<WorkerBrowserOwner["getBrowserFrame"]>[0]) => run(() => worker.getBrowserFrame(target)),
       closeBrowserTab: (target: Parameters<WorkerBrowserOwner["closeBrowserTab"]>[0]) => run(() => worker.closeBrowserTab(target)),
       inspectBrowserTab: (target: Parameters<WorkerBrowserOwner["inspectBrowserTab"]>[0]) => run(() => worker.inspectBrowserTab(target)),
