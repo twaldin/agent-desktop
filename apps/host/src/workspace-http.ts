@@ -1,3 +1,5 @@
+import { parseGitFileOrigin, parseGitFileLocation, parseGitFilePath, parseGitFileHistoryCursor } from "@agent-desktop/shared";
+import { parseSymbolDefinitionRequest } from "../../../packages/shared/src/symbol-navigation";
 import { createHash } from "node:crypto";
 import type { LocalEnvironmentActions } from "./local-environments/actions";
 import { LocalEnvironmentStore } from "./local-environments";
@@ -75,6 +77,8 @@ export function parseWorkspaceTarget(value: unknown): WorkspaceTarget {
 export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
   const query = object(value);
   switch (query.type) {
+    case "file.definitions": return { type: query.type, request: parseSymbolDefinitionRequest(query.request) };
+    case "file.symbol-context": return { type: query.type };
     case "environment.output":
     case "environment.preparation": return { type: query.type, preparationId: text(query.preparationId, 200) };
     case "environment.read": return { type: query.type, configPath: text(query.configPath) };
@@ -85,6 +89,9 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
     case "git.recent-branches": return { type: query.type, limit: parseGitRecentBranchesLimit(query.limit) };
     case "git.resolve-checkout": return { type: query.type, expression: parseGitRevisionExpression(query.expression) };
     case "git.resolve-revision": return { type: query.type, expression: parseGitRevisionExpression(query.expression) };
+    case "git.file-inspect": return { type: query.type, path: parseGitFilePath(query.path), expression: parseGitRevisionExpression(query.expression) };
+    case "git.file-history": return { type: query.type, origin: parseGitFileOrigin(query.origin), start: parseGitFileHistoryCursor(query.start) };
+    case "git.file-revision": return { type: query.type, origin: parseGitFileOrigin(query.origin), location: parseGitFileLocation(query.location) };
     case "git.search-branches":
     case "git.search-starting-branches": return { type: query.type, ...parseGitBranchSearch(query.query, query.limit) };
     case "file.operations": return { type: query.type };
@@ -424,10 +431,25 @@ export class HostWorkspaces {
     const summaryOwner = query.type === "git.selection-summary" && !("filePath" in target) ? this.ownerStamp(target) : undefined;
     const reviewOwner = query.type === "git.review-summary" && !("filePath" in target) ? this.ownerStamp(target) : undefined;
     const branchSearchOwner = (query.type === "git.search-branches" || query.type === "git.search-starting-branches" || query.type === "git.resolve-revision" || query.type === "git.recent-branches" || query.type === "git.base-branch" || query.type === "git.default-branch" || query.type === "git.resolve-checkout") && !("filePath" in target) ? this.ownerStamp(target) : undefined;
+    const isFileHistory = query.type === "git.file-inspect" || query.type === "git.file-history" || query.type === "git.file-revision";
+    const fileHistoryOwner = isFileHistory && !("filePath" in target) ? this.ownerStamp(target) : undefined;
     const owner = this.#resolve(target);
     // Git controls intentionally address the containing repository; file controls stay project-confined.
-    const workspace = query.type.startsWith("git.") && query.type !== "git.status" ? await owner.gitRootService() : owner;
+    const workspace = query.type.startsWith("git.") && query.type !== "git.status" && !isFileHistory ? await owner.gitRootService() : owner;
     switch (query.type) {
+      case "file.symbol-context": {
+        if ("filePath" in target) throw new Error("Open a project workspace to navigate semantic definitions.");
+        const stamp = this.ownerStamp(target), workspaceIdentity = await workspace.symbolContext();
+        if (stamp !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The symbol workspace owner changed.");
+        return { type: query.type, workspaceIdentity };
+      }
+      case "file.definitions": {
+        if ("filePath" in target) throw new Error("Open a project workspace to navigate semantic definitions.");
+        const stamp = this.ownerStamp(target);
+        const result = await workspace.symbolDefinitions(query.request), workspaceIdentity = await workspace.symbolContext();
+        if (stamp !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The symbol workspace owner changed. Reopen the file before retrying.");
+        return { type: query.type, workspaceIdentity, result };
+      }
       case "environment.actions": {
         if (!this.actions) throw new Error("Configured environment actions are unavailable on this host.");
         return { type: query.type, state: await this.actions.catalog(target) };
@@ -460,6 +482,21 @@ export class HostWorkspaces {
         return { type: query.type, availability: "repository", status: await (await owner.gitRootService()).gitStatus() };
       }
       case "git.action-context": return { type: query.type, context: await readGitActionContext(workspace) };
+      case "git.file-inspect": {
+        const inspection = await owner.inspectGitFile(query.path, query.expression);
+        if ("filePath" in target || fileHistoryOwner !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The file history owner changed during the read.");
+        return { type: query.type, inspection };
+      }
+      case "git.file-history": {
+        const history = await owner.gitFileHistory(query.origin, query.start);
+        if ("filePath" in target || fileHistoryOwner !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The file history owner changed during the read.");
+        return { type: query.type, history };
+      }
+      case "git.file-revision": {
+        const revision = await owner.gitFileRevision(query.origin, query.location);
+        if ("filePath" in target || fileHistoryOwner !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The file history owner changed during the read.");
+        return { type: query.type, revision };
+      }
       case "git.selection-summary": {
         if ("filePath" in target) throw new Error("A standalone file cannot own a Git selection.");
         const context = await readGitActionContext(workspace);

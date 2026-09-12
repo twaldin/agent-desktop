@@ -1,0 +1,35 @@
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+index b7b6997..1b79304 100644
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -94,6 +94,7 @@ var Editor = class {
+ 	#selectionAction;
+ 	#canMountSelectionAction = true;
+ 	#shouldIgnoreSelectionChange = false;
++	#selectionFocusGeneration = 0;
+ 	#suppressNativeSelectionSync = false;
+ 	#contentHasFocus = false;
+ 	#replacementFocusRequest;
+@@ -1736,6 +1737,7 @@ var Editor = class {
+ 	#focus(position, preventScroll = true, shouldFocus) {
+ 		this.#contentHasFocus = true;
+ 		if (position !== void 0) {
++			const generation = ++this.#selectionFocusGeneration;
+ 			this.#shouldIgnoreSelectionChange = true;
+ 			this.#setWindowSelection({
+ 				start: position,
+@@ -1743,12 +1745,14 @@ var Editor = class {
+ 				direction: 0
+ 			});
+ 			queueRender(() => {
++				if (generation !== this.#selectionFocusGeneration) return;
+ 				if (shouldFocus?.() === false || !this.#contentHasFocus) {
+ 					this.#shouldIgnoreSelectionChange = false;
+ 					return;
+ 				}
+ 				this.#contentElement?.focus({ preventScroll });
+ 				queueRender(() => {
++					if (generation !== this.#selectionFocusGeneration) return;
+ 					this.#shouldIgnoreSelectionChange = false;
+ 				});
+ 			});

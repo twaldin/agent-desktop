@@ -51,3 +51,24 @@ test("an existing Files tab stays launchable with its configured shortcut and de
   clickButtons(DockEmptyActions({ actions, destination: "right" }));
   expect(selected).toEqual(["right"]);
 });
+
+test("repository ordering is independent of Review membership and retains contributed action dispatch", () => {
+  const calls: string[] = [];
+  const ids = ["files", "side-chat", "browser", "review", "mcp:second", "mcp:first", "terminal"];
+  const declarations: DockAddAction[] = ids.map(id => ({
+    id, label: id, icon: "compose", singletonTabId: id === "review" ? review.id : undefined,
+    onSelect: destination => calls.push(`${id}:${destination}`),
+  }));
+  const state = createDockState();
+  const normal = dockEmptyActionCatalogue(declarations, state, false);
+  clickButtons(DockEmptyActions({ actions: normal, destination: "right" }));
+  expect(calls).toEqual(ids.map(id => `${id}:right`));
+  expect(dockEmptyActionCatalogue(declarations, state, true).map(action => action.id))
+    .toEqual(["review", "terminal", "browser", "files", "side-chat", "mcp:second", "mcp:first"]);
+  const hiddenReview = hideDock(insertDockTab(state, review, "bottom"), "bottom");
+  expect(dockEmptyActionCatalogue(declarations, hiddenReview, true).map(action => action.id))
+    .toEqual(["terminal", "browser", "files", "side-chat", "mcp:second", "mcp:first"]);
+  expect(dockEmptyActionCatalogue(declarations, hiddenReview, false).map(action => action.id))
+    .toEqual(["files", "side-chat", "browser", "mcp:second", "mcp:first", "terminal"]);
+  expect(declarations.map(action => action.id)).toEqual(ids);
+});

@@ -1060,9 +1060,11 @@ export function App() {
   }];
   const mcpActions = [...sessionMcpActions, ...directoryMcpActions];
   // Pinned Git workspaces prioritize Review and Terminal; other workspaces retain the provider order.
-  const dockActions: DockAddAction[] = dockEmptyActionCatalogue(reviewAction
-    ? [reviewAction,terminalAction,browserAction,filesAction,sideChatAction,...mcpActions]
-    : [filesAction,sideChatAction,browserAction,terminalAction,...mcpActions], dock.snapshot.state);
+  const dockActions: DockAddAction[] = dockEmptyActionCatalogue(
+    [filesAction,sideChatAction,browserAction,reviewAction,...mcpActions,terminalAction],
+    dock.snapshot.state,
+    workspace?.gitAvailability === "repository" || workspace?.status !== undefined,
+  );
   function terminalRecovery(intent: TerminalWindowIntent, enabled: boolean, detached = false) {
     const requestKey = `${intent.hostId}:${intent.request.requestId}`, status = terminalRequests.status(requestKey);
     return <TerminalRequestRecovery intent={intent} state={status?.state} running={status?.running ?? false} checking={status?.checking ?? false}
