@@ -37,6 +37,8 @@ async function run() {
     show: false,
     width: 1280,
     height: 900,
+    minWidth: 720,
+    minHeight: 480,
     webPreferences: {
       preload: join(output, "preload.cjs"),
       sandbox: true,
@@ -160,6 +162,14 @@ async function run() {
     throw new Error(`Timed out: ${label}`);
   };
   const click = async (selector: string, text?: string) => {
+    await wait(`(() => {
+      const selector = ${JSON.stringify(selector)}, text = ${JSON.stringify(text)};
+      return [...document.querySelectorAll(selector)].some(node => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && !node.closest('[hidden], [inert]') && !node.disabled &&
+          (text === undefined || node.textContent?.trim() === text || node.getAttribute('aria-label') === text);
+      });
+    })()`, `enabled visible target ${selector} ${text ?? ''}`);
     const p = await evaluate(
       `accountsModelAppTarget(${JSON.stringify(selector)},${JSON.stringify(text)})`,
     );
@@ -194,7 +204,7 @@ async function run() {
   const checkpoints: string[] = [];
   try {
     await window.loadFile(join(output, "web/index.html")); window.show(); window.webContents.focus();
-    await wait(`!!document.querySelector('button[aria-label="Model and reasoning effort"]')&&!document.body.innerText.includes('Loading conversation')`, "App native session ready");
+    await wait(`!!document.querySelector('button[aria-label="Model and reasoning effort"]')&&!document.body.innerText.includes('Loading conversation')&&!document.body.innerText.includes('Loading this workspace’s native models')`, "App native session ready");
     await click("button", "Model and reasoning effort"); await click("button", "Session account");
     await wait(`document.querySelectorAll('.session-account-choice').length===2`, "native OAuth choices");
     await capture("01-native-session-accounts"); checkpoints.push("actual-App-native-owner-oauth-catalog");
@@ -204,7 +214,7 @@ async function run() {
     const beforeReload = await http(`/v1/sessions/${context.sessionId}/accounts`);
     if (!(beforeReload as any).accounts.some((account:any)=>account.orgName==='Second organization'&&account.active)) throw new Error("Native host selection did not change");
     await window.reload();
-    await wait(`!!document.querySelector('button[aria-label="Model and reasoning effort"]')&&!document.body.innerText.includes('Loading conversation')`, "App reloaded");
+    await wait(`!!document.querySelector('button[aria-label="Model and reasoning effort"]')&&!document.body.innerText.includes('Loading conversation')&&!document.body.innerText.includes('Loading this workspace’s native models')`, "App reloaded");
     await click("button", "Model and reasoning effort"); await click("button", "Session account");
     await wait(`!![...document.querySelectorAll('.session-account-choice')].find(n=>n.textContent.includes('Second organization')&&n.getAttribute('aria-pressed')==='true')`, "native selected account after document reload");
     checkpoints.push("document-reload-native-account-retained");

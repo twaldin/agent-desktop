@@ -4,8 +4,8 @@ import { Icon } from "./Icons";
 import { filterModelOptions, nextModelOption, type ModelPickerOption } from "./model-picker";
 import "./composer-selection-popup.css";
 
-export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset, accounts }: {
-  accounts?: ReactNode;
+export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset, accountChoicesNode }: {
+  accountChoicesNode?: ReactNode;
   modelValue: string; modelLabel: string; modelTitle: string; models: ModelPickerOption[]; levels: string[]; effort?: string; effectiveEffort?: string; defaultEffortLabel: string; disabled: boolean;
   onModel(value: string): void; onEffort(value?: string): void; onReset(): void;
 }) {
@@ -72,9 +72,9 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
           <output className="visually-hidden">{activeOrdinal >= 0 ? ordinal[activeOrdinal] : "Select effort"}</output>
         </div>}
 
-        {accounts && <button role="menuitem" type="button" onClick={() => { if (!disabled) setOpen("accounts"); }}>Session account<Icon name="chevron"/></button>}
+        {accountChoicesNode && <button role="menuitem" type="button" onClick={() => { if (!disabled) setOpen("accounts"); }}>Session account<Icon name="chevron"/></button>}
       </>}
-      {open === "accounts" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => setOpen("main")}><Icon name="chevron"/></button><strong>Session account</strong></div>{accounts}</>}
+      {open === "accounts" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => setOpen("main")}><Icon name="chevron"/></button><strong>Session account</strong></div>{accountChoicesNode}</>}
       {open === "models" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select model</strong></div><label className="composer-selection-search"><Icon name="search"/><input type="search" aria-label="Search models" value={query} placeholder="Search model or provider" onChange={event => { setQuery(event.target.value); }} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); close(); return; } if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const index = event.key === "ArrowDown" ? nextModelOption(filtered, -1, 1) : nextModelOption(filtered, filtered.length, -1); if (index >= 0) menu.current?.querySelector<HTMLButtonElement>(`button[data-model-index="${index}"]`)?.focus(); return; } if (event.key === "Enter") { event.preventDefault(); const index = nextModelOption(filtered, -1, 1); if (index >= 0) chooseModel(filtered[index]!); } }}/></label><div className="composer-selection-options" role="menu">{visibleModels.map((item, index) => <button data-model-index={index} role="menuitemradio" aria-checked={item.value === modelValue} aria-disabled={Boolean(item.disabled)} disabled={item.disabled} key={item.value} type="button" onClick={() => chooseModel(item)}><span><b>{item.label}</b>{item.detail && <small>{item.detail}</small>}</span>{item.value === modelValue && <Icon name="check"/>}</button>)}{!filtered.length && <p>No models match this search.</p>}</div></>}
       {open === "effort" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select effort</strong></div><button role="menuitemradio" aria-checked={!effort} type="button" onClick={() => { if (disabled) return; onEffort(undefined); close(); }}>{defaultEffortLabel}{!effort && <Icon name="check"/>}</button>{levels.map(level => <button role="menuitemradio" aria-checked={effort === level} key={level} type="button" onClick={() => { if (disabled) return; onEffort(level); close(); }}>{effortLabel(level)}{effort === level && <Icon name="check"/>}</button>)}</>}
     </div>, document.body)}
