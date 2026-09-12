@@ -1,10 +1,13 @@
 import type { BrowserWindow } from 'electron';
 import type { WindowStateStore } from '../../../apps/desktop/src/main/window-state';
-export async function runMcpFlow(flow: { window: BrowserWindow; evaluate(script: string): Promise<any>; wait(expression: string, label: string): Promise<void>; click(selector: string, text?: string): Promise<void>; key(key: string): Promise<void>; capture(name: string): Promise<void>; store: WindowStateStore; calls: unknown[]; connection: { hostId: string }; http(path: string, body?: unknown): Promise<any>; setConnected(connected: boolean): void }) {
+export async function runMcpFlow(flow: { window: BrowserWindow; evaluate(script: string): Promise<any>; wait(expression: string, label: string): Promise<void>; click(selector: string, text?: string): Promise<void>; key(key: string): Promise<void>; capture(name: string): Promise<void>; store: WindowStateStore; calls: unknown[]; connection: { hostId: string }; http(path: string, body?: unknown): Promise<any>; setConnected(connected: boolean): void; terminal: boolean; git: boolean }) {
   const { window, evaluate, wait, click, key, capture, store } = flow;
   await wait('panelState().actions.includes("Counter app")', 'actual native MCP thread entrypoint');
+  if (flow.git) await wait('panelState().actions.includes("Review")', 'actual Git Review availability');
+  if (flow.terminal) await wait('panelState().actions.includes("Terminal")', 'actual Terminal availability');
   const actions = await evaluate('panelState().actions');
-  if (JSON.stringify(actions) !== JSON.stringify(['Files', 'Side chat', 'Browser', 'Counter app'])) throw new Error('Wrong provider action order: ' + JSON.stringify(actions));
+  const builtins = flow.git ? ['Review', ...(flow.terminal ? ['Terminal'] : []), 'Browser', 'Files', 'Side chat'] : ['Files', 'Side chat', 'Browser', ...(flow.terminal ? ['Terminal'] : [])];
+  if (JSON.stringify(actions) !== JSON.stringify([...builtins, 'Counter app'])) throw new Error('Wrong provider action order: ' + JSON.stringify(actions));
   await capture('mcp-01-provider-action');
   await click('.dock-empty-panel-label', 'Counter app');
   await wait('document.querySelector("iframe[title=\\"Counter app\\"]") !== null', 'sandboxed app frame');

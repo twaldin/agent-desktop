@@ -13,3 +13,8 @@ export function mcpAppDockTab(hostId: string, sessionId: string, app: NativeMcpA
   const value = { kind: "mcp-app" as const, hostId, target: `session:${sessionId}` as const, title: app.title, mcpApp };
   return { ...value, id: dockTabId(value) };
 }
+
+/** Catalogue action identity is separate from each newly opened presentation. */
+export function mcpAppActionId(hostId: string, sessionId: string, serverName: string, toolName: string): string {
+  return JSON.stringify(["mcp-app", hostId, sessionId, serverName, toolName]);
+}

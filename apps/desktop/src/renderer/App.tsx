@@ -1,5 +1,5 @@
 import { useMcpAppCatalogue } from "./use-mcp-app-catalogue";
-import { mcpAppDockTab } from "./mcp-app-dock";
+import { mcpAppActionId, mcpAppDockTab } from "./mcp-app-dock";
 import { McpAppController } from "./mcp-app-controller";
 import { McpAppPanel } from "./McpAppPanel";
 import { useSessionReadState } from "./use-session-read-state";
@@ -957,7 +957,7 @@ export function App() {
   const mcpActions: DockAddAction[] = !selected || !mcpCatalogue.snapshot?.canOpenApps ? [] : mcpCatalogue.snapshot.servers.flatMap(server => server.status !== "connected" ? [] : (server.apps ?? []).map(app => {
     const selection = { epoch: mcpCatalogue.snapshot!.epoch, expectedRevision: mcpCatalogue.snapshot!.revision, serverName: server.name, toolName: app.toolName, resourceUri: app.resourceUri };
     const create = () => ({ ...mcpAppDockTab(hostId, selected.id, app, server.name), mcpAppSelection: selection });
-    return { id: JSON.stringify(["mcp-app", hostId, selected.id, server.name, app.toolName]), label: app.title, icon: "compose" as const,
+    return { id: mcpAppActionId(hostId, selected.id, server.name, app.toolName), label: app.title, icon: "compose" as const,
       appIcon: app.icon, destinations: ["right"] as const, requiresConnection: true, deferSelectionUntilDropdownClose: true,
       preparationTarget: { hostId, target: `session:${selected.id}` as const },
       prepare: async (signal: AbortSignal) => signal.aborted || !mcpCatalogue.current() ? { status: "cancelled" as const, creationMayHaveRun: false } : { status: "ready" as const, tab: create() },
@@ -967,7 +967,7 @@ export function App() {
   // Pinned Git workspaces prioritize Review and Terminal; other workspaces retain the provider order.
   const dockActions: DockAddAction[] = dockEmptyActionCatalogue(reviewAction
     ? [reviewAction,terminalAction,browserAction,filesAction,sideChatAction,...mcpActions]
-    : [filesAction,sideChatAction,browserAction,...mcpActions,terminalAction], dock.snapshot.state);
+    : [filesAction,sideChatAction,browserAction,terminalAction,...mcpActions], dock.snapshot.state);
   function terminalRecovery(intent: TerminalWindowIntent, enabled: boolean, detached = false) {
     const requestKey = `${intent.hostId}:${intent.request.requestId}`, status = terminalRequests.status(requestKey);
     return <TerminalRequestRecovery intent={intent} state={status?.state} running={status?.running ?? false} checking={status?.checking ?? false}

@@ -4,9 +4,9 @@ import { readResource, listResources, listResourceTemplates } from "@oh-my-pi/pi
 import { cloneMcpJson, parseNativeMcpAppDescriptor, parseNativeMcpAppRequest, parseNativeMcpAppResource,
   type McpJson, type NativeMcpAppDescriptor, type NativeMcpAppRequest, type NativeMcpAppResponse, type NativeMcpAppSelection } from "../../../../packages/shared/src/session-mcp-app";
 
-function object(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
+function asRecord(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
 export function mcpToolResource(tool: MCPToolDefinition): string | undefined {
-  const meta = tool._meta, ui = object(meta?.ui);
+  const meta = tool._meta, ui = asRecord(meta?.ui);
   const resource = ui?.resourceUri ?? meta?.["ui/resourceUri"] ?? meta?.["openai/outputTemplate"];
   return typeof resource === "string" && resource.startsWith("ui://") ? resource : undefined;
 }
@@ -20,8 +20,8 @@ export function mcpAppDescriptors(connection: MCPServerConnection): NativeMcpApp
   };
   const light = best("light"), dark = best("dark");
   return (connection.tools ?? []).flatMap(tool => {
-    const entrypoints = object(tool._meta?.["openai/ui"])?.entrypoints, resourceUri = mcpToolResource(tool);
-    if (!resourceUri || !Array.isArray(entrypoints) || !entrypoints.some(entry => object(entry)?.type === "thread")) return [];
+    const entrypoints = asRecord(tool._meta?.["openai/ui"])?.entrypoints, resourceUri = mcpToolResource(tool);
+    if (!resourceUri || !Array.isArray(entrypoints) || !entrypoints.some(entry => asRecord(entry)?.type === "thread")) return [];
     try { return [parseNativeMcpAppDescriptor({ toolName: tool.name, title: tool.title || tool.annotations?.title || tool.name, resourceUri, ...(light && dark ? { icon: { light, dark } } : {}) })]; }
     catch { return []; }
   });
@@ -76,7 +76,7 @@ export class NativeMcpApps {
     if (prior) { if (prior.fingerprint !== fingerprint) return Promise.reject(new Error("MCP app request identity was reused with different input.")); return prior.promise; }
     try { this.#current(channel); } catch (error) { return Promise.reject(error); }
     if (channel.operations.size >= 1024) return Promise.reject(new Error("This MCP app has reached its operation limit. Reopen it deliberately."));
-    if ([...channel.operations.values()].filter(operation => !settled.has(operation)).length >= 8) return Promise.reject(new Error("Wait for pending MCP app operations."));
+    if ([...channel.operations.values()].filter(operation => !settledOperations.has(operation)).length >= 8) return Promise.reject(new Error("Wait for pending MCP app operations."));
     const operation = { fingerprint } as Operation;
     // Reserve before invoking native code, including synchronously reentrant callbacks.
     channel.operations.set(requestId, operation);
@@ -92,7 +92,7 @@ export class NativeMcpApps {
         }
         this.#current(channel);
         return value;
-      } finally { clearTimeout(timer); settled.add(operation); }
+      } finally { clearTimeout(timer); settledOperations.add(operation); }
     });
     void operation.promise.catch(() => {});
     return operation.promise;
@@ -122,9 +122,9 @@ export class NativeMcpApps {
       channel.opened = this.#run(channel, "open", JSON.stringify(request), async signal => {
         const value = await readResource(connection, request.selection.resourceUri, { signal });
         if (value.contents.length !== 1) throw new Error("MCP app must provide exactly one UI resource.");
-        const content = value.contents[0]!, raw = content as unknown as Record<string, unknown>, ui = object(object(raw._meta)?.ui);
+        const content = value.contents[0]!, raw = content as unknown as Record<string, unknown>, ui = asRecord(asRecord(raw._meta)?.ui);
         if (typeof content.text !== "string" && typeof content.blob !== "string") throw new Error("Invalid MCP app HTML payload.");
-        if (ui?.permissions !== undefined && (!object(ui.permissions) || Object.keys(object(ui.permissions)!).length)) throw new Error("This app requests browser permissions that are not available in this sandbox.");
+        if (ui?.permissions !== undefined && (!asRecord(ui.permissions) || Object.keys(asRecord(ui.permissions)!).length)) throw new Error("This app requests browser permissions that are not available in this sandbox.");
         const resource = parseNativeMcpAppResource({ uri: content.uri, mimeType: content.mimeType,
           html: "text" in content ? content.text : new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(typeof content.blob === "string" ? content.blob : "", "base64")),
           ...(ui?.csp === undefined ? {} : { csp: ui.csp }) });
@@ -142,13 +142,13 @@ export class NativeMcpApps {
       if (request.method === "tools/call") {
         const name = request.params.name;
         const tool = channel.connection.tools?.find(tool => tool.name === name);
-        const visibility = object(tool?._meta?.ui)?.visibility;
+        const visibility = asRecord(tool?._meta?.ui)?.visibility;
         if (!tool || Array.isArray(visibility) && !visibility.includes("app")) throw new Error("This tool is not available to the MCP app.");
-        if (request.params.arguments !== undefined && !object(request.params.arguments)) throw new Error("Invalid MCP app tool arguments.");
-        value = await this.options.executeTool(channel.connection, tool, object(request.params.arguments) ?? {}, signal, () => {
+        if (request.params.arguments !== undefined && !asRecord(request.params.arguments)) throw new Error("Invalid MCP app tool arguments.");
+        value = await this.options.executeTool(channel.connection, tool, asRecord(request.params.arguments) ?? {}, signal, () => {
           this.#current(channel);
           const current = channel.connection.tools?.find(value => value.name === tool.name);
-          const currentVisibility = object(current?._meta?.ui)?.visibility;
+          const currentVisibility = asRecord(current?._meta?.ui)?.visibility;
           if (current !== tool || Array.isArray(currentVisibility) && !currentVisibility.includes("app")) throw new Error("The original MCP tool changed before dispatch.");
         });
       } else if (request.method === "resources/read") {
@@ -158,13 +158,13 @@ export class NativeMcpApps {
       else value = { resourceTemplates: await listResourceTemplates(channel.connection, { signal }) };
       // Parse dispatched results before retirement checks so cleanup retains malformed failures.
       const result = cloneMcpJson(value);
-      if (!object(result)) throw new Error("Invalid MCP app result.");
+      if (!asRecord(result)) throw new Error("Invalid MCP app result.");
       return { type: "result", channelId: channel.id, requestId: request.requestId, value: result as Record<string, McpJson> };
     });
   }
   #close(channel: Channel): Promise<NativeMcpAppResponse> {
     if (channel.closed) return channel.closed;
-    const pending = [...channel.operations.values()].filter(operation => !settled.has(operation));
+    const pending = [...channel.operations.values()].filter(operation => !settledOperations.has(operation));
     channel.retired = true;
     channel.closed = Promise.resolve().then(async () => {
       await Promise.allSettled(pending.map(operation => operation.promise));
@@ -178,7 +178,7 @@ export class NativeMcpApps {
     void channel.closed.catch(() => {});
     return channel.closed;
   }
-  get pending(): boolean { return [...this.#channels.values()].some(channel => [...channel.operations.values()].some(operation => !settled.has(operation))); }
+  get pending(): boolean { return [...this.#channels.values()].some(channel => [...channel.operations.values()].some(operation => !settledOperations.has(operation))); }
   async dispose(): Promise<void> {
     this.#disposed = true; this.#unsubscribe?.(); this.#unsubscribe = undefined;
     const results = await Promise.allSettled([...this.#channels.values()].map(channel => this.#close(channel)));
@@ -186,4 +186,4 @@ export class NativeMcpApps {
     if (errors.length) throw new AggregateError(errors, "MCP app session cleanup failed.");
   }
 }
-const settled = new WeakSet<Operation>();
+const settledOperations = new WeakSet<Operation>();

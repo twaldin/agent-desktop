@@ -108,7 +108,7 @@ try {
   await wait('typeof window.panelState === "function"', 'fixture observation helper');
   await wait('panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
   if (context.mcp) {
-    await runMcpFlow({ window, evaluate, wait, click, key, capture, store, calls, connection, http, setConnected });
+    await runMcpFlow({ window, evaluate, wait, click, key, capture, store, calls, connection, http, setConnected, terminal: context.terminal, git: context.git });
     retireMcpDocument(); await Promise.all(mcpDrains);
     if (errors.length) throw new Error('Renderer errors: ' + JSON.stringify(errors));
     passed = true; return;
