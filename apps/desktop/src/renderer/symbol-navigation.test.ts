@@ -35,22 +35,22 @@ async function fixture() {
     const text = data.documents.get(path)!.text, point = symbolPosition(text, offset);
     return { text, selections: [{ start: point, end: point, direction: "forward" }] };
   };
-  const open = (location: SymbolLocation) => { opened.push(location); };
+  const presentation = { isCurrentSource: () => true, open: (location: SymbolLocation) => { opened.push(location); } };
   const reveal = () => { const pending = navigation.pending; if (!pending) throw new Error(navigation.message); navigation.revealed(pending.request.id); };
-  return { cwd, data, navigation, owners, opened, snapshot, open, reveal, source, targetText };
+  return { cwd, data, navigation, owners, opened, snapshot, presentation, reveal, source, targetText };
 }
 
 test("history commits only after reveal, restores cursor selections, and new navigation drops the forward branch", async () => {
   const f = await fixture();
   const origin = f.snapshot("source.ts", f.source.indexOf("first();") + 2);
   origin.selections.push({ start: { line: 3, column: 1 }, end: { line: 3, column: 7 }, direction: "backward" });
-  await f.navigation.define("source.ts", origin, f.open);
+  await f.navigation.define("source.ts", origin, f.presentation);
   expect(f.navigation.index).toBe(-1); f.reveal();
   expect(f.opened.at(-1)?.path).toBe("target.ts");
-  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.open);
+  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.presentation);
   expect(f.navigation.pending?.request.selections).toEqual(origin.selections); f.reveal();
   expect(f.navigation.canForward).toBe(true);
-  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("second();") + 2), f.open); f.reveal();
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("second();") + 2), f.presentation); f.reveal();
   expect(f.opened.at(-1)?.selection.start.line).toBe(2);
   expect(f.navigation.canForward).toBe(false);
   expect(f.data.documents.get("source.ts")?.text).toBe(f.source);
@@ -63,11 +63,11 @@ test("unrelated dirty JSON does not block definitions, but dirty compiler JSON c
   await writeFile(join(f.cwd, "tsconfig.json"), '{"extends":"./compiler-extra.json","compilerOptions":{"noLib":true,"module":"nodenext","moduleResolution":"nodenext"}}');
   await f.data.read("notes.json"); await f.data.read("compiler-extra.json");
   f.data.edit("notes.json", '{"note":"unsaved"}');
-  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open);
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.presentation);
   expect(f.opened.at(-1)?.path).toBe("target.ts"); f.reveal();
   const index = f.navigation.index, count = f.opened.length;
   f.data.edit("compiler-extra.json", '{"compilerOptions":{"strict":true}}');
-  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open);
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.presentation);
   expect(f.opened.length).toBe(count); expect(f.navigation.index).toBe(index);
   expect(f.navigation.message).toContain("compiler-extra.json");
   expect(f.data.documents.get("notes.json")?.text).toBe('{"note":"unsaved"}');
@@ -78,8 +78,8 @@ test("modifier-click navigation returns to the clicked token rather than the old
   const f = await fixture();
   const snapshot = f.snapshot("source.ts", f.source.indexOf("second();") + 2);
   snapshot.position = { line: 2, column: 1 };
-  await f.navigation.define("source.ts", snapshot, f.open); f.reveal();
-  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.open);
+  await f.navigation.define("source.ts", snapshot, f.presentation); f.reveal();
+  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.presentation);
   expect(f.opened.at(-1)?.path).toBe("source.ts");
   expect(f.navigation.pending?.request.selections).toEqual([{ start: snapshot.position, end: snapshot.position, direction: "forward" }]);
   f.reveal();
@@ -87,38 +87,70 @@ test("modifier-click navigation returns to the clicked token rather than the old
 
 test("missing and dirty-stale destinations retain buffers and leave the history index unchanged", async () => {
   const f = await fixture();
-  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open); f.reveal();
-  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.open); f.reveal();
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.presentation); f.reveal();
+  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.presentation); f.reveal();
   const index = f.navigation.index, count = f.opened.length;
   f.data.edit("target.ts", "// unsaved\n" + f.targetText);
-  await f.navigation.travel(1, "source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open);
+  await f.navigation.travel(1, "source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.presentation);
   expect(f.navigation.index).toBe(index); expect(f.opened.length).toBe(count);
   expect(f.data.documents.get("target.ts")?.text).toBe("// unsaved\n" + f.targetText);
   await rm(join(f.cwd, "target.ts"));
-  await f.navigation.travel(1, "source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open);
+  await f.navigation.travel(1, "source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.presentation);
   expect(f.navigation.index).toBe(index); expect(f.opened.length).toBe(count);
   expect(f.data.documents.get("target.ts")?.dirty).toBe(true);
 }, 60_000);
 
 test("foreign-owner and offline history cannot open locations or advance navigation", async () => {
   const f = await fixture();
-  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open); f.reveal();
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.presentation); f.reveal();
   const count = f.opened.length, index = f.navigation.index;
   f.navigation.entries[0] = { ...f.navigation.entries[0]!, hostId: "other-owner" };
-  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.open);
+  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.presentation);
   expect(f.navigation.index).toBe(index); expect(f.opened.length).toBe(count);
   f.navigation.entries[0] = { ...f.navigation.entries[0]!, hostId: "symbol-owner", workspaceIdentity: "replaced-workspace" };
-  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.open);
+  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.presentation);
   expect(f.navigation.index).toBe(index); expect(f.opened.length).toBe(count);
   f.data.setConnected(false);
-  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.open);
+  await f.navigation.travel(-1, "target.ts", f.snapshot("target.ts", 18), f.presentation);
   expect(f.navigation.index).toBe(index); expect(f.opened.length).toBe(count);
 }, 60_000);
 
 test("failed reveal never creates a successful navigation entry", async () => {
   const f = await fixture();
-  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.open);
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), f.presentation);
   const id = f.navigation.pending?.request.id; if (!id) throw new Error(f.navigation.message);
   f.navigation.revealed(id, "Target changed before the native editor attached");
   expect(f.navigation.index).toBe(-1); expect(f.navigation.entries).toEqual([]);
+}, 60_000);
+
+test("a source presentation abandoned while capturing cannot open or commit a location", async () => {
+  const f = await fixture();
+  let current = true;
+  const presentation = { ...f.presentation, isCurrentSource: () => current };
+  const lookup = f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), presentation);
+  current = false; await lookup;
+  expect(f.opened).toEqual([]); expect(f.navigation.pending).toBeUndefined();
+  expect(f.navigation.index).toBe(-1); expect(f.navigation.busy).toBe(false);
+  expect(f.data.documents.get("source.ts")?.text).toBe(f.source);
+}, 60_000);
+
+test("multiple definitions retain the originating presentation until a choice is accepted", async () => {
+  const f = await fixture(), text = "interface Merged { a: number }\ninterface Merged { b: number }\nlet value: Merged;\n";
+  await writeFile(join(f.cwd, "source.ts"), text); await f.data.read("source.ts");
+  let current = true;
+  await f.navigation.define("source.ts", f.snapshot("source.ts", text.lastIndexOf("Merged") + 2), { ...f.presentation, isCurrentSource: () => current });
+  expect(f.navigation.choice?.definitions.length).toBe(2);
+  current = false; await f.navigation.choose(0);
+  expect(f.opened).toEqual([]); expect(f.navigation.pending).toBeUndefined();
+  expect(f.navigation.index).toBe(-1); expect(f.navigation.busy).toBe(false);
+}, 60_000);
+
+test("an accepted destination may deactivate the source without cancelling native reveal", async () => {
+  const f = await fixture();
+  let current = true;
+  const presentation = { isCurrentSource: () => current, open: (location: SymbolLocation) => { current = false; f.presentation.open(location); } };
+  await f.navigation.define("source.ts", f.snapshot("source.ts", f.source.indexOf("first();") + 2), presentation);
+  expect(f.opened.at(-1)?.path).toBe("target.ts"); f.reveal();
+  expect(f.navigation.index).toBe(1); expect(f.navigation.canBack).toBe(true);
+  expect(f.navigation.pending).toBeUndefined(); expect(f.navigation.busy).toBe(false);
 }, 60_000);
