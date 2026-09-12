@@ -1,3 +1,4 @@
+import { normalizeAccelerator } from "../../../../packages/shared/src/command-keybindings";
 import { resolveEffectiveApplicationBindings, type PrimaryNumberShortcutTarget } from "../../../../packages/shared/src/application-commands";
 import { commandKeymapNumberTarget, type CommandKeymapPreferenceRecord } from "../../../../packages/shared/src/preferences-v2";
 import type { AppShortcut } from "./app-shortcuts";
@@ -23,7 +24,7 @@ export const APP_COMMAND_BINDING_OWNERS = {
 export function appCommandShortcutLabel(bindings: Partial<Record<AppShortcut, readonly string[]>>, owner: AppShortcut): string | undefined {
   const key = bindings[owner]?.[0];
   if (!key) return;
-  return key.split(" ").map(stroke => {
+  return normalizeAccelerator(key).split(" ").map(stroke => {
     const parts = stroke.split("+"), key = parts.pop()!;
     const modifiers = [parts.includes("Ctrl") && "⌃", parts.includes("Alt") && "⌥", parts.includes("Shift") && "⇧", (parts.includes("Command") || parts.includes("CmdOrCtrl")) && "⌘"];
     return modifiers.filter(Boolean).join("") + key;

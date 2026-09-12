@@ -54,3 +54,14 @@ test("command menu, chat drill-in and folder action have distinct configurable o
   expect(readAppCommandBindings(bad, true).error).toBeTruthy();
   expect(readAppCommandBindings(bad, true).bindings).toEqual({});
 });
+
+test("terminal hint retains the native Control modifier and displays normalized custom alternatives", () => {
+  const defaults = readAppCommandBindings(undefined, true);
+  expect(appCommandShortcutLabel(defaults.bindings, "terminal")).toBe("⌃`");
+  const saved = record([{ command: "toggleTerminal", keys: ["Control+Option+T", "Command+J"] }]);
+  const before = JSON.stringify(saved);
+  expect(appCommandShortcutLabel(readAppCommandBindings(saved, true).bindings, "terminal")).toBe("⌃⌥T");
+  expect(appCommandShortcutLabel({ terminal: ["Control+K Control+T"] }, "terminal")).toBe("⌃K ⌃T");
+  expect(appCommandShortcutLabel(readAppCommandBindings(record([{ command: "toggleTerminal", keys: [] }]), true).bindings, "terminal")).toBeUndefined();
+  expect(JSON.stringify(saved)).toBe(before);
+});
