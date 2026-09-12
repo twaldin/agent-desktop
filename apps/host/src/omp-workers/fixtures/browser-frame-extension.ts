@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { Target } from "puppeteer-core";
+type WorkerTab = Extract<NonNullable<ReturnType<typeof import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor").getTab>>, { backend: "worker" }>;
+type BrowserTarget = ReturnType<WorkerTab["browser"]["browser"]["targets"]>[number];
 
-async function targetId(target: Target) {
+async function targetId(target: BrowserTarget) {
   const raw = target as unknown as { _targetId?: unknown };
   if (typeof raw._targetId === "string") return raw._targetId;
   const session = await target.createCDPSession();
@@ -13,7 +14,7 @@ async function pageState(name: string) {
   const supervisor = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor");
   const tab = supervisor.getTab(name);
   if (!tab || tab.backend !== "worker") throw new Error("Native browser contract tab is unavailable");
-  let target: Target | undefined;
+  let target: BrowserTarget | undefined;
   for (const candidate of tab.browser.browser.targets()) if (await targetId(candidate) === tab.targetId) { target = candidate; break; }
   const page = await target?.page();
   if (!page) throw new Error("Native browser contract page is unavailable");
@@ -49,7 +50,7 @@ export default function (pi: ExtensionAPI) {
       const { getTab } = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor");
       const tab = getTab(name);
       if (!tab || tab.backend !== "worker") throw new Error("Native browser contract tab is unavailable");
-      let target: Target | undefined;
+      let target: BrowserTarget | undefined;
       for (const candidate of tab.browser.browser.targets()) if (await targetId(candidate) === tab.targetId) { target = candidate; break; }
       const page = await target?.page();
       if (!page) throw new Error("Native browser contract page is unavailable");
