@@ -15,6 +15,11 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const vision = { provider: "image-contract", id: "vision" };
 
+async function waitForEvents(events: WorkerEvent[], types: WorkerEvent["type"][]) {
+  const deadline = Date.now() + 7_000;
+  while (!types.every(type => events.some(event => event.type === type)) && Date.now() < deadline) await Bun.sleep(5);
+}
+
 async function fixture(config = "", worker = "no-provider-worker.ts") {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "agent-desktop-image-worker-")));
   const agentDir = path.join(root, "agent"), cwd = path.join(root, "project"), gates = path.join(root, "gates");
@@ -54,6 +59,7 @@ test("actual native worker records an image-only ordered turn, normalization rec
     expect(user.text).toBe("");
     expect(user.content?.filter(block => block.type === "image").map(block => block.sha256)).toEqual(accepted.images!.map(image => image.nativeSha256));
     expect(JSON.stringify(before)).not.toContain(first.data.toBase64());
+    await waitForEvents(events, ["message_start", "message_end"]);
     expect(JSON.stringify(events)).not.toContain(first.data.toBase64());
     expect(events.some(event => event.type === "message_start")).toBe(true);
     expect(events.some(event => event.type === "message_end")).toBe(true);

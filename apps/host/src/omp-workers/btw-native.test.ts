@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WorkerRuntime } from "./runtime";
+import type { WorkerEvent } from "./events";
 import type { NativeBtwStatus } from "../../../../packages/shared/src/btw";
 
 async function waitFile(file: string) {
@@ -18,6 +19,11 @@ async function waitBtw(session: Awaited<ReturnType<WorkerRuntime["create"]>>, st
   expect(snapshot?.status).toBe(status);
   return snapshot!;
 }
+async function waitEvent(events: WorkerEvent[], after: number, type: WorkerEvent["type"]) {
+  const deadline = Date.now() + 7_000;
+  while (!events.slice(after).some(event => event.type === type) && Date.now() < deadline) await Bun.sleep(5);
+  expect(events.slice(after).some(event => event.type === type)).toBe(true);
+}
 
 test("real native ephemeral turns inherit in-flight context without mutating or aborting the main lineage", async () => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "agent-desktop-btw-worker-")));
@@ -27,14 +33,16 @@ test("real native ephemeral turns inherit in-flight context without mutating or 
   const runtime = new WorkerRuntime({ agentDir, workerPath: fileURLToPath(new URL("./fixtures/no-provider-worker.ts", import.meta.url)),
     environment: { HOME: root, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, BTW_CONTRACT_GATES: gates, TERM: "dumb" } });
   try {
-    const session = await runtime.create({ cwd, interactions: true, approvalOverride: "yolo" });
+    const events: WorkerEvent[] = [];
+    const session = await runtime.create({ cwd, interactions: true, approvalOverride: "yolo", onEvent: event => events.push(event) });
     const model = { provider: "btw-contract", id: "controlled" };
     await writeFile(path.join(gates, "1.release"), "");
     const first = session.startPrompt("Persistent user context", { model });
     await first.accepted; expect(await first.completion).toBe(true);
 
+    const parentEventStart = events.length;
     const parent = session.startPrompt("Parent remains in flight", { model });
-    await parent.accepted; await waitFile(path.join(gates, "2.started"));
+    await parent.accepted; await waitFile(path.join(gates, "2.started")); await waitEvent(events, parentEventStart, "message_update");
     expect(session.isStreaming).toBe(true);
     const journalBeforeSide = await readFile(session.sessionFile, "utf8");
 
