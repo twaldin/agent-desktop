@@ -153,3 +153,21 @@ test("a post-save notification failure retains the map and reports an unknown ou
   expect(() => local.sync.mutateCommandKeymap({ expectedRevision: null, edit: { type: "reset-all" } }, definitions)).toThrow("changed");
   expect(local.writes()).toBe(1);
 });
+
+test("pinned sidebar sorting persists in v2 and remains absent from legacy projections", async () => {
+  const local = replica(), modern = replica();
+  const record = local.sync.store.put({ key: "sidebar.pinnedSort", value: "priority" });
+  expect(local.sync.snapshot().records).toEqual([]);
+  expect(local.sync.snapshotV2().records).toContainEqual(record);
+  wire((url, init) => {
+    expect(url).toBe("https://modern.invalid/v2/preferences/merge");
+    const body = JSON.parse(String(init?.body));
+    expect(body.records).toContainEqual(record);
+    return Response.json(modern.sync.mergeV2(body));
+  });
+  await local.sync.sync([{ hostId: "modern", origin: "https://modern.invalid", preferencesSyncVersion: 2 }]);
+  expect(modern.sync.snapshotV2().records).toContainEqual(record);
+  const tombstone = local.sync.store.put({ key: "sidebar.pinnedSort", deleted: true });
+  expect(local.sync.snapshot().records).toEqual([]);
+  expect(local.sync.snapshotV2().records).toContainEqual(tombstone);
+});

@@ -5,6 +5,8 @@ import {
 } from "./preferences";
 
 export const COMMAND_KEYMAP_PREFERENCE = "general.commandKeymap" as const;
+/** Pinned ordering is v2-only so legacy parsers never receive it. */
+export const PINNED_SIDEBAR_SORT_PREFERENCE = "sidebar.pinnedSort" as const;
 export type PrimaryNumberTarget = "tabs" | "sidebar";
 export type CommandKeymapPreference = {
   /** The viewing desktops are macOS, including when the owning service runs on Linux. */
@@ -103,7 +105,7 @@ export function parsePreferencesSnapshotV2(value: unknown): PreferencesSnapshotV
 /** This is an outgoing projection, never a replacement for the full persisted state. */
 export function projectLegacyPreferences(value: PreferencesSnapshotV2): PreferencesSnapshot {
   const snapshot = parsePreferencesSnapshotV2(value);
-  return parsePreferencesSnapshot({ version: 1, records: snapshot.records.filter(record => record.key !== COMMAND_KEYMAP_PREFERENCE) });
+  return parsePreferencesSnapshot({ version: 1, records: snapshot.records.filter(record => record.key !== COMMAND_KEYMAP_PREFERENCE && record.key !== PINNED_SIDEBAR_SORT_PREFERENCE) });
 }
 
 /** Read legacy stored bytes without rewriting them; unknown versions still fail closed. */

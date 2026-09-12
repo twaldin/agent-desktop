@@ -146,3 +146,14 @@ test("accepted question delivery does not hide a different open permission from 
   expect(pending.questionDeliveryPending).toBe(true);
   expect(ranked()).toEqual(["unread", "pending"]);
 });
+
+test("pinned sort is independent from the Recents chat sort", () => {
+  const { data, groups, organization } = fixture();
+  groups[0]!.hostState.projects = []; groups[1]!.hostState.projects = [];
+  groups[0]!.hostState.sessions = [session("home", "older", undefined, false, 1), session("home", "newer", undefined, false, 20)];
+  organization.set("session:home:older", { sectionId: "pinned", position: 0 });
+  organization.set("session:home:newer", { sectionId: "pinned", position: 1024 });
+  const pinnedSort = () => "updated_at" as const;
+  const layout = sidebarLayout({ ...data, pinnedSort, get: () => ({ grouping: "list", projectSort: "manual", chatSort: "manual" }) }, groups, "", false, new Set());
+  expect(layout.pinned.map(item => item.value.id)).toEqual(["newer", "older"]);
+});
