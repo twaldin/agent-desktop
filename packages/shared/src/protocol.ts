@@ -19,6 +19,7 @@ export * from "./session-mcp";
 export * from "./notifications";
 export * from "./queued-messages";
 export * from "./queued-submissions";
+export * from "./task-location";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from './integrations';
 import type { NativeMarketplaceCatalog, NativePluginAcquisition, NativePluginAcquisitionReceipt, NativePluginAcquisitionRequest } from './plugin-acquisition';
 export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation, NativeMcpServer } from './integrations';
@@ -215,6 +216,7 @@ export interface HostState {
   gitSubmissions?: { commandVersion: 10 };
   sessionSearch?: { version: 1 };
   queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13 } };
+  taskLocations?: { version: 1; commandVersion: 14 };
   repositoryWatches?: { version: 1 };
   branchQueries?: { version: 1 };
   commandKeybindings?: { commandVersion: 11; snapshotVersion: 2; numberTargetVersion?: 1 };
@@ -224,6 +226,8 @@ export interface HostState {
 }
 
 export type HostCommand =
+  | { type: "session.location.move"; sessionId: string; expectedRevision: string; target: import("./task-location").TaskLocationMoveTarget }
+  | { type: "session.location.resume"; sessionId: string; operationId: string; expectedRevision: string }
   | { type: "preferences.put"; change: PreferenceChange }
   | { type: "preferences.keymap.mutate"; mutation: CommandKeymapMutation }
   | { type: "workspace.mutate"; target: WorkspaceTarget; action: WorkspaceMutation }
@@ -255,7 +259,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
 }
 
 export interface ImageAdmission {
@@ -271,7 +275,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult }
+  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt }
   | { ok: false; commandId: string; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -283,6 +287,7 @@ export type HostEvent =
   | { sequence: number; type: "workspace"; target: WorkspaceTarget; repositoryChange?: GitRepositoryChange }
   | { sequence: number; type: "preferences" }
   | { sequence: number; type: "device-access" }
+  | { sequence: number; type: "task-location"; sessionId: string }
   | { sequence: number; type: "settings"; target?: WorkspaceTarget; sessionId?: string; scope?: "global" | "project" }
   | { sequence: number; type: "connection"; connected: boolean; error?: string };
 
@@ -410,6 +415,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   cancelSessionSearch?(requestId: string, hostId: string): Promise<void>;
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   getQueuedMessages?(sessionId: string, hostId: string): Promise<import("./queued-messages").NativeQueuedMessagesResponse>;
+  getTaskLocation?(sessionId: string, hostId?: string): Promise<import("./task-location").TaskLocationSnapshot>;
   mutateQueuedMessages?(sessionId: string, mutation: import("./queued-messages").NativeQueuedMessageMutation, hostId: string): Promise<import("./queued-messages").NativeQueuedMessageMutationReceipt>;
   subscribeQueuedMessages?(listener: (event: { hostId: string; sessionId: string }) => void): () => void;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;

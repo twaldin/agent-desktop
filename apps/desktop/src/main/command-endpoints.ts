@@ -3,8 +3,9 @@ import type { CommandEnvelope, CommandResult, OmpSessionControlMutation } from "
 import { HostRequestError } from "./host-transport";
 
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
-export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" {
+export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" | "/v14/commands" {
   const command = envelope.command;
+  if (envelope.commandVersion === 14 || command.type === "session.location.move" || command.type === "session.location.resume") return "/v14/commands";
   if (envelope.commandVersion === 13 || command.type === "session.follow-up") return "/v13/commands";
   if (envelope.commandVersion === 12 || hasRemoteWorktreeIntent(command)) return "/v12/commands";
   if (envelope.commandVersion === 11 || command.type === "preferences.keymap.mutate") return "/v11/commands";
@@ -33,6 +34,7 @@ export async function requestVersionedCommand(request: (path: string, body: unkn
   const endpoint = commandEndpoint(envelope);
   try { return await request(endpoint, envelope); }
   catch (error) {
+    if (endpoint === '/v14/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:'TASK_LOCATION_PROTOCOL_UNSUPPORTED',message:'Update the owning host to move existing tasks between local and managed worktrees. This request was not accepted.'}} satisfies CommandResult;
     // A missing endpoint establishes that this versioned request was rejected.
     // A timeout or any other failure retains ordinary uncertain-delivery rules.
     if (endpoint === '/v13/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return { ok: false, commandId: envelope.id, error: { code: 'FOLLOW_UP_PROTOCOL_UNSUPPORTED', message: 'Update the owning host to queue active-turn follow-ups. This request was not accepted.' } } satisfies CommandResult;

@@ -35,13 +35,13 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
-  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | undefined;
-  return { ...parseCommandBody(value, version ?? (transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | undefined;
+  return { ...parseCommandBody(value, version ?? (transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
 }
-function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13): CommandEnvelope {
+function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14): CommandEnvelope {
   const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
@@ -59,6 +59,20 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
   const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
   const promptText = () => hasContext && input.text === "" ? "" : text(input.text, "prompt", hasContext ? 500_000 : 4_000_000);
   switch (type) {
+    case "session.location.move": {
+      if ((commandVersion ?? 0) < 14 || Object.keys(input).some(key => !["type","sessionId","expectedRevision","target"].includes(key))) throw new Error("Task location changes require command version 14.");
+      const target = object(input.target), kind = target.kind;
+      if (kind !== "local" && kind !== "worktree") throw new Error("Invalid task location target.");
+      if (Object.keys(target).some(key => !["kind","branch",...(kind==="worktree"?["localCheckoutBranch"]:[])].includes(key))) throw new Error("Invalid task location target fields.");
+      const parsedTarget: import("@agent-desktop/shared").TaskLocationMoveTarget = kind === "local"
+        ? { kind: "local", branch: text(target.branch, "destination branch") }
+        : { kind: "worktree", branch: text(target.branch, "destination branch"), localCheckoutBranch: text(target.localCheckoutBranch, "local checkout branch") };
+      return { id, command: { type, sessionId: text(input.sessionId,"session ID"), expectedRevision: text(input.expectedRevision,"location revision",500), target: parsedTarget } };
+    }
+    case "session.location.resume": {
+      if ((commandVersion ?? 0) < 14 || Object.keys(input).some(key => !["type","sessionId","operationId","expectedRevision"].includes(key))) throw new Error("Task location recovery requires command version 14.");
+      return { id, command: { type, sessionId:text(input.sessionId,"session ID"), operationId:text(input.operationId,"location operation ID"), expectedRevision:text(input.expectedRevision,"location revision",500) } };
+    }
     case "skill.file.write": {
       if (Object.keys(input).some(key => !["type", "ref", "expectedRevision", "text", "bom"].includes(key))
         || typeof input.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedRevision)

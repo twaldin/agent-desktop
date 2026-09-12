@@ -404,6 +404,8 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       }
       case "getQueuedMessages": respond(true, requireSession().getQueuedMessages()); break;
       case "mutateQueuedMessages": respond(true, requireSession().mutateQueuedMessages(message.args.mutation)); break;
+      case "assertTaskLocationReady": requireSession().assertTaskLocationReady(); respond(true); break;
+      case "moveSession": respond(true, await requireSession().moveSession(message.args.cwd)); break;
       case "abort": await requireSession().abort(); respond(true); break;
       case "setModel": await requireSession().setModel(message.args.model); respond(true); break;
       case "listAccountChoices": respond(true, await requireSession().listAccountChoices()); break;

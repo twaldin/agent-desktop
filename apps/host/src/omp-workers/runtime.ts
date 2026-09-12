@@ -40,7 +40,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -60,6 +60,8 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   getBtw(): Promise<NativeBtwSnapshot | null>;
   getQueuedMessages(): Promise<import("../../../../packages/shared/src/queued-messages").NativeQueuedMessagesSnapshot>;
   mutateQueuedMessages(mutation: import("../../../../packages/shared/src/queued-messages").NativeQueuedMessageMutation): Promise<import("../../../../packages/shared/src/queued-messages").NativeQueuedMessageMutationReceipt>;
+  assertTaskLocationReady(): Promise<void>;
+  moveSession(cwd: string): Promise<{ id: string; cwd: string; sessionFile: string }>;
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
   cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
@@ -723,6 +725,8 @@ export class WorkerRuntime {
       startFollowUp: (text, delivery, expectedApprovalMode) => client.startFollowUp(text, delivery, expectedApprovalMode),
       getQueuedMessages: () => client.request({ operation: "getQueuedMessages" }),
       mutateQueuedMessages: mutation => client.request({ operation: "mutateQueuedMessages", args: { mutation } }),
+      assertTaskLocationReady: () => client.request({ operation: "assertTaskLocationReady" }),
+      moveSession: cwd => client.request({ operation: "moveSession", args: { cwd } }, 60_000),
       abort: () => client.request({ operation: "abort" }),
       setModel: model => client.request({ operation: "setModel", args: { model } }),
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),

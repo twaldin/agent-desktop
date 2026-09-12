@@ -6,6 +6,8 @@ import type { WorkspaceState } from "./workspace-state";
 import type { BranchSwitchRequest } from "./BranchSwitchDialog";
 import { BranchSelector } from "./BranchSelector";
 import { GitSubmissionButton } from "./GitSubmissionDialog";
+import { TaskLocationControl } from "./TaskLocationControl";
+import type { TaskLocationActions, TaskLocationSnapshot } from "./task-location";
 import "./environment-card.css";
 
 export interface EnvironmentSource { id: string; label: string; kind: "image" | "file"; onOpen(): void }
@@ -17,9 +19,11 @@ export interface EnvironmentCardProps {
   collapsedSections: readonly EnvironmentSectionKey[]; onToggleSection(key: EnvironmentSectionKey): void;
   showEmptySources?: boolean; actions?: ReactNode; compoundGit?: boolean;
   sideChats?: readonly { id: string; title: string; unread: boolean; onOpen(): void }[];
+  /** Existing sessions never fall back to the global host picker while their host location is loading or unavailable. */
+  taskLocation?: { snapshot: TaskLocationSnapshot; actions: TaskLocationActions } | { state: "loading" | "unavailable"; reason?: string };
 }
 
-export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [] }: EnvironmentCardProps) {
+export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [], taskLocation }: EnvironmentCardProps) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [expandedSources, setExpandedSources] = useState(false);
   useEffect(() => workspace.subscribe(redraw), [workspace]);
@@ -34,7 +38,12 @@ export function EnvironmentCard({ hostName, cwd, local, connected, workspace, ac
   return <aside className="environment-card" aria-label="Environment summary">
     <SummarySection {...section("environment")} title="Environment" actions={actions}>
       <button className="environment-row" disabled={!status} onClick={onReview} title={status ? `${changed.size} files${staged.length ? ` · ${staged.length} staged` : ""}${conflict ? " · conflicts" : ""}` : "Changes unavailable"}><Icon name="sliders"/><span>Changes</span></button>
-      <div className="environment-row environment-host"><button onClick={onHost} title={`${connected ? "" : "Offline · "}${cwd || hostName}`}><Icon name="laptop"/><span>{local ? "Local" : hostName}</span></button><button className="environment-row-action" aria-label="Open terminal" title="Open terminal" disabled={!connected} onClick={onTerminal}><Icon name="terminal"/></button></div>
+      <div className="environment-row environment-host">{taskLocation && "snapshot" in taskLocation
+        ? <TaskLocationControl snapshot={taskLocation.snapshot} actions={taskLocation.actions} connected={connected}/>
+        : taskLocation
+          ? <button className="environment-location-unavailable" disabled title={taskLocation.reason}><Icon name="laptop"/><span>{taskLocation.state === "loading" ? "Loading task location…" : "Task location unavailable"}</span></button>
+        : <button onClick={onHost} title={`${connected ? "" : "Offline · "}${cwd || hostName}`}><Icon name="laptop"/><span>{local ? "Local" : hostName}</span></button>}
+        <button className="environment-row-action" aria-label="Open terminal" title="Open terminal" disabled={!connected} onClick={onTerminal}><Icon name="terminal"/></button></div>
       {workspace.gitAvailability !== "not-repository" && <BranchSelector onCheckoutBlocked={onCheckoutBlocked} workspace={workspace} connected={connected} branchPrefix={branchPrefix} onOpenGitSettings={onOpenGitSettings} variant="environment" repositoryName={cwd.split(/[\\/]/).filter(Boolean).at(-1)}/>}
       {compoundGit ? <GitSubmissionButton data={workspace} className="environment-row" onOpen={onCommit}/> : <button className="environment-row" disabled={commitDisabled} onClick={onCommit} title={commitDisabled ? commitReason : `Commit ${staged.length} staged ${staged.length === 1 ? "file" : "files"}`}><Icon name="check"/><span>Commit</span></button>}
     </SummarySection>

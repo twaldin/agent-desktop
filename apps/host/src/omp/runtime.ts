@@ -10,17 +10,22 @@ import path from "node:path";
 import { goalControlState, parseNativeBrowserTabMetadata, type DetachedQuestionSnapshot, type GoalMutationRequest, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeGoalActivity, type NativeSessionActivity, type ResolveDetachedQuestionReceipt, type ResolveDetachedQuestionRequest, type TranscriptMessage } from "@agent-desktop/shared";
 import { createHash } from "node:crypto";
 import {
-  AgentRegistry, createAgentSession, discoverAuthStorage, getAgentDir,
+  AgentRegistry, createAgentSession, discoverAuthStorage, discoverSlashCommands, getAgentDir,
   ModelRegistry, SessionManager, Settings,
   loadSessionExtensions,
   type AgentSession, type AgentSessionEvent, type AuthStorage,
 } from "@oh-my-pi/pi-coding-agent";
+import { applyProviderGlobalsFromSettings } from "@oh-my-pi/pi-coding-agent/config/provider-globals";
+import { clearClaudePluginRootsCache } from "@oh-my-pi/pi-coding-agent/discovery/helpers";
+import { discoverTitleSystemPromptFile, resolvePromptInput } from "@oh-my-pi/pi-coding-agent/system-prompt";
+import { setProjectDir } from "@oh-my-pi/pi-utils";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { AUTO_THINKING, parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import { initThemeSync } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
 import { invalidate } from "@oh-my-pi/pi-coding-agent/capability/fs";
 import { reset as resetCapabilityCache } from "@oh-my-pi/pi-coding-agent/discovery";
+import { reset as resetCapabilities } from "@oh-my-pi/pi-coding-agent/capability";
 import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
 import { TranscriptMirror, projectGoalCompletions } from "./transcript";
 import { beginNativePrompt, type OmpPromptRun, type OmpPromptReceipt } from "./prompt";
@@ -119,6 +124,8 @@ export interface OmpSession {
   startFollowUp(text: string, delivery: "follow-up" | "steer", expectedApprovalMode?: OmpApprovalMode): OmpQueuedSubmissionRun;
   getQueuedMessages(): NativeQueuedMessagesSnapshot;
   mutateQueuedMessages(mutation: NativeQueuedMessageMutation): NativeQueuedMessageMutationReceipt;
+  assertTaskLocationReady(): void;
+  moveSession(cwd: string): Promise<{ id: string; cwd: string; sessionFile: string }>;
   abort(): Promise<void>;
   setModel(model: ModelChoice): Promise<void>;
   listAccountChoices(): Promise<SessionAccountList>;
@@ -521,6 +528,11 @@ export class OmpRuntime {
         assertSessionActive();
         if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
+      const assertTaskLocationReady = () => {
+        assertIdle();
+        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size) throw new Error("Resolve queued messages, questions, side answers, MCP reads, and interrupts before moving this task.");
+      };
+      const taskLocationOutcomeUnknown = (message: string) => Object.assign(new Error(message), { name: "TaskLocationOutcomeUnknown", code: "OUTCOME_UNKNOWN" });
       const trackMcpMutation = <T>(run: Promise<T>) => {
         mcpMutation = run;
         const clear = () => { if (mcpMutation === run) mcpMutation = undefined; };
@@ -956,6 +968,29 @@ export class OmpRuntime {
         },
         getQueuedMessages: () => { assertSessionActive(); return queuedMessages.snapshot(); },
         mutateQueuedMessages: mutation => { assertSessionActive(); return queuedMessages.mutate(mutation); },
+        assertTaskLocationReady,
+        moveSession: async cwd => {
+          assertTaskLocationReady();
+          const destination = await requireDirectory(cwd), source = manager.getCwd();
+          if (destination === source) return { id: session.sessionId, cwd: source, sessionFile: session.sessionFile! };
+          await session.settings.flush(); await manager.flush();
+          const saved = manager.captureState();
+          const rescope = async (next: string) => {
+            setProjectDir(next); await session.settings.reloadForCwd(next);
+            applyProviderGlobalsFromSettings(session.settings); clearClaudePluginRootsCache();
+            session.setTitleSystemPrompt(await resolvePromptInput(discoverTitleSystemPromptFile(next), "title system prompt"));
+            resetCapabilities(); await session.refreshSkills();
+            session.setSlashCommands(await discoverSlashCommands({ cwd: next, extensionRoots: session.effectiveExtensionRoots }));
+          };
+          try { await session.moveSession(destination, path.dirname(session.sessionFile!)); await rescope(destination); }
+          catch (error) {
+            try { await manager.rollbackMove(saved); await rescope(source); }
+            catch (restoreError) { throw taskLocationOutcomeUnknown(`Native task location changed but rollback could not be verified: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`); }
+            throw error;
+          }
+          if (session.sessionId !== handle.id || manager.getCwd() !== destination) throw taskLocationOutcomeUnknown("Native task identity or working directory changed unexpectedly.");
+          return { id: session.sessionId, cwd: destination, sessionFile: session.sessionFile! };
+        },
         abort: async () => {
           assertSessionActive(); admissionAbort?.abort(); ui?.cancelAll("aborted"); mcp.cancelAuthorization();
           interruptEpoch++;

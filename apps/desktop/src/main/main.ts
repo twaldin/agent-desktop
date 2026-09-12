@@ -486,6 +486,11 @@ ipcMain.handle("host:messages", (event, sessionId: string, hostId?: string) => {
   if (typeof sessionId !== "string" || sessionId.length > 200) throw new Error("Invalid session ID.");
   return request(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`, undefined, hostId);
 });
+ipcMain.handle("host:task-location", (event, sessionId: string, hostId?: string) => {
+  assertTrustedSender(event);
+  if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200 || sessionId.includes("\0")) throw new Error("Invalid task location owner.");
+  return request(`/v1/sessions/${encodeURIComponent(sessionId)}/task-location`, undefined, hostId);
+});
 ipcMain.handle("host:queued-messages", async (event, sessionId: string, hostId: string) => {
   assertTrustedSender(event); return requestQueuedMessages(await endpointFor(hostId), sessionId);
 });
