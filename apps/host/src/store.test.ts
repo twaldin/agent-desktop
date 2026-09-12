@@ -108,6 +108,32 @@ describe("HostStore persistence and recovery", () => {
     expect(store.listProjects()).toHaveLength(1);
   });
 
+  test("catalog removal retains existing project ownership through SQLite reopen and re-add restores it", () => {
+    const path = directory(), projectPath = join(path, "project"), sessionFile = join(path, "session.jsonl");
+    mkdirSync(projectPath);
+    const first = open(path), project = first.addProject({ path: projectPath, name: "Before removal" });
+    const savedDraft = first.putDraft({ ...draft, projectId: project.id }, 0);
+    expect(savedDraft.ok).toBe(true);
+    first.upsertSession({ id: "retained-session", hostId: first.host.id, projectId: project.id, cwd: project.path,
+      title: "Retained", status: "idle", sessionFile, model: null, createdAt: 1, updatedAt: 1, archived: false });
+    const removed = first.removeProject(project.id);
+    expect(removed.removedAt).toEqual(expect.any(Number));
+    expect(first.listProjects()).toEqual([]);
+    expect(first.getProject(project.id)).toMatchObject({ id: project.id, path: project.path, removedAt: removed.removedAt });
+    expect(first.getCataloguedProject(project.id)).toBeUndefined();
+    expect(first.getSession("retained-session")?.projectId).toBe(project.id);
+    expect(first.getDraft(draft.id)?.projectId).toBe(project.id);
+    close(first);
+    const reopened = open(path);
+    expect(reopened.listProjects()).toEqual([]);
+    expect(reopened.getSession("retained-session")).toMatchObject({ projectId: project.id, cwd: project.path, sessionFile });
+    expect(reopened.getDraft(draft.id)?.projectId).toBe(project.id);
+    expect(reopened.upsertSession({ ...reopened.getSession("retained-session")!, title: "Still admitted" }).title).toBe("Still admitted");
+    const restored = reopened.addProject({ path: projectPath, name: "Restored name" });
+    expect(restored).toEqual({ ...project, name: "Restored name" });
+    expect(reopened.listProjects()).toEqual([restored]);
+  });
+
   test("a stale draft write preserves both complete versions durably", () => {
     const path = directory();
     const first = open(path);

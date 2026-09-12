@@ -1,6 +1,7 @@
 import { createBrowserCloseBridge } from "./browser-close-preload";
 import { createBrowserObservationBridge } from "./browser-observation-preload";
 import { createDraftBrowserBridge } from "./draft-browser-preload";
+import { createProjectRevealBridge } from "./project-reveal-preload";
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge, DesktopEvent, DesktopTerminalEvent, NativeTerminalInvalidation } from "@agent-desktop/shared";
 
@@ -186,6 +187,7 @@ const bridge: DesktopBridge = {
   controlBrowser: (sessionId, request, hostId) => ipcRenderer.invoke("host:browser-control", sessionId, request, hostId),
   getBrowserFrame: (sessionId, target, hostId) => ipcRenderer.invoke("host:browser-frame", sessionId, target, hostId),
   chooseDirectory: () => ipcRenderer.invoke("desktop:directory"),
+  revealProjectDirectory: createProjectRevealBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   subscribe: listener => {
     const callback = (_event: Electron.IpcRendererEvent, message: DesktopEvent) => listener(message);
     ipcRenderer.on("host:event", callback);

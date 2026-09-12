@@ -1,6 +1,7 @@
 import { registerBrowserCloseHandlers } from "./browser-close-ipc";
 import { registerBrowserObservationHandlers } from "./browser-observation-ipc";
 import { registerDraftBrowserHandlers } from "./draft-browser-ipc";
+import { registerProjectRevealHandler } from "./project-reveal-ipc";
 import { BranchQueryConnection } from "./branch-query-connection";
 import { BranchQueryWindows } from "./branch-query-windows";
 import { attachWorkspaceQueryEvents } from "./workspace-query-events";
@@ -877,6 +878,8 @@ ipcMain.handle("desktop:directory", async event => {
   const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
+registerProjectRevealHandler(ipcMain, assertTrustedSender, () => connection?.hostId, endpointFor,
+  endpoint => requestHost(endpoint, "/v1/state") as Promise<HostState>, path => shell.openPath(path));
 
 // Small, local-only synchronous IPC: preload restores presentation before React
 // mounts, and a close cannot outrun the acknowledged atomic save.

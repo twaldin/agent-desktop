@@ -187,6 +187,27 @@ describe("isolated host transport", () => {
     expect((await state(reopened)).projects).toHaveLength(1);
   });
 
+  test("project rename and catalog removal preserve existing sessions and reject a new session", async () => {
+    const options = await isolatedOptions(), host = await start(options);
+    const added = await command(host, { id: "project-add", command: { type: "project.add", path: options.discoveryDirectory, name: "Original" } });
+    expect(added.ok).toBe(true);
+    if (!added.ok || !added.value || !("path" in added.value)) throw new Error("Project add failed");
+    const project = added.value;
+    const renamed = await command(host, { id: "project-rename", command: { type: "project.rename", projectId: project.id, name: "Renamed" } });
+    expect(renamed).toMatchObject({ ok: true, value: { id: project.id, name: "Renamed" } });
+    host.store.upsertSession({ id: "existing-session", hostId: host.store.host.id, projectId: project.id, cwd: project.path,
+      title: "Existing", status: "idle", sessionFile: join(options.dataDirectory, "existing.jsonl"), model: null, createdAt: 1, updatedAt: 1, archived: false });
+    expect(host.store.putDraft({ ...initialDraft, projectId: project.id }, 0).ok).toBe(true);
+    const removed = await command(host, { id: "project-remove", command: { type: "project.remove", projectId: project.id } });
+    expect(removed).toMatchObject({ ok: true, value: { id: project.id, removedAt: expect.any(Number) } });
+    expect((await state(host)).projects).toEqual([]);
+    expect(host.store.getSession("existing-session")?.projectId).toBe(project.id);
+    expect(host.store.getDraft(initialDraft.id)?.projectId).toBe(project.id);
+    const rejected = await command(host, { id: "removed-project-new-session", command: { type: "session.create", projectId: project.id } });
+    expect(rejected).toMatchObject({ ok: false, error: { code: "COMMAND_FAILED", message: expect.stringContaining("selected project") } });
+    expect(host.store.getDraft(initialDraft.id)?.projectId).toBe(project.id);
+  });
+
   test("concurrent HTTP draft edits preserve both versions and failed sends retain the draft", async () => {
     const host = await start(await isolatedOptions());
     const [first, second] = await Promise.all([

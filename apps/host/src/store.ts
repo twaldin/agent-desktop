@@ -289,7 +289,7 @@ export class HostStore {
 
   listProjects(): Project[] {
     return this.db.query<JsonRow, []>("SELECT data FROM projects ORDER BY rowid").all()
-      .map(({ data }) => JSON.parse(data) as Project);
+      .map(({ data }) => JSON.parse(data) as Project).filter(project => project.removedAt === undefined);
   }
 
   getProject(id: string): Project | undefined {
@@ -297,12 +297,24 @@ export class HostStore {
     return row ? JSON.parse(row.data) as Project : undefined;
   }
 
+  getCataloguedProject(id: string): Project | undefined {
+    const project = this.getProject(id);
+    return project?.removedAt === undefined ? project : undefined;
+  }
+
   addProject(input: { path: string; name?: string }): Project {
     const path = realpathSync(input.path);
     if (!statSync(path).isDirectory()) throw new Error("Project path must be a directory");
     return this.db.transaction(() => {
       const existing = this.db.query<JsonRow, [string]>("SELECT data FROM projects WHERE path = ?").get(path);
-      if (existing) return JSON.parse(existing.data) as Project;
+      if (existing) {
+        const project = JSON.parse(existing.data) as Project;
+        if (project.removedAt === undefined) return project;
+        const restored: Project = { ...project, name: input.name?.trim() || project.name };
+        delete restored.removedAt;
+        this.db.query("UPDATE projects SET data = ? WHERE id = ?").run(JSON.stringify(restored), restored.id);
+        return restored;
+      }
       const project: Project = {
         id: crypto.randomUUID(), hostId: this.host.id, path,
         name: input.name?.trim() || basename(path) || path, createdAt: Date.now(),
@@ -310,6 +322,29 @@ export class HostStore {
       this.db.query("INSERT INTO projects (id, path, data) VALUES (?, ?, ?)")
         .run(project.id, path, JSON.stringify(project));
       return project;
+    }).immediate();
+  }
+
+  renameProject(id: string, name: string): Project {
+    return this.db.transaction(() => {
+      const project = this.getCataloguedProject(id);
+      if (!project || project.hostId !== this.host.id) throw new Error("Project is not in this host's catalog.");
+      const renamed: Project = { ...project, name: name.trim() };
+      if (!renamed.name) throw new Error("Project name cannot be empty.");
+      this.db.query("UPDATE projects SET data = ? WHERE id = ?").run(JSON.stringify(renamed), id);
+      return renamed;
+    }).immediate();
+  }
+
+  /** Remove only catalog presentation. The row remains the durable owner for
+   * existing sessions, drafts, and already-admitted work. */
+  removeProject(id: string): Project {
+    return this.db.transaction(() => {
+      const project = this.getCataloguedProject(id);
+      if (!project || project.hostId !== this.host.id) throw new Error("Project is not in this host's catalog.");
+      const removed: Project = { ...project, removedAt: Date.now() };
+      this.db.query("UPDATE projects SET data = ? WHERE id = ?").run(JSON.stringify(removed), id);
+      return removed;
     }).immediate();
   }
 

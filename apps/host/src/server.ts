@@ -729,6 +729,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         finally { publish({ type: "workspace", target: command.target }); }
       }
       case "project.add": return ok(store.addProject(command));
+      case "project.rename": return ok(store.renameProject(command.projectId, command.name));
+      case "project.remove": return ok(store.removeProject(command.projectId));
       case "draft.put": {
         const save = async () => {
           const result = store.putDraft(command.draft, command.expectedRevision);
@@ -742,7 +744,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (command.worktree && command.draft && store.getDraft(command.draft.id)?.environment !== undefined && command.environment === undefined)
           return fail(envelope.id, "ENVIRONMENT_PROTOCOL_REQUIRED", "Send the captured environment selection with this worktree draft. Its choices were preserved.");
         if (command.environment !== undefined) return environmentSessions.create({ ...envelope, commandVersion: 5, command });
-        const project = command.projectId ? store.getProject(command.projectId) : undefined;
+        const project = command.projectId ? store.getCataloguedProject(command.projectId) : undefined;
         if (command.projectId && !project) throw new Error("The selected project is not on this host.");
         if (command.worktree && (!project || command.cwd !== undefined)) throw new Error("A worktree must belong to the selected project.");
         const createdWorktree = command.worktree && project

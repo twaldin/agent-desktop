@@ -46,6 +46,15 @@ test("rejects malformed transport commands before runtime or filesystem calls", 
   ]) expect(() => parseCommandEnvelope({ id: "c", command })).toThrow();
 });
 
+test("project catalog mutations accept only bounded project identities and names", () => {
+  expect(parseCommandEnvelope({ id: "rename", command: { type: "project.rename", projectId: "project", name: "Renamed" } }).command)
+    .toEqual({ type: "project.rename", projectId: "project", name: "Renamed" });
+  expect(parseCommandEnvelope({ id: "remove", command: { type: "project.remove", projectId: "project" } }).command)
+    .toEqual({ type: "project.remove", projectId: "project" });
+  for (const command of [{ type: "project.rename", projectId: "", name: "Name" }, { type: "project.rename", projectId: "project", name: "" }, { type: "project.remove", projectId: "" }])
+    expect(() => parseCommandEnvelope({ id: "catalog", command })).toThrow();
+});
+
 test("preserves the captured draft revision for prompts and steering", () => {
   for (const type of ["session.prompt", "session.steer"]) {
     const parsed = parseCommandEnvelope({ id: "c", command: { type, sessionId: "s", text: "hello", draft: { id: "d", revision: 3 } } });

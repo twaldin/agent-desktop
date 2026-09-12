@@ -82,6 +82,8 @@ export interface Project {
   name: string;
   path: string;
   createdAt: number;
+  /** Retained privately for existing sessions and drafts after catalog removal. */
+  removedAt?: number;
 }
 
 export interface ModelChoice {
@@ -226,6 +228,8 @@ export type HostCommand =
   | { type: "skill.file.reveal"; ref: NativeSkillFileRef }
   | { type: "skill.file.open"; ref: NativeSkillFileRef; targetId: string }
   | { type: "project.add"; path: string; name?: string }
+  | { type: "project.rename"; projectId: string; name: string }
+  | { type: "project.remove"; projectId: string }
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number } }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
@@ -418,6 +422,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   controlBrowser?(sessionId: string, request: BrowserControlRequest, hostId?: string): Promise<BrowserControlReceipt>;
   getBrowserFrame?(sessionId: string, target: BrowserFrameTarget, hostId?: string): Promise<BrowserFrameSnapshot>;
   chooseDirectory(): Promise<string | null>;
+  /** Opens only a project owned by the local desktop host. */
+  revealProjectDirectory?(projectId: string, hostId: string): Promise<void>;
   subscribe(listener: (event: DesktopEvent) => void): () => void;
 }
 

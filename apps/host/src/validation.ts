@@ -84,6 +84,8 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
     case "preferences.put": return { id, command: { type, change: parsePreferenceChange(input.change) } };
     case "workspace.mutate": return { id, command: { type, target: parseWorkspaceTarget(input.target), action: parseWorkspaceMutation(input.action) } };
     case "project.add": return { id, command: { type, path: directory(input.path), name: input.name === undefined ? undefined : text(input.name, "project name", 500) } };
+    case "project.rename": return { id, command: { type, projectId: text(input.projectId, "project ID"), name: text(input.name, "project name", 500) } };
+    case "project.remove": return { id, command: { type, projectId: text(input.projectId, "project ID") } };
     case "session.create": return { id, command: { type,
       projectId: input.projectId === null ? null : text(input.projectId, "project ID"),
       cwd: input.cwd === undefined ? undefined : directory(input.cwd),

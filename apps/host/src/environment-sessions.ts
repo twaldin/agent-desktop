@@ -85,12 +85,12 @@ export class EnvironmentSessions {
     const completed = this.requireClaim(envelope.id, hash);
     if (completed) return completed;
 
-    this.validateCreate(envelope);
-
     const prior = this.store.environmentPreparations.get(envelope.id);
     if (prior) {
       return this.finishPreparationReceipt(envelope.id, hash, prior);
     }
+
+    this.validateCreate(envelope);
 
     const projectId = command.projectId!;
     let release: (() => void) | undefined;
@@ -208,7 +208,7 @@ export class EnvironmentSessions {
         "Environment session creation requires project, worktree, environment, and draft ownership",
       );
     }
-    const project = this.store.getProject(command.projectId);
+    const project = this.store.getCataloguedProject(command.projectId);
     if (!project || project.hostId !== this.store.host.id) {
       throw new Error(`Project ${command.projectId} is not owned by this host`);
     }

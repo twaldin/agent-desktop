@@ -261,6 +261,36 @@ test("a stale captured config is rejected before acquiring a reservation or crea
   expect(await access(join(f.data, "worktrees")).then(() => true, () => false)).toBe(false);
 }, 30_000);
 
+test("catalog removal rejects fresh environment admission but retains an already-admitted preparation receipt", async () => {
+  const fresh = await fixture("touch setup-must-not-run");
+  fresh.store.removeProject(fresh.project.id);
+  await expect(fresh.sessions.create(fresh.envelope)).rejects.toThrow("not owned by this host");
+  expect(fresh.store.environmentPreparations.list()).toEqual([]);
+  expect(fresh.handles).toEqual([]);
+  expect(fresh.reserved.size).toBe(0);
+  expect(await access(join(fresh.data, "worktrees")).then(() => true, () => false)).toBe(false);
+
+  const recovered = await fixture("touch setup-must-not-run");
+  const worktree = join(recovered.root, "already-admitted");
+  await mkdir(worktree);
+  recovered.store.createEnvironmentPreparation({
+    id: recovered.envelope.id,
+    projectId: recovered.project.id,
+    sourceRoot: recovered.source,
+    worktreePath: worktree,
+    startingState: recovered.command.worktree!,
+    draft: recovered.command.draft!,
+    environment: null,
+  });
+  recovered.store.removeProject(recovered.project.id);
+  await expect(recovered.sessions.create(recovered.envelope)).resolves.toMatchObject({
+    ok: true,
+    value: { type: "environment.preparation", preparation: { id: recovered.envelope.id, phase: "validated" } },
+  });
+  expect(recovered.handles).toEqual([]);
+  expect(recovered.reserved.size).toBe(0);
+}, 30_000);
+
 test("a lost native commit receipt disposes the uncommitted handle and becomes inspect-only", async () => {
   const f = await fixture("exit 0");
   const create = f.runtime.create.bind(f.runtime);
