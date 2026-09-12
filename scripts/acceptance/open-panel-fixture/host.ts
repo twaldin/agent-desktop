@@ -13,7 +13,7 @@ for (const path of ['data', 'agent', 'project']) await mkdir(join(fixture, path)
 await writeFile(join(fixture, 'project', 'README.md'), '# Open panel fixture\n');
 await writeFile(join(fixture, 'agent', 'config.yml'), 'tools:\n  approvalMode: always-ask\n');
 const { startHost } = await import('../../../apps/host/src/server');
-const host = await startHost({ dataDirectory: join(fixture, 'data'), agentDirectory: join(fixture, 'agent'), discoveryDirectory: join(fixture, 'project'), workerPath: resolve(import.meta.dir, '../../../apps/host/src/omp-workers/fixtures/no-provider-worker.ts'), tailscale: false, port: 0 });
+const host = await startHost({ dataDirectory: join(fixture, 'data'), agentDirectory: join(fixture, 'agent'), discoveryDirectory: join(fixture, 'project'), workerPath: resolve(import.meta.dir, '../../../apps/host/src/omp-workers/fixtures/no-provider-worker.ts'), nativeTerminalBundle: process.argv[3], tailscale: false, port: 0 });
 await writeFile(join(fixture, 'connection.json'), JSON.stringify(host.connection), { mode: 0o600 });
 let stopping = false;
 async function stop() { if (stopping) return; stopping = true; try { await host.stop(); process.exit(0); } catch (error) { console.error(error); process.exit(1); } }

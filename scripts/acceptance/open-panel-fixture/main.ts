@@ -1,8 +1,9 @@
 import { app, BrowserWindow, Menu, ipcMain } from 'electron';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { requestHost } from '../../../apps/desktop/src/main/host-transport';
+import { nativeTerminalResult, requestHost } from '../../../apps/desktop/src/main/host-transport';
 import { requestVersionedCommand } from '../../../apps/desktop/src/main/command-endpoints';
+import { requestTerminalCreate, requestTerminalCreationCapabilities, requestTerminalCreationStatus } from '../../../apps/desktop/src/main/terminal-create-transport';
 import { requestBtw } from '../../../apps/desktop/src/main/btw-transport';
 import { WindowStateStore } from '../../../apps/desktop/src/main/window-state';
 import { createDockState } from '../../../apps/desktop/src/renderer/dock-state';
@@ -24,10 +25,18 @@ window.webContents.on('console-message', (_event, level, message) => { if (level
 const http = (path: string, body?: unknown) => requestHost(connection, path, body);
 ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) => {
   calls.push({ method, args });
-  const hostIndex: Record<string, number> = { getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
+  const hostIndex: Record<string, number> = { getNativeTerminalCapabilities: 0, getTerminalCreationCapabilities: 0, nativeTerminalQuery: 1, nativeTerminalAction: 1, writeNativeTerminal: 1, createNativeTerminal: 1, observeTerminalCreation: 1, getState: 0, getComposerCatalog: 2, getMessages: 1, getInteractions: 1, getSessionControls: 1, getBtw: 1, workspaceQuery: 2, command: 1 };
   const requestedHost = args[hostIndex[method] ?? -1];
   if (requestedHost !== undefined && requestedHost !== connection.hostId) throw new Error('The fixture cannot route to a foreign host.');
   switch (method) {
+    case 'features': return { terminal: context.terminal };
+    case 'getNativeTerminalCapabilities': return nativeTerminalResult(() => http('/v2/terminals/capabilities'));
+    case 'nativeTerminalQuery': return nativeTerminalResult(() => http('/v2/terminals/query', args[0]));
+    case 'nativeTerminalAction': return nativeTerminalResult(() => http('/v2/terminals/action', args[0]));
+    case 'writeNativeTerminal': return nativeTerminalResult(() => http('/v2/terminals/input', args[0]));
+    case 'getTerminalCreationCapabilities': return nativeTerminalResult(() => requestTerminalCreationCapabilities(connection));
+    case 'createNativeTerminal': return nativeTerminalResult(() => requestTerminalCreate(connection, args[0]));
+    case 'observeTerminalCreation': return nativeTerminalResult(() => requestTerminalCreationStatus(connection, args[0]));
     case 'bootstrap': return store.bootstrap();
     case 'save': return store.saveView(args[0]);
     case 'getState': return http('/v1/state');
@@ -45,7 +54,7 @@ ipcMain.handle('panel-call', async (_event, method: string, args: any[] = []) =>
   }
 });
 const socket = new WebSocket(connection.origin.replace('http:', 'ws:') + '/v1/events?after=0', ['agent-desktop', connection.token]);
-socket.addEventListener('message', event => { if (!window.isDestroyed()) window.webContents.send('panel-event', JSON.parse(String(event.data))); });
+socket.addEventListener('message', event => { if (window.isDestroyed()) return; const frame = JSON.parse(String(event.data)); if (frame.type === 'native-terminal') window.webContents.send('panel-native', { ...frame.event, hostId: connection.hostId }); else window.webContents.send('panel-event', frame); });
 const evaluate = (script: string) => window.webContents.executeJavaScript(script, true);
 const wait = async (expression: string, label: string) => { const start = Date.now(); while (Date.now() - start < 20_000) { if (await evaluate(expression)) return; await delay(50); } throw new Error(`Timed out: ${label}`); };
 const click = async (selector: string, text?: string) => { const p = await evaluate(`panelTarget(${JSON.stringify(selector)},${JSON.stringify(text)})`); window.webContents.sendInputEvent({ type: 'mouseMove', ...p }); window.webContents.sendInputEvent({ type: 'mouseDown', ...p, button: 'left', clickCount: 1 }); window.webContents.sendInputEvent({ type: 'mouseUp', ...p, button: 'left', clickCount: 1 }); inputs.push({ type: 'pointer', selector, text, p }); await delay(150); };
@@ -54,9 +63,10 @@ const capture = async (name: string) => { await delay(250); const state = await 
 let passed = false, error: string | undefined;
 try {
   await window.loadFile(join(output, 'web/index.html')); window.webContents.focus();
+  await wait('typeof window.panelState === "function"', 'fixture observation helper');
   await wait('panelState().actions.includes("Files") && !panelState().body.includes("Loading conversation")', 'settled empty action list');
   if (context.git) await wait('panelState().actions.includes("Review")', 'Git Review availability');
-  const expectedActions = context.git ? ['Review', 'Browser', 'Files', 'Side chat'] : ['Files', 'Side chat', 'Browser'];
+  const expectedActions = context.git ? ['Review', ...(context.terminal ? ['Terminal'] : []), 'Browser', 'Files', 'Side chat'] : ['Files', 'Side chat', 'Browser', ...(context.terminal ? ['Terminal'] : [])];
   const originalActions = await evaluate('panelState().actions');
   if (JSON.stringify(originalActions) !== JSON.stringify(expectedActions)) throw new Error('Wrong real capability/order: ' + JSON.stringify(originalActions));
   await capture('01-empty');
@@ -69,7 +79,7 @@ try {
   for (const item of originalGlyphs) { const menu = menuGlyphs.find((value: { label: string }) => value.label.trim() === item.label.trim()); if (!menu || menu.svg !== item.svg) throw new Error('Action glyph changed between launcher and Open panel menu: ' + item.label); }
   await key('b'); await key('ENTER');
   await wait('panelState().tabs.some(tab=>tab.label.includes("New tab"))', 'keyboard Browser selection'); await capture('04-browser');
-  await click('[aria-label="Page address"]'); window.webContents.insertText('https://example.invalid/unsent'); await delay(350);
+  await wait('panelState().focus.label === "Page address"', 'Browser Enter delegated address focus'); window.webContents.insertText('https://example.invalid/unsent'); await delay(350);
   await wait('panelState().saved.state.dock.tabs.some(tab=>tab.browserNewTab?.draft === "https://example.invalid/unsent")', 'durable unsent Browser draft');
   const beforeHide = store.bootstrap().state!.dock!;
   await click('[aria-label="Toggle side panel"]');
@@ -102,10 +112,33 @@ try {
     await click('[aria-label="Open side panel tab"]');
     await wait('panelState().menu.some(label=>label.includes("Review"))', 'Review restored after close'); await key('ESCAPE');
   }
+  if (context.terminal) {
+    await click('[aria-label="Open side panel tab"]'); await key('t'); await key('ENTER');
+    await wait('[...document.querySelectorAll(".terminal-view-footer button")].some(button => button.textContent === "Use this panel’s size" && !button.disabled)', 'real PTY viewport ready');
+    const terminalTabs = store.bootstrap().state!.dock!.tabs.filter(tab => tab.kind === 'terminal');
+    if (terminalTabs.length !== 1) throw new Error('Terminal selection did not create exactly one original dock descriptor.');
+    await capture('terminal-01-ready');
+    await click('.native-terminal-grid');
+    const commandText = "printf 'OPEN_%s\\n' PANEL_PTY_COMPLETE; pwd";
+    for (const character of commandText) { window.webContents.sendInputEvent({ type: 'char', keyCode: character }); await delay(5); }
+    inputs.push({ type: 'native-character-input', text: commandText }); await key('ENTER');
+    await delay(500); await click('.terminal-view-footer button', 'History');
+    await wait('[...document.querySelectorAll("pre")].some(node => node.getAttribute("aria-label") === "Captured native screen" && node.textContent.split("\\n").some(line => line.trim() === "OPEN_PANEL_PTY_COMPLETE"))', 'actual native PTY output');
+    await capture('terminal-02-output');
+    await click('[aria-label="Toggle side panel"]'); await click('[aria-label="Toggle side panel"]');
+    await wait('document.querySelector(".dock-native-terminal") !== null', 'original Terminal viewer reopened');
+    if (JSON.stringify(store.bootstrap().state!.dock!.tabs.filter(tab => tab.kind === 'terminal')) !== JSON.stringify(terminalTabs)) throw new Error('Terminal hide/reopen replaced the original descriptor.');
+    await capture('terminal-03-reopened');
+    await click('[aria-label="Terminal actions"]'); await click('.dock-terminal-actions button', 'Stop shell for all viewers');
+    await wait('document.querySelector(".dock-terminal-actions")?.textContent?.includes("Forget stopped terminal")', 'actual shell stopped');
+    await capture('terminal-04-stopped');
+    await click('[data-app-shell-tab-close-button]', `Close ${terminalTabs[0]!.title} tab`);
+  }
   const beforeReload = store.bootstrap().state!.dock!.tabs;
   const oldDocument = await evaluate('panelState().documentId');
   const reloaded = new Promise<void>(resolve => window.webContents.once('did-finish-load', () => resolve()));
   window.reload(); await reloaded;
+  await wait('typeof window.panelState === "function"', 'reloaded observation helper');
   await wait('panelState().tabs.some(tab=>tab.label.includes("Side chat"))', 'actual window-store reload');
   if (await evaluate('panelState().documentId') === oldDocument) throw new Error('The document did not reload.');
   if (JSON.stringify(store.bootstrap().state!.dock!.tabs) !== JSON.stringify(beforeReload)) throw new Error('Reload changed original dock descriptors.');
