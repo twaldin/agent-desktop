@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +61,7 @@ test("rejects stale views and dirty local destinations without dispatching nativ
 test("reports a conflicted checkout as unavailable without trying to synthesize a tree",async()=>{
   const f=await fixture(); git(f.repo,"checkout","main"); await writeFile(join(f.repo,"tracked.txt"),"main\n"); git(f.repo,"add","tracked.txt"); git(f.repo,"commit","-m","main change");
   git(f.repo,"checkout","feature"); await writeFile(join(f.repo,"tracked.txt"),"feature\n"); git(f.repo,"add","tracked.txt"); git(f.repo,"commit","-m","feature change");
-  expect(spawnSync("git",["-C",f.repo,"merge","main"],{encoding:"utf8"}).status).not.toBe(0);
+  expect(()=>git(f.repo,"merge","main")).toThrow();
   const snapshot=await f.service.get("session");
   expect(snapshot.current.conflicted).toBe(true); expect(snapshot.worktree).toMatchObject({available:false,reason:"Resolve Git conflicts before moving this task."});
 },15_000);
