@@ -23,6 +23,7 @@ const bridge: Partial<DesktopBridge> = {
     observeTerminalCreation: (request: unknown, host: string) => api.call('observeTerminalCreation', [request, host]),
     subscribeNativeTerminals: (listener: (event: NativeTerminalInvalidation & { hostId: string }) => void) => api.subscribeNative(listener),
   } : {}),
+  ...(features.directoryOwner ? { mcpOwner: { request: (host: string, request: unknown) => api.call("mcpOwner", [host, request]) } } : {}),
   ...(features.mcp ? {
     getSessionMcp: (id: string, host?: string) => api.call('getSessionMcp', [id, host]),
     sessionMcpApp: (id: string, request: unknown, host: string) => api.call('sessionMcpApp', [id, request, host]),

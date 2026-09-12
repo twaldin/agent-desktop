@@ -1,8 +1,10 @@
 import { PullRequestCache } from './pull-request-cache';
 import { PullRequestsPage, PullRequestIcon } from './PullRequestsPage';
 import type { PullRequestWindowView } from '../pull-request-window-state';
+import { useMcpDirectoryOwners } from "./use-mcp-directory-owners";
+import { McpDirectoryConnection, McpDirectoryStatus } from "./McpDirectoryPanel";
 import { useMcpAppCatalogue } from "./use-mcp-app-catalogue";
-import { mcpAppActionId, mcpAppDockTab, mcpArtifactDockTab, mcpFileViewerForPath, mcpFileViewerDockTab } from "./mcp-app-dock";
+import { mcpAppActionId, mcpAppDockTab, mcpDirectoryAppDockTab, mcpArtifactDockTab, mcpFileViewerForPath, mcpFileViewerDockTab, mcpDirectoryFileViewerDockTab } from "./mcp-app-dock";
 import { McpAppController } from "./mcp-app-controller";
 import { McpAppPanel } from "./McpAppPanel";
 import { AutomationsPage, type AutomationPageMemory } from './AutomationsPage';
@@ -962,6 +964,12 @@ export function App() {
     ],
   });
 
+  const directoryOwner = useMcpDirectoryOwners(bridge, (ownerHost, ownerProject) => {
+    const record = desktop.catalog.records.get(ownerHost);
+    return Boolean(record?.connected && (ownerProject === null || record.state?.projects.some(project => project.id === ownerProject)));
+  });
+  const [connectingDirectory, setConnectingDirectory] = useState<{ owner: import("./mcp-directory-owner").McpDirectoryOwner; connecting: boolean }>();
+  const directoryMcp = !selected && !missingSession ? directoryOwner(hostId, project?.id ?? null) : undefined;
   const mcpCatalogue = useMcpAppCatalogue(bridge, hostId, selected?.archived ? undefined : selected?.id, connected);
   const committedArtifactOwner = useRef({ hostId, sessionId: selected?.id, enabled: false, messages: transcript.messages, presentations: dock.presentations });
   useLayoutEffect(() => { committedArtifactOwner.current = { hostId, sessionId: selected?.id, enabled: connected && !contentOverlayOpen, messages: transcript.messages, presentations: dock.presentations }; });
@@ -997,15 +1005,27 @@ export function App() {
     dock.addMcpFileViewer(tab, current);
     return true;
   };
+  const openMcpDirectoryFileViewer = (ownerHost: string, projectId: string, path: string, origin: DockPresentationRef): boolean => {
+    const owner = directoryOwner(ownerHost, projectId), snapshot = owner?.snapshot;
+    const selectedViewer = mcpFileViewerForPath(snapshot?.catalogue, path);
+    if (!owner || !snapshot || !selectedViewer || committedArtifactOwner.current.hostId !== ownerHost) return false;
+    const current = (presentations = committedArtifactOwner.current.presentations) => owner.isCurrentSnapshot(snapshot)
+      && committedArtifactOwner.current.enabled && committedArtifactOwner.current.hostId === ownerHost && isCurrentDockPresentation(presentations, origin);
+    if (!current()) return true;
+    const tab = mcpDirectoryFileViewerDockTab(ownerHost, { projectId, cwd: snapshot.cwd }, path, selectedViewer.viewer, selectedViewer.serverName);
+    tab.mcpAppSelection = { epoch: snapshot.catalogue.epoch, expectedRevision: snapshot.catalogue.revision, serverName: selectedViewer.serverName,
+      toolName: selectedViewer.viewer.toolName, resourceUri: selectedViewer.viewer.resourceUri };
+    mcpOpeningFocus.current.set(tab.id, document.activeElement); dock.addMcpFileViewer(tab, current); return true;
+  };
   const mcpOpeningFocus = useRef(new Map<string, Element | null>());
-  const mcpPanels = useRef(new Map<string, McpAppController>());
+  const mcpPanels = useMemo(() => new Map<string, McpAppController>(), [bridge, bridge.mcpOwner]);
   useEffect(() => {
     const live = new Set(dock.snapshot.tabs.filter(tab => tab.kind === "mcp-app").map(tab => tab.id));
     for (const id of mcpOpeningFocus.current.keys()) if (!live.has(id)) mcpOpeningFocus.current.delete(id);
-    for (const [id, controller] of mcpPanels.current) if (!live.has(id)) { mcpPanels.current.delete(id); void controller.dispose().catch(error => setActionError(errorMessage(error))); }
-  }, [dock.snapshot.tabs]);
-  useEffect(() => () => { for (const controller of mcpPanels.current.values()) void controller.dispose().catch(() => {}); mcpPanels.current.clear(); }, []);
-  const mcpActions: DockAddAction[] = !selected || !mcpCatalogue.snapshot?.canOpenApps ? [] : mcpCatalogue.snapshot.servers.flatMap(server => server.status !== "connected" ? [] : (server.apps ?? []).map(app => {
+    for (const [id, controller] of mcpPanels) if (!live.has(id)) { mcpPanels.delete(id); void controller.dispose().catch(error => setActionError(errorMessage(error))); }
+  }, [dock.snapshot.tabs, mcpPanels]);
+  useEffect(() => () => { for (const controller of mcpPanels.values()) void controller.dispose().catch(() => {}); mcpPanels.clear(); }, [mcpPanels]);
+  const sessionMcpActions: DockAddAction[] = !selected || !mcpCatalogue.snapshot?.canOpenApps ? [] : mcpCatalogue.snapshot.servers.flatMap(server => server.status !== "connected" ? [] : (server.apps ?? []).map(app => {
     const selection = { epoch: mcpCatalogue.snapshot!.epoch, expectedRevision: mcpCatalogue.snapshot!.revision, serverName: server.name, toolName: app.toolName, resourceUri: app.resourceUri };
     const create = () => ({ ...mcpAppDockTab(hostId, selected.id, app, server.name), mcpAppSelection: selection });
     return { id: mcpAppActionId(hostId, selected.id, server.name, app.toolName), label: app.title, icon: "compose" as const,
@@ -1015,6 +1035,27 @@ export function App() {
       onSelect: (destination: "right" | "bottom") => { if (destination !== "right" || !mcpCatalogue.current()) return; const tab = create(); mcpOpeningFocus.current.set(tab.id, document.activeElement); dock.addMcpApp(tab, mcpCatalogue.current); },
     };
   }));
+  const directoryAppEntries: DockAddAction[] = !directoryMcp ? [] : directoryMcp.current() && directoryMcp.snapshot?.catalogue.canOpenApps
+    ? directoryMcp.snapshot.catalogue.servers.flatMap(server => server.status !== "connected" ? [] : (server.apps ?? []).map(app => {
+      const owner = directoryMcp, snapshot = owner.snapshot!, catalogue = snapshot.catalogue;
+      const current = () => owner.isCurrentSnapshot(snapshot);
+      const create = () => ({ ...mcpDirectoryAppDockTab(hostId, { projectId: snapshot.projectId, cwd: snapshot.cwd }, app, server.name),
+        mcpAppSelection: { epoch: catalogue.epoch, expectedRevision: catalogue.revision, serverName: server.name, toolName: app.toolName, resourceUri: app.resourceUri } });
+      return { id: mcpAppActionId(hostId, `directory:${snapshot.cwd}`, server.name, app.toolName), label: app.title, icon: "compose" as const,
+        appIcon: app.icon, destinations: ["right"] as const, requiresConnection: true, deferSelectionUntilDropdownClose: true,
+        preparationTarget: { hostId, target: snapshot.projectId === null ? "host" as const : `project:${snapshot.projectId}` as const },
+        prepare: async (signal: AbortSignal) => signal.aborted || !current() ? { status: "cancelled" as const, creationMayHaveRun: false } : { status: "ready" as const, tab: create() },
+        onSelect: (destination: "right" | "bottom") => { if (destination !== "right" || !current()) return; const tab = create(); mcpOpeningFocus.current.set(tab.id, document.activeElement); dock.addMcpApp(tab, current); },
+      };
+    })) : [];
+  const directoryMcpActions: DockAddAction[] = !directoryMcp ? [] : [...directoryAppEntries, {
+    id: "connect-directory-apps", label: directoryMcp.current() ? "App connections" : directoryMcp.loading ? "Connecting apps…" : "Connect apps", icon: "compose", requiresConnection: true,
+    destinations: ["right"], onSelect: () => {
+      setConnectingDirectory({ owner: directoryMcp, connecting: !directoryMcp.current() || !directoryMcp.snapshot?.catalogue.available });
+      if (!directoryMcp.current() && !directoryMcp.loading) void directoryMcp.acquire().catch(() => {});
+    },
+  }];
+  const mcpActions = [...sessionMcpActions, ...directoryMcpActions];
   // Pinned Git workspaces prioritize Review and Terminal; other workspaces retain the provider order.
   const dockActions: DockAddAction[] = dockEmptyActionCatalogue(reviewAction
     ? [reviewAction,terminalAction,browserAction,filesAction,sideChatAction,...mcpActions]
@@ -1107,10 +1148,19 @@ export function App() {
       return publish ? (value: Parameters<typeof publish>[0]) => { publish(value); redrawBrowserMenu(value => value + 1); } : undefined;
     };
     if (tab.kind === "mcp-app") {
-      if (!tab.mcpApp || !tab.target.startsWith("session:")) return <p>The saved app owner is unavailable.</p>;
-      let controller = mcpPanels.current.get(tab.id);
-      if (!controller) { controller = new McpAppController(bridge, tab.hostId, tab.target.slice(8), tab.mcpApp); mcpPanels.current.set(tab.id, controller); }
-      return <McpAppPanel controller={controller} connected={Boolean(desktop.catalog.records.get(tab.hostId)?.connected)} initialSelection={tab.mcpAppSelection} focusOnMount={element => {
+      if (!tab.mcpApp || !tab.mcpApp.directory && !tab.target.startsWith("session:")) return <p>The saved app owner is unavailable.</p>;
+      const directory = tab.mcpApp.directory, owner = directory && directoryOwner(tab.hostId, directory.projectId);
+      if (directory && !owner) return <p>Directory apps are unavailable in this desktop version.</p>;
+      let controller = mcpPanels.get(tab.id);
+      if (!controller) {
+        controller = new McpAppController(bridge, tab.hostId, directory ? undefined : tab.target.slice(8), tab.mcpApp, owner && directory ? {
+          read: signal => owner.catalogue(directory.cwd, signal),
+          request: request => owner.request(request),
+          subscribeClose: listener => owner.subscribeClose(listener),
+        } : undefined);
+        mcpPanels.set(tab.id, controller);
+      }
+      const panel = <McpAppPanel controller={controller} connected={Boolean(desktop.catalog.records.get(tab.hostId)?.connected)} initialSelection={tab.mcpAppSelection} focusOnMount={element => {
         if (!mcpOpeningFocus.current.has(tab.id)) return;
         const origin = mcpOpeningFocus.current.get(tab.id); mcpOpeningFocus.current.delete(tab.id);
         const document = element.ownerDocument;
@@ -1118,6 +1168,7 @@ export function App() {
           if (document.activeElement === origin || document.activeElement === document.body && !origin?.isConnected) element.focus({ preventScroll: true });
         }
       }}/>;
+      return owner && directory ? <div className="mcp-directory-panel"><McpDirectoryStatus owner={owner} cwd={directory.cwd} hostLabel={desktop.catalog.records.get(tab.hostId)?.state?.host.name ?? tab.hostId}/>{panel}</div> : panel;
     }
     if (tab.kind === "skill-file") {
       if (!tab.skillFile) return <p>The saved skill file identity is unavailable.</p>;
@@ -1189,12 +1240,14 @@ export function App() {
       onOpenFile={path => {
         if (!filePresentation || !isCurrentDockPresentation(committedArtifactOwner.current.presentations, filePresentation)) return;
         if ("sessionId" in target && openMcpFileViewer(tab.hostId, target.sessionId, path, filePresentation)) return;
+      if ("projectId" in target && openMcpDirectoryFileViewer(tab.hostId, target.projectId, path, filePresentation)) return;
         setWorkspaceFileRequest({ owner, request: { id: crypto.randomUUID(), path } });
         dock.selectFile(tab.id, path);
       }}/>
     return <WorkspacePanel onCommit={record?.state?.gitSubmissions?.commandVersion === 10 ? () => openGitSubmission(data!) : undefined} onAddFile={canAddWholeFile && tab.hostId === hostId && fileRoot ? relativePath => addWholeFile(tab.hostId, `${(fileRoot ?? "").replace(/\/$/, "")}/${relativePath}`) : undefined} onFileEdit={() => dock.pinFile(tab.id)} onAddToChat={canAddSelection && fileRoot ? (relativePath, selection) => addSelection(tab.hostId, `${(fileRoot ?? "").replace(/\/$/, "")}/${relativePath}`, selection) : undefined} embedded active={active} fileTree={fileTree} onFileTreeChange={setFileTree} data={data} connected={online} filePath={tab.kind === "file" ? tab.filePath : undefined} fileMode={tab.fileMode} onFileModeChange={mode => dock.setFileMode(tab.id, mode)} openExternal={url => bridge.openExternal(url)} onOpenFile={(path, location, options) => {
       if (!filePresentation || !isCurrentDockPresentation(committedArtifactOwner.current.presentations, filePresentation)) return;
       if ("sessionId" in target && openMcpFileViewer(tab.hostId, target.sessionId, path, filePresentation)) return;
+      if ("projectId" in target && openMcpDirectoryFileViewer(tab.hostId, target.projectId, path, filePresentation)) return;
       const destination = tab.kind !== "file" ? "right" : dock.destinationForTab(tab.id);
       if (!destination) return;
       if ("filePath" in target) {
@@ -1212,7 +1265,7 @@ export function App() {
   const closeStatus = useWindowClose(bridge, shell, async signal => {
     // The shell is inert during close preparation. Drain every app independently
     // before the window permits native close; descriptors remain restorable.
-    const appDrains = await Promise.allSettled([...mcpPanels.current.values()].map(controller => controller.close()));
+    const appDrains = await Promise.allSettled([...mcpPanels.values()].map(controller => controller.close()));
     signal.throwIfAborted();
     const appFailures = appDrains.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (appFailures.length) throw new AggregateError(appFailures, "MCP app cleanup could not be confirmed. Keep this window open and retry.");
@@ -1417,7 +1470,7 @@ export function App() {
           const change=placeTask(dock.snapshot,mainChat,target,side);if(change) applyPlacement(change);
         }}
         onTabContextMenu={(event,tab)=>void taskPlacementMenu(event,{kind:"content",tabId:tab.id,hostId:tab.hostId,target:tab.target})}
-        onPinTab={dock.pinFile} onBeforeClose={tab => tab.kind === "mcp-app" ? (mcpPanels.current.get(tab.id)?.close() ?? Promise.resolve()).then(() => true, error => { setActionError(errorMessage(error)); return false; }) : tab.kind === "browser" ? browserCloseFocus.runClose(tab.id, dock.presentations.instances.get(tab.id), focusId => browserCloses.close(tab, dock.presentations.instances.get(tab.id), focusId)) : fileClose.onBeforeClose(tab)} destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} layoutAction={destination === "right" ? taskLayoutAction : undefined} onChange={dock.change} onTabDrop={(id,_from,to,index) => {
+        onPinTab={dock.pinFile} onBeforeClose={tab => tab.kind === "mcp-app" ? (mcpPanels.get(tab.id)?.close() ?? Promise.resolve()).then(() => true, error => { setActionError(errorMessage(error)); return false; }) : tab.kind === "browser" ? browserCloseFocus.runClose(tab.id, dock.presentations.instances.get(tab.id), focusId => browserCloses.close(tab, dock.presentations.instances.get(tab.id), focusId)) : fileClose.onBeforeClose(tab)} destination={destination} state={dock.snapshot.state} tabs={dock.snapshot.tabs} viewport={dockViewport} layoutAction={destination === "right" ? taskLayoutAction : undefined} onChange={dock.change} onTabDrop={(id,_from,to,index) => {
           const tab=dock.snapshot.tabs.find(tab=>tab.id===id);if(!tab) return;
           if(to!==_from && !taskDropDestinations(dock.snapshot,mainChat,dragTarget(tab)).includes(to==="right"?contentSide:"bottom")) return;
           dock.change(moveDockTab(dock.snapshot.state,id,to,index));
@@ -1455,6 +1508,7 @@ export function App() {
       onOpenGitSettings={() => { setBranchSwitch(undefined); setSettingsPage("git"); openSettings(); }}
       onClose={() => setBranchSwitch(value => value === branchSwitch ? undefined : value)}/>}
     {gitFeedback && <GitSubmissionFeedback data={gitFeedback.data} ownerLabel={gitFeedback.label} onDismiss={() => setGitFeedback(undefined)}/>}
+    {connectingDirectory && <McpDirectoryConnection owner={connectingDirectory.owner} closeWhenReady={connectingDirectory.connecting} hostLabel={desktop.catalog.records.get(connectingDirectory.owner.hostId)?.state?.host.name ?? connectingDirectory.owner.hostId} onClose={() => setConnectingDirectory(undefined)}/>}
     {fileClose.dialog}
     {sourcePreview && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>

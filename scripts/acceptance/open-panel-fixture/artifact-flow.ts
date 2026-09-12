@@ -2,7 +2,7 @@ import type { BrowserWindow } from 'electron';
 import type { WindowStateStore } from '../../../apps/desktop/src/main/window-state';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(script: string): Promise<any>; wait(expression: string, label: string): Promise<void>; click(selector: string, text?: string): Promise<void>; key(key: string): Promise<void>; capture(name: string): Promise<void>; store: WindowStateStore; calls: unknown[]; setConnected(connected: boolean): void; fixture: string }) {
+export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(script: string): Promise<any>; wait(expression: string, label: string): Promise<void>; click(selector: string, text?: string): Promise<void>; key(key: string): Promise<void>; capture(name: string): Promise<void>; store: WindowStateStore; calls: unknown[]; setConnected(connected: boolean): void; fixture: string; directoryOwner?: boolean; http?(path: string): Promise<any> }) {
   const { window, evaluate, wait, click, capture, store } = flow;
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   const frame = () => window.webContents.mainFrame.frames.find(value => value.url === 'about:srcdoc');
@@ -13,15 +13,19 @@ export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(sc
     const inner = await inspect(`(()=>{const r=document.getElementById(${JSON.stringify(id)}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     if (!inner || typeof inner !== "object" || !("x" in inner) || typeof inner.x !== "number" || !("y" in inner) || typeof inner.y !== "number") throw new Error("Invalid iframe geometry");
     const point = { x: outer.x + inner.x, y: outer.y + inner.y };
+    window.webContents.focus();
+    const hit = await evaluate(`document.elementFromPoint(${point.x},${point.y})?.tagName`);
+    if (hit !== 'IFRAME') throw new Error('The actual viewer control is outside its visible iframe.');
     if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
     await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
-    flow.calls.push({ method: 'artifact-iframe-pointer', id, point }); await delay(100);
+    flow.calls.push({ method: 'artifact-iframe-pointer', id, point, hit }); await delay(100);
   };
   const approveIfRequired = async () => {
     for (let i = 0; i < 300; i++) {
       if (await evaluate('document.querySelector(".interaction-card") !== null')) {
+        if (await evaluate('document.querySelector(".interaction-card")?.textContent.includes("Connect directory apps?")')) { await click('.interaction-actions button', 'Yes'); continue; }
         await click('.interaction-option', 'Approve'); await click('.interaction-actions button', 'Choose'); return;
       }
       if (frame() && await inspect('document.querySelector("#result")?.textContent === "File refreshed"')) return;
@@ -30,7 +34,20 @@ export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(sc
     throw new Error('Viewer neither loaded nor requested its native permission');
   };
   const providerCalls = () => readFileSync(join(flow.fixture, 'mcp-requests.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-  const assertNoReplay = () => { if (providerCalls().filter(value => value.method === 'tools/call' && value.params.name === 'report').length !== 1) throw new Error('Historical report tool was replayed'); };
+  const assertNoReplay = () => { if (providerCalls().filter(value => value.method === 'tools/call' && value.params.name === 'report').length !== (flow.directoryOwner ? 0 : 1)) throw new Error('Historical report tool was replayed'); };
+  const assertNoConversation = async () => {
+    if (flow.directoryOwner && (!flow.http || (await flow.http('/v1/state')).sessions.length || flow.calls.some((value: any) => value.method === 'sessionMcpApp' || value.method === 'getSessionMcp'))) throw new Error('Directory file viewer borrowed or created a conversation.');
+  };
+  await assertNoConversation();
+  if (flow.directoryOwner) {
+    await click('[aria-label="Start new chat in Open panel workspace"]');
+    await wait('panelState().actions.includes("Connect apps") && panelState().actions.includes("Files")', 'project draft workspace without conversation');
+    await click('.dock-empty-panel-label', 'Connect apps');
+    await wait('document.querySelector(".interaction-card")?.textContent.includes("Connect directory apps?")', 'original directory startup permission');
+    await click('.interaction-actions button', 'Yes');
+    await wait(`!document.querySelector('dialog[aria-label="App connections"]') && panelState().actions.includes("App connections")`, 'native declared file viewers ready');
+    await capture('directory-viewer-01-native-discovery');
+  } else {
   await wait('document.querySelector(".transcript-artifact-open") !== null', 'actual native completed artifact entry');
   await capture('artifact-01-native-history');
   await click('.transcript-artifact-open');
@@ -46,13 +63,16 @@ export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(sc
   assertNoReplay(); await capture('artifact-03-no-replay-reopen');
   await click('[aria-label="Close report result tab"]'); await wait('document.querySelector(".mcp-app-frame") === null', 'reopened artifact drained');
   await click('[aria-label="Toggle side panel"]'); await wait('panelState().actions.includes("Files")', 'empty panel reopened');
+  }
   await click('.dock-empty-panel-label', 'Files');
   await wait('document.querySelector("[role=treeitem][aria-label=\\"sample.report.note\\"]") !== null', 'real workspace file');
   await click('[role="treeitem"][aria-label="sample.report.note"]');
   await approveIfRequired(); await waitFrame('document.querySelector("#editor")?.value === "Original file note"', 'declared file viewer and original resource');
   const viewerTab = store.bootstrap().state!.dock!.tabs.find(tab => tab.mcpApp?.source?.type === 'file')!;
   if (!viewerTab) throw new Error('Missing persisted original file descriptor');
+  if (flow.directoryOwner && (viewerTab.mcpApp?.directory?.cwd !== join(flow.fixture, 'project') || !viewerTab.mcpApp.directory.projectId || viewerTab.target !== `project:${viewerTab.mcpApp.directory.projectId}`)) throw new Error('Directory viewer lost its admitted project and directory.');
   await capture('artifact-04-original-file');
+  if (flow.directoryOwner) { await clickFrame('watch'); await waitFrame('document.querySelector("#updates")?.textContent === "Watching file"', 'original native file subscription'); }
   await clickFrame('editor');
   await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 4, commands: ['selectAll'] });
   await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 4 });
@@ -61,7 +81,9 @@ export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(sc
   await clickFrame('save'); await waitFrame('document.querySelector("#result")?.textContent === "saved"', 'revisioned actual filesystem save');
   if (readFileSync(join(flow.fixture, 'project/sample.report.note'), 'utf8') !== 'Edited by original viewer') throw new Error('Saved viewer bytes differ');
   await capture('artifact-05-saved');
+  const updatesBefore = flow.directoryOwner ? await inspect('Number(document.querySelector("#updates")?.dataset.count || 0)') : 0;
   writeFileSync(join(flow.fixture, 'project/sample.report.note'), 'External change');
+  if (flow.directoryOwner) await waitFrame(`Number(document.querySelector("#updates")?.dataset.count || 0) > ${updatesBefore}`, 'actual filesystem event delivered to original viewer');
   await clickFrame('save'); await waitFrame('document.querySelector("#result")?.textContent === "conflict"', 'external edit conflict');
   if (readFileSync(join(flow.fixture, 'project/sample.report.note'), 'utf8') !== 'External change') throw new Error('Conflict overwrote external bytes');
   await capture('artifact-06-conflict');
@@ -69,7 +91,7 @@ export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(sc
   await clickFrame('binary'); await waitFrame('document.querySelector("#result")?.textContent === "saved"', 'binary save');
   if (readFileSync(join(flow.fixture, 'project/sample.report.note')).toString('base64') !== 'AAH/') throw new Error('Binary save changed bytes');
   await clickFrame('refresh'); await waitFrame('document.querySelector("#editor")?.value === "Binary AAH/"', 'binary representation'); await capture('artifact-07-binary');
-  await clickFrame('foreign'); await waitFrame('document.querySelector("#result")?.textContent.includes("could not be confirmed")', 'foreign resource rejected');
+  await clickFrame('foreign'); await waitFrame('document.querySelector("#result")?.textContent.includes("does not belong")', 'foreign resource rejected');
   if (providerCalls().some(value => value.method === 'resources/read' && String(value.params.uri).startsWith('codex-resource://'))) throw new Error('Original host resource escaped to MCP server');
   await capture('artifact-08-foreign-rejected');
   flow.setConnected(false); await wait('document.querySelector(".mcp-app-frame") === null && document.querySelector(".mcp-app-empty button")?.disabled', 'offline original document retired'); await capture('artifact-09-offline');
@@ -85,5 +107,5 @@ export async function runArtifactFlow(flow: { window: BrowserWindow; evaluate(sc
   await click('.mcp-app-empty button', 'Open app'); await approveIfRequired(); await waitFrame('document.querySelector("#editor")?.value === "Binary AAH/"', 'original saved viewer restored');
   assertNoReplay(); await capture('artifact-12-restored-open');
   await click('[aria-label="Close sample.report.note tab"]'); await wait('!panelState().tabs.some(tab => tab.label.includes("sample.report.note"))', 'viewer close drains');
-  await capture('artifact-13-closed');
+  await capture('artifact-13-closed'); await assertNoConversation();
 }

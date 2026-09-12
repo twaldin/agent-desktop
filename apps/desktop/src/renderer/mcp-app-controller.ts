@@ -1,22 +1,40 @@
-import { parseNativeMcpAppResponse, type DesktopBridge, type McpJson, type NativeMcpAppRequest, type NativeMcpAppResource, type NativeMcpAppSelection } from "@agent-desktop/shared";
+import { parseNativeMcpAppResponse, type DesktopBridge, type McpJson, type NativeMcpAppRequest, type NativeMcpAppResource, type NativeMcpAppSelection, type NativeMcpAppResponse, type NativeSessionMcpSnapshot } from "@agent-desktop/shared";
 import type { McpDockApp } from "./mcp-app-dock";
-interface Operation { id: string; closed: boolean; opening: Promise<NativeMcpAppResource>; closing?: Promise<void>; closeFailed?: boolean; operationErrors?: number; warningShown?: boolean; initialResult?: Promise<Record<string, McpJson>>; initialArguments?: Record<string, McpJson> }
+interface Operation { abort: AbortController; id: string; closed: boolean; opening: Promise<NativeMcpAppResource>; closing?: Promise<void>; closeFailed?: boolean; operationErrors?: number; warningShown?: boolean; initialResult?: Promise<Record<string, McpJson>>; initialArguments?: Record<string, McpJson> }
+export interface McpAppPort {
+  read(signal: AbortSignal): Promise<NativeSessionMcpSnapshot>;
+  subscribeClose?(listener: () => void): () => void;
+  request(request: NativeMcpAppRequest): Promise<NativeMcpAppResponse>;
+}
 export class McpAppController {
   #operation?: Operation;
   #disposed = false;
   #connected = false;
   #listeners = new Set<() => void>();
   subscribeClose(listener: () => void): () => void { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; }
-  constructor(readonly bridge: DesktopBridge, readonly hostId: string, readonly sessionId: string, readonly app: McpDockApp) {}
+  constructor(readonly bridge: DesktopBridge, readonly hostId: string, readonly sessionId: string | undefined, readonly app: McpDockApp, private readonly ownerPort?: McpAppPort) {
+    this.#unsubscribeOwner = ownerPort?.subscribeClose?.(() => { if (this.#operation) void this.#close(this.#operation).catch(() => {}); });
+  }
+  #unsubscribeOwner?: () => void;
+  #read(signal: AbortSignal): Promise<NativeSessionMcpSnapshot | undefined> {
+    if (this.ownerPort) return this.ownerPort.read(signal);
+    if (!this.sessionId || !this.bridge.getSessionMcp) return Promise.reject(new Error("The original MCP session is unavailable."));
+    return this.bridge.getSessionMcp(this.sessionId, this.hostId).then(result => result.value ?? undefined);
+  }
+  #request(request: NativeMcpAppRequest): Promise<NativeMcpAppResponse> {
+    if (this.ownerPort) return this.ownerPort.request(request);
+    if (!this.sessionId || !this.bridge.sessionMcpApp) return Promise.reject(new Error("The original MCP session is unavailable."));
+    return this.bridge.sessionMcpApp(this.sessionId, request, this.hostId);
+  }
   connected(value: boolean): void { this.#connected = value; if (!value && this.#operation) void this.#close(this.#operation).catch(() => {}); }
   #current(operation: Operation): void {
     if (this.#disposed || !this.#connected || this.#operation !== operation || operation.closed) throw new Error("The original MCP app connection is unavailable. Open the app again deliberately.");
   }
   open(selection?: NativeMcpAppSelection): Promise<NativeMcpAppResource> {
-    if (this.#disposed || !this.#connected || !this.bridge.sessionMcpApp || !this.bridge.getSessionMcp) return Promise.reject(new Error("Connect to this app’s original session host."));
+    if (this.#disposed || !this.#connected || !this.ownerPort && (!this.bridge.sessionMcpApp || !this.bridge.getSessionMcp)) return Promise.reject(new Error("Connect to this app’s original session host."));
     const previous = this.#operation, previousWarning = previous?.warningShown === true;
     if (previous && !previous.closed) return previous.opening;
-    const operation = { id: crypto.randomUUID(), closed: false } as Operation;
+    const operation = { abort: new AbortController(), id: crypto.randomUUID(), closed: false } as Operation;
     // Reserve synchronously, including the initial close barrier. A second open
     // joins this exact attempt and a close before dispatch cancels it.
     this.#operation = operation;
@@ -29,7 +47,7 @@ export class McpAppController {
       }
       this.#current(operation);
       if (!selection) {
-        const snapshot = (await this.bridge.getSessionMcp!(this.sessionId, this.hostId)).value;
+        const snapshot = await this.#read(operation.abort.signal);
         this.#current(operation);
         if (!snapshot?.canOpenApps || !snapshot.servers.some(server => server.status === "connected" && server.name === this.app.serverName
           && (this.app.source?.type === "artifact" || (this.app.source?.type === "file" ? server.fileViewers : server.apps)?.some(app => app.toolName === this.app.toolName && app.resourceUri === this.app.resourceUri)))) throw new Error("This app is not available from its original server.");
@@ -37,7 +55,7 @@ export class McpAppController {
       }
       this.#current(operation);
       const request = { type: "open" as const, channelId: operation.id, selection, ...(this.app.source ? { source: this.app.source } : {}) };
-      const response = parseNativeMcpAppResponse(await this.bridge.sessionMcpApp!(this.sessionId, request, this.hostId), request);
+      const response = parseNativeMcpAppResponse(await this.#request(request), request);
       this.#current(operation);
       if (response.type !== "opened") throw new Error("Invalid MCP app opening result.");
       if (response.initialResult) operation.initialResult = Promise.resolve(response.initialResult);
@@ -55,15 +73,26 @@ export class McpAppController {
     return operation.initialResult ??= this.request("tools/call", { name: this.app.toolName, arguments: operation.initialArguments ?? {} });
   }
   initialArguments(): Record<string, McpJson> | undefined { return this.#operation?.initialArguments ?? (this.app.source?.type === "artifact" ? undefined : {}); }
-  async request(method: Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: Record<string, McpJson>): Promise<Record<string, McpJson>> {
+  async #dispatch<Result>(requestForChannel: (channelId: string) => Extract<NativeMcpAppRequest, { type: "request" | "events" }>, accept: (response: NativeMcpAppResponse) => Result): Promise<Result> {
     const operation = this.#operation;
     if (!operation) throw new Error("Open the MCP app first.");
     this.#current(operation); await operation.opening; this.#current(operation);
-    const request = { type: "request" as const, channelId: operation.id, requestId: crypto.randomUUID(), method, params };
-    const response = parseNativeMcpAppResponse(await this.bridge.sessionMcpApp!(this.sessionId, request, this.hostId), request);
+    const request = requestForChannel(operation.id);
+    const response = parseNativeMcpAppResponse(await this.#request(request), request);
     this.#current(operation);
-    if (response.type !== "result") throw new Error("Invalid MCP app response.");
-    return response.value;
+    return accept(response);
+  }
+  request(method: Extract<NativeMcpAppRequest, { type: "request" }>["method"], params: Record<string, McpJson>): Promise<Record<string, McpJson>> {
+    return this.#dispatch(channelId => ({ type: "request", channelId, requestId: crypto.randomUUID(), method, params }), response => {
+      if (response.type !== "result") throw new Error("Invalid MCP app response.");
+      return response.value;
+    });
+  }
+  events(after: number): Promise<Extract<NativeMcpAppResponse, { type: "events" }>> {
+    return this.#dispatch(channelId => ({ type: "events", channelId, after }), response => {
+      if (response.type !== "events") throw new Error("Invalid MCP resource events.");
+      return response;
+    });
   }
   async close(): Promise<void> {
     const operation = this.#operation;
@@ -80,13 +109,13 @@ export class McpAppController {
   }
   #close(operation: Operation): Promise<void> {
     if (operation.closing) return operation.closing;
-    operation.closed = true;
+    operation.closed = true; operation.abort.abort(new Error("The original app opening was cancelled."));
     operation.closing = (async () => {
       // Opening can be in transit. Its settlement precedes close, including an
       // ambiguous transport error; never let a late open create an orphan channel.
       await operation.opening.catch(() => {});
       const request = { type: "close" as const, channelId: operation.id };
-      const response = parseNativeMcpAppResponse(await this.bridge.sessionMcpApp!(this.sessionId, request, this.hostId), request);
+      const response = parseNativeMcpAppResponse(await this.#request(request), request);
       if (response.type !== "closed") throw new Error("Invalid app cleanup receipt.");
       operation.operationErrors = response.operationErrors;
     })();
@@ -94,5 +123,5 @@ export class McpAppController {
     void operation.closing.catch(() => { operation.closeFailed = true; });
     return operation.closing;
   }
-  dispose(): Promise<void> { this.#disposed = true; return this.#operation ? this.#close(this.#operation) : Promise.resolve(); }
+  dispose(): Promise<void> { this.#disposed = true; this.#unsubscribeOwner?.(); return this.#operation ? this.#close(this.#operation) : Promise.resolve(); }
 }

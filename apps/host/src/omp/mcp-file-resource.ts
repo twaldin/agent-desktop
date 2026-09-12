@@ -1,3 +1,5 @@
+import { watch } from "node:fs";
+import path from "node:path";
 import { WorkspaceService, WorkspaceError } from "../workspace/service";
 import type { McpJson, NativeMcpAppSource } from "../../../../packages/shared/src/session-mcp-app";
 export const MCP_VIEWER_MAX_BYTES = 1024 * 1024;
@@ -6,6 +8,44 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => value 
 export class McpFileResources {
   readonly workspace: WorkspaceService;
   constructor(cwd: string) { this.workspace = new WorkspaceService(cwd, { maxTextBytes: MCP_VIEWER_MAX_BYTES }); }
+  async watch(source: Extract<NativeMcpAppSource, { type: "file" }>, changed: () => void, signal: AbortSignal, assertCurrent: () => void): Promise<{ release(): Promise<void> }> {
+    signal.throwIfAborted(); assertCurrent();
+    // Validate this exact path with the same original-root read authority first.
+    const original = await this.workspace.copyInfo(source.path); signal.throwIfAborted(); assertCurrent();
+    const parent = path.dirname(original.absolutePath), name = path.basename(original.absolutePath);
+    let closed = false, failure: unknown, last: string | undefined = original.revision, inspecting: Promise<void> | undefined;
+    const report = () => { if (!closed && !signal.aborted) changed(); };
+    const watcher = watch(parent, { encoding: "utf8" }, (_event, filename) => { if (filename === null || filename === name) report(); });
+    const watchClosed = new Promise<void>(resolve => watcher.once("close", () => resolve()));
+    watcher.on("error", error => { failure ??= error; report(); });
+    // Parent rename/replacement need not emit another filename on the old watch.
+    // A bounded metadata read detects it without reading the viewer's contents.
+    const inspect = () => {
+      if (closed) return Promise.resolve();
+      if (inspecting) return inspecting;
+      inspecting = Promise.resolve().then(async () => {
+        try {
+          const info = await this.workspace.copyInfo(source.path);
+          if (last !== undefined && last !== info.revision) report(); last = info.revision;
+        } catch { if (last !== "missing") report(); last = "missing"; }
+      }).finally(() => { inspecting = undefined; });
+      return inspecting;
+    };
+    const timer = setInterval(() => void inspect(), 1000); void inspect();
+    let release: Promise<void> | undefined;
+    const close = () => {
+      if (release) return release;
+      closed = true; clearInterval(timer); signal.removeEventListener("abort", abort);
+      watcher.close();
+      release = Promise.all([watchClosed, inspecting]).then(() => { if (failure !== undefined) throw failure; });
+      void release.catch(() => {}); return release;
+    };
+    const abort = () => { void close().catch(() => {}); };
+    signal.addEventListener("abort", abort, { once: true });
+    try { signal.throwIfAborted(); assertCurrent(); }
+    catch (error) { await close(); throw error; }
+    return { release: close };
+  }
   async request(source: Extract<NativeMcpAppSource, { type: "file" }>, method: "resources/read" | "openai/resources/write", params: Record<string, McpJson>, signal: AbortSignal, assertCurrent: () => void): Promise<unknown> {
     const current = () => { signal.throwIfAborted(); assertCurrent(); };
     current();

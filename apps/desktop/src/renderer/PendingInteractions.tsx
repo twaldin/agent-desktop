@@ -23,7 +23,7 @@ export function PendingInteractions({ bridge, hostId, sessionId, localHostId, co
   </section>;
 }
 
-function InteractionCard({ request, disabled, sending, respond }: { request: OmpInteraction; disabled: boolean; sending: boolean; respond(response: OmpInteractionResponse): Promise<void> }) {
+export function InteractionCard({ request, disabled, sending, respond }: { request: OmpInteraction; disabled: boolean; sending: boolean; respond(response: OmpInteractionResponse): Promise<void> }) {
   const [value, setValue] = useState(request.prefill ?? "");
   const [index, setIndex] = useState(Math.min(Math.max(request.initialIndex ?? 0, 0), Math.max(0, (request.options?.length ?? 1) - 1)));
   const [now, setNow] = useState(Date.now());

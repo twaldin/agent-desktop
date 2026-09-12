@@ -8,7 +8,7 @@ import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 
-export const WORKER_PROTOCOL_VERSION = 50;
+export const WORKER_PROTOCOL_VERSION = 51;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -29,6 +29,7 @@ export type WorkerInit = { agentDir?: string } & (
   | { mode: "create"; options: Omit<OmpSessionOptions, "onEvent"> }
   | { mode: "open"; options: Omit<OmpOpenOptions, "onEvent"> }
   | { mode: "discovery" }
+  | { mode: "mcp-owner"; owner: { id: string; cwd: string } }
   | { mode: "browser"; owner: { id: string; cwd: string } }
 );
 export type WorkerOperation = BrowserEvaluationOperation
@@ -67,6 +68,10 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "getSessionMcpAuthorization" }
   | { operation: "respondSessionMcpAuthorization"; args: { request: import("@agent-desktop/shared").NativeMcpAuthorizationReply } }
   | { operation: "cancelSessionMcpAuthorization"; args: { authorizationId: string } }
+  | { operation: "getMcpOwner" }
+  | { operation: "mcpOwnerApp"; args: { request: import("@agent-desktop/shared").NativeMcpAppRequest } }
+  | { operation: "listMcpOwnerInteractions" }
+  | { operation: "respondMcpOwnerInteraction"; args: { id: string; response: OmpInteractionResponse } }
   | { operation: "getSessionMcp" }
   | { operation: "reloadSessionMcp"; args: { request: import("@agent-desktop/shared").NativeSessionMcpReload } }
   | { operation: "reconnectSessionMcp"; args: { request: import("@agent-desktop/shared").NativeSessionMcpReconnect } }

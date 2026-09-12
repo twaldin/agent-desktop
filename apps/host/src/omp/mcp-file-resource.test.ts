@@ -51,3 +51,48 @@ test("a viewer cannot save through an original symlink retargeted to different b
   expect(await readFile(join(cwd, "other.bin"), "utf8")).toBe("different file");
   expect(await readFile(join(cwd, source.path))).toEqual(Buffer.from([1, 0, 255]));
 }));
+
+test("a file subscription observes real edits, deletion and recreation, then releases before later edits", () => fixture(async (owner, cwd) => {
+  const abort = new AbortController(); let updates = 0;
+  const lease = await owner.watch(source, () => { updates++; }, abort.signal, () => {});
+  const changed = async (work: () => Promise<void>) => {
+    const before = updates; await work();
+    for (let index = 0; index < 200 && updates === before; index++) await Bun.sleep(10);
+    expect(updates).toBeGreaterThan(before);
+  };
+  try {
+    await changed(() => writeFile(join(cwd, source.path), "external edit"));
+    const read = await owner.request(source, "resources/read", { uri: source.resourceUri }, abort.signal, () => {}) as Read;
+    expect(read.contents[0]?.text).toBe("external edit");
+    await changed(() => unlink(join(cwd, source.path)));
+    await expect(owner.request(source, "resources/read", { uri: source.resourceUri }, abort.signal, () => {})).rejects.toThrow();
+    await changed(() => writeFile(join(cwd, source.path), "replacement"));
+    await lease.release(); const afterClose = updates;
+    await writeFile(join(cwd, source.path), "after release"); await Bun.sleep(40);
+    expect(updates).toBe(afterClose);
+  } finally { abort.abort(); await lease.release(); }
+}));
+test("file subscription cannot acquire a foreign root and abort joins original watcher cleanup", () => fixture(async (owner, cwd) => {
+  const abort = new AbortController(); let updates = 0;
+  await expect(owner.watch({ ...source, path: "../foreign.bin" }, () => {}, abort.signal, () => {})).rejects.toThrow();
+  const lease = await owner.watch(source, () => { updates++; }, abort.signal, () => {});
+  abort.abort(); await lease.release();
+  const before = updates; await writeFile(join(cwd, source.path), "after abort"); await Bun.sleep(40);
+  expect(updates).toBe(before);
+}));
+
+test("an edit between original metadata capture and watcher installation is not adopted as an unchanged baseline", () => fixture(async (owner, cwd) => {
+  const readMetadata = owner.workspace.copyInfo.bind(owner.workspace); let first = true, updates = 0;
+  owner.workspace.copyInfo = async path => {
+    const captured = await readMetadata(path);
+    if (first) { first = false; await writeFile(join(cwd, source.path), "changed before watch installed"); }
+    return captured;
+  };
+  const abort = new AbortController(), lease = await owner.watch(source, () => { updates++; }, abort.signal, () => {});
+  try {
+    for (let index = 0; index < 200 && !updates; index++) await Bun.sleep(10);
+    expect(updates).toBeGreaterThan(0);
+    const current = await owner.request(source, "resources/read", { uri: source.resourceUri }, abort.signal, () => {}) as Read;
+    expect(current.contents[0]?.text).toBe("changed before watch installed");
+  } finally { abort.abort(); await lease.release(); }
+}));
