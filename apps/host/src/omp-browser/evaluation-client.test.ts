@@ -29,6 +29,7 @@ function model(backend: "cdp" | "cmux") {
     : { binding: binding(backend), backend, state: { version: 1, surfaceId: target.targetId, url: "https://original.invalid/", title: "Original", viewport: { width: 800, height: 600, deviceScaleFactor: 2 }, elementRefs: [{ id: 7, ref: "@e7", name: "Original" }] } };
   const hooks: { start?: () => void; dispose?: () => Promise<void> } = {};
   let unsubscribed = false, ownerDestructions = 0;
+  const inspections: Array<{ pending: number; unacknowledged: number }> = [];
   const client: BrowserEvaluationClient & { destroyOwner(): void } = {
     pid: target.workerPid,
     subscribeBrowserEvaluation(value, receiver, onLost) {
@@ -53,8 +54,11 @@ function model(backend: "cdp" | "cmux") {
           if (started) { post(control("close")); post(control("drained")); }
           return Promise.resolve(undefined as T);
         }
-        case "inspectOpenBrowserEvaluation":
-        case "inspectRetainedBrowserEvaluation": throw new Error("Unexpected inspection in ordinary evaluation fixture");
+        case "inspectOpenBrowserEvaluation": {
+          const state = inspections.shift() ?? { pending: 0, unacknowledged: 0 };
+          return Promise.resolve({ descriptor, started, sequence: 0, ...state } as T);
+        }
+        case "inspectRetainedBrowserEvaluation": throw new Error("Unexpected retained inspection in ordinary evaluation fixture");
       }
     },
     destroyOwner() { ownerDestructions++; },
@@ -62,6 +66,7 @@ function model(backend: "cdp" | "cmux") {
   return { client, descriptor, requests, sent, order, actual, entered64, hooks,
     emit(frame: BrowserEvaluationFrame) { assert(post); post(frame); },
     lose(error: unknown) { assert(lost); lost(error); for (const request of actual) request.gate.reject(error); },
+    inspect(...states: Array<{ pending: number; unacknowledged: number }>) { inspections.push(...states); },
     unsubscribed: () => unsubscribed, ownerDestructions: () => ownerDestructions };
 }
 async function open(h: ReturnType<typeof model>, backend: "cdp" | "cmux") {
@@ -82,6 +87,15 @@ test("parent registers before open/start, receives synchronous replay, keeps one
   const ack: BrowserEvaluationFrame = { type: "worker-cdp", channel: "channel-717", kind: "ack", sequence: 1 };
   handle.receive(ack); assert.deepEqual(h.sent, [ack]);
   await handle.dispose(); assert(h.unsubscribed()); assert.equal(h.ownerDestructions(), 0);
+});
+
+test("startup admission waits until the exact source evaluator has no in-flight or unacknowledged operation", async () => {
+  const h = model("cdp"), handle = cdp(await open(h, "cdp"));
+  await handle.start(() => {});
+  h.inspect({ pending: 1, unacknowledged: 0 }, { pending: 0, unacknowledged: 1 }, { pending: 0, unacknowledged: 0 });
+  await handle.waitForIdle(500);
+  assert.equal(h.requests.filter(row => row.operation === "inspectOpenBrowserEvaluation").length, 3);
+  await handle.dispose();
 });
 
 test("close-first nested drained callback then throw retains the callback and native errors through repeated disposal", async () => {
