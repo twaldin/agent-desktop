@@ -58,7 +58,7 @@ function field(initial: Partial<BrowserAddressInputProps<BrowserAddressSuggestio
   const chosen:BrowserAddressSuggestion[]=[], submissions:string[]=[],changes:string[]=[];let cancelled=0,blurred=0;
   let rect={left:300,right:600,top:40,bottom:70,width:300};
   const anchor={isConnected:true,getClientRects:()=>[rect],getBoundingClientRect:()=>rect};
-  const inputNode={blur(){blurred++;input().props.onBlur();}};
+  const inputNode={blur(){blurred++;input().props.onBlur({relatedTarget:null});}};
   let props:BrowserAddressInputProps<BrowserAddressSuggestion>={inputRef:{current:inputNode as HTMLInputElement},anchorRef:{current:anchor as unknown as HTMLElement},owner:'["owner","session"]',value:"",draft:false,disabled:false,readOnly:false,suggestions:[row("a"),row("b")],onChoose:r=>chosen.push(r),onSubmit:()=>submissions.push(props.value),onChange:value=>{changes.push(value);props={...props,value,draft:true};},onCancel:()=>{cancelled++;},...initial};
   const slots:any[]=[],effectQueue:Array<()=>void>=[];let cursor=0,dirty=false,tree:any;
   const internals=(React as any).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
@@ -87,9 +87,9 @@ test("actual field Enter, pointer and Escape handlers keep selection intent sepa
     f.key("ArrowDown");expect(f.input().props["aria-activedescendant"]).toBe("field-0-option-0");
     f.key("Enter");expect(f.chosen.map(r=>r.id)).toEqual(["a"]);
     expect(f.changes).toEqual([]);expect(f.blurred).toBe(0);
-    const button=f.popup().children.props.children[1];let prevented=0;
+    const option=f.popup().children.props.children[1],button=option.props.children[0];let prevented=0;
     button.props.onPointerDown({preventDefault(){prevented++;}});button.props.onClick();
-    expect(prevented).toBe(1);expect(button.props.tabIndex).toBe(-1);expect(button.props.role).toBe("option");
+    expect(prevented).toBe(1);expect(button.props.tabIndex).toBe(-1);expect(option.props.role).toBe("option");
     expect(f.chosen.map(r=>r.id)).toEqual(["a","b"]);expect(f.blurred).toBe(0);
     f.key("Escape");expect(f.cancelled).toBe(1);expect(f.blurred).toBe(1);expect(f.input().props["aria-expanded"]).toBe(false);expect(f.frames.size).toBe(0);
   }finally{f.close();}
@@ -169,12 +169,21 @@ test("parent form Enter keeps composition and disabled/read-only submission guar
 test("actual field does not submit a vanished selected row and edit resets frozen selection", () => {
   const f=field();try{
     f.focus();f.key("ArrowDown");f.update({suggestions:[row("late"),row("b")]});
-    expect(f.popup().children.props.children.map((b:any)=>b.props.children[1].props.children)).toEqual(["b"]);
+    expect(f.popup().children.props.children.map((option:any)=>option.props.children[0].props.children[1].props.children[0].props.children)).toEqual(["b"]);
     f.key("Enter");expect(f.chosen).toEqual([]);expect(f.submissions).toEqual([]);
     f.input().props.onChange({currentTarget:{value:"late"}});f.render();f.key("Enter");
     expect(f.chosen.map(r=>r.id)).toEqual(["late"]);expect(f.changes).toEqual(["late"]);
     f.update({value:"example.com",suggestions:[row("domain","example.com")]});f.key("Enter");
     expect(f.submissions).toEqual(["example.com"]);expect(f.chosen).toHaveLength(1);
+  }finally{f.close();}
+});
+
+test("suggestion deletion keeps the editing input alive and restores it after the owned delete",()=>{
+  const deleted:string[]=[];const f=field({suggestions:[{...row("a","Example"),deleteLabel:"Remove suggestion for Example"}],onDelete:row=>deleted.push(row.id)});try{
+    f.focus();const option=f.popup().children.props.children[0],button=option.props.children[1];
+    expect(button.props["aria-label"]).toBe("Remove suggestion for Example");
+    f.input().props.onBlur({relatedTarget:{dataset:{browserSidebarAutocompleteDelete:"true"}}});f.render();expect(f.input().props["aria-expanded"]).toBe(true);
+    button.props.onClick({stopPropagation(){}});expect(deleted).toEqual(["a"]);expect(f.cancelled).toBe(0);
   }finally{f.close();}
 });
 

@@ -12,14 +12,23 @@
   color: var(--text);
   box-shadow: 0 10px 24px rgb(0 0 0 / 20%);
 }
-.browser-address-suggestions > button {
+.browser-address-suggestions > [role="option"] {
   display: flex;
   align-items: center;
   flex: none;
   width: 100%;
   height: 36px;
+  border-radius: calc(var(--menu-radius) * 2 / 3);
+}
+.browser-address-suggestions > [role="option"] > button:first-child {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 36px;
   gap: 10px;
-  padding: 0 36px 0 10px;
+  padding: 0 10px;
   border: 0;
   border-radius: calc(var(--menu-radius) * 2 / 3);
   background: transparent;
@@ -30,8 +39,14 @@
   user-select: none;
   outline: none;
 }
-.browser-address-suggestions > button:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
-.browser-address-suggestions > button[aria-selected="true"] { background: var(--hover); }
+.browser-address-suggestions > [role="option"]:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
+.browser-address-suggestions > [role="option"][aria-selected="true"] { background: var(--hover); }
+.browser-address-suggestion-delete { flex: none; width: 28px; height: 28px; margin-inline-end: 4px; padding: 6px; border: 0; border-radius: var(--button-radius); background: transparent; color: var(--muted); }
+.browser-address-suggestion-delete:hover, .browser-address-suggestion-delete:focus-visible { background: var(--hover); color: var(--text); outline: none; }
+.browser-address-suggestion-delete svg { width: 16px; height: 16px; }
 .browser-address-suggestion-icon { display: flex; flex: none; width: 16px; height: 16px; }
 .browser-address-suggestion-icon > svg { width: 16px; height: 16px; }
-.browser-address-suggestion-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.browser-address-suggestion-copy { display:flex;align-items:baseline;gap:6px;min-width:0;overflow:hidden; }
+.browser-address-suggestion-title, .browser-address-suggestion-subtitle { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.browser-address-suggestion-title { flex:none;max-width:60%; }
+.browser-address-suggestion-subtitle { color:var(--muted); }

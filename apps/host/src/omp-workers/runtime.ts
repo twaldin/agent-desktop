@@ -12,7 +12,7 @@ import { realpath } from "node:fs/promises";
 import { readSessionHeader, requireDirectory } from "../omp/session-files";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BrowserFrameTarget, BrowserMetadataAvailability, ModelInfo, NativeBrowserFrame, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
+import type { BrowserFrameTarget, BrowserHistoryEntry, BrowserMetadataAvailability, ModelInfo, NativeBrowserFrame, NativeSessionActivity, TranscriptMessage, OmpComposerCatalog, OmpModelCapabilities } from "@agent-desktop/shared";
 import type { GoalContinuationEligibility, OmpBrowserTabCreateResult, OmpDetachedQuestionDeliveryRun, OmpGoalContinuationRun, OmpOpenOptions, OmpPromptRun, OmpSession, OmpSessionOptions } from "../omp";
 import { DetachedQuestionOutcomeUnknown } from "../omp/detached-questions";
 import { copyPreparedImages } from "../omp/images";
@@ -69,6 +69,7 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   startBtw(input: NativeBtwStart): Promise<NativeBtwSnapshot>;
   cancelBtw(runId: string): Promise<NativeBtwSnapshot | null>;
   getBrowserMetadata(): Promise<BrowserMetadataAvailability>;
+  getBrowserHistory?(target: BrowserFrameTarget): Promise<BrowserHistoryEntry[]>;
   createBrowserTab(name: string, initialUrl?: string): Promise<OmpBrowserTabCreateResult>;
   controlBrowser(request: BrowserControlRequest): Promise<{name: string; targetId: string; context: BrowserDocumentContext; url: string; title: string}>;
   getBrowserFrame(target: BrowserFrameTarget): Promise<NativeBrowserFrame>;
@@ -90,7 +91,7 @@ export interface WorkerMcpOwner {
   subscribeWorkerFailure(listener: (failure: WorkerFailure) => void): () => void;
   dispose(): Promise<void>;
 }
-export interface WorkerBrowserOwner extends Pick<WorkerSession, "workerPid" | "workerFailure" | "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "closeBrowserTab" | "inspectBrowserTab" | "getBrowserFrame" | "subscribeWorkerFailure" | "dispose"> {
+export interface WorkerBrowserOwner extends Pick<WorkerSession, "workerPid" | "workerFailure" | "getBrowserMetadata" | "getBrowserHistory" | "createBrowserTab" | "controlBrowser" | "closeBrowserTab" | "inspectBrowserTab" | "getBrowserFrame" | "subscribeWorkerFailure" | "dispose"> {
   readonly id: string;
   readonly cwd: string;
   reserveBrowserEvaluation(target: BrowserFrameTarget, operationId: string): Promise<WorkerBrowserReservationStatus>;
@@ -874,12 +875,16 @@ export class WorkerRuntime {
     })());
   }
 
-  #browserControls(client: WorkerClient, readOwnerId: () => string): Pick<WorkerSession, "getBrowserMetadata" | "createBrowserTab" | "controlBrowser" | "closeBrowserTab" | "inspectBrowserTab" | "getBrowserFrame"> {
+  #browserControls(client: WorkerClient, readOwnerId: () => string): Pick<WorkerSession, "getBrowserMetadata" | "getBrowserHistory" | "createBrowserTab" | "controlBrowser" | "closeBrowserTab" | "inspectBrowserTab" | "getBrowserFrame"> {
     return {
       getBrowserMetadata: async () => {
         const metadata = await client.request<BrowserMetadataAvailability>({ operation: "getBrowserMetadata" }, 15_000);
         if (metadata.availability === "running" && metadata.workerPid !== client.pid) return { availability: "unavailable", reason: "Native browser metadata came from a stale worker." };
         return metadata;
+      },
+      getBrowserHistory: target => {
+        if (target.workerPid !== client.pid) return Promise.reject(new Error("The selected browser history belongs to a stale worker."));
+        return client.request<BrowserHistoryEntry[]>({ operation: "getBrowserHistory", args: { target } }, 15_000);
       },
       // Native acquisition owns its configured finite timeout. Retain the IPC
       // request until it settles so a desktop timeout cannot release the host's

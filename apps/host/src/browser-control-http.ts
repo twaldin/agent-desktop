@@ -21,7 +21,8 @@ export async function readBrowserControlBody(request: Request): Promise<unknown>
  * process epoch rejects requests from before a host restart. No action replay. */
 export class BrowserControlHttp {
   private readonly controls: BrowserControlRequests;
-  constructor(private options: { hostId: string; sessionExists(id: string): boolean; getExistingHandle(id: string): Promise<BrowserControlHandle | undefined>; now?: () => number }) {
+  constructor(private options: { hostId: string; sessionExists(id: string): boolean; getExistingHandle(id: string): Promise<BrowserControlHandle | undefined>;
+    afterCompletedNavigation?(sessionId: string, input: BrowserControlRequest): Promise<void>; now?: () => number }) {
     this.controls = new BrowserControlRequests(options.now);
   }
   get epoch(): string { return this.controls.epoch; }
@@ -36,7 +37,7 @@ export class BrowserControlHttp {
     catch { return failure('Invalid browser action request.'); }
     const result = await this.controls.execute(sessionId, input, {
       isCurrent: () => this.options.sessionExists(sessionId), getExistingHandle: () => this.options.getExistingHandle(sessionId),
-    });
+    },this.options.afterCompletedNavigation);
     return Response.json({ ...result, hostId: this.options.hostId, sessionId }, { headers });
   }
 }

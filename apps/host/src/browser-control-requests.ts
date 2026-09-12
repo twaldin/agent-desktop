@@ -17,7 +17,8 @@ export class BrowserControlRequests {
   readonly epoch = crypto.randomUUID();
   private receipts = new Map<string, { hash: string; createdAt: number; settled: boolean; result: Promise<BrowserControlResult> }>();
   constructor(private readonly now = Date.now) {}
-  async execute(ownerId: string, input: BrowserControlRequest, owner: ControlOwner): Promise<BrowserControlResult> {
+  async execute(ownerId: string, input: BrowserControlRequest, owner: ControlOwner,
+    afterCompletedNavigation?: (ownerId:string,input:BrowserControlRequest)=>Promise<void>): Promise<BrowserControlResult> {
     const receipt = (outcome: BrowserControlResult['outcome'], message?: string): BrowserControlResult => ({ protocolVersion: 1, requestId: input.requestId,
       workerPid: input.target.workerPid, name: input.target.name, targetId: input.target.targetId, outcome, ...(message ? { message } : {}) });
     if (input.controlEpoch !== this.epoch) return receipt('rejected', 'The browser control owner restarted. Refresh before sending another action.');
@@ -42,6 +43,7 @@ export class BrowserControlRequests {
         if (value.name !== input.target.name || value.targetId !== input.target.targetId) throw new Error('Browser result identity changed.');
         // Returned text remains untrusted page data and is bounded before IPC.
         if (typeof value.url !== 'string' || value.url.length > 8192 || typeof value.title !== 'string' || value.title.length > 1024) throw new Error('Invalid browser action result.');
+        if (input.action.type === "navigate") await afterCompletedNavigation?.(ownerId,input).catch(()=>{});
         return { ...receipt('completed'), context: parseBrowserDocumentContext(value.context), url: value.url, title: value.title };
       } catch (error) {
         return error instanceof Error && error.name === 'BrowserActionRejected'

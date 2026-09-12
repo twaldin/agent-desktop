@@ -394,6 +394,16 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         else respond(true, browserMetadata(native.listTabsForOwner(owner)));
         break;
       }
+      case "getBrowserHistory": {
+        const owner = browserOwnerId(), target = message.args.target;
+        if (!validBrowserFrameTarget(target) || target.workerPid !== process.pid) { const error = new Error("The browser worker changed."); error.name = "BrowserActionRejected"; throw error; }
+        const native = await import("@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor") as unknown as {
+          readTabNavigationHistoryForOwner?: (owner: string, selected: import("@agent-desktop/shared").BrowserFrameTarget) => Promise<unknown>
+        };
+        if (!native.readTabNavigationHistoryForOwner) throw new Error("Native browser history is unavailable.");
+        respond(true, await native.readTabNavigationHistoryForOwner(owner, target));
+        break;
+      }
       case "createBrowserTab": {
         if (typeof message.args.name !== "string" || !/^desktop-[a-zA-Z0-9-]{1,100}$/.test(message.args.name)) {
           const error = new Error("Invalid native browser tab creation identity.");

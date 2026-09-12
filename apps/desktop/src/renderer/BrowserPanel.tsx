@@ -3,12 +3,14 @@ import {
   validBrowserFrameTarget,
   type BrowserFrameTarget,
   type BrowserHumanAction,
+  type BrowserAutocompleteRequest,
   type DesktopBridge,
   type NativeBrowserTabMetadata,
 } from "../../../../packages/shared/src/protocol";
 import { browserPreviewSource, type BrowserPreviewOwner, type BrowserPreviewSource, type PreviewFrame, type PreviewMetadata } from "./browser-preview-source";
+import { BrowserAddressInput, type BrowserAddressSuggestion } from "./BrowserAddressInput";
 import { Icon } from "./Icons";
-import { browserAddressLabel, browserExternalAddress, browserNavigationAddress } from "./browser-address";
+import { browserAddressLabel, browserExternalAddress, browserNavigationAddress, parseBrowserAddress } from "./browser-address";
 import { framePoint } from "./browser-input";
 import "./browser-panel.css";
 
@@ -58,6 +60,24 @@ function modifiers(event: {
     event.shiftKey && "Shift",
   ].filter(Boolean) as Array<"Alt" | "Control" | "Meta" | "Shift">;
 }
+interface AddressRow extends BrowserAddressSuggestion {
+  address: string;
+  subtitle?: string;
+  acceptToken?: string;
+  deleteToken?: string;
+}
+
+export function browserBackendCapabilities(backend: NativeBrowserTabMetadata["backend"] | undefined, context?: PreviewFrame["context"]) {
+  const opaque = context?.opaqueHistoryTraversal === true;
+  return {
+    historyEntries: backend !== "cmux",
+    stop: backend !== "cmux",
+    pageInput: backend === "worker",
+    resize: backend === "worker" && Boolean(context?.navigation),
+    back: Boolean(context?.navigation?.canGoBack || opaque),
+    forward: Boolean(context?.navigation?.canGoForward || opaque),
+  };
+}
 
 export function BrowserPanel(props: Props) {
   const draft = props.draftOwner;
@@ -95,10 +115,17 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   const panelSizeFresh = useRef(false);
   const [refresh, setRefresh] = useState(0);
   const [pending, setPending] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState(false);
+  const stoppingNavigation = useRef(false);
   const [address, setAddress] = useState("");
   const [addressFocused, setAddressFocused] = useState(false);
   const addressFocusRef = useRef(false);
   const addressInput = useRef<HTMLInputElement>(null);
+  const addressForm = useRef<HTMLFormElement>(null);
+  const [addressSuggestions, setAddressSuggestions] = useState<AddressRow[]>([]);
+  const [autocompleteRefresh, setAutocompleteRefresh] = useState(0);
+  const addressEditingSession = useRef<string | undefined>(undefined);
+  const autocompleteRequest = useRef<BrowserAutocompleteRequest | undefined>(undefined);
   const optionsMenu = useRef<HTMLDetailsElement>(null);
   const blankPageFocused = useRef(false);
   const [queuedText, setQueuedText] = useState(0);
@@ -116,6 +143,10 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   const textInput = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const skipInput = useRef(false);
+  const selectedBackend = metadata?.availability === "running"
+    ? metadata.tabs.find(tab => tab.state === "alive" && selected && tab.name === selected.name && tab.targetId === selected.targetId)?.backend
+    : undefined;
+  const nativeHistoryAvailable = browserBackendCapabilities(selectedBackend).historyEntries;
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   activeRef.current = active;
@@ -126,6 +157,42 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   }, [frame]);
 
   useLayoutEffect(() => { if (addressFocused && !addressDirty.current) addressInput.current?.select(); }, [addressFocused]);
+
+  useEffect(() => {
+    if (!addressFocused || !selected || !source.current() || !source.canAutocomplete || !nativeHistoryAvailable) {
+      setAddressSuggestions([]);
+      return;
+    }
+    const query = address === "about:blank" ? "" : address;
+    const target = { ...selected };
+    const editingSessionId = addressEditingSession.current ??= crypto.randomUUID();
+    let disposed = false; let timer: ReturnType<typeof setTimeout>; let ownedRequest: BrowserAutocompleteRequest | undefined;
+    const load = (attempt: number) => {
+      const requestId = crypto.randomUUID();
+      const request: BrowserAutocompleteRequest = { action:"start", editingSessionId, requestId, target, query, cursorPosition: query.length, preventInlineAutocomplete:false };
+      ownedRequest = request;
+      autocompleteRequest.current = request;
+      void source.autocomplete(request).then(
+        (result) => {
+          if (disposed || result.state!=="matches" || autocompleteRequest.current!==request || !source.current() || !same(selectedRef.current, target)) return;
+          setAddressSuggestions((result.matches??[]).map(item=>({id:item.id,title:item.isSearch?`Search the web for ‘${item.fillIntoEdit}’`:item.title,
+            address:item.destinationURL,subtitle:item.description,canBeDefault:item.canBeDefault,acceptToken:item.acceptToken,deleteToken:item.deleteToken,
+            deleteLabel:item.deletable?`Remove suggestion for ${item.title||item.destinationURL}`:undefined,icon:<Icon name={item.isSearch?"search":"globe"}/>})));
+        },
+        () => {
+          if (disposed) return;
+          if (attempt < 2) timer = setTimeout(() => load(attempt + 1), 200);
+          else if (!disposed) setAddressSuggestions([]);
+        },
+      );
+    };
+    timer = setTimeout(() => load(0), 120);
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      if (ownedRequest) void source.autocomplete({action:"stop",editingSessionId,requestId:ownedRequest.requestId,target}).catch(()=>{});
+    };
+  }, [address, addressFocused, selected?.workerPid, selected?.name, selected?.targetId, source, nativeHistoryAvailable, autocompleteRefresh]);
 
   const holdInput = (extra?: BrowserHumanAction) => {
     const waiting = [...(extra ? [extra] : []), ...textQueue.current];
@@ -223,13 +290,6 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           setFrame(undefined);
           saveSelection(selectionKey, target);
         }
-        if (tab.backend !== "worker") {
-          setFrame(undefined);
-          setError(
-            "This native browser backend does not support viewport previews yet.",
-          );
-          return;
-        }
         const image = await source.frame(target);
         if (!current()) return;
         frameSource.current = source;
@@ -302,6 +362,8 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     same(frame, selected),
   );
   const controlsReady = frameReady && !pending;
+  const capabilities = browserBackendCapabilities(selectedBackend, frame?.context);
+  const pageInputReady = controlsReady && capabilities.pageInput;
   const blankPage = frame?.url === "about:blank";
   useEffect(() => {
     if (blankPage && controlsReady && !blankPageFocused.current) { blankPageFocused.current = true; addressInput.current?.focus(); }
@@ -315,7 +377,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
   const control = async (
     action: BrowserHumanAction,
     queued = false,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const image = frameRef.current;
     const target = selectedRef.current;
     if (
@@ -327,33 +389,35 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       !target ||
       !same(image, target)
     )
-      return;
+      return false;
     const context = contextRef.current ?? image.context;
-    if (!context) return;
+    if (!context) return false;
     const requestId = crypto.randomUUID();
     // Invalidates a capture already in progress before this native mutation.
     const revision = ++selectionRevision.current;
     pendingRef.current = true;
+    const navigation = ["navigate", "reload", "back", "forward"].includes(action.type);
+    if (navigation) setPendingNavigation(true);
     panelSizeFresh.current = false;
     setPending(true);
     try {
       const receipt = await source.control({
         requestId, controlEpoch: image.controlEpoch, capturedAt: image.capturedAt, target, context, action,
       });
-      if (!mounted.current || revision !== selectionRevision.current || committedSource.current !== source || !source.current()) return;
+      if (!mounted.current || revision !== selectionRevision.current || committedSource.current !== source || !source.current()) return false;
       if (receipt.outcome === "unknown") {
         haltedRef.current = true; holdInput(); setActionError(
           receipt.message ||
             "The browser action outcome is unknown. It was not replayed.",
         );
-        return;
+        return false;
       }
       if (receipt.outcome === "rejected") {
         haltedRef.current = true; holdInput(action); setActionError(receipt.message || "The browser action was rejected.");
-        return;
+        return false;
       }
       contextRef.current = receipt.context ?? context;
-      if (!activeRef.current || pausedRef.current) { holdInput(); return; }
+      if (!activeRef.current || pausedRef.current) { holdInput(); return false; }
       if (action.type === "navigate") addressDirty.current = false;
       const next = textQueue.current.shift();
       setQueuedText(
@@ -364,11 +428,11 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
         ),
       );
       if (next) {
-        await control(next, true);
-        return;
+        return await control(next, true);
       }
       setError(undefined);
       setRefresh((value) => value + 1);
+      return true;
     } catch (cause) {
       if (mounted.current && revision === selectionRevision.current) {
         haltedRef.current = true; holdInput(); setActionError(
@@ -377,9 +441,49 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
             : "The browser action could not be confirmed; inspect the page before acting again.",
         );
       }
+      return false;
     } finally {
       pendingRef.current = false;
+      if (navigation) setPendingNavigation(false);
       if (mounted.current) setPending(false);
+    }
+  };
+  const stopNavigation = async () => {
+    const image = frameRef.current;
+    const target = selectedRef.current;
+    const context = contextRef.current ?? image?.context;
+    if (
+      !pendingNavigation ||
+      stoppingNavigation.current ||
+      !source.current() ||
+      !source.canControl ||
+      !image?.controlEpoch ||
+      !target ||
+      !context ||
+      !same(image, target)
+    ) return;
+    stoppingNavigation.current = true;
+    setToolbarError(undefined);
+    try {
+      const receipt = await source.control({
+        requestId: crypto.randomUUID(),
+        controlEpoch: image.controlEpoch,
+        capturedAt: image.capturedAt,
+        target,
+        context,
+        action: { type: "stop" },
+      });
+      if (!mounted.current || committedSource.current !== source || !source.current()) return;
+      if (receipt.outcome !== "completed") {
+        haltedRef.current = true;
+        setActionError(receipt.message ?? "Stopping the page could not be confirmed. Inspect it before acting again.");
+      } else {
+        setRefresh(value => value + 1);
+      }
+    } catch (cause) {
+      if (mounted.current) setActionError(cause instanceof Error ? cause.message : "Stopping the page could not be confirmed.");
+    } finally {
+      stoppingNavigation.current = false;
     }
   };
 
@@ -450,16 +554,16 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     else textQueue.current.push(action);
     setQueuedText(queuedCharacters());
   };
-  const submitAddress = (event: React.FormEvent) => {
-    event.preventDefault();
+  const submitAddress = (event?: React.FormEvent) => {
+    event?.preventDefault();
     if (!controlsReady) return;
     try {
       const url = browserNavigationAddress(address);
-      if (url) { setToolbarError(undefined); addressInput.current?.blur(); void control({ type: "navigate", url }); }
+      if (url) { setToolbarError(undefined); void control({ type: "navigate", url }).then(completed=>{if(completed)addressInput.current?.blur();}); }
     } catch (cause) { setToolbarError(cause instanceof Error ? cause.message : 'The page address could not be opened.'); }
   };
   const pointer = (event: React.MouseEvent<HTMLImageElement>) => {
-    if (!controlsReady || !frame?.context) return;
+    if (!pageInputReady || !frame?.context) return;
     const point = framePoint(
       event.currentTarget.getBoundingClientRect(),
       frame.context,
@@ -471,7 +575,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
     void control({ type: "click", ...point });
   };
   const wheel = (event: React.WheelEvent<HTMLImageElement>) => {
-    if (!controlsReady || !frame?.context) return;
+    if (!pageInputReady || !frame?.context) return;
     const point = framePoint(
       event.currentTarget.getBoundingClientRect(),
       frame.context,
@@ -506,7 +610,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
       "PageDown",
     ];
     if (
-      !frameReady ||
+      !pageInputReady ||
       event.nativeEvent.isComposing ||
       !supported.includes(event.key)
     )
@@ -566,7 +670,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
             title={tab.url}
           >
             {tab.title || tab.url || tab.name}
-            {tab.backend !== "worker" ? " · unavailable" : ""}
+            {tab.backend === "cmux" ? " · limited controls" : ""}
           </button>
         ))}
       </div>}
@@ -574,7 +678,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
         <button
           aria-label="Back"
           title="Back"
-          disabled={!controlsReady || !frame?.context?.navigation?.canGoBack}
+          disabled={!controlsReady || !capabilities.back}
           onClick={() => void control({ type: "back" })}
         >
           <Icon name="browserBack" />
@@ -582,41 +686,47 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
         <button
           aria-label="Forward"
           title="Forward"
-          disabled={!controlsReady || !frame?.context?.navigation?.canGoForward}
+          disabled={!controlsReady || !capabilities.forward}
           onClick={() => void control({ type: "forward" })}
         >
           <Icon name="browserBack" className="browser-forward-icon" />
         </button>
         <button
-          aria-label="Reload page"
-          title="Reload page"
-          disabled={!controlsReady}
-          onClick={() => void control({ type: "reload" })}
+          aria-label={pendingNavigation && capabilities.stop ? "Stop loading" : "Reload page"}
+          title={pendingNavigation && !capabilities.stop ? "Navigation in progress; Stop is unavailable for cmux" : pendingNavigation ? "Stop loading" : "Reload page"}
+          disabled={pendingNavigation && capabilities.stop ? !source.canControl : !controlsReady}
+          onClick={() => pendingNavigation && capabilities.stop ? void stopNavigation() : void control({ type: "reload" })}
         >
-          <Icon name="browserReload" />
+          <Icon name={pendingNavigation && capabilities.stop ? "stop" : "browserReload"} />
         </button>
-        <form onSubmit={submitAddress}>
-          <input
-            ref={addressInput}
-            data-browser-address-owner={source.focusOwner}
-            data-browser-address-draft={addressDirty.current ? "true" : undefined}
-            aria-label="Page address"
-            role="combobox"
-            aria-expanded={false}
-            aria-autocomplete="none"
-            spellCheck={false}
-            autoComplete="off"
-            disabled={!selected || !active}
+        <form ref={addressForm} onSubmit={submitAddress}>
+          <BrowserAddressInput inputRef={addressInput} anchorRef={addressForm} owner={source.focusOwner}
             value={addressFocused || addressDirty.current ? (address === "about:blank" ? "" : address) : browserAddressLabel(address)}
-            onFocus={event => { addressFocusRef.current = true; setAddressFocused(true); }}
-            onBlur={() => { addressFocusRef.current = false; setAddressFocused(false); if (!addressDirty.current) setAddress(frameRef.current?.url ?? address); }}
-            onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); addressDirty.current = false; setAddress(frameRef.current?.url ?? ""); event.currentTarget.blur(); } }}
-            onChange={(event) => {
-              addressDirty.current = true;
-              setAddress(event.target.value);
+            draft={addressDirty.current}
+            disabled={!selected || !active}
+            readOnly={false}
+            suggestions={addressSuggestions}
+            onFocus={() => { addressEditingSession.current=crypto.randomUUID();addressFocusRef.current = true; setAddressFocused(true); }}
+            onBlur={() => { addressEditingSession.current=undefined;addressFocusRef.current = false; setAddressFocused(false); if (!addressDirty.current) setAddress(frameRef.current?.url ?? address); }}
+            onChange={(value) => { addressDirty.current = true; setAddress(value); }}
+            onCancel={() => { addressEditingSession.current=undefined;addressFocusRef.current = false; setAddressFocused(false); addressDirty.current = false; setAddress(frameRef.current?.url ?? ""); }}
+            onSubmit={() => submitAddress()}
+            onChoose={(row) => {
+              setToolbarError(undefined);
+              addressDirty.current = false;
+              setAddress(row.address);
+              const request=autocompleteRequest.current;
+              void (async()=>{
+                if(request?.action==="start"&&row.acceptToken)await source.autocomplete({action:"accept",editingSessionId:request.editingSessionId,requestId:request.requestId,target:request.target,acceptToken:row.acceptToken});
+                if(await control({type:"navigate",url:row.address}))addressInput.current?.blur();
+              })().catch(cause=>setToolbarError(cause instanceof Error?cause.message:"The browser suggestion could not be opened."));
             }}
-            placeholder="Search or enter a URL"
-          />
+            onDelete={(row)=>{
+              const request=autocompleteRequest.current;if(request?.action!=="start"||!row.deleteToken)return;
+              void source.autocomplete({action:"delete",editingSessionId:request.editingSessionId,requestId:request.requestId,target:request.target,deleteToken:row.deleteToken})
+                .then(()=>{setAutocompleteRefresh(value=>value+1);requestAnimationFrame(()=>addressInput.current?.focus());})
+                .catch(cause=>setToolbarError(cause instanceof Error?cause.message:"The browser suggestion could not be removed."));
+            }} />
           <button
             aria-label="Open in external browser"
             title="Open in this device’s external browser"
@@ -647,7 +757,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
               if (optionsMenu.current) optionsMenu.current.open = false;
               lastFit.current = undefined; setFitPage(value => !value);
             }}><span>Fit page to panel</span>{fitPage && <Icon name="check"/>}</button>
-            <button role="menuitem" disabled={!controlsReady || !frame?.context?.navigation} onClick={() => {
+            <button role="menuitem" disabled={!controlsReady || !capabilities.resize} onClick={() => {
               const rect = viewport.current?.getBoundingClientRect();
               if (!rect || rect.width < 1 || rect.height < 1) return;
               if (optionsMenu.current) optionsMenu.current.open = false;
@@ -682,7 +792,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           {blankPage && <div className="browser-blank-page"><Icon name="globe"/><strong>Start browsing</strong><span>Enter a URL to open a page</span></div>}
           <div
             ref={viewport}
-            className={`browser-viewport${controlsReady ? " browser-viewport-live" : ""}${blankPage ? " browser-blank-viewport" : ""}`}
+            className={`browser-viewport${pageInputReady ? " browser-viewport-live" : ""}${blankPage ? " browser-blank-viewport" : ""}`}
           >
             <img
               src={`data:${frame.mimeType};base64,${frame.data}`}
@@ -701,7 +811,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
               maxLength={16384}
               className="browser-input-capture"
               aria-label="Browser page keyboard input"
-              disabled={!frameReady}
+              disabled={!pageInputReady}
               onKeyDown={frameKey}
               onInput={captureInput}
               onCompositionStart={() => {
@@ -712,6 +822,7 @@ function OwnedBrowserPreview({ bridge, source, active, nativeTarget, onMetadata,
           </div>
           <figcaption className={stale ? "browser-stale" : "browser-preview-caption"}>
             Viewport preview · {frame.title || frame.url}
+            {selectedBackend === "cmux" ? " · History, Stop, and page input unavailable" : ""}
             {stale ? " · stale preview" : ""}
           </figcaption>
         </figure>

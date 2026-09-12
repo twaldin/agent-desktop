@@ -42,6 +42,7 @@ import type { LocalEnvironmentWorkerEnvironment } from "./local-environments/env
 import type { GitSubmissionReceipt, GitSubmissionTarget } from "../../../packages/shared/src/git-submissions";
 import type { WorkspaceTarget } from "../../../packages/shared/src/workspace";
 import { AutomationRecords, initializeAutomationRecords } from "./automation-records";
+import { BrowserAutocompleteRecords } from "./browser-autocomplete-records";
 
 export type { DraftInput } from "../../../packages/shared/src/protocol";
 import type { DraftInput } from "../../../packages/shared/src/protocol";
@@ -117,6 +118,7 @@ export class HostStore {
   readonly terminalCreations: TerminalCreationRecords;
   readonly environmentPreparations: EnvironmentPreparationAccessor;
   readonly automations: AutomationRecords;
+  readonly browserAutocomplete: BrowserAutocompleteRecords;
   private readonly db: Database;
   private readonly environmentPreparationStore: LocalEnvironmentPreparations;
 
@@ -204,6 +206,10 @@ export class HostStore {
         if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
         this.requireVersion(23);
       });
+      this.browserAutocomplete = new BrowserAutocompleteRecords(
+        () => this.readMetadata("browser-autocomplete-history.v1"),
+        value => this.writeMetadata("browser-autocomplete-history.v1", value),
+      );
       this.getDeviceAccessPolicy(); // Refuse corrupt or missing restrictions before serving any connection.
       this.recoverInterruptedSessions();
       this.recoverInterruptedGitSubmissions();

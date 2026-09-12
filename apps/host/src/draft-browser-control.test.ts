@@ -8,6 +8,7 @@ import { HostStore } from "./store";
 import { DraftBrowserWorkers } from "./browser-draft-workers";
 import { DraftBrowserHttp } from "./draft-browser-http";
 import { BrowserControlRequests } from "./browser-control-requests";
+import { BrowserAutocompleteService } from "./browser-autocomplete-service";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
@@ -30,11 +31,12 @@ function fixture(control?: (input: BrowserControlRequest) => Promise<typeof resu
       inspectBrowserTab: async () => { throw new Error("Unexpected observation in this fixture"); },
       closeBrowserTab: async () => { throw new Error("No close allowed in this fixture"); },
       getBrowserMetadata: async () => ({ availability: "running", workerPid: 77, tabs: [] }), getBrowserFrame: async () => frame(),
+      getBrowserHistory: async () => [{id:"native-current",url:result.url,title:result.title,current:true}],
       createBrowserTab: async () => { throw new Error("Control may not create a tab"); },
       controlBrowser: async input => { calls.push({ ownerId: inputOwner, input }); return control ? control(input) : result; },
     };
   } });
-  const handler = new DraftBrowserHttp(store, workers, "creation-epoch", () => now);
+  const handler = new DraftBrowserHttp(store, workers, "creation-epoch", () => now, new BrowserAutocompleteService(store.host.id,store.browserAutocomplete));
   cleanups.push(async () => { await handler.dispose(); store.close(); rmSync(root, { recursive: true, force: true }); });
   const request = (action: string, extra: Record<string, unknown> = {}, ownerId = "owner", header = store.host.id) => new Request(`http://fixture/v1/draft-browser-owners/${ownerId}/${action}`, {
     method: "POST", headers: { [BROWSER_METADATA_OWNER_HEADER]: header }, body: JSON.stringify({ draftId: "draft", draftRevision: 1, ...extra }),
@@ -66,6 +68,14 @@ test("draft controls consume frame epoch, preserve actual owner envelope and dis
   expect(f.calls).toHaveLength(9); expect(f.events).toEqual(["worker:owner"]);
   expect(f.store.getDraft("draft")).toEqual(before); expect(f.store.listSessions()).toEqual([]);
   expect((await f.send("status")).body.ticket.controlEpoch).toBe("creation-epoch");
+});
+
+test("draft autocomplete reads and deletes exact native owner history",async()=>{
+  const f=fixture();await f.prepare();const start={action:"start",editingSessionId:"edit",requestId:"suggest",target,query:"observed",cursorPosition:8,preventInlineAutocomplete:false};
+  const first=await f.send("autocomplete",{autocomplete:start});expect(first.status).toBe(200);expect(first.body.matches[0]).toMatchObject({type:"history",destinationURL:result.url,deletable:true});
+  const deleted=await f.send("autocomplete",{autocomplete:{action:"delete",editingSessionId:"edit",requestId:"suggest",target,deleteToken:first.body.matches[0].deleteToken}});
+  expect(deleted.body.state).toBe("deleted");
+  const next=await f.send("autocomplete",{autocomplete:{...start,requestId:"after",query:"",cursorPosition:0}});expect(next.body.matches).toEqual([]);
 });
 
 test("owner header, original binding, PID, context, body and URL validation precede control dispatch", async () => {

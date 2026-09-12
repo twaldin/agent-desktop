@@ -1,5 +1,5 @@
 diff --git a/dist/types/commit/conventional/service.d.ts b/dist/types/commit/conventional/service.d.ts
-index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e1882c5df 100644
+index bd6991c..e5fb07a 100644
 --- a/dist/types/commit/conventional/service.d.ts
 +++ b/dist/types/commit/conventional/service.d.ts
 @@ -8,6 +8,12 @@ export interface GenerateGitCommitOptions {
@@ -22,7 +22,7 @@ index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
 diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/types/extensibility/plugins/marketplace/cache.d.ts
-index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b4da5d976 100644
+index 244fb84..c268062 100644
 --- a/dist/types/extensibility/plugins/marketplace/cache.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/cache.d.ts
 @@ -22,7 +22,7 @@ export declare function getCachedPluginPath(cacheDir: string, marketplace: strin
@@ -35,7 +35,7 @@ index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b
   * Synchronous check — true when the cache directory exists on disk.
   * Uses `existsSync` because callers may need to run this check inline without async.
 diff --git a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
-index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f5363c3a0c52 100644
+index 54f6204..a1c142d 100644
 --- a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 @@ -3,7 +3,7 @@
@@ -65,7 +65,7 @@ index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f536
   * Promote a temporary clone directory to its final cache location.
   *
 diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
-index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013cf45b464 100644
+index 85d413a..21dbcd8 100644
 --- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
 @@ -5,7 +5,7 @@
@@ -103,7 +103,7 @@ index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013
      listInstalledPlugins(): Promise<InstalledPluginSummary[]>;
      setPluginEnabled(pluginId: string, enabled: boolean, scope?: "user" | "project"): Promise<void>;
 diff --git a/dist/types/extensibility/plugins/marketplace/types.d.ts b/dist/types/extensibility/plugins/marketplace/types.d.ts
-index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67738aec06 100644
+index 6d66e30..d8a6893 100644
 --- a/dist/types/extensibility/plugins/marketplace/types.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/types.d.ts
 @@ -88,10 +88,15 @@ export interface MarketplacesRegistry {
@@ -123,7 +123,7 @@ index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67
      addedAt: string;
      updatedAt: string;
 diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
-index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d396253e88b 100644
+index fb43dfe..9401964 100644
 --- a/dist/types/mcp/client.d.ts
 +++ b/dist/types/mcp/client.d.ts
 @@ -1,3 +1,4 @@
@@ -140,7 +140,7 @@ index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d39
      onNotification?: (method: string, params: unknown) => void;
      onRequest?: (method: string, params: unknown) => Promise<unknown>;
 diff --git a/dist/types/mcp/errors.d.ts b/dist/types/mcp/errors.d.ts
-index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6af7beb0ed 100644
+index 35c2750..31df5e7 100644
 --- a/dist/types/mcp/errors.d.ts
 +++ b/dist/types/mcp/errors.d.ts
 @@ -15,6 +15,11 @@ interface MCPTransportErrorOptions {
@@ -165,7 +165,7 @@ index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6a
  export declare function mcpTraceIdFromHeaders(headers: Headers): string | undefined;
  /** Preserve a server-provided JSON-RPC error without exposing credential-shaped data. */
 diff --git a/dist/types/mcp/loader.d.ts b/dist/types/mcp/loader.d.ts
-index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf0316ccd78bd 100644
+index 88cb17b..083b2f7 100644
 --- a/dist/types/mcp/loader.d.ts
 +++ b/dist/types/mcp/loader.d.ts
 @@ -21,6 +21,7 @@ export interface MCPToolsLoadResult {
@@ -177,7 +177,7 @@ index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf031
      onStatus?: (event: McpConnectionStatusEvent) => void;
      /** Whether to load project-level config (default: true) */
 diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e9f515cdf 100644
+index 9933dc7..3df0403 100644
 --- a/dist/types/mcp/manager.d.ts
 +++ b/dist/types/mcp/manager.d.ts
 @@ -39,6 +39,9 @@ export interface MCPLoadResult {
@@ -216,7 +216,7 @@ index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e
       * Refresh tools from a specific server.
 diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e04e8a9c45
+index 0000000..5f5ec41
 --- /dev/null
 +++ b/dist/types/mcp/resource-subscriptions.d.ts
 @@ -0,0 +1,4 @@
@@ -225,7 +225,7 @@ index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e0
 +export declare function setManagedResourceSubscription(connection: MCPServerConnection, uri: string, enabled: boolean, options?: MCPRequestOptions): Promise<void>;
 +export declare function retainResourceSubscription(connection: MCPServerConnection, uri: string, options?: MCPRequestOptions): Promise<MCPResourceSubscription>;
 diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
-index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d46cc55212 100644
+index 7a53726..9ad0821 100644
 --- a/dist/types/mcp/tool-bridge.d.ts
 +++ b/dist/types/mcp/tool-bridge.d.ts
 @@ -13,6 +13,7 @@ import type { MCPAuthChallenge, MCPContent, MCPServerConnection, MCPToolDefiniti
@@ -250,7 +250,7 @@ index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d4
      provider?: string;
      /** Provider display name (e.g., "Claude Code", "MCP Config") */
 diff --git a/dist/types/mcp/transports/sse.d.ts b/dist/types/mcp/transports/sse.d.ts
-index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110b6be85eb 100644
+index e448695..61c7a8a 100644
 --- a/dist/types/mcp/transports/sse.d.ts
 +++ b/dist/types/mcp/transports/sse.d.ts
 @@ -15,10 +15,10 @@ export declare class LegacySseTransport implements MCPTransport {
@@ -267,7 +267,7 @@ index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110
 -export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
 +export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;
 diff --git a/dist/types/mcp/types.d.ts b/dist/types/mcp/types.d.ts
-index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bbe734d2ec 100644
+index 8b623f5..90dfda5 100644
 --- a/dist/types/mcp/types.d.ts
 +++ b/dist/types/mcp/types.d.ts
 @@ -155,6 +155,7 @@ export interface MCPImplementation {
@@ -279,7 +279,7 @@ index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bb
          listChanged?: boolean;
      };
 diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
-index e3b75c288b6c8ded7d709832d65a2cf993461374..0a306d7465c2f498f630bfb8851b7a8aa9f13d55 100644
+index e3b75c2..0a306d7 100644
 --- a/dist/types/sdk.d.ts
 +++ b/dist/types/sdk.d.ts
 @@ -191,6 +191,7 @@ export interface CreateAgentSessionOptions {
@@ -291,7 +291,7 @@ index e3b75c288b6c8ded7d709832d65a2cf993461374..0a306d7465c2f498f630bfb8851b7a8a
      mcpManager?: MCPManager;
      /** Enable LSP integration (tool, formatting, diagnostics, warmup). Default: true */
 diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
-index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
+index 67ab2e0..28b1ef2 100644
 --- a/dist/types/tools/browser.d.ts
 +++ b/dist/types/tools/browser.d.ts
 @@ -1,3 +1,5 @@
@@ -338,7 +338,7 @@ index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969e
 +export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ace39556d1
+index 0000000..caed131
 --- /dev/null
 +++ b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 @@ -0,0 +1,37 @@
@@ -380,7 +380,7 @@ index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ac
 +    assertCurrent(): void;
 +}): Readonly<CdpEvaluationOpening>;
 diff --git a/dist/types/tools/browser/cmux/cmux-tab.d.ts b/dist/types/tools/browser/cmux/cmux-tab.d.ts
-index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45e1a08493 100644
+index f5d460b..75aae00 100644
 --- a/dist/types/tools/browser/cmux/cmux-tab.d.ts
 +++ b/dist/types/tools/browser/cmux/cmux-tab.d.ts
 @@ -56,7 +56,7 @@ export interface RunCmuxCodeOptions {
@@ -419,7 +419,7 @@ index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45
 +export declare function createRetainedCmuxTab(state: CmuxRetainedState, client: Pick<CmuxSocketClient, "request">): CmuxTab;
 diff --git a/dist/types/tools/browser/cmux/evaluation-channel.d.ts b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f123e704b5
+index 0000000..e6d2440
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 @@ -0,0 +1,8 @@
@@ -432,7 +432,7 @@ index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f1
 +}
 +export declare function createCmuxEvaluationChannel(tab: CmuxTab, source: Pick<CmuxSocketClient, "request"> & { assertCurrent(): void }): Readonly<CmuxEvaluationChannel>;
 diff --git a/dist/types/tools/browser/cmux/socket-client.d.ts b/dist/types/tools/browser/cmux/socket-client.d.ts
-index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9b15ebca6 100644
+index e94d47c..e8f5c5c 100644
 --- a/dist/types/tools/browser/cmux/socket-client.d.ts
 +++ b/dist/types/tools/browser/cmux/socket-client.d.ts
 @@ -1,9 +1,17 @@
@@ -469,7 +469,7 @@ index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9
  }
 diff --git a/dist/types/tools/browser/cmux/surface-observation.d.ts b/dist/types/tools/browser/cmux/surface-observation.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b17305183
+index 0000000..6ebb03b
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/surface-observation.d.ts
 @@ -0,0 +1,14 @@
@@ -488,7 +488,7 @@ index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b
 +/** Capture before creation/adoption. Does not connect, lease, or establish server incarnation. */
 +export declare function captureCmuxSurfaceObservation(client: CmuxSocketClient, timeoutMs: number): CmuxSurfaceObservation;
 diff --git a/dist/types/tools/browser/relay/protocol.d.ts b/dist/types/tools/browser/relay/protocol.d.ts
-index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491ffac07771 100644
+index 6fd1252..58a7c0b 100644
 --- a/dist/types/tools/browser/relay/protocol.d.ts
 +++ b/dist/types/tools/browser/relay/protocol.d.ts
 @@ -19,6 +19,9 @@ export interface TabSnapshot {
@@ -512,7 +512,7 @@ index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491f
      tabs: TabSnapshot[];
 diff --git a/dist/types/tools/browser/run-context.d.ts b/dist/types/tools/browser/run-context.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc09ce3bcb
+index 0000000..8e4fc00
 --- /dev/null
 +++ b/dist/types/tools/browser/run-context.d.ts
 @@ -0,0 +1,9 @@
@@ -526,7 +526,7 @@ index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc
 +}
 +export declare function createBrowserRunContext(session: ToolSession, snapshot?: SessionSnapshot): BrowserRunContext;
 diff --git a/dist/types/tools/browser/tab-protocol.d.ts b/dist/types/tools/browser/tab-protocol.d.ts
-index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f5350b08b95 100644
+index 4411a20..0d51ece 100644
 --- a/dist/types/tools/browser/tab-protocol.d.ts
 +++ b/dist/types/tools/browser/tab-protocol.d.ts
 @@ -40,7 +40,20 @@ export interface SessionSnapshot {
@@ -552,7 +552,7 @@ index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f53
      browserWSEndpoint: string;
      safeDir: string;
 diff --git a/dist/types/tools/browser/tab-supervisor.d.ts b/dist/types/tools/browser/tab-supervisor.d.ts
-index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba2266bde73f7 100644
+index a822a71..d613600 100644
 --- a/dist/types/tools/browser/tab-supervisor.d.ts
 +++ b/dist/types/tools/browser/tab-supervisor.d.ts
 @@ -1,4 +1,5 @@
@@ -613,7 +613,7 @@ index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba226
 +export declare function openReservedCdpEvaluation(ownerSessionId: string, target: OwnerTabViewportTarget, operationId: string, timeoutMs: number): Promise<Readonly<import("./cdp-evaluation-channel.js").CdpEvaluationChannel>>;
 diff --git a/dist/types/tools/browser/target-observation.d.ts b/dist/types/tools/browser/target-observation.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb421abd75
+index 0000000..0328314
 --- /dev/null
 +++ b/dist/types/tools/browser/target-observation.d.ts
 @@ -0,0 +1,8 @@
@@ -626,7 +626,7 @@ index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
 diff --git a/src/blob-broker/uploaders-object-storage.ts b/src/blob-broker/uploaders-object-storage.ts
-index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906beeee2f0e 100644
+index 3ff2d47..8865e1b 100644
 --- a/src/blob-broker/uploaders-object-storage.ts
 +++ b/src/blob-broker/uploaders-object-storage.ts
 @@ -254,7 +254,7 @@ function createS3Uploader(destination: BlobDestinationId, config: DestinationRun
@@ -639,7 +639,7 @@ index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906b
  	for (const part of parts) length += part.byteLength;
  	const result = new Uint8Array(length);
 diff --git a/src/collab/protocol.ts b/src/collab/protocol.ts
-index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959dd061c94 100644
+index 92e904f..4d14b74 100644
 --- a/src/collab/protocol.ts
 +++ b/src/collab/protocol.ts
 @@ -111,7 +111,7 @@ export type CollabFrame =
@@ -652,7 +652,7 @@ index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959
  	new DataView(out.buffer).setUint32(0, peerId, false);
  	out.set(sealed, ENVELOPE_HEADER_LENGTH);
 diff --git a/src/collab/relay-client.ts b/src/collab/relay-client.ts
-index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11c80bb580 100644
+index 8f2ea5c..3270855 100644
 --- a/src/collab/relay-client.ts
 +++ b/src/collab/relay-client.ts
 @@ -52,7 +52,7 @@ export class CollabSocket {
@@ -674,7 +674,7 @@ index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11
  			logger.debug("collab: dropping frame, reconnect buffer full", { t: frameType });
  			return;
 diff --git a/src/commit/conventional/service.ts b/src/commit/conventional/service.ts
-index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f16816c4faa67 100644
+index de01f53..6e98843 100644
 --- a/src/commit/conventional/service.ts
 +++ b/src/commit/conventional/service.ts
 @@ -29,6 +29,13 @@ export interface GenerateGitCommitOptions {
@@ -728,7 +728,7 @@ index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f1681
  	} finally {
  		await inference.dispose();
 diff --git a/src/export/share.ts b/src/export/share.ts
-index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2c980a559 100644
+index 1d1ed9e..6f9fbb8 100644
 --- a/src/export/share.ts
 +++ b/src/export/share.ts
 @@ -663,7 +663,7 @@ async function shareViaServer(
@@ -741,7 +741,7 @@ index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2
  	try {
  		res = await fetch(base, {
 diff --git a/src/extensibility/plugins/marketplace/cache.ts b/src/extensibility/plugins/marketplace/cache.ts
-index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d172813bc57 100644
+index 6745cc7..c919217 100644
 --- a/src/extensibility/plugins/marketplace/cache.ts
 +++ b/src/extensibility/plugins/marketplace/cache.ts
 @@ -54,11 +54,56 @@ export function getCachedPluginPath(
@@ -838,7 +838,7 @@ index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d17
  	} catch (err) {
  		// Clean up staging dir on any failure; leave existing targetPath intact
 diff --git a/src/extensibility/plugins/marketplace/fetcher.ts b/src/extensibility/plugins/marketplace/fetcher.ts
-index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb922d4f009 100644
+index 389da79..75a3c78 100644
 --- a/src/extensibility/plugins/marketplace/fetcher.ts
 +++ b/src/extensibility/plugins/marketplace/fetcher.ts
 @@ -5,14 +5,80 @@
@@ -971,7 +971,7 @@ index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb9
  		const catalog = parseMarketplaceCatalog(content, displayPath);
  		return { catalog, clonePath: tmpDir };
 diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibility/plugins/marketplace/manager.ts
-index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757a4a6f1f0 100644
+index 72733e9..4e51c57 100644
 --- a/src/extensibility/plugins/marketplace/manager.ts
 +++ b/src/extensibility/plugins/marketplace/manager.ts
 @@ -16,7 +16,7 @@ import { normalizePluginRuntimeConfig } from "../runtime-config";
@@ -1078,7 +1078,7 @@ index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757
  			}
  		}
 diff --git a/src/extensibility/plugins/marketplace/types.ts b/src/extensibility/plugins/marketplace/types.ts
-index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d554741226d8fa67 100644
+index fd101ff..109e85f 100644
 --- a/src/extensibility/plugins/marketplace/types.ts
 +++ b/src/extensibility/plugins/marketplace/types.ts
 @@ -142,10 +142,16 @@ export interface MarketplacesRegistry {
@@ -1099,7 +1099,7 @@ index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d5547412
  	addedAt: string;
  	updatedAt: string;
 diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2fba12efc0 100644
+index fc71d73..3ac109c 100644
 --- a/src/mcp/client.ts
 +++ b/src/mcp/client.ts
 @@ -1,3 +1,5 @@
@@ -1202,7 +1202,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2f
  	for (const result of results) {
  		if (result.status === "rejected") {
 diff --git a/src/mcp/errors.ts b/src/mcp/errors.ts
-index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6dab5207bb 100644
+index b779975..6d26911 100644
 --- a/src/mcp/errors.ts
 +++ b/src/mcp/errors.ts
 @@ -29,6 +29,12 @@ interface MCPTransportErrorOptions {
@@ -1260,7 +1260,7 @@ index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6d
  
  function errorCode(error: unknown): string | number | undefined {
 diff --git a/src/mcp/loader.ts b/src/mcp/loader.ts
-index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e316020f6dd 100644
+index 135a0c5..81aa537 100644
 --- a/src/mcp/loader.ts
 +++ b/src/mcp/loader.ts
 @@ -27,6 +27,7 @@ export interface MCPToolsLoadResult {
@@ -1280,7 +1280,7 @@ index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e31
  			enableProjectConfig: options?.enableProjectConfig,
  			filterExa: options?.filterExa,
 diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fdd25740bb 100644
+index ffccf8e..2943118 100644
 --- a/src/mcp/manager.ts
 +++ b/src/mcp/manager.ts
 @@ -7,7 +7,7 @@
@@ -1655,7 +1655,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fd
  		// Replace tools from this server
 diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba0687268aea9
+index 0000000..f3f9a54
 --- /dev/null
 +++ b/src/mcp/resource-subscriptions.ts
 @@ -0,0 +1,81 @@
@@ -1741,7 +1741,7 @@ index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba068
 +  });
 +}
 diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
-index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b464568a987 100644
+index 955b724..2b20d89 100644
 --- a/src/mcp/tool-bridge.ts
 +++ b/src/mcp/tool-bridge.ts
 @@ -33,7 +33,7 @@ import type {
@@ -1860,7 +1860,7 @@ index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b46
  					} catch (retryError) {
  						rethrowIfAborted(retryError, signal);
 diff --git a/src/mcp/transports/http.ts b/src/mcp/transports/http.ts
-index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd14ad42e4 100644
+index 9d12523..9f399a6 100644
 --- a/src/mcp/transports/http.ts
 +++ b/src/mcp/transports/http.ts
 @@ -486,6 +486,10 @@ export class HttpTransport implements MCPTransport {
@@ -1886,7 +1886,7 @@ index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd
  			}
  
 diff --git a/src/mcp/transports/sse.ts b/src/mcp/transports/sse.ts
-index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73e71a1c4f 100644
+index a4d71ea..29d1697 100644
 --- a/src/mcp/transports/sse.ts
 +++ b/src/mcp/transports/sse.ts
 @@ -10,6 +10,7 @@ import type {
@@ -1977,7 +1977,7 @@ index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73
  	return transport;
  }
 diff --git a/src/mcp/types.ts b/src/mcp/types.ts
-index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8e7ea9a41 100644
+index 7a600a6..19e6282 100644
 --- a/src/mcp/types.ts
 +++ b/src/mcp/types.ts
 @@ -187,6 +187,7 @@ export interface MCPImplementation {
@@ -1989,7 +1989,7 @@ index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8
  	sampling?: Record<string, never>;
  	experimental?: Record<string, unknown>;
 diff --git a/src/sdk.ts b/src/sdk.ts
-index d647c7908f246ebd2edefe00f427d20378b22d30..eb7f36fe1170852f0b5c51f4863eecba9e78d09f 100644
+index d647c79..eb7f36f 100644
 --- a/src/sdk.ts
 +++ b/src/sdk.ts
 @@ -540,6 +540,8 @@ export interface CreateAgentSessionOptions {
@@ -2031,7 +2031,7 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..eb7f36fe1170852f0b5c51f4863eecba
  
  		// Route the initial tool surface through the Code Mode-aware path when the
 diff --git a/src/tools/browser.ts b/src/tools/browser.ts
-index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
+index b191f31..50c0be1 100644
 --- a/src/tools/browser.ts
 +++ b/src/tools/browser.ts
 @@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
@@ -2277,7 +2277,7 @@ index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9
  	params: BrowserParams,
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd781508d8205f5
+index 0000000..1fc2ad5
 --- /dev/null
 +++ b/src/tools/browser/cdp-evaluation-channel.ts
 @@ -0,0 +1,117 @@
@@ -2399,7 +2399,7 @@ index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd78150
 +	return Object.freeze({ ready, dispose });
 +}
 diff --git a/src/tools/browser/cmux/cmux-tab.ts b/src/tools/browser/cmux/cmux-tab.ts
-index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6683dfe3d 100644
+index eabba18..0028ae2 100644
 --- a/src/tools/browser/cmux/cmux-tab.ts
 +++ b/src/tools/browser/cmux/cmux-tab.ts
 @@ -2,8 +2,8 @@ import * as fs from "node:fs";
@@ -2666,7 +2666,27 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  	}
  
  	get surfaceId(): string {
-@@ -376,6 +576,15 @@ export class CmuxTab {
+@@ -366,6 +566,19 @@ export class CmuxTab {
+ 		};
+ 	}
+ 
++	/** Narrow owner UI surface. The retained request transport and original
++	 * surface id stay inside this tab; callers cannot retarget either. */
++	async requestOwnerSurface(
++		method: "browser.eval" | "browser.screenshot" | "browser.navigate" | "browser.back" | "browser.forward" | "browser.reload",
++		params: Record<string, unknown> = {},
++		timeoutMs = 10_000,
++	): Promise<Record<string, unknown>> {
++		if (!["browser.eval", "browser.screenshot", "browser.navigate", "browser.back", "browser.forward", "browser.reload"].includes(method)) {
++			throw new ToolError("Unsupported cmux owner surface request");
++		}
++		return await this.#request(method, params, timeoutMs) as Record<string, unknown>;
++	}
++
+ 	url(): string {
+ 		return this.#lastUrl;
+ 	}
+@@ -376,6 +589,15 @@ export class CmuxTab {
  		return this.#lastTitle;
  	}
  
@@ -2682,7 +2702,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  	async readyInfo(viewport: ReadyInfo["viewport"] = DEFAULT_VIEWPORT): Promise<ReadyInfo> {
  		const urlResult = (await this.#request("browser.url.get", {})) as CmuxUrlGetResult;
  		if (typeof urlResult.url === "string" && urlResult.url.length > 0) {
-@@ -394,13 +603,6 @@ export class CmuxTab {
+@@ -394,13 +616,6 @@ export class CmuxTab {
  		};
  	}
  
@@ -2696,7 +2716,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  
  	async goto(url: string, opts?: { waitUntil?: WaitUntil; timeoutMs?: number }): Promise<void> {
  		const timeoutMs = opts?.timeoutMs ?? this.#runContext?.timeoutMs ?? 30_000;
-@@ -771,9 +973,9 @@ export class CmuxTab {
+@@ -771,9 +986,9 @@ export class CmuxTab {
  		signal: AbortSignal | undefined = this.#runContext?.signal,
  	): Promise<Record<string, unknown>> {
  		throwIfAborted(signal);
@@ -2709,7 +2729,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  		throwIfAborted(signal);
  		return result;
  	}
-@@ -1364,6 +1566,14 @@ class CmuxBrowserFacade {
+@@ -1364,6 +1579,14 @@ class CmuxBrowserFacade {
  }
  
  export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promise<RunResultOk> {
@@ -2724,7 +2744,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  	const runAc = new AbortController();
  	const timeoutSignal = AbortSignal.timeout(opts.timeoutMs);
  	const signal = AbortSignal.any(
-@@ -1375,8 +1585,9 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
+@@ -1375,8 +1598,9 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
  	const runId = crypto.randomUUID();
  	const filename = `cmux-run-${runId}.js`;
  	const activeRun: ActiveCmuxRun = { filename, floatingRejections: [] };
@@ -2735,7 +2755,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  
  	const { promise: cancelRejection, reject } = Promise.withResolvers<never>();
  	// If the synchronous setup below throws (same-realm ownership conflict)
-@@ -1389,23 +1600,22 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
+@@ -1389,23 +1613,22 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
  	floatingFailure.catch(() => {});
  	let runActive = true;
  	let hasFloatingFailure = false;
@@ -2764,7 +2784,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  	const onAbort = (): void => {
  		if (timeoutSignal.aborted) {
  			reject(new ToolError(`Browser code execution timed out after ${opts.timeoutMs}ms`));
-@@ -1417,19 +1627,25 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
+@@ -1417,19 +1640,25 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
  			);
  		}
  	};
@@ -2798,7 +2818,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  			tab: runTab,
  			assert: (cond: unknown, text?: string): void => {
  				if (!cond) throw new ToolError(text ?? "Assertion failed");
-@@ -1465,7 +1681,8 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
+@@ -1465,7 +1694,8 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
  			},
  			callTool: (name, args) => {
  				throwIfAborted(signal);
@@ -2808,7 +2828,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  			},
  		};
  		// Like the inline worker fallback, cmux runs user JS in-process: awaited cmux/tool calls
-@@ -1474,16 +1691,15 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
+@@ -1474,16 +1704,15 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
  		let runError: unknown;
  		let runFailed = false;
  		try {
@@ -2834,7 +2854,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  		} catch (error) {
  			runFailed = true;
  			runError = error;
-@@ -1491,11 +1707,13 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
+@@ -1491,11 +1720,13 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
  		runAc.abort(runEndedError);
  		// Let rejection callbacks run while this run can still own guest-created promises.
  		await Bun.sleep(0);
@@ -2848,7 +2868,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  			throw runError;
  		}
  		if (activeRun.floatingRejections.length > 0) {
-@@ -1509,12 +1727,17 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
+@@ -1509,12 +1740,17 @@ export async function runCmuxCode(tab: CmuxTab, opts: RunCmuxCodeOptions): Promi
  		return { displays: output.finish(), returnValue: cloneSafe(returnValue), screenshots };
  	} finally {
  		runActive = false;
@@ -2873,7 +2893,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..f2fb122511947a208a446f3dd8d34ab6
  
 diff --git a/src/tools/browser/cmux/evaluation-channel.ts b/src/tools/browser/cmux/evaluation-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcafb236cb08
+index 0000000..34d7f21
 --- /dev/null
 +++ b/src/tools/browser/cmux/evaluation-channel.ts
 @@ -0,0 +1,130 @@
@@ -3008,7 +3028,7 @@ index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcaf
 +	});
 +}
 diff --git a/src/tools/browser/cmux/socket-client.ts b/src/tools/browser/cmux/socket-client.ts
-index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c078f1299 100644
+index 1741739..71e79d2 100644
 --- a/src/tools/browser/cmux/socket-client.ts
 +++ b/src/tools/browser/cmux/socket-client.ts
 @@ -12,6 +12,8 @@ type RequestJob = {
@@ -3325,7 +3345,7 @@ index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c
  	#rejectAll(err: ToolError): void {
 diff --git a/src/tools/browser/cmux/surface-observation.ts b/src/tools/browser/cmux/surface-observation.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da08d9aeefa
+index 0000000..b6b4128
 --- /dev/null
 +++ b/src/tools/browser/cmux/surface-observation.ts
 @@ -0,0 +1,83 @@
@@ -3414,7 +3434,7 @@ index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da0
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d338494fe8
+index 0000000..6367c08
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
 @@ -0,0 +1,300 @@
@@ -3719,7 +3739,7 @@ index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d3
 +	return { message: typeof value.message === "string" ? value.message : "Browser protocol request failed", code: typeof value.code === "number" ? value.code : -32000, data: value.data ?? value.originalMessage };
 +}
 diff --git a/src/tools/browser/registry.ts b/src/tools/browser/registry.ts
-index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993c48e980a 100644
+index 1b1bf38..69c255e 100644
 --- a/src/tools/browser/registry.ts
 +++ b/src/tools/browser/registry.ts
 @@ -77,6 +77,21 @@ export interface ReleaseBrowserOptions {
@@ -3814,7 +3834,7 @@ index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993
  		handle.client.close();
  		return;
 diff --git a/src/tools/browser/relay/bridge.ts b/src/tools/browser/relay/bridge.ts
-index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d436e1d9de 100644
+index dededcc..486d572 100644
 --- a/src/tools/browser/relay/bridge.ts
 +++ b/src/tools/browser/relay/bridge.ts
 @@ -18,8 +18,8 @@
@@ -4876,7 +4896,7 @@ index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d4
  	}
  }
 diff --git a/src/tools/browser/relay/extension-assets/background.js.txt b/src/tools/browser/relay/extension-assets/background.js.txt
-index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e841a8b1445 100644
+index 560da85..85e7d1a 100644
 --- a/src/tools/browser/relay/extension-assets/background.js.txt
 +++ b/src/tools/browser/relay/extension-assets/background.js.txt
 @@ -7,6 +7,7 @@ var ws = null;
@@ -4981,7 +5001,7 @@ index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e84
    socket.onclose = () => {
      if (ws !== socket)
 diff --git a/src/tools/browser/relay/protocol.ts b/src/tools/browser/relay/protocol.ts
-index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a2203ff24 100644
+index baef431..f573512 100644
 --- a/src/tools/browser/relay/protocol.ts
 +++ b/src/tools/browser/relay/protocol.ts
 @@ -21,6 +21,7 @@ export interface TabSnapshot {
@@ -5003,7 +5023,7 @@ index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a
  			tabs: TabSnapshot[];
 diff --git a/src/tools/browser/run-context.ts b/src/tools/browser/run-context.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0bef346f0
+index 0000000..4b24343
 --- /dev/null
 +++ b/src/tools/browser/run-context.ts
 @@ -0,0 +1,33 @@
@@ -5041,7 +5061,7 @@ index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0
 +	};
 +}
 diff --git a/src/tools/browser/tab-protocol.ts b/src/tools/browser/tab-protocol.ts
-index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c813f49b18f 100644
+index 98cbe21..80be7e6 100644
 --- a/src/tools/browser/tab-protocol.ts
 +++ b/src/tools/browser/tab-protocol.ts
 @@ -1,4 +1,5 @@
@@ -5088,7 +5108,7 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  			safeDir: string;
  			targetId: string;
  			dialogs?: "accept" | "dismiss";
-@@ -75,16 +92,18 @@ export type WorkerInitPayload =
+@@ -75,16 +92,19 @@ export type WorkerInitPayload =
  			 * behaves as `true`; the supervisor clears it for browsers we did not launch.
  			 */
  			activateForScreenshot?: boolean;
@@ -5103,12 +5123,13 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  	| { type: "init"; payload: WorkerInitPayload }
  	| { type: "run"; id: string; name: string; code: string; timeoutMs: number; session: SessionSnapshot }
  	| { type: "abort"; id: string; expectedCleanup?: boolean }
++	| { type: "stop-navigation"; id: string }
  	| { type: "tool-reply"; id: string; reply: ToolReply }
 +	| { type: "retire" }
  	| { type: "close" };
  
  export interface ReadyInfo {
-@@ -111,6 +130,7 @@ export interface RunErrorPayload {
+@@ -111,6 +131,7 @@ export interface RunErrorPayload {
  }
  
  export type WorkerOutbound =
@@ -5116,8 +5137,11 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  	| {
  			/**
  			 * Puppeteer loaded, browser connected. Sent before page acquisition so the supervisor's cold-start budget
-@@ -134,7 +154,7 @@ export type WorkerOutbound =
+@@ -132,9 +153,10 @@ export type WorkerOutbound =
+ 	| { type: "init-failed"; error: RunErrorPayload }
+ 	| { type: "result"; id: string; ok: true; payload: RunResultOk }
  	| { type: "result"; id: string; ok: false; error: RunErrorPayload }
++	| { type: "navigation-stopped"; id: string; ok: true; result: unknown } | { type: "navigation-stopped"; id: string; ok: false; error: RunErrorPayload }
  	| { type: "tool-call"; id: string; runId: string; name: string; args: unknown }
  	| { type: "log"; level: "debug" | "warn" | "error"; msg: string; meta?: Record<string, unknown> }
 -	| { type: "closed" };
@@ -5126,10 +5150,10 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..8a85cf00f9c8ce3fed1ef0a50fb93c81
  export interface Transport {
  	send(msg: WorkerOutbound | WorkerInbound, transferList?: Transferable[]): void;
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcfb54c90aa 100644
+index c6b8dd5..16cb150 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
-@@ -5,18 +5,23 @@ import {
+@@ -5,18 +5,24 @@ import {
  	postmortem,
  	Snowflake,
  	withTimeout,
@@ -5138,6 +5162,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 -import type { Page, Target } from "puppeteer-core";
 -import { callSessionTool } from "../../eval/js/tool-bridge";
 -import { webpExclusionForModel } from "../../utils/image-loading";
++import { createHash } from "node:crypto";
 +import type { KeyInput, MouseButton, Page, Target } from "puppeteer-core";
 +import type { Connection } from "puppeteer-core/internal/cdp/Connection.js";
  import type { ToolSession } from "../index";
@@ -5159,7 +5184,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  import { closeCdpTarget, forgetSharedTarget, recordSharedTarget, type SharedTargetScope } from "./orphan-registry";
  import {
  	type BrowserHandle,
-@@ -31,8 +36,6 @@ import type {
+@@ -31,8 +37,6 @@ import type {
  	RunErrorPayload,
  	RunResultOk,
  	SessionSnapshot,
@@ -5168,7 +5193,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	WorkerInbound,
  	WorkerInitPayload,
  	WorkerOutbound,
-@@ -41,20 +44,12 @@ import type {
+@@ -41,20 +45,12 @@ import type {
  // Coding-agent binary/bundle workers route through the CLI entrypoint with a
  // hidden argv mode, so compiled/npm builds only need one JavaScript entry.
  
@@ -5190,7 +5215,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	signal?: AbortSignal;
  	toolCalls: Map<string, AbortController>;
  	/**
-@@ -87,9 +82,74 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
+@@ -87,9 +83,76 @@ interface TabSessionBase<TBrowser extends BrowserHandle = BrowserHandle> {
  	ownerSessionId?: string;
  }
  
@@ -5238,11 +5263,13 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	readonly scrollY: number;
 +	/** Absent only for compatibility with a context captured by an older host. */
 +	readonly navigation?: OwnerTabNavigationContext;
++	/** The retained native surface can traverse history but cannot disclose entries or bounds. */
++	readonly opaqueHistoryTraversal?: true;
 +}
 +
 +export type OwnerTabHumanAction =
 +	| { readonly type: "navigate"; readonly url: string }
-+	| { readonly type: "reload" | "back" | "forward" }
++	| { readonly type: "reload" | "back" | "forward" | "stop" }
 +	| { readonly type: "click"; readonly x: number; readonly y: number; readonly button?: MouseButton; readonly clickCount?: 1 | 2 | 3 }
 +	| { readonly type: "wheel"; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number }
 +	| { readonly type: "resize"; readonly width: number; readonly height: number }
@@ -5265,7 +5292,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	activateForScreenshot: boolean;
  }
  
-@@ -126,6 +186,8 @@ export interface AcquireTabOptions {
+@@ -126,6 +189,8 @@ export interface AcquireTabOptions {
  	 * dispose. Optional — omitting it opts the tab out of session-scoped reap.
  	 */
  	ownerSessionId?: string;
@@ -5274,7 +5301,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  export interface AcquireTabResult {
-@@ -146,7 +208,154 @@ export interface ReleaseTabOptions {
+@@ -146,7 +211,163 @@ export interface ReleaseTabOptions {
  	timeoutMs?: number;
  }
  
@@ -5426,10 +5453,19 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +}
 +const viewportCaptures = new Map<string, Promise<Readonly<OwnerTabViewportCapture>>>();
 +const humanActions = new Map<string, Promise<Readonly<OwnerTabHumanActionResult>>>();
++type StoppedNavigationObservation={context:OwnerTabDocumentContext;url:string;title:string};
++type ActiveOwnerNavigation = { ownerSessionId:string; targetId:string; entryId:number; stopRequested:boolean; stopped:Promise<StoppedNavigationObservation>; settleStopped(value:StoppedNavigationObservation):void; stop():Promise<StoppedNavigationObservation>; pending?:Promise<Readonly<OwnerTabHumanActionResult>> };
++const activeOwnerNavigations = new Map<string,ActiveOwnerNavigation>();
++const activeNavigation=(ownerSessionId:string,targetId:string,entryId:number,stop:()=>Promise<StoppedNavigationObservation>):ActiveOwnerNavigation=>{const stopped=Promise.withResolvers<StoppedNavigationObservation>();return{ownerSessionId,targetId,entryId,stopRequested:false,stopped:stopped.promise,settleStopped:stopped.resolve,stop}};
++const workerNavigationStops = new WeakMap<WorkerHandle,Map<string,ReturnType<typeof Promise.withResolvers<StoppedNavigationObservation>>>>();
++async function stopWorkerNavigation(worker:WorkerHandle):Promise<StoppedNavigationObservation>{
++	const id=Snowflake.next(),done=Promise.withResolvers<StoppedNavigationObservation>(),pending=workerNavigationStops.get(worker)??new Map();workerNavigationStops.set(worker,pending);pending.set(id,done);
++	try{worker.send({type:"stop-navigation",id});return await withTimeout(done.promise,5_000,"Timed out stopping browser navigation")}finally{pending.delete(id)}
++}
  // Headless targets a worker created before dying during init (page-created).
  // A killed worker can't close its own page; the supervisor closes the
  // recorded target instead. A shared browser's other targets must never be
-@@ -168,7 +377,6 @@ const SETUP_BUDGET_CAP_MS = 10_000;
+@@ -168,7 +389,6 @@ const SETUP_BUDGET_CAP_MS = 10_000;
  // Floor for the ready-phase budget: the 2s setup floor can consume more than
  // a sub-3s caller's entire init budget, so the remaining-budget math must
  // never hand raceWithTimeout a non-positive value.
@@ -5437,7 +5473,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  // Names of tabs the supervisor force-killed (timeout past grace, failed recycle),
  // mapped to the kill reason. Lets the next `run` on that name explain WHY the tab
  // vanished instead of a bare "not alive". Cleared when the name is opened again.
-@@ -203,23 +411,240 @@ async function waitForTabCleanup<T>(
+@@ -203,23 +423,240 @@ async function waitForTabCleanup<T>(
  	}
  }
  
@@ -5682,7 +5718,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		},
  		async error => {
  			await releaseBrowser(browser, { kill: false }).catch(() => undefined);
-@@ -241,7 +666,12 @@ async function acquireTabImpl(
+@@ -241,7 +678,12 @@ async function acquireTabImpl(
  	name: string,
  	browser: BrowserHandle,
  	opts: AcquireTabOptions,
@@ -5695,7 +5731,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	// Worker-init deadline: the inline-fallback retry passes this same start
  	// so it can't restart the budget (which would let a cold import that
  	// consumed most of it spend the phase floors again for another full
-@@ -261,6 +691,7 @@ async function acquireTabImpl(
+@@ -261,6 +703,7 @@ async function acquireTabImpl(
  	// to reuse (e.g. reopening the sole tab with a different dialogs policy).
  	let tempHold = false;
  	const existing = tabs.get(name);
@@ -5703,7 +5739,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	if (existing) {
  		if (existing.browser === browser && existing.state === "alive") {
  			const requestedCmuxSurface = "client" in browser ? (opts.cmuxSurface ?? browser.surface) : undefined;
-@@ -273,6 +704,13 @@ async function acquireTabImpl(
+@@ -273,6 +716,13 @@ async function acquireTabImpl(
  				tempHold = true;
  				await releaseTab(name, { kill: false });
  			} else {
@@ -5717,7 +5753,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  				const reuseSteps: string[] = [];
  				if (opts.viewport && browser.kind.kind !== "cmux") {
  					const dsf = opts.viewport.deviceScaleFactor;
-@@ -286,14 +724,14 @@ async function acquireTabImpl(
+@@ -286,14 +736,14 @@ async function acquireTabImpl(
  					);
  				}
  				if (reuseSteps.length) {
@@ -5734,7 +5770,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  					);
  				}
  				return { tab: tabs.get(name)!, created: false };
-@@ -309,7 +747,8 @@ async function acquireTabImpl(
+@@ -309,7 +759,8 @@ async function acquireTabImpl(
  
  	if ("client" in browser) {
  		try {
@@ -5744,7 +5780,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  			if (tempHold) await releaseBrowser(browser, { kill: false });
  			return result;
  		} catch (error) {
-@@ -317,87 +756,58 @@ async function acquireTabImpl(
+@@ -317,87 +768,58 @@ async function acquireTabImpl(
  			throw error;
  		}
  	}
@@ -5869,7 +5905,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		state: "alive",
  		info,
  		pending: new Map(),
-@@ -407,6 +817,7 @@ async function acquireTabImpl(
+@@ -407,6 +829,7 @@ async function acquireTabImpl(
  		ownerSessionId: opts.ownerSessionId,
  	};
  	worker.onMessage(msg => handleTabMessage(tab, msg));
@@ -5877,7 +5913,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	tabs.set(name, tab);
  	// Durably record ownership so another live omp process can reap this page if
  	// this process dies abnormally before its own teardown closes the tab.
-@@ -415,10 +826,222 @@ async function acquireTabImpl(
+@@ -415,10 +838,298 @@ async function acquireTabImpl(
  	return { tab, created: true };
  }
  
@@ -6092,6 +6128,82 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	return source;
 +}
 +
++interface CmuxViewportObservation {
++	readonly context: OwnerTabDocumentContext;
++	readonly url: string;
++	readonly title: string;
++}
++
++type CmuxOwnerTab = CmuxTabSession | (RetainedSessionTab & { readonly backend: "cmux"; readonly cmuxTab: CmuxTab });
++
++const CMUX_DOCUMENT_CONTEXT_SCRIPT = `(() => ({
++	url: String(location.href), title: String(document.title), timeOrigin: String(performance.timeOrigin),
++	width: innerWidth, height: innerHeight, scrollX, scrollY
++}))()`;
++
++function assertCmuxOwnerTabCurrent(tab: CmuxOwnerTab): void {
++	if ("browser" in tab) originalCmuxTabSource(tab).assertCurrent();
++	else if (retainedSessionTabs.get(tab.name) !== tab || tab.state !== "alive") throw new ToolError("Original retained cmux browser source is no longer current");
++}
++
++function retainedCmuxOwnerTab(tab: RetainedSessionTab): CmuxOwnerTab {
++	if (tab.backend !== "cmux" || !tab.cmuxTab) throw new ToolError("Retained cmux browser transport is unavailable");
++	return tab as CmuxOwnerTab;
++}
++
++function assertCmuxSurfaceResult(result: Record<string, unknown>, targetId: string): void {
++	if (result.surface_id !== targetId) throw new ToolError("cmux returned a result for a different browser surface");
++}
++
++async function readCmuxViewportObservation(tab: CmuxOwnerTab): Promise<CmuxViewportObservation> {
++	assertCmuxOwnerTabCurrent(tab);
++	const result = await tab.cmuxTab.requestOwnerSurface("browser.eval", {
++		script: CMUX_DOCUMENT_CONTEXT_SCRIPT,
++	}, 5_000);
++	assertCmuxSurfaceResult(result, tab.targetId);
++	const value = result.value as Record<string, unknown> | undefined;
++	if (!value || typeof value !== "object" || Array.isArray(value)
++		|| typeof value.url !== "string" || value.url.length === 0 || value.url.length > 8_192 || value.url.includes("\0")
++		|| typeof value.title !== "string" || value.title.length > 1_024 || value.title.includes("\0")
++		|| typeof value.timeOrigin !== "string" || value.timeOrigin.length === 0 || value.timeOrigin.length > 100
++		|| !validFinite(value.width, 1, 16_384) || !validFinite(value.height, 1, 16_384)
++		|| value.width * value.height > 32_000_000
++		|| !validFinite(value.scrollX, -1_000_000_000, 1_000_000_000)
++		|| !validFinite(value.scrollY, -1_000_000_000, 1_000_000_000)) {
++		throw new ToolError("cmux returned an invalid browser document context");
++	}
++	const documentId = `cmux-${createHash("sha256").update(`${value.timeOrigin}\0${value.url}`).digest("hex")}`;
++	const context = Object.freeze({
++		documentId, width: value.width, height: value.height, scrollX: value.scrollX, scrollY: value.scrollY,
++		opaqueHistoryTraversal: true as const,
++	});
++	assertCmuxOwnerTabCurrent(tab);
++	return Object.freeze({ context, url: value.url, title: value.title });
++}
++
++async function captureCmuxViewport(tab: CmuxOwnerTab): Promise<Readonly<OwnerTabViewportCapture>> {
++	assertCmuxOwnerTabCurrent(tab);
++	const before = await readCmuxViewportObservation(tab);
++	const screenshot = await tab.cmuxTab.requestOwnerSurface("browser.screenshot", {}, 10_000);
++	assertCmuxSurfaceResult(screenshot, tab.targetId);
++	if (typeof screenshot.png_base64 !== "string" || screenshot.png_base64.length === 0
++		|| screenshot.png_base64.length > 12 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(screenshot.png_base64)) {
++		throw new ToolError("cmux returned an invalid browser viewport image");
++	}
++	const png = Buffer.from(screenshot.png_base64, "base64");
++	if (png.byteLength === 0 || png.byteLength > 8 * 1024 * 1024) throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
++	const metadata = await new Bun.Image(png, { maxPixels: 32_000_000 }).metadata();
++	if (metadata.width !== before.context.width || metadata.height !== before.context.height) throw new BrowserDocumentTransition("The cmux browser viewport changed during capture");
++	const jpeg = Buffer.from(await new Bun.Image(png, { maxPixels: 32_000_000 }).jpeg({ quality: 80 }).bytes());
++	if (jpeg.byteLength === 0 || jpeg.byteLength > 8 * 1024 * 1024) throw new ToolError("Browser viewport capture exceeded the 8 MiB transport bound");
++	const after = await readCmuxViewportObservation(tab);
++	if (!sameOwnerTabDocumentContext(before.context, after.context, false) || before.url !== after.url || before.title !== after.title) {
++		throw new BrowserDocumentTransition("The cmux browser document or viewport changed during capture");
++	}
++	assertCmuxOwnerTabCurrent(tab);
++	return Object.freeze({ name: tab.name, ownerSessionId: tab.ownerSessionId!, targetId: tab.targetId, data: jpeg, ...after });
++}
++
  async function acquireCmuxTab(
  	name: string,
  	browser: CmuxBrowserHandle,
@@ -6100,7 +6212,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  ): Promise<AcquireTabResult> {
  	const attachedSurface = opts.cmuxSurface ?? browser.surface;
  	if (attachedSurface?.startsWith("surface:")) {
-@@ -427,15 +1050,19 @@ async function acquireCmuxTab(
+@@ -427,15 +1138,19 @@ async function acquireCmuxTab(
  		);
  	}
  
@@ -6121,7 +6233,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  			if (typeof result.surface_id !== "string" || result.surface_id.length === 0) {
  				throw new ToolError("cmux browser.open_split did not return a surface_id");
  			}
-@@ -443,7 +1070,7 @@ async function acquireCmuxTab(
+@@ -443,7 +1158,7 @@ async function acquireCmuxTab(
  			ownsSurface = true;
  			if (typeof result.url === "string" && result.url.length > 0) initialUrl = result.url;
  			if (opts.url) {
@@ -6130,7 +6242,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  					"browser.wait",
  					{
  						surface_id: surfaceId,
-@@ -455,7 +1082,7 @@ async function acquireCmuxTab(
+@@ -455,7 +1170,7 @@ async function acquireCmuxTab(
  			}
  		}
  
@@ -6139,7 +6251,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		if (attachedSurface && opts.url) {
  			await cmuxTab.goto(opts.url, { waitUntil: opts.waitUntil ?? "load", timeoutMs: opts.timeoutMs });
  		}
-@@ -465,6 +1092,7 @@ async function acquireCmuxTab(
+@@ -465,6 +1180,7 @@ async function acquireCmuxTab(
  		if (opts.signal?.aborted) {
  			throw new ToolAbortError("Browser tab open aborted");
  		}
@@ -6147,7 +6259,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		holdBrowser(browser);
  		const tab: CmuxTabSession = {
  			name,
-@@ -481,33 +1109,77 @@ async function acquireCmuxTab(
+@@ -481,33 +1197,77 @@ async function acquireCmuxTab(
  			cmuxAttachedSurface: attachedSurface,
  			ownerSessionId: opts.ownerSessionId,
  		};
@@ -6181,10 +6293,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  
 -async function runInTabWithSnapshot(
 +function runInTabWithContext(
-+	name: string,
+ 	name: string,
+-	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
+-	snapshot: SessionSnapshot,
 +	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
 +	context: BrowserRunContext,
-+): Promise<RunResultOk> {
+ ): Promise<RunResultOk> {
 +	const retained = retainedSessionTabs.get(name);
 +	if (retained) return executeRetainedTabRun(retained, opts, context);
 +	try { assertTabNotReserved(name); } catch (error) { return Promise.reject(error); }
@@ -6226,17 +6340,15 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +}
 +
 +async function executeTabRun(
- 	name: string,
--	opts: { code: string; timeoutMs: number; signal?: AbortSignal; session?: ToolSession },
--	snapshot: SessionSnapshot,
++	name: string,
 +	opts: { code: string; timeoutMs: number; signal?: AbortSignal },
 +	context: BrowserRunContext,
- ): Promise<RunResultOk> {
++): Promise<RunResultOk> {
 +	if (humanActions.has(name)) throw new ToolError(`Tab ${JSON.stringify(name)} is busy with a human browser action`);
  	const tab = tabs.get(name);
  	if (!tab || tab.state === "dead") {
  		const killed = killedTabs.get(name);
-@@ -517,7 +1189,9 @@ async function runInTabWithSnapshot(
+@@ -517,7 +1277,9 @@ async function runInTabWithSnapshot(
  				: `Tab ${JSON.stringify(name)} is not alive. Open it first with action:"open".`,
  		);
  	}
@@ -6246,7 +6358,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	const id = Snowflake.next();
  	const { promise, resolve, reject } = Promise.withResolvers<RunResultOk>();
  	// `releaseTab` calls `pending.reject(closeError)` when the tab dies
-@@ -539,7 +1213,7 @@ async function runInTabWithSnapshot(
+@@ -539,7 +1301,7 @@ async function runInTabWithSnapshot(
  	const pending: PendingRun = {
  		resolve,
  		reject,
@@ -6255,7 +6367,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		signal: opts.signal,
  		toolCalls: new Map(),
  		closeAc,
-@@ -553,20 +1227,19 @@ async function runInTabWithSnapshot(
+@@ -553,20 +1315,19 @@ async function runInTabWithSnapshot(
  			// rejected it — `Promise.withResolvers` settles on the first
  			// call and later resolve/reject are no-ops, so the tab-close
  			// error still wins the race.
@@ -6280,7 +6392,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		for (const ctrl of pending.toolCalls.values()) ctrl.abort(opts.signal?.reason);
  	};
  	if (opts.signal?.aborted) abort();
-@@ -578,7 +1251,7 @@ async function runInTabWithSnapshot(
+@@ -578,7 +1339,7 @@ async function runInTabWithSnapshot(
  			name,
  			code: opts.code,
  			timeoutMs: opts.timeoutMs,
@@ -6289,7 +6401,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		});
  		try {
  			return await raceWithTimeout(
-@@ -590,7 +1263,7 @@ async function runInTabWithSnapshot(
+@@ -590,7 +1351,7 @@ async function runInTabWithSnapshot(
  		} catch (error) {
  			const runTimedOut =
  				error instanceof ToolError && error.message.startsWith("Browser code execution timed out after ");
@@ -6298,7 +6410,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  				try {
  					if (tab.worker.mode === "inline") {
  						const reason = runTimedOut
-@@ -615,12 +1288,139 @@ async function runInTabWithSnapshot(
+@@ -615,12 +1376,139 @@ async function runInTabWithSnapshot(
  	}
  }
  
@@ -6438,7 +6550,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	const wasAlive = tab.state === "alive";
  	tab.state = "dead";
  	const closeError = postmortem.markExpectedCleanupError(new ToolError(`Tab ${JSON.stringify(name)} was closed`));
-@@ -653,7 +1453,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -653,7 +1541,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  					tab,
  					timeoutMs,
  					`cmux surface ${JSON.stringify(tab.targetId)} (surface.close)`,
@@ -6447,7 +6559,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  				);
  			} catch (err) {
  				if (isLastSurfaceCloseError(err)) {
-@@ -674,14 +1474,21 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -674,14 +1562,21 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  		} catch (error) {
  			closeError ??= error;
  		} finally {
@@ -6472,7 +6584,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		try {
  			tab.worker.send({ type: "close" });
  			await waitForClosed(tab);
-@@ -689,8 +1496,10 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -689,8 +1584,10 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  			forced = true;
  		}
  	}
@@ -6485,7 +6597,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		try {
  			await waitForTabCleanup(
  				tab,
-@@ -699,7 +1508,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -699,7 +1596,7 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  				closeOrphanTarget(tab),
  			);
  		} catch (error) {
@@ -6494,7 +6606,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		}
  	}
  	try {
-@@ -711,26 +1520,30 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
+@@ -711,26 +1608,30 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
  	} catch (error) {
  		cleanupError ??= error;
  	} finally {
@@ -6535,7 +6647,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  /**
-@@ -748,12 +1561,424 @@ export async function dropHeadlessTabs(): Promise<void> {
+@@ -748,12 +1649,574 @@ export async function dropHeadlessTabs(): Promise<void> {
   */
  export async function releaseTabsForOwner(ownerId: string, opts: ReleaseTabOptions = {}): Promise<number> {
  	if (!ownerId) return 0;
@@ -6665,9 +6777,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	const retained=retainedSessionTabs.get(target.name);
 +	if(retained){
 +		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab is no longer available");
-+		if(retained.backend!=="worker")throw new ToolError("Viewport capture is not supported for cmux browser tabs");
 +		const key=`${ownerSessionId}\0${target.name}\0${target.targetId}`;
 +		if(humanActions.has(target.name)||viewportCaptures.has(key))throw new ToolError("This browser viewport is busy");
++		if(retained.backend==="cmux"){
++			const pending=captureCmuxViewport(retainedCmuxOwnerTab(retained));
++			viewportCaptures.set(key,pending);void pending.finally(()=>{if(viewportCaptures.get(key)===pending)viewportCaptures.delete(key)}).catch(()=>{});return await pending;
++		}
 +		const pending=(async()=>{
 +			const result=await executeRetainedTabRun(retained,{code:`
 +const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
@@ -6689,7 +6804,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	if (!tab || tab.ownerSessionId !== ownerSessionId || tab.targetId !== target.targetId || tab.state !== "alive") {
 +		throw new ToolError("The selected owner-bound browser tab is no longer available");
 +	}
-+	if (tab.backend === "cmux") throw new ToolError("Viewport capture is not supported for cmux browser tabs");
++	if (tab.backend === "cmux") {
++		const pending = captureCmuxViewport(tab);
++		viewportCaptures.set(key, pending);
++		void pending.then(() => viewportCaptures.delete(key), () => viewportCaptures.delete(key));
++		return await withTimeout(pending, 10_000, "Timed out after 10000ms capturing the cmux browser viewport");
++	}
 +	const pending = Promise.resolve().then(async () => {
 +		const deadline = Date.now() + 2_000;
 +		const verifyOwner = () => {
@@ -6731,6 +6851,51 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	return await withTimeout(pending, 10_000, "Timed out after 10000ms capturing the browser viewport");
 +}
 +
++export interface OwnerTabNavigationHistoryEntry { readonly id: string; readonly url: string; readonly title: string; readonly current: boolean }
++
++/** Reads Chromium navigation history from one exact original owner and target.
++ * This does not activate or navigate the tab and deliberately exposes no
++ * cross-tab/global browser history. */
++export async function readTabNavigationHistoryForOwner(
++	ownerSessionId: string,
++	target: OwnerTabViewportTarget,
++): Promise<readonly OwnerTabNavigationHistoryEntry[]> {
++	if (!ownerSessionId || !target?.name || !target.targetId) throw new ToolError("Browser history requires an exact owner, name, and target id");
++	const project = (value: unknown): readonly OwnerTabNavigationHistoryEntry[] => {
++		if (!value || typeof value !== "object") throw new ToolError("Native browser history returned an invalid result");
++		const input = value as { currentIndex?: unknown; entries?: unknown };
++		if (!Number.isSafeInteger(input.currentIndex) || !Array.isArray(input.entries) || input.entries.length > 100) throw new ToolError("Native browser history exceeded its bound");
++		return Array.from({ length: input.entries.length }, (_, index) => {
++			const row = input.entries![index] as { id?: unknown; url?: unknown; title?: unknown };
++			if (!row || !Number.isSafeInteger(row.id) || typeof row.url !== "string" || !row.url || row.url.length > 8192 || typeof row.title !== "string" || row.title.length > 1024) throw new ToolError("Native browser history contains an invalid entry");
++			return Object.freeze({ id: String(row.id), url: row.url, title: row.title.replace(/[\u0000-\u001f\u007f]+/g, " "), current: index === input.currentIndex });
++		});
++	};
++	const retained = retainedSessionTabs.get(target.name);
++	if (retained) {
++		if (retained.ownerSessionId !== ownerSessionId || retained.targetId !== target.targetId || retained.state !== "alive") throw new ToolError("The selected owner-bound browser tab is no longer available");
++		if (retained.backend !== "worker") throw new ToolError("Browser history is not supported for cmux browser tabs");
++		const result = await executeRetainedTabRun(retained, { code: `const c=await page.target().createCDPSession();try{return await c.send("Page.getNavigationHistory")}finally{await c.detach().catch(()=>{})}`, timeoutMs: 10_000 }, { snapshot: { cwd: retained.safeDir } });
++		if (retainedSessionTabs.get(target.name) !== retained || retained.state !== "alive") throw new ToolError("The selected owner-bound browser tab changed during the history read");
++		return project(result.returnValue);
++	}
++	assertTabNotReserved(target.name);
++	if (humanActions.has(target.name)) throw new ToolError("This browser tab is busy with a human action");
++	const tab = tabs.get(target.name);
++	if (!tab || tab.ownerSessionId !== ownerSessionId || tab.targetId !== target.targetId || tab.state !== "alive") throw new ToolError("The selected owner-bound browser tab is no longer available");
++	if (tab.backend === "cmux") throw new ToolError("Browser history is not supported for cmux browser tabs");
++	let exactTarget: Target | undefined;
++	for (const candidate of tab.browser.browser.targets()) if ((await targetIdForTarget(candidate)) === target.targetId) { exactTarget = candidate; break; }
++	const page = await exactTarget?.page();
++	if (!page || page.isClosed()) throw new ToolError("The selected browser target is not an open page");
++	const client = await page.target().createCDPSession();
++	try {
++		const result = project(await client.send("Page.getNavigationHistory"));
++		if (tabs.get(target.name) !== tab || tab.state !== "alive" || tab.ownerSessionId !== ownerSessionId || tab.targetId !== target.targetId) throw new ToolError("The selected owner-bound browser tab changed during the history read");
++		return result;
++	} finally { await client.detach().catch(() => {}); }
++}
++
 +const HUMAN_ACTION_TIMEOUT_MS = 15_000;
 +const keyModifiers = new Set(["Alt", "Control", "Meta", "Shift"] as const);
 +const namedKeys = new Set(["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", " "]);
@@ -6746,14 +6911,17 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +		&& validFinite(value.width, 1, 16_384) && validFinite(value.height, 1, 16_384) && value.width * value.height <= 32_000_000
 +		&& validFinite(value.scrollX, -1_000_000_000, 1_000_000_000) && validFinite(value.scrollY, -1_000_000_000, 1_000_000_000)
 +		&& (value.navigation === undefined || (value.navigation && Number.isSafeInteger(value.navigation.entryId) && value.navigation.entryId >= 0
-+			&& typeof value.navigation.canGoBack === "boolean" && typeof value.navigation.canGoForward === "boolean")));
++			&& typeof value.navigation.canGoBack === "boolean" && typeof value.navigation.canGoForward === "boolean"))
++		&& (value.opaqueHistoryTraversal === undefined || value.opaqueHistoryTraversal === true)
++		&& !(value.navigation && value.opaqueHistoryTraversal));
 +}
 +
 +function sameOwnerTabDocumentContext(expected: OwnerTabDocumentContext, actual: OwnerTabDocumentContext, navigation: boolean): boolean {
 +	return expected.documentId === actual.documentId && expected.width === actual.width && expected.height === actual.height
 +		&& (navigation || (expected.scrollX === actual.scrollX && expected.scrollY === actual.scrollY))
 +		&& (expected.navigation === undefined || (actual.navigation !== undefined && expected.navigation.entryId === actual.navigation.entryId
-+			&& expected.navigation.canGoBack === actual.navigation.canGoBack && expected.navigation.canGoForward === actual.navigation.canGoForward));
++			&& expected.navigation.canGoBack === actual.navigation.canGoBack && expected.navigation.canGoForward === actual.navigation.canGoForward))
++		&& expected.opaqueHistoryTraversal === actual.opaqueHistoryTraversal;
 +}
 +
 +class BrowserDocumentTransition extends ToolError {}
@@ -6802,14 +6970,14 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	for (;;) {
 +		const current = tabs.get(target.name);
 +		if (current !== tab || current?.state !== "alive" || current?.ownerSessionId !== ownerSessionId || current?.targetId !== target.targetId || page.isClosed()) {
-+			throw new ToolError("The selected owner-bound browser tab changed during the action");
++			throw new ToolError(`The selected owner-bound browser tab changed during the action [map=${current===tab},state=${current?.state},owner=${current?.ownerSessionId===ownerSessionId},target=${current?.targetId===target.targetId},closed=${page.isClosed()}]`);
 +		}
 +		if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during the action");
 +		try {
 +			const context = await readOwnerTabDocumentContext(page), url = page.url(), title = await page.title();
 +			const verified = tabs.get(target.name);
 +			if (verified !== tab || verified?.state !== "alive" || verified?.ownerSessionId !== ownerSessionId || verified?.targetId !== target.targetId || page.isClosed()) {
-+				throw new ToolError("The selected owner-bound browser tab changed during the action");
++				throw new ToolError(`The selected owner-bound browser tab changed during the action [verified=${verified===tab},state=${verified?.state},owner=${verified?.ownerSessionId===ownerSessionId},target=${verified?.targetId===target.targetId},closed=${page.isClosed()}]`);
 +			}
 +			if ((await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected browser target changed during the action");
 +			return { context, url, title };
@@ -6820,7 +6988,32 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	}
 +}
 +
++async function stopAttachedTabNavigation(
++	tab: WorkerTabSession,
++	ownerSessionId: string,
++	target: OwnerTabViewportTarget,
++): Promise<StoppedNavigationObservation> {
++	const current = tabs.get(target.name);
++	if (current !== tab || current.state !== "alive" || current.ownerSessionId !== ownerSessionId || current.targetId !== target.targetId) {
++		throw new ToolError("The selected owner-bound browser tab changed before navigation stopped");
++	}
++	let exactTarget: Target | undefined;
++	for (const candidate of tab.browser.browser.targets()) if ((await targetIdForTarget(candidate)) === target.targetId) { exactTarget = candidate; break; }
++	if (!exactTarget) throw new ToolError("The selected browser target is no longer attached");
++	const page = await exactTarget.page();
++	if (!page || page.isClosed()) throw new ToolError("The selected browser target is not an open page");
++	const session = await page.target().createCDPSession();
++	try { await session.send("Page.stopLoading"); }
++	finally { await session.detach().catch(() => undefined); }
++	const context = await readOwnerTabDocumentContext(page), url = page.url(), title = await page.title();
++	const verified = tabs.get(target.name);
++	if (verified !== tab || verified.state !== "alive" || verified.ownerSessionId !== ownerSessionId || verified.targetId !== target.targetId || page.isClosed()
++		|| (await targetIdForTarget(page.target())) !== target.targetId) throw new ToolError("The selected owner-bound browser tab changed while navigation stopped");
++	return { context, url, title };
++}
++
 +function validateHumanAction(action: OwnerTabHumanAction, expected: OwnerTabDocumentContext): void {
++	if(action.type==="stop")return;
 +	if (!action || typeof action !== "object" || Array.isArray(action)) rejectHumanAction("Invalid human browser action");
 +	if (action.type === "navigate") {
 +		if (typeof action.url !== "string" || action.url.length === 0 || action.url.length > 8_192 || /[\u0000-\u0020]/.test(action.url)) rejectHumanAction("Invalid browser navigation URL");
@@ -6829,7 +7022,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +		return;
 +	}
 +	if (["back", "forward"].includes(action.type)) {
-+		if (!expected.navigation) rejectHumanAction("Refresh the browser preview before using its history");
++		if (!expected.navigation && !expected.opaqueHistoryTraversal) rejectHumanAction("Refresh the browser preview before using its history");
 +		return;
 +	}
 +	if (action.type === "reload") return;
@@ -6864,6 +7057,41 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	rejectHumanAction("Unsupported human browser action");
 +}
 +
++async function performCmuxNavigationAction(
++	tab: CmuxOwnerTab,
++	expected: OwnerTabDocumentContext,
++	action: Extract<OwnerTabHumanAction, { type: "navigate" | "reload" | "back" | "forward" }>,
++): Promise<Readonly<OwnerTabHumanActionResult>> {
++	let before: CmuxViewportObservation;
++	try {
++		before = await readCmuxViewportObservation(tab);
++		if (!sameOwnerTabDocumentContext(expected, before.context, true)) rejectHumanAction("The browser document or viewport changed; refresh before acting");
++		assertCmuxOwnerTabCurrent(tab);
++	} catch (error) {
++		if (error instanceof BrowserActionRejected) throw error;
++		const rejected = new BrowserActionRejected(error instanceof Error ? error.message : "The cmux browser target could not be verified before the action");
++		Object.defineProperty(rejected, "cause", { value: error, configurable: true });
++		throw rejected;
++	}
++	const method = action.type === "navigate" ? "browser.navigate" : `browser.${action.type}`;
++	const result = await tab.cmuxTab.requestOwnerSurface(method as "browser.navigate" | "browser.reload" | "browser.back" | "browser.forward", {
++		...(action.type === "navigate" ? { url: action.url } : {}),
++	}, HUMAN_ACTION_TIMEOUT_MS);
++	assertCmuxSurfaceResult(result, tab.targetId);
++	const deadline = Date.now() + POST_ACTION_OBSERVATION_TIMEOUT_MS;
++	let previous: CmuxViewportObservation | undefined;
++	for (;;) {
++		const observed = await readCmuxViewportObservation(tab);
++		if (previous && sameOwnerTabDocumentContext(previous.context, observed.context, false)
++			&& previous.url === observed.url && previous.title === observed.title) {
++			return Object.freeze({ name: tab.name, ownerSessionId: tab.ownerSessionId!, targetId: tab.targetId, ...observed });
++		}
++		if (Date.now() >= deadline) throw new ToolError("cmux did not return a stable browser observation after the action");
++		previous = observed;
++		await new Promise<void>(resolve => setTimeout(resolve, 20));
++	}
++}
++
 +/** Mutates one exact owner-bound Puppeteer tab using a captured document context. */
 +export async function performTabHumanActionForOwner(
 +	ownerSessionId: string,
@@ -6874,22 +7102,41 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	if (typeof ownerSessionId !== "string" || !ownerSessionId || !target || typeof target.name !== "string" || !target.name || target.name.length > 200 || target.name.includes("\0")
 +		|| typeof target.targetId !== "string" || !target.targetId || target.targetId.length > 200 || target.targetId.includes("\0") || !validDocumentContext(expected)) rejectHumanAction("Human browser action requires an exact owner, target, and document context");
 +	validateHumanAction(action, expected);
++	if(action.type==="stop"){
++		const selected = retainedSessionTabs.get(target.name) ?? tabs.get(target.name);
++		if (selected?.backend === "cmux" && selected.ownerSessionId === ownerSessionId && selected.targetId === target.targetId && selected.state === "alive") {
++			rejectHumanAction("Stop loading is unavailable for cmux browser surfaces");
++		}
++		const active=activeOwnerNavigations.get(target.name),entryId=expected.navigation?.entryId;
++		if(!active||active.ownerSessionId!==ownerSessionId||active.targetId!==target.targetId||entryId===undefined||active.entryId!==entryId||!active.pending)rejectHumanAction("The selected browser tab has no matching navigation to stop");
++		if(active.stopRequested)rejectHumanAction("The selected browser navigation is already stopping");
++		active.stopRequested=true;let observed:StoppedNavigationObservation;
++		try{observed=await active.stop()}catch(error){active.stopRequested=false;throw error}
++		if(!validDocumentContext(observed.context)||typeof observed.url!=="string"||typeof observed.title!=="string")throw new ToolError("The stopped browser navigation returned an invalid observation");
++		active.settleStopped(observed);
++		return Object.freeze({name:target.name,ownerSessionId,targetId:target.targetId,...observed});
++	}
 +	const retained=retainedSessionTabs.get(target.name);
 +	if(retained){
 +		if(retained.ownerSessionId!==ownerSessionId||retained.targetId!==target.targetId||retained.state!=="alive")rejectHumanAction("The selected owner-bound browser tab is no longer available");
-+		if(retained.backend!=="worker")rejectHumanAction("Human actions are not supported for cmux browser tabs");
 +		if(humanActions.has(target.name))rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy`);
++		if(retained.backend==="cmux"){
++			if(!["navigate","reload","back","forward"].includes(action.type))rejectHumanAction("This cmux browser surface does not support page input or resize");
++			const pending=performCmuxNavigationAction(retainedCmuxOwnerTab(retained),expected,action as Extract<OwnerTabHumanAction,{type:"navigate"|"reload"|"back"|"forward"}>);
++			humanActions.set(target.name,pending);void pending.finally(()=>{if(humanActions.get(target.name)===pending)humanActions.delete(target.name)}).catch(()=>{});return await pending;
++		}
++		const navigation=["navigate","reload","back","forward"].includes(action.type), active:ActiveOwnerNavigation|undefined=navigation?activeNavigation(ownerSessionId,target.targetId,expected.navigation!.entryId,()=>stopWorkerNavigation(retained.worker!)):undefined;
 +		const pending=(async()=>{
-+			const result=await executeRetainedTabRun(retained,{code:`
++			let result:RunResultOk;try{result=await executeRetainedTabRun(retained,{code:`
 +const expected=${JSON.stringify(expected)},action=${JSON.stringify(action)};
 +const read=async()=>{const c=await page.target().createCDPSession();try{const h=await c.send("Page.getNavigationHistory"),t=await c.send("Page.getFrameTree"),v=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),e=h.entries[h.currentIndex];return{documentId:t.frameTree.frame.loaderId,...v,navigation:{entryId:e.id,canGoBack:h.currentIndex>0,canGoForward:h.currentIndex<h.entries.length-1}}}finally{await c.detach().catch(()=>{})}};
 +const before=await read(),navigation=["navigate","reload","back","forward"].includes(action.type),same=expected.documentId===before.documentId&&expected.width===before.width&&expected.height===before.height&&(navigation||(expected.scrollX===before.scrollX&&expected.scrollY===before.scrollY))&&(!expected.navigation||(before.navigation&&expected.navigation.entryId===before.navigation.entryId&&expected.navigation.canGoBack===before.navigation.canGoBack&&expected.navigation.canGoForward===before.navigation.canGoForward));if(!same)throw new Error("The browser document or viewport changed; refresh before acting");
-+if(action.type==="navigate")await page.goto(action.url,{waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="reload")await page.reload({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="back")await page.goBack({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="forward")await page.goForward({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="click")await page.mouse.click(action.x,action.y,{button:action.button,count:action.clickCount});else if(action.type==="wheel"){await page.mouse.move(action.x,action.y);await page.mouse.wheel({deltaX:action.deltaX,deltaY:action.deltaY})}else if(action.type==="resize")await page.setViewport({...page.viewport(),width:action.width,height:action.height});else if(action.type==="text")await page.keyboard.sendCharacter(action.text);else if(action.type==="key"){const pressed=[];try{for(const key of action.modifiers||[]){await page.keyboard.down(key);pressed.push(key)}await page.keyboard.press(action.key)}finally{for(const key of pressed.reverse())await page.keyboard.up(key).catch(()=>{})}}const context=await read();return{context,url:page.url(),title:await page.title()};`,timeoutMs:HUMAN_ACTION_TIMEOUT_MS},{snapshot:{cwd:retained.safeDir}});
++if(action.type==="navigate")await page.goto(action.url,{waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="reload")await page.reload({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="back")await page.goBack({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="forward")await page.goForward({waitUntil:"domcontentloaded",timeout:30000});else if(action.type==="click")await page.mouse.click(action.x,action.y,{button:action.button,count:action.clickCount});else if(action.type==="wheel"){await page.mouse.move(action.x,action.y);await page.mouse.wheel({deltaX:action.deltaX,deltaY:action.deltaY})}else if(action.type==="resize")await page.setViewport({...page.viewport(),width:action.width,height:action.height});else if(action.type==="text")await page.keyboard.sendCharacter(action.text);else if(action.type==="key"){const pressed=[];try{for(const key of action.modifiers||[]){await page.keyboard.down(key);pressed.push(key)}await page.keyboard.press(action.key)}finally{for(const key of pressed.reverse())await page.keyboard.up(key).catch(()=>{})}}const context=await read();return{context,url:page.url(),title:await page.title()};`,timeoutMs:HUMAN_ACTION_TIMEOUT_MS},{snapshot:{cwd:retained.safeDir}})}catch(error){if(!active?.stopRequested)throw error;result={displays:[],screenshots:[],returnValue:await active.stopped}}
 +			if(retainedSessionTabs.get(target.name)!==retained||retained.state!=="alive")throw new ToolError("The selected owner-bound browser tab changed during the action");
 +			const value=result.returnValue as {context?:OwnerTabDocumentContext;url?:string;title?:string};if(!value||!validDocumentContext(value.context!)||typeof value.url!=="string"||typeof value.title!=="string")throw new ToolError("Retained browser action returned an invalid observation");
 +			return Object.freeze({name:retained.name,ownerSessionId,targetId:retained.targetId,context:value.context!,url:value.url,title:value.title});
 +		})();
-+		humanActions.set(target.name,pending);void pending.finally(()=>{if(humanActions.get(target.name)===pending)humanActions.delete(target.name)}).catch(()=>{});return await pending;
++		if(active){active.pending=pending;activeOwnerNavigations.set(target.name,active)}humanActions.set(target.name,pending);void pending.finally(()=>{if(humanActions.get(target.name)===pending)humanActions.delete(target.name);if(activeOwnerNavigations.get(target.name)===active)activeOwnerNavigations.delete(target.name)}).catch(()=>{});return await pending;
 +	}
 +	assertTabNotReserved(target.name);
 +	const key = `${ownerSessionId}\0${target.name}\0${target.targetId}`;
@@ -6897,11 +7144,19 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +	const existingCapture = viewportCaptures.get(key);
 +	const selectedTab = tabs.get(target.name);
 +	if (!selectedTab || selectedTab.ownerSessionId !== ownerSessionId || selectedTab.targetId !== target.targetId || selectedTab.state !== "alive") rejectHumanAction("The selected owner-bound browser tab is no longer available");
-+	if (selectedTab?.backend === "cmux") rejectHumanAction("Human actions are not supported for cmux browser tabs");
++	if (selectedTab.backend === "cmux") {
++		if (!["navigate", "reload", "back", "forward"].includes(action.type)) rejectHumanAction("This cmux browser surface does not support page input or resize");
++		if (selectedTab.pending.size > 0) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy with native browser work`);
++		const pending = performCmuxNavigationAction(selectedTab, expected, action as Extract<OwnerTabHumanAction, { type: "navigate" | "reload" | "back" | "forward" }>);
++		humanActions.set(target.name, pending);
++		void pending.finally(() => { if (humanActions.get(target.name) === pending) humanActions.delete(target.name); }).catch(() => {});
++		return await withTimeout(pending, HUMAN_ACTION_TIMEOUT_MS, `Timed out after ${HUMAN_ACTION_TIMEOUT_MS}ms performing the cmux browser action`);
++	}
 +	const tab = selectedTab as WorkerTabSession;
 +	assertTabNotReserved(target.name);
 +	if (tab.pending.size > 0) rejectHumanAction(`Tab ${JSON.stringify(target.name)} is busy with native browser work`);
 +	let dispatched = false, callerTimedOut = false;
++	const navigationAction=["navigate","reload","back","forward"].includes(action.type);
 +	const pending = Promise.resolve().then(async () => {
 +		let page: Page, resizeViewport: NonNullable<ReturnType<Page["viewport"]>> | undefined;
 +		try {
@@ -6929,11 +7184,12 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +			Object.defineProperty(rejected, "cause", { value: error, configurable: true }); throw rejected;
 +		}
 +		dispatched = true;
-+		switch (action.type) {
-+			case "navigate": await page.goto(action.url, { waitUntil: "domcontentloaded", timeout: 30_000 }); break;
-+			case "reload": await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
-+			case "back": await page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
-+			case "forward": await page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
++		const waitNavigation=async<T>(operation:Promise<T>)=>{const active=activeOwnerNavigations.get(target.name);if(!active)return await operation;void operation.catch(()=>{});return await Promise.race([operation,active.stopped.then(()=>undefined)])};
++		try{switch (action.type) {
++			case "navigate": await waitNavigation(page.goto(action.url, { waitUntil: "domcontentloaded", timeout: 30_000 })); break;
++			case "reload": await waitNavigation(page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 })); break;
++			case "back": await waitNavigation(page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 })); break;
++			case "forward": await waitNavigation(page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 })); break;
 +			case "click": await page.mouse.click(action.x, action.y, { button: action.button, count: action.clickCount }); break;
 +			case "wheel": await page.mouse.move(action.x, action.y); await page.mouse.wheel({ deltaX: action.deltaX, deltaY: action.deltaY }); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))); break;
 +			case "resize": await page.setViewport(resizeViewport!); break;
@@ -6944,15 +7200,21 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
 +				finally { for (const modifier of pressed.reverse()) await page.keyboard.up(modifier).catch(() => undefined); }
 +				break;
 +			}
-+		}
++			case "stop": break;
++		}}catch(error){const active=activeOwnerNavigations.get(target.name);if(!active?.stopRequested)throw error;}
 +		// A pointer/key action may synchronously start a navigation after Puppeteer
 +		// reports input dispatch. Retry only transient CDP/context attachment races;
 +		// every pass revalidates the same live owner, tab, page, and target.
++		const stopped=activeOwnerNavigations.get(target.name);
++		if(stopped?.stopRequested){const observed=await stopped.stopped;return Object.freeze({name:tab.name,ownerSessionId,targetId:tab.targetId,...observed})}
 +		const observed = await observeOwnerTabAfterAction(page, tab, ownerSessionId, target);
 +		return Object.freeze({ name: tab.name, ownerSessionId, targetId: tab.targetId, ...observed });
 +	});
 +	humanActions.set(target.name, pending);
-+	const release = () => { if (humanActions.get(target.name) === pending) humanActions.delete(target.name); };
++	if(navigationAction){
++		const active=activeNavigation(ownerSessionId,target.targetId,expected.navigation!.entryId,()=>stopAttachedTabNavigation(tab,ownerSessionId,target));active.pending=pending;activeOwnerNavigations.set(target.name,active);
++	}
++	const release = () => { if (humanActions.get(target.name) === pending) humanActions.delete(target.name);if(activeOwnerNavigations.get(target.name)?.pending===pending)activeOwnerNavigations.delete(target.name); };
 +	void pending.then(release, release);
 +	try { return await withTimeout(pending, HUMAN_ACTION_TIMEOUT_MS, `Timed out after ${HUMAN_ACTION_TIMEOUT_MS}ms performing the human browser action`); }
 +	catch (error) {
@@ -6965,7 +7227,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  /** Test-only accessor for the module-global tabs map. */
-@@ -766,14 +1991,12 @@ function isLastSurfaceCloseError(err: unknown): boolean {
+@@ -766,14 +2229,12 @@ function isLastSurfaceCloseError(err: unknown): boolean {
  	return /last/i.test(message);
  }
  
@@ -6982,7 +7244,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  			safeDir,
  			// Visible launches still need an OMP-owned page, stealth setup, and
  			// independent lifecycle; only their fixed device emulation is disabled.
-@@ -790,14 +2013,15 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
+@@ -790,14 +2251,15 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
  	// target may be backgrounded, so retain activation for target-correct pixels.
  	const userDriven = browser.kind.kind === "connected" || browser.kind.kind === "relay";
  	const activateForScreenshot = !userDriven || !shouldPreserveConnectedBrowserFocus(opts.target);
@@ -7001,7 +7263,17 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		safeDir,
  		targetId,
  		dialogs: opts.dialogs,
-@@ -821,6 +2045,7 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
+@@ -809,6 +2271,9 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
+ }
+ 
+ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
++	if(msg.type==="navigation-stopped"){
++		const pending=workerNavigationStops.get(tab.worker)?.get(msg.id);if(!pending)return;msg.ok?pending.resolve(msg.result as StoppedNavigationObservation):pending.reject(errorFromPayload(msg.error));return;
++	}
+ 	if (msg.type === "result") {
+ 		const pending = tab.pending.get(msg.id);
+ 		if (!pending) return;
+@@ -821,6 +2286,7 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
  		return;
  	}
  	if (msg.type === "ready") {
@@ -7009,7 +7281,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		tab.info = msg.info;
  		return;
  	}
-@@ -831,52 +2056,53 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
+@@ -831,52 +2297,53 @@ function handleTabMessage(tab: WorkerTabSession, msg: WorkerOutbound): void {
  	if (msg.type === "log") logWorkerMessage(msg);
  }
  
@@ -7103,7 +7375,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  function toErrorPayload(error: unknown): RunErrorPayload {
-@@ -893,77 +2119,73 @@ function toErrorPayload(error: unknown): RunErrorPayload {
+@@ -893,77 +2360,73 @@ function toErrorPayload(error: unknown): RunErrorPayload {
  }
  
  async function recycleTimedOutWorkerTab(tab: WorkerTabSession, timeoutMs: number): Promise<void> {
@@ -7233,7 +7505,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  
  /**
-@@ -994,36 +2216,14 @@ function sharedScopeOf(browser: BrowserHandle): SharedTargetScope | undefined {
+@@ -994,36 +2457,14 @@ function sharedScopeOf(browser: BrowserHandle): SharedTargetScope | undefined {
   * page can be, so no targetId guesswork across multiple sessions.
   */
  async function closeOrphanTarget(tab: WorkerTabSession): Promise<void> {
@@ -7273,7 +7545,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	});
  	try {
  		await raceWithTimeout(promise, GRACE_MS, "Timed out closing browser tab worker");
-@@ -1032,21 +2232,20 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
+@@ -1032,21 +2473,20 @@ async function waitForClosed(tab: WorkerTabSession): Promise<void> {
  	}
  }
  
@@ -7302,7 +7574,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  		if (info.targetInfo?.targetId) return info.targetInfo.targetId;
  		throw new ToolError("Target id unavailable from CDP target info");
  	} finally {
-@@ -1098,86 +2297,6 @@ async function raceWithTimeout<T>(
+@@ -1098,86 +2538,6 @@ async function raceWithTimeout<T>(
  	}
  }
  
@@ -7389,7 +7661,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  /**
   * Init a tab worker under a single listener spanning the whole init: a short
   * `setup` handshake (bounded by the cold-start guard so a stalled cold start
-@@ -1203,16 +2322,22 @@ async function initializeTabWorker(
+@@ -1203,16 +2563,22 @@ async function initializeTabWorker(
  	payload: WorkerInitPayload,
  	timeoutMs: number,
  	deadlineStart: number = performance.now(),
@@ -7419,7 +7691,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	let setupDone = false;
  	// Reject only the active phase's promise: the other one may never be
  	// awaited (a phase that already failed leaves the rest un-run), so
-@@ -1220,6 +2345,8 @@ async function initializeTabWorker(
+@@ -1220,6 +2586,8 @@ async function initializeTabWorker(
  	const failStartup = (error: Error) => {
  		(setupDone ? ready : setup).reject(error);
  	};
@@ -7428,7 +7700,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  	const unlisten = worker.onMessage(msg => {
  		if (msg.type === "page-created") {
  			// Record the headless target before the (potentially slow)
-@@ -1231,22 +2358,27 @@ async function initializeTabWorker(
+@@ -1231,22 +2599,27 @@ async function initializeTabWorker(
  			setup.resolve();
  		} else if (msg.type === "ready") ready.resolve(msg.info);
  		else if (msg.type === "init-failed") failStartup(markReportedInitFailure(errorFromPayload(msg.error)));
@@ -7463,7 +7735,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..7e6d9583fc4cf2887d8526bf67426dcf
  }
  /**
 diff --git a/src/tools/browser/tab-worker-entry.ts b/src/tools/browser/tab-worker-entry.ts
-index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267ffe33f470 100644
+index 9c572c8..fbc9340 100644
 --- a/src/tools/browser/tab-worker-entry.ts
 +++ b/src/tools/browser/tab-worker-entry.ts
 @@ -6,6 +6,15 @@ import { WorkerCore } from "./tab-worker";
@@ -7512,7 +7784,7 @@ index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267f
 +}
 diff --git a/src/tools/browser/tab-worker-host.ts b/src/tools/browser/tab-worker-host.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cca94d5352
+index 0000000..c3045c8
 --- /dev/null
 +++ b/src/tools/browser/tab-worker-host.ts
 @@ -0,0 +1,296 @@
@@ -7813,7 +8085,7 @@ index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cc
 +	return attempt;
 +}
 diff --git a/src/tools/browser/tab-worker.ts b/src/tools/browser/tab-worker.ts
-index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76cdd29b4b 100644
+index 6e8281a..a822c09 100644
 --- a/src/tools/browser/tab-worker.ts
 +++ b/src/tools/browser/tab-worker.ts
 @@ -3,13 +3,13 @@ import * as os from "node:os";
@@ -8019,7 +8291,14 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  				return;
  			case "abort":
  				if (this.#active?.id === msg.id) {
-@@ -1060,77 +1104,119 @@ export class WorkerCore {
+@@ -1057,80 +1101,126 @@ export class WorkerCore {
+ 					this.#active.ac.abort(reason);
+ 				}
+ 				return;
++			case "stop-navigation":
++				try { const page=this.#requirePage(),session=await page.target().createCDPSession();let result:unknown;try{await session.send("Page.stopLoading");const history=await session.send("Page.getNavigationHistory"),tree=await session.send("Page.getFrameTree"),viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scrollX,scrollY})),entry=history.entries[history.currentIndex];result={context:{documentId:tree.frameTree.frame.loaderId,...viewport,navigation:{entryId:entry.id,canGoBack:history.currentIndex>0,canGoForward:history.currentIndex<history.entries.length-1}},url:page.url(),title:await page.title()}}finally{await session.detach().catch(()=>{})}this.#transport.send({ type: "navigation-stopped", id: msg.id, ok: true,result }); }
++				catch (error) { this.#transport.send({ type: "navigation-stopped", id: msg.id, ok: false, error: errorPayload(error) }); }
++				return;
  			case "tool-reply":
  				this.#deliverToolReply(msg.id, msg.reply);
  				return;
@@ -8169,7 +8448,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			return target;
  		}
  		throw new ToolError(`Target ${targetId} is no longer available on the attached browser`);
-@@ -1144,7 +1230,9 @@ export class WorkerCore {
+@@ -1144,7 +1234,9 @@ export class WorkerCore {
  	async #claimRelayTarget(page: Page): Promise<void> {
  		let session: CDPSession | undefined;
  		try {
@@ -8179,7 +8458,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			// Puppeteer's protocol map cannot express the relay-private method; the
  			// send signature is otherwise identical.
  			const raw = session as unknown as { send(method: string): Promise<unknown> };
-@@ -1165,10 +1253,15 @@ export class WorkerCore {
+@@ -1165,10 +1257,15 @@ export class WorkerCore {
  	async #recoverAttachedTarget(target: Target): Promise<void> {
  		let session: CDPSession | undefined;
  		try {
@@ -8195,7 +8474,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			await session.send("Fetch.disable").catch(() => undefined);
  		} catch (error) {
  			this.#log("debug", "Recovery CDP session failed; proceeding with attach", {
-@@ -1187,17 +1280,19 @@ export class WorkerCore {
+@@ -1187,17 +1284,19 @@ export class WorkerCore {
  	 */
  	#observeDialogs(): void {
  		const page = this.#requirePage();
@@ -8222,7 +8501,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		this.#targetId = targetId;
  		return {
  			url: redactUrlCredentials(page.url()),
-@@ -1212,17 +1307,28 @@ export class WorkerCore {
+@@ -1212,17 +1311,28 @@ export class WorkerCore {
  		if (this.#dialogPolicy === policy && this.#dialogHandler) return;
  		if (this.#dialogHandler) page.off("dialog", this.#dialogHandler);
  		const handler = (dialog: Dialog): void => {
@@ -8261,7 +8540,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		};
  		page.on("dialog", handler);
  		this.#dialogPolicy = policy;
-@@ -1231,7 +1337,9 @@ export class WorkerCore {
+@@ -1231,7 +1341,9 @@ export class WorkerCore {
  
  	async #postReadyInfo(): Promise<void> {
  		try {
@@ -8272,7 +8551,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		} catch (error) {
  			this.#log("debug", "Failed to refresh tab info", {
  				error: error instanceof Error ? error.message : String(error),
-@@ -1240,6 +1348,7 @@ export class WorkerCore {
+@@ -1240,6 +1352,7 @@ export class WorkerCore {
  	}
  
  	async #run(msg: Extract<WorkerInbound, { type: "run" }>): Promise<void> {
@@ -8280,7 +8559,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		if (this.#active) {
  			this.#transport.send({
  				type: "result",
-@@ -1365,17 +1474,20 @@ export class WorkerCore {
+@@ -1365,17 +1478,20 @@ export class WorkerCore {
  			try {
  				await runPage?.cleanup();
  			} catch (error) {
@@ -8301,7 +8580,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  			this.#transport.send({
  				type: "result",
  				id: msg.id,
-@@ -1415,6 +1527,8 @@ export class WorkerCore {
+@@ -1415,6 +1531,8 @@ export class WorkerCore {
  	}
  
  	async #callTool(active: ActiveRun, name: string, args: unknown): Promise<unknown> {
@@ -8310,7 +8589,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  		const id = `tab-tc-${active.id}-${crypto.randomUUID()}`;
  		const { promise, resolve, reject } = Promise.withResolvers<unknown>();
  		active.pendingTools.set(id, { resolve, reject });
-@@ -2170,6 +2284,7 @@ export class WorkerCore {
+@@ -2170,6 +2288,7 @@ export class WorkerCore {
  		try {
  			const session = await this.#requirePage().createCDPSession();
  			try {
@@ -8318,7 +8597,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  				await session.send("Page.stopLoading");
  			} finally {
  				await session.detach().catch(() => undefined);
-@@ -2181,29 +2296,96 @@ export class WorkerCore {
+@@ -2181,29 +2300,96 @@ export class WorkerCore {
  		}
  	}
  
@@ -8428,7 +8707,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..30c12d3b53bb22a1ac6d954f6c28af76
  }
 diff --git a/src/tools/browser/target-observation.ts b/src/tools/browser/target-observation.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902d24582f4
+index 0000000..d0148a7
 --- /dev/null
 +++ b/src/tools/browser/target-observation.ts
 @@ -0,0 +1,91 @@
@@ -8525,7 +8804,7 @@ index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902
 +}
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8be412636
+index 0000000..870b940
 --- /dev/null
 +++ b/src/tools/browser/worker-cdp-channel.ts
 @@ -0,0 +1,249 @@
@@ -8779,7 +9058,7 @@ index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8
 +	dispose(): Promise<void> { this.close(); return this.#done.promise; }
 +}
 diff --git a/src/tools/computer/worker-entry.ts b/src/tools/computer/worker-entry.ts
-index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d589ce816a 100644
+index 14a0b4e..619e0a0 100644
 --- a/src/tools/computer/worker-entry.ts
 +++ b/src/tools/computer/worker-entry.ts
 @@ -10,10 +10,11 @@ export function startComputerWorker(): void {
@@ -8795,6 +9074,9 @@ index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d5
  		},
  		onMessage(handler) {
  			if (inbox) return inbox.bind(message => handler(message as ComputerWorkerInbound));
+diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
+old mode 100755
+new mode 100644
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 old mode 100755
 new mode 100644
@@ -8808,6 +9090,9 @@ diff --git a/dist/types/tools/browser/run-context.d.ts b/dist/types/tools/browse
 old mode 100755
 new mode 100644
 diff --git a/dist/types/tools/browser/target-observation.d.ts b/dist/types/tools/browser/target-observation.d.ts
+old mode 100755
+new mode 100644
+diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
 old mode 100755
 new mode 100644
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts
@@ -8832,11 +9117,5 @@ diff --git a/src/tools/browser/target-observation.ts b/src/tools/browser/target-
 old mode 100755
 new mode 100644
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
-old mode 100755
-new mode 100644
-diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
-old mode 100755
-new mode 100644
-diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
 old mode 100755
 new mode 100644

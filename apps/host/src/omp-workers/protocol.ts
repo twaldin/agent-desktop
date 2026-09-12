@@ -80,6 +80,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "cancelBtw"; args: { runId: string } }
   | { operation: "promoteBtw"; args: { runId: string; operationId?: string } }
   | { operation: "getBrowserMetadata" }
+  | { operation: "getBrowserHistory"; args: { target: BrowserFrameTarget } }
   | { operation: "createBrowserTab"; args: { name: string; initialUrl?: string } }
   | { operation: "controlBrowser"; args: { request: BrowserControlRequest } }
   | { operation: "closeBrowserTab"; args: { target: BrowserFrameTarget } }
