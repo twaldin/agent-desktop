@@ -55,8 +55,10 @@ test("v12 retains earlier command parser semantics and explicit version cannot d
   ] };
   expect((await f.send(12, { id: "prompt", command: prompt })).status).toBe(200);
   expect(f.calls.at(-1)?.envelope.command).toMatchObject(prompt);
-  expect(f.calls.map(call => call.version)).toEqual([12, 12]);
-  expect(() => parseCommandEnvelope({ id: "bad", commandVersion: 13, command })).toThrow("Unsupported command version");
+  expect((await f.send(13, { id: "prompt-current", commandVersion: 13, command: prompt })).status).toBe(200);
+  expect(f.calls.at(-1)?.envelope.command).toMatchObject(prompt);
+  expect(f.calls.map(call => call.version)).toEqual([12, 12, 13]);
+  expect(() => parseCommandEnvelope({ id: "bad", commandVersion: 999_999, command })).toThrow("Unsupported command version");
   expect(() => parseCommandEnvelope({ id: "bad", commandVersion: 12, command: { ...command, worktree: { ...remote, remoteRef: "origin/topic" } } })).toThrow("starting state");
 });
 

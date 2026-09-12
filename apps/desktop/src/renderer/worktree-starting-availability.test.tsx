@@ -23,7 +23,7 @@ function expression(name: string, values: Record<string, unknown>): unknown {
   return new Function(...Object.keys(values), `return (${matches[0]![1]});`)(...Object.values(values));
 }
 function appHandler(name: "submit" | "resumeEnvironment", values: Record<string, unknown>): () => Promise<void> {
-  const start = app.indexOf(`  async function ${name}()`);
+  const start = app.indexOf(`  async function ${name}(`);
   const end = app.indexOf("  async function ", start + 10);
   if (start < 0 || end < 0) throw new Error("Missing App handler");
   const code = new Bun.Transpiler({ loader: "tsx" }).transformSync(`function build(values) { const {${Object.keys(values).join(",")}} = values; ${app.slice(start, end)} return ${name}; }`);
@@ -72,7 +72,7 @@ test("actual App submit rechecks the owning host after the saved-draft await", a
     let dispatched = 0; const errors: unknown[] = []; const beforeSubmission = { owners: 0, pages: 0, docks: 0 };
     const values = {
       canSend: true, submitting: { current: false }, setBusy() {}, setActionError(value: unknown) { if (value) errors.push(value); }, draftId: remote.id, selectedRef: { current: "host-a:new" }, hostId: "host-a",
-      submissions: { get() { return undefined; }, async submit(snapshot: Draft) { dispatched++; return { submitted: snapshot, sessionId: "new-session", commandId: "send-id" }; } },
+      submissions: { get() { return undefined; }, queuedEntries() { return []; }, async submit(snapshot: Draft) { dispatched++; return { submitted: snapshot, sessionId: "new-session", commandId: "send-id" }; } },
       drafts: { async prepareSubmission() { return saved; }, beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: remote }; }, ingest() {} },
       hasDraftContent, hasRemoteExecution, remoteWorktreeIssue, desktop: { catalog: { records } }, selectedId: null, running: false, nativeBtwQuestion() { return undefined; },
       draftBrowserOwners: { beforeSubmission() { beforeSubmission.owners++; } }, draftBrowserPages: { beforeSubmission() { beforeSubmission.pages++; } },
