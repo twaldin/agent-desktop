@@ -317,7 +317,33 @@ export class WorkspaceService {
   private async pathRevision(target: string): Promise<string> {
     const metadata = await lstat(target, { bigint: true });
     const linkTarget = metadata.isSymbolicLink() ? await readlink(target) : "";
-    return hash(Buffer.from(JSON.stringify({ dev: String(metadata.dev), ino: String(metadata.ino), mode: String(metadata.mode), size: String(metadata.size), mtimeNs: String(metadata.mtimeNs), ctimeNs: String(metadata.ctimeNs), linkTarget })));
+    let contentRevision: string | undefined;
+    if (metadata.isFile()) {
+      const path = relative(this.cwd, target);
+      const source = await this.copyFile(path).catch(error => {
+        if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+        throw error;
+      });
+      // Renaming/unlinking requires directory permission, not permission to read
+      // the file. Preserve that operation with an explicitly opaque revision.
+      contentRevision = "unreadable";
+      if (source) try {
+        const changed = () => new WorkspaceError("REVISION_CONFLICT", "The selected file changed while it was being reviewed. Refresh before trying again.");
+        if (source.target !== target || source.metadata.mode !== metadata.mode || this.copyRevision(source.metadata) !== this.copyRevision(metadata)) throw changed();
+        const digest = createHash("sha256"), buffer = Buffer.alloc(FILE_COPY_CHUNK_BYTES);
+        for (let offset = 0; offset < source.size;) {
+          const { bytesRead } = await source.file.read(buffer, 0, Math.min(buffer.length, source.size - offset), offset);
+          if (bytesRead === 0) throw changed();
+          digest.update(buffer.subarray(0, bytesRead));
+          offset += bytesRead;
+        }
+        const after = await source.file.stat({ bigint: true });
+        if (after.mode !== metadata.mode || this.copyRevision(after) !== this.copyRevision(metadata)) throw changed();
+        await this.verifyCopyPath(path, target, metadata);
+        contentRevision = digest.digest("hex");
+      } finally { await source.file.close(); }
+    }
+    return hash(Buffer.from(JSON.stringify({ dev: String(metadata.dev), ino: String(metadata.ino), mode: String(metadata.mode), size: String(metadata.size), mtimeNs: String(metadata.mtimeNs), ctimeNs: String(metadata.ctimeNs), linkTarget, contentRevision })));
   }
 
   /** Reviewable identity for a later rename/delete. Contents are never supplied by the client. */

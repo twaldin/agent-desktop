@@ -1,5 +1,11 @@
 # Workspace file editor
 
+## Reviewed rename and delete
+
+Readable regular-file revisions include a streamed content digest as well as the original file identity and nanosecond metadata. A same-size edit cannot reuse a reviewed revision merely because the filesystem records the same change timestamp and the writer restores the modification time. Reads use the existing confined file-descriptor checks, constant-size chunks and before/after identity checks. Changes and operational read failures remain errors. Files that cannot be opened because of read permissions retain an explicitly opaque metadata revision: directory permissions can still allow rename/delete, but the app does not claim to have reviewed their contents. Links retain link-target revisions and folders retain their metadata revision and empty-folder deletion rule.
+
+These checks protect the reviewed snapshot; they are not an atomic filesystem lease. Other applications can still change a path between the final check and rename/unlink, and reading a changing file is not an operating-system snapshot. Hashing large files adds read cost. Opaque revisions provide identity/metadata checks only.
+
 ## Composer file activation
 
 Clicking an existing inline file now opens its owner-workspace file panel without changing the draft or sending a prompt. The node uses its current PM identity and the latest composer callback; foreign-host and outside-workspace paths are not remapped. This matches the pinned composer's ordinary pointer callback. Separate keyboard focus, native tooltip and hover-preview behavior belong to other reference surfaces and are not added here.

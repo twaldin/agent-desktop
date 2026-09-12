@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,test} from "bun:test";
-import {mkdir,mkdtemp,readFile,readdir,rename,rm,symlink,utimes,writeFile} from "node:fs/promises";
+import {chmod,mkdir,mkdtemp,readFile,readdir,rename,rm,stat,symlink,utimes,writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {WorkspaceService} from "../workspace";
@@ -45,6 +45,24 @@ describe("reviewed workspace path operations",()=>{
   const reviewed=await f.service.pathContext("same.txt");await writeFile(file,"BBBB");await utimes(file,epoch,epoch);
   await expect(f.service.deletePath("same.txt",reviewed.revision)).rejects.toMatchObject({code:"REVISION_CONFLICT"});
   expect(await readFile(file,"utf8")).toBe("BBBB");
+ });
+
+ test("rename and delete retain changed bytes when the filesystem change timestamp collides",async()=>{
+  const child=Bun.spawn([process.execPath,new URL("../fixtures/path-revision-collision.ts",import.meta.url).pathname],{stdout:"pipe",stderr:"pipe"});
+  const [exitCode,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
+  expect({exitCode,stderr}).toEqual({exitCode:0,stderr:""});
+  expect(JSON.parse(stdout)).toMatchObject({ok:true,operations:["rename","delete"]});
+ });
+
+ test.skipIf(process.getuid?.()===0)("file read permission is not required to rename or unlink an opaque file",async()=>{
+  const f=await fixture(),path=join(f.cwd,"opaque");await writeFile(path,"kept");await chmod(path,0);
+  await expect(readFile(path)).rejects.toMatchObject({code:"EACCES"});
+  const identity=await stat(path),reviewed=await f.service.pathContext("opaque");
+  const moved=await f.service.renamePath("opaque","moved",reviewed.revision);
+  expect((await stat(join(f.cwd,"moved"))).ino).toBe(identity.ino);
+  expect(moved.entry.mode).toBe(0);
+  await f.service.deletePath("moved",moved.revision);
+  expect(await readdir(f.cwd)).toEqual([]);
  });
 
  test("workspace replacement and outside traversal are rejected",async()=>{
