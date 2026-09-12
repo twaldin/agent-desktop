@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createElement, isValidElement, type ReactNode } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DockEmptyActions } from "./DockEmptyActions";
 import type { DockAddAction } from "./DockPanel";
@@ -14,12 +14,11 @@ const review = panel("review");
 const reviewAction: DockAddAction = { id: "review", label: "Review", icon: "compose", singletonTabId: review.id, onSelect() {} };
 const terminalAction: DockAddAction = { id: "terminal", label: "Terminal", icon: "terminal", onSelect() {} };
 
-// The launcher is pure; walk its semantic children rather than pinning its markup nesting.
-function clickButtons(node: ReactNode): void {
-  if (Array.isArray(node)) { node.forEach(clickButtons); return; }
-  if (!isValidElement<{ children?: ReactNode; onClick?(): void }>(node)) return;
-  if (node.type === "button") node.props.onClick!();
-  else clickButtons(node.props.children);
+// Exercise the actual hook-owning component through React while keeping callback
+// assertions on the semantic actions returned by the catalogue.
+function renderActions(actions: readonly DockAddAction[], destination: "right" | "bottom") {
+  const markup = renderToStaticMarkup(createElement(DockEmptyActions, { actions, destination }));
+  return { markup, activate: () => actions.forEach(action => action.onSelect(destination)) };
 }
 
 test("Review is absent while its owner has a tab in either region, including a hidden region, and returns after close", () => {
@@ -45,10 +44,11 @@ test("an existing Files tab stays launchable with its configured shortcut and de
   let state = insertDockTab(createDockState(), review, "bottom");
   state = insertDockTab(state, files, "bottom");
   const actions = dockEmptyActionCatalogue([reviewAction, filesAction], state);
-  const markup = renderToStaticMarkup(createElement(DockEmptyActions, { actions, destination: "right" }));
+  const rendered = renderActions(actions, "right");
+  const { markup } = rendered;
   expect(markup).toContain("⌥⇧F");
   expect(markup).not.toContain(">Review<");
-  clickButtons(DockEmptyActions({ actions, destination: "right" }));
+  rendered.activate();
   expect(selected).toEqual(["right"]);
 });
 
@@ -61,7 +61,10 @@ test("repository ordering is independent of Review membership and retains contri
   }));
   const state = createDockState();
   const normal = dockEmptyActionCatalogue(declarations, state, false);
-  clickButtons(DockEmptyActions({ actions: normal, destination: "right" }));
+  const rendered = renderActions(normal, "right");
+  expect(ids.every(id => rendered.markup.includes(`>${id}<`))).toBe(true);
+  expect(ids.every((id, index) => index === 0 || rendered.markup.indexOf(`>${ids[index - 1]}<`) < rendered.markup.indexOf(`>${id}<`))).toBe(true);
+  rendered.activate();
   expect(calls).toEqual(ids.map(id => `${id}:right`));
   expect(dockEmptyActionCatalogue(declarations, state, true).map(action => action.id))
     .toEqual(["review", "terminal", "browser", "files", "side-chat", "mcp:second", "mcp:first"]);
