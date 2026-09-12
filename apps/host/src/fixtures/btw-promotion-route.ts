@@ -13,13 +13,16 @@ await writeFile(path.join(agentDir,'config.yml'),`extensions:\n  - ${JSON.string
 for(let i=1;i<=4;i++)await writeFile(path.join(gates,`${i}.release`),'');
 const options={dataDirectory:path.join(root,'data'),agentDirectory:agentDir,discoveryDirectory:cwd,workerPath:fileURLToPath(new URL('../omp-workers/fixtures/no-provider-worker.ts',import.meta.url))};
 let host=await startHost(options);
-async function request(url:string,body?:unknown,owner=false){const response=await fetch(host.connection.origin+url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${host.connection.token}`,'Content-Type':'application/json',...(owner?{'X-Agent-Host-Id':host.store.host.id}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});assert.equal(response.status,200,await response.clone().text());return response.json() as Promise<any>;}
+class RetiringWorkerRead extends Error{}
+async function request(url:string,body?:unknown,owner=false){const response=await fetch(host.connection.origin+url,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${host.connection.token}`,'Content-Type':'application/json',...(owner?{'X-Agent-Host-Id':host.store.host.id}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});const diagnostic=await response.text();if(body===undefined&&response.status===400&&diagnostic==='{"error":"OMP worker is closing"}')throw new RetiringWorkerRead(`${url}: ${diagnostic}`);assert.equal(response.status,200,`${url}: ${diagnostic}`);return JSON.parse(diagnostic);}
 const command=(envelope:CommandEnvelope)=>request('/v1/commands',envelope) as Promise<CommandResult>;
 // These requests intentionally remain pending while the fixture answers the
 // native confirmation. Attach rejection ownership immediately so a fast peer
 // close cannot become an unhandled rejection before the later assertion awaits it.
 function deferred<T>(promise:Promise<T>){void promise.catch(()=>undefined);return promise;}
-async function until<T>(read:()=>Promise<T>,accept:(v:T)=>boolean){const deadline=Date.now()+8000;let v=await read();while(!accept(v)&&Date.now()<deadline){await Bun.sleep(10);v=await read();}assert(accept(v),JSON.stringify(v));return v;}
+async function until<T>(read:()=>Promise<T>,accept:(v:T)=>boolean){const deadline=Date.now()+8000;let v:T|undefined,last:RetiringWorkerRead|undefined;while(Date.now()<deadline){try{v=await read();last=undefined;if(accept(v))return v;}catch(error){if(!(error instanceof RetiringWorkerRead))throw error;last=error;}await Bun.sleep(10);}if(last)throw last;assert(v!==undefined&&accept(v),JSON.stringify(v));return v;}
+let retirementProbe=0;assert.equal(await until(async()=>{if(retirementProbe++===0)throw new RetiringWorkerRead('controlled retirement');return 'ready';},v=>v==='ready'),'ready');
+await assert.rejects(()=>until(async()=>{throw new Error('unrelated read failure');},()=>false),/unrelated read failure/);
 const side=(id:string)=>request(`/v1/sessions/${id}/btw`,undefined,true) as Promise<NativeBtwResponse>;
 async function answer(id:string,value:boolean){const questions=await until(()=>request(`/v1/sessions/${id}/interactions`),v=>v.some((q:any)=>q.title==='Promote side answer'));const q=questions.find((q:any)=>q.title==='Promote side answer');await request(`/v1/sessions/${id}/interactions`,{interactionId:q.id,response:{value}});}
 async function prepared(label:string){
