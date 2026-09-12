@@ -1,3 +1,5 @@
+import { HtmlPreviewDocument } from './html-preview-document';
+import { requestHtmlPreview } from './html-preview-transport';
 import { McpOwnerWindow } from "./mcp-owner-windows";
 import { requestMcpOwner } from "./mcp-owner-transport";
 import { McpAppWindowChannels } from "./mcp-app-window-channels";
@@ -95,11 +97,15 @@ function applyNativeWindowTheme(window: BrowserWindow) {
   if (process.platform === "darwin") window.setVibrancy(resolved.vibrancy);
   if (!window.webContents.isDestroyed()) window.webContents.send("desktop:window-theme-state", resolved.opaqueWindows);
 }
+const htmlPreviewDocuments = new Map<number, HtmlPreviewDocument>();
+const htmlPreviewDrains = new Set<HtmlPreviewDocument>();
 const mcpOwnerDocuments = new Map<number, McpOwnerWindow>();
 const mcpOwnerDrains = new Set<McpOwnerWindow>();
 const mcpAppDocuments = new Map<number, McpAppWindowChannels>();
 const mcpAppDocumentDrains = new Set<McpAppWindowChannels>();
 function retireMcpAppDocument(senderId: number) {
+  const html = htmlPreviewDocuments.get(senderId);
+  if (html) { htmlPreviewDocuments.delete(senderId); htmlPreviewDrains.add(html); void html.retire().then(() => htmlPreviewDrains.delete(html), error => console.error("HTML preview cleanup failed:", error)); }
   const directoryOwner = mcpOwnerDocuments.get(senderId);
   if (directoryOwner) {
     mcpOwnerDocuments.delete(senderId); mcpOwnerDrains.add(directoryOwner);
@@ -118,7 +124,7 @@ const windowCloseGate = new WindowCloseGate({
   senderIds: () => [...windows].filter(window => !window.isDestroyed()).map(window => window.webContents.id),
   prepareQuit: async () => {
     const release = await modifierWatches.pauseAndDrain();
-    try { await Promise.all([...mcpAppDocumentDrains, ...mcpOwnerDrains].map(owner => owner.retire())); return release; }
+    try { await Promise.all([...mcpAppDocumentDrains, ...mcpOwnerDrains, ...htmlPreviewDrains].map(owner => owner.retire())); return release; }
     catch (error) { release(); throw error; }
   },
   send: (senderId, request) => {
@@ -563,6 +569,20 @@ ipcMain.handle("host:mcp-app", (event, sessionId: string, input: import("@agent-
 });
 ipcMain.handle("host:mcp-resource", async (event, sessionId: string, request: import("@agent-desktop/shared").NativeSessionMcpResourceRequest, hostId?: string) => {
   assertTrustedSender(event); return requestSessionMcpResource(await endpointFor(hostId), sessionId, request);
+});
+ipcMain.handle("host:html-preview", (event, sessionId: string, input: import("../../../../packages/shared/src/html-preview").HtmlPreviewRequest | { leaseId: string }, hostId: string) => {
+  assertTrustedSender(event);
+  const sender = event.sender, frame = event.senderFrame;
+  let owner = htmlPreviewDocuments.get(sender.id);
+  if (!owner) {
+    owner = new HtmlPreviewDocument({
+      current: () => !shuttingDown && !sender.isDestroyed() && sender.mainFrame === frame && htmlPreviewDocuments.get(sender.id) === owner,
+      connect: async host => { const endpoint = await endpointFor(requireImageOwner(host)); assertTrustedSender(event); return endpoint; },
+      request: requestHtmlPreview,
+    });
+    htmlPreviewDocuments.set(sender.id, owner);
+  }
+  return owner.dispatch(sessionId, input, hostId);
 });
 ipcMain.handle("host:session-outputs", async (event, sessionId: string, hostId: string) => {
   assertTrustedSender(event);

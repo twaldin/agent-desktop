@@ -1,3 +1,4 @@
+import { HtmlPreviewViews } from './html-preview-views';
 import { useMcpDirectoryOwners } from "./use-mcp-directory-owners";
 import { McpDirectoryConnection, McpDirectoryStatus } from "./McpDirectoryPanel";
 import { useMcpAppCatalogue } from "./use-mcp-app-catalogue";
@@ -1045,11 +1046,17 @@ export function App() {
     connected, active: Boolean(selected && !reviewAction && workspaceOpen && !dock.snapshot.state.right.tabIds.length && !settingsOpen && !pluginDirectoryOpen),
     entryIds: transcript.messages.flatMap(message => message.nativeId ? [message.nativeId] : []),
   });
+  const [htmlPreviewViews] = useState(() => new HtmlPreviewViews(setActionError));
+  useLayoutEffect(() => { htmlPreviewViews.start(); return () => htmlPreviewViews.dispose(); }, [htmlPreviewViews]);
+  useLayoutEffect(() => { htmlPreviewViews.observe(dock.snapshot.tabs.map(tab => tab.id)); });
   const openSuggestedOutput = (output: import("@agent-desktop/shared").SessionOutput, current: () => boolean) => {
     const original = committedArtifactOwner.current;
     const retained = suggestedOutputs.capture(output, true);
     if (!current() || !retained || !original.sessionId) return;
-    if (output.kind === "generated-image") {
+    if (output.kind === "html-preview") {
+      return htmlPreviewViews.open({ bridge, hostId: original.hostId, sessionId: original.sessionId, epoch: suggestedOutputs.snapshot!.epoch, output, admitted: current, retained,
+        queue: (url, guard, preview) => dock.openOutputWebsite(url, original.hostId, original.sessionId!, current, guard, preview) });
+    } else if (output.kind === "generated-image") {
       setSourcePreview({ hostId: original.hostId, current: retained, source: { id: `generated:${output.entryId}:${output.imageIndex}`, kind: "image", label: output.label,
         image: { kind: "transcript", source: "generated", sessionId: original.sessionId, nativeEntryId: output.entryId, blockIndex: output.imageIndex, mimeType: output.mimeType, sha256: output.sha256, bytes: output.bytes } } });
     } else if (output.kind === "mcp") {
@@ -1473,7 +1480,7 @@ export function App() {
           if(to!==_from && !taskDropDestinations(dock.snapshot,mainChat,dragTarget(tab)).includes(to==="right"?contentSide:"bottom")) return;
           dock.change(moveDockTab(dock.snapshot.state,id,to,index));
         }} addActions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} closeable={destination === "bottom"} renderTab={(tab, active) => renderDockTab(tab, active && !settingsOpen && !pluginDirectoryOpen && dock.snapshot.state[destination].open)}/>
-      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination} suggested={destination === "right" && selected && !reviewAction ? { owner: suggestedOutputs, images: { hostId, sessionId: selected.id, media: attachmentMedia }, onOpen: openSuggestedOutput } : undefined}/>}
+      {!dock.snapshot.state[destination].tabIds.length && <DockEmptyActions actions={dockActions.filter(action => !action.destinations || action.destinations.includes(destination))} destination={destination} suggested={destination === "right" && selected && !reviewAction ? { owner: suggestedOutputs, images: { hostId, sessionId: selected.id, media: attachmentMedia }, onOpen: openSuggestedOutput, onSource: (output, current) => dock.openHostFile(output.path, hostId, "right", false, current) } : undefined}/>}
     </div>)}
     </div>
     {paneDrag && !settingsOpen && !pluginDirectoryOpen && <TaskPaneDropPreview geometry={taskDropGeometry(dock.snapshot,mainChat,paneDrag.target,dockViewport)} point={paneDrag.point}/>}

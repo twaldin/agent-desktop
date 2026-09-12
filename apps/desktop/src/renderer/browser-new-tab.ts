@@ -9,6 +9,7 @@ export interface BrowserNewTabState {
   /** Presence matters: an explicitly empty draft is still an edit. */
   draft?: string;
   request?: BrowserCreateRequest;
+  preview?: { workerPid: number; expiresAt: number };
   message?: string;
 }
 
@@ -18,11 +19,12 @@ export function parseBrowserNewTabState(value: unknown): BrowserNewTabState {
   if (!["idle", "pending", "rejected", "unknown"].includes(v.status)
     || v.draft !== undefined && (typeof v.draft !== "string" || v.draft.length > 8192 || v.draft.includes("\0"))
     || v.message !== undefined && (typeof v.message !== "string" || v.message.length > 4096)) throw new Error("Invalid browser launcher state.");
+  if (v.preview !== undefined && (!Number.isSafeInteger(v.preview?.workerPid) || v.preview.workerPid <= 0 || !Number.isSafeInteger(v.preview.expiresAt) || v.preview.expiresAt <= 0)) throw new Error("Invalid original HTML preview owner.");
   const request = v.request === undefined ? undefined : parseBrowserCreateRequest(v.request);
   if (request && request.initialUrl === undefined || v.status === "unknown" && !request || v.status === "idle" && request) throw new Error("Invalid browser launcher request.");
   // Loading a window never resumes an acquisition. A ticket lookup has no side effect.
   const status = v.status === "pending" ? request ? "unknown" : "idle" : v.status;
-  return { status, ...(v.draft === undefined ? {} : { draft: v.draft }), ...(request ? { request } : {}),
+  return { status, ...(v.preview ? { preview: { ...v.preview } } : {}), ...(v.draft === undefined ? {} : { draft: v.draft }), ...(request ? { request } : {}),
     ...(v.status === "pending" && request ? { message: "Browser creation was interrupted. Its outcome is unknown; the address is retained." }
       : v.message === undefined ? {} : { message: v.message }) };
 }
@@ -63,7 +65,7 @@ export class BrowserNewTabController {
     return this.live && this.presentationObserved && !this.inFlight && this.state.status === "idle"
       && this.state.draft === undefined && this.state.request === undefined;
   }
-  private set(state: BrowserNewTabState) { this.state = state; if (this.live) this.changed(state); }
+  private set(state: BrowserNewTabState) { if (this.state.preview && state.draft === this.state.draft) state = { ...state, preview: this.state.preview }; this.state = state; if (this.live) this.changed(state); }
   edit(draft: string | undefined) {
     if (!this.live || this.inFlight || this.state.status === "unknown") return;
     if (draft !== undefined && (draft.length > 8192 || draft.includes("\0"))) return;
@@ -71,13 +73,17 @@ export class BrowserNewTabController {
   }
   async submit(retained: () => boolean = () => true) {
     if (!this.live || this.inFlight || this.state.status === "unknown" || !this.state.draft?.trim() || !retained()) return;
-    const assertRetained = () => { if (!retained()) throw new Error("The original saved output is no longer selected."); };
+    const assertRetained = () => {
+      if (!retained()) throw new Error("The original saved output is no longer selected.");
+      if (this.state.preview && Date.now() >= this.state.preview.expiresAt) throw new Error("The HTML preview expired. Reopen its current Suggested output.");
+    };
     const draft = this.state.draft;
     let request: BrowserCreateRequest | undefined;
     let dispatched = false;
     this.inFlight = true;
     this.set({ status: "pending", draft });
     try {
+      assertRetained();
       const initialUrl = parseBrowserNavigationUrl(browserNavigationAddress(draft));
       if (!this.connected) throw new Error("Reconnect to the owning host to open this address.");
       if (!this.bridge.getBrowserMetadata || !this.bridge.createBrowserTab) throw new Error("Update this desktop and host to open browser tabs.");
@@ -85,6 +91,7 @@ export class BrowserNewTabController {
       if (!this.live) return;
       assertRetained();
       if (!this.connected) throw new Error("The owning host disconnected before browser creation.");
+      if (this.state.preview && (metadata?.availability !== "running" || metadata.workerPid !== this.state.preview.workerPid)) throw new Error("The HTML preview belongs to the original task worker. Reopen its current Suggested output.");
       if (!metadata || metadata.hostId !== this.tab.hostId || metadata.sessionId !== this.sessionId || !metadata.creationTicket) throw new Error("A current creation ticket from this browser's owner is unavailable.");
       request = parseBrowserCreateRequest({ ...metadata.creationTicket, initialUrl, requestId: crypto.randomUUID() });
       this.set({ status: "pending", draft, request });

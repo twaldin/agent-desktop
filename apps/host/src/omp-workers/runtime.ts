@@ -792,6 +792,8 @@ export class WorkerRuntime {
         finally { if (client.snapshot?.sessionFile) { const file = path.resolve(client.snapshot.sessionFile); this.#openFiles.add(file); reservedPaths.add(file); } }
       },
       ...this.#browserControls(client, () => client.snapshot!.id),
+      openHtmlPreview: request => client.request({ operation: "openHtmlPreview", request }, 30_000),
+      releaseHtmlPreview: leaseId => client.request({ operation: "releaseHtmlPreview", leaseId }, 30_000),
       getSessionOutputs: () => client.request({ operation: "getSessionOutputs" }, 30_000),
       getImage: async (nativeEntryId, blockIndex, source) => {
         if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");

@@ -67,3 +67,6 @@
 .dock-suggested-icon>img { width:100%; height:100%; object-fit:cover; border-radius:2px; }
 .dock-suggested-icon>.icon { width:100%; height:100%; }
 .dock-suggested-message { width:100%; max-width:516px; margin:8px auto; color:var(--dock-empty-secondary); font-size:var(--dock-empty-label-size); }
+
+.dock-suggested-list>li { display:flex; }
+.dock-suggested-list button.dock-suggested-source { width:36px; flex:none; }
