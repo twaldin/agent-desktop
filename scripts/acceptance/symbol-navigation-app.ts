@@ -115,6 +115,22 @@ export async function exerciseSymbolNavigationApp(page: SymbolAcceptancePage, ou
         throw new Error("First-mounted symbol selection collapsed after render: " + JSON.stringify(selected.selection));
     }
     checks.push("First-mounted declaration selection survives queued editor focus and selection events.");
+    const declaration = await snapshot();
+    const openPullRequests = await page.waitForSelector('.nav-action[aria-label="Pull requests"]', { visible: true });
+    if (!openPullRequests) throw new Error("The production Pull requests action is missing.");
+    await openPullRequests.click();
+    const closePullRequests = await page.waitForSelector('button[aria-label="Close pull requests"]', { visible: true });
+    if (!closePullRequests) throw new Error("The production Pull requests page did not open.");
+    await closePullRequests.click();
+    await wait(value => value.label === "Edit symbol-target.ts");
+    for (let frame = 0; frame < 8; frame++) {
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+      const restored = await snapshot();
+      if (JSON.stringify(restored.selection) !== JSON.stringify(declaration.selection))
+        throw new Error("Pull requests navigation changed the retained declaration selection: " + JSON.stringify(restored.selection));
+    }
+    await capture("01b-definition-after-pull-requests");
+    checks.push("Opening and closing the actual Pull requests page preserves the original declaration selection across queued frames.");
     await click("Back to symbol");
     await wait(value => value.label === "Edit symbol-source.ts" && !value.buttons.find(button => button.text === "Forward to symbol")?.disabled && JSON.stringify(value.selection) === JSON.stringify(origin.selection));
     checks.push("Back restores the exact original native cursor and selection.");
