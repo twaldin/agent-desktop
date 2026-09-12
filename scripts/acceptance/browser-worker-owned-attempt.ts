@@ -88,16 +88,26 @@ test("normal inline close is delivered before retirement", async () => {
 test("invalid channel is rejected before worker allocation", async () => {
   const h = harness(); await assert.rejects(h.spawn(""), /channel identity/); assert.equal(h.state().constructions, 0);
 });
-function acquisition(loseAt: "temporary-release" | "outer-release" | "none", replace = false, elapsedAtRelease = 0) {
+function acquisition(loseAt: "temporary-release" | "outer-release" | "none", replace = false, elapsedAtRelease = 0,
+  exposure: "success" | "fail" | "hold" = "success") {
   const tabs = new Map<string, any>(), calls: string[] = []; let valid = true, releases = 0, now = 0;
+  const exposureGate = Promise.withResolvers<void>();
   const browser = { kind: { kind: "headless" }, refCount: 0 }, original = { browser, backend: "worker", state: "alive", dialogPolicy: false };
   if (loseAt === "temporary-release") tabs.set("tab", original);
   const worker = { startupCreations: [], finishStartup() {}, assertActive() {}, createdTargetId: "new-page", onMessage() {}, async terminate() { calls.push("terminate"); } };
-  const owner = { assertCurrent() { if (!valid) throw new Error("Original owner lost"); }, async closeTarget(id: string) { calls.push(`close:${id}`); } };
+  const owner = { assertCurrent() { if (!valid) throw new Error("Original owner lost"); },
+    async exposeTarget(id: string, budget: number) {
+      calls.push(`expose:${id}:${budget}`);
+      if (exposure === "hold") await exposureGate.promise;
+      owner.assertCurrent();
+      if (exposure === "fail") throw new Error("Original target exposure failed");
+    },
+    async closeTarget(id: string) { calls.push(`close:${id}`); } };
   const replacement = { replacement: true };
   const deps: Record<string, any> = {
     tabs, acquireChains: new Map(), killedTabs: new Map(), workerPageTargets: new WeakMap(), tabObservations: new WeakMap(), GRACE_MS: 100,
     ToolError: Error, ToolAbortError: Error, BrowserTabCreateRejected: Error,
+    assertTabNotReserved() {},
     performance: {now: () => now}, initBudgetExhausted: (budget: number, start: number) => now - start >= budget,
     captureWorkerConnection: () => owner,
     holdBrowser() { browser.refCount++; },
@@ -113,7 +123,8 @@ function acquisition(loseAt: "temporary-release" | "outer-release" | "none", rep
   const source = sources[2]!.slice(sources[2]!.indexOf("export function acquireTab("), sources[2]!.indexOf("\ntype WorkerPageInit ="));
   const cleanup = sources[2]!.slice(sources[2]!.indexOf("async function closeUnpublishedWorkerTargets("), sources[2]!.indexOf("/** Retain one authenticated cmux connection"));
   const { acquireTab } = new Function(...Object.keys(deps), `${transform(source + cleanup)};return { acquireTab }`)(...Object.values(deps));
-  return { run: () => acquireTab("tab", browser, { timeoutMs: 1000, dialogs: true }), calls, tabs, replacement, state: () => ({ refs: browser.refCount, releases }) };
+  return { run: () => acquireTab("tab", browser, { timeoutMs: 1000, dialogs: true }), calls, tabs, replacement,
+    lose() { valid = false; }, releaseExposure() { exposureGate.resolve(); }, state: () => ({ refs: browser.refCount, releases }) };
 }
 test("temporary hold release invalidation drains unpublished worker and its page", async () => {
   const h = acquisition("temporary-release"); await assert.rejects(h.run(), /Original owner lost/);
@@ -121,19 +132,33 @@ test("temporary hold release invalidation drains unpublished worker and its page
 });
 test("outer hold release invalidation removes only acquisition-created original", async () => {
   const h = acquisition("outer-release"); await assert.rejects(h.run(), /Original owner lost/);
-  assert.deepEqual(h.calls, ["cleanup-original", "release-original"]); assert.equal(h.tabs.has("tab"), false); assert.equal(h.state().refs, 0);
+  assert.deepEqual(h.calls, ["expose:new-page:1100", "cleanup-original", "release-original"]); assert.equal(h.tabs.has("tab"), false); assert.equal(h.state().refs, 0);
 });
 test("outer release cannot delete a replacement", async () => {
   const h = acquisition("outer-release", true); await assert.rejects(h.run(), /Original owner lost/);
-  assert.deepEqual(h.calls, ["cleanup-original", "release-original"]); assert.equal(h.tabs.get("tab"), h.replacement); assert.equal(h.state().refs, 0);
+  assert.deepEqual(h.calls, ["expose:new-page:1100", "cleanup-original", "release-original"]); assert.equal(h.tabs.get("tab"), h.replacement); assert.equal(h.state().refs, 0);
 });
 test("valid original publishes with retained hold", async () => {
   const h = acquisition("none"), result = await h.run(); assert.equal(result.created, true); assert.equal(h.tabs.get("tab"), result.tab); assert.equal(h.state().refs, 1);
+  assert.deepEqual(h.calls, ["expose:new-page:1100"]);
+});
+
+test("failed target exposure drains the initialized worker and exact unpublished page", async () => {
+  const h = acquisition("none", false, 0, "fail"); await assert.rejects(h.run(), /Original target exposure failed/);
+  assert.deepEqual(h.calls, ["expose:new-page:1100", "terminate", "close:new-page"]);
+  assert.equal(h.tabs.has("tab"), false); assert.equal(h.state().refs, 0);
+});
+
+test("owner loss during held target exposure cannot publish or recapture a replacement", async () => {
+  const h = acquisition("none", false, 0, "hold"), result = outcome(h.run()); await ticks(); h.lose(); h.releaseExposure(); await ticks();
+  assert.equal(result()?.ok, false); assert.ok(result()?.errors.includes("Original owner lost"));
+  assert.deepEqual(h.calls, ["expose:new-page:1100", "terminate", "close:new-page"]);
+  assert.equal(h.tabs.has("tab"), false); assert.equal(h.state().refs, 0);
 });
 
 test("outer hold release cannot publish after the original deadline", async () => {
   const h = acquisition("none", false, 1101); await assert.rejects(h.run(), /deadline expired before publication/);
-  assert.deepEqual(h.calls, ["cleanup-original", "release-original"]); assert.equal(h.tabs.has("tab"), false); assert.equal(h.state().refs, 0);
+  assert.deepEqual(h.calls, ["expose:new-page:1100", "cleanup-original", "release-original"]); assert.equal(h.tabs.has("tab"), false); assert.equal(h.state().refs, 0);
 });
 
 function startup(options: { holdAllocation?: boolean; holdDrain?: boolean; cleanupError?: boolean; reported?: boolean; inline?: boolean; receipts?: Array<{requestId: number; status: string; targetId?: string}>; lostMessage?: boolean } = {}) {
@@ -274,7 +299,8 @@ function recycleCase(holdAt?: "old-drain" | "new-init") {
   const owner = {assertCurrent() {if (!valid) throw new Error("Original connection lost");}, async closeTarget(id: string) {calls.push(`close:${id}`);}};
   const tab = {name: "original", worker: original as unknown, targetId: "original-adopted", state: "alive", connectionOwner: owner, dialogPolicy: "dismiss", activateForScreenshot: false, info: {old: true}};
   const tabs = new Map<string, any>([[tab.name, tab]]);
-  const dependencies = {performance: {now: () => now}, ToolError: Error, tabs, getPuppeteerDir: () => "/controlled", workerPageTargets: new WeakMap(), handleTabMessage() {},
+  const dependencies = {performance: {now: () => now}, ToolError: Error, tabs, getPuppeteerDir: () => "/controlled", workerPageTargets: new WeakMap(),
+    recyclingTabs: new WeakSet(), assertTabNotReserved() {}, handleTabMessage() {},
     async initializeOwnedAttempt(selected: unknown, payload: unknown, budget: number, start: number) {
       assert.equal(selected, owner); calls.push("new-init"); payloads.push({payload, budget, start});
       if (holdAt === "new-init") await gate.promise; return {worker: next, info: {fresh: true}};

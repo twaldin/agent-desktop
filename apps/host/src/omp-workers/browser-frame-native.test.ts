@@ -28,7 +28,7 @@ test("real owner-bound captures preserve state and recover bounded document tran
     return new Response(`<!doctype html><meta charset="utf-8"><title>Native frame page</title><style>html,body{margin:0;width:100%;height:100%;background:#13579b;color:white}</style><main>frame proof</main><script>globalThis.browserFrameState={token:'unchanged',count:7}</script>`, { headers: { "Content-Type": "text/html" } });
   } });
   const runtime = new WorkerRuntime({ agentDir, workerPath: fileURLToPath(new URL("./fixtures/local-browser-worker.ts", import.meta.url)), environment: {
-    PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, TERM: "dumb", PUPPETEER_EXECUTABLE_PATH: await browserExecutable(), BROWSER_FRAME_TEST_URL: `http://127.0.0.1:${server.port}/page`, PI_BROWSER_CMUX: "0", PI_BROWSER_RELAY: "0",
+    HOME: root, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, TERM: "dumb", PUPPETEER_EXECUTABLE_PATH: await browserExecutable(), BROWSER_FRAME_TEST_URL: `http://127.0.0.1:${server.port}/page`, PI_BROWSER_CMUX: "0", PI_BROWSER_RELAY: "0",
   } });
   try {
     const session = await runtime.create({ cwd, interactions: true }); const sessionId = session.id;

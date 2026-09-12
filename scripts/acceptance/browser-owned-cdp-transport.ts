@@ -108,9 +108,9 @@ await scenario("normal root and flattened child requests replies and events stay
   assert.equal(delivered[2]!.method, "Target.targetInfoChanged"); assert.equal("sessionId" in delivered[2]!, false); assert.equal(delivered[3]!.sessionId, "owned-child");
   assert.equal(unrelated.detached, false); assert.equal(foreignChild.detached, false); assert.equal(h.original._session("unrelated")?.id(), "unrelated"); assert.equal(h.original._closed, false); assert.equal(result.ok, true);
 });
-await scenario("malformed and unowned requests do not dispatch and duplicate pending id is refused", async (h, report) => {
+await scenario("malformed requests do not dispatch and duplicate pending id is refused", async (h, report) => {
   const transport = await h.capture(); h.session("foreign"); const gate = h.gate({ result: "held" }); h.setRead(async () => await gate.promise);
-  const invalid = ["not JSON", "null", "[]", JSON.stringify({ id: 0, method: "A.b" }), JSON.stringify({ id: 1.5, method: "A.b" }), JSON.stringify({ id: 1, method: "" }), JSON.stringify({ id: 1, method: "A.b", params: [] }), JSON.stringify({ id: 1, method: "A.b", sessionId: "" }), request(1, "A.b", "foreign")];
+  const invalid = ["not JSON", "null", "[]", JSON.stringify({ id: 0, method: "A.b" }), JSON.stringify({ id: 1.5, method: "A.b" }), JSON.stringify({ id: 1, method: "" }), JSON.stringify({ id: 1, method: "A.b", params: [] }), JSON.stringify({ id: 1, method: "A.b", sessionId: "" })];
   const refusals: string[] = [];
   for (const raw of invalid) { try { transport.send(raw); } catch (error) { refusals.push((error as Error).message); } }
   const before = dispatched(h).length; transport.send(request(10)); let duplicate: string | undefined;
@@ -118,6 +118,37 @@ await scenario("malformed and unowned requests do not dispatch and duplicate pen
   gate.resolve({ result: "held" }); await ticks(); report({ refusals, duplicate, before });
   assert.equal(refusals.length, invalid.length); assert.equal(before, 0); assert.match(duplicate ?? "", /Duplicate/); assert.equal(dispatched(h).length, 1); await transport.dispose();
 });
+for (const state of ["detached", "foreign", "replaced"] as const) {
+  await scenario(`${state} child gets a correlated refusal while the original root remains usable`, async (h, report) => {
+    const transport = await h.capture();
+    const root = h.root();
+    const child = state === "foreign" ? h.session("child") : h.child("child", root);
+    if (state === "detached") child.onClosed();
+    if (state === "replaced") h.session(child.id(), root);
+    const delivered: Record<string, unknown>[] = [];
+    let closeCount = 0;
+    transport.onmessage = raw => delivered.push(JSON.parse(raw));
+    transport.onclose = () => { closeCount++; };
+    // Puppeteer can queue this command before a child-detached event is delivered.
+    transport.send(request(41, "Runtime.runIfWaitingForDebugger", child.id()));
+    await ticks();
+    assert.deepEqual(delivered, [{ id: 41, sessionId: child.id(), error: {
+      code: -32000, message: "Session closed or not owned by this browser transport",
+    } }]);
+    assert.equal(dispatched(h).length, 0);
+    assert.equal(closeCount, 0);
+    transport.send(request(42));
+    await ticks();
+    assert.deepEqual(dispatched(h).map(call => [call.sessionId, call.method]), [[root.id(), "Runtime.evaluate"]]);
+    assert.equal(delivered[1]?.id, 42);
+    assert.equal("error" in delivered[1]!, false);
+    assert.equal(closeCount, 0);
+    const result = await tracked(transport.dispose()).done();
+    assert.equal(result.ok, true);
+    assert.equal(closeCount, 1);
+    report({ delivered, result, closeCount });
+  });
+}
 await scenario("original connection replacement during allocation cleans only original allocated session", async (h, report) => {
   const allocation = h.gate({ sessionId: "owned-root" }); h.holdAllocation(allocation.promise);
   const opening = tracked(h.capture()); await ticks(); h.browser._connection = h.replacement;
