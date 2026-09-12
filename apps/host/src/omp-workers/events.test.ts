@@ -18,3 +18,27 @@ test("worker projection retains lifecycle/thinking/error fields without reading 
   expect(projectWorkerEvent(requested)).toBe(requested);
   expect(remoteError(new Error(`Native error with data:image/png;base64,${"A".repeat(8192)}`))).toEqual({ name: "Error", message: "Native error with [image payload omitted]" });
 });
+
+test("remote errors retain bounded nested cleanup diagnostics without exposing arbitrary payloads", () => {
+  const leaf = new Error(`Target detached ${"A".repeat(8192)}`);
+  const reservation = new AggregateError([leaf, { get credential() { throw new Error("must not inspect payload"); } }], "Browser owner reservation cleanup failed");
+  const cleanup = Object.assign(new AggregateError([reservation], "OMP worker native cleanup failed"), { code: "OUTCOME_UNKNOWN" as const });
+  Object.assign(cleanup, { cause: cleanup });
+  const projected = remoteError(cleanup);
+  expect(projected).toMatchObject({ name: "AggregateError", code: "OUTCOME_UNKNOWN" });
+  expect(projected.message).toContain("OMP worker native cleanup failed");
+  expect(projected.message).toContain("Browser owner reservation cleanup failed");
+  expect(projected.message).toContain("Target detached [encoded payload omitted]");
+  expect(projected.message).toContain("[cyclic error omitted]");
+  expect(projected.message).not.toContain("must not inspect payload");
+  expect(projected.message.length).toBeLessThanOrEqual(4096);
+
+  const guardedErrors = Array.from({ length: 64 }, (_, index) => new Error(`failure ${index}`));
+  const wideAggregate = new AggregateError(guardedErrors, "wide cleanup");
+  Object.defineProperty(wideAggregate.errors, 16, { get() { throw new Error("must not inspect beyond detail budget"); } });
+  const wide = remoteError(wideAggregate);
+  expect(wide.message).toContain("failure 0");
+  expect(wide.message).toContain("[additional error details omitted]");
+  expect(wide.message).not.toContain("failure 63");
+  expect(wide.message.length).toBeLessThanOrEqual(4096);
+});

@@ -122,9 +122,35 @@ export type ChildMessage =
   | { type: "event"; sequence: number; event: WorkerEvent; snapshot?: SessionSnapshot }
   | { type: "fatal"; error: RemoteError };
 
+const MAX_REMOTE_ERROR_DETAILS = 16;
+const MAX_REMOTE_ERROR_DEPTH = 4;
+function remoteErrorMessage(error: Error, seen: Set<Error>, budget: { remaining: number }, depth = 0): string {
+  if (seen.has(error)) return "[cyclic error omitted]";
+  if (budget.remaining-- <= 0) return "[additional error details omitted]";
+  seen.add(error);
+  const message = projectNativeErrorMessage(error.message);
+  if (depth >= MAX_REMOTE_ERROR_DEPTH) return message;
+  const details: string[] = [];
+  const omit = () => { if (details.at(-1) !== "[additional error details omitted]") details.push("[additional error details omitted]"); };
+  if (error instanceof AggregateError && Array.isArray(error.errors)) {
+    const limit = Math.min(error.errors.length, budget.remaining);
+    for (let index = 0; index < limit; index += 1) {
+      const item = error.errors[index];
+      if (item instanceof Error) details.push(remoteErrorMessage(item, seen, budget, depth + 1));
+      if (budget.remaining <= 0) break;
+    }
+    if (error.errors.length > limit || budget.remaining <= 0) omit();
+  }
+  if (error.cause instanceof Error) {
+    if (budget.remaining <= 0) omit();
+    else details.push(remoteErrorMessage(error.cause, seen, budget, depth + 1));
+  }
+  return details.length ? projectNativeErrorMessage(`${message}: ${details.join("; ")}`) : message;
+}
+
 export function remoteError(error: unknown): RemoteError {
   return error instanceof Error
-    ? { name: error.name.slice(0, 100), message: projectNativeErrorMessage(error.message),
+    ? { name: error.name.slice(0, 100), message: remoteErrorMessage(error, new Set(), { remaining: MAX_REMOTE_ERROR_DETAILS }),
       ...("code" in error && error.code === "OUTCOME_UNKNOWN" ? { code: "OUTCOME_UNKNOWN" as const } : {}) }
     : { name: "Error", message: "OMP worker operation failed" };
 }
