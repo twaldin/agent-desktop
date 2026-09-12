@@ -4,6 +4,7 @@ import { PullRequestsHttp } from "./pull-requests-http";
 import { PULL_REQUESTS_CAPABILITY } from "../../../packages/shared/src/pull-requests";
 import { HtmlPreviewHttp } from './html-preview-http';
 import { McpOwnerHttp } from "./mcp-owner-http";
+import { SIDEBAR_NAVIGATION_CAPABILITY } from "../../../packages/shared/src/sidebar-navigation";
 import { isUnreadSessionEvent } from "../../../packages/shared/src/session-read";
 import { BranchQueryPeer } from "./branch-query-peer";
 import { BRANCH_QUERY_CAPABILITY } from "@agent-desktop/shared";
@@ -600,6 +601,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
+      sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
       drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }

@@ -116,6 +116,10 @@ import { SidebarNavigationIcon } from "./SidebarNavigationIcon";
 import { OrganizedSidebar } from "./OrganizedSidebar";
 import { moveSidebarItem, sidebarLayout, sidebarChatActions } from "./sidebar-layout";
 import { sessionUnreadKey } from "./session-read-state";
+import { SidebarNavigation } from "./SidebarNavigation";
+import { useSidebarNavigation } from "./use-sidebar-navigation";
+import { SidebarActivity, SidebarActivityIcon } from "./SidebarActivity";
+import { sidebarActivity } from "./sidebar-activity";
 import { NativeSettings } from "./NativeSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { GitSettings } from "./GitSettings";
@@ -180,6 +184,7 @@ export function App() {
   const routeKey = `${route.hostId ?? desktop.localHostId ?? ""}:${selectedId ?? ""}`;
   const selectedRef = useRef(routeKey); selectedRef.current = routeKey;
   const [sidebarOpen, setSidebarOpen] = useState(windowRestoration.state.sidebarOpen);
+  const [sidebarActivityOpen, setSidebarActivityOpen] = useState(false);
   const [commandMenuMode, setCommandMenuMode] = useState<"commands" | "chats">();
   const commandMenuOrigin = useRef<Element | null>(null);
   const commandMenuGitBlame = useRef<(() => void) | undefined>(undefined);
@@ -270,6 +275,7 @@ export function App() {
   const [, redraw] = useReducer(value => value + 1, 0);
   const preferences = useMemo(() => new PreferencesState(bridge, offlineCache, { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value) }), [bridge]);
   const localConnected = Boolean(desktop.localHostId && desktop.catalog.records.get(desktop.localHostId)?.connected);
+  const sidebarNavigation = useSidebarNavigation(bridge, desktop.localHostId, localConnected, desktop.localHostId ? desktop.catalog.records.get(desktop.localHostId)?.state?.sidebarNavigation?.version === 1 : false);
   const commandKeymap = useMemo(() => windowRestoration.ownerSlot ? new CommandKeymapState(windowRestoration.ownerSlot, bridge, offlineCache, { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value) }) : undefined, [bridge, windowRestoration.ownerSlot]);
   const keymapCapability = desktop.localHostId ? desktop.catalog.records.get(desktop.localHostId)?.state?.commandKeybindings : undefined;
   useEffect(() => {
@@ -605,6 +611,7 @@ export function App() {
     route, settingsOpen, pluginDirectoryOpen: pluginDirectoryOpen || automationsOpen || pullRequestsOpen, root: workbenchElement.current, navigate }); });
   useEffect(() => () => browserSearchSelection.cancel(), [browserSearchSelection]);
   const newConversation = useCallback((projectId?: string, owner = route.hostId ?? state?.host.id ?? desktop.localHostId) => {
+    setShowArchived(false); setSidebarActivityOpen(false);
     navigate(null, owner);
     if (projectId !== undefined && owner) {
       const pair = controllers(owner), capabilities = desktop.catalog.records.get(owner)?.state?.newChatExecution;
@@ -647,6 +654,7 @@ export function App() {
   const sessionRead = useSessionReadState(preferences, selected, !contentOverlayOpen && !(dock.snapshot.state.right.open && dock.snapshot.state.rightLayout === "full"), transcript.loaded && (transcript.readSequence ?? -1) >= (selected?.activitySequence ?? 0));
   const unreadSessions = sessionRead.unreadKeys(hostGroups.flatMap(group => group.hostState.sessions));
   const organizedSidebar = sidebarLayout(preferences, hostGroups, "", showArchived, expandedProjects, unreadSessions);
+  const sidebarActivityItems = sidebarActivity(hostGroups, unreadSessions);
   const mainChatPanelId = useId();
   const mainChatTabId = `${mainChatPanelId}-tab`;
   const [mainStripContainer,setMainStripContainer] = useState<HTMLDivElement | null>(null);
@@ -758,7 +766,7 @@ export function App() {
     inputActions: ["focus-main-chat"],
     blocked: () => Boolean(dialog || menuOpen || fileSearchOwner || commandMenuMode),
     actions: {
-      ...sidebarChatActions(organizedSidebar.chatSlots, navigate),
+      ...sidebarChatActions(sidebarActivityOpen ? sidebarActivityItems.map(item => ({ hostId: item.session.hostId, sessionId: item.session.id })) : organizedSidebar.chatSlots, navigate),
       ...(!contentOverlayOpen ? numberedMainTaskActions(taskTargets, taskDirection, selectMainTask) : {}),
       ...(!contentOverlayOpen && taskTargets.length > 1 ? { "next-task-tab": () => cycleMainTask("next"), "previous-task-tab": () => cycleMainTask("previous") } : {}),
       "new-chat": () => newConversation(),
@@ -1536,14 +1544,14 @@ export function App() {
   return <><div ref={shell} className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
     {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={profileMenu("settings-host")}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
-      <div className="sidebar-brand"><strong>Agent Desktop</strong><button className="icon-button small" aria-label="Search" title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} aria-expanded={commandMenuMode === "chats"} onClick={() => openCommandMenu("chats")}><SidebarNavigationIcon name="search"/></button></div>
-      <nav className="sidebar-actions" aria-label="Main navigation">
-        <button className="nav-action" onClick={() => newConversation()}><SidebarNavigationIcon name="new-chat"/><span>New chat</span><kbd>⌘ N</kbd></button>
-        <button aria-label="Scheduled" className={`nav-action ${automationsOpen ? "selected" : ""}`} aria-current={automationsOpen ? "page" : undefined} onClick={openAutomations}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.33"><circle cx="10" cy="10" r="7"/><path d="M10 5.5V10l-2.5 2" strokeLinecap="round" strokeLinejoin="round"/></svg><span>Scheduled</span></button>
-        <button aria-label="Pull requests" className={`nav-action ${pullRequestsOpen ? "selected" : ""}`} aria-current={pullRequestsOpen ? "page" : undefined} onClick={() => { setAutomationsOpen(false); setPluginDirectoryOpen(false); setSettingsOpen(false); setPullRequestsOpen(true); }}><PullRequestIcon/><span>Pull requests</span></button>
-        <button aria-label="Plugins" className={`nav-action ${pluginDirectoryOpen?"selected":""}`} aria-current={pluginDirectoryOpen?"page":undefined} onClick={()=>{settingsOriginLabel.current=null;setAutomationsOpen(false); setPullRequestsOpen(false);setPluginDirectoryOpen(true);setSettingsOpen(false);}}><SidebarNavigationIcon name="plugins"/><span>Plugins</span></button>
-      </nav>
-      <div className="sidebar-scroll"><OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} activeProjectId={!contentOverlayOpen && selectedId === null ? project?.id : undefined} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession} onMarkRead={(target, unread) => { const session = hostGroups.find(group => group.hostState.host.id === target.hostId)?.hostState.sessions.find(session => session.id === target.id && session.hostId === target.hostId); return session ? sessionRead.mark(session, unread) : Promise.resolve(false); }} localHostId={desktop.localHostId ?? null} onRenameProject={renameSidebarProject} onRemoveProject={removeSidebarProject} onRevealProject={revealSidebarProject}/></div>
+      <div className="sidebar-brand"><strong>Agent Desktop</strong><div className="sidebar-brand-actions"><button className="icon-button small" aria-label="Search" title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} aria-expanded={commandMenuMode === "chats"} onClick={() => openCommandMenu("chats")}><SidebarNavigationIcon name="search"/></button><button className={`icon-button small ${sidebarActivityOpen ? "active" : ""}`} aria-label={sidebarActivityOpen ? "Close activity view" : "View activity"} title={sidebarActivityItems.length ? "Chats are unread, active, or awaiting a response" : "View activity"} aria-pressed={sidebarActivityOpen} onClick={() => { setSidebarActivityOpen(value => !value); setShowArchived(false); }}><SidebarActivityIcon/></button></div></div>
+      <SidebarNavigation data={sidebarNavigation} onNew={() => newConversation()} newShortcut={appCommandShortcutLabel(appCommandBindings.bindings, "new-chat")} destinations={[
+        ...(state?.pullRequests?.version === 1 && bridge.pullRequests ? [{ id: "pull-requests" as const, label: "Pull requests", icon: <PullRequestIcon/>, current: pullRequestsOpen, onSelect: () => { setAutomationsOpen(false); setPluginDirectoryOpen(false); setSettingsOpen(false); setPullRequestsOpen(true); } }] : []),
+        ...(state?.automations?.capability === AUTOMATIONS_CAPABILITY && bridge.automations ? [{ id: "scheduled" as const, label: "Scheduled", icon: <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.33"><circle cx="10" cy="10" r="7"/><path d="M10 5.5V10l-2.5 2" strokeLinecap="round" strokeLinejoin="round"/></svg>, current: automationsOpen, onSelect: openAutomations }] : []),
+        { id: "plugins", label: "Plugins", icon: <SidebarNavigationIcon name="plugins"/>, current: pluginDirectoryOpen, onSelect: () => { settingsOriginLabel.current = null; setAutomationsOpen(false); setPullRequestsOpen(false); setPluginDirectoryOpen(true); setSettingsOpen(false); } },
+        { id: "archive", label: "Archive", icon: <Icon name="archive"/>, current: showArchived && !contentOverlayOpen, onSelect: () => { setSidebarActivityOpen(false); setAutomationsOpen(false); setPullRequestsOpen(false); setPluginDirectoryOpen(false); setSettingsOpen(false); setShowArchived(true); } },
+      ]}/>
+      <div className="sidebar-scroll">{sidebarActivityOpen ? <SidebarActivity items={sidebarActivityItems} selectedId={selectedId} selectedHostId={hostId} onNavigate={navigate}/> : <OrganizedSidebar layout={organizedSidebar} preferences={preferences} groups={hostGroups} activeHostId={hostId} selectedId={selectedId} activeProjectId={!contentOverlayOpen && selectedId === null ? project?.id : undefined} query="" showArchived={showArchived} collapsedSections={collapsedSidebarSections} onToggleSection={key => setCollapsedSidebarSections(previous => { const next = new Set(previous); next.has(key) ? next.delete(key) : next.add(key); return next; })} expandedProjects={expandedProjects} onToggleProject={key => setExpandedProjects(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onNavigate={navigate} onNew={newConversation} onAddProject={addProject} addingProject={addingProject} connected={connected} onToggleArchived={() => setShowArchived(value => !value)} onArchive={archiveSidebarSession} onMarkRead={(target, unread) => { const session = hostGroups.find(group => group.hostState.host.id === target.hostId)?.hostState.sessions.find(session => session.id === target.id && session.hostId === target.hostId); return session ? sessionRead.mark(session, unread) : Promise.resolve(false); }} localHostId={desktop.localHostId ?? null} onRenameProject={renameSidebarProject} onRemoveProject={removeSidebarProject} onRevealProject={revealSidebarProject}/>}</div>
       <footer className="sidebar-footer">{profileMenu()}</footer>
     </aside>}
     <div ref={workbenchElement} data-browser-current-owner={browserAddressOwner} data-content-side={contentSide} data-content-column={rightDockColumn} onFocusCapture={event => {

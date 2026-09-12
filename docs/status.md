@@ -1118,3 +1118,11 @@ Native modifier-release bridge source is being implemented after the renderer-on
 
 
 Layout modifier/focus source follow-up adds pinned Go/pKi Option-click Chat fill and focused-activator ownership after the separate91696e95 closed-retained correction. It preserves its frozen source and does not presume a review verdict. Real DOM/native/pixel acceptance, embedded external focus, empty-new-tab discard and left-side content remain open. No runtime launched; retained user instances and launch hold unchanged.
+
+## Sidebar Explore navigation and customization
+
+Explore exposes the existing Pull requests, Scheduled, Plugins and Archive routes with capability-aware visibility. Versioned preferences retain complete ordering and unavailable intent; reset and all-hidden recovery remain reachable. Rejected or corrupt local intent can be explicitly recovered without discarding an uncertain command or replaying its effects.
+
+The production App and an isolated real host verified pointer reordering, keyboard pickup/move/drop/cancel, modal customization, nested context Reset by pointer and keyboard, and focus restoration. Native window captures and accessibility observations separately verified the keyboard flow at 1440×1000 logical points with a 275-point sidebar and 30-point default rows. The native fixture's unavailable-model notice remains visible; this is not provider or whole-App acceptance.
+
+Pinned modality, glyphs and default spacing are source-grounded. Whole-sidebar completion, hosted mode, matched 7982 pixels and material/display equality remain unclaimed. See [sidebar organization](sidebar-organization.md) for the preference, recovery and evidence boundaries.

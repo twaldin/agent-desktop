@@ -10,6 +10,7 @@
 .organized-sidebar .organized-session:hover,
 .organized-sidebar .organized-session.selected { background:var(--selected); }
 .organized-sidebar .project-row.selected { background:var(--selected); }
+.organized-sidebar .project-row { height:auto; min-height:calc(30px * var(--spacing-scale, 1)); }
 .organized-sidebar .session-row { height:30px; gap:6px; padding:5px 10px; }
 .organized-sidebar .sidebar-session-title { min-width:0; overflow:hidden; white-space:nowrap; mask-image:linear-gradient(to right,#000 calc(100% - 12px),transparent); }
 .organized-sidebar .sidebar-session-status { margin-left:auto; flex-shrink:0; width:5px; height:5px; border-radius:50%; }
@@ -26,7 +27,10 @@
 .organized-sidebar .organized-session:hover .sidebar-session-status,
 .organized-sidebar .organized-session:focus-within .sidebar-session-status { display:none; }
 .organized-sidebar .project-row > .sidebar-item-menu { margin-left:auto; }
-.organized-sidebar .project-row .project-new { margin-left:0; }
+.organized-sidebar .project-row .project-new { margin-left:0; opacity:0; pointer-events:none; }
+.organized-sidebar .project-row:hover .project-new,
+.organized-sidebar .project-row:has(:focus-visible) .project-new,
+.organized-sidebar .project-row:has([aria-expanded="true"].icon-button) .project-new { opacity:1; pointer-events:auto; }
 .organized-sidebar .project-row .project-new:disabled { color:var(--tertiary); }
 .organized-sidebar .project-sessions .session-row { padding-left:28px; }
 .organized-sidebar .project-sessions .sidebar-empty { padding-left:28px; }
@@ -40,16 +44,11 @@
 .sidebar-chat-card time { margin-left:auto; flex-shrink:0; }
 @keyframes sidebar-running { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .organized-sidebar .sidebar-session-status.running { animation:none; } }
-.organized-sidebar .project-label { padding-left:10px; }
+.organized-sidebar .project-label { height:auto; min-height:calc(28px * var(--spacing-scale, 1)); padding-left:10px; }
 .organized-sidebar .sidebar-project-glyph { position:relative; display:flex; width:17px; height:17px; flex-shrink:0; }
-.organized-sidebar .sidebar-project-glyph > .icon:last-child { position:absolute; inset:0; width:12px; height:12px; margin:auto; opacity:0; }
 .organized-sidebar .project-marker { display:flex; align-items:center; justify-content:center; width:17px; height:17px; color:var(--secondary); }
 .organized-sidebar .project-marker svg { width:16px; height:16px; }
 .organized-sidebar .project-marker-emoji { font-size:15px; line-height:1; }
-.organized-sidebar .project-row:hover .project-marker,
-.organized-sidebar .project-row:focus-within .project-marker { opacity:0; }
-.organized-sidebar .project-row:hover .sidebar-project-glyph > .icon:last-child,
-.organized-sidebar .project-row:focus-within .sidebar-project-glyph > .icon:last-child { opacity:1; }
 .sidebar-chat-card .sidebar-chat-card-title { align-items:flex-start; margin-bottom:6px; color:var(--text); }
 .sidebar-chat-card-title strong { margin:0; }
 .sidebar-chat-card-title > span { margin-top:2px; flex-shrink:0; }

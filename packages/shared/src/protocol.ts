@@ -255,6 +255,7 @@ export interface HostState {
   repositoryWatches?: { version: 1 };
   branchQueries?: { version: 1 };
   commandKeybindings?: { commandVersion: 11; snapshotVersion: 2; numberTargetVersion?: 1 };
+  sidebarNavigation?: { version: 1 };
   newChatExecution?: { commandVersion: 4; worktrees: true; startingRefs?: { commandVersion: 12; remote: true } };
   localEnvironments?: { configuration: true; actions?: true; execution?: { commandVersion: 5; scriptOutput?: true; scriptCancellation?: true } };
   diagnostics?: { models?: string; preferences?: string };
