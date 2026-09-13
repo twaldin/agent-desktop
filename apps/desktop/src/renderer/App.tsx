@@ -151,7 +151,7 @@ import { EnvironmentCard } from "./EnvironmentCard";
 import { useTaskLocation } from "./task-location-state";
 import { SideChat, sideChatFocusCommand } from "./SideChat";
 import { BtwState } from "./btw-state";
-import { SessionFork, type SessionForkMenuRequest } from "./SessionFork";
+import { SessionFork, forkSlashQueryRemoval, type SessionForkMenuRequest } from "./SessionFork";
 import { SessionForkState, type ForkExecution } from "./session-fork-state";
 import { nativeBtwQuestion } from "../../../../packages/shared/src/btw";
 import { assertComposerOwner } from "./composer-autocomplete";
@@ -628,15 +628,22 @@ export function App() {
     if (event.type === "session.fork" && event.hostId === hostId && event.sessionId === forkController?.sessionId && connected) void forkController.refresh();
   }), [bridge, forkController, hostId, connected]);
   const canFork = forkOwner.enabled && forkController?.canStart;
-  function openForkMenu(anchor: HTMLElement | null = textarea.current?.element ?? null) {
+  function openForkMenu(anchor: HTMLElement | null = textarea.current?.element ?? null, slashQuery?: string) {
     const owner = forkOwnerRef.current;
     if (!anchor || !owner.enabled || !owner.data?.canStart) return;
-    const editor = textarea.current, start = editor?.selectionStart, end = editor?.selectionEnd;
+    const editor = textarea.current;
+    let restoredText = drafts.get(draftId).draft.text;
+    let selection = { start: editor?.selectionStart ?? 0, end: editor?.selectionEnd ?? 0 };
     setMenuOpen(false);
-    setForkMenu({ owner, request: { anchor, restoreFocus() {
-      if (forkOwnerRef.current !== owner || !anchor.isConnected) return;
-      anchor.focus({ preventScroll: true });
-      if (anchor === editor?.element && start !== undefined && end !== undefined) editor.setSelectionRange(start, end);
+    setForkMenu({ owner, request: { anchor, dismissQuery() {
+      if (slashQuery === undefined || forkOwnerRef.current !== owner || textarea.current !== editor || !editor) return;
+      const removal = forkSlashQueryRemoval({ text: slashQuery, start: slashQuery.indexOf("/"), end: slashQuery.trimEnd().length }, drafts.get(draftId).draft.text, selection);
+      if (!removal) return;
+      editor.replaceText(removal.text); restoredText = removal.text; selection = removal.selection;
+    }, restoreFocus() {
+      if (forkOwnerRef.current !== owner || textarea.current !== editor || !editor?.element.isConnected) return;
+      editor.focus();
+      if (drafts.get(draftId).draft.text === restoredText) editor.setSelectionRange(selection.start, selection.end);
     } } });
   }
   async function openForkedChat(owner = forkOwnerRef.current) {
@@ -1087,7 +1094,7 @@ export function App() {
         if (native?.source.kind === "builtin") {
           if (!owner.enabled || !owner.data?.canStart || !/^\s*\/fork\s*$/.test(typedFork) || hasDraftContent({ ...drafts.get(draftId).draft, text: "" }))
             throw new Error("Fork requires an idle chat and an otherwise empty composer. The draft was retained.");
-          openForkMenu(); return;
+          openForkMenu(undefined, typedFork); return;
         }
         if (!native || !["executable", "partial"].includes(native.availability)) throw new Error("The owning host did not expose a supported /fork action. The draft was retained.");
       } catch (cause) { setActionError(errorMessage(cause)); return; }
@@ -1717,7 +1724,7 @@ export function App() {
           {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
           {selected && <GoalStrip key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
           {forkController && <SessionFork data={forkController} request={forkMenu?.owner === forkOwner ? forkMenu.request : undefined}
-            onClose={restore => { if (restore) forkMenu?.request.restoreFocus(); setForkMenu(undefined); }}
+            onClose={restore => { forkMenu?.request.dismissQuery?.(); if (restore) forkMenu?.request.restoreFocus(); setForkMenu(undefined); }}
             onSelect={execution => void runFork(execution)} onResume={() => void runFork()} onOpenChild={() => void openForkedChat()}/>}
           {!selectedId && <ComposerContext onCheckoutBlocked={openBranchSwitch} ref={composerContext} hostId={hostId} hostName={state?.host.name ?? hostId} hosts={desktop.hosts} projects={state?.projects ?? []} projectId={draft.projectId} connected={connected} addingProject={addingProject} workspace={workspace}
             environment={draft.environment} environmentAvailable={environmentAvailable} environments={environmentCatalog ? {items:environmentCatalog.items,loading:environmentCatalog.loading,error:environmentCatalog.error ?? environmentCatalog.cacheWarning,refresh:() => { void environmentCatalog.refresh(); }} : undefined}

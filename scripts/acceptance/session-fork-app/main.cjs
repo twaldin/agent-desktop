@@ -18,6 +18,7 @@ globalThis.fetch = async (input, init) => {
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
   const fork = body?.command?.type === 'session.fork' || body?.command?.type === 'session.fork.resume';
   if (fork) calls.push({ path: url.pathname, envelope: body });
+  if (fork && conditions.scope === 'dismissal-only') throw new Error('Native Fork commands are forbidden in the focused dismissal check.');
   const response = await originalFetch(input, init);
   if (fork && reloadAfterFork) {
     reloadAfterFork = false;
@@ -47,6 +48,7 @@ async function exercise(window) {
   const evaluate = expression => window.webContents.executeJavaScript(expression, true);
   surface = createSurfaceGuard({ window, output, fixture, conditions, http });
   const stateExpression = `(() => { const p=document.querySelector('#prompt');return {sessionId:document.querySelector('.session-row[aria-current="page"]')?.getAttribute('data-session-id'),text:p?.textContent,files:p?.querySelectorAll('[data-file-id]').length??0,focus:document.activeElement===p,body:document.body.innerText,menu:[...document.querySelectorAll('.session-fork-menu [role="menuitem"],.session-fork-menu [role="option"]')].map(n=>({label:n.querySelector('.completion-label')?.textContent,disabled:n.disabled||n.getAttribute('aria-disabled')==='true',selected:n.getAttribute('aria-selected')})),innerWidth,innerHeight,dpr:devicePixelRatio};})()`;
+  const selectionExpression = `(() => {const p=document.querySelector('#prompt'),s=getSelection();if(!p||!s?.anchorNode||!s.focusNode||!p.contains(s.anchorNode)||!p.contains(s.focusNode))return null;const offset=(node,end)=>{const range=document.createRange();range.selectNodeContents(p);range.setEnd(node,end);return range.toString().length};return{anchor:offset(s.anchorNode,s.anchorOffset),focus:offset(s.focusNode,s.focusOffset),text:s.toString()};})()`;
   const wait = async (expression, label) => { const deadline = Date.now() + 30_000; while (Date.now() < deadline) { try { if (await evaluate(expression)) return; } catch (cause) { if (!window.webContents.isLoading()) throw cause; } await delay(50); } throw new Error('Timed out: ' + label); };
   const click = async (selector, label) => {
     await surface.check('before-target-scroll:' + selector);
@@ -77,6 +79,53 @@ async function exercise(window) {
     const originalBytes = readFileSync(sourceFile(parent.sessionFile));
     const originalMessages = await http(`/v1/sessions/${context.sourceId}/messages`);
     await capture('01-original-draft');
+    await click('#prompt'); await key('LEFT'); await key('RIGHT', ['shift']);
+    const originalComposer = await evaluate(stateExpression), originalSelection = await evaluate(selectionExpression);
+    if (!originalSelection || originalSelection.anchor === originalSelection.focus) throw new Error('Original composer selection was not established.');
+    await chooseHeaderFork(); await key('ESCAPE');
+    await wait(`!document.querySelector('.session-fork-menu') && (${stateExpression}).focus`, 'header Fork dismissal restores the original composer');
+    const restoredComposer = await evaluate(stateExpression);
+    if (restoredComposer.text !== originalComposer.text || restoredComposer.files !== originalComposer.files || JSON.stringify(await evaluate(selectionExpression)) !== JSON.stringify(originalSelection)
+      || JSON.stringify((await http('/v1/state')).drafts.find(d => d.id === parentDraft.id)) !== JSON.stringify(parentDraft) || calls.length !== 0)
+      throw new Error('Header Fork dismissal changed the original composer selection, draft, attachments or native identity.');
+    await capture('01a-header-dismiss-restored-composer');
+    checkpoints.push('Header Fork Escape restores original composer selection with exact draft/attachment preservation and no native Fork command');
+    if (conditions.scope === 'dismissal-only') {
+      await navigate(context.standaloneId); await click('#prompt');
+      const queryBase = await evaluate(stateExpression), querySelection = await evaluate(selectionExpression);
+      if (queryBase.text !== '' || queryBase.files !== 0 || !querySelection || querySelection.anchor !== 0 || querySelection.focus !== 0)
+        throw new Error('The existing independent query source is not an empty composer at its original insertion point.');
+      await insertText('/fork');
+      await wait(`!![...document.querySelectorAll('.composer-autocomplete .completion-label')].find(n=>n.textContent==='Fork chat')`, 'focused builtin Fork query');
+      await key('ENTER'); await wait(`(${stateExpression}).menu.length>0`, 'entered Fork query destinations');
+      await capture('02-focused-query-destinations'); await key('ESCAPE');
+      await wait(`!document.querySelector('.session-fork-menu') && (${stateExpression}).focus`, 'query dismissal restores original composer');
+      const cleared = await evaluate(stateExpression);
+      if (cleared.text !== queryBase.text || cleared.files !== queryBase.files
+        || JSON.stringify(await evaluate(selectionExpression)) !== JSON.stringify(querySelection) || calls.length !== 0)
+        throw new Error('Focused dismissal failed query-only removal, insertion position, attachment preservation or zero-Fork admission.');
+      const queryRestoredSelection = await evaluate(selectionExpression);
+      await capture('03-focused-query-removed');
+      const querySaveDeadline = Date.now() + 10_000;
+      while ((await http('/v1/state')).drafts.find(d => d.id === 'session:' + context.standaloneId)?.text !== '' && Date.now() < querySaveDeadline) await delay(50);
+      if ((await http('/v1/state')).drafts.find(d => d.id === 'session:' + context.standaloneId)?.text !== '') throw new Error('The host draft retained the dismissed query.');
+      await insertText('Ordinary command menu draft');
+      const commandBase = await evaluate(stateExpression), commandSelection = await evaluate(selectionExpression);
+      await key('K', ['meta']); await wait(`document.querySelector('.command-menu input')!==null`, 'unchanged command menu opening');
+      await insertText('Fork chat'); await key('ESCAPE');
+      await wait(`!document.querySelector('.command-menu') && (${stateExpression}).focus`, 'unchanged command menu cancellation');
+      const afterCommandMenu = await evaluate(stateExpression);
+      if (afterCommandMenu.text !== commandBase.text || afterCommandMenu.files !== commandBase.files || calls.length !== 0
+        || !readFileSync(sourceFile(parent.sessionFile)).equals(originalBytes))
+        throw new Error('Command-menu dismissal changed the original composer or native source.');
+      await capture('04-focused-command-menu-preserved');
+      checkpoints.push('Empty-source Fork query Escape removes the query, restores insertion and persists the cleared draft; ordinary command-menu cancellation preserves its separate text; zero native Fork commands');
+      writeFileSync(join(output, 'dismissal-selection-proof.json'), JSON.stringify({ header: { originalComposer, originalSelection, restoredComposer }, query: { queryBase, querySelection, cleared, queryRestoredSelection }, command: { commandBase, commandSelection, afterCommandMenu, selection: await evaluate(selectionExpression) } }, null, 2));
+      writeFileSync(join(output, 'native-source-before.jsonl'), originalBytes);
+      writeFileSync(join(output, 'native-source-after.jsonl'), readFileSync(sourceFile(parent.sessionFile)));
+      writeFileSync(join(output, 'bound-state.json'), JSON.stringify(await http('/v1/state'), null, 2));
+      passed = true; return;
+    }
     await click('#prompt'); await key('K', ['meta']);
     await wait(`document.querySelector('.command-menu input')!==null`, 'actual application command menu');
     await insertText('Fork chat');
@@ -113,7 +162,12 @@ async function exercise(window) {
     await key('UP'); await wait(`(${stateExpression}).menu[1]?.selected==='true'`, 'slash submenu wrap');
     await key('DOWN'); await wait(`(${stateExpression}).menu[0]?.selected==='true' && (${stateExpression}).focus`, 'slash submenu focus retained');
     await capture('06-same-worktree-slash'); await key('ESCAPE');
-    await wait(`!document.querySelector('.session-fork-menu') && (${stateExpression}).text==='/fork'`, 'Escape retains source query');
+    await wait(`!document.querySelector('.session-fork-menu') && (${stateExpression}).text==='' && (${stateExpression}).focus`, 'Escape removes only the live Fork query and restores the composer');
+    const dismissedSelection = await evaluate(selectionExpression);
+    if (dismissedSelection?.anchor !== 0 || dismissedSelection?.focus !== 0) throw new Error('Fork query dismissal did not restore its insertion position.');
+    const querySaveDeadline = Date.now() + 10_000;
+    while ((await http('/v1/state')).drafts.find(d => d.id === 'session:' + worktreeId)?.text !== '' && Date.now() < querySaveDeadline) await delay(50);
+    if ((await http('/v1/state')).drafts.find(d => d.id === 'session:' + worktreeId)?.text !== '') throw new Error('The actual source draft retained the dismissed Fork query.');
     checkpoints.push('Pinned same-worktree labels, wrapping, composer focus and query-only dismissal without native identity command');
     await chooseHeaderFork();
     const beforeDrop = calls.length; reloadAfterFork = true; await key('ENTER');
@@ -122,9 +176,9 @@ async function exercise(window) {
     await capture('07-read-only-recovery'); await click('.session-fork-status button', 'Open forked chat');
     await wait(`(${stateExpression}).sessionId===${JSON.stringify(dropped.result.value.session.id)} && (${stateExpression}).text===''`, 'recovered real child navigation');
     current = await http('/v1/state');
-    if (current.sessions.find(s => s.id === dropped.result.value.session.id)?.cwd !== worktree.cwd || current.drafts.find(d => d.id === 'session:' + worktreeId)?.text !== '/fork') throw new Error('Same-worktree fork changed cwd or consumed the source query.');
+    if (current.sessions.find(s => s.id === dropped.result.value.session.id)?.cwd !== worktree.cwd || current.drafts.find(d => d.id === 'session:' + worktreeId)?.text !== '') throw new Error('Same-worktree fork changed cwd or resurrected the dismissed source query.');
     if (calls.some(call => call.path !== '/v16/commands' || !['session.fork', 'session.fork.resume'].includes(call.envelope.command.type))) throw new Error('Fork bypassed command16.');
-    checkpoints.push('Real acknowledgement loss plus actual renderer reload; read-only receipt recovery, no replay, same-worktree child and source query retained');
+    checkpoints.push('Real acknowledgement loss plus actual renderer reload; read-only receipt recovery, no replay, same-worktree child and dismissed source composer retained');
     await navigate(context.standaloneId); await chooseHeaderFork();
     if ((await evaluate(stateExpression)).menu.length !== 1) throw new Error('An ineligible projectless worktree choice was fabricated.');
     await capture('08-projectless-local-only'); await key('ESCAPE');
@@ -136,7 +190,7 @@ async function exercise(window) {
     passed = true;
   } catch (cause) { failure = String(cause); await capture('failure').catch(() => {}); }
   finally {
-    writeFileSync(join(output, 'result.json'), JSON.stringify({ passed, failure, checkpoints, calls, inputs, captures, errors, dropped,
+    writeFileSync(join(output, 'result.json'), JSON.stringify({ passed, failure, acceptanceScope: conditions.scope ?? 'whole-fork', checkpoints, calls, inputs, captures, errors, dropped,
       source: { main: createHash('sha256').update(readFileSync(join(repository, 'apps/desktop/dist/main.cjs'))).digest('hex'), preload: createHash('sha256').update(readFileSync(join(repository, 'apps/desktop/dist/preload.cjs'))).digest('hex') },
       conditions, scope: 'Actual production App/main/preload/versioned transport and real no-provider native host. Required per-action prerequisites are owned CG/AX/display/viewport/DPR/zoom/theme/yabai state and zero actual discovered peers. Native window-ID PNG qualifications are recorded separately; a failed condition refuses subsequent input/capture. Reference conditions remain unmatched; no pixel-parity or physical cross-device claim.' }, null, 2));
     for (const owned of BrowserWindow.getAllWindows()) owned.destroy(); app.exit(passed ? 0 : 1);

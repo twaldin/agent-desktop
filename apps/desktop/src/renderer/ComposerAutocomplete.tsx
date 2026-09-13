@@ -9,7 +9,7 @@ import { assertComposerOwner, catalogSuggestions, composerToken, fileSuggestions
 import type { ComposerAppAction, ComposerSuggestion } from "./composer-autocomplete";
 import { errorMessage } from "./desktop-state";
 import { Icon } from "./Icons";
-import { SessionForkIcon, sessionForkDestinations } from "./SessionFork";
+import { SessionForkIcon, forkSlashQueryRemoval, sessionForkDestinations } from "./SessionFork";
 import type { ForkExecution, SessionForkState } from "./session-fork-state";
 import "./composer-autocomplete.css";
 
@@ -27,7 +27,7 @@ export function useComposerAutocomplete(props: Props) {
   const [caret, setCaret] = useState({ scope, start: 0, end: 0 });
   const [dismissed, setDismissed] = useState<string>();
   const [catalogState, setCatalogState] = useState<{ scope: string; catalog?: ComposerActionsCatalog; error?: string; loading: boolean }>();
-  const [forkSubmenu, setForkSubmenu] = useState<{ scope: string; prefix: string }>();
+  const [forkSubmenu, setForkSubmenu] = useState<{ scope: string; prefix: string; queryStart: number; input: ComposerInput | null }>();
   const forkQuery = forkSubmenu?.scope === scope && props.fork?.emptyComposer && text.startsWith(forkSubmenu.prefix)
     && caret.scope === scope && caret.start === text.length && caret.end === text.length ? text.slice(forkSubmenu.prefix.length).trim() : undefined;
   const catalog = catalogState?.scope === scope ? catalogState.catalog : undefined;
@@ -106,7 +106,7 @@ export function useComposerAutocomplete(props: Props) {
     // A stale event cannot replace input edited since this render.
     if (currentScope.current !== capturedScope || props.readText() !== captured) return;
     if (item.id === "host:fork" && !tab) {
-      setForkSubmenu({ scope, prefix: captured }); setHighlight("host:fork:local"); return;
+      setForkSubmenu({ scope, prefix: captured, queryStart: captured.indexOf("/", token.start), input: input.current }); setHighlight("host:fork:local"); return;
     }
     if (item.id.startsWith("host:fork:") && props.fork?.data.value) {
       if (tab) return;
@@ -145,12 +145,21 @@ export function useComposerAutocomplete(props: Props) {
       setCaret({ scope, start: replacement.caret, end: replacement.caret });
     });
   };
+  const dismissForkSubmenu = (restore: boolean) => {
+    const editor = forkSubmenu?.input;
+    if (forkQuery === undefined || !forkSubmenu || !token || !editor || currentScope.current !== scope || input.current !== editor) return;
+    const removal = forkSlashQueryRemoval({ text, start: forkSubmenu.queryStart, end: token.end }, props.readText(), { start: editor.selectionStart, end: editor.selectionEnd });
+    if (!removal) return;
+    props.updateText(removal.text);
+    if (restore) { editor.focus(); editor.setSelectionRange(removal.selection.start, removal.selection.end); }
+    setCaret({ scope, ...removal.selection });
+  };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>): boolean => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return false;
     const macMove = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform) && event.ctrlKey && (event.key === "n" || event.key === "p");
     if (!open || event.metaKey || event.altKey || (event.ctrlKey && !macMove)) return false;
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDismissed(key); setForkSubmenu(undefined); return true; }
-    if (event.key === "Tab" && forkQuery !== undefined) { setDismissed(key); setForkSubmenu(undefined); return false; }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); dismissForkSubmenu(true); setDismissed(key); setForkSubmenu(undefined); return true; }
+    if (event.key === "Tab" && forkQuery !== undefined) { dismissForkSubmenu(false); setDismissed(key); setForkSubmenu(undefined); return false; }
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || macMove) {
       event.preventDefault(); event.stopPropagation(); setHighlight(nextSuggestion(items, selected?.id, event.key === "ArrowDown" || macMove && event.key === "n" ? 1 : -1)); return true;
     }
@@ -166,7 +175,7 @@ export function useComposerAutocomplete(props: Props) {
     open, composing, observeCaret,
     inputProps: {
       "aria-autocomplete": "list" as const, "aria-controls": open ? menuId : undefined, "aria-expanded": open, "aria-activedescendant": open ? activeId : undefined,
-      onFocus: () => { setFocused(true); observeCaret(); }, onBlur: () => setFocused(false), onSelect: observeCaret,
+      onFocus: () => { setFocused(true); observeCaret(); }, onBlur: () => { dismissForkSubmenu(false); setForkSubmenu(undefined); setFocused(false); }, onSelect: observeCaret,
       onCompositionStart: () => { composing.current = true; setComposition(true); },
       onCompositionEnd: () => { composing.current = false; setComposition(false); observeCaret(); },
       onChange: (event: ChangeEvent<HTMLTextAreaElement>) => { props.updateText(event.target.value); setCaret({ scope, start: event.target.selectionStart, end: event.target.selectionEnd }); setActionState(undefined); },

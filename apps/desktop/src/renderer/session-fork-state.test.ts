@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { SessionForkState } from './session-fork-state';
 import { startForkFixture } from '../../../../scripts/acceptance/session-fork-app/fixture';
 
-// These boundaries use the production host, worker55 and native OMP journals.
+// These boundaries use the composed production host/worker and native OMP journals; worker55 was the historical Work baseline.
 // Only delivery timing is controlled; no fork response or native copy is mocked.
 test('read-only recovery and a late reply never repeat or resurrect a bound fork', async () => {
   const fixture = await startForkFixture();
