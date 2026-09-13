@@ -6,6 +6,7 @@ const execFileAsync = promisify(execFile);
 const { createHash } = require("node:crypto");
 const { createInterface } = require("node:readline");
 const { basename, isAbsolute, join, resolve } = require("node:path");
+const { setTimeout: waitForReadiness } = require("node:timers/promises");
 const root = resolve(process.argv[2] || ""), repo = resolve(process.argv[3] || "");
 if (!process.argv[2] || !process.argv[3] || !basename(root).startsWith("native-history-find-") || process.env.HOME !== root
   || process.env.AGENT_DESKTOP_DATA_DIR !== join(root, "host") || process.env.AGENT_DESKTOP_PROFILE_DIR !== join(root, "desktop")
@@ -33,6 +34,7 @@ if (OriginalWebSocket) globalThis.WebSocket = class extends OriginalWebSocket {
 };
 let appPeerObserved = false, expected;
 let sequenceStep = 0, pendingInspection;
+let initialAdmission, initialAdmissionStarted = false;
 const originalHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) => {
   if (channel === "host:native-terminal-input") fail("find-reached-native-input");
@@ -70,10 +72,10 @@ function ownedWindow() {
   if (windows.length !== 1) fail("ambiguous-actual-app-window");
   return windows[0];
 }
-async function readNativeMetadata(command, args, label) {
+async function readNativeMetadata(command, args, label, timeout = 30_000) {
   let output;
   try {
-    output = await execFileAsync(command, args, { encoding: "utf8", timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    output = await execFileAsync(command, args, { encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024 });
     append("native-probe-command-observations.jsonl", { label, command, args, ...output });
     return JSON.parse(output.stdout);
   } catch (error) {
@@ -81,12 +83,84 @@ async function readNativeMetadata(command, args, label) {
       killed: error.killed, stdout: error.stdout ?? output?.stdout, stderr: error.stderr ?? output?.stderr });
   }
 }
+async function admitInitialManager(label) {
+  const startedAt = Date.now(), deadline = startedAt + 20_000;
+  let identity, observation = 0;
+  const remaining = () => {
+    const milliseconds = deadline - Date.now();
+    if (milliseconds <= 0) fail("initial-manager-admission-deadline", { label, startedAt, deadline, identity, observation });
+    return milliseconds;
+  };
+  const observe = async phase => {
+    const window = ownedWindow(), cg = await readNativeMetadata(inspector, ["metadata", String(process.pid)], `${label}-${observation}-${phase}`, remaining());
+    const owned = Array.isArray(cg.windows) ? cg.windows.filter(value => value.kCGWindowOwnerPID === process.pid && value.kCGWindowIsOnscreen && value.kCGWindowLayer === 0) : [];
+    const native = owned[0], inventory = cg.ax, axWindow = inventory?.windows?.[0], ax = axWindow?.bounds, bounds = window.isDestroyed() ? null : window.getBounds(), b = native?.kCGWindowBounds;
+    append("initial-manager-admission.jsonl", { phase: "native-observation", label, observation, samplingPhase: phase, cg, bounds });
+    if (!bounds || cg.pid !== process.pid || !cg.accessibilityPermission || !cg.screenCapturePermission || cg.frontmost !== true || !window.isFocused()
+      || window.webContents.getURL() !== new URL("file://" + join(repo, "apps/desktop/dist/renderer/index.html")).href
+      || owned.length !== 1 || !Number.isSafeInteger(native?.kCGWindowNumber) || inventory?.pid !== process.pid || inventory.queryError !== 0
+      || inventory.windowCount !== 1 || !Array.isArray(inventory.windows) || inventory.windows.length !== 1
+      || axWindow?.pidError !== 0 || axWindow.pid !== process.pid || axWindow.position?.error !== 0 || axWindow.size?.error !== 0
+      || axWindow.role?.error !== 0 || axWindow.subrole?.error !== 0 || typeof axWindow.role.value !== "string" || typeof axWindow.subrole.value !== "string"
+      || !ax || !b || !["x", "y", "width", "height"].every(key => Number.isFinite(ax[key])) || ax.width <= 0 || ax.height <= 0
+      || ax.x !== b.X || ax.y !== b.Y || ax.width !== b.Width || ax.height !== b.Height
+      || ax.x !== bounds.x || ax.y !== bounds.y || ax.width !== bounds.width || ax.height !== bounds.height) {
+      fail("initial-native-owner-or-geometry-unavailable", { label, observation, phase, cg, bounds });
+    }
+    const current = { pid: process.pid, cgWindow: native.kCGWindowNumber, electronWindowId: window.id, webContentsId: window.webContents.id,
+      axPid: axWindow.pid, axIndex: axWindow.index, axRole: axWindow.role.value, axSubrole: axWindow.subrole.value };
+    append("initial-manager-admission.jsonl", { phase: "native-identity", label, observation, samplingPhase: phase, identity: current });
+    if (identity && JSON.stringify(identity) !== JSON.stringify(current)) fail("initial-native-identity-changed", { label, observation, expected: identity, observed: current, cg });
+    identity ??= current;
+    return { identity: current, cg, bounds };
+  };
+  append("initial-manager-admission.jsonl", { phase: "start", label, startedAt, deadline });
+  for (;;) {
+    observation++;
+    await observe("before-query");
+    const args = ["-m", "query", "--windows", "--window", String(identity.cgWindow)];
+    const queryTimeout = remaining();
+    let output, receipt;
+    try {
+      output = await execFileAsync(yabai, args, { encoding: "utf8", timeout: queryTimeout, maxBuffer: 4 * 1024 * 1024 });
+      receipt = { exitCode: 0, stdout: output.stdout, stderr: output.stderr };
+    } catch (error) {
+      receipt = { exitCode: error.code, signal: error.signal, killed: error.killed, stdout: error.stdout, stderr: error.stderr, error: String(error) };
+    }
+    append("initial-manager-admission.jsonl", { phase: "manager-observation", label, observation, command: yabai, args, identity, receipt });
+    if (!output) {
+      const pending = receipt.exitCode === 1 && !receipt.signal && !receipt.killed && receipt.stdout === ""
+        && receipt.stderr === `could not locate window with the specified id '${identity.cgWindow}'.\n`;
+      if (!pending) fail("unexpected-initial-manager-error", { label, observation, identity, receipt });
+      append("initial-manager-admission.jsonl", { phase: "pending-exact-id-not-found", label, observation, identity, receipt });
+      await waitForReadiness(Math.min(50, remaining()));
+      continue;
+    }
+    let manager;
+    try { manager = JSON.parse(output.stdout); } catch (error) { fail("invalid-initial-manager-reply", { label, observation, receipt, error: String(error) }); }
+    if (output.stderr !== "" || manager?.id !== identity.cgWindow || manager.pid !== identity.pid || manager["has-ax-reference"] !== true) {
+      fail("initial-manager-mapping-mismatch", { label, observation, identity, manager, receipt });
+    }
+    const native = await observe("after-mapping"), bounds = native.bounds;
+    if (manager.frame?.x !== bounds.x || manager.frame?.y !== bounds.y || manager.frame?.w !== bounds.width || manager.frame?.h !== bounds.height) {
+      fail("initial-manager-geometry-mismatch", { label, observation, identity, manager, native });
+    }
+    remaining();
+    const admitted = { kind: "initial-unbound-manager-admission", label, identity, startedAt, deadline, admittedAt: Date.now(), observations: observation, native, manager,
+      qualification: "Only initial passive mapping readiness. AX association is the sole owned AX window matching this pinned CG window and bounds. No delay/exclusion/churn cause established; no post-binding retry." };
+    append("initial-manager-admission.jsonl", { phase: "admitted", ...admitted });
+    return admitted;
+  }
+}
 async function probe(label, requireBinding = true) {
+  if (!initialAdmission) fail("initial-manager-admission-required", { label });
   const window = ownedWindow();
   const cg = await readNativeMetadata(inspector, ["metadata", String(process.pid)], label);
   const owned = cg.windows.filter(value => value.kCGWindowOwnerPID === process.pid && value.kCGWindowIsOnscreen && value.kCGWindowLayer === 0);
   if (!cg.accessibilityPermission || !cg.screenCapturePermission || cg.frontmost !== true || owned.length !== 1 || !window.isFocused()) fail("native-permission-window-or-foreground-binding", { label, cg, electronFocused: window.isFocused() });
   const native = owned[0], bounds = window.getBounds(), contentBounds = window.getContentBounds();
+  if (native.kCGWindowNumber !== initialAdmission.identity.cgWindow || window.id !== initialAdmission.identity.electronWindowId
+    || window.webContents.id !== initialAdmission.identity.webContentsId) fail("admitted-native-window-changed", { label, admitted: initialAdmission.identity, cg, bounds });
   const manager = await readNativeMetadata(yabai, ["-m", "query", "--windows", "--window", String(native.kCGWindowNumber)], label);
   const axInventory = cg.ax, axWindow = axInventory?.windows?.[0], ax = axWindow?.bounds;
   if (cg.pid !== process.pid || axInventory?.pid !== process.pid || axInventory.queryError !== 0
@@ -95,6 +169,8 @@ async function probe(label, requireBinding = true) {
     || !ax || !["x", "y", "width", "height"].every(key => Number.isFinite(ax[key])) || ax.width <= 0 || ax.height <= 0) {
     fail("actual-ax-inventory-or-window-unavailable", { label, cg, axInventory, ownedCGCount: owned.length, native, bounds, manager });
   }
+  if (axWindow.index !== initialAdmission.identity.axIndex || axWindow.role?.value !== initialAdmission.identity.axRole
+    || axWindow.subrole?.value !== initialAdmission.identity.axSubrole) fail("admitted-ax-association-changed", { label, admitted: initialAdmission.identity, axInventory });
   const renderer = await window.webContents.executeJavaScript(`(async () => {
     await document.fonts.ready;
     const visible = node => node.getClientRects().length && !node.closest('[hidden]');
@@ -208,13 +284,18 @@ async function boot() {
   for await (const line of createInterface({ input: process.stdin, terminal: false })) {
     const [command, label, ...values] = line.trim().split(/\s+/);
     if (!command) continue;
-    if (!label || !/^[a-zA-Z0-9_-]{1,80}$/.test(label)) throw new Error("Every probe/capture/bind needs a unique safe label.");
+    if (!label || !/^[a-zA-Z0-9_-]{1,80}$/.test(label)) throw new Error("Every fixture control needs a unique safe label.");
     const file = join(owner.evidence, `${label}.json`);
     if (existsSync(file)) throw new Error("Frozen evidence labels cannot be reused.");
     if (mode === "capture-sequencing" && ((pendingInspection && command !== "inspect") || sequenceStep > 1)) {
       fail("original-image-inspection-required-or-sequence-complete", { command, label, sequenceStep, pendingInspection });
     }
-    if (command === "bind") {
+    if (command === "admit") {
+      if (initialAdmissionStarted || expected || !appPeerObserved) fail("initial-manager-admission-not-allowed", { label, initialAdmissionStarted, bound: !!expected, appPeerObserved });
+      initialAdmissionStarted = true;
+      initialAdmission = await admitInitialManager(label);
+      writeFileSync(file, JSON.stringify(initialAdmission, null, 2), { flag: "wx", mode: 0o600 });
+    } else if (command === "bind") {
       const [width, height, zoom = "1"] = values;
       const observed = await probe(label, false);
       if (!appPeerObserved || observed.window.bounds.width !== Number(width) || observed.window.bounds.height !== Number(height) || observed.window.zoomFactor !== Number(zoom)) fail("requested-layout-not-actually-observed");
@@ -268,7 +349,7 @@ async function boot() {
       append("capture-chronology.jsonl", { phase: "original-image-inspection", ...inspection });
       if (!matches) fail("original-image-does-not-match-captured-state", { label, metadata: file });
       pendingInspection = undefined; sequenceStep++;
-    } else throw new Error("Only bind, probe, capture and explicit diagnostic inspect are allowed; Main supplies physical input, not synthetic focus or DOM writes.");
+    } else throw new Error("Only initial admit, bind, probe, capture and explicit diagnostic inspect are allowed; Main supplies physical input, not synthetic focus or DOM writes.");
     console.log(`Native history Find ${command} ready ${label}`);
   }
 }
