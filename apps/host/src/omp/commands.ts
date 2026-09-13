@@ -21,6 +21,8 @@ import { formatMcpInspection, type McpInspection } from "./mcp-output";
 export interface NativeCommandBridges {
   forceTool?: Pick<NativeForceToolAdmission, "options" | "dispatch">;
   withNativeForceInvocation?: NativeForceInvocationScope;
+  /** Invoked only after exact native extension/custom precedence. */
+  plan?: (text: string) => Promise<NativePromptDispatchResult>;
   reloadMcp(): Promise<void>;
   inspectMcp(): NativeSessionMcpSnapshot;
   reconnectMcp(serverName: string): Promise<NativeSessionMcpSnapshot>;
@@ -75,6 +77,10 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
     const parsed = parseSlashCommand(text);
     const builtin = parsed && lookupBuiltinSlashCommand(parsed.name);
     if (parsed && builtin) {
+      if (builtin.name === "plan" || builtin.name === "plan-review") {
+        if (!bridges?.plan) throw new Error("The native Plan owner is unavailable; this command was not executed.");
+        return bridges.plan(text);
+      }
       const availability = builtinAvailability(builtin.name, parsed.args);
       const verb = parsed.args.trim().split(/\s+/, 1)[0]?.toLowerCase();
       const desktopMcpAuthorization = builtin.name === "mcp" && verb === "reauth";

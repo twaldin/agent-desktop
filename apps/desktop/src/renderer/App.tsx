@@ -1,3 +1,7 @@
+import { PlanExecutionContinuationControl, PlanReviewPanel } from "./PlanReviewPanel";
+import { useSessionPlan, type SessionPlanPorts } from "./use-session-plan";
+import type { PlanReviewPorts } from "./plan-review-model";
+import type { SessionPlan } from "../../../../packages/shared/src/session-plan";
 import { ForceToolControl } from "./ForceToolControl";
 import { forceCommandSpelling, nativeForceWinner, type NativeForceSubmission } from "./force-tool-submissions";
 import type { ForceToolPorts, ForceToolSnapshot } from "./force-tool-state";
@@ -682,6 +686,88 @@ export function App() {
     expandAfterNavigation.current = id ? `${owner ?? ""}:${id}` : undefined;
     if (focusComposer) requestAnimationFrame(() => textarea.current?.focus());
   }, [route.hostId, state?.host.id, desktop.localHostId]);
+  const planOwner = useRef({ hostId, sessionId: selected?.id, enabled: connected && !selected?.archived && !contentOverlayOpen });
+  useLayoutEffect(() => { planOwner.current = { hostId, sessionId: selected?.id, enabled: connected && !selected?.archived && !contentOverlayOpen }; });
+  const planPorts = useMemo<SessionPlanPorts>(() => ({ bridge,
+    documentSupported: state?.plan?.document?.version === 1 && state.plan.document.commandVersion === 20,
+    storage: { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value), remove: key => localStorage.removeItem(key) }, onTransition(owner, session) {
+    // Host commit supplies the destination. Navigation never consumes either
+    // conversation's unsent draft, and a late result cannot steal a new route.
+    const current = () => planOwner.current.enabled && planOwner.current.hostId === owner.hostId && planOwner.current.sessionId === owner.sessionId;
+    if (!current()) return;
+    void refresh().then(() => {
+      if (!current()) return;
+      const committed = desktop.catalog.records.get(owner.hostId)?.state?.sessions.find(candidate => candidate.id === session.id && candidate.hostId === owner.hostId);
+      if (!committed) throw new Error("The owning host has not published the committed Plan destination. Refresh its session catalog before navigating.");
+      navigate(committed.id, committed.hostId);
+    }).catch(cause => { if (current()) setActionError(errorMessage(cause)); });
+  } }), [bridge, refresh, navigate, desktop.catalog, state?.plan?.document]);
+  const nativePlan = useSessionPlan({ hostId, sessionId: selected?.id ?? "" }, planPorts, {
+    connected: connected && !selected?.archived, active: !contentOverlayOpen,
+    supported: state?.plan?.version === 1 && state.plan.commandVersion === 19, localHostId: desktop.localHostId,
+  });
+  const [planOpenOwner, setPlanOpenOwner] = useState<string>();
+  const planRoute = JSON.stringify([hostId, selected?.id]);
+  const planDialog = useRef<HTMLDialogElement>(null), planTrigger = useRef<HTMLButtonElement>(null);
+  const seenPlanReviews = useRef(new Set<string>());
+  const [retainedPlan, setRetainedPlan] = useState<{ owner: { hostId: string; sessionId: string }; value: SessionPlan }>();
+  useLayoutEffect(() => {
+    if (nativePlan.view.value) setRetainedPlan({ owner: nativePlan.view.owner, value: nativePlan.view.value });
+  }, [nativePlan.view.owner, nativePlan.view.value]);
+  const panelPlan = nativePlan.view.value ? { owner: nativePlan.view.owner, value: nativePlan.view.value } : retainedPlan;
+  const planOpen = planOpenOwner === planRoute && !contentOverlayOpen && !!nativePlan.view.value;
+  useEffect(() => {
+    const value = nativePlan.view.value, review = value?.review;
+    if (!review || !nativePlan.view.fresh || !connected) return;
+    const key = JSON.stringify([hostId, selected?.id, value.ticket.epoch, review.id]);
+    if (review.status === "dismissed") { setPlanOpenOwner(current => current === planRoute ? undefined : current); return; }
+    if (!seenPlanReviews.current.has(key)) { seenPlanReviews.current.add(key); setPlanOpenOwner(planRoute); }
+  }, [nativePlan.view.value, nativePlan.view.fresh, connected, hostId, selected?.id, planRoute]);
+  useEffect(() => {
+    const element = planDialog.current;
+    if (planOpen && element && !element.open) element.showModal();
+    else if (!planOpen && element?.open) element.close();
+  }, [planOpen]);
+  const hidePlan = () => { setPlanOpenOwner(undefined); requestAnimationFrame(() => planTrigger.current?.focus({ preventScroll: true })); };
+  const planReviewPorts = useMemo<PlanReviewPorts>(() => ({
+    mutate: async (owner, request) => {
+      const current = () => planOwner.current.enabled && planOwner.current.hostId === owner.hostId && planOwner.current.sessionId === owner.sessionId;
+      const operation = nativePlan.state.mutate(owner, request);
+      // Native decision hooks can ask questions through PendingInteractions.
+      // Hide this modal while they run; the mounted editor retains its buffers.
+      if (request.mutation.action !== "edit" && request.mutation.action !== "document" && current()) setPlanOpenOwner(undefined);
+      try {
+        const receipt = await operation;
+        if (current()) {
+          if (receipt.outcome !== "applied") setPlanOpenOwner(planRoute);
+          else if (request.mutation.action === "refine") requestAnimationFrame(() => textarea.current?.focus());
+        }
+        return receipt;
+      } catch (cause) { if (current()) setPlanOpenOwner(planRoute); throw cause; }
+    },
+    readDocumentSection: (owner, request) => nativePlan.state.readDocumentSection(owner, request),
+    refresh: async () => { await nativePlan.state.refresh(); },
+    dismiss: async (owner, binding) => {
+      await nativePlan.state.control(owner, { ...binding, action: "dismiss" });
+      if (planOwner.current.hostId === owner.hostId && planOwner.current.sessionId === owner.sessionId) {
+        setPlanOpenOwner(undefined); requestAnimationFrame(() => planTrigger.current?.focus({ preventScroll: true }));
+      }
+    },
+    reopen: async (owner, binding) => {
+      await nativePlan.state.control(owner, { ...binding, action: "reopen" });
+      if (planOwner.current.hostId === owner.hostId && planOwner.current.sessionId === owner.sessionId) setPlanOpenOwner(planRoute);
+    },
+  }), [nativePlan.state, planRoute]);
+  const openPlanReview = async () => {
+    const value = nativePlan.view.value;
+    if (!value) return;
+    try {
+      if (!value.review) await nativePlan.state.control(nativePlan.view.owner, { sessionId: nativePlan.view.owner.sessionId, ticket: value.ticket, action: "review" });
+      else if (value.review.status === "dismissed") await planReviewPorts.reopen(nativePlan.view.owner, {
+        sessionId: nativePlan.view.owner.sessionId, ticket: value.ticket, reviewId: value.review.id, reviewRevision: value.review.revision });
+      if (planOwner.current.hostId === nativePlan.view.owner.hostId && planOwner.current.sessionId === nativePlan.view.owner.sessionId) setPlanOpenOwner(planRoute);
+    } catch { setPlanOpenOwner(planRoute); /* The owner state displays the actual failure. */ }
+  };
   let forkController = selected ? forkControllers.get(`${hostId}:${selected.id}`) : undefined;
   if (selected && !forkController) {
     forkController = new SessionForkState(bridge, hostId, selected.id, { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value) });
@@ -1935,6 +2021,23 @@ export function App() {
             ports={forceToolPorts} connected={connected && !selected?.archived} active={!contentOverlayOpen}
             draftText={draft.text} recovery={submissions.forceRecovery(forceSessionId)}/>
             : <p className="force-tool-help">Open a conversation to choose an active tool. Native /force can also be typed in this draft.</p>}
+          <PlanExecutionContinuationControl view={nativePlan.view} connected={connected && !selected?.archived}
+            retry={expected => nativePlan.state.retryExecution(expected)} refresh={() => nativePlan.state.refresh()}
+            openOwner={expected => { try { nativePlan.state.openExecutionOwner(expected); } catch (cause) { setActionError(errorMessage(cause)); } }}/>
+          <div className="plan-composer-controls" role="group" aria-label="Native Plan mode">
+            <button type="button" className="composer-selection-trigger" aria-pressed={nativePlan.view.value?.mode === "active"}
+              disabled={!nativePlan.view.fresh || !nativePlan.view.value?.canToggle || nativePlan.view.pending || nativePlan.view.uncertain}
+              title={nativePlan.view.unavailable ?? nativePlan.view.value?.busyReason ?? "Native planning mode, separate from tool permissions"}
+              onClick={() => { const value = nativePlan.view.value; if (value) void nativePlan.state.control(nativePlan.view.owner, { sessionId: nativePlan.view.owner.sessionId, ticket: value.ticket, action: "toggle" }).catch(() => {}); }}>
+              <Icon name="check"/>Plan · {nativePlan.view.value?.mode ?? "unavailable"}
+            </button>
+            <button ref={planTrigger} type="button" className="composer-selection-trigger" aria-haspopup="dialog" aria-expanded={planOpen}
+              disabled={!nativePlan.view.value || nativePlan.view.pending || (!nativePlan.view.value.review && (nativePlan.view.value.mode !== "active" || !nativePlan.view.fresh || nativePlan.view.uncertain))}
+              title={nativePlan.view.value?.mode !== "active" && !nativePlan.view.value?.review ? "Enter Plan mode before opening its native plan artifact." : "Review the owning session’s native plan"}
+              onClick={() => void openPlanReview()}>{nativePlan.view.value?.review ? "Review plan" : "Open plan"}</button>
+            {nativePlan.view.loading && <span role="status">Refreshing Plan…</span>}
+            {(nativePlan.view.unavailable || nativePlan.view.error || nativePlan.view.value?.warning) && <span role="status">{nativePlan.view.unavailable ?? nativePlan.view.error ?? nativePlan.view.value?.warning}</span>}
+          </div>
           <AdvancedStreamControls bridge={bridge} hostId={hostId} localHostId={desktop.localHostId} sessionId={selected?.id} connected={connected} disabled={Boolean(selected?.archived) || running}/>
           <div className="composer-footnote" aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : null}</div>
         </div>
@@ -2007,6 +2110,16 @@ export function App() {
     {connectingDirectory && <McpDirectoryConnection owner={connectingDirectory.owner} closeWhenReady={connectingDirectory.connecting} hostLabel={desktop.catalog.records.get(connectingDirectory.owner.hostId)?.state?.host.name ?? connectingDirectory.owner.hostId} onClose={() => setConnectingDirectory(undefined)}/>}
     {fileClose.dialog}
     {sourcePreview && (!sourcePreview.current || sourcePreview.current()) && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}
+    <dialog ref={planDialog} className="app-dialog native-plan-dialog" aria-label="Native Plan review"
+      onCancel={event => { event.preventDefault(); hidePlan(); }}>
+      <div className="native-plan-dialog-tools"><button type="button" className="icon-button" aria-label="Hide Plan panel" onClick={hidePlan}><Icon name="close"/></button></div>
+      {panelPlan && <PlanReviewPanel owner={panelPlan.owner} plan={panelPlan.value}
+        ownerLabel={`${state?.host.name ?? panelPlan.owner.hostId} · ${selected?.title ?? "Conversation"}`}
+        connected={connected && !selected?.archived && panelPlan.owner.hostId === hostId && panelPlan.owner.sessionId === selected?.id}
+        fresh={nativePlan.view.fresh && !nativePlan.view.pending && !nativePlan.view.uncertain && panelPlan.value === nativePlan.view.value} open={planOpen}
+        executionChoices={panelPlan.value.executionChoices} receipt={nativePlan.view.receipt} failure={nativePlan.view.failure} error={nativePlan.view.error}
+        {...planReviewPorts} copy={typeof navigator.clipboard?.writeText === "function" ? copyText : undefined}/>}
+    </dialog>
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>
       {dialog === "project" ? <form onSubmit={addRemoteProject}><p className="subtle-notice">Enter an existing absolute folder path on {state?.host.name}. The project and its sessions stay on that machine.</p>{actionError && <p className="inline-error" role="alert">{actionError.message}</p>}<label className="field-label" htmlFor="remote-project-path">Folder path</label><input id="remote-project-path" className="text-field" value={remotePath} onChange={event => setRemotePath(event.target.value)} placeholder="/home/you/projects/example" autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!remotePath.trim() || !connected || addingProject}>{addingProject ? "Adding…" : "Add project"}</button></div></form> : dialog === "rename" ? <form onSubmit={rename}>{actionError && <p className="inline-error" role="alert">{actionError.message}</p>}<label className="field-label" htmlFor="conversation-title">Name</label><input id="conversation-title" className="text-field" value={renameTitle} onChange={event => setRenameTitle(event.target.value)} autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!renameTitle.trim() || !connected}>Save</button></div></form> : <div className="build-status"><p>This connected desktop flow includes host selection and an aggregate project sidebar: projects, revisioned drafts, sessions, model selection, streaming, steering, stopping, rename, and archive.</p><p>Accounts, native OMP settings and pending requests, file/editor/Git/worktree panels, and terminal sessions use the owning host’s APIs. Shared sidebar organization and the theme file are connected. Attachments, richer review, browser panels, plugins, automations, remain incomplete.</p><p>The layout uses the pinned package and measured colors from the supplied screenshot. Full visual parity and physical cross-device acceptance remain pending.</p><p>{desktop.networkError ?? desktop.network?.error ?? (desktop.network?.status === "connected" ? "Tailscale discovery is connected." : "Tailscale discovery is not connected.")}</p><button className="secondary-button" onClick={() => void desktop.refreshNetwork()}>Refresh machines</button><div className="build-host">{state?.host.name ?? "Host unavailable"} · {state?.host.platform ?? "Unknown platform"}</div></div>}

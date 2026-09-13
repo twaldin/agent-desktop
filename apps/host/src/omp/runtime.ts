@@ -1,3 +1,12 @@
+import { NativePlanExecutionAdmission, NativePlanMessageAdmissionError, type OmpPlanExecutionRun } from "./plan-execution-admission";
+import { NativePlanController, NativePlanError, resolveNativePlanInvocation } from "./plan-controller";
+import { projectSessionPlan } from "./plan-state";
+import { parsePlanDecisionPreparation, type OmpPlanDecisionPreparation } from "./plan-decision";
+import { parsePlanControlRequest, parsePlanDocumentReadRequest, parsePlanMutationRequest,
+  type PlanDocumentReadRequest, type PlanMutationRequest, type PlanDecisionReceipt,
+  type PlanControlRequest, type PlanControlResult, type SessionPlan } from "../../../../packages/shared/src/session-plan";
+import type { PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
+import { shouldEnterPlanModeOnStartup } from "@oh-my-pi/pi-coding-agent/plan-mode/startup";
 import { resolveOwnedDialectFromEnv } from "@oh-my-pi/pi-agent-core/agent-loop";
 import { NativeForceToolController } from "./force-tool";
 import { NativeForceToolAdmission, assertForceToolRecoveryAndEnter } from "./force-tool-admission";
@@ -17,7 +26,7 @@ import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, Nativ
 import type { NativeSessionMcpResourceRequest, NativeSessionMcpResourceResult } from "@agent-desktop/shared";
 import { NativeSessionMcp } from "./mcp-session";
 import type { NativeSessionMcpSnapshot, NativeSessionMcpReload, NativeSessionMcpReconnect } from "@agent-desktop/shared";
-import { realpath } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { readSessionHeader, requireDirectory, type SessionStartupIdentity } from "./session-files";
 import path from "node:path";
 import { goalControlState, parseNativeBrowserTabMetadata, type DetachedQuestionSnapshot, type GoalMutationRequest, type ModelChoice, type ModelInfo, type NativeBrowserTabMetadata, type NativeGoalActivity, type NativeSessionActivity, type ResolveDetachedQuestionReceipt, type ResolveDetachedQuestionRequest, type TranscriptMessage } from "@agent-desktop/shared";
@@ -78,7 +87,7 @@ function detachedQuestionRejected(message: string): Error {
 }
 
 type NativeModel = NonNullable<AgentSession["model"]>;
-export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
+export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent | { type: "plan_changed" } | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
 export type OmpEventListener = (event: OmpRuntimeEvent) => void;
 export interface OmpSessionOptions {
   cwd: string;
@@ -143,6 +152,11 @@ export interface OmpSession {
   }, transport: { post(frame: unknown): void; installReceiver?(receive:(frame:unknown)=>void):void; request(method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<Record<string, unknown>> }): Promise<{ receive(frame: unknown): void; dispose(): Promise<void> }>;
   subscribe(listener: OmpEventListener): () => void;
   getForceTool(): ForceToolState;
+  getPlan(): SessionPlan;
+  getPlanDocumentSection(request: PlanDocumentReadRequest): PlanDocumentSection;
+  controlPlan(request: PlanControlRequest): Promise<PlanControlResult>;
+  preparePlanDecision(commandId: string, request: PlanMutationRequest): Promise<OmpPlanDecisionPreparation>;
+  startPlanExecution(phaseId: string): OmpPlanExecutionRun;
   cancelForceTool(input: { ticket: ForceToolTicket; directiveId: string }): ForceToolCancelResult;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
@@ -377,8 +391,13 @@ export class OmpRuntime {
   create(options: OmpSessionOptions): Promise<OmpSession> {
     return this.#setup(async () => {
       const cwd = await requireDirectory(options.cwd);
+      const selectedSessionDirectory = options.sessionDirectory ?? SessionManager.getDefaultSessionDir(cwd);
+      await mkdir(selectedSessionDirectory, { recursive: true });
+      const sessionDirectory = await requireDirectory(selectedSessionDirectory);
       this.#assertActive();
-      const manager = SessionManager.create(cwd, options.sessionDirectory);
+      // Keep creation and later native /new paths identical to #open's
+      // canonical path, including macOS /var and /private/var aliases.
+      const manager = SessionManager.create(cwd, sessionDirectory);
       return this.#attach(manager, { ...options, cwd });
     });
   }
@@ -473,6 +492,7 @@ export class OmpRuntime {
       const btw = new NativeBtwController(session);
       const mcp = new NativeSessionMcp(session, result.mcpManager, true);
       const steering = new NativeSteerAdmission(session, manager);
+      const planExecution = new NativePlanExecutionAdmission(session, manager);
       const queuedMessages = new NativeQueuedMessages(session, steering);
       const auth = context.auth;
       const registry = context.registry;
@@ -516,6 +536,7 @@ export class OmpRuntime {
           for (const listener of listeners) listener(event);
       };
       let goalController: NativeGoalController | undefined;
+      let planController: NativePlanController | undefined;
       if (options.interactions) {
         bridge = new OmpInteractionBridge(session.sessionId, emitBridge);
         result.setToolUIContext(bridge, true);
@@ -531,6 +552,7 @@ export class OmpRuntime {
       const unsubscribe = session.subscribe(event => {
         if (promotionState !== "idle") return;
         goalController?.observe(event);
+        planController?.observeEvent(event);
         detachedQuestions.observe(event);
         mirror.accept(event);
         for (const listener of listeners) listener(event);
@@ -544,6 +566,8 @@ export class OmpRuntime {
       let interruptEpoch = 0;
       let accountMutation = false;
       let goalMutation = false;
+      let planMutation: Promise<unknown> | undefined;
+      let planTransitionInFlight = false;
       const outputEpoch = crypto.randomUUID();
       const htmlPreviews = new HtmlPreviews();
       let outputRead: Promise<import("@agent-desktop/shared").SessionOutputs> | undefined;
@@ -566,12 +590,12 @@ export class OmpRuntime {
       const accountBridge = createNativeAccountSelectionBridge(async () => session, { assertActive: assertSessionActive, revalidate: () => auth.revalidateCredentials() });
       const controls = new NativeSessionControls(session, options.approvalOverride);
       const nativeGoalController = goalController = new NativeGoalController(session, manager, () => ({
-        disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation || Boolean(mcpMutation),
+        disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation || Boolean(mcpMutation) || Boolean(planMutation) || Boolean(planController?.busy),
         interruptsInFlight, interactionsPending: (ui?.list().length ?? 0) > 0,
       }), async () => { await session.setActiveToolsByName(goalPreviousTools); });
       const assertIdle = () => {
         assertSessionActive();
-        if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
+        if (promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
       const assertSnapshotReady = (operation = "moving this task") => {
         assertIdle();
@@ -626,7 +650,7 @@ export class OmpRuntime {
           : nativeForceDispatchDepth === 0 && (session.extensionRunner?.getCommand("force") || session.customCommands.some(command => command.command.name === "force"))
             ? "An extension or custom command owns /force in this session." : undefined,
         getBusyReason: () => (forceAdmissionDepth === 0 && (promptInFlight || admissionPending))
-          || accountMutation || goalMutation || mcpMutation || interruptsInFlight || session.hasPostPromptWork
+          || accountMutation || goalMutation || planMutation || planController?.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
           || session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running"
           ? "Resolve current native work before changing the force queue." : undefined,
       });
@@ -642,6 +666,57 @@ export class OmpRuntime {
         cancel: (input: Parameters<NativeForceToolController["cancel"]>[0]) => forceTool.cancel(input),
         assertRecovery: (input: ForceToolRecovery) => withinForceAdmission(() => forceTool.assertRecovery(input)),
       };
+      const planEpoch = crypto.randomUUID();
+      const nativePlan = planController = new NativePlanController(session, manager, {
+        assertOwner: () => {
+          if (planTransitionInFlight) {
+            if (disposed || promotionState === "retired") throw new Error("The original native Plan owner has retired.");
+          } else assertSessionActive();
+        },
+        confirmExit: () => {
+          if (!ui) throw new Error("The native Plan confirmation UI is unavailable; the plan was retained.");
+          return ui.confirm("Exit plan mode?", "Your plan is saved. Exit plan mode without approving it?");
+        },
+        onChanged: () => { if (!disposed && promotionState === "idle") for (const listener of listeners) listener({ type: "plan_changed" }); },
+      });
+      const trackPlanMutation = <T>(work: () => Promise<T>): Promise<T> => {
+        assertSessionActive();
+        if (planMutation) throw new Error("The original native Plan operation is still settling.");
+        // Reserve before invoking code that can emit a synchronous callback.
+        const operation = Promise.resolve().then(work);
+        planMutation = operation;
+        const clear = () => { if (planMutation === operation) planMutation = undefined; };
+        void operation.then(clear, clear);
+        return operation;
+      };
+      const readPlan = () => {
+        assertSessionActive();
+        const review = nativePlan.readReview(), snapshot = nativePlan.snapshot();
+        const busyReason = !resolveNativePlanInvocation(session, "/plan") ? "An extension or custom command owns /plan in this session." : nativePlan.busy || planMutation || accountMutation || goalMutation || mcpMutation || admissionPending || interruptsInFlight
+          || session.isCompacting || session.isAborting || session.hasPostPromptWork
+          ? "Wait for the owning native operation to settle." : undefined;
+        return projectSessionPlan({ epoch: planEpoch, snapshot, review, enabled: session.settings.get("plan.enabled"), busyReason });
+      };
+      const readPlanDocumentSection = (raw: PlanDocumentReadRequest): PlanDocumentSection => {
+        const request = parsePlanDocumentReadRequest(raw), original = readPlan(), review = original.review;
+        if (request.sessionId !== session.sessionId || request.ticket.epoch !== original.ticket.epoch
+          || request.ticket.nativeSessionId !== original.ticket.nativeSessionId || request.ticket.revision !== original.ticket.revision
+          || request.reviewId !== review?.id || request.reviewRevision !== review.revision
+          || request.selection.documentRevision !== review.document?.documentRevision)
+          throw new Error("The original Plan document changed. Refresh before inspecting this section.");
+        const section = nativePlan.readReviewDocumentSection({ reviewId: review.id, reviewRevision: review.revision,
+          documentRevision: request.selection.documentRevision, renderColumns: request.selection.renderColumns,
+          sectionId: request.selection.sectionId });
+        const current = readPlan();
+        if (current.ticket.epoch !== original.ticket.epoch || current.ticket.nativeSessionId !== original.ticket.nativeSessionId
+          || current.ticket.revision !== original.ticket.revision || current.review?.id !== review.id
+          || current.review.revision !== review.revision
+          || current.review.document?.documentRevision !== request.selection.documentRevision)
+          throw new Error("The original Plan document changed during inspection.");
+        return section;
+      };
+      await trackPlanMutation(() => nativePlan.restore());
+      if (shouldEnterPlanModeOnStartup(manager, session.settings)) await trackPlanMutation(() => nativePlan.enter());
       const handle: OmpSession = {
         get id() { return session.sessionId; },
         get sessionFile() { return session.sessionFile ?? sessionFile; },
@@ -649,7 +724,7 @@ export class OmpRuntime {
         get model() { return session.model ? { provider: session.model.provider, id: session.model.id } : null; },
         get thinkingLevel() { return session.configuredThinkingLevel(); },
         get isStreaming() { return session.isStreaming; },
-        get hasPostPromptWork() { return session.hasPostPromptWork || Boolean(mcp.getAuthorization()?.pending); },
+        get hasPostPromptWork() { return session.hasPostPromptWork || Boolean(mcp.getAuthorization()?.pending) || nativePlan.busy || Boolean(planMutation); },
         get title() { return session.sessionName ?? manager.getHeader()?.title; },
         get createdAt() { return Date.parse(manager.getHeader()!.timestamp); },
         modelFallbackMessage: result.modelFallbackMessage,
@@ -721,7 +796,7 @@ export class OmpRuntime {
           const startedBeforeInterrupt = interruptEpoch;
           const preflight = () => {
             assertSessionActive();
-            if (admissionPending || accountMutation || goalMutation || mcpMutation || interruptsInFlight || session.hasPostPromptWork
+            if (admissionPending || accountMutation || goalMutation || planMutation || planController?.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
               || session.queuedMessageCount > 0 || (ui?.list().length ?? 0) > 0) {
               throw detachedQuestionRejected("The native session cannot accept a detached answer yet.");
             }
@@ -831,7 +906,7 @@ export class OmpRuntime {
             try { assertIdle(); } catch { throw goalRejected("The native session is busy. Wait for its current work to finish."); }
           } else {
             assertSessionActive();
-            if (admissionPending || accountMutation || goalMutation || mcpMutation || interruptsInFlight || session.hasPostPromptWork
+            if (admissionPending || accountMutation || goalMutation || planMutation || planController?.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
               || nativeGoalController.hasActiveToolExecution() || (ui?.list().length ?? 0) > 0) {
               throw goalRejected("The native session has an active tool, approval, ask, or admission. Wait for it to settle.");
             }
@@ -978,11 +1053,190 @@ export class OmpRuntime {
           assertSessionActive(); listeners.add(listener);
           return () => { listeners.delete(listener); };
         },
+        getPlan: readPlan,
+        getPlanDocumentSection: readPlanDocumentSection,
+        controlPlan: async raw => {
+          let dispatched = false;
+          try {
+          const request = parsePlanControlRequest(raw), original = readPlan();
+          if (request.sessionId !== session.sessionId || request.ticket.epoch !== original.ticket.epoch
+            || request.ticket.nativeSessionId !== original.ticket.nativeSessionId || request.ticket.revision !== original.ticket.revision)
+            throw new Error("The original Plan state changed. Refresh before choosing an action.");
+          if (original.reconciliationRequired || planMutation || nativePlan.busy || accountMutation || goalMutation || mcpMutation
+            || admissionPending || interruptsInFlight || session.isCompacting || session.isAborting || session.hasPostPromptWork)
+            throw new Error("Resolve pending native work before changing the Plan state.");
+          const invocation = request.action === "toggle" || request.action === "review"
+            ? resolveNativePlanInvocation(session, request.action === "toggle" ? "/plan" : "/plan-review") : undefined;
+          if ((request.action === "toggle" || request.action === "review") && !invocation)
+            throw new Error("The native Plan command no longer owns this action.");
+          let cancelled = false;
+          dispatched = true;
+          await trackPlanMutation(async () => {
+            assertSessionActive(); invocation?.assertCurrent();
+            if (request.action === "toggle") cancelled = Boolean((await nativePlan.toggle(invocation!)).cancelled);
+            else if (request.action === "review") await nativePlan.openLatestReview(invocation);
+            else if (request.action === "dismiss") nativePlan.dismissReview(request);
+            else if (request.action === "reopen") nativePlan.reopenReview(request);
+          });
+          return { state: readPlan(), ...(cancelled ? { cancelled: true as const } : {}) };
+          } catch (error) {
+            const code = !dispatched || error instanceof NativePlanError && error.outcome === "rejected" ? "PLAN_REJECTED" : "OUTCOME_UNKNOWN";
+            throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code });
+          }
+        },
+        startPlanExecution: phaseId => {
+          assertSessionActive();
+          if (!phaseId || phaseId.length > 200 || phaseId.includes("\0")) throw new Error("Invalid native Plan phase identity.");
+          if (promptInFlight || admissionPending || planMutation || nativePlan.busy || accountMutation || goalMutation || mcpMutation || interruptsInFlight)
+            throw new Error("The original native owner has another pending admission.");
+          const originalId = session.sessionId, originalFile = session.sessionFile;
+          const controller = new AbortController();
+          promptInFlight = admissionPending = true; admissionAbort = controller;
+          const accepted = Promise.withResolvers<Awaited<OmpPlanExecutionRun["accepted"]>>();
+          let nativeRun: OmpPlanExecutionRun | undefined, claimed = false;
+          const assertOriginal = () => {
+            assertSessionActive();
+            if (session.sessionId !== originalId || session.sessionFile !== originalFile) throw new Error("The original Plan execution owner changed.");
+          };
+          const completion = (async () => {
+            await auth.revalidateCredentials();
+            if (ui) { extensionStartup ??= initializeDesktopExtensions(session, ui); await extensionStartup; }
+            assertOriginal(); controller.signal.throwIfAborted();
+            const handoff = await trackPlanMutation(() => nativePlan.claimExecution({ phaseId }));
+            claimed = true;
+            assertOriginal(); controller.signal.throwIfAborted();
+            nativeRun = planExecution.start({ prompt: handoff.prompt, attribution: handoff.branch === "refine" ? "refinement" : "approval", assertCurrent: assertOriginal });
+            const admission = nativeRun.accepted.then(async receipt => {
+              await nativePlan.settleExecutionAdmission({ phaseId, outcome: receipt ? "entered" : "not-entered" });
+              if (receipt) nativeGoalController.resetSuppression();
+              accepted.resolve(receipt);
+            }, async error => {
+              try { await nativePlan.settleExecutionAdmission({ phaseId, outcome: "unknown" }); }
+              catch (settlement) { throw new AggregateError([error, settlement], "Native Plan admission and settlement failed."); }
+              throw error;
+            });
+            void admission.catch(error => accepted.reject(new NativePlanMessageAdmissionError(error)));
+            const results = await Promise.allSettled([admission, nativeRun.completion]);
+            const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+            if (failures.length) throw new AggregateError(failures, "Native Plan execution failed.");
+            await nativeGoalController.settleFinalization();
+            await nativePlan.settleAfterTurn();
+          })().catch(async error => {
+            if (claimed && !nativeRun) {
+              // The durable claim exists but no native prompt call was made.
+              try { await nativePlan.settleExecutionAdmission({ phaseId, outcome: "not-entered" }); }
+              catch (settlement) { error = new AggregateError([error, settlement], "Native Plan pre-dispatch settlement failed."); }
+            }
+            accepted.reject(error); throw error;
+          }).finally(() => {
+            promptInFlight = false; admissionPending = false;
+            if (admissionAbort === controller) admissionAbort = undefined;
+          });
+          void accepted.promise.catch(() => {}); void completion.catch(() => {});
+          const clearAdmission = () => { admissionPending = false; };
+          void accepted.promise.then(clearAdmission, clearAdmission);
+          return { accepted: accepted.promise, completion, abort: async () => {
+            controller.abort(); await session.abort(); await completion;
+          } };
+        },
+        preparePlanDecision: async (commandId, raw) => {
+          const request = parsePlanMutationRequest(raw);
+          if (!commandId || commandId.length > 200 || commandId.includes("\0")) throw new Error("Invalid Plan command identity.");
+          try { assertIdle(); } catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: "PLAN_REJECTED" }); }
+          const original = readPlan();
+          if (request.sessionId !== session.sessionId || request.ticket.epoch !== original.ticket.epoch
+            || request.ticket.nativeSessionId !== original.ticket.nativeSessionId || request.ticket.revision !== original.ticket.revision
+            || request.reviewId !== original.review?.id || request.reviewRevision !== original.review.revision)
+            throw Object.assign(new Error("The original Plan review changed. Refresh before choosing an action."), { code: "PLAN_REJECTED" });
+          if (original.reconciliationRequired || original.review.status !== "ready" || original.busyReason || admissionPending
+            || interruptsInFlight || ui?.list().length || btw.get()?.status === "running")
+            throw Object.assign(new Error("Resolve the original Plan work before making another decision."), { code: "PLAN_REJECTED" });
+          const originId = session.sessionId, originFile = session.sessionFile;
+          const mutation = request.mutation;
+          const documentRevision = original.review.document?.documentRevision;
+          if (!documentRevision || mutation.action === "document" && mutation.documentAction.expectedDocumentRevision !== documentRevision)
+            throw Object.assign(new Error("The original Plan document owner changed. Refresh before choosing an action."), { code: "PLAN_REJECTED" });
+          const replacing = mutation.action === "save" || mutation.action === "approve" && mutation.context === "fresh";
+          const receipt: PlanDecisionReceipt = { commandId, reviewId: request.reviewId, reviewRevision: request.reviewRevision,
+            action: mutation.action, outcome: "applied", artifact: "unchanged", transition: "unchanged", execution: "not-requested" };
+          return trackPlanMutation(async () => {
+            assertSessionActive();
+            // Native newSession changes identity inside this worker. Suppress
+            // old-owner transcript events while retaining branch-hook questions.
+            if (replacing) { planTransitionInFlight = true; promotionState = "running"; }
+            try {
+              const binding = { reviewId: request.reviewId, reviewRevision: request.reviewRevision };
+              const prepared: OmpPlanDecisionPreparation = { receipt };
+              if (mutation.action === "edit") {
+                await nativePlan.editReview({ ...binding, documentRevision, content: mutation.content }); receipt.artifact = "written";
+              } else if (mutation.action === "document") {
+                const result = await nativePlan.mutateReviewDocument({ ...binding, action: mutation.documentAction,
+                  renderColumns: mutation.renderColumns });
+                receipt.artifact = result.artifactChanged ? "written" : "unchanged";
+              } else if (mutation.action === "refine") {
+                const result = await nativePlan.prepareRefinement({ ...binding, documentRevision, text: mutation.text });
+                if (result.kind === "admission") { prepared.execution = { phaseId: result.phaseId }; receipt.execution = "not-entered"; }
+              } else if (mutation.action === "approve") {
+                const result = await nativePlan.decide({ ...binding, documentRevision,
+                  action: mutation.context, executionRole: mutation.executionRole });
+                receipt.execution = "not-entered";
+                receipt.planExit = "completed";
+                const compactOutcome = result.kind === "execution" ? result.phase.compactOutcome
+                  : result.kind === "cancelled" && result.branch === "compact" ? result.compactOutcome : undefined;
+                const compactMessage = result.kind === "execution" ? result.phase.compactMessage
+                  : result.kind === "cancelled" && result.branch === "compact" ? result.compactMessage : undefined;
+                if (compactOutcome) receipt.compaction = { outcome: compactOutcome, ...(compactMessage ? { message: compactMessage } : {}) };
+                if (result.kind === "cancelled") receipt.outcome = "cancelled";
+                else if (result.kind === "execution") prepared.execution = { phaseId: result.phase.phaseId };
+                else {
+                  prepared.execution = { phaseId: result.receipt.phaseId };
+                  prepared.transition = result.receipt.newIdentity;
+                  receipt.transition = "new-session"; receipt.destinationSessionId = result.receipt.newIdentity.nativeSessionId;
+                }
+              } else {
+                const result = await nativePlan.saveAndStartNew({ ...binding, documentRevision, destination: mutation.destination });
+                receipt.artifact = result.transition === "unknown" ? "unknown" : "written";
+                receipt.planExit = result.planExit ?? "completed";
+                if (result.savedDestination) receipt.savedDestination = result.savedDestination;
+                if (result.transition === "cancelled") receipt.outcome = "cancelled";
+                else {
+                  receipt.transition = result.transition;
+                  if (result.transition === "unknown") { receipt.outcome = "unknown"; receipt.message = result.message; }
+                  if (result.newIdentity && result.newIdentity.nativeSessionId !== originId) {
+                    prepared.transition = result.newIdentity; receipt.destinationSessionId = result.newIdentity.nativeSessionId;
+                  }
+                }
+              }
+              return parsePlanDecisionPreparation(prepared, commandId);
+            } catch (error) {
+              if (error instanceof NativePlanError && error.outcome === "rejected") throw Object.assign(error, { code: "PLAN_REJECTED" });
+              if (!(error instanceof NativePlanError)) throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: "OUTCOME_UNKNOWN" });
+              receipt.outcome = "unknown"; receipt.message = error.message;
+              if (mutation.action === "approve" || mutation.action === "save") receipt.planExit = error.planExit ?? "unknown";
+              if (error.compaction) receipt.compaction = error.compaction;
+              receipt.artifact = mutation.action === "edit" || mutation.action === "save"
+                || mutation.action === "document" && mutation.documentAction.kind !== "annotate" ? "unknown" : "unchanged";
+              receipt.execution = mutation.action === "approve" || mutation.action === "refine" ? "unknown" : "not-requested";
+              if (replacing) receipt.transition = "unknown";
+              const replacement = error.receipt?.newIdentity;
+              if (error.receipt?.savedDestination) receipt.savedDestination = error.receipt.savedDestination;
+              if (replacement) receipt.destinationSessionId = replacement.nativeSessionId;
+              return parsePlanDecisionPreparation({ receipt, ...(replacement ? { transition: replacement } : {}) }, commandId);
+            } finally {
+              if (replacing) {
+                const changed = session.sessionId !== originId || session.sessionFile !== originFile;
+                if (session.sessionFile) { const file = path.resolve(session.sessionFile); this.#reservedFiles.add(file); reservedPaths.add(file); }
+                promotionState = changed ? "retired" : "idle";
+                planTransitionInFlight = false;
+              }
+            }
+          });
+        },
         getForceTool: () => { assertSessionActive(); return forceTool.getState(); },
         cancelForceTool: input => { assertSessionActive(); return forceTool.cancel(input); },
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
-          if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          if (promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
           const forceFields = parseForceToolPromptFields(promptOptions);
           if (forceFields.forceRecovery && ((promptOptions.commandVersion ?? 0) < 18 || !promptOptions.commandId))
             throw new Error("Force prompt recovery requires command protocol 18 and its original operation identity.");
@@ -1058,6 +1312,20 @@ export class OmpRuntime {
                     return { agentInvoked: await session.prompt(nativeText) };
                   });
                 return dispatchNativePrompt(session, nativeText, imagePrompt?.images, skillPrompt, {
+                  plan: async raw => {
+                    const invocation = resolveNativePlanInvocation(session, raw);
+                    if (!invocation) throw new Error("The original native Plan command no longer owns this input.");
+                    const transition = await trackPlanMutation(async () => {
+                      if (invocation.name === "plan-review") {
+                        await nativePlan.openLatestReview(invocation); return undefined;
+                      }
+                      return nativePlan.toggle(invocation);
+                    });
+                    assertSessionActive(); invocation.assertCurrent();
+                    if (controller.signal.aborted) throw new Error("The native Plan command was interrupted after its mode change.");
+                    if (transition?.prompt) return { agentInvoked: await session.prompt(transition.prompt) };
+                    return { agentInvoked: false, handledCommand: invocation.name };
+                  },
                   forceTool: forceAdmission,
                   withNativeForceInvocation: operation => {
                     // Synchronous, exact-token-checked sections only. Never hold
@@ -1108,6 +1376,8 @@ export class OmpRuntime {
               void nativeRun.accepted.then(value => { if (value) nativeGoalController.resetSuppression(); receipt.resolve(value); }, receipt.reject);
               const completed = await nativeRun.completion;
               await nativeGoalController.settleFinalization();
+              await planMutation;
+              await nativePlan.settleAfterTurn();
               return completed;
           })().catch(error => { receipt.reject(error); throw error; }).finally(() => { wholeFiles?.close(); selectedText?.close(); imagePrompt?.close(); skillPrompt?.close(); });
           void receipt.promise.catch(() => {});
@@ -1123,7 +1393,7 @@ export class OmpRuntime {
         steer: async (text, expectedApprovalMode, options) => {
           assertSessionActive();
           if (options?.images?.length) throw new Error("Image attachments are not supported on steering input yet; no input was queued");
-          if (admissionPending || mcpMutation) throw new Error("OMP is still accepting a prompt or reloading MCP servers");
+          if (admissionPending || planMutation || nativePlan.busy || mcpMutation) throw new Error("OMP is still accepting a prompt or settling native maintenance.");
           // The host snapshot can precede a concurrently admitted Interrupt.
           // Recheck in the owning worker before native steer can queue an idle
           // auto-continuation or land after abort's initial queue cancellation.
@@ -1134,7 +1404,7 @@ export class OmpRuntime {
         startFollowUp: (text, delivery, expectedApprovalMode, images) => {
           const assertCurrent = () => {
             assertSessionActive();
-            if (admissionPending || mcpMutation) throw new Error("OMP is still accepting a prompt or reloading MCP servers");
+            if (admissionPending || planMutation || nativePlan.busy || mcpMutation) throw new Error("OMP is still accepting a prompt or settling native maintenance.");
             if (interruptsInFlight || !session.isStreaming) throw new Error("There is no running native turn accepting a follow-up");
             if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode"))
               throw new Error("The running turn uses a different native permission mode. Stop it before changing permissions.");
@@ -1221,7 +1491,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
-          const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose(), htmlPreviews.dispose()]);
+          const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose(), htmlPreviews.dispose(), planExecution.dispose()]);
           btw.dispose();
           detachedQuestions.dispose();
           admissionAbort?.abort();
@@ -1234,9 +1504,11 @@ export class OmpRuntime {
             const mcpDrains = await mcpDisposal;
             await extensionStartup?.catch(() => {});
             await mcpMutation?.catch(() => {});
+            await planMutation?.catch(() => {});
             await Promise.allSettled([...mcpReads, ...(outputRead ? [outputRead] : [])]);
             const cleanupErrors = mcpDrains.flatMap(result => result.status === "rejected" ? [result.reason] : []);
             const clean = async (work: () => unknown) => { try { await work(); } catch (error) { cleanupErrors.push(error); } };
+            await clean(() => nativePlan.dispose());
             await clean(() => forceTool.dispose());
             await clean(() => session.beginDispose());
             await clean(() => session.dispose());

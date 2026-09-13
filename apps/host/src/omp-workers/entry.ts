@@ -1,3 +1,7 @@
+import { parsePlanMutationRequest, parsePlanDocumentReadRequest } from "../../../../packages/shared/src/session-plan";
+import { parsePlanDocumentSection } from "../../../../packages/shared/src/plan-document";
+import { parsePlanDecisionPreparation } from "../omp/plan-decision";
+import { parsePlanControlRequest, parsePlanControlResult, parseSessionPlan } from "../../../../packages/shared/src/session-plan";
 import { WorkerBrowserEvaluationChannels } from "../omp-browser/evaluation";
 import { WorkerBrowserObservations } from "../omp-browser/observation";
 import { WorkerBrowserReservations } from "../omp-browser/reservation";
@@ -207,7 +211,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
     const interactive = ["listInteractions", "respondInteraction", "cancelInteractions", "dispose"].includes(message.operation);
     if ((promotionInFlight || promotedOwnerRetired) && !interactive) throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
     if (message.operation === "flushSession" && activeRequests) throw new Error("Wait for the current native operation before flushing for Fork.");
-    if (message.operation === "promoteBtw") {
+    if (message.operation === "promoteBtw" || message.operation === "preparePlanDecision") {
       if (activeRequests) throw new Error("Wait for the current native operation before promoting a side answer.");
       promotionInFlight = ownsPromotion = true;
     }
@@ -338,6 +342,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getSkillInventory": if (!runtime || session) throw new Error("Native skill inventory requires an initialized discovery worker."); respond(true, await runtime.getSkillInventory(message.args.cwd, { refresh: message.args.refresh })); break;
       case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
+      case "controlPlan": respond(true, parsePlanControlResult(await requireSession().controlPlan(parsePlanControlRequest(message.args)))); break;
+      case "getPlan": respond(true, parseSessionPlan(requireSession().getPlan())); break;
+      case "getPlanDocumentSection": {
+        const input = parsePlanDocumentReadRequest(message.args);
+        const owner = requireSession();
+        const value = parsePlanDocumentSection(await owner.getPlanDocumentSection(input), input.selection);
+        if (requireSession() !== owner) throw new Error("The original Plan document worker changed during inspection.");
+        respond(true, value); break;
+      }
       case "getForceTool": respond(true, parseForceToolState(requireSession().getForceTool())); break;
       case "cancelForceTool": {
         const active = requireSession();
@@ -404,6 +417,11 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "startBtw": respond(true, requireSession().startBtw(message.args)); break;
       case "cancelBtw": respond(true, requireSession().cancelBtw(message.args.runId)); break;
       case "promoteBtw": respond(true, await requireSession().promoteBtw(message.args.runId, message.args.operationId)); break;
+      case "preparePlanDecision": {
+        const input = parsePlanMutationRequest(message.args.request);
+        respond(true, parsePlanDecisionPreparation(await requireSession().preparePlanDecision(message.args.commandId, input), message.args.commandId));
+        break;
+      }
       case "getBrowserMetadata": {
         const owner = browserOwnerId();
         let native: { listTabsForOwner?: (ownerSessionId: string) => unknown };
@@ -520,6 +538,14 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "releaseHtmlPreview": respond(true, await requireSession().releaseHtmlPreview(message.leaseId)); break;
       case "getSessionOutputs": respond(true, await requireSession().getSessionOutputs()); break;
       case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex, message.args.source)); break;
+      case "startPlanExecution": {
+        const run = requireSession().startPlanExecution(message.args.phaseId);
+        await Promise.all([
+          run.accepted.then(value => respond(true, value, undefined, "accepted"), error => respond(false, undefined, error, "accepted")),
+          run.completion.then(() => respond(true, undefined, undefined, "completion"), error => respond(false, undefined, error, "completion")),
+        ]);
+        break;
+      }
       case "startPrompt": {
         const forceFields = parseForceToolPromptFields(message.args.options ?? {});
         const forceOperation = forceFields.forceTool !== undefined || forceFields.forceRecovery !== undefined;
@@ -598,7 +624,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         break;
     }
   } catch (error) {
-    if (message.operation === "startPrompt" || message.operation === "startGoalContinuation" || message.operation === "startQuestionDelivery" || message.operation === "startFollowUp") {
+    if (message.operation === "startPlanExecution" || message.operation === "startPrompt" || message.operation === "startGoalContinuation" || message.operation === "startQuestionDelivery" || message.operation === "startFollowUp") {
       respond(false, undefined, error, "accepted");
       respond(false, undefined, error, "completion");
     } else respond(false, undefined, error);

@@ -808,6 +808,97 @@ export class HostStore {
     }).immediate();
   }
 
+  /** A Plan replacement cannot execute until catalog and original setup exports
+   * are bound atomically. The command remains pending through prompt admission. */
+  bindPlanDecisionDestination(intent: import("./plan-decisions").PlanDecisionIntent, session: SessionSummary,
+    environment: LocalEnvironmentWorkerEnvironment | undefined): void {
+    this.db.transaction(() => {
+      const claim = this.getCommand(intent.commandId), origin = this.getSession(intent.originId);
+      if (!claim || claim.state !== "pending" || claim.command?.type !== "session.plan.mutate"
+        || claim.command.sessionId !== intent.originId || claim.command.reviewId !== intent.reviewId
+        || claim.command.reviewRevision !== intent.reviewRevision || !origin || session.hostId !== origin.hostId
+        || session.projectId !== origin.projectId || session.cwd !== origin.cwd || session.id === origin.id
+        || session.sessionFile === origin.sessionFile || this.getSession(session.id)
+        || intent.destination?.id !== session.id || intent.destination.sessionFile !== session.sessionFile)
+        throw new Error("Native Plan replacement does not match its original command and owner.");
+      this.requireVersion(7);
+      this.upsertSession(session);
+      if (environment) this.writeMetadata(`session-environment:${session.id}`, { cwd: session.cwd, environment });
+      this.writeMetadata(`plan-decision:${intent.originId}`, intent);
+      this.writeMetadata(`plan-decision-command:${intent.commandId}`, intent);
+      if (intent.execution) this.writeMetadata(`plan-decision-owner:${session.id}`,
+        { originId: intent.originId, originalCommandId: intent.commandId });
+    }).immediate();
+  }
+
+  getPlanDecisionForSession(sessionId: string): import("./plan-decisions").PlanDecisionIntent | undefined {
+    const direct = this.readMetadata<import("./plan-decisions").PlanDecisionIntent>(`plan-decision:${sessionId}`);
+    if (direct) {
+      const exact = this.readMetadata<import("./plan-decisions").PlanDecisionIntent>(`plan-decision-command:${direct.commandId}`);
+      if (exact?.originId === sessionId && exact.originId === direct.originId && exact.commandId === direct.commandId) return exact;
+      return undefined;
+    }
+    const owner = this.readMetadata<{ originId: string; originalCommandId: string }>(`plan-decision-owner:${sessionId}`);
+    const intent = owner ? this.readMetadata<import("./plan-decisions").PlanDecisionIntent>(`plan-decision-command:${owner.originalCommandId}`) : undefined;
+    return intent && intent.commandId === owner?.originalCommandId && intent.execution?.owner.id === sessionId ? intent : undefined;
+  }
+
+  getPlanDecisionByCommand(commandId: string, originId: string, executionOwnerId: string): import("./plan-decisions").PlanDecisionIntent | undefined {
+    const intent = this.readMetadata<import("./plan-decisions").PlanDecisionIntent>(`plan-decision-command:${commandId}`);
+    return intent?.commandId === commandId && intent.originId === originId && intent.execution?.owner.id === executionOwnerId ? intent : undefined;
+  }
+
+  reservePlanExecutionRetry(intent: import("./plan-decisions").PlanDecisionIntent, attemptId: string,
+    request: import("../../../packages/shared/src/session-plan").PlanExecutionRetryRequest): void {
+    this.db.transaction(() => {
+      const current = this.getPlanDecisionByCommand(request.originalCommandId, request.originSessionId, request.sessionId), claim = this.getCommand(attemptId);
+      if (!claim || claim.state !== "pending" || claim.command?.type !== "session.plan.execution.retry"
+        || claim.command.sessionId !== request.sessionId || claim.command.originSessionId !== request.originSessionId
+        || claim.command.originalCommandId !== request.originalCommandId || claim.command.expectedAttemptId !== request.expectedAttemptId
+        || !current?.execution || current.commandId !== intent.commandId || current.originId !== request.originSessionId
+        || current.execution.owner.id !== request.sessionId || current.execution.state !== "ready"
+        || current.execution.latestAttemptId !== request.expectedAttemptId)
+        throw new Error("The Plan execution retry is stale or has no matching durable continuation.");
+      current.execution = { ...current.execution, state: "pending", latestAttemptId: attemptId };
+      this.writeMetadata(`plan-decision-command:${current.commandId}`, current);
+      const latest = this.readMetadata<import("./plan-decisions").PlanDecisionIntent>(`plan-decision:${current.originId}`);
+      if (latest?.commandId === current.commandId) this.writeMetadata(`plan-decision:${current.originId}`, current);
+    }).immediate();
+  }
+
+  finishPlanExecutionRetry(intent: import("./plan-decisions").PlanDecisionIntent, attemptId: string,
+    state: "ready" | "entered" | "unknown", result: CommandResult): CommandResult {
+    return this.db.transaction(() => {
+      const current = this.getPlanDecisionByCommand(intent.commandId, intent.originId, intent.execution!.owner.id), claim = this.getCommand(attemptId);
+      if (!current?.execution || current.commandId !== intent.commandId || current.originId !== intent.originId
+        || current.execution.latestAttemptId !== attemptId || current.execution.state !== "pending"
+        || !claim || claim.state !== "pending" || claim.command?.type !== "session.plan.execution.retry"
+        || result.commandId !== attemptId) throw new Error("The Plan execution retry settlement lost its reserved owner.");
+      current.execution = { ...current.execution, state };
+      this.writeMetadata(`plan-decision-command:${current.commandId}`, current);
+      const latest = this.readMetadata<import("./plan-decisions").PlanDecisionIntent>(`plan-decision:${current.originId}`);
+      if (latest?.commandId === current.commandId) this.writeMetadata(`plan-decision:${current.originId}`, current);
+      this.finishCommand(attemptId, claim.requestHash, result);
+      return result;
+    }).immediate();
+  }
+
+  finishPlanDecision(intent: import("./plan-decisions").PlanDecisionIntent, result: CommandResult): CommandResult {
+    return this.db.transaction(() => {
+      const claim = this.getCommand(intent.commandId);
+      if (!claim || claim.command?.type !== "session.plan.mutate" || claim.command.sessionId !== intent.originId
+        || claim.command.reviewId !== intent.reviewId || claim.command.reviewRevision !== intent.reviewRevision
+        || result.commandId !== intent.commandId) throw new Error("Plan decision receipt does not match its original command.");
+      if (claim.state === "done") return claim.result!;
+      this.writeMetadata(`plan-decision:${intent.originId}`, intent);
+      this.writeMetadata(`plan-decision-command:${intent.commandId}`, intent);
+      if (intent.execution) this.writeMetadata(`plan-decision-owner:${intent.execution.owner.id}`,
+        { originId: intent.originId, originalCommandId: intent.commandId });
+      this.finishCommand(intent.commandId, claim.requestHash, result);
+      return result;
+    }).immediate();
+  }
+
   finishBtwPromotion(commandId: string, session: SessionSummary, environment: LocalEnvironmentWorkerEnvironment | undefined,
     intent: import('./btw-promotion').BtwPromotionIntent, intentKey: string): CommandResult {
     return this.db.transaction(() => {

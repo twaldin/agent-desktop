@@ -11,7 +11,7 @@ import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 import type { NativeSessionForkInput } from "../omp/session-fork";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 58;
+export const WORKER_PROTOCOL_VERSION = 60;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -61,6 +61,11 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "mutateMcpServer"; args: { cwd: string; mutation: NativeMcpMutation } }
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }
+  | { operation: "getPlan" }
+  | { operation: "getPlanDocumentSection"; args: import("../../../../packages/shared/src/session-plan").PlanDocumentReadRequest }
+  | { operation: "startPlanExecution"; args: { phaseId: string } }
+  | { operation: "preparePlanDecision"; args: { commandId: string; request: import("../../../../packages/shared/src/session-plan").PlanMutationRequest } }
+  | { operation: "controlPlan"; args: import("../../../../packages/shared/src/session-plan").PlanControlRequest }
   | { operation: "getForceTool" }
   | { operation: "cancelForceTool"; args: { ticket: ForceToolTicket; directiveId: string } }
   | { operation: "mutateGoal"; args: { request: GoalMutationRequest } }
@@ -129,7 +134,7 @@ export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | { type: "eventAck"; sequence: number }
   /** The child exits only after its disposal result has reached the owner. */
   | { type: "disposeAck"; id: string };
-export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" }
+export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" | "PLAN_REJECTED" }
 export type ChildMessage =
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
@@ -170,6 +175,6 @@ function remoteErrorMessage(error: Error, seen: Set<Error>, budget: { remaining:
 export function remoteError(error: unknown): RemoteError {
   return error instanceof Error
     ? { name: error.name.slice(0, 100), message: remoteErrorMessage(error, new Set(), { remaining: MAX_REMOTE_ERROR_DETAILS }),
-      ...("code" in error && error.code === "OUTCOME_UNKNOWN" ? { code: "OUTCOME_UNKNOWN" as const } : {}) }
+      ...("code" in error && (error.code === "OUTCOME_UNKNOWN" || error.code === "PLAN_REJECTED") ? { code: error.code } : {}) }
     : { name: "Error", message: "OMP worker operation failed" };
 }

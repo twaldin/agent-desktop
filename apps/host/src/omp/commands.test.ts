@@ -160,3 +160,21 @@ test("resolved force alias scope survives canonical shadowing but refuses a new 
     expect(scopeDepth).toBe(0);
   }
 });
+
+test("Plan dispatch preserves the exact winning native token and does not reinterpret a shadowed command", async () => {
+  const value = fixture(mcp("succeeded"));
+  const received: string[] = []; let shadows = 0;
+  Object.assign(value.session, { extensionRunner: {
+    getCommand: (name: string) => name === "plan" ? { handler: async () => { shadows++; } } : undefined,
+    createCommandContext: () => ({}), runScoped: async (run: () => Promise<void>) => run(), emitError() {},
+  } });
+  const bridges: NativeCommandBridges = { ...value.bridges, plan: async text => {
+    received.push(text); return { agentInvoked: false, handledCommand: "plan" };
+  } };
+  await dispatchNativePrompt(value.session, "/plan inspect", undefined, undefined, bridges);
+  expect(shadows).toBe(1); expect(received).toEqual([]);
+  await dispatchNativePrompt(value.session, "/plan:inspect original text", undefined, undefined, bridges);
+  expect(received).toEqual(["/plan:inspect original text"]);
+  await expect(dispatchNativePrompt(value.session, "/plan-review")).rejects.toThrow("Plan owner is unavailable");
+  expect(received).toHaveLength(1);
+});

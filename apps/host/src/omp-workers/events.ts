@@ -12,12 +12,13 @@ export interface NativeEventMetadata {
   isTerminal?: boolean; isError?: boolean; aborted?: boolean; willRetry?: boolean; success?: boolean;
   attempt?: number; maxAttempts?: number; delayMs?: number;
 }
-export type WorkerEvent = NativeEventMetadata | OmpBridgeEvent | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
+export type WorkerEvent = { type: "plan_changed" } | NativeEventMetadata | OmpBridgeEvent | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
 export type WorkerEventListener = (event: WorkerEvent) => void;
 export const projectNativeErrorMessage = (value: string) => value.slice(0, 4096).replace(/data:image\/[^\s"']+/gi, "[image payload omitted]").replace(/[A-Za-z0-9+/]{256,}={0,2}/g, "[encoded payload omitted]");
 
 /** Called on the native object BEFORE structuredClone, serialization or queue accounting. */
 export function projectWorkerEvent(event: OmpRuntimeEvent): WorkerEvent {
+  if (event.type === "plan_changed") return { type: "plan_changed" };
   if (event.type === "queued_messages_changed") return { type: event.type, snapshot: structuredClone(event.snapshot) };
   if (event.type === "extension_interaction_requested" || event.type === "extension_interaction_resolved"
     || event.type === "extension_notification" || event.type === "extension_ui_unsupported") return event;

@@ -1,3 +1,7 @@
+import type { OmpPlanExecutionRun } from "../omp/plan-execution-admission";
+import { parsePlanDecisionPreparation } from "../omp/plan-decision";
+import { parsePlanMutationRequest, parsePlanControlRequest, parsePlanControlResult, parseSessionPlan, parsePlanDocumentReadRequest, type SessionPlan, type PlanDocumentReadRequest } from "../../../../packages/shared/src/session-plan";
+import { parsePlanDocumentSection, type PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { requestWorkerBrowserObservation, type WorkerBrowserObservation } from "../omp-browser/observation";
 import { openWorkerBrowserEvaluation, recoverWorkerBrowserEvaluation, type WorkerBrowserEvaluation } from "../omp-browser/evaluation-client";
 import { copyEvaluationBinding, copyEvaluationFrame, copyEvaluationValue, evaluationKey, type BrowserEvaluationBinding, type BrowserEvaluationFrame } from "../omp-browser/evaluation-wire";
@@ -42,12 +46,14 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
+  getPlan(): Promise<SessionPlan>;
+  getPlanDocumentSection(request: PlanDocumentReadRequest): Promise<PlanDocumentSection>;
   getForceTool(): Promise<ForceToolState>;
   cancelForceTool(input: { ticket: ForceToolTicket; directiveId: string }): Promise<ForceToolCancelResult>;
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
@@ -392,7 +398,7 @@ export class WorkerClient {
       else {
         const error = new Error(message.error?.message ?? "OMP worker operation failed");
         error.name = message.error?.name ?? "Error";
-        if (message.error?.code === "OUTCOME_UNKNOWN") Object.assign(error, { code: "OUTCOME_UNKNOWN" });
+        if (message.error?.code === "OUTCOME_UNKNOWN" || message.error?.code === "PLAN_REJECTED") Object.assign(error, { code: message.error.code });
         if (forceToolReceipt) Object.assign(error, { forceToolReceipt: { ...forceToolReceipt } });
         pending.reject(error);
       }
@@ -543,6 +549,28 @@ export class WorkerClient {
     this.#holdRetained = false;
     const inbox = this.#retainedInbox.splice(0);
     for (const message of inbox) this.#receive(message);
+  }
+
+  startPlanExecution(phaseId: string): OmpPlanExecutionRun {
+    if (!phaseId || phaseId.length > 200 || phaseId.includes("\0")) throw new Error("Invalid native Plan execution phase.");
+    if (this.failure) throw new WorkerFailureError(this.failure);
+    if (this.#closing || this.#pending.size > 125) throw new Error("The original Plan worker cannot admit another request.");
+    const id = String(++this.#requestId);
+    const accepted = this.#promise<Awaited<OmpPlanExecutionRun["accepted"]>>(`${id}:accepted`, undefined, "prompt-admission").then(value => {
+      if (value !== null && (!value || !(value.kind === "native-plan-message" || value.kind === "native-plan-command") || typeof value.entryId !== "string" || !value.entryId || value.entryId.length > 200))
+        throw new OmpPromptAdmissionError(new Error("Invalid native Plan message receipt."));
+      return value;
+    });
+    const completion = this.#promise<void>(`${id}:completion`);
+    try { this.#send({ type: "request", id, operation: "startPlanExecution", args: { phaseId } }); }
+    catch (error) {
+      for (const phase of ["accepted", "completion"]) {
+        const key = `${id}:${phase}`, pending = this.#pending.get(key);
+        pending?.reject(this.#transportFailure(pending, error)); this.#pending.delete(key);
+      }
+    }
+    void accepted.catch(() => {});
+    return { accepted, completion, abort: async () => { await this.request({ operation: "abort" }); await completion; } };
   }
 
   startPrompt(text: string, options?: Parameters<OmpSession["startPrompt"]>[1]): OmpPromptRun {
@@ -1005,6 +1033,48 @@ export class WorkerRuntime {
       },
       subscribe: listener => client.subscribe(listener),
       subscribeWorkerFailure: listener => client.subscribeFailure(listener),
+      startPlanExecution: phaseId => client.startPlanExecution(phaseId),
+      preparePlanDecision: async (commandId, raw) => {
+        const request = parsePlanMutationRequest(raw), before = state();
+        const originId = before.id, originFile = before.sessionFile, originCwd = before.cwd;
+        if (request.sessionId !== originId) throw new Error("The Plan decision target changed before dispatch.");
+        try {
+          const result = parsePlanDecisionPreparation(await client.request({ operation: "preparePlanDecision", args: { commandId, request } }, undefined, "prompt-admission"), commandId);
+          const current = state();
+          if (disposeCall || client.failure || current.cwd !== originCwd
+            || (result.transition ? current.id !== result.transition.nativeSessionId || current.sessionFile !== result.transition.sessionFile
+              : current.id !== originId || current.sessionFile !== originFile))
+            throw Object.assign(new Error("The original Plan decision result could not be confirmed."), { code: "OUTCOME_UNKNOWN" });
+          return result;
+        } finally {
+          if (client.snapshot?.sessionFile) { const file = path.resolve(client.snapshot.sessionFile); this.#openFiles.add(file); reservedPaths.add(file); }
+        }
+      },
+      controlPlan: async raw => {
+        const request = parsePlanControlRequest(raw);
+        if (request.sessionId !== state().id) throw new Error("The Plan control target changed before dispatch.");
+        const result = parsePlanControlResult(await client.request({ operation: "controlPlan", args: request }, undefined, "prompt-admission"));
+        if (disposeCall || client.failure || state().id !== request.sessionId || result.state.ticket.nativeSessionId !== request.ticket.nativeSessionId
+          || result.state.ticket.epoch !== request.ticket.epoch)
+          throw Object.assign(new Error("The original Plan control result could not be confirmed."), { code: "OUTCOME_UNKNOWN" });
+        return result;
+      },
+      getPlan: async () => {
+        const origin = { id: state().id, file: state().sessionFile };
+        const value = parseSessionPlan(await client.request({ operation: "getPlan" }));
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file
+          || value.ticket.nativeSessionId !== origin.id) throw new Error("The original Plan worker changed during inspection.");
+        return value;
+      },
+      getPlanDocumentSection: async raw => {
+        const request = parsePlanDocumentReadRequest(raw);
+        const origin = { id: state().id, file: state().sessionFile };
+        if (request.sessionId !== origin.id) throw new Error("The Plan document target changed before inspection.");
+        const value = parsePlanDocumentSection(await client.request({ operation: "getPlanDocumentSection", args: request }), request.selection);
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file)
+          throw new Error("The original Plan document worker changed during inspection.");
+        return value;
+      },
       getForceTool: async () => parseForceToolState(await client.request({ operation: "getForceTool" })),
       cancelForceTool: async input => {
         const value = await client.request({ operation: "cancelForceTool", args: input }, 15_000, "force-cancel");

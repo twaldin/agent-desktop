@@ -278,6 +278,158 @@ index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bb
      roots?: {
          listChanged?: boolean;
      };
+diff --git a/dist/types/modes/components/plan-review-overlay.d.ts b/dist/types/modes/components/plan-review-overlay.d.ts
+index 5dad6c38d23106b9a4254454e1286827e39e904c..4184a146709a623da89eebc0e9a251a2247bced1 100644
+--- a/dist/types/modes/components/plan-review-overlay.d.ts
++++ b/dist/types/modes/components/plan-review-overlay.d.ts
+@@ -18,28 +18,8 @@
+  */
+ import { type Component } from "@oh-my-pi/pi-tui";
+ import type { HookSelectorSlider } from "./hook-selector.js";
+-/** Serializable annotations retained by the plan-review owner between overlays. */
+-export interface PlanReviewAnnotationState {
+-    annotations: Array<{
+-        section: {
+-            index: number;
+-            title: string;
+-            /** Heading ancestry from the document root, when emitted by this overlay. */
+-            path?: string[];
+-            /** Hash of the section source, used to reject ambiguous moved headings. */
+-            contentHash?: string;
+-        };
+-        target: {
+-            kind: "section";
+-        } | {
+-            kind: "line";
+-            row: number;
+-            context: string;
+-            contextTruncated?: boolean;
+-        };
+-        note: string;
+-    }>;
+-}
++import type { PlanReviewAnnotationState } from "../../plan-mode/plan-review-document.js";
++export type { PlanReviewAnnotationState } from "../../plan-mode/plan-review-document.js";
+ export interface PlanReviewOverlayCallbacks {
+     /** Invoked with the chosen option label (never a disabled one). */
+     onPick: (label: string) => void;
+diff --git a/dist/types/modes/interactive-mode.d.ts b/dist/types/modes/interactive-mode.d.ts
+index 4965e2bd73dd47532ac9b08c5a9625d7c1093ef1..170b339567661af0804128e2d24e38b48886d6d3 100644
+--- a/dist/types/modes/interactive-mode.d.ts
++++ b/dist/types/modes/interactive-mode.d.ts
+@@ -58,7 +58,7 @@ export declare function computeEditorMaxHeight(terminalRows: number): number;
+  *  tiny-model topic (e.g. `PYO3_METHODS_PLAN.md`), trimmed to a word boundary
+  *  when a verbose fallback title sneaks through. */
+ export declare function planSaveFileName(title: string): string;
+-export declare function shouldEnterPlanModeOnStartup(sessionManager: Pick<SessionManager, "buildSessionContext" | "getEntries">, sessionSettings: Pick<Settings, "get">): boolean;
++export { shouldEnterPlanModeOnStartup } from "../plan-mode/startup.js";
+ /** Options for creating an InteractiveMode instance (for future API use) */
+ export interface InteractiveModeOptions {
+     /** Providers that were migrated during startup */
+diff --git a/dist/types/plan-mode/plan-review-document.d.ts b/dist/types/plan-mode/plan-review-document.d.ts
+new file mode 100755
+index 0000000000000000000000000000000000000000..d1fcab9826b04deb4c1937ea2e3707d7381b74a3
+--- /dev/null
++++ b/dist/types/plan-mode/plan-review-document.d.ts
+@@ -0,0 +1,89 @@
++export { joinPlanSections, parsePlanSections, sectionDeletionSpan, stripInlineMarkdown } from "../modes/components/plan-toc.js";
++export type { PlanSection } from "../modes/components/plan-toc.js";
++import type { PlanSection } from "../modes/components/plan-toc.js";
++
++export declare const PLAN_REVIEW_RENDER_COLUMNS_MIN = 20;
++export declare const PLAN_REVIEW_RENDER_COLUMNS_MAX = 240;
++export declare const PLAN_REVIEW_SUMMARY_MAX_BYTES = 2097152;
++export declare const PLAN_REVIEW_SECTION_MAX_ROWS = 20000;
++export declare const PLAN_REVIEW_SECTION_MAX_BYTES = 2097152;
++export declare const PLAN_REVIEW_MAX_ANNOTATIONS = 1000;
++export declare const PLAN_REVIEW_ANNOTATION_MAX_BYTES = 500000;
++
++export interface PlanReviewLineContext { text: string; truncated: boolean }
++export type PlanReviewAnnotationTarget = { kind: "section" } | { kind: "line"; row: number; context: string; contextTruncated: boolean };
++export interface PlanReviewAnnotation { note: string; target: PlanReviewAnnotationTarget }
++export interface PlanReviewDocumentSection extends PlanSection { annotations: PlanReviewAnnotation[] }
++export interface PlanReviewAnnotationState {
++    annotations: Array<{
++        section: { index: number; title: string; path?: string[]; contentHash?: string };
++        target: { kind: "section" } | { kind: "line"; row: number; context: string; contextTruncated?: boolean };
++        note: string;
++    }>;
++}
++
++export interface PlanReviewDocumentSectionSummary { sectionId: string; level: number; title: string; annotationCount: number }
++export interface PlanReviewDocumentSummary {
++    documentRevision: string;
++    renderColumns: number;
++    canUndo: boolean;
++    feedback: string;
++    sections: PlanReviewDocumentSectionSummary[];
++    /** Section ids in exact native ToC order; omitted title/preamble sections remain in `sections`. */
++    toc: string[];
++}
++export interface PlanReviewDocumentRow { rowId: string; text: string; truncated: boolean; annotationIds: string[] }
++export interface PlanReviewDocumentAnnotationProjection {
++    annotationId: string;
++    note: string;
++    target: { kind: "section" } | { kind: "line"; rowId: string };
++}
++export interface PlanReviewDocumentSectionProjection extends PlanReviewDocumentSectionSummary {
++    documentRevision: string;
++    renderColumns: number;
++    rows: PlanReviewDocumentRow[];
++    annotations: PlanReviewDocumentAnnotationProjection[];
++}
++/** Native-only display rows plus the serializable section projection. */
++export interface PlanReviewNativeRenderedSection { projection: PlanReviewDocumentSectionProjection; displayRows: readonly string[] }
++
++export type PlanReviewDocumentAction =
++    | { kind: "delete-section"; expectedDocumentRevision: string; sectionId: string }
++    | { kind: "annotate"; expectedDocumentRevision: string; target: { kind: "section"; sectionId: string } | { kind: "line"; sectionId: string; rowId: string }; note: string }
++    | { kind: "undo"; expectedDocumentRevision: string };
++export interface PlanReviewDocumentMutationResult {
++    documentRevision: string;
++    content: string;
++    annotationState: PlanReviewAnnotationState;
++    feedback: string;
++    artifactChanged: boolean;
++    summary: PlanReviewDocumentSummary;
++}
++export interface PreparedPlanReviewDocumentMutation {
++    /** Candidate state. The caller adopts it only after any required artifact write succeeds. */
++    next: PlanReviewDocumentOwner;
++    result: PlanReviewDocumentMutationResult;
++}
++export declare class PlanReviewDocumentOwner {
++    constructor(content: string, options: { binding: string; annotationState?: PlanReviewAnnotationState });
++    static nativeOverlay(content: string, annotationState?: PlanReviewAnnotationState): PlanReviewDocumentOwner;
++    get documentRevision(): string;
++    get content(): string;
++    get feedback(): string;
++    get annotationState(): PlanReviewAnnotationState;
++    summary(expectedDocumentRevision: string, renderColumns: number): PlanReviewDocumentSummary;
++    section(expectedDocumentRevision: string, sectionId: string, renderColumns: number): PlanReviewDocumentSectionProjection;
++    /** Full native render convenience used by PlanReviewOverlay; transport should prefer summary + section. */
++    renderSections(expectedDocumentRevision: string, renderColumns: number): PlanReviewNativeRenderedSection[];
++    prepare(action: PlanReviewDocumentAction, renderColumns: number): PreparedPlanReviewDocumentMutation;
++    prepareReplace(input: { content: string; expectedDocumentRevision: string; renderColumns: number }): PreparedPlanReviewDocumentMutation;
++}
++
++export declare function planReviewSectionPaths(sections: readonly PlanSection[]): string[][];
++export declare function planReviewSectionContentHash(section: Pick<PlanSection, "raw">): string;
++export declare function clonePlanReviewAnnotation(annotation: PlanReviewAnnotation): PlanReviewAnnotation;
++export declare function capturePlanReviewAnnotationState(sections: readonly PlanReviewDocumentSection[]): PlanReviewAnnotationState;
++export declare function resolvePlanReviewLineRow(storedRow: number, storedContext: PlanReviewLineContext, contexts: readonly PlanReviewLineContext[]): number;
++export declare function restorePlanReviewAnnotations(sections: readonly PlanSection[], state: PlanReviewAnnotationState | undefined, lineContexts: (sectionIndex: number) => readonly PlanReviewLineContext[]): PlanReviewAnnotation[][];
++export declare function formatPlanReviewFeedback(sections: readonly PlanReviewDocumentSection[], deleted: readonly string[]): string;
++export declare function combinePlanReviewFeedback(documentFeedback: string, additionalFeedback: string): string;
+diff --git a/dist/types/plan-mode/startup.d.ts b/dist/types/plan-mode/startup.d.ts
+new file mode 100755
+index 0000000000000000000000000000000000000000..baaa5c1bb346acd306704b6dfca58974846b00cb
+--- /dev/null
++++ b/dist/types/plan-mode/startup.d.ts
+@@ -0,0 +1,3 @@
++import type { Settings } from "../config/settings.js";
++import type { SessionManager } from "../session/session-manager.js";
++export declare function shouldEnterPlanModeOnStartup(sessionManager: Pick<SessionManager, "buildSessionContext" | "getEntries">, sessionSettings: Pick<Settings, "get">): boolean;
 diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
 index e3b75c288b6c8ded7d709832d65a2cf993461374..bfa51d7b8fdd311b57d32d1e5d21645ccfdaab38 100644
 --- a/dist/types/sdk.d.ts
@@ -2197,6 +2349,1288 @@ index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8
  	roots?: { listChanged?: boolean };
  	sampling?: Record<string, never>;
  	experimental?: Record<string, unknown>;
+diff --git a/src/modes/components/plan-review-overlay.ts b/src/modes/components/plan-review-overlay.ts
+index 9799cc1357df9c62fa64b16fe6cee8d50f523989..c600c9073599b60751233b4e90b7c3a25d510018 100644
+--- a/src/modes/components/plan-review-overlay.ts
++++ b/src/modes/components/plan-review-overlay.ts
+@@ -50,7 +50,16 @@ import {
+ 	topBorder,
+ 	topBorderSplit,
+ } from "./overlay-box";
+-import { joinPlanSections, parsePlanSections, sectionDeletionSpan } from "./plan-toc";
++import { parsePlanSections } from "./plan-toc";
++import {
++	PlanReviewDocumentOwner,
++	restorePlanReviewAnnotations,
++	resolvePlanReviewLineRow,
++	type PlanReviewAnnotation,
++	type PlanReviewAnnotationState,
++	type PlanReviewLineContext,
++} from "../../plan-mode/plan-review-document";
++export type { PlanReviewAnnotationState } from "../../plan-mode/plan-review-document";
+ import { renderSegmentTrack } from "./segment-track";
+ 
+ /** Title shown in the overlay's top border. */
+@@ -66,24 +75,13 @@ const MAX_ANNOTATION_CONTEXT_WIDTH = 120;
+ 
+ type Focus = "toc" | "body" | "actions";
+ 
+-type AnnotationTarget = { kind: "section" } | { kind: "line"; row: number; context: string; contextTruncated: boolean };
+-
+-interface OverlayAnnotation {
+-	note: string;
+-	target: AnnotationTarget;
+-}
+-
+ interface OverlaySection {
+ 	level: number;
+ 	title: string;
+ 	raw: string;
+ 	md: Markdown;
+-	annotations: OverlayAnnotation[];
+-}
+-
+-interface LineAnchorContext {
+-	text: string;
+-	truncated: boolean;
++	annotations: PlanReviewAnnotation[];
++	sectionId?: string;
+ }
+ 
+ interface BodyRowAnchor {
+@@ -91,30 +89,8 @@ interface BodyRowAnchor {
+ 	row: number;
+ 	context: string;
+ 	contextTruncated: boolean;
+-}
+-
+-/** Serializable annotations retained by the plan-review owner between overlays. */
+-export interface PlanReviewAnnotationState {
+-	annotations: Array<{
+-		section: {
+-			index: number;
+-			title: string;
+-			/** Heading ancestry from the document root, when emitted by this overlay. */
+-			path?: string[];
+-			/** Hash of the section source, used to reject ambiguous moved headings. */
+-			contentHash?: string;
+-		};
+-		target: { kind: "section" } | { kind: "line"; row: number; context: string; contextTruncated?: boolean };
+-		note: string;
+-	}>;
+-}
+-
+-/** Undo snapshot: joined plan text, annotations aligned by section, and the
+- *  accumulated deleted-section feedback at the time of the snapshot. */
+-interface UndoEntry {
+-	text: string;
+-	annotations: OverlayAnnotation[][];
+-	deleted: string[];
++	sectionId: string;
++	rowId: string;
+ }
+ 
+ export interface PlanReviewOverlayCallbacks {
+@@ -160,6 +136,7 @@ const DEFAULT_HELP_SUFFIX = "esc cancel";
+ export class PlanReviewOverlay implements Component {
+ 	#mdTheme: MarkdownTheme;
+ 	#scrollView: ScrollView;
++	#document: PlanReviewDocumentOwner;
+ 	#sections: OverlaySection[] = [];
+ 	#toc: number[] = [];
+ 	/** Shallowest level among ToC entries, used to flatten indentation. */
+@@ -167,9 +144,7 @@ export class PlanReviewOverlay implements Component {
+ 	#sectionOffsets: number[] = [];
+ 	/** Rendered body row to underlying plan row; callouts retain their owner's anchor. */
+ 	#bodyRowAnchors: BodyRowAnchor[] = [];
+-	#undo: UndoEntry[] = [];
+-	/** Titles of sections deleted in the overlay, surfaced as Refine feedback. */
+-	#deleted: string[] = [];
++	#renderColumns = MAX_ANNOTATION_CONTEXT_WIDTH;
+ 
+ 	#options: string[];
+ 	#disabled: Set<number>;
+@@ -208,7 +183,7 @@ export class PlanReviewOverlay implements Component {
+ 	#committedLabel: string | undefined;
+ 	#annotating = false;
+ 	#input: Input;
+-	#annotationTarget: BodyRowAnchor | { sectionIndex: number; row: null; context: null } | undefined;
++	#annotationTarget: BodyRowAnchor | { sectionIndex: number; row: null; context: null; sectionId: string } | undefined;
+ 
+ 	constructor(
+ 		planContent: string,
+@@ -216,6 +191,7 @@ export class PlanReviewOverlay implements Component {
+ 		private readonly callbacks: PlanReviewOverlayCallbacks,
+ 	) {
+ 		this.#mdTheme = getMarkdownTheme();
++		this.#document = PlanReviewDocumentOwner.nativeOverlay(planContent, options.annotationState);
+ 		this.#scrollView = new ScrollView([], {
+ 			height: MIN_BODY_ROWS,
+ 			scrollbar: "auto",
+@@ -240,8 +216,7 @@ export class PlanReviewOverlay implements Component {
+ 		this.#input.setUseTerminalCursor(false);
+ 		this.#input.onSubmit = value => this.#submitAnnotation(value);
+ 		this.#input.onEscape = () => this.#exitAnnotate();
+-		this.#setSections(planContent);
+-		this.#restoreAnnotationState(options.annotationState);
++		this.#setSections(this.#document.content);
+ 		if (Array.isArray(options.annotationState?.annotations) && options.annotationState.annotations.length > 0) {
+ 			this.#recomputeFeedback();
+ 		}
+@@ -255,15 +230,13 @@ export class PlanReviewOverlay implements Component {
+ 	 *  reset scroll/focus so the operator starts at the top. Does not emit
+ 	 *  `onPlanEdited` (the editor round-trip already persisted the file). */
+ 	setPlanContent(planContent: string): void {
+-		const annotations = this.#annotationState();
+-		this.#setSections(planContent);
+-		this.#restoreAnnotationState(annotations);
++		const prepared = this.#document.prepareReplace({ content: planContent,
++			expectedDocumentRevision: this.#document.documentRevision, renderColumns: this.#renderColumns });
++		this.#document = prepared.next;
++		this.#setSections(this.#document.content);
+ 		this.#scrollView.scrollToTop();
+ 		this.#scrollProgress = 0;
+ 		this.#tocCursor = 0;
+-		// A wholesale external-editor swap supersedes prior in-overlay deletions.
+-		this.#deleted = [];
+-		this.#undo = [];
+ 		this.#recomputeFeedback();
+ 	}
+ 
+@@ -275,145 +248,19 @@ export class PlanReviewOverlay implements Component {
+ 			md: new Markdown(section.raw, 1, 0, this.#mdTheme),
+ 			annotations: [],
+ 		}));
++		this.#restoreAnnotationState(this.#document.annotationState);
+ 		this.#rebuildToc();
+ 		this.#tocCursor = Math.min(this.#tocCursor, Math.max(0, this.#toc.length - 1));
+ 	}
+-	#cloneAnnotation(annotation: OverlayAnnotation): OverlayAnnotation {
+-		return {
+-			note: annotation.note,
+-			target:
+-				annotation.target.kind === "section"
+-					? { kind: "section" }
+-					: {
+-							kind: "line",
+-							row: annotation.target.row,
+-							context: annotation.target.context,
+-							contextTruncated: annotation.target.contextTruncated,
+-						},
+-		};
+-	}
+-
+-	#sectionPaths(): string[][] {
+-		const stack: Array<{ level: number; title: string }> = [];
+-		return this.#sections.map(section => {
+-			if (section.level < 1) return [];
+-			while (stack.length > 0 && stack[stack.length - 1]!.level >= section.level) stack.pop();
+-			stack.push({ level: section.level, title: section.title });
+-			return stack.map(entry => entry.title);
+-		});
+-	}
+-
+-	#sectionContentHash(section: OverlaySection): string {
+-		return `${section.raw.length}:${Bun.hash(section.raw).toString(16)}`;
+-	}
+-
+ 	#annotationState(): PlanReviewAnnotationState {
+-		const annotations: PlanReviewAnnotationState["annotations"] = [];
+-		const sectionPaths = this.#sectionPaths();
+-		for (let sectionIndex = 0; sectionIndex < this.#sections.length; sectionIndex++) {
+-			const section = this.#sections[sectionIndex]!;
+-			for (const annotation of section.annotations) {
+-				annotations.push({
+-					section: {
+-						index: sectionIndex,
+-						title: section.title,
+-						path: sectionPaths[sectionIndex]!,
+-						contentHash: this.#sectionContentHash(section),
+-					},
+-					target:
+-						annotation.target.kind === "section"
+-							? { kind: "section" }
+-							: {
+-									kind: "line",
+-									row: annotation.target.row,
+-									context: annotation.target.context,
+-									contextTruncated: annotation.target.contextTruncated,
+-								},
+-					note: annotation.note,
+-				});
+-			}
+-		}
+-		return { annotations };
++		return this.#document.annotationState;
+ 	}
+ 
+ 	#restoreAnnotationState(state: PlanReviewAnnotationState | undefined): void {
+-		if (!state || !Array.isArray(state.annotations)) return;
+-		const sectionPaths = this.#sectionPaths();
+-		const contentHashes = this.#sections.map(section => this.#sectionContentHash(section));
+-		for (const entry of state.annotations) {
+-			if (
+-				!entry ||
+-				typeof entry.note !== "string" ||
+-				!entry.section ||
+-				!entry.target ||
+-				typeof entry.section.title !== "string"
+-			) {
+-				continue;
+-			}
+-			const note = entry.note.trim();
+-			if (!note) continue;
+-			const storedIndex = Number.isInteger(entry.section.index) ? entry.section.index : -1;
+-			const storedPath = entry.section.path;
+-			let matchingSections: number[];
+-			if (
+-				Array.isArray(storedPath) &&
+-				storedPath.every(segment => typeof segment === "string") &&
+-				typeof entry.section.contentHash === "string"
+-			) {
+-				matchingSections = [];
+-				for (let i = 0; i < this.#sections.length; i++) {
+-					const path = sectionPaths[i]!;
+-					if (
+-						this.#sections[i]!.title === entry.section.title &&
+-						contentHashes[i] === entry.section.contentHash &&
+-						path.length === storedPath.length &&
+-						path.every((segment, pathIndex) => segment === storedPath[pathIndex])
+-					) {
+-						matchingSections.push(i);
+-					}
+-				}
+-			} else {
+-				matchingSections =
+-					storedIndex >= 0 &&
+-					storedIndex < this.#sections.length &&
+-					this.#sections[storedIndex]!.title === entry.section.title
+-						? [storedIndex]
+-						: [];
+-			}
+-			if (matchingSections.length === 0) continue;
+-			const sectionIndex = matchingSections.reduce((best, candidate) =>
+-				Math.abs(candidate - storedIndex) < Math.abs(best - storedIndex) ? candidate : best,
+-			);
+-			const section = this.#sections[sectionIndex]!;
+-			if (entry.target.kind === "section") {
+-				if (section.level >= 1) section.annotations.push({ note, target: { kind: "section" } });
+-				continue;
+-			}
+-			if (
+-				entry.target.kind !== "line" ||
+-				!Number.isFinite(entry.target.row) ||
+-				typeof entry.target.context !== "string"
+-			) {
+-				continue;
+-			}
+-			const contexts = section.md.render(MAX_ANNOTATION_CONTEXT_WIDTH).map(line => this.#lineContext(line));
+-			const row = this.#resolveLineRow(
+-				entry.target.row,
+-				{ text: entry.target.context, truncated: entry.target.contextTruncated === true },
+-				contexts,
+-			);
+-			if (row < 0) continue;
+-			const context = contexts[row]!;
+-			section.annotations.push({
+-				note,
+-				target: {
+-					kind: "line",
+-					row,
+-					context: context.text,
+-					contextTruncated: context.truncated,
+-				},
+-			});
+-		}
++		const restored = restorePlanReviewAnnotations(this.#sections, state, sectionIndex =>
++			this.#sections[sectionIndex]!.md.render(MAX_ANNOTATION_CONTEXT_WIDTH).map(line => this.#lineContext(line)),
++		);
++		for (let i = 0; i < this.#sections.length; i++) this.#sections[i]!.annotations = restored[i]!;
+ 	}
+ 
+ 	#rebuildToc(): void {
+@@ -510,7 +357,7 @@ export class PlanReviewOverlay implements Component {
+ 			return;
+ 		}
+ 		if (this.callbacks.onCopyPlan && keyData === "c") {
+-			void this.callbacks.onCopyPlan(joinPlanSections(this.#sections));
++			void this.callbacks.onCopyPlan(this.#document.content);
+ 			return;
+ 		}
+ 		if (matchesKey(keyData, "tab") || keyData === "\t") {
+@@ -768,55 +615,39 @@ export class PlanReviewOverlay implements Component {
+ 		return pos;
+ 	}
+ 
+-	#pushUndo(): void {
+-		this.#undo.push({
+-			text: joinPlanSections(this.#sections),
+-			annotations: this.#sections.map(section =>
+-				section.annotations.map(annotation => this.#cloneAnnotation(annotation)),
+-			),
+-			deleted: [...this.#deleted],
+-		});
+-	}
+-
+ 	#deleteSelectedSection(): void {
+ 		const sectionIndex = this.#toc[this.#tocCursor];
+-		if (sectionIndex === undefined) return;
+-		const span = sectionDeletionSpan(this.#sections, sectionIndex);
+-		if (span.length === 0) return;
+-		this.#pushUndo();
+-		// Record the removed headings so the Refine feedback can ask the model to
+-		// drop them, then splice from the bottom up so earlier indices stay valid.
+-		for (const i of span) {
+-			const section = this.#sections[i]!;
+-			if (section.level >= 1 && section.title) this.#deleted.push(section.title);
+-		}
+-		for (let i = span.length - 1; i >= 0; i--) this.#sections.splice(span[i]!, 1);
+-		this.#rebuildToc();
++		const sectionId = sectionIndex === undefined ? undefined : this.#sections[sectionIndex]?.sectionId;
++		if (!sectionId) return;
++		const prepared = this.#document.prepare({ kind: "delete-section",
++			expectedDocumentRevision: this.#document.documentRevision, sectionId }, this.#renderColumns);
++		this.#document = prepared.next;
++		this.#setSections(this.#document.content);
+ 		this.#tocCursor = Math.min(this.#tocCursor, Math.max(0, this.#toc.length - 1));
+ 		this.#pendingScrollToToc = true;
+-		this.callbacks.onPlanEdited?.(joinPlanSections(this.#sections));
++		this.callbacks.onPlanEdited?.(prepared.result.content);
+ 		this.#recomputeFeedback();
+ 	}
+ 
+ 	#undoLast(): void {
+-		const entry = this.#undo.pop();
+-		if (!entry) return;
+-		this.#setSections(entry.text);
+-		for (let i = 0; i < this.#sections.length; i++) {
+-			this.#sections[i]!.annotations =
+-				entry.annotations[i]?.map(annotation => this.#cloneAnnotation(annotation)) ?? [];
+-		}
+-		this.#deleted = [...entry.deleted];
++		if (!this.#document.summary(this.#document.documentRevision, this.#renderColumns).canUndo) return;
++		const prepared = this.#document.prepare({ kind: "undo",
++			expectedDocumentRevision: this.#document.documentRevision }, this.#renderColumns);
++		this.#document = prepared.next;
++		this.#setSections(this.#document.content);
+ 		this.#tocCursor = Math.min(this.#tocCursor, Math.max(0, this.#toc.length - 1));
+ 		this.#pendingScrollToToc = true;
+-		this.callbacks.onPlanEdited?.(joinPlanSections(this.#sections));
++		// Preserve the native overlay callback contract: undo emits the current
++		// complete plan even when it only removed an annotation.
++		this.callbacks.onPlanEdited?.(prepared.result.content);
+ 		this.#recomputeFeedback();
+ 	}
+ 
+ 	#startSectionAnnotate(): void {
+ 		const sectionIndex = this.#toc[this.#tocCursor];
+-		if (sectionIndex === undefined) return;
+-		this.#startAnnotate({ sectionIndex, row: null, context: null });
++		const sectionId = sectionIndex === undefined ? undefined : this.#sections[sectionIndex]?.sectionId;
++		if (!sectionId) return;
++		this.#startAnnotate({ sectionIndex, row: null, context: null, sectionId });
+ 	}
+ 
+ 	#startBodyAnnotate(): void {
+@@ -826,7 +657,7 @@ export class PlanReviewOverlay implements Component {
+ 		this.#startAnnotate(this.#bodyRowAnchors[topRow]!);
+ 	}
+ 
+-	#startAnnotate(target: BodyRowAnchor | { sectionIndex: number; row: null; context: null }): void {
++	#startAnnotate(target: BodyRowAnchor | { sectionIndex: number; row: null; context: null; sectionId: string }): void {
+ 		this.#annotationTarget = target;
+ 		this.#annotating = true;
+ 		this.#input.setValue("");
+@@ -837,21 +668,15 @@ export class PlanReviewOverlay implements Component {
+ 		const note = value.trim();
+ 		const target = this.#annotationTarget;
+ 		this.#annotationTarget = undefined;
+-		const section = target ? this.#sections[target.sectionIndex] : undefined;
+-		if (note && section && target) {
+-			this.#pushUndo();
+-			section.annotations.push({
+-				note,
+-				target:
+-					target.row === null
+-						? { kind: "section" }
+-						: {
+-								kind: "line",
+-								row: target.row,
+-								context: target.context,
+-								contextTruncated: target.contextTruncated,
+-							},
+-			});
++		if (note && target) {
++			const action = target.row === null
++				? { kind: "annotate" as const, expectedDocumentRevision: this.#document.documentRevision,
++					target: { kind: "section" as const, sectionId: target.sectionId }, note }
++				: { kind: "annotate" as const, expectedDocumentRevision: this.#document.documentRevision,
++					target: { kind: "line" as const, sectionId: target.sectionId, rowId: target.rowId }, note };
++			const prepared = this.#document.prepare(action, this.#renderColumns);
++			this.#document = prepared.next;
++			this.#setSections(this.#document.content);
+ 			this.#recomputeFeedback();
+ 		}
+ 		this.#input.setValue("");
+@@ -865,36 +690,7 @@ export class PlanReviewOverlay implements Component {
+ 
+ 	#recomputeFeedback(): void {
+ 		this.callbacks.onAnnotationStateChange?.(this.#annotationState());
+-		const annotated = this.#sections.filter(section => section.annotations.length > 0);
+-		if (annotated.length === 0 && this.#deleted.length === 0) {
+-			this.callbacks.onFeedbackChange?.("");
+-			return;
+-		}
+-		let feedback = "Refinement feedback on the plan:\n";
+-		if (this.#deleted.length > 0) {
+-			feedback += "\nRemove these sections:\n";
+-			for (const title of this.#deleted) feedback += `- ${title}\n`;
+-		}
+-		for (const section of annotated) {
+-			feedback += `\n## ${section.title || "Plan preamble"}\n`;
+-			for (const annotation of section.annotations) {
+-				if (annotation.target.kind === "line") feedback += `> Line: ${annotation.target.context}\n`;
+-				feedback += this.#formatAnnotationFeedback(annotation.note);
+-			}
+-		}
+-		this.callbacks.onFeedbackChange?.(feedback);
+-	}
+-
+-	#formatAnnotationFeedback(note: string): string {
+-		if (!note.includes("\n")) return `- ${note}\n`;
+-		const fence = this.#markdownFenceFor(note);
+-		return `${fence}md\n${note}\n${fence}\n`;
+-	}
+-
+-	#markdownFenceFor(text: string): string {
+-		let fence = "```";
+-		while (text.includes(fence)) fence += "`";
+-		return fence;
++		this.callbacks.onFeedbackChange?.(this.#document.feedback);
+ 	}
+ 
+ 	#renderSliderLines(): string[] {
+@@ -974,15 +770,19 @@ export class PlanReviewOverlay implements Component {
+ 
+ 	/** Build the concatenated body lines and map each rendered row back to a plan anchor. */
+ 	#buildBody(bodyContentWidth: number): string[] {
++		this.#renderColumns = bodyContentWidth;
+ 		const lines: string[] = [];
+ 		const anchors: BodyRowAnchor[] = [];
++		const nativeSections = this.#document.renderSections(this.#document.documentRevision, bodyContentWidth);
+ 		// oxlint-disable-next-line unicorn/no-new-array -- length preallocation
+ 		const offsets: number[] = new Array(this.#sections.length);
+ 		for (let sectionIndex = 0; sectionIndex < this.#sections.length; sectionIndex++) {
+ 			const section = this.#sections[sectionIndex]!;
++			const nativeSection = nativeSections[sectionIndex]!;
++			section.sectionId = nativeSection.projection.sectionId;
+ 			offsets[sectionIndex] = lines.length;
+-			const rendered = section.md.render(bodyContentWidth);
+-			const contexts = rendered.map(line => this.#lineContext(line));
++			const rendered = nativeSection.displayRows;
++			const contexts = nativeSection.projection.rows;
+ 			for (let row = 0; row < rendered.length; row++) {
+ 				const context = contexts[row]!;
+ 				const anchor = {
+@@ -990,21 +790,15 @@ export class PlanReviewOverlay implements Component {
+ 					row,
+ 					context: context.text,
+ 					contextTruncated: context.truncated,
++					sectionId: nativeSection.projection.sectionId,
++					rowId: context.rowId,
+ 				};
+ 				lines.push(rendered[row]!);
+ 				anchors.push(anchor);
+-				for (const annotation of section.annotations) {
+-					const annotationRow =
+-						annotation.target.kind === "section"
+-							? 0
+-							: this.#resolveLineRow(
+-									annotation.target.row,
+-									{
+-										text: annotation.target.context,
+-										truncated: annotation.target.contextTruncated,
+-									},
+-									contexts,
+-								);
++				for (const annotation of nativeSection.projection.annotations) {
++					const annotationRowId = annotation.target.kind === "line" ? annotation.target.rowId : undefined;
++					const annotationRow = annotation.target.kind === "section"
++						? 0 : contexts.findIndex(candidate => candidate.rowId === annotationRowId);
+ 					if (annotationRow === row) {
+ 						this.#appendAnnotationCallout(lines, anchors, annotation.note, anchor, bodyContentWidth);
+ 					}
+@@ -1016,46 +810,13 @@ export class PlanReviewOverlay implements Component {
+ 		return lines;
+ 	}
+ 
+-	#lineContext(line: string): LineAnchorContext {
++	#lineContext(line: string): PlanReviewLineContext {
+ 		const sanitized = sanitizeStatusText(line);
+ 		const truncated = visibleWidth(sanitized) > MAX_ANNOTATION_CONTEXT_WIDTH;
+ 		const text = truncateToWidth(sanitized, MAX_ANNOTATION_CONTEXT_WIDTH, Ellipsis.Unicode);
+ 		return { text: text || "(blank line)", truncated };
+ 	}
+ 
+-	#resolveLineRow(
+-		storedRow: number,
+-		storedContext: LineAnchorContext,
+-		contexts: readonly LineAnchorContext[],
+-	): number {
+-		if (contexts.length === 0) return -1;
+-		const targetRow = Math.max(0, Math.floor(storedRow));
+-		const normalize = (context: LineAnchorContext): string => {
+-			const normalized = sanitizeStatusText(context.text).replace(/\s+/g, " ").trim();
+-			return context.truncated && normalized.endsWith("…") ? normalized.slice(0, -1) : normalized;
+-		};
+-		const normalizedStoredContext = normalize(storedContext);
+-		if (!normalizedStoredContext) return -1;
+-		let best = -1;
+-		let bestDistance = Number.POSITIVE_INFINITY;
+-		for (let row = 0; row < contexts.length; row++) {
+-			const normalizedContext = normalize(contexts[row]!);
+-			if (
+-				normalizedContext !== normalizedStoredContext &&
+-				!normalizedContext.includes(normalizedStoredContext) &&
+-				!normalizedStoredContext.includes(normalizedContext)
+-			) {
+-				continue;
+-			}
+-			const distance = Math.abs(row - targetRow);
+-			if (distance < bestDistance) {
+-				best = row;
+-				bestDistance = distance;
+-			}
+-		}
+-		return best;
+-	}
+-
+ 	#appendAnnotationCallout(
+ 		lines: string[],
+ 		anchors: BodyRowAnchor[],
+diff --git a/src/modes/interactive-mode.ts b/src/modes/interactive-mode.ts
+index 536c6c816b3cad8bf75be98e036463ed09aa4ad7..51cd2b960acb87fca78a1b8f8e3cbc4b756f82b1 100644
+--- a/src/modes/interactive-mode.ts
++++ b/src/modes/interactive-mode.ts
+@@ -1,3 +1,5 @@
++import { shouldEnterPlanModeOnStartup } from "../plan-mode/startup";
++export { shouldEnterPlanModeOnStartup } from "../plan-mode/startup";
+ /**
+  * Interactive mode for the coding agent.
+  * Handles TUI rendering and user interaction, delegating business logic to AgentSession.
+@@ -381,19 +383,6 @@ function readPersistedToolNames(value: unknown): string[] | undefined {
+ 	return value as string[];
+ }
+ 
+-export function shouldEnterPlanModeOnStartup(
+-	sessionManager: Pick<SessionManager, "buildSessionContext" | "getEntries">,
+-	sessionSettings: Pick<Settings, "get">,
+-): boolean {
+-	const hasConversationContext = sessionManager.buildSessionContext().messages.length > 0;
+-	const hasExplicitMode = sessionManager.getEntries().some(entry => entry.type === "mode_change");
+-	return (
+-		!hasConversationContext &&
+-		!hasExplicitMode &&
+-		sessionSettings.get("plan.defaultOnStartup") &&
+-		sessionSettings.get("plan.enabled")
+-	);
+-}
+ 
+ /** Options for creating an InteractiveMode instance (for future API use) */
+ export interface InteractiveModeOptions {
+diff --git a/src/plan-mode/plan-review-document.ts b/src/plan-mode/plan-review-document.ts
+new file mode 100755
+index 0000000000000000000000000000000000000000..09da944d6756e72da02bc751a4a6175758c0d1ae
+--- /dev/null
++++ b/src/plan-mode/plan-review-document.ts
+@@ -0,0 +1,665 @@
++/**
++ * Pure document operations shared by native Plan review surfaces. Markdown
++ * section parsing remains owned by the existing plan-toc implementation.
++ */
++export {
++	joinPlanSections,
++	parsePlanSections,
++	sectionDeletionSpan,
++	stripInlineMarkdown,
++} from "../modes/components/plan-toc";
++export type { PlanSection } from "../modes/components/plan-toc";
++
++import { Markdown, Ellipsis, truncateToWidth, visibleWidth, type MarkdownTheme } from "@oh-my-pi/pi-tui";
++import { sanitizeText } from "@oh-my-pi/pi-utils";
++import { sanitizeStatusText } from "../modes/shared";
++import { getMarkdownTheme, getSymbolTheme, theme } from "../modes/theme/theme";
++import {
++	joinPlanSections,
++	parsePlanSections,
++	sectionDeletionSpan,
++	type PlanSection,
++} from "../modes/components/plan-toc";
++
++export interface PlanReviewLineContext {
++	text: string;
++	truncated: boolean;
++}
++
++export type PlanReviewAnnotationTarget =
++	| { kind: "section" }
++	| { kind: "line"; row: number; context: string; contextTruncated: boolean };
++
++export interface PlanReviewAnnotation {
++	note: string;
++	target: PlanReviewAnnotationTarget;
++}
++
++export interface PlanReviewDocumentSection extends PlanSection {
++	annotations: PlanReviewAnnotation[];
++}
++
++/** Serializable annotations retained by the plan-review owner between views. */
++export interface PlanReviewAnnotationState {
++	annotations: Array<{
++		section: {
++			index: number;
++			title: string;
++			/** Heading ancestry from the document root. */
++			path?: string[];
++			/** Hash of the section source, used to reject ambiguous moved headings. */
++			contentHash?: string;
++		};
++		target: { kind: "section" } | { kind: "line"; row: number; context: string; contextTruncated?: boolean };
++		note: string;
++	}>;
++}
++
++/** Heading ancestry for each section. Preamble sections have an empty path. */
++export function planReviewSectionPaths(sections: readonly PlanSection[]): string[][] {
++	const stack: Array<{ level: number; title: string }> = [];
++	return sections.map(section => {
++		if (section.level < 1) return [];
++		while (stack.length > 0 && stack[stack.length - 1]!.level >= section.level) stack.pop();
++		stack.push({ level: section.level, title: section.title });
++		return stack.map(entry => entry.title);
++	});
++}
++
++/** Exact native section fingerprint used by annotation realignment. */
++export function planReviewSectionContentHash(section: Pick<PlanSection, "raw">): string {
++	return `${section.raw.length}:${Bun.hash(section.raw).toString(16)}`;
++}
++
++export function clonePlanReviewAnnotation(annotation: PlanReviewAnnotation): PlanReviewAnnotation {
++	return {
++		note: annotation.note,
++		target:
++			annotation.target.kind === "section"
++				? { kind: "section" }
++				: {
++						kind: "line",
++						row: annotation.target.row,
++						context: annotation.target.context,
++						contextTruncated: annotation.target.contextTruncated,
++					},
++	};
++}
++
++/** Capture annotations with the path/hash anchors used by native Plan review. */
++export function capturePlanReviewAnnotationState(
++	sections: readonly PlanReviewDocumentSection[],
++): PlanReviewAnnotationState {
++	const annotations: PlanReviewAnnotationState["annotations"] = [];
++	const sectionPaths = planReviewSectionPaths(sections);
++	for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
++		const section = sections[sectionIndex]!;
++		for (const annotation of section.annotations) {
++			annotations.push({
++				section: {
++					index: sectionIndex,
++					title: section.title,
++					path: sectionPaths[sectionIndex]!,
++					contentHash: planReviewSectionContentHash(section),
++				},
++				target:
++					annotation.target.kind === "section"
++						? { kind: "section" }
++						: {
++								kind: "line",
++								row: annotation.target.row,
++								context: annotation.target.context,
++								contextTruncated: annotation.target.contextTruncated,
++							},
++				note: annotation.note,
++			});
++		}
++	}
++	return { annotations };
++}
++
++function normalizeLineContext(context: PlanReviewLineContext): string {
++	const normalized = sanitizeText(context.text)
++		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
++		.replace(/ +/g, " ")
++		.trim()
++		.replace(/\s+/g, " ")
++		.trim();
++	return context.truncated && normalized.endsWith("…") ? normalized.slice(0, -1) : normalized;
++}
++
++/** Resolve a persisted rendered-line anchor to the nearest matching row. */
++export function resolvePlanReviewLineRow(
++	storedRow: number,
++	storedContext: PlanReviewLineContext,
++	contexts: readonly PlanReviewLineContext[],
++): number {
++	if (contexts.length === 0) return -1;
++	const targetRow = Math.max(0, Math.floor(storedRow));
++	const normalizedStoredContext = normalizeLineContext(storedContext);
++	if (!normalizedStoredContext) return -1;
++	let best = -1;
++	let bestDistance = Number.POSITIVE_INFINITY;
++	for (let row = 0; row < contexts.length; row++) {
++		const normalizedContext = normalizeLineContext(contexts[row]!);
++		if (
++			normalizedContext !== normalizedStoredContext &&
++			!normalizedContext.includes(normalizedStoredContext) &&
++			!normalizedStoredContext.includes(normalizedContext)
++		) continue;
++		const distance = Math.abs(row - targetRow);
++		if (distance < bestDistance) {
++			best = row;
++			bestDistance = distance;
++		}
++	}
++	return best;
++}
++
++/**
++ * Restore persisted annotations against current sections. The caller supplies
++ * the same rendered-line contexts used by its review surface; this helper owns
++ * the native path/hash and nearest-row reconciliation rules.
++ */
++export function restorePlanReviewAnnotations(
++	sections: readonly PlanSection[],
++	state: PlanReviewAnnotationState | undefined,
++	lineContexts: (sectionIndex: number) => readonly PlanReviewLineContext[],
++): PlanReviewAnnotation[][] {
++	const restored = sections.map(() => [] as PlanReviewAnnotation[]);
++	if (!state || !Array.isArray(state.annotations)) return restored;
++	const sectionPaths = planReviewSectionPaths(sections);
++	const contentHashes = sections.map(planReviewSectionContentHash);
++	for (const entry of state.annotations) {
++		if (!entry || typeof entry.note !== "string" || !entry.section || !entry.target || typeof entry.section.title !== "string") continue;
++		const note = entry.note.trim();
++		if (!note) continue;
++		const storedIndex = Number.isInteger(entry.section.index) ? entry.section.index : -1;
++		const storedPath = entry.section.path;
++		let matchingSections: number[];
++		if (Array.isArray(storedPath) && storedPath.every(segment => typeof segment === "string") && typeof entry.section.contentHash === "string") {
++			matchingSections = [];
++			for (let i = 0; i < sections.length; i++) {
++				const path = sectionPaths[i]!;
++				if (sections[i]!.title === entry.section.title && contentHashes[i] === entry.section.contentHash && path.length === storedPath.length
++					&& path.every((segment, pathIndex) => segment === storedPath[pathIndex])) matchingSections.push(i);
++			}
++		} else {
++			matchingSections = storedIndex >= 0 && storedIndex < sections.length && sections[storedIndex]!.title === entry.section.title ? [storedIndex] : [];
++		}
++		if (matchingSections.length === 0) continue;
++		const sectionIndex = matchingSections.reduce((best, candidate) =>
++			Math.abs(candidate - storedIndex) < Math.abs(best - storedIndex) ? candidate : best,
++		);
++		const section = sections[sectionIndex]!;
++		if (entry.target.kind === "section") {
++			if (section.level >= 1) restored[sectionIndex]!.push({ note, target: { kind: "section" } });
++			continue;
++		}
++		if (entry.target.kind !== "line" || !Number.isFinite(entry.target.row) || typeof entry.target.context !== "string") continue;
++		const contexts = lineContexts(sectionIndex);
++		const row = resolvePlanReviewLineRow(entry.target.row,
++			{ text: entry.target.context, truncated: entry.target.contextTruncated === true }, contexts);
++		if (row < 0) continue;
++		const context = contexts[row]!;
++		restored[sectionIndex]!.push({ note, target: { kind: "line", row, context: context.text, contextTruncated: context.truncated } });
++	}
++	return restored;
++}
++
++function markdownFenceFor(text: string): string {
++	let fence = "```";
++	while (text.includes(fence)) fence += "`";
++	return fence;
++}
++
++/** Exact native Markdown sent by the Refine branch for deletes/annotations. */
++export function formatPlanReviewFeedback(
++	sections: readonly PlanReviewDocumentSection[],
++	deleted: readonly string[],
++): string {
++	const annotated = sections.filter(section => section.annotations.length > 0);
++	if (annotated.length === 0 && deleted.length === 0) return "";
++	let feedback = "Refinement feedback on the plan:\n";
++	if (deleted.length > 0) {
++		feedback += "\nRemove these sections:\n";
++		for (const title of deleted) feedback += `- ${title}\n`;
++	}
++	for (const section of annotated) {
++		feedback += `\n## ${section.title || "Plan preamble"}\n`;
++		for (const annotation of section.annotations) {
++			if (annotation.target.kind === "line") feedback += `> Line: ${annotation.target.context}\n`;
++			const note = annotation.note;
++			feedback += note.includes("\n") ? `${markdownFenceFor(note)}md\n${note}\n${markdownFenceFor(note)}\n` : `- ${note}\n`;
++		}
++	}
++	return feedback;
++}
++
++/** Native-owned composition of structured document feedback and an optional
++ * free-form refinement. The structured block remains byte-exact when alone. */
++export function combinePlanReviewFeedback(documentFeedback: string, additionalFeedback: string): string {
++	if (!documentFeedback.trim()) return additionalFeedback;
++	if (!additionalFeedback.trim()) return documentFeedback;
++	return `${documentFeedback.trimEnd()}\n\n${additionalFeedback}`;
++}
++
++export const PLAN_REVIEW_RENDER_COLUMNS_MIN = 20;
++export const PLAN_REVIEW_RENDER_COLUMNS_MAX = 240;
++export const PLAN_REVIEW_SUMMARY_MAX_BYTES = 2 * 1024 * 1024;
++export const PLAN_REVIEW_SECTION_MAX_ROWS = 20_000;
++export const PLAN_REVIEW_SECTION_MAX_BYTES = 2 * 1024 * 1024;
++export const PLAN_REVIEW_MAX_ANNOTATIONS = 1_000;
++export const PLAN_REVIEW_ANNOTATION_MAX_BYTES = 500_000;
++const MAX_ANNOTATION_CONTEXT_WIDTH = 120;
++const encoder = new TextEncoder();
++
++export interface PlanReviewDocumentSectionSummary {
++	sectionId: string;
++	level: number;
++	title: string;
++	annotationCount: number;
++}
++
++export interface PlanReviewDocumentSummary {
++	documentRevision: string;
++	renderColumns: number;
++	canUndo: boolean;
++	feedback: string;
++	sections: PlanReviewDocumentSectionSummary[];
++	/** Section ids in exact native ToC order; omitted title/preamble sections remain in `sections`. */
++	toc: string[];
++}
++
++export interface PlanReviewDocumentRow {
++	rowId: string;
++	text: string;
++	truncated: boolean;
++	annotationIds: string[];
++}
++
++export interface PlanReviewDocumentAnnotationProjection {
++	annotationId: string;
++	note: string;
++	target: { kind: "section" } | { kind: "line"; rowId: string };
++}
++
++export interface PlanReviewDocumentSectionProjection extends PlanReviewDocumentSectionSummary {
++	documentRevision: string;
++	renderColumns: number;
++	rows: PlanReviewDocumentRow[];
++	annotations: PlanReviewDocumentAnnotationProjection[];
++}
++
++/** Native-only display rows plus the serializable section projection. */
++export interface PlanReviewNativeRenderedSection {
++	projection: PlanReviewDocumentSectionProjection;
++	displayRows: readonly string[];
++}
++
++export type PlanReviewDocumentAction =
++	| { kind: "delete-section"; expectedDocumentRevision: string; sectionId: string }
++	| {
++			kind: "annotate";
++			expectedDocumentRevision: string;
++			target:
++				| { kind: "section"; sectionId: string }
++				| { kind: "line"; sectionId: string; rowId: string };
++			note: string;
++	  }
++	| { kind: "undo"; expectedDocumentRevision: string };
++
++export interface PlanReviewDocumentMutationResult {
++	documentRevision: string;
++	content: string;
++	annotationState: PlanReviewAnnotationState;
++	feedback: string;
++	artifactChanged: boolean;
++	summary: PlanReviewDocumentSummary;
++}
++
++export interface PreparedPlanReviewDocumentMutation {
++	/** Candidate state. The caller adopts it only after any required artifact write succeeds. */
++	next: PlanReviewDocumentOwner;
++	result: PlanReviewDocumentMutationResult;
++}
++
++interface DocumentUndoEntry {
++	sections: PlanReviewDocumentSection[];
++	deleted: string[];
++}
++
++function renderedLineContext(line: string): PlanReviewLineContext {
++	const sanitized = sanitizeStatusText(line);
++	const truncated = visibleWidth(sanitized) > MAX_ANNOTATION_CONTEXT_WIDTH;
++	const text = truncateToWidth(sanitized, MAX_ANNOTATION_CONTEXT_WIDTH, Ellipsis.Unicode);
++	return { text: text || "(blank line)", truncated };
++}
++
++function plainMarkdownTheme(): MarkdownTheme {
++	const plain = (text: string) => text;
++	return {
++		heading: plain,
++		link: plain,
++		linkUrl: plain,
++		code: plain,
++		codeBlock: plain,
++		codeBlockBorder: plain,
++		quote: plain,
++		quoteBorder: plain,
++		hr: plain,
++		listBullet: plain,
++		bold: plain,
++		italic: plain,
++		underline: plain,
++		strikethrough: plain,
++		highlightCode: code => code.split("\n"),
++		symbols: getSymbolTheme(),
++	};
++}
++
++function activeMarkdownTheme(): MarkdownTheme {
++	// Worker-only document projection has no TUI and therefore may run before a
++	// global color theme exists. Styling never owns row identity; the native
++	// Markdown renderer and symbol layout remain the source of wrapping.
++	return typeof theme === "undefined" ? plainMarkdownTheme() : getMarkdownTheme();
++}
++
++function renderSection(section: PlanSection, columns: number): { displayRows: readonly string[]; contexts: PlanReviewLineContext[] } {
++	const displayRows = new Markdown(section.raw, 1, 0, activeMarkdownTheme()).render(columns);
++	return { displayRows, contexts: displayRows.map(renderedLineContext) };
++}
++
++function cloneSections(sections: readonly PlanReviewDocumentSection[]): PlanReviewDocumentSection[] {
++	return sections.map(section => ({
++		level: section.level,
++		title: section.title,
++		raw: section.raw,
++		annotations: section.annotations.map(clonePlanReviewAnnotation),
++	}));
++}
++
++function validColumns(value: number, nativeOverlay: boolean): number {
++	const minimum = nativeOverlay ? 1 : PLAN_REVIEW_RENDER_COLUMNS_MIN;
++	const maximum = nativeOverlay ? 4096 : PLAN_REVIEW_RENDER_COLUMNS_MAX;
++	if (!Number.isInteger(value) || value < minimum || value > maximum) {
++		throw new Error(`Plan review render columns must be an integer from ${minimum} to ${maximum}.`);
++	}
++	return value;
++}
++
++function opaqueDigest(parts: readonly (string | number)[]): string {
++	// Four independently salted native hashes keep the identifier opaque and at
++	// the same strict 64-hex width used by the owning review protocol. No client
++	// computes or interprets this value.
++	return ["a", "b", "c", "d"]
++		.map(salt => Bun.hash(`${salt}\0${parts.join("\0")}`).toString(16).padStart(16, "0"))
++		.join("");
++}
++
++/**
++ * Copy-on-write native owner for Plan review document structure. Artifact I/O
++ * remains with the caller: it adopts a prepared `next` owner only after the
++ * corresponding owned write succeeds.
++ */
++export class PlanReviewDocumentOwner {
++	#binding: string;
++	#nativeOverlay = false;
++	#counter = 0;
++	#documentRevision: string;
++	#sections: PlanReviewDocumentSection[];
++	#deleted: string[] = [];
++	#undo: DocumentUndoEntry[] = [];
++
++	constructor(content: string, options: { binding: string; annotationState?: PlanReviewAnnotationState }) {
++		if (!options.binding || options.binding.includes("\0")) throw new Error("A native Plan review binding is required.");
++		this.#binding = options.binding;
++		this.#sections = parsePlanSections(content).map(section => ({ ...section, annotations: [] }));
++		if (options.annotationState) {
++			const restored = restorePlanReviewAnnotations(this.#sections, options.annotationState, index =>
++				renderSection(this.#sections[index]!, MAX_ANNOTATION_CONTEXT_WIDTH).contexts,
++			);
++			for (let index = 0; index < this.#sections.length; index++) this.#sections[index]!.annotations = restored[index]!;
++		}
++		this.#documentRevision = this.#revision();
++	}
++
++	/** Native TUI construction keeps actual emergency and wide terminal widths;
++	 * desktop/public callers remain constrained to the exported projection range. */
++	static nativeOverlay(content: string, annotationState?: PlanReviewAnnotationState): PlanReviewDocumentOwner {
++		const owner = new PlanReviewDocumentOwner(content, { binding: `native-overlay:${Bun.hash(content).toString(16)}`, annotationState });
++		owner.#nativeOverlay = true;
++		return owner;
++	}
++
++	get documentRevision(): string {
++		return this.#documentRevision;
++	}
++
++	get content(): string {
++		return joinPlanSections(this.#sections);
++	}
++
++	get feedback(): string {
++		return formatPlanReviewFeedback(this.#sections, this.#deleted);
++	}
++
++	get annotationState(): PlanReviewAnnotationState {
++		return structuredClone(capturePlanReviewAnnotationState(this.#sections));
++	}
++
++	#revision(): string {
++		return opaqueDigest([
++			"document",
++			this.#binding,
++			this.#counter,
++			this.content,
++			JSON.stringify(capturePlanReviewAnnotationState(this.#sections)),
++			JSON.stringify(this.#deleted),
++		]);
++	}
++
++	#assertRevision(expected: string): void {
++		if (expected !== this.#documentRevision) throw new Error("The native Plan review document changed; refresh before continuing.");
++	}
++
++	#sectionId(index: number, columns: number): string {
++		const section = this.#sections[index]!;
++		return opaqueDigest(["section", this.#documentRevision, columns, index, section.level, section.title, planReviewSectionContentHash(section)]);
++	}
++
++	#rowId(sectionIndex: number, row: number, context: PlanReviewLineContext, columns: number): string {
++		return opaqueDigest(["row", this.#documentRevision, columns, sectionIndex, row, context.text, context.truncated ? 1 : 0]);
++	}
++
++	#annotationId(sectionIndex: number, annotationIndex: number, columns: number): string {
++		const annotation = this.#sections[sectionIndex]!.annotations[annotationIndex]!;
++		return opaqueDigest(["annotation", this.#documentRevision, columns, sectionIndex, annotationIndex, annotation.note,
++			annotation.target.kind === "section" ? "section" : `${annotation.target.row}\0${annotation.target.context}`]);
++	}
++
++	#tocIndices(): number[] {
++		const headings: number[] = [];
++		for (let index = 0; index < this.#sections.length; index++) if (this.#sections[index]!.level >= 1) headings.push(index);
++		let minLevel = Number.POSITIVE_INFINITY;
++		for (const index of headings) minLevel = Math.min(minLevel, this.#sections[index]!.level);
++		const topLevel = headings.filter(index => this.#sections[index]!.level === minLevel);
++		const titleIndex = topLevel.length === 1 && headings[0] === topLevel[0] ? topLevel[0] : -1;
++		return headings.filter(index => index !== titleIndex);
++	}
++
++	summary(expectedDocumentRevision: string, renderColumns: number): PlanReviewDocumentSummary {
++		this.#assertRevision(expectedDocumentRevision);
++		const columns = validColumns(renderColumns, this.#nativeOverlay);
++		const sections = this.#sections.map((section, index) => ({
++			sectionId: this.#sectionId(index, columns),
++			level: section.level,
++			title: section.title,
++			annotationCount: section.annotations.length,
++		}));
++		const summary: PlanReviewDocumentSummary = {
++			documentRevision: this.#documentRevision,
++			renderColumns: columns,
++			canUndo: this.#undo.length > 0,
++			feedback: this.feedback,
++			sections,
++			toc: this.#tocIndices().map(index => sections[index]!.sectionId),
++		};
++		if (encoder.encode(JSON.stringify(summary)).byteLength > PLAN_REVIEW_SUMMARY_MAX_BYTES) {
++			throw new Error("The native Plan document summary is too large.");
++		}
++		return summary;
++	}
++
++	#renderOne(index: number, columns: number, bounded: boolean): PlanReviewNativeRenderedSection {
++		const section = this.#sections[index]!;
++		const sectionId = this.#sectionId(index, columns);
++		const { displayRows, contexts } = renderSection(section, columns);
++		if (bounded && displayRows.length > PLAN_REVIEW_SECTION_MAX_ROWS) throw new Error("The native Plan section has too many rendered rows.");
++		const rowIds = contexts.map((context, row) => this.#rowId(index, row, context, columns));
++		const annotations: PlanReviewDocumentAnnotationProjection[] = [];
++		const annotationRows = new Map<number, string[]>();
++		for (let annotationIndex = 0; annotationIndex < section.annotations.length; annotationIndex++) {
++			const annotation = section.annotations[annotationIndex]!;
++			const annotationId = this.#annotationId(index, annotationIndex, columns);
++			if (annotation.target.kind === "section") {
++				annotations.push({ annotationId, note: annotation.note, target: { kind: "section" } });
++				continue;
++			}
++			const row = resolvePlanReviewLineRow(annotation.target.row,
++				{ text: annotation.target.context, truncated: annotation.target.contextTruncated }, contexts);
++			if (row < 0) continue;
++			annotations.push({ annotationId, note: annotation.note, target: { kind: "line", rowId: rowIds[row]! } });
++			annotationRows.set(row, [...(annotationRows.get(row) ?? []), annotationId]);
++		}
++		const projection: PlanReviewDocumentSectionProjection = {
++				documentRevision: this.#documentRevision,
++				renderColumns: columns,
++				sectionId,
++				level: section.level,
++				title: section.title,
++				annotationCount: section.annotations.length,
++				rows: contexts.map((context, row) => ({ rowId: rowIds[row]!, text: context.text, truncated: context.truncated,
++					annotationIds: annotationRows.get(row) ?? [] })),
++				annotations,
++		};
++		if (bounded && encoder.encode(JSON.stringify(projection)).byteLength > PLAN_REVIEW_SECTION_MAX_BYTES) {
++			throw new Error("The native Plan section projection is too large.");
++		}
++		return { projection, displayRows };
++	}
++
++	section(expectedDocumentRevision: string, sectionId: string, renderColumns: number): PlanReviewDocumentSectionProjection {
++		this.#assertRevision(expectedDocumentRevision);
++		const columns = validColumns(renderColumns, this.#nativeOverlay);
++		const index = this.#sections.findIndex((_section, candidate) => this.#sectionId(candidate, columns) === sectionId);
++		if (index < 0) throw new Error("The native Plan section changed; refresh before continuing.");
++		return structuredClone(this.#renderOne(index, columns, true).projection);
++	}
++
++	renderSections(expectedDocumentRevision: string, renderColumns: number): PlanReviewNativeRenderedSection[] {
++		this.#assertRevision(expectedDocumentRevision);
++		const columns = validColumns(renderColumns, this.#nativeOverlay);
++		return this.#sections.map((_section, index) => this.#renderOne(index, columns, false));
++	}
++
++	#clone(): PlanReviewDocumentOwner {
++		const copy = new PlanReviewDocumentOwner(this.content, { binding: this.#binding });
++		copy.#counter = this.#counter;
++		copy.#nativeOverlay = this.#nativeOverlay;
++		copy.#documentRevision = this.#documentRevision;
++		copy.#sections = cloneSections(this.#sections);
++		copy.#deleted = [...this.#deleted];
++		copy.#undo = this.#undo.map(entry => ({ sections: cloneSections(entry.sections), deleted: [...entry.deleted] }));
++		return copy;
++	}
++
++	#pushUndo(): void {
++		this.#undo.push({ sections: cloneSections(this.#sections), deleted: [...this.#deleted] });
++	}
++
++	#advance(): void {
++		this.#counter++;
++		this.#documentRevision = this.#revision();
++	}
++
++	#result(columns: number, artifactChanged: boolean): PlanReviewDocumentMutationResult {
++		return {
++			documentRevision: this.#documentRevision,
++			content: this.content,
++			annotationState: this.annotationState,
++			feedback: this.feedback,
++			artifactChanged,
++			summary: this.summary(this.#documentRevision, columns),
++		};
++	}
++
++	prepare(action: PlanReviewDocumentAction, renderColumns: number): PreparedPlanReviewDocumentMutation {
++		this.#assertRevision(action.expectedDocumentRevision);
++		const columns = validColumns(renderColumns, this.#nativeOverlay);
++		const next = this.#clone();
++		let artifactChanged = false;
++		if (action.kind === "undo") {
++			const entry = next.#undo.pop();
++			if (!entry) throw new Error("There is no native Plan document action to undo.");
++			next.#sections = cloneSections(entry.sections);
++			next.#deleted = [...entry.deleted];
++			artifactChanged = next.content !== this.content;
++		} else if (action.kind === "delete-section") {
++			const index = next.#sections.findIndex((_section, candidate) => next.#sectionId(candidate, columns) === action.sectionId);
++			if (index < 0) throw new Error("The native Plan section changed; refresh before continuing.");
++			const span = sectionDeletionSpan(next.#sections, index);
++			if (span.length === 0) throw new Error("The native Plan preamble cannot be deleted.");
++			next.#pushUndo();
++			for (const sectionIndex of span) {
++				const section = next.#sections[sectionIndex]!;
++				if (section.level >= 1 && section.title) next.#deleted.push(section.title);
++			}
++			for (let offset = span.length - 1; offset >= 0; offset--) next.#sections.splice(span[offset]!, 1);
++			artifactChanged = true;
++		} else {
++			const note = action.note.trim();
++			if (!note) throw new Error("A native Plan annotation note is required.");
++			if (encoder.encode(note).byteLength > PLAN_REVIEW_ANNOTATION_MAX_BYTES) throw new Error("The native Plan annotation is too large.");
++			const count = next.#sections.reduce((total, section) => total + section.annotations.length, 0);
++			if (count >= PLAN_REVIEW_MAX_ANNOTATIONS) throw new Error("The native Plan review has too many annotations.");
++			const sectionIndex = next.#sections.findIndex((_section, candidate) => next.#sectionId(candidate, columns) === action.target.sectionId);
++			if (sectionIndex < 0) throw new Error("The native Plan section changed; refresh before continuing.");
++			const section = next.#sections[sectionIndex]!;
++			next.#pushUndo();
++			if (action.target.kind === "section") {
++				if (section.level < 1) throw new Error("The native Plan preamble is not a section annotation target.");
++				section.annotations.push({ note, target: { kind: "section" } });
++			} else {
++				const rowId = action.target.rowId;
++				const rendered = next.#renderOne(sectionIndex, columns, true).projection;
++				const row = rendered.rows.findIndex(candidate => candidate.rowId === rowId);
++				if (row < 0) throw new Error("The native Plan rendered row changed; refresh before continuing.");
++				const context = rendered.rows[row]!;
++				section.annotations.push({ note, target: { kind: "line", row, context: context.text, contextTruncated: context.truncated } });
++			}
++		}
++		next.#advance();
++		return { next, result: next.#result(columns, artifactChanged) };
++	}
++
++	prepareReplace(input: {
++		content: string;
++		expectedDocumentRevision: string;
++		renderColumns: number;
++	}): PreparedPlanReviewDocumentMutation {
++		this.#assertRevision(input.expectedDocumentRevision);
++		const columns = validColumns(input.renderColumns, this.#nativeOverlay);
++		const next = this.#clone();
++		const annotationState = this.annotationState;
++		next.#sections = parsePlanSections(input.content).map(section => ({ ...section, annotations: [] }));
++		const restored = restorePlanReviewAnnotations(next.#sections, annotationState, index =>
++			renderSection(next.#sections[index]!, MAX_ANNOTATION_CONTEXT_WIDTH).contexts,
++		);
++		for (let index = 0; index < next.#sections.length; index++) next.#sections[index]!.annotations = restored[index]!;
++		next.#deleted = [];
++		next.#undo = [];
++		next.#advance();
++		return { next, result: next.#result(columns, next.content !== this.content) };
++	}
++}
+diff --git a/src/plan-mode/startup.ts b/src/plan-mode/startup.ts
+new file mode 100755
+index 0000000000000000000000000000000000000000..fae1433db4856caae18ccc5b9fd80500bb493072
+--- /dev/null
++++ b/src/plan-mode/startup.ts
+@@ -0,0 +1,16 @@
++import type { Settings } from "../config/settings";
++import type { SessionManager } from "../session/session-manager";
++
++export function shouldEnterPlanModeOnStartup(
++	sessionManager: Pick<SessionManager, "buildSessionContext" | "getEntries">,
++	sessionSettings: Pick<Settings, "get">,
++): boolean {
++	const hasConversationContext = sessionManager.buildSessionContext().messages.length > 0;
++	const hasExplicitMode = sessionManager.getEntries().some(entry => entry.type === "mode_change");
++	return (
++		!hasConversationContext &&
++		!hasExplicitMode &&
++		sessionSettings.get("plan.defaultOnStartup") &&
++		sessionSettings.get("plan.enabled")
++	);
++}
 diff --git a/src/sdk.ts b/src/sdk.ts
 index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe31ab5551b 100644
 --- a/src/sdk.ts
@@ -9620,6 +11054,12 @@ index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d5
 diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
 old mode 100755
 new mode 100644
+diff --git a/dist/types/plan-mode/plan-review-document.d.ts b/dist/types/plan-mode/plan-review-document.d.ts
+old mode 100755
+new mode 100644
+diff --git a/dist/types/plan-mode/startup.d.ts b/dist/types/plan-mode/startup.d.ts
+old mode 100755
+new mode 100644
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 old mode 100755
 new mode 100644
@@ -9636,6 +11076,12 @@ diff --git a/dist/types/tools/browser/target-observation.d.ts b/dist/types/tools
 old mode 100755
 new mode 100644
 diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
+old mode 100755
+new mode 100644
+diff --git a/src/plan-mode/plan-review-document.ts b/src/plan-mode/plan-review-document.ts
+old mode 100755
+new mode 100644
+diff --git a/src/plan-mode/startup.ts b/src/plan-mode/startup.ts
 old mode 100755
 new mode 100644
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts

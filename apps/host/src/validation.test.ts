@@ -110,3 +110,12 @@ test("force cancellation preserves exact ticket and rejects extra or stale-forma
   expect(() => parseCommandEnvelope({ ...input, command: { ...input.command, all: true } }, 18)).toThrow();
   expect(() => parseCommandEnvelope({ ...input, command: { ...input.command, directiveId: "" } }, 18)).toThrow();
 });
+
+test("Plan execution retry requires v19 and preserves only durable continuation identities", () => {
+  const command = { type: "session.plan.execution.retry", sessionId: "destination", originSessionId: "origin",
+    originalCommandId: "approve", expectedAttemptId: "retry-one" } as const;
+  expect(parseCommandEnvelope({ id: "retry-two", commandVersion: 19, command }, 19)).toEqual({ id: "retry-two", commandVersion: 19, command });
+  expect(() => parseCommandEnvelope({ id: "retry-two", command }, 18)).toThrow("version 19");
+  expect(() => parseCommandEnvelope({ id: "retry-two", commandVersion: 19, command: { ...command, phaseId: "private" } }, 19)).toThrow("keys");
+  expect(() => parseCommandEnvelope({ id: "retry-two", commandVersion: 19, command: { ...command, expectedAttemptId: "bad/id" } }, 19)).toThrow("identity");
+});

@@ -30,6 +30,8 @@ const supportedBuiltins = new Set(["force", "model", "switch", "fast", "skillful
 const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
   if (supportedBuiltins.has(name)) return { availability: "executable" };
+  // These commands use the owning Plan controller and its durable decisions.
+  if (name === "plan" || name === "plan-review") return { availability: "executable" };
   if (name === "mcp") {
     if (args === undefined) return {availability:"partial",reason:"Native help, live resource/prompt/notification lists, runtime reload, server reconnect and OAuth reauthorization are connected. Other subcommands retain their native integration requirements."};
     const verb=args.trim().split(/\s+/,1)[0]?.toLowerCase();
