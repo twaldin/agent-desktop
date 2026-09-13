@@ -20,10 +20,9 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
   const id = useId();
   useEffect(() => {
     if (!data) return;
-    const unsubscribe = data.subscribe(redraw); data.start(localHostId);
+    const unsubscribe = data.subscribe(redraw); data.start(localHostId); data.setConnected(connected);
     return () => { unsubscribe(); data.stop(); };
-  }, [data, localHostId]);
-  useEffect(() => { data?.setConnected(connected); }, [data, connected]);
+  }, [data, connected, localHostId]);
   const snapshot = data?.controls?.advancedStream;
   const blocked = disabled || !connected || !data || data.loading || data.saving || !!data.error || !snapshot?.supported;
   return <details className="advanced-stream-controls">

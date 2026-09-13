@@ -8,7 +8,7 @@
       "field": "temperature",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
-      "status": "bounded-source-awaiting-integration-and-proof",
+      "status": "bounded-native-functional-verified",
       "settingsPaths": [],
       "note": "Native SDK snapshots settings.temperature >=0 into Agent; AgentLoop passes temperature (Harmony retries add 0.05). Model-bound override precedes SDK streamFn; direct Google builder writes generationConfig.temperature. Other APIs/models remain required.",
       "consumptionWindows": [
@@ -39,7 +39,7 @@
         }
       ],
       "ownership": "owning-host native session; provider/API scope as noted",
-      "verification": "source-inspected; native request/UI proof not yet run",
+      "verification": "Controlled native builder proof on 3c9f315 and bounded functional App proof on 56a507a cover the declared Google/Vertex subset; see top-level verification for exact checkpoint scope, historical failures and the subsequent correction regression.",
       "required": true
     },
     {
@@ -47,7 +47,7 @@
       "field": "topP",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
-      "status": "bounded-source-awaiting-integration-and-proof",
+      "status": "bounded-native-functional-verified",
       "settingsPaths": [],
       "note": "SDK startup setting -> Agent.topP -> AgentLoop config -> mapOptionsForApi base -> direct Google generationConfig.topP. Other APIs/models remain required.",
       "consumptionWindows": [
@@ -73,7 +73,7 @@
         }
       ],
       "ownership": "owning-host native session; provider/API scope as noted",
-      "verification": "source-inspected; native request/UI proof not yet run",
+      "verification": "Controlled native builder proof on 3c9f315 and bounded functional App proof on 56a507a cover the declared Google/Vertex subset; see top-level verification for exact checkpoint scope, historical failures and the subsequent correction regression.",
       "required": true
     },
     {
@@ -285,7 +285,7 @@
       "field": "maxTokens",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
-      "status": "bounded-source-awaiting-integration-and-proof",
+      "status": "bounded-native-functional-verified",
       "settingsPaths": [],
       "note": "No native sampling setting/Agent public maxTokens setter found. Model maxTokens supplies mapper fallback; model-bound wrapper supplies explicit SimpleStreamOptions.maxTokens before native mapper. Direct Google APIs do not inflate this limit for thinking; CCA does and is outside subset. A later lower native model limit preserves saved intent and exposes outputLimitConflict; revisioned explicit inherit/set remains reachable while excessive writes and dispatch are rejected.",
       "consumptionWindows": [
@@ -306,7 +306,7 @@
         }
       ],
       "ownership": "owning-host native session; provider/API scope as noted",
-      "verification": "source-inspected; native request/UI proof not yet run",
+      "verification": "Controlled native builder and lowered-limit recovery proof on 3c9f315 and bounded functional App proof on 56a507a cover the declared Google/Vertex subset; see top-level verification for exact checkpoint scope, historical failures and the subsequent correction regression.",
       "required": true
     },
     {
@@ -965,9 +965,11 @@
   "complete": false,
   "verification": {
     "sourceTrace": "21 source/catalog files byte-identical to exact pinned upstream, including the bundled model lookup, bundled model data and configurable ModelRegistry composition; installed native packages remain 18.1.10",
-    "nativeRequest": "Main proved 12 controlled native Google/Vertex requests and six valid native-registry negative cases on historical ebcbac3. A subsequent valid lower-limit/reopen fixture reproduced an unreadable saved-limit recovery state. The recovery correction requires fresh Main 14-request/6-negative-case proof. Historical failures remain retained; none of these results establishes actual App UI or live provider acceptance.",
-    "appUi": "blocked on Root-owned outside-form App mount, Main build and explicit native lease",
-    "independentReviews": "pending one dedicated different-family Standards/Spec pair"
+    "nativeRequest": "Main verified 14 controlled native Google/Vertex Agent-loop/request-builder cases, six valid native-registry catalog negatives and two lowered-limit recovery cases on 3c9f315. Explicit zero/default/inherit/reopen behavior and excessive-limit rejection/recovery are covered. Original failed checkpoints remain retained; this is controlled native construction, not live provider acceptance.",
+    "appUi": "Root's outside-composer-form App mount and Main typecheck/build are delivered at 56a507a. Run02 completed 12 bounded functional actual-App cases with original native ModelRegistry.refresh delegated to its documented offline strategy; real main/preload/bridge/host and native session persistence were used. This is not unchanged production online-discovery or live-provider acceptance. Those recorded cases precede the localHostId-only lifecycle correction; that edge has a dedicated controlled component regression, not fresh corrected-source App evidence.",
+    "geometry": "Functional, not pixel-comparable; no reference comparison was made. Initial captures retain actual 1139x1384 geometry; corrected wide/narrow captures held 1200x820 and 720x700. Per-capture Space/yabai/fullscreen/direct zoom/theme were not fully sampled and remain unknown. Original tiling/input driver misses remain retained; no retrofilled metadata, style compensation or relaxed thresholds.",
+    "network": "Run02 recorded zero installed-guard attempts, zero guarded external forwards, zero native messages and native auth-change revision zero. Its owning host explicitly disabled tailnet discovery, but no refusing tailscale PATH executable or live peer-list snapshot was recorded. Retained cache observations were local-only, not an exhaustive historical egress audit or a zero-real-peer claim. Original Run01 remains failed with 20 blocked discovery attempts and zero forwards. Every future App activation requires the current geometry/network gate and a new Main lease.",
+    "independentReviews": "The original retained independent Standards/Spec pair returned changes required at 56a507a for lifecycle synchronization and stale maintained coverage claims. This correction addresses those findings; acceptance belongs to Main's gates and re-review in those same contexts, not to this historical evidence record. No accepted verdict or new pair is claimed here. All 30 entries remain required and overall coverage remains incomplete."
   },
   "sourceProvenance": [
     {

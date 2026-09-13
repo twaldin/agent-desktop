@@ -668,18 +668,18 @@
       "field": "temperature",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
-      "status": "bounded-source-awaiting-integration-and-proof",
+      "status": "bounded-native-functional-verified",
       "settingsPaths": [],
-      "note": "Typed session/model-bound sampling source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
+      "note": "Typed session/model-bound sampling for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport. Controlled native request proof and bounded functional App proof are delivered; custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits."
     },
     {
       "interface": "StreamOptions",
       "field": "topP",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
-      "status": "bounded-source-awaiting-integration-and-proof",
+      "status": "bounded-native-functional-verified",
       "settingsPaths": [],
-      "note": "Typed session/model-bound sampling source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
+      "note": "Typed session/model-bound sampling for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport. Controlled native request proof and bounded functional App proof are delivered; custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits."
     },
     {
       "interface": "StreamOptions",
@@ -740,9 +740,9 @@
       "field": "maxTokens",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
-      "status": "bounded-source-awaiting-integration-and-proof",
+      "status": "bounded-native-functional-verified",
       "settingsPaths": [],
-      "note": "Typed session/model-bound output-limit source requires a pinned bundled Gemini identity and unchanged native API/endpoint/transport on google-generative-ai/google-vertex; clear preserves native model fallback. Custom endpoints and unlisted IDs are unsupported. App integration, corrected native request/UI proof and all other scopes remain required; see native-stream-control-coverage.json."
+      "note": "Typed session/model-bound output limit for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport; inherit preserves native model fallback. Controlled native request/limit-recovery proof and bounded functional App proof are delivered. Custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits."
     },
     {
       "interface": "StreamOptions",
