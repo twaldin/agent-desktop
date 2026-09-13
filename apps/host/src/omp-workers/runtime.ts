@@ -20,7 +20,7 @@ import { copyNativeSelectedTextInput } from "../omp/selected-text";
 import { copyNativeWholeFileInput } from "../omp/whole-file";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
-import { WORKER_PROTOCOL_VERSION, remoteError, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation, type CommitGenerationInput } from "./protocol";
+import { WORKER_PROTOCOL_VERSION, remoteError, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation, type CommitGenerationInput, type NativeSessionForkInput, type NativeSessionForkResult } from "./protocol";
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
@@ -768,6 +768,22 @@ export class WorkerRuntime {
     })());
   }
 
+  /** Whole-history copy owns a fresh process; it never switches the retained source. */
+  forkSession(input: NativeSessionForkInput): Promise<NativeSessionForkResult> {
+    this.#assertActive();
+    return this.#track((async () => {
+      const client = await this.#spawn({ mode: "discovery", agentDir: this.#options.agentDir });
+      let copied = false;
+      try {
+        const result = await client.request<NativeSessionForkResult>({ operation: "forkSession", args: input });
+        copied = true;
+        return result;
+      } finally {
+        try { await client.close({ requireAcknowledgement: copied }); } finally { this.#clients.delete(client); }
+      }
+    })());
+  }
+
   create(options: Omit<OmpSessionOptions, "onEvent"> & { onEvent?: WorkerEventListener }, localEnvironment?: LocalEnvironmentWorkerEnvironment): Promise<WorkerSession> {
     this.#assertActive();
     const { onEvent, ...nativeOptions } = options;
@@ -941,6 +957,7 @@ export class WorkerRuntime {
       cancelSessionMcpAuthorization: authorizationId => client.request({ operation: "cancelSessionMcpAuthorization", args: { authorizationId } }, 15_000, "mcp-authorization"),
       reloadSessionMcp: request => client.request({ operation: "reloadSessionMcp", args: { request } }, 120_000),
       reconnectSessionMcp: request => client.request({ operation: "reconnectSessionMcp", args: { request } }, 120_000),
+      flushSession: () => client.request({ operation: "flushSession" }),
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),
       startBtw: input => client.request({ operation: "startBtw", args: input }, 15_000),
       cancelBtw: runId => client.request({ operation: "cancelBtw", args: { runId } }, 15_000),

@@ -8,8 +8,10 @@ import type { GoalContinuationEligibility } from "../omp/goal-controller";
 import type { WorkerEvent } from "./events";
 import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
+import type { NativeSessionForkInput } from "../omp/session-fork";
+export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 56;
+export const WORKER_PROTOCOL_VERSION = 57;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -38,6 +40,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "init"; args: WorkerInit }
   | { operation: "enableReconnect"; args: { socketPath: string; token: string; instanceId: string } }
   | { operation: "generateCommit"; args: CommitGenerationInput }
+  | { operation: "forkSession"; args: NativeSessionForkInput }
+  | { operation: "flushSession" }
   | { operation: "listModels"; args: { cwd: string; refresh?: boolean } }
   | { operation: "listModelCapabilities"; args: { cwd: string; refresh?: boolean } }
   | { operation: "getComposerCatalog"; args: { cwd: string; refresh?: boolean } }

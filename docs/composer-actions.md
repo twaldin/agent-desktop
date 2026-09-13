@@ -10,6 +10,8 @@ A session query reads the actual loaded native registries. It includes extension
 
 Builtin commands which depend on the terminal UI, coordinated lifecycle changes, provider login, or configuration reload stay visible with `pending`, `partial`, or `disabled` availability and a reason. The current dispatcher enables reviewed text handlers. `/session` is partial: info is executable, while deletion and account pin operations remain in their owning desktop controls.
 
+The native builtin `/fork` has a separate host-owned whole-chat flow. It opens the same destination menu as the `forkThread` application command and Conversation actions, rather than dispatching the identity-changing terminal handler. Loaded command overrides retain their normal precedence. Choosing the current workspace or an eligible new worktree creates a distinct native child with an empty draft; cancelling the slash menu removes only its query. See [whole-chat Fork](local-environments.md#whole-chat-fork) for ownership and recovery.
+
 ## Completions and insertion
 
 `POST /v1/composer/completions` accepts one of:

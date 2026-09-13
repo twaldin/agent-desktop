@@ -398,9 +398,23 @@ export class HostWorkspaces {
       if (!current || current.revision !== record.revision || current.phase !== "worktree-creating"
         || current.hostId !== record.hostId || !project || project.hostId !== record.hostId || project.path !== record.sourceRoot)
         throw new WorkspaceError("PREPARATION_CHANGED", "The admitted worktree preparation or owning project changed.");
+      if (record.forkSource) {
+        const source = this.store.getSession(record.forkSource.id);
+        if (!source || source.hostId !== record.hostId || source.projectId !== record.projectId
+          || source.cwd !== record.forkSource.cwd || source.sessionFile !== record.forkSource.sessionFile)
+          throw new WorkspaceError("PREPARATION_CHANGED", "The captured Fork source changed.");
+      }
     };
     assertCurrent();
-    const workspace = await this.preparationWorkspace(record.projectId, record.directories);
+    let workspace = await this.preparationWorkspace(record.projectId, record.directories);
+    if (record.forkSource) {
+      const source = this.#resolve({ sessionId: record.forkSource.id });
+      const context = await source.gitWorkspaceContext(), sourceGit = await source.gitRootService();
+      const [originRepository, projectRepository] = await Promise.all([sourceGit.repositoryWatchContext(), workspace.repositoryWatchContext()]);
+      if (originRepository.commonDir !== projectRepository.commonDir || context.workspaceRelativePath !== record.directories?.workspaceRelativePath)
+        throw new WorkspaceError("PREPARATION_CHANGED", "The Fork source no longer belongs to the captured project workspace.");
+      workspace = sourceGit;
+    }
     assertCurrent();
     const name = `chat-${createHash("sha256").update(record.id).digest("hex")}`;
     const destination = await workspace.sessionWorktreeDestination(name);
