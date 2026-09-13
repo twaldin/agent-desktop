@@ -90,7 +90,7 @@
         "expect": "Truthful offline/previous-capture notices and unavailable Refresh history, while local count/navigation remains usable against unchanged retained pre hashes. No false saved/live claim, replacement shell, implicit recovery or PTY input. Preserve refusal/error receipts; disabled refresh is verified as such, not forced through an API."
       }
     ],
-    "remainingSeparate": "Saved/other-owner transition acceptance is still PENDING under a separate future scope. This live-only mode does not waive it or establish full Find completion. No diagnostic007/cause claim, actual composing-IME claim, truncated-true claim or pixel parity follows.",
+    "remainingSeparate": "Saved/other-owner transition acceptance requires a separate owner scope and cannot be inferred from this live-only mode. Evidence from distinct bounded scopes must be combined explicitly; no single full run, diagnostic007/cause, actual composing-IME, truncated-true or pixel-parity claim follows.",
     "cleanup": "After completion or first refusal, stop only owned App/host, release browser and prove owned PID/CG/CDP/tmux closure plus source stability. Preserve raw controls/keys/native snapshots/original images/inspection chronology and hashes. Main alone seals evidence and authorizes any later scope."
   },
   "isolation": [
