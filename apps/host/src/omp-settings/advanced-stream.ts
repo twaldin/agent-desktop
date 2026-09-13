@@ -7,7 +7,7 @@ import { compareRevision, parseRevision } from "@oh-my-pi/pi-catalog/identity";
 import { defaultSupportedEffort } from "@oh-my-pi/pi-catalog/model-thinking";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import type { ResolvedAnthropicCompat } from "@oh-my-pi/pi-catalog/types";
-import type { OmpAdvancedStreamControls, OmpSessionControlMutation, OmpStreamSelection } from "@agent-desktop/shared";
+import { OMP_TOP_K_VALUES, type OmpAdvancedStreamControls, type OmpLegacyStreamField, type OmpSessionControlMutation, type OmpStreamSelection } from "@agent-desktop/shared";
 import { OmpSettingsError, validateSettingValue } from "./schema";
 
 type NativeModel = NonNullable<AgentSession["model"]>;
@@ -16,8 +16,10 @@ type Field = keyof OmpStreamSelection;
 type FieldControls = NonNullable<OmpAdvancedStreamControls["fields"]>;
 type SupportedFamily = "gemini" | "anthropic";
 const ENTRY = "agent-desktop.advanced-stream.v1";
+const TOP_K_ENTRY = "agent-desktop.advanced-stream.top-k.v1";
 const installed = new WeakSet<AgentSession>();
-const fields = ["temperature", "topP", "maxTokens"] as const satisfies readonly Field[];
+const legacyFields = ["temperature", "topP", "maxTokens"] as const satisfies readonly OmpLegacyStreamField[];
+const fields = [...legacyFields, "topK"] as const satisfies readonly Field[];
 const ANTHROPIC_INTERLEAVED_THINKING = process.env.PI_NO_INTERLEAVED_THINKING !== "1";
 const ANTHROPIC_OUTPUT_BUDGET_NOTE = "Requested max tokens is an output budget, not a hard cap: native thinking may increase it, and Anthropic OAuth may cap it at 64000.";
 function record(value: unknown): value is Record<string, unknown> {
@@ -98,12 +100,30 @@ function samplingConflict(model: NativeModel, selection: OmpStreamSelection, opt
   if (exclusiveAnthropicSampling(model) && temperature != null && topP != null)
     return "This model accepts Temperature or Top P, not both, including native baseline values. Choose Provider default (omit) for one field and save it before setting the other. Follow native session can restore a conflicting baseline; no other saved setting was changed.";
 }
-function fieldControls(model: NativeModel, family: SupportedFamily | undefined, options?: SimpleStreamOptions): FieldControls {
+function topKControl(model: NativeModel, family: SupportedFamily | undefined): NonNullable<FieldControls["topK"]> {
+  const bounds = { minimum: 1, maximum: null };
+  if (family !== "gemini") return { ...bounds, supported: false, reason: "Top K is unavailable for the current native model and endpoint." };
+  const bundled = getBundledModel(model.provider, model.id);
+  if (model.requestModelId !== bundled?.requestModelId || !isDeepStrictEqual(model.identity, bundled?.identity))
+    return { ...bounds, supported: false, reason: "Top K is unavailable because this model's wire identity differs from the built-in model." };
+  if (model.api === "google-vertex") return { ...bounds, supported: false,
+    reason: model.id === "gemini-2.5-flash" || model.id === "gemini-2.5-pro"
+      ? "Vertex publishes a fixed Top K of 64 for this model; it is not an adjustable sampling control."
+      : "This Vertex model has no verified adjustable Top K capability." };
+  if (typeof model.topK === "number" && Number.isSafeInteger(model.topK) && model.topK > 0)
+    return { ...bounds, supported: true, reason: `Google's native model discovery reports Top K sampling with a default of ${model.topK}. This default is not a maximum.` };
+  return { ...bounds, supported: false, reason: model.topK === undefined
+    ? "Native model discovery has not reported Top K support. Select this model again in Session settings to refresh its metadata."
+    : "Google's model metadata does not advertise adjustable Top K sampling for this model." };
+}
+function fieldControls(model: NativeModel, family: SupportedFamily | undefined, options?: SimpleStreamOptions, includeTopK = false): FieldControls {
   const outputMaximum = maximum(model);
+  const topK = includeTopK ? { topK: topKControl(model, family) } : {};
   if (family === "gemini") return {
     temperature: { supported: true, reason: "Gemini supports an explicit sampling temperature.", minimum: 0, maximum: 2 },
     topP: { supported: true, reason: "Gemini supports an explicit Top P value.", minimum: 0, maximum: 1 },
     maxTokens: { supported: true, reason: "Gemini supports a bounded output limit.", minimum: 1, maximum: outputMaximum },
+    ...topK,
   };
   if (family === "anthropic") {
     const reason = anthropicSamplingReason(model, options);
@@ -111,6 +131,7 @@ function fieldControls(model: NativeModel, family: SupportedFamily | undefined, 
       temperature: { supported: !reason, reason: reason ?? "The pinned native request accepts temperature for this effective thinking configuration.", minimum: 0, maximum: 1 },
       topP: { supported: !reason, reason: reason ?? "The pinned native request accepts Top P for this effective thinking configuration.", minimum: 0, maximum: 1 },
       maxTokens: { supported: true, reason: "Set the requested Anthropic output budget; native request construction remains authoritative.", minimum: 1, maximum: outputMaximum },
+      ...topK,
     };
   }
   const reason = "This field is unavailable for the current native model and endpoint.";
@@ -118,12 +139,16 @@ function fieldControls(model: NativeModel, family: SupportedFamily | undefined, 
     temperature: { supported: false, reason, minimum: 0, maximum: 2 },
     topP: { supported: false, reason, minimum: 0, maximum: 1 },
     maxTokens: { supported: false, reason, minimum: 1, maximum: outputMaximum },
+    ...topK,
   };
 }
 function validate(field: Field, value: unknown, model?: NativeModel): void {
   if (value === null && field !== "maxTokens") return;
   if (typeof value !== "number" || !Number.isFinite(value)) throw new OmpSettingsError("invalid-value", "Enter a finite numeric stream value.");
-  if (field === "maxTokens") {
+  if (field === "topK") {
+    if (!Number.isSafeInteger(value) || !OMP_TOP_K_VALUES.includes(value as typeof OMP_TOP_K_VALUES[number]))
+      throw new OmpSettingsError("invalid-value", "Top K must be one of the pinned native values: 1, 20, 40, or 100.");
+  } else if (field === "maxTokens") {
     if (!Number.isSafeInteger(value) || value < 1) throw new OmpSettingsError("invalid-value", "Output limit must be a positive integer.");
     const outputMaximum = model && maximum(model);
     if (outputMaximum !== null && outputMaximum !== undefined && value > outputMaximum)
@@ -151,14 +176,14 @@ export class NativeAdvancedStreamControls {
       if (!family) return original(model, context, options);
       const selection = this.selection(model);
       const effective = family === "anthropic" ? this.effectiveOptions(model, options, selection) : options;
-      const controls = fieldControls(model, family, effective);
+      const controls = fieldControls(model, family, effective, family === "gemini" || Object.hasOwn(selection, "topK"));
       if (family === "anthropic" && controls.temperature.supported) {
         const conflict = samplingConflict(model, selection, effective);
         if (conflict) throw new OmpSettingsError("invalid-value", conflict);
       }
       let next = options;
       for (const field of fields) {
-        if (!controls[field].supported || !Object.hasOwn(selection, field)) continue;
+        if (!controls[field]?.supported || !Object.hasOwn(selection, field)) continue;
         validate(field, selection[field], model);
         if (!next || next === options) next = { ...options };
         next[field] = selection[field] ?? undefined;
@@ -177,9 +202,9 @@ export class NativeAdvancedStreamControls {
   private baselineOptions(model: NativeModel, selection: OmpStreamSelection): SimpleStreamOptions | undefined {
     const agent = this.session.agent;
     return this.effectiveOptions(model, { reasoning: agent.state.thinkingLevel, disableReasoning: agent.state.disableReasoning,
-      thinkingBudgets: agent.thinkingBudgets, temperature: agent.temperature, topP: agent.topP }, selection);
+      thinkingBudgets: agent.thinkingBudgets, temperature: agent.temperature, topP: agent.topP, topK: agent.topK }, selection);
   }
-  private selection(model: NativeModel): OmpStreamSelection {
+  private legacySelection(model: NativeModel): OmpStreamSelection {
     const branch = this.session.sessionManager.getBranch();
     for (let index = branch.length - 1; index >= 0; index--) {
       const entry = branch[index]!;
@@ -188,15 +213,34 @@ export class NativeAdvancedStreamControls {
       if (!record(data) || !record(data.model) || typeof data.model.provider !== "string" || typeof data.model.id !== "string" || typeof data.model.api !== "string" || !record(data.selection))
         throw new OmpSettingsError("read-failed", "The native stream receipt is invalid; no selection was silently replaced.");
       if (!sameModel(data.model as { provider: string; id: string; api: string }, model)) continue;
-      if (Object.keys(data.selection).some(field => !fields.includes(field as Field)))
+      if (Object.keys(data.selection).some(field => !legacyFields.includes(field as OmpLegacyStreamField)))
         throw new OmpSettingsError("read-failed", "The native stream receipt contains unsupported options.");
       // A later native model-limit change must not make saved intent or the
       // revision needed to clear it unreadable. Writes and dispatch still pass
       // the current model to validation and reject an excessive request limit.
-      for (const field of fields) if (Object.hasOwn(data.selection, field)) validate(field, data.selection[field]);
+      for (const field of legacyFields) if (Object.hasOwn(data.selection, field)) validate(field, data.selection[field]);
       return { ...data.selection } as OmpStreamSelection;
     }
     return {};
+  }
+  private topKSelection(model: NativeModel): Pick<OmpStreamSelection, "topK"> {
+    const branch = this.session.sessionManager.getBranch();
+    for (let index = branch.length - 1; index >= 0; index--) {
+      const entry = branch[index]!;
+      if (entry.type !== "custom" || entry.customType !== TOP_K_ENTRY) continue;
+      const data: unknown = entry.data;
+      if (!record(data) || !record(data.model) || typeof data.model.provider !== "string" || typeof data.model.id !== "string" || typeof data.model.api !== "string" || !record(data.selection))
+        throw new OmpSettingsError("read-failed", "The native Top K receipt is invalid; no selection was silently replaced.");
+      if (!sameModel(data.model as { provider: string; id: string; api: string }, model)) continue;
+      if (Object.keys(data.selection).some(field => field !== "topK"))
+        throw new OmpSettingsError("read-failed", "The native Top K receipt contains unsupported options.");
+      if (Object.hasOwn(data.selection, "topK")) validate("topK", data.selection.topK);
+      return { ...data.selection } as Pick<OmpStreamSelection, "topK">;
+    }
+    return {};
+  }
+  private selection(model: NativeModel): OmpStreamSelection {
+    return { ...this.legacySelection(model), ...this.topKSelection(model) };
   }
   read(): OmpAdvancedStreamControls {
     const model = this.session.model;
@@ -207,7 +251,7 @@ export class NativeAdvancedStreamControls {
       && selection.maxTokens > outputMaximum
       ? { saved: selection.maxTokens, maximum: outputMaximum } : undefined;
     const options = model && family === "anthropic" ? this.baselineOptions(model, selection) : undefined;
-    const controls = model && fieldControls(model, family, options);
+    const controls = model && fieldControls(model, family, options, family === "gemini" || Object.hasOwn(selection, "topK"));
     const conflict = model && family === "anthropic" && controls?.temperature.supported ? samplingConflict(model, selection, options) : undefined;
     return {
       // Older clients treat this flag as support for ALL three controls.
@@ -228,7 +272,7 @@ export class NativeAdvancedStreamControls {
       model: model ? { provider: model.provider, id: model.id, api: model.api } : null,
       selection,
       ...(outputLimitConflict ? { outputLimitConflict } : {}),
-      native: { temperature: this.session.agent.temperature ?? null, topP: this.session.agent.topP ?? null, maxTokens: model?.maxTokens ?? null },
+      native: { temperature: this.session.agent.temperature ?? null, topP: this.session.agent.topP ?? null, maxTokens: model?.maxTokens ?? null, topK: this.session.agent.topK ?? null },
       persistence: "owning-session-branch-model-api",
     };
   }
@@ -239,12 +283,14 @@ export class NativeAdvancedStreamControls {
     if (!fields.includes(request.field)) throw new OmpSettingsError("invalid-value", "Unknown advanced stream field.");
     const selection = this.selection(model);
     const options = family === "anthropic" ? this.baselineOptions(model, selection) : undefined;
-    const control = fieldControls(model, family, options)[request.field];
+    const control = fieldControls(model, family, options, family === "gemini" || Object.hasOwn(selection, "topK"))[request.field];
+    if (request.field === "topK" && !control)
+      throw new OmpSettingsError("unsupported", "The current native model does not advertise a Top K control.");
     if (request.action === "inherit") {
       if (request.value !== undefined) throw new OmpSettingsError("invalid-value", "Inherit does not accept a value.");
       delete selection[request.field];
-    } else if (!control.supported) {
-      throw new OmpSettingsError("unsupported", control.reason);
+    } else if (!control?.supported) {
+      throw new OmpSettingsError("unsupported", control?.reason ?? "This field is unavailable for the current native model and endpoint.");
     } else if (request.action === "provider-default") {
       if (request.field === "maxTokens" || request.value !== undefined) throw new OmpSettingsError("invalid-value", "Only sampling controls have an explicit provider default.");
       selection[request.field] = null;
@@ -254,10 +300,17 @@ export class NativeAdvancedStreamControls {
     } else throw new OmpSettingsError("invalid-value", "Unknown advanced stream action.");
     // Clearing a field always remains possible, even on an untrusted endpoint
     // or while a different retained field needs recovery. Never rewrite it.
-    if (family === "anthropic" && control.supported && request.field !== "maxTokens" && request.action !== "inherit") {
+    if (family === "anthropic" && control?.supported && request.field !== "maxTokens" && request.action !== "inherit") {
       const conflict = samplingConflict(model, selection, options);
       if (conflict) throw new OmpSettingsError("invalid-value", conflict);
     }
-    this.session.sessionManager.appendCustomEntry(ENTRY, { model: { provider: model.provider, id: model.id, api: model.api }, selection });
+    const modelReceipt = { provider: model.provider, id: model.id, api: model.api };
+    if (request.field === "topK") {
+      const topK = Object.hasOwn(selection, "topK") ? { topK: selection.topK } : {};
+      this.session.sessionManager.appendCustomEntry(TOP_K_ENTRY, { model: modelReceipt, selection: topK });
+    } else {
+      const legacy = Object.fromEntries(legacyFields.filter(field => Object.hasOwn(selection, field)).map(field => [field, selection[field]]));
+      this.session.sessionManager.appendCustomEntry(ENTRY, { model: modelReceipt, selection: legacy });
+    }
   }
 }

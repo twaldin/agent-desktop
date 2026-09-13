@@ -1,0 +1,77 @@
+diff --git a/dist/types/types.d.ts b/dist/types/types.d.ts
+index 0796b06..d881258 100644
+--- a/dist/types/types.d.ts
++++ b/dist/types/types.d.ts
+@@ -943,6 +943,12 @@ export interface Model<TApi extends Api = Api> {
+     premiumMultiplier?: number;
+     contextWindow: number | null;
+     maxTokens: number | null;
++    /**
++     * Provider-observed default Top K sampling value. A positive safe integer is
++     * the advertised default, `null` means the provider was queried but omitted
++     * or returned an invalid value, and `undefined` means it has not been observed.
++     */
++    topK?: number | null;
+     /**
+      * When `true`, providers MUST omit `max_output_tokens` (Responses) /
+      * `max_tokens` / `max_completion_tokens` (Completions) from the outbound
+diff --git a/src/discovery/gemini.ts b/src/discovery/gemini.ts
+index fa0e6fc..37065db 100644
+--- a/src/discovery/gemini.ts
++++ b/src/discovery/gemini.ts
+@@ -26,6 +26,7 @@ const geminiModelListItemSchema = type({
+ 	"supportedGenerationMethods?": "string[]",
+ 	"inputTokenLimit?": resilientNumber,
+ 	"outputTokenLimit?": resilientNumber,
++	"topK?": resilientNumber,
+ });
+ 
+ type GeminiModelListItem = typeof geminiModelListItemSchema.infer;
+@@ -191,6 +192,7 @@ function normalizeModel(
+ 	const reference = bundledById.get(id);
+ 	const contextWindow = normalizePositiveInt(item.inputTokenLimit, reference?.contextWindow ?? null);
+ 	const maxTokens = normalizePositiveInt(item.outputTokenLimit, reference?.maxTokens ?? null);
++	const topK = normalizeObservedPositiveSafeInt(item.topK);
+ 	const name = normalizeModelName(item.displayName, reference?.name ?? id);
+ 
+ 	if (reference) {
+@@ -201,6 +203,7 @@ function normalizeModel(
+ 			baseUrl,
+ 			contextWindow,
+ 			maxTokens,
++			topK,
+ 		};
+ 	}
+ 	return {
+@@ -214,9 +217,14 @@ function normalizeModel(
+ 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+ 		contextWindow,
+ 		maxTokens,
++		topK,
+ 	};
+ }
+ 
++function normalizeObservedPositiveSafeInt(value: number | undefined): number | null {
++	return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
++}
++
+ function normalizeModelId(value: string | undefined): string | null {
+ 	if (!value) {
+ 		return null;
+diff --git a/src/types.ts b/src/types.ts
+index ec348db..8820bca 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -1119,6 +1119,12 @@ export interface Model<TApi extends Api = Api> {
+ 	premiumMultiplier?: number;
+ 	contextWindow: number | null;
+ 	maxTokens: number | null;
++	/**
++	 * Provider-observed default Top K sampling value. A positive safe integer is
++	 * the advertised default, `null` means the provider was queried but omitted
++	 * or returned an invalid value, and `undefined` means it has not been observed.
++	 */
++	topK?: number | null;
+ 	/**
+ 	 * When `true`, providers MUST omit `max_output_tokens` (Responses) /
+ 	 * `max_tokens` / `max_completion_tokens` (Completions) from the outbound

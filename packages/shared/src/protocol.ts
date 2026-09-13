@@ -76,6 +76,7 @@ export type * from "./workspace";
 export type * from "./accounts";
 export type * from "./interactions";
 export type * from "./settings";
+export { OMP_TOP_K_VALUES } from "./settings";
 export type * from "./theme";
 export type * from "./terminals";
 export * from "./terminal-creation";

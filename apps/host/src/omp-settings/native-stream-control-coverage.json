@@ -81,9 +81,9 @@
       "field": "topK",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L401",
-      "status": "required",
+      "status": "provider-capability-reviewed-partial-native-ui",
       "settingsPaths": [],
-      "note": "SDK startup setting and public Agent setter; mapper base forwards; Google writes topK; Anthropic and OpenAI sampling compatibility may suppress. No new control in bounded subset.",
+      "note": "Direct Google requires positive native Model.topK metadata for custom sampling. Undefined is unobserved; null is observed without usable support. Vertex 2.5 Flash/Pro is visibly fixed at 64; other Vertex models remain visibly unverified. Endpoint/API/transport/wire identity gates and separate model-bound receipts preserve unsupported intent and explicit Follow-native recovery. Native baseline remains exact. Model.topK is a default, not a maximum; all presets still require real provider acceptance.",
       "consumptionWindows": [
         {
           "file": "packages/coding-agent/src/sdk.ts",
@@ -112,7 +112,7 @@
         }
       ],
       "ownership": "owning-host native session; provider/API scope as noted",
-      "verification": "source-inspected; native request/UI proof not yet run",
+      "verification": "Original source001 30-test/265-assertion and 16 controlled Google/Vertex request results remain evidence for their frozen source only. Independent reassessment rejected the blanket capability gate. Source002 Standards REJECT / Spec PASS preserves the finding that its Vertex branch skipped existing legacy-field verification. Fixture/documentation-only source003 restores both providers' legacy sampling/output, endpoint/model fences, reopen, model switch and lowered-limit recovery; only custom Top K mutations are Google-only. Final 34 maintained tests (325 assertions) and 17 controlled builder requests (8 Google, 9 Vertex), 6 boundary cases and 2 recovery cases passed. Native Google-only observation cache reuse, withdrawal, same-model recovery and reopen are controlled-tested; earlier warm-cache failure remains preserved. Source003 passed both original correction reviews. Disposable native App/real-host readback saved all four presets while retaining baseline 37 under controlled native metadata and denied external networking. A later native UI run saved omission and retained it across a full App/host restart of the same original session without seed/create; Follow then cleared the override with baseline 37 unchanged. First-save controls-changed warning and earlier window/mode limits remain preserved; the later visible run used full-screen and Raise. Source004 release-form full suite passed 3579 with 31 skipped, typecheck/build0; the preliminary default-timeout Git-history failure is retained. This later documentation-only update has no executable delta. Unavailable-model UI, live provider, packaged and physical/reference acceptance remain pending.",
       "required": true
     },
     {

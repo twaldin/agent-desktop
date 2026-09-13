@@ -2,26 +2,31 @@ import { expect, test } from "bun:test";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import type { Model } from "@oh-my-pi/pi-catalog/types";
+import type { OmpStreamField } from "@agent-desktop/shared";
 import { NativeAdvancedStreamControls } from "./advanced-stream";
 
 const ENTRY = "agent-desktop.advanced-stream.v1";
+const TOP_K_ENTRY = "agent-desktop.advanced-stream.top-k.v1";
 type CapturedCall = { model: Model; context: unknown; options: Record<string, unknown> | undefined };
 type Receipt = { type: "custom"; customType: string; data: unknown };
 
 /** Controlled session/stream seam: exercises production ownership, receipt, validation,
  * and forwarding logic without constructing an AgentSession or claiming native SDK proof.
  */
-function controlledSession(initialModel: Model, initialSelection?: Record<string, unknown>) {
+function controlledSession(initialModel: Model, initialSelection?: Record<string, unknown>, initialTopKSelection?: Record<string, unknown>) {
   let model = initialModel;
   const branch: Receipt[] = initialSelection ? [{ type: "custom", customType: ENTRY, data: {
     model: { provider: model.provider, id: model.id, api: model.api }, selection: { ...initialSelection },
   } }] : [];
+  if (initialTopKSelection) branch.push({ type: "custom", customType: TOP_K_ENTRY, data: {
+    model: { provider: model.provider, id: model.id, api: model.api }, selection: { ...initialTopKSelection },
+  } });
   const calls: CapturedCall[] = [];
   const original = (callModel: Model, context: unknown, options: Record<string, unknown> | undefined) => {
     calls.push({ model: callModel, context, options });
     return { controlled: true };
   };
-  const agent = { streamFn: original, temperature: 0.35 as number | undefined, topP: 0.8 as number | undefined,
+  const agent = { streamFn: original, temperature: 0.35 as number | undefined, topP: 0.8 as number | undefined, topK: 37 as number | undefined,
     state: { thinkingLevel: "high" as "high" | undefined, disableReasoning: false, tools: [] as Array<{ name: string }> },
     thinkingBudgets: undefined as { high?: number } | undefined };
   const settings = { externalThinking: false, get: () => settings.externalThinking };
@@ -37,9 +42,153 @@ function controlledSession(initialModel: Model, initialSelection?: Record<string
   return { session, agent, settings, branch, calls, setModel: (next: Model) => { model = next; } };
 }
 function identity(model: Model) { return { provider: model.provider, id: model.id, api: model.api }; }
-function mutation(model: Model, field: "temperature" | "topP" | "maxTokens", action: "set" | "inherit" | "provider-default", value?: number) {
+function mutation(model: Model, field: OmpStreamField, action: "set" | "inherit" | "provider-default", value?: number) {
   return { operation: "advanced-stream" as const, expectedRevision: "controlled-revision", model: identity(model), field, action, ...(action === "set" ? { value } : {}) };
 }
+// Controlled metadata only; the separate native fixture exercises provider
+// discovery, registry composition, cache and Agent model propagation.
+function observedGoogle(id = "gemini-2.5-flash"): Model {
+  return { ...getBundledModel("google", id), topK: 64 };
+}
+
+test("Gemini Top K composes independent strict receipts without rewriting legacy selections", async () => {
+  const model = observedGoogle();
+  const native = controlledSession(model, { temperature: 0.2, maxTokens: 256 }, { topK: 20 });
+  const controls = new NativeAdvancedStreamControls(native.session);
+
+  expect(controls.read().selection).toEqual({ temperature: 0.2, maxTokens: 256, topK: 20 });
+  expect(controls.read().native.topK).toBe(37); // Native inheritance is reported exactly, even outside the app's four custom choices.
+  expect(controls.read().fields!.topK).toEqual({ supported: true, reason: expect.any(String), minimum: 1, maximum: null });
+
+  controls.mutate(mutation(model, "topP", "set", 0.4));
+  expect(native.branch.at(-1)!.customType).toBe(ENTRY);
+  expect((native.branch.at(-1)!.data as { selection: unknown }).selection).toEqual({ temperature: 0.2, topP: 0.4, maxTokens: 256 });
+  expect(controls.read().selection.topK).toBe(20);
+
+  controls.mutate(mutation(model, "topK", "set", 100));
+  expect(native.branch.at(-1)!.customType).toBe(TOP_K_ENTRY);
+  expect((native.branch.at(-1)!.data as { selection: unknown }).selection).toEqual({ topK: 100 });
+  controls.mutate(mutation(model, "maxTokens", "set", 512));
+  expect(native.branch.at(-1)!.customType).toBe(ENTRY);
+  expect((native.branch.at(-1)!.data as { selection: Record<string, unknown> }).selection.topK).toBeUndefined();
+  expect(controls.read().selection).toEqual({ temperature: 0.2, topP: 0.4, maxTokens: 512, topK: 100 });
+
+  await dispatch(native.session, model, { topK: 37 });
+  expect(native.calls.at(-1)!.options?.topK).toBe(100);
+  controls.mutate(mutation(model, "topK", "provider-default"));
+  await dispatch(native.session, model, { topK: 37 });
+  expect(native.calls.at(-1)!.options?.topK).toBeUndefined();
+  controls.mutate(mutation(model, "topK", "inherit"));
+  expect((native.branch.at(-1)!.data as { selection: unknown }).selection).toEqual({});
+  await dispatch(native.session, model, { topK: 37 });
+  expect(native.calls.at(-1)!.options?.topK).toBe(37);
+  expect(controls.read().selection.topK).toBeUndefined();
+});
+
+test("Top K validates pinned choices and follows receipt branch and model order", async () => {
+  const model = observedGoogle();
+  const other = observedGoogle("gemini-2.5-pro");
+  const native = controlledSession(model, { temperature: 0.2 }, { topK: 20 });
+  const controls = new NativeAdvancedStreamControls(native.session);
+  for (const value of [0, 2, 1.5, 101, Number.NaN]) {
+    const length = native.branch.length;
+    expectCode(() => controls.mutate(mutation(model, "topK", "set", value)), "invalid-value");
+    expect(native.branch).toHaveLength(length);
+  }
+  controls.mutate(mutation(model, "topK", "set", 100));
+  const fork = native.branch.slice();
+  native.setModel(other);
+  expect(controls.read().selection).toEqual({});
+  controls.mutate(mutation(other, "topK", "set", 1));
+  expect(controls.read().selection).toEqual({ topK: 1 });
+  native.setModel(model);
+  expect(controls.read().selection).toEqual({ temperature: 0.2, topK: 100 });
+  native.branch.splice(0, native.branch.length, ...fork.slice(0, 2));
+  expect(controls.read().selection).toEqual({ temperature: 0.2, topK: 20 });
+});
+
+test("Top K retention is suppressed on changed endpoints and remains explicitly recoverable", async () => {
+  const model = observedGoogle();
+  const native = controlledSession(model, undefined, { topK: 40 });
+  const controls = new NativeAdvancedStreamControls(native.session);
+  const rerouted = { ...model, baseUrl: "https://untrusted.invalid" } satisfies Model;
+  native.setModel(rerouted);
+  expect(controls.read().selection).toEqual({ topK: 40 });
+  expect(controls.read().fields!.topK?.supported).toBe(false);
+  const original = { topK: 20, cacheRetention: "short" };
+  await dispatch(native.session, rerouted, original);
+  expect(native.calls.at(-1)!.options).toBe(original);
+  expectCode(() => controls.mutate(mutation(rerouted, "topK", "set", 100)), "unsupported");
+  controls.mutate(mutation(rerouted, "topK", "inherit"));
+  expect(controls.read().selection.topK).toBeUndefined();
+  expect(controls.read().fields!.topK).toBeUndefined();
+  native.setModel(model);
+  expect(controls.read().fields!.topK?.supported).toBe(true);
+});
+
+test("Top K remains visible but unavailable without a provider capability, including fixed Vertex models", async () => {
+  const cases: Array<{ model: Model; reason: RegExp }> = [
+    { model: getBundledModel("google", "gemini-2.5-flash"), reason: /not reported/ },
+    { model: { ...observedGoogle(), topK: null }, reason: /does not advertise/ },
+    { model: { ...observedGoogle(), topK: 0 }, reason: /does not advertise/ },
+    { model: { ...observedGoogle(), topK: 1.5 }, reason: /does not advertise/ },
+    { model: getBundledModel("google-vertex", "gemini-2.5-flash"), reason: /fixed Top K of 64/ },
+    { model: getBundledModel("google-vertex", "gemini-2.5-pro"), reason: /fixed Top K of 64/ },
+  ];
+  for (const { model, reason } of cases) {
+    const native = controlledSession(model, { temperature: 0.2 }, { topK: 40 });
+    const controls = new NativeAdvancedStreamControls(native.session);
+    expect(controls.read().fields!.topK).toEqual({ supported: false, reason: expect.stringMatching(reason), minimum: 1, maximum: null });
+    expect(controls.read().selection.topK).toBe(40);
+    const before = native.branch.length;
+    expectCode(() => controls.mutate(mutation(model, "topK", "set", 20)), "unsupported");
+    expectCode(() => controls.mutate(mutation(model, "topK", "provider-default")), "unsupported");
+    expect(native.branch.length).toBe(before);
+    await dispatch(native.session, model, { cacheRetention: "short" });
+    expect(native.calls.at(-1)!.options).toEqual({ cacheRetention: "short", temperature: 0.2 });
+    controls.mutate(mutation(model, "topK", "inherit"));
+    expect(controls.read().selection).toEqual({ temperature: 0.2 });
+    expect(controls.read().fields!.topK?.supported).toBe(false);
+  }
+});
+
+test("successful metadata withdrawal suppresses an earlier Top K receipt without deleting it", async () => {
+  const model = observedGoogle();
+  const native = controlledSession(model, undefined, { topK: 40 });
+  const controls = new NativeAdvancedStreamControls(native.session);
+  await dispatch(native.session, model, {});
+  expect(native.calls.at(-1)!.options?.topK).toBe(40);
+  const withdrawn = { ...model, topK: null };
+  native.setModel(withdrawn);
+  await dispatch(native.session, withdrawn, {});
+  expect(native.calls.at(-1)!.options?.topK).toBeUndefined();
+  expect(controls.read().selection.topK).toBe(40);
+  expect(controls.read().fields!.topK?.supported).toBe(false);
+});
+
+test("wire-identity overrides cannot borrow Top K authority and unadvertised recovery writes no receipt", () => {
+  const model = { ...observedGoogle(), requestModelId: "another-wire-model" };
+  const native = controlledSession(model, undefined, { topK: 40 });
+  const controls = new NativeAdvancedStreamControls(native.session);
+  expect(controls.read().fields!.topK?.supported).toBe(false);
+  expectCode(() => controls.mutate(mutation(model, "topK", "set", 20)), "unsupported");
+  controls.mutate(mutation(model, "topK", "inherit"));
+  expect(controls.read().selection.topK).toBeUndefined();
+  const anthropic = getBundledModel("anthropic", "claude-opus-4-6");
+  native.setModel(anthropic);
+  const before = native.branch.length;
+  expect(controls.read().fields!.topK).toBeUndefined();
+  expectCode(() => controls.mutate(mutation(anthropic, "topK", "inherit")), "unsupported");
+  expect(native.branch.length).toBe(before);
+});
+
+test("legacy and Top K receipt grammars remain independently strict", () => {
+  const model = getBundledModel("google", "gemini-2.5-flash");
+  const legacy = controlledSession(model, { topK: 20 });
+  expectCode(() => new NativeAdvancedStreamControls(legacy.session).read(), "read-failed");
+  const topK = controlledSession(model, undefined, { topK: 20, temperature: 0.2 });
+  expectCode(() => new NativeAdvancedStreamControls(topK.session).read(), "read-failed");
+});
 function expectCode(run: () => unknown, code: string) {
   try { run(); throw new Error("Expected controlled mutation to fail."); }
   catch (error) { expect((error as { code?: string }).code).toBe(code); }
@@ -106,6 +255,7 @@ test("Gemini field support remains complete while untrusted Anthropic and Codex 
     temperature: { supported: true, reason: expect.any(String), minimum: 0, maximum: 2 },
     topP: { supported: true, reason: expect.any(String), minimum: 0, maximum: 1 },
     maxTokens: { supported: true, reason: expect.any(String), minimum: 1, maximum: gemini.maxTokens },
+    topK: { supported: false, reason: expect.any(String), minimum: 1, maximum: null },
   });
   expect(geminiState.outputBudgetNote).toBeUndefined();
   geminiControls.mutate(mutation(gemini, "temperature", "provider-default"));

@@ -670,7 +670,7 @@
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
       "status": "bounded-native-functional-verified",
       "settingsPaths": [],
-      "note": "Typed session/model-bound sampling for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport. Controlled native request proof and bounded functional App proof are delivered; custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits. The separately reviewed Anthropic extension adds per-field sampling/output budgets under native thinking and compatibility guards; see that ledger’s anthropicExtension for its distinct controlled request and disposable App evidence."
+      "note": "Typed session/model-bound sampling for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport. Controlled native request proof and bounded functional App proof are delivered; custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits. The separately reviewed Anthropic extension adds per-field sampling/output budgets under native thinking and compatibility guards; see that ledger\u2019s anthropicExtension for its distinct controlled request and disposable App evidence."
     },
     {
       "interface": "StreamOptions",
@@ -679,16 +679,16 @@
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
       "status": "bounded-native-functional-verified",
       "settingsPaths": [],
-      "note": "Typed session/model-bound sampling for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport. Controlled native request proof and bounded functional App proof are delivered; custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits. The separately reviewed Anthropic extension adds per-field sampling/output budgets under native thinking and compatibility guards; see that ledger’s anthropicExtension for its distinct controlled request and disposable App evidence."
+      "note": "Typed session/model-bound sampling for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport. Controlled native request proof and bounded functional App proof are delivered; custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits. The separately reviewed Anthropic extension adds per-field sampling/output budgets under native thinking and compatibility guards; see that ledger\u2019s anthropicExtension for its distinct controlled request and disposable App evidence."
     },
     {
       "interface": "StreamOptions",
       "field": "topK",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L401",
-      "status": "pending-stream-control",
+      "status": "provider-capability-reviewed-partial-native-ui",
       "settingsPaths": [],
-      "note": "Not independently editable through desktop controls. Native defaults/provider behavior remain active; dedicated applicability/mapping remains required."
+      "note": "Direct Google requires positive native Model.topK metadata for custom sampling. Undefined is unobserved; null is observed without usable support. Vertex 2.5 Flash/Pro is visibly fixed at 64; other Vertex models remain visibly unverified. Endpoint/API/transport/wire identity gates and separate model-bound receipts preserve unsupported intent and explicit Follow-native recovery. Native baseline remains exact. Model.topK is a default, not a maximum; all presets still require real provider acceptance."
     },
     {
       "interface": "StreamOptions",
@@ -742,7 +742,7 @@
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
       "status": "bounded-native-functional-verified",
       "settingsPaths": [],
-      "note": "Typed session/model-bound output limit for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport; inherit preserves native model fallback. Controlled native request/limit-recovery proof and bounded functional App proof are delivered. Custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits. The separately reviewed Anthropic extension adds per-field sampling/output budgets under native thinking and compatibility guards; see that ledger’s anthropicExtension for its distinct controlled request and disposable App evidence."
+      "note": "Typed session/model-bound output limit for pinned bundled Gemini identities with unchanged google-generative-ai/google-vertex API, endpoint and transport; inherit preserves native model fallback. Controlled native request/limit-recovery proof and bounded functional App proof are delivered. Custom endpoints, unlisted IDs and other scopes remain required/unsupported. No live provider, unchanged online-discovery or pixel-comparison acceptance; same-pair review acceptance is separate from this bounded evidence. See native-stream-control-coverage.json for checkpoint evidence, correction-regression scope and geometry/network limits. The separately reviewed Anthropic extension adds per-field sampling/output budgets under native thinking and compatibility guards; see that ledger\u2019s anthropicExtension for its distinct controlled request and disposable App evidence."
     },
     {
       "interface": "StreamOptions",

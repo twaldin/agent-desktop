@@ -128,20 +128,24 @@ export interface OmpModelCapabilities {
   excludedSensitiveFields: string[];
   unmappedCapabilityFields: string[];
 }
-export type OmpStreamField = "temperature" | "topP" | "maxTokens";
+export const OMP_TOP_K_VALUES = [1, 20, 40, 100] as const;
+export type OmpLegacyStreamField = "temperature" | "topP" | "maxTokens";
+export type OmpStreamField = OmpLegacyStreamField | "topK";
 export interface OmpStreamSelection {
   /** Omitted follows the native session; null explicitly uses provider sampling defaults. */
   temperature?: number | null;
   topP?: number | null;
+  topK?: number | null;
   /** Omitted follows the native request/model output limit. */
   maxTokens?: number;
 }
 export interface OmpAdvancedStreamControls {
-  /** Legacy all-fields availability. New clients use fields when present. */
+  /** Legacy availability for temperature, Top P and output limit only. */
   supported: boolean;
   reason: string;
   /** New hosts report each field independently. Omitted preserves the older Gemini contract. */
-  fields?: Record<OmpStreamField, { supported: boolean; reason: string; minimum: number; maximum: number | null }>;
+  fields?: Record<OmpLegacyStreamField, { supported: boolean; reason: string; minimum: number; maximum: number | null }>
+    & { topK?: { supported: boolean; reason: string; minimum: number; maximum: number | null } };
   /** A requested budget can be adjusted by native thinking and account rules. */
   outputBudgetNote?: string;
   /** Provider cross-field constraint; native inherited sampling participates. */
@@ -150,7 +154,7 @@ export interface OmpAdvancedStreamControls {
   samplingConflict?: string;
   model: { provider: string; id: string; api: string } | null;
   selection: OmpStreamSelection;
-  native: { temperature: number | null; topP: number | null; maxTokens: number | null };
+  native: { temperature: number | null; topP: number | null; maxTokens: number | null; topK?: number | null };
   /** Retained intent needs an explicit edit after the native model limit changes. */
   outputLimitConflict?: { saved: number; maximum: number };
   persistence: "owning-session-branch-model-api";

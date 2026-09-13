@@ -12,7 +12,7 @@
 .advanced-stream-row { display: grid; grid-template-columns: minmax(100px,1fr) minmax(140px,1fr); gap: 8px 12px; align-items: center; padding: 12px 0; border-top: var(--divider-width,1px) solid var(--border); }
 .advanced-stream-row label { color: var(--text); }
 .advanced-stream-row :is(select,input) { width: 100%; min-width: 0; min-height: 32px; padding: 5px 9px; border: 1px solid var(--border); border-radius: var(--button-radius,7px); background: var(--elevated-surface); color: var(--text); font: inherit; }
-.advanced-stream-row input { grid-column: 2; }
+.advanced-stream-row :is(input,.advanced-stream-value) { grid-column: 2; }
 .advanced-stream-row :is(small,p,.advanced-stream-edit-actions) { grid-column: 1 / -1; }
 .advanced-stream-row small { line-height: 1.5; overflow-wrap: anywhere; }
-@media (max-width: 600px) { .advanced-stream-row { grid-template-columns: minmax(0,1fr); } .advanced-stream-row input { grid-column: 1; } }
+@media (max-width: 600px) { .advanced-stream-row { grid-template-columns: minmax(0,1fr); } .advanced-stream-row :is(input,.advanced-stream-value) { grid-column: 1; } }

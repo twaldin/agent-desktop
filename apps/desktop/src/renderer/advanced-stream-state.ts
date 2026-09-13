@@ -91,8 +91,13 @@ export class AdvancedStreamState {
       || snapshot.model.id !== edit.model.id || snapshot.model.api !== edit.model.api) {
       edit.error = "Native controls changed. Reload and explicitly review this edit before saving."; this.notify(); return;
     }
-    if (snapshot?.fields?.[field].supported === false && edit.action !== "inherit") {
-      edit.error = snapshot.fields[field].reason; this.notify(); return;
+    const capability = snapshot.fields?.[field];
+    if (field === "topK" && !capability) {
+      edit.error = "This host does not advertise Top K controls. Your edit is retained; reload after connecting to a supporting host.";
+      this.notify(); return;
+    }
+    if (capability?.supported === false && edit.action !== "inherit") {
+      edit.error = capability.reason; this.notify(); return;
     }
     const value = edit.action === "set" && edit.text.trim() !== "" ? Number(edit.text) : undefined;
     if (edit.action === "set" && (value === undefined || !Number.isFinite(value))) {

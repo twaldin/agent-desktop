@@ -15,9 +15,18 @@ if (process.env.PI_CODING_AGENT_DIR !== agentDir) throw new Error("PI_CODING_AGE
 const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
 const inertKey = "native-stream-owned-boundary-not-a-credential";
 let rejectedFetches = 0;
+const discoveryRequests: string[] = [];
 globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
   const request = new Request(input, init);
   const url = new URL(request.url);
+  if (request.method === "GET" && url.origin === "https://generativelanguage.googleapis.com"
+    && url.pathname === "/v1beta/models" && url.searchParams.get("key") === inertKey) {
+    discoveryRequests.push(request.url);
+    return Response.json({ models: ["gemini-2.5-flash", "gemini-2.5-pro"].map(id => ({
+      name: `models/${id}`, displayName: id, supportedGenerationMethods: ["generateContent"],
+      inputTokenLimit: 1_048_576, outputTokenLimit: 65_536, topK: 40,
+    })) });
+  }
   if (request.method !== "POST" || !["generativelanguage.googleapis.com", "aiplatform.googleapis.com"].includes(url.hostname)
     || !url.pathname.endsWith(":streamGenerateContent") || request.headers.get("x-goog-api-key") !== inertKey) {
     rejectedFetches++;
@@ -28,7 +37,7 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
 }, { preconnect: () => {} }) as typeof fetch;
 await mkdir(agentDir, { recursive: true }); await mkdir(cwd, { recursive: true });
 const configPath = path.join(agentDir, "config.yml");
-const config = "extensions: []\ntemperature: 0.35\ntopP: 0.8\nretry:\n  enabled: false\n";
+const config = "extensions: []\ntemperature: 0.35\ntopP: 0.8\ntopK: 20\nretry:\n  enabled: false\n";
 await writeFile(configPath, config, { flag: "wx" });
 // Intentionally exercise the native module-loading boundary only after the
 // outbound fetch guard is installed; static imports would run native discovery first.
@@ -37,6 +46,7 @@ const { getBundledModel } = await import("@oh-my-pi/pi-catalog/models");
 const { NativeSessionControls } = await import("../../omp-settings/models");
 const { parseSessionControlMutation } = await import("../../settings-http");
 const auth = await discoverAuthStorage(agentDir);
+auth.setConfigApiKey("google", inertKey);
 const settings = await Settings.loadReadOnly({ agentDir, cwd });
 const registry = new ModelRegistry(auth, path.join(agentDir, "models.yml"), { settings });
 const evidence: Array<Record<string, unknown>> = [];
@@ -44,9 +54,18 @@ const boundaryEvidence: Array<{ provider: string; case: string; supported: boole
 const recoveryEvidence: Array<{ provider: string; retained: number; maximum: number; excessiveWriteRejected: true; excessiveDispatchBlocked: true; explicitInheritRequestLimit: number }> = [];
 try {
   for (const target of [{ provider: "google", api: "google-generative-ai" }, { provider: "google-vertex", api: "google-vertex" }] as const) {
-    const model = registry.find(target.provider, "gemini-2.5-flash");
-    if (!model || model.api !== target.api) throw new Error("Pinned native Gemini model/API missing; do not fabricate catalog entries.");
+    const initialModel = registry.find(target.provider, "gemini-2.5-flash");
+    if (!initialModel || initialModel.api !== target.api) throw new Error("Pinned native Gemini model/API missing; do not fabricate catalog entries.");
+    let model: Model = initialModel;
     const create = async (file?: string, sessionModel: Model = model, sessionRegistry: NativeModelRegistry = registry) => {
+      // The controlled overlay registries below share AuthStorage, and each
+      // config reload clears config-sourced keys. Restore only this fixture's
+      // inert key before each owned session instance.
+      auth.setConfigApiKey("google", inertKey);
+      if (sessionModel.provider === "google") {
+        assert.equal(auth.hasResolvableAuth("google"), true, "Owned Google auth must remain natively resolvable before SDK creation.");
+        assert.equal(sessionRegistry.hasConfiguredAuth(sessionModel), true, "Owning registry must recognize the fixture credential before SDK creation.");
+      }
       const manager = file ? await SessionManager.open(file) : SessionManager.create(cwd, path.join(agentDir, "sessions"));
       try {
         const result = await createAgentSession({ agentDir, cwd, authStorage: auth, modelRegistry: sessionRegistry,
@@ -59,6 +78,7 @@ try {
       } catch (error) { await manager.close(); throw error; }
     };
     let native = await create();
+    model = native.session.model!;
     const request = async (label: string) => {
       const before = captured.length;
       await native.session.agent.prompt("Owned native-stream fixture input; no external provider transport.");
@@ -77,7 +97,29 @@ try {
     };
     try {
       const baseline = await request("native-startup-defaults");
-      assert.equal(baseline.temperature, 0.35); assert.equal(baseline.topP, 0.8); assert.equal(baseline.maxOutputTokens, model.maxTokens);
+      assert.equal(baseline.temperature, 0.35); assert.equal(baseline.topP, 0.8); assert.equal(baseline.topK, 20); assert.equal(baseline.maxOutputTokens, model.maxTokens);
+      const topKControl = native.controls.read().advancedStream!.fields!.topK;
+      assert.ok(topKControl); assert.equal(topKControl.supported, target.provider === "google"); assert.equal(topKControl.minimum, 1); assert.equal(topKControl.maximum, null);
+      if (target.provider === "google-vertex") {
+        assert.match(topKControl.reason, /fixed|Vertex/i);
+        await assert.rejects(mutate("topK", "set", 40), { code: "unsupported" });
+        // A receipt written by the rejected implementation remains readable and
+        // explicitly clearable, but never reaches the fixed Vertex request.
+        native.manager.appendCustomEntry("agent-desktop.advanced-stream.top-k.v1", {
+          model: { provider: model.provider, id: model.id, api: model.api }, selection: { topK: 40 },
+        });
+        assert.equal(native.controls.read().advancedStream!.selection.topK, 40);
+        const retained = await request("fixed-vertex-retained-receipt-suppressed");
+        assert.equal(retained.topK, 20, "Unsupported retained intent must not replace the inherited native baseline.");
+        await mutate("topK", "inherit");
+        assert.equal(native.controls.read().advancedStream!.selection.topK, undefined);
+        const cleared = await request("fixed-vertex-receipt-explicitly-cleared");
+        assert.equal(cleared.topK, 20);
+      } else {
+        await mutate("topK", "set", 1);
+        const focusedTopK = await request("top-k-preset-1");
+        assert.equal(focusedTopK.topK, 1);
+      }
       // Exercise real native models.yml overlays, not fabricated in-memory Models.
       // No request is dispatched while an unverified endpoint/model is selected.
       const customEndpoint = "https://native-stream-custom.invalid/v1beta";
@@ -92,7 +134,8 @@ try {
         const authority: Pick<Model, "id" | "api" | "baseUrl" | "transport" | "identity"> = { id: bundledBefore.id, api: bundledBefore.api, baseUrl: bundledBefore.baseUrl, transport: bundledBefore.transport, identity: structuredClone(bundledBefore.identity) };
         const modelConfigPath = path.join(agentDir, `${target.provider}-${boundary.label}.yml`);
         // Native custom model definitions require an explicit auth mode. This
-        // owned no-dispatch registry has no credentials and never changes auth storage.
+        // owned no-dispatch registry shares AuthStorage; create() restores the
+        // fixture's inert key after each overlay config reload.
         await writeFile(modelConfigPath, JSON.stringify({ providers: { [target.provider]: { auth: "none", ...boundary.configuration } } }), { flag: "wx" });
         const overlayRegistry = new ModelRegistry(auth, modelConfigPath, { settings });
         const overlayModel = overlayRegistry.find(target.provider, boundary.id);
@@ -109,36 +152,62 @@ try {
         const snapshot = native.controls.read();
         assert.equal(snapshot.advancedStream!.supported, false, `${boundary.label} must not advertise bundled native stream support.`);
         await assert.rejects(mutate("temperature", "set", 0.4), { code: "unsupported" });
+        await assert.rejects(mutate("topK", "set", 40), { code: "unsupported" });
         boundaryEvidence.push({ provider: target.provider, case: boundary.label, supported: snapshot.advancedStream!.supported, mutation: "unsupported",
           effective: { id: overlayModel.id, api: overlayModel.api, baseUrl: overlayModel.baseUrl, transport: overlayModel.transport ?? null }, loadedWithoutErrors: true, bundledUnchanged: true });
         native.session.agent.setModel(model);
       }
       const stale = native.controls.read();
-      await mutate("temperature", "set", 0); await mutate("topP", "set", 0.4); await mutate("maxTokens", "set", 256);
+      await mutate("temperature", "set", 0); await mutate("topP", "set", 0.4);
+      if (target.provider === "google") await mutate("topK", "set", 100);
+      await mutate("maxTokens", "set", 256);
       const custom = await request("explicit-zero-sampling-and-output");
-      assert.equal(custom.temperature, 0); assert.equal(custom.topP, 0.4); assert.equal(custom.maxOutputTokens, 256);
+      assert.equal(custom.temperature, 0); assert.equal(custom.topP, 0.4);
+      assert.equal(custom.topK, target.provider === "google" ? 100 : 20);
+      assert.equal(custom.maxOutputTokens, 256);
       await assert.rejects(native.controls.mutate({ operation: "advanced-stream", expectedRevision: stale.revision, model: stale.advancedStream!.model!, field: "topP", action: "set", value: 0.9 }, async () => {}), { code: "conflict" });
       await assert.rejects(mutate("topP", "set", 2), { code: "invalid-value" });
+      if (target.provider === "google") await assert.rejects(mutate("topK", "set", 2), { code: "invalid-value" });
       await assert.rejects(mutate("maxTokens", "set", 0), { code: "invalid-value" });
       await mutate("temperature", "provider-default"); await mutate("topP", "provider-default");
+      if (target.provider === "google") await mutate("topK", "provider-default");
       const omitted = await request("explicit-provider-defaults");
-      assert.equal(Object.hasOwn(omitted, "temperature"), false); assert.equal(Object.hasOwn(omitted, "topP"), false); assert.equal(omitted.maxOutputTokens, 256);
+      assert.equal(Object.hasOwn(omitted, "temperature"), false); assert.equal(Object.hasOwn(omitted, "topP"), false);
+      assert.equal(target.provider === "google" ? Object.hasOwn(omitted, "topK") : omitted.topK, target.provider === "google" ? false : 20);
       for (const field of ["temperature", "topP", "maxTokens"] as const) await mutate(field, "inherit");
+      if (target.provider === "google") await mutate("topK", "inherit");
       const inherited = await request("cleared-to-native-startup-defaults");
-      assert.equal(inherited.temperature, 0.35); assert.equal(inherited.topP, 0.8); assert.equal(inherited.maxOutputTokens, model.maxTokens);
-      await mutate("temperature", "set", 0.6); await mutate("topP", "set", 0.55); await mutate("maxTokens", "set", 512);
+      assert.equal(inherited.temperature, 0.35); assert.equal(inherited.topP, 0.8); assert.equal(inherited.topK, 20); assert.equal(inherited.maxOutputTokens, model.maxTokens);
+      await mutate("temperature", "set", 0.6); await mutate("topP", "set", 0.55);
+      if (target.provider === "google") await mutate("topK", "set", 40);
+      await mutate("maxTokens", "set", 512);
       const file = native.manager.getSessionFile()!;
-      await native.session.dispose(); native = await create(file);
+      await native.session.dispose();
+      const discoveryCountBeforeWarmRefresh = discoveryRequests.length;
+      const directBeforeReopen = await registry.refreshSelectedModelMetadata(model);
+      assert.equal(discoveryRequests.length, discoveryCountBeforeWarmRefresh, "Fresh selected-model metadata must reopen from its dedicated cache without another Models GET.");
+      assert.equal(directBeforeReopen.topK, target.provider === "google" ? 40 : undefined,
+        "Direct cached metadata refresh must preserve the provider's observed Top K state.");
+      model = directBeforeReopen;
+      native = await create(file);
+      const reopenedState = native.controls.read().advancedStream!;
+      assert.equal(reopenedState.selection.topK, target.provider === "google" ? 40 : undefined,
+        "Reopen must preserve a supported receipt and keep an explicitly cleared fixed-provider receipt absent.");
+      assert.equal(reopenedState.fields!.topK?.supported, target.provider === "google");
+      assert.equal(native.session.model?.topK, target.provider === "google" ? 40 : undefined);
       const reopened = await request("native-session-reopened");
-      assert.equal(reopened.temperature, 0.6); assert.equal(reopened.topP, 0.55); assert.equal(reopened.maxOutputTokens, 512);
+      assert.equal(reopened.temperature, 0.6); assert.equal(reopened.topP, 0.55);
+      assert.equal(reopened.topK, target.provider === "google" ? 40 : 20);
+      assert.equal(reopened.maxOutputTokens, 512);
       const otherModel = registry.find(target.provider, "gemini-2.5-pro");
       if (!otherModel || otherModel.api !== target.api) throw new Error("Pinned native alternate Gemini model missing.");
       native.session.agent.setModel(otherModel);
       assert.deepEqual(native.controls.read().advancedStream!.selection, {});
       const other = await request("different-model-inherits-native");
-      assert.equal(other.temperature, 0.35); assert.equal(other.topP, 0.8); assert.equal(other.maxOutputTokens, otherModel.maxTokens);
+      assert.equal(other.temperature, 0.35); assert.equal(other.topP, 0.8); assert.equal(other.topK, 20); assert.equal(other.maxOutputTokens, otherModel.maxTokens);
       native.session.agent.setModel(model);
       assert.equal(native.controls.read().advancedStream!.selection.maxTokens, 512);
+      assert.equal(native.controls.read().advancedStream!.selection.topK, target.provider === "google" ? 40 : undefined);
       // Preserve saved intent when an actual native model override lowers the
       // model limit. Reading its revision and explicitly clearing must remain possible.
       const lowerLimitConfig = path.join(agentDir, `${target.provider}-lower-output-limit.yml`);
@@ -168,9 +237,10 @@ try {
       const lowerLimitRequest = await request("lowered-native-limit-explicitly-cleared-after-reopen");
       assert.equal(lowerLimitRequest.maxOutputTokens, 128);
       assert.equal(lowerLimitRequest.temperature, 0.6); assert.equal(lowerLimitRequest.topP, 0.55);
+      assert.equal(lowerLimitRequest.topK, target.provider === "google" ? 40 : 20);
       recoveryEvidence.push({ provider: target.provider, retained: 512, maximum: 128, excessiveWriteRejected: true, excessiveDispatchBlocked: true, explicitInheritRequestLimit: 128 });
     } finally { await native.session.dispose(); }
   }
   assert.equal(await readFile(configPath, "utf8"), config);
-  console.log(JSON.stringify({ sourceCommit: "f241301c83726afe75a847e919b89977a54dafbe", version: "18.1.10", evidenceClass: "real-native-agent-loop-and-request-builder-controlled-fetch; not-App-UI-or-live-provider", accountWrites: 0, externalNetworkRequests: 0, rejectedFetches, evidence, boundaryEvidence, recoveryEvidence }, null, 2));
+  console.log(JSON.stringify({ sourceBase: "f3ca116d395700a9c4f26f5dcf2b0235eb377bb5", version: "18.1.10", evidenceClass: "real-native-agent-loop-and-request-builder-controlled-fetch; Google metadata uses controlled Models GET; Vertex proves inherited baseline and disabled receipt recovery; no live-provider acceptance", accountWrites: 0, externalNetworkRequests: 0, rejectedFetches, evidence, boundaryEvidence, recoveryEvidence }, null, 2));
 } finally { auth.close(); }

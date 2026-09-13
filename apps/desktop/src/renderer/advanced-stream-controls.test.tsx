@@ -347,3 +347,137 @@ test("a model switch keeps the old model's draft until switchback and explicit r
   state.rebase("temperature"); await state.save("temperature"); expect(writes).toBe(1);
   state.stop();
 });
+
+function topKControls(revision = "top-k-initial"): OmpSessionControls {
+  const value = controls(revision, 0.6);
+  value.advancedStream!.fields = {
+    temperature: { supported: true, reason: "Native temperature.", minimum: 0, maximum: 2 },
+    topP: { supported: true, reason: "Native Top P.", minimum: 0, maximum: 1 },
+    maxTokens: { supported: true, reason: "Native output limit.", minimum: 1, maximum: 65536 },
+    topK: { supported: true, reason: "Choose one of the native Top K presets.", minimum: 1, maximum: null },
+  };
+  value.advancedStream!.native.topK = 40;
+  return value;
+}
+function topKRow(tree: React.ReactElement) {
+  const found = elements(tree).find(item => item.props.className === "advanced-stream-row"
+    && elements(item).some(child => child.type === "label" && child.props.children === "Top K"));
+  if (!found) throw new Error("Top K row is unavailable");
+  return found;
+}
+
+test("old host support never advertises Top K or accepts a retained Top K edit", async () => {
+  for (const native of [controls("legacy-boolean", 0.6), topKControls("legacy-fields")]) {
+    if (native.advancedStream!.fields) delete native.advancedStream!.fields.topK;
+    let writes = 0;
+    const bridge: Pick<DesktopBridge, "getSessionControls" | "setSessionControl" | "subscribe"> = { getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+      setSessionControl: async () => { writes++; return structuredClone(native); } };
+    const hooks = driver();
+    const props = { bridge: bridge as DesktopBridge, hostId: "owner", sessionId: "session", connected: true, disabled: false };
+    const state = new AdvancedStreamState(bridge, "owner", "session");
+    try {
+      hooks.render(props); await settle();
+      const tree = hooks.render(props);
+      expect(elements(tree).some(item => item.type === "label" && item.props.children === "Top K")).toBe(false);
+      expect(input(tree).value).toBe("0.6");
+      state.start(); state.setConnected(true); await settle();
+      for (const action of ["set", "provider-default", "inherit"] as const) {
+        state.edit("topK", action, "20"); await state.save("topK");
+        expect(state.edits.get("topK")?.error).toContain("does not advertise Top K");
+      }
+      expect(writes).toBe(0);
+    } finally { state.stop(); hooks.dispose(); }
+  }
+});
+
+test("Top K presets, omission and follow use the owning session without changing other fields", async () => {
+  let native = topKControls(), writes = 0;
+  const bridge: Pick<DesktopBridge, "getSessionControls" | "setSessionControl" | "subscribe"> = {
+    getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async (sessionId, mutation, hostId) => {
+      expect(sessionId).toBe("session"); expect(hostId).toBe("owner");
+      expect(mutation.expectedRevision).toBe(native.revision);
+      if (mutation.operation !== "advanced-stream" || mutation.field !== "topK") throw new Error("Unexpected mutation");
+      expect(mutation.model).toEqual(native.advancedStream!.model!);
+      if (mutation.action === "inherit") delete native.advancedStream!.selection.topK;
+      else native.advancedStream!.selection.topK = mutation.action === "provider-default" ? null : mutation.value;
+      native.revision = `saved-top-k-${++writes}`;
+      return structuredClone(native);
+    },
+  };
+  const hooks = driver();
+  const props = { bridge: bridge as DesktopBridge, hostId: "owner", sessionId: "session", connected: true, disabled: false };
+  try {
+    hooks.render(props); await settle();
+    let row = topKRow(hooks.render(props));
+    elements(row).find(item => item.type === "select")!.props.onChange!({ target: { value: "set" } });
+    row = topKRow(hooks.render(props));
+    let picker = elements(row).find(item => item.props["aria-label"] === "Top K value")!;
+    expect(picker.type).toBe("select"); expect(picker.props.value).toBe("");
+    expect(elements(picker).filter(item => item.type === "option").map(item => item.props.value)).toEqual(["", "1", "20", "40", "100"]);
+    for (const value of ["1", "20", "40", "100"]) {
+      picker.props.onChange!({ target: { value } });
+      row = topKRow(hooks.render(props));
+      expect(button(row, "Save").disabled).toBe(false);
+      button(row, "Save").onClick(); await settle();
+      row = topKRow(hooks.render(props));
+      picker = elements(row).find(item => item.props["aria-label"] === "Top K value")!;
+      expect(picker.props.value).toBe(value);
+      expect(native.advancedStream!.selection.temperature).toBe(0.6);
+    }
+    for (const action of ["provider-default", "inherit"] as const) {
+      elements(row).find(item => item.type === "select")!.props.onChange!({ target: { value: action } });
+      row = topKRow(hooks.render(props)); button(row, "Save").onClick(); await settle();
+      row = topKRow(hooks.render(props));
+      expect(native.advancedStream!.selection.topK).toBe(action === "provider-default" ? null : undefined);
+      expect(native.advancedStream!.selection.temperature).toBe(0.6);
+      expect(elements(row).some(item => item.props["aria-label"] === "Top K value")).toBe(false);
+    }
+    expect(writes).toBe(6);
+    for (const status of [{ connected: false }, { disabled: true }]) {
+      row = topKRow(hooks.render({ ...props, ...status }));
+      expect(elements(row).find(item => item.type === "select")!.props.disabled).toBe(true);
+    }
+  } finally { hooks.dispose(); }
+});
+
+test("explicitly unavailable Top K retains intent but permits follow-native recovery", async () => {
+  const native = topKControls();
+  native.advancedStream!.selection.topK = 20;
+  native.advancedStream!.fields!.topK = { supported: false, reason: "The native endpoint changed.", minimum: 1, maximum: null };
+  let writes = 0;
+  const bridge: Pick<DesktopBridge, "getSessionControls" | "setSessionControl" | "subscribe"> = { getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async (_id: string, mutation: Parameters<DesktopBridge["setSessionControl"]>[1]) => {
+      if (mutation.operation !== "advanced-stream" || mutation.field !== "topK" || mutation.action !== "inherit")
+        throw new Error("Only follow-native recovery is available");
+      writes++; delete native.advancedStream!.selection.topK; return structuredClone(native);
+    } };
+  const state = new AdvancedStreamState(bridge, "owner", "session"), hooks = driver();
+  const props = { bridge: bridge as DesktopBridge, hostId: "owner", sessionId: "session", connected: true, disabled: false };
+  try {
+    hooks.render(props); state.start(); state.setConnected(true); await settle();
+    const row = topKRow(hooks.render(props));
+    const picker = elements(row).find(item => item.props["aria-label"] === "Top K value")!;
+    expect(picker.props.value).toBe("20"); expect(picker.props.disabled).toBe(true);
+    expect(elements(row).find(item => item.type === "select")!.props.disabled).toBe(false);
+    state.edit("topK", "set", "40"); await state.save("topK");
+    expect(writes).toBe(0); expect(state.edits.get("topK")?.error).toBe("The native endpoint changed.");
+    state.edit("topK", "inherit", ""); await state.save("topK");
+    expect(writes).toBe(1); expect(state.controls?.advancedStream?.selection).toEqual({ temperature: 0.6 });
+  } finally { state.stop(); hooks.dispose(); }
+});
+
+test("Top K pending edits require owner connection, original model and explicit revision rebase", async () => {
+  let native = topKControls(), writes = 0;
+  const state = new AdvancedStreamState({ getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async () => { writes++; return structuredClone(native); } }, "owner", "session");
+  try {
+    state.start(); state.setConnected(true); await settle(); state.edit("topK", "set", "100");
+    state.setConnected(false); await state.save("topK"); expect(writes).toBe(0);
+    native = topKControls("changed"); native.advancedStream!.model!.api = "google-vertex";
+    state.setConnected(true); await settle(); state.rebase("topK"); await state.save("topK");
+    expect(writes).toBe(0); expect(state.edits.get("topK")?.text).toBe("100");
+    native = topKControls("returned"); await state.refresh(); await state.save("topK");
+    expect(writes).toBe(0); state.rebase("topK"); await state.save("topK"); expect(writes).toBe(1);
+  } finally { state.stop(); }
+});

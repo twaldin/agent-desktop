@@ -64,7 +64,7 @@ export function parseSessionControlMutation(value: unknown): OmpSessionControlMu
     case "advanced-stream": {
       keys(input, ["expectedRevision", "operation", "model", "field", "action", "value"]);
       const model = object(input.model); keys(model, ["provider", "id", "api"]);
-      if (input.field !== "temperature" && input.field !== "topP" && input.field !== "maxTokens") throw new SettingsRequestError("Invalid advanced stream field.");
+      if (input.field !== "temperature" && input.field !== "topP" && input.field !== "maxTokens" && input.field !== "topK") throw new SettingsRequestError("Invalid advanced stream field.");
       if (input.action !== "inherit" && input.action !== "provider-default" && input.action !== "set") throw new SettingsRequestError("Invalid advanced stream action.");
       if (input.action === "set" ? typeof input.value !== "number" || !Number.isFinite(input.value) : Object.hasOwn(input, "value")) throw new SettingsRequestError("Only an explicit stream value accepts a finite number.");
       if (input.action === "provider-default" && input.field === "maxTokens") throw new SettingsRequestError("Output limit must inherit the native model limit or use an explicit number.");
