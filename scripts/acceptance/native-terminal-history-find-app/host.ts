@@ -14,6 +14,8 @@ if (!basename(root).startsWith("native-history-find-") || process.env.HOME !== r
   || !existsSync(join(root, "fixture-owner.json"))) throw new Error("Prepared isolated native Find profile required.");
 const owner = JSON.parse(readFileSync(join(root, "fixture-owner.json"), "utf8"));
 if (owner.repo !== repo || owner.root !== root || process.env.NATIVE_FIND_HOST_ENTRY !== join(import.meta.dir, "host.ts")) throw new Error("Fixture ownership mismatch.");
+const mode = process.env.NATIVE_FIND_MODE ?? "full";
+if ((mode !== "full" && mode !== "capture-sequencing") || owner.mode !== mode) throw new Error("Prepared native Find mode mismatch.");
 if (existsSync(join(root, "context.json"))) throw new Error("Retained fixture host restart requires a separately recorded recovery run; no implicit reseeding.");
 const record = (kind: string) => appendFileSync(join(root, "guard-violations.jsonl"), JSON.stringify({ kind, pid: process.pid, at: Date.now() }) + "\n", { mode: 0o600 });
 const originalFetch = globalThis.fetch;
@@ -25,7 +27,7 @@ globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
 const { startHost } = await import("../../../apps/host/src/server");
 const host = await startHost({ dataDirectory: join(root, "host"), agentDirectory: join(root, "agent"), discoveryDirectory: join(root, "project"),
   nativeTerminalBundle: owner.bundle.directory, workerPath: join(import.meta.dir, "worker.ts"), tailscale: false, port: 0 });
-const { registerExitCleanup } = await import("@oh-my-pi/pi-utils");
+const { register: registerExitCleanup } = await import("@oh-my-pi/pi-utils/postmortem");
 registerExitCleanup("native-history-find-fixture-host", () => host.stop(), { exitOnly: true });
 const object = (value: unknown): Record<string, unknown> => { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid real host reply."); return value as Record<string, unknown>; };
 const text = (value: unknown): string => { if (typeof value !== "string" || !value) throw new Error("Missing real native identity."); return value; };
@@ -53,16 +55,18 @@ try {
   if (!draft.ok) throw new Error("Owned draft setup failed.");
   const tabs: DockTab[] = [];
   let dock = createDockState();
-  for (const role of ["saved", "other", "live"] as const) {
+  const roles: ReadonlyArray<"saved" | "other" | "live"> = mode === "capture-sequencing" ? ["live"] : ["saved", "other", "live"];
+  for (const role of roles) {
     const terminal = object(object(await request("/v2/terminals/action", { type: "create", options: { target: { projectId: project.id }, cols: 80, rows: 24 } })).terminal);
     const id = text(terminal.id);
     const attachment = object(object(await request("/v2/terminals/action", { type: "attach", terminalId: id, viewerId: crypto.randomUUID() })).attachment);
     const input = { terminalId: id, attachmentId: text(attachment.id), inputEpoch: text(attachment.inputEpoch), geometryRevision: integer(attachment.geometryRevision), clientId: crypto.randomUUID() };
+    await request("/v2/terminals/action", { type: "heartbeat", attachmentId: input.attachmentId, afterSequence: 0, geometryRevision: input.geometryRevision });
     const command = `exec /bin/sh ${quote(join(import.meta.dir, "emit-history.sh"))} ${quote(root)} ${quote(role)}`;
     for (const [sequence, value] of [[1, { kind: "text", data: command }], [2, { kind: "key", key: "Enter" }]] as const) {
       const receipt = object(await request("/v2/terminals/input", { ...input, sequence, input: value }));
-      if (receipt.outcome !== "accepted") throw new Error("Real native setup input was not accepted.");
       appendFileSync(join(owner.evidence, "setup-inputs.jsonl"), JSON.stringify({ terminalId: id, role, sequence, input: value, receipt }) + "\n", { mode: 0o600 });
+      if (receipt.outcome !== "accepted") throw new Error("Real native setup input was not accepted: " + JSON.stringify(receipt));
     }
     const deadline = Date.now() + 20_000;
     let history: Record<string, unknown>;
@@ -85,13 +89,16 @@ try {
   }
   dock.rightLayout = "full";
   const windowState = new WindowStateStore(join(root, "desktop"), "primary");
-  const view = windowState.saveView({ ...defaultWindowView(), route: { hostId: host.connection.hostId, sessionId: null }, expandedProjects: [project.id], dock: { state: dock, tabs } });
+  const view = windowState.saveView({ ...defaultWindowView(), route: { hostId: host.connection.hostId, sessionId: null }, expandedProjects: [`${host.connection.hostId}:${project.id}`], dock: { state: dock, tabs } });
   if (view.error) throw new Error(view.error);
-  await writeFile(join(root, "context.json"), JSON.stringify({ hostId: host.connection.hostId, projectId: project.id, terminals }, null, 2), { flag: "wx", mode: 0o600 });
+  await writeFile(join(root, "context.json"), JSON.stringify({ mode, hostId: host.connection.hostId, projectId: project.id, terminals }, null, 2), { flag: "wx", mode: 0o600 });
   console.log("Native history Find host ready");
   for await (const line of createInterface({ input: process.stdin, terminal: false })) {
     if (line === "stop") { await host.stop(); process.exit(0); }
-    else if (line === "refresh-live") await writeFile(join(root, "refresh-live"), "emit another real output line\n");
+    else if (line === "refresh-live") {
+      if (mode !== "full") throw new Error("Refreshing output is outside the minimal capture-sequencing diagnostic.");
+      await writeFile(join(root, "refresh-live"), "emit another real output line\n");
+    }
     else if (line === "snapshot") {
       const snapshots = await Promise.all(terminals.map(async item => ({ ...item, history: await capture(item.id) })));
       await writeFile(join(owner.evidence, `native-snapshot-${Date.now()}.json`), JSON.stringify({ snapshots, nativeSessions: host.store.listSessions().length, at: Date.now() }, null, 2), { flag: "wx", mode: 0o600 });

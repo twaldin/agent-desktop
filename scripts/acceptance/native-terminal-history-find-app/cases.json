@@ -26,7 +26,28 @@
     "NATIVE_FIND_TMUX_BUNDLE": "<verified immutable bundle directory>",
     "NATIVE_FIND_INSPECTOR": "<Main-verified executable compiled from this fixture's native-inspect.swift; metadata PID must include frontmost and screens id/backingScale/physical mode>",
     "NATIVE_FIND_YABAI": "<verified absolute yabai executable>",
+    "NATIVE_FIND_MODE": "<full by default; capture-sequencing only for the bounded diagnostic below>",
     "NATIVE_FIND_CDP_PORT": "<owned unique loopback port if Main needs read-only browser inspection>"
+  },
+  "captureSequencing": {
+    "scope": "Set NATIVE_FIND_MODE=capture-sequencing identically for fresh preparation, host and App. Do NOT run the full cases/final outage below: this diagnostic creates ONE genuine live native pane, admits only TWO setup inputs, and takes only the two specified originals. No saved/other owner setup or transition, refresh, compact, broad Find acceptance or cause claim.",
+    "ownership": "All common isolation and strict native geometry/display/font gates remain. Fresh HOME/evidence only; Main grants a new lease after source gates. Bind the exact native CG/AX surface before read-only browser attachment and reprobe ownership counts after attachment. Keep Main asynchronous screencapture; no fixed wait, invalidation, DOM focus, CSS change, input replay or threshold relaxation.",
+    "chronology": [
+      "The external native driver writes unique per-action records with operation/target, exact helper identity, dispatch start/return timestamps and exit/stdout/stderr. Dispatch return is NOT delivered input.",
+      "actual-key-inputs.jsonl passively records actual WebContents keyDown/keyUp and timestamps. Do not synthesize events or resend a batch merely because its dispatch returned before delivery.",
+      "Wait read-only for the actual expected query/index/section; no fixed delay. Retain the settled observation and strict before-input probe. Probe history exposes query, matchIndex, matchCount, activeSection and activeVisible.",
+      "capture-chronology.jsonl records capture-start with settled state, actual asynchronous screenshot return/error, and subsequent original-image inspection report. Each capture JSON separately records commandReceivedAt/captureStartedAt/captureFinishedAt/afterObservedAt.",
+      "View each original PNG immediately after its before/after metadata checks and BEFORE any next input. Retain image-read start/end and literal visible query/index/count/section in the external inspection receipt; never infer them from DOM or stable:true.",
+      "Report that original through app stdin: inspect <unique-inspection-label> <capture-label> <actual-PNG-sha256> <visibly-observed-query> <visibly-observed-index> <visibly-observed-count> <scrollback|screen|saved>. The report timestamp is not the image-read timestamp. Values are operator observations, not an automated pixel oracle. A mismatch is recorded before refusal; do not recapture or overwrite it.",
+      "While an original awaits inspection, diagnostic bind/probe/capture commands refuse, so no fresh pre-input admission can advance the sequence. After the second inspected original, the diagnostic is complete; no further UI input or broad cases."
+    ],
+    "sequence": [
+      "Physically open the sole live pane's History and Find; type needle once. Observe original delivered key receipts and settled query=needle/index1/count82/Native scrollback text with exact owning capture hashes.",
+      "Send capture sequence-baseline. Check its native before/after conditions, then view sequence-baseline.png and record its actual visible state. Only if it visibly agrees, send inspect inspected-baseline sequence-baseline <PNG-sha256> needle 1 82 scrollback. Otherwise report the values actually seen; preserve refusal and stop.",
+      "After successful original baseline inspection, run one fresh strict pre-input probe and perform ONE physical Previous action. Retain dispatch return and settled query=needle/index82/count82/Saved normal screen; do not press Next or any other navigation.",
+      "Send capture sequence-previous. Check before/after conditions, then view sequence-previous.png BEFORE any further input. Report the visible state with inspect inspected-previous sequence-previous <PNG-sha256> <actual-query> <actual-index> <actual-count> <actual-section>. Only an actually matching82/82 Saved normal original qualifies as this bounded sequence matching.",
+      "Stop and preserve on any drift/refusal/divergence. After either bounded match or failure, stop only the owned App/host, release CDP, prove PID/CG/socket cleanup and retain raw hashes. No source correction or second activation within the same scope. A match proves only this sequence, not a cause, pixel parity or full Find acceptance."
+    ]
   },
   "isolation": [
     "Preparation refuses non-empty profile/evidence directories and installs an executable private PATH tailscale that returns exit1, never synthesized peer JSON.",

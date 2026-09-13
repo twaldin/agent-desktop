@@ -11,6 +11,8 @@ if (!process.argv[2] || !process.argv[3] || !basename(root).startsWith("native-h
   || process.env.HOME !== root || process.env.PI_CODING_AGENT_DIR !== join(root, "agent")
   || process.env.AGENT_DESKTOP_DATA_DIR !== join(root, "host") || process.env.AGENT_DESKTOP_PROFILE_DIR !== join(root, "desktop")
   || process.env.PI_DISABLE_DOTENV !== "1" || process.env.PATH?.split(":")[0] !== join(root, "bin")) throw new Error("Use a fresh native-history-find-* HOME, separate evidence directory and exact isolated paths/private PATH.");
+const mode = process.env.NATIVE_FIND_MODE ?? "full";
+if (mode !== "full" && mode !== "capture-sequencing") throw new Error("NATIVE_FIND_MODE must be full or capture-sequencing.");
 const osUser = userInfo(), username = execFileSync("/usr/bin/id", ["-un"], { encoding: "utf8" }).trim();
 if (process.env.USER !== username || process.env.LOGNAME !== username) throw new Error("USER and LOGNAME must match the observed OS user; record rather than mask OS metadata.");
 const bun = process.env.NATIVE_FIND_BUN, bundlePath = process.env.NATIVE_FIND_TMUX_BUNDLE;
@@ -35,10 +37,10 @@ const sourcePaths = ["apps/desktop/src/renderer/NativeTerminalPanel.tsx", "apps/
   ...["prepare.ts", "host.ts", "worker.ts", "electron.cjs", "emit-history.sh", "cases.json", "native-inspect.swift"].map(name => `scripts/acceptance/native-terminal-history-find-app/${name}`)];
 const sourceHashes = Object.fromEntries(await Promise.all(sourcePaths.map(async name => [name, createHash("sha256").update(await readFile(join(repo, name))).digest("hex")])));
 const helperHashes = { inspector: { path: inspector, sha256: createHash("sha256").update(await readFile(inspector)).digest("hex") }, yabai: { path: yabai, sha256: createHash("sha256").update(await readFile(yabai)).digest("hex") } };
-const owner = { kind: "native-history-find", root, evidence, repo, source, hostEntry, bundle: { directory: bundle.directory, digest: bundle.digest },
+const owner = { kind: "native-history-find", mode, root, evidence, repo, source, hostEntry, bundle: { directory: bundle.directory, digest: bundle.digest },
   osUser, username, helperHashes, environment: { HOME: root, USER: process.env.USER, LOGNAME: process.env.LOGNAME, SHELL: process.env.SHELL, LANG: process.env.LANG, PATH: process.env.PATH },
   tailscaleSha256: createHash("sha256").update(tailscale).digest("hex"), bunSha256: createHash("sha256").update(await readFile(bun)).digest("hex"), sourceHashes };
 await writeFile(join(root, "fixture-owner.json"), JSON.stringify(owner, null, 2), { flag: "wx", mode: 0o600 });
 await writeFile(join(evidence, "prepared.json"), JSON.stringify(owner, null, 2), { flag: "wx", mode: 0o600 });
-console.log(JSON.stringify({ ready: true, root, evidence, source, bundleDigest: bundle.digest, hostEntry,
+console.log(JSON.stringify({ ready: true, mode, root, evidence, source, bundleDigest: bundle.digest, hostEntry,
   next: "Main starts host.ts and electron.cjs under hub only after source gates and an explicit native lease; retain this complete isolated environment." }));

@@ -13,6 +13,8 @@ if (!process.argv[2] || !process.argv[3] || !basename(root).startsWith("native-h
   || process.env.AGENT_DESKTOP_BUN !== join(root, "bin/guarded-bun")) throw new Error("Exact isolated native Find launch environment required.");
 const owner = JSON.parse(readFileSync(join(root, "fixture-owner.json"), "utf8"));
 if (owner.root !== root || owner.repo !== repo || process.env.NATIVE_FIND_HOST_ENTRY !== owner.hostEntry) throw new Error("Owned fixture mismatch.");
+const mode = process.env.NATIVE_FIND_MODE ?? "full";
+if (!["full", "capture-sequencing"].includes(mode) || owner.mode !== mode) throw new Error("Prepared native Find mode mismatch.");
 const inspector = process.env.NATIVE_FIND_INSPECTOR, yabai = process.env.NATIVE_FIND_YABAI;
 if (!inspector || !isAbsolute(inspector) || !yabai || !isAbsolute(yabai)) throw new Error("Main must supply verified absolute native inspector and yabai paths.");
 const sha = value => createHash("sha256").update(value).digest("hex");
@@ -30,6 +32,7 @@ if (OriginalWebSocket) globalThis.WebSocket = class extends OriginalWebSocket {
   constructor(url, protocols) { if (!loopback(new URL(String(url)))) fail("desktop-nonloopback-websocket"); super(url, protocols); }
 };
 let appPeerObserved = false, expected;
+let sequenceStep = 0, pendingInspection;
 const originalHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, listener) => originalHandle(channel, async (...args) => {
   if (channel === "host:native-terminal-input") fail("find-reached-native-input");
@@ -57,7 +60,7 @@ app.on("browser-window-created", (_event, window) => {
   window.webContents.on("did-finish-load", () => {
     if (window.webContents.getURL() !== new URL("file://" + join(repo, "apps/desktop/dist/renderer/index.html")).href) return;
     const compiled = Object.fromEntries(["main.cjs", "preload.cjs", "renderer/index.html"].map(file => [file, sha(readFileSync(join(repo, "apps/desktop/dist", file)))]));
-    writeFileSync(join(owner.evidence, "app-ready.json"), JSON.stringify({ pid: process.pid, source: owner.source, url: window.webContents.getURL(), bounds: window.getBounds(),
+    writeFileSync(join(owner.evidence, "app-ready.json"), JSON.stringify({ mode, pid: process.pid, source: owner.source, url: window.webContents.getURL(), bounds: window.getBounds(),
       executable: { path: process.execPath, sha256: sha(readFileSync(process.execPath)), versions: process.versions }, compiled, at: Date.now() }, null, 2), { flag: "wx", mode: 0o600 });
     console.log("Native history Find actual App ready; no input until peer0 and bound geometry probe");
   });
@@ -112,16 +115,32 @@ async function probe(label, requireBinding = true) {
         style:Object.fromEntries(Object.entries(style).filter(([name])=>!['colorScheme','background','color'].includes(name))), metrics });
     };
     font('root',document.documentElement); font('body',document.body);
-    for (const node of document.querySelectorAll('.native-terminal-grid .xterm-char-measure-element')) font('native-output',node);
+    // Xterm WidthCache uses fixed regular/bold/italic/bold-italic slots. Bind
+    // those identities, not computed CSS that could rename a drifting font.
+    const variants = ['regular','bold','italic','bold-italic'];
+    for (const container of document.querySelectorAll('.native-terminal-grid .xterm-width-cache-measure-container')) {
+      const nodes = [...container.children].filter(node => node.classList.contains('xterm-char-measure-element'));
+      if (nodes.length !== variants.length) throw new Error('Unexpected native font measurement slots');
+      nodes.forEach((node,index) => font('native-output-'+variants[index],node));
+    }
+    for (const node of document.querySelectorAll('.native-terminal-grid .xterm-char-measure-element')) {
+      if (!node.closest('.xterm-width-cache-measure-container')) font('native-cell-size',node);
+    }
     for (const node of history?.querySelectorAll('pre') ?? []) font('history-output',node);
+    const findStatus = history?.querySelector('.native-terminal-history-find-status')?.textContent;
+    const findIndex = findStatus?.match(/^([0-9]+) of ([0-9]+) matches · /);
+    const activeMark = history?.querySelector('mark[aria-current=true]'), scrollport = history?.querySelector('.native-terminal-history-content');
+    const activeBounds = activeMark?.getBoundingClientRect(), scrollBounds = scrollport?.getBoundingClientRect();
     return { url:location.href, screenX, screenY, width:innerWidth, height:innerHeight, aspect:innerWidth/innerHeight, dpr:devicePixelRatio,
       fontsReady:document.fonts.status==='loaded', fontTokens, fonts,
       visualViewport:visualViewport && { width:visualViewport.width, height:visualViewport.height, scale:visualViewport.scale },
       theme:{ rootClass:document.documentElement.className, rootData:{...document.documentElement.dataset}, root:css(document.documentElement), body:css(document.body), terminal:history?css(history):null },
       active:{ tag:document.activeElement?.tagName, label:document.activeElement?.getAttribute('aria-label'), text:document.activeElement?.textContent?.slice(0,160) },
       history:history && { busy:history.getAttribute('aria-busy')==='true', terminalView:history.closest('.native-terminal-view')?.id, generation:history.dataset.historyGeneration, revision:history.dataset.historyRevision, capturedAt:history.dataset.historyCapturedAt,
-        query:history.querySelector('input[type=search]')?.value, status:history.querySelector('.native-terminal-history-find-status')?.textContent,
-        activeMatch:history.querySelector('mark[aria-current=true]')?.textContent,
+        query:history.querySelector('input[type=search]')?.value, status:findStatus,
+        matchIndex:findIndex?Number(findIndex[1]):null, matchCount:findIndex?Number(findIndex[2]):null,
+        activeMatch:activeMark?.textContent, activeSection:activeMark?.closest('pre')?.getAttribute('aria-label'),
+        activeVisible:!!activeBounds&&!!scrollBounds&&activeBounds.bottom>scrollBounds.top&&activeBounds.top<scrollBounds.bottom&&activeBounds.right>scrollBounds.left&&activeBounds.left<scrollBounds.right,
         sections:[...history.querySelectorAll('pre')].map(node=>({label:node.getAttribute('aria-label'),text:node.textContent,style:css(node)})) } };
   })()`);
   if (renderer.history) renderer.history.sections = renderer.history.sections.map(({ text, ...value }) => ({ ...value, textLength: text.length, textSha256: sha(text) }));
@@ -187,12 +206,16 @@ async function boot() {
   require(join(repo, "apps/desktop/dist/main.cjs"));
   await ready;
   for await (const line of createInterface({ input: process.stdin, terminal: false })) {
-    const [command, label, width, height, zoom = "1"] = line.trim().split(/\s+/);
+    const [command, label, ...values] = line.trim().split(/\s+/);
     if (!command) continue;
     if (!label || !/^[a-zA-Z0-9_-]{1,80}$/.test(label)) throw new Error("Every probe/capture/bind needs a unique safe label.");
     const file = join(owner.evidence, `${label}.json`);
     if (existsSync(file)) throw new Error("Frozen evidence labels cannot be reused.");
+    if (mode === "capture-sequencing" && ((pendingInspection && command !== "inspect") || sequenceStep > 1)) {
+      fail("original-image-inspection-required-or-sequence-complete", { command, label, sequenceStep, pendingInspection });
+    }
     if (command === "bind") {
+      const [width, height, zoom = "1"] = values;
       const observed = await probe(label, false);
       if (!appPeerObserved || observed.window.bounds.width !== Number(width) || observed.window.bounds.height !== Number(height) || observed.window.zoomFactor !== Number(zoom)) fail("requested-layout-not-actually-observed");
       expected = { pid: process.pid, cgWindow: observed.cgWindow, bounds: observed.window.bounds, space: observed.manager.space, display: observed.manager.display,
@@ -201,16 +224,51 @@ async function boot() {
       writeFileSync(file, JSON.stringify({ kind: "actual-layout-binding", observed, expected }, null, 2), { flag: "wx", mode: 0o600 });
     } else if (command === "probe") writeFileSync(file, JSON.stringify(await probe(label), null, 2), { flag: "wx", mode: 0o600 });
     else if (command === "capture") {
-      const before = await probe(`${label}-before`), image = join(owner.evidence, `${label}.png`);
+      const commandReceivedAt = Date.now(), before = await probe(`${label}-before`), image = join(owner.evidence, `${label}.png`);
+      if (mode === "capture-sequencing") {
+        const history = before.renderer.history, first = sequenceStep === 0;
+        if (pendingInspection || sequenceStep > 1 || label !== (first ? "sequence-baseline" : "sequence-previous")
+          || history?.busy || history?.query !== "needle" || history.matchCount !== 82 || history.matchIndex !== (first ? 1 : 82)
+          || history.activeSection !== (first ? "Native scrollback text" : "Saved normal screen") || !history.activeVisible) {
+          fail("capture-sequence-not-settled-or-inspected", { label, sequenceStep, pendingInspection, history });
+        }
+      }
       if (existsSync(image)) throw new Error("Frozen native capture cannot be overwritten.");
-      execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", String(before.cgWindow), image]);
+      const captureStartedAt = Date.now();
+      append("capture-chronology.jsonl", { phase: "capture-start", label, commandReceivedAt, captureStartedAt, settledHistory: before.renderer.history });
+      const captureReceipt = await execFileAsync("/usr/sbin/screencapture", ["-x", "-o", "-l", String(before.cgWindow), image]).catch(error => {
+        append("capture-chronology.jsonl", { phase: "capture-error", label, error: String(error), code: error.code, signal: error.signal, stdout: error.stdout, stderr: error.stderr });
+        throw error;
+      });
+      const captureFinishedAt = Date.now();
+      append("capture-chronology.jsonl", { phase: "capture-return", label, captureStartedAt, captureFinishedAt, ...captureReceipt });
       const after = await probe(`${label}-after`);
       const png = readFileSync(image), raster = { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
       const stable = raster.width === before.window.bounds.width * before.display.scaleFactor && raster.height === before.window.bounds.height * before.display.scaleFactor
         && JSON.stringify(before.renderer.theme) === JSON.stringify(after.renderer.theme) && JSON.stringify(before.renderer.history) === JSON.stringify(after.renderer.history);
-      writeFileSync(file, JSON.stringify({ evidenceClass: "actual native CG window raster", stable, pixelComparable: false, reason: "No reference comparison; reference geometry/zoom/theme are not established.", before, after, raster, imageSha256: sha(png) }, null, 2), { flag: "wx", mode: 0o600 });
+      const imageSha256 = sha(png), chronology = { commandReceivedAt, captureStartedAt, captureFinishedAt, afterObservedAt: after.at };
+      writeFileSync(file, JSON.stringify({ evidenceClass: "actual native CG window raster", stable, pixelComparable: false, reason: "No reference comparison; reference geometry/zoom/theme are not established. Stable metadata is not original-image inspection.", chronology, before, after, raster, imageSha256 }, null, 2), { flag: "wx", mode: 0o600 });
       if (!stable) fail("native-capture-changed-or-raster-mismatch", { label, metadata: file });
-    } else throw new Error("Only bind, probe and capture are allowed; Main supplies physical input, not synthetic focus or DOM writes.");
+      if (mode === "capture-sequencing") pendingInspection = { label, image, imageSha256, history: before.renderer.history, captureFinishedAt };
+    } else if (command === "inspect") {
+      const [captureLabel, imageSha256, query, index, count, section] = values;
+      if (mode !== "capture-sequencing" || !pendingInspection || captureLabel !== pendingInspection.label) {
+        fail("unexpected-original-image-inspection", { label, values, sequenceStep, pendingInspection });
+      }
+      const sectionNames = { scrollback: "Native scrollback text", screen: "Captured native screen", saved: "Saved normal screen" };
+      const observed = { query, matchIndex: Number(index), matchCount: Number(count), activeSection: sectionNames[section] };
+      const actualImageSha256 = sha(readFileSync(pendingInspection.image)), expectedHistory = pendingInspection.history;
+      const matches = values.length === 6 && imageSha256 === actualImageSha256 && imageSha256 === pendingInspection.imageSha256
+        && observed.query === expectedHistory.query && observed.matchIndex === expectedHistory.matchIndex
+        && observed.matchCount === expectedHistory.matchCount && observed.activeSection === expectedHistory.activeSection;
+      const inspection = { kind: "operator-original-image-inspection", label, captureLabel, imageSha256, actualImageSha256, observed, expectedHistory,
+        matches, captureFinishedAt: pendingInspection.captureFinishedAt, inspectionReportedAt: Date.now(),
+        qualification: "Operator-supplied values from viewing this original PNG; never inferred from DOM metadata or stable:true. A match is bounded evidence, not a cause or broad acceptance verdict." };
+      writeFileSync(file, JSON.stringify(inspection, null, 2), { flag: "wx", mode: 0o600 });
+      append("capture-chronology.jsonl", { phase: "original-image-inspection", ...inspection });
+      if (!matches) fail("original-image-does-not-match-captured-state", { label, metadata: file });
+      pendingInspection = undefined; sequenceStep++;
+    } else throw new Error("Only bind, probe, capture and explicit diagnostic inspect are allowed; Main supplies physical input, not synthetic focus or DOM writes.");
     console.log(`Native history Find ${command} ready ${label}`);
   }
 }
