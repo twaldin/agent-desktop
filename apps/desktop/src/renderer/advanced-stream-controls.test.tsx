@@ -191,7 +191,159 @@ test("state refuses unavailable sampling even when a caller bypasses disabled co
   state.start(); state.setConnected(true); await settle();
   state.edit("temperature", "set", "0.4"); await state.save("temperature");
   expect(writes).toBe(0); expect(state.edits.get("temperature")?.text).toBe("0.4");
-  expect(state.edits.get("temperature")?.error).toBe("Sampling is not available for this model.");
+  expect(state.edits.get("temperature")?.error).toBe(native.advancedStream!.fields!.temperature.reason);
   state.edit("maxTokens", "set", "4096"); state.setConnected(false); await state.save("maxTokens");
   expect(writes).toBe(0); expect(state.edits.get("maxTokens")?.text).toBe("4096"); state.stop();
+});
+
+function samplingControls(revision = "sampling-off"): OmpSessionControls {
+  const value = outputOnlyControls();
+  value.revision = revision;
+  value.model = { provider: "anthropic", id: "claude-sonnet-4-5" };
+  value.advancedStream = { ...value.advancedStream!, model: { ...value.model, api: "anthropic-messages" },
+    selection: { temperature: 0.2, topP: null },
+    fields: {
+      temperature: { supported: true, reason: "Native request accepts sampling.", minimum: 0, maximum: 1 },
+      topP: { supported: true, reason: "Native request accepts sampling.", minimum: 0, maximum: 1 },
+      maxTokens: { supported: true, reason: "Native output budget.", minimum: 1, maximum: 64000 },
+    },
+    samplingConstraint: "Choose one sampling parameter; omit the other explicitly.",
+  };
+  return value;
+}
+
+test("Anthropic uses per-field support despite legacy false and exposes native conflict recovery", async () => {
+  let native = samplingControls();
+  native.advancedStream!.samplingConflict = "Inherited Top P conflicts with saved Temperature.";
+  delete native.advancedStream!.selection.topP;
+  native.advancedStream!.native.topP = 0.8;
+  let saved = false;
+  const bridge: Pick<DesktopBridge, "getSessionControls" | "setSessionControl" | "subscribe"> = {
+    getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async (_id, mutation) => {
+      if (mutation.operation !== "advanced-stream" || mutation.field !== "temperature" || mutation.action !== "set")
+        throw new Error("Unexpected sampling operation");
+      saved = true;
+      native = samplingControls("saved"); native.advancedStream!.selection.temperature = mutation.value;
+      return structuredClone(native);
+    },
+  };
+  const hooks = driver();
+  const props = { bridge: bridge as DesktopBridge, hostId: "owner", sessionId: "session", connected: true, disabled: false };
+  try {
+    hooks.render(props); await settle();
+    let tree = hooks.render(props);
+    const temperature = elements(tree).find(item => item.type === "input" && item.props["aria-label"] === "Temperature value")!;
+    expect(temperature.props.disabled).toBe(false); expect(temperature.props.max).toBe(1);
+    expect(elements(tree).some(item => item.type === "p" && item.props.children === native.advancedStream!.samplingConflict)).toBe(true);
+    native = samplingControls("explicit-omission-saved-elsewhere");
+    button(tree, "Reload").onClick(); await settle();
+    tree = hooks.render(props);
+    input(tree).onChange({ target: { value: "0" } });
+    tree = hooks.render(props); button(tree, "Save").onClick(); await settle();
+    expect(saved).toBe(true); expect(input(hooks.render(props)).value).toBe("0");
+  } finally { hooks.dispose(); }
+});
+
+test("thinking snapshot changes preserve a pending draft and require explicit review before applying", async () => {
+  let native = samplingControls(), writes = 0;
+  const state = new AdvancedStreamState({
+    getSessionControls: async () => structuredClone(native),
+    setSessionControl: async () => { writes++; return structuredClone(native); }, subscribe: () => () => {},
+  }, "owner", "session");
+  state.start(); state.setConnected(true); await settle();
+  state.edit("temperature", "set", "0.4");
+  native = samplingControls("thinking-high");
+  native.advancedStream!.fields!.temperature.supported = false;
+  native.advancedStream!.fields!.topP.supported = false;
+  await state.refresh(); await state.save("temperature");
+  expect(writes).toBe(0); expect(state.edits.get("temperature")?.text).toBe("0.4");
+  state.rebase("temperature"); await state.save("temperature");
+  expect(writes).toBe(0);
+  native = samplingControls("thinking-off-again");
+  await state.refresh(); await state.save("temperature");
+  expect(writes).toBe(0);
+  state.rebase("temperature"); await state.save("temperature");
+  expect(writes).toBe(1); expect(state.edits.has("temperature")).toBe(false);
+  state.stop();
+});
+
+test("saving one sampling field never silently rebases another field's pending edit", async () => {
+  let native = samplingControls(), writes = 0;
+  const state = new AdvancedStreamState({
+    getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async () => { writes++; native = samplingControls(`saved-${writes}`); return structuredClone(native); },
+  }, "owner", "session");
+  state.start(); state.setConnected(true); await settle();
+  state.edit("temperature", "provider-default", "");
+  state.edit("topP", "set", "0.7");
+  await state.save("temperature");
+  await state.save("topP");
+  expect(writes).toBe(1); expect(state.edits.get("topP")?.text).toBe("0.7");
+  state.rebase("topP"); await state.save("topP");
+  expect(writes).toBe(2);
+  state.stop();
+});
+
+test("late save acknowledgement cannot replace a newer thinking snapshot or replay on reconnect", async () => {
+  let native = samplingControls(), writes = 0;
+  const pending = Promise.withResolvers<OmpSessionControls>();
+  const state = new AdvancedStreamState({
+    getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async () => { writes++; return pending.promise; },
+  }, "owner", "session");
+  state.start(); state.setConnected(true); await settle();
+  state.edit("temperature", "set", "0.4");
+  state.edit("topP", "set", "0.7");
+  const save = state.save("temperature");
+  state.setConnected(false);
+  native = samplingControls("changed-while-pending");
+  native.advancedStream!.fields!.temperature.supported = false;
+  native.advancedStream!.fields!.topP.supported = false;
+  state.setConnected(true);
+  pending.resolve(samplingControls("old-save-receipt"));
+  await save; await settle();
+  expect(state.controls?.revision).toBe("changed-while-pending");
+  expect(state.edits.has("temperature")).toBe(false); // Acknowledged, not an uncertain write.
+  expect(state.edits.get("topP")?.text).toBe("0.7");
+  expect(writes).toBe(1);
+  await state.refresh(); expect(writes).toBe(1);
+  state.stop();
+});
+
+test("endpoint-unavailable selections remain visible and clearable when no field supports custom values", async () => {
+  const native = samplingControls();
+  for (const field of Object.values(native.advancedStream!.fields!)) field.supported = false;
+  const writes: string[] = [];
+  const state = new AdvancedStreamState({
+    getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async (_id, mutation) => {
+      if (mutation.operation !== "advanced-stream" || mutation.action !== "inherit") throw new Error("Only explicit recovery is supported");
+      writes.push(mutation.field); delete native.advancedStream!.selection[mutation.field];
+      return structuredClone(native);
+    },
+  }, "owner", "session");
+  state.start(); state.setConnected(true); await settle();
+  state.edit("temperature", "set", "0.4"); await state.save("temperature");
+  expect(writes).toEqual([]);
+  state.edit("temperature", "inherit", ""); await state.save("temperature");
+  expect(writes).toEqual(["temperature"]); expect(state.controls?.advancedStream?.selection).toEqual({ topP: null });
+  state.stop();
+});
+
+test("a model switch keeps the old model's draft until switchback and explicit rebase", async () => {
+  let native = samplingControls(), writes = 0;
+  const state = new AdvancedStreamState({
+    getSessionControls: async () => structuredClone(native), subscribe: () => () => {},
+    setSessionControl: async () => { writes++; return structuredClone(native); },
+  }, "owner", "session");
+  state.start(); state.setConnected(true); await settle();
+  state.edit("temperature", "set", "0.4");
+  native = outputOnlyControls();
+  await state.refresh(); state.rebase("temperature"); await state.save("temperature");
+  expect(writes).toBe(0); expect(state.edits.get("temperature")?.model.id).toBe("claude-sonnet-4-5");
+  native = samplingControls("switchback");
+  await state.refresh(); await state.save("temperature"); expect(writes).toBe(0);
+  state.rebase("temperature"); await state.save("temperature"); expect(writes).toBe(1);
+  state.stop();
 });

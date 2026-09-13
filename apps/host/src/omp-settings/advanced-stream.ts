@@ -1,6 +1,12 @@
 import { isDeepStrictEqual } from "node:util";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
+import { supportsExternalThinking } from "@oh-my-pi/pi-coding-agent/tools/think";
+import type { SimpleStreamOptions } from "@oh-my-pi/pi-ai";
+import { ANTHROPIC_THINKING } from "@oh-my-pi/pi-ai/stream";
+import { compareRevision, parseRevision } from "@oh-my-pi/pi-catalog/identity";
+import { defaultSupportedEffort } from "@oh-my-pi/pi-catalog/model-thinking";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+import type { ResolvedAnthropicCompat } from "@oh-my-pi/pi-catalog/types";
 import type { OmpAdvancedStreamControls, OmpSessionControlMutation, OmpStreamSelection } from "@agent-desktop/shared";
 import { OmpSettingsError, validateSettingValue } from "./schema";
 
@@ -12,6 +18,7 @@ type SupportedFamily = "gemini" | "anthropic";
 const ENTRY = "agent-desktop.advanced-stream.v1";
 const installed = new WeakSet<AgentSession>();
 const fields = ["temperature", "topP", "maxTokens"] as const satisfies readonly Field[];
+const ANTHROPIC_INTERLEAVED_THINKING = process.env.PI_NO_INTERLEAVED_THINKING !== "1";
 const ANTHROPIC_OUTPUT_BUDGET_NOTE = "Requested max tokens is an output budget, not a hard cap: native thinking may increase it, and Anthropic OAuth may cap it at 64000.";
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -36,18 +43,76 @@ function supportedFamily(model: NativeModel): SupportedFamily | undefined {
 function maximum(model: NativeModel): number | null {
   return typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) && model.maxTokens > 0 ? model.maxTokens : null;
 }
-function fieldControls(model: NativeModel, family: SupportedFamily | undefined): FieldControls {
+/** Mirrors only the pinned mapper/builder's sampling gate, never its request.
+ * stream.ts:1925-1939,2021-2115; anthropic.ts:3952-4005,4082-4094.
+ * The SDK still owns reasoning normalization, budget expansion and wire output.
+ */
+function anthropicSamplingReason(model: NativeModel, options: SimpleStreamOptions | undefined): string | undefined {
+  const bundled = getBundledModel<"anthropic-messages">(model.provider, model.id);
+  if (model.api !== "anthropic-messages" || bundled?.api !== "anthropic-messages")
+    return "Sampling is unavailable for this native API.";
+  // Model<Api> is generic rather than a discriminated union; the API is checked above.
+  const compat = model.compat as ResolvedAnthropicCompat;
+  if (!bundled.compat.supportsSamplingParams || !compat.supportsSamplingParams)
+    return "The pinned native model compatibility suppresses sampling parameters.";
+  if (model.requestModelId !== bundled.requestModelId || !isDeepStrictEqual(model.thinking?.effortRouting, bundled.thinking?.effortRouting))
+    return "Sampling is unavailable because this model's wire identity differs from the pinned built-in model.";
+  // Prefix binding materializes adaptive thinking even on the omitted/off path.
+  if (model.thinking?.mode === "anthropic-adaptive" && model.thinking.prefixBinding && compat.supportsThinkingBindingControls)
+    return "Native prefix binding requires adaptive thinking and suppresses sampling.";
+  if (!model.reasoning) return undefined;
+  if (compat.requiresThinkingEnabled) return "Native compatibility requires thinking; sampling parameters are suppressed.";
+  let reasoning = options?.reasoning;
+  let disabled = options?.disableReasoning || options?.forceReasoningOff;
+  if (model.thinking?.requiresEffort && !model.thinking.suppressWhenOff && (!reasoning || disabled)) {
+    const floor = defaultSupportedEffort(model);
+    if (floor !== undefined) { reasoning = floor; disabled = false; }
+  }
+  let thinking = !!reasoning && !disabled && !((options?.thinkingBudgets?.[reasoning] ?? ANTHROPIC_THINKING[reasoning]) <= 0);
+  // With interleaving disabled the mapper can exhaust a lowered native ceiling
+  // and turn thinking off. Use the same arithmetic, without changing its budget.
+  if (thinking && !ANTHROPIC_INTERLEAVED_THINKING && model.thinking?.mode !== "anthropic-adaptive") {
+    const budget = options?.thinkingBudgets?.[reasoning!] ?? ANTHROPIC_THINKING[reasoning!];
+    const base = options?.maxTokens ?? model.maxTokens ?? undefined;
+    const total = Math.min(base === undefined ? 64000 : base + budget, model.maxTokens ?? Infinity);
+    if (total <= budget && total <= 1024) thinking = false;
+  }
+  return thinking ? "The effective native request uses thinking and suppresses sampling. Change thinking only if appropriate for your task; saved sampling stays retained." : undefined;
+}
+
+function exclusiveAnthropicSampling(model: NativeModel): boolean {
+  // Provider restriction, absent from native compat: Opus 4.1 and the 4.5+
+  // generation accept temperature OR top_p. Use trusted baked revisions, not IDs.
+  // Sources and the earlier models' different contract are recorded in README.
+  const revision = model.identity?.revision && parseRevision(model.identity.revision);
+  return !!revision && compareRevision(revision, [4, 1, 0]) >= 0;
+}
+
+function samplingConflict(model: NativeModel, selection: OmpStreamSelection, options?: SimpleStreamOptions): string | undefined {
+  const temperature = selection.temperature === undefined ? options?.temperature : selection.temperature;
+  const topP = selection.topP === undefined ? options?.topP : selection.topP;
+  if (temperature != null && (!Number.isFinite(temperature) || temperature < 0 || temperature > 1))
+    return "Anthropic temperature must be between 0 and 1. Replace the saved value, choose Provider default (omit), or follow a valid native baseline.";
+  if (topP != null && (!Number.isFinite(topP) || topP < 0 || topP > 1))
+    return "Anthropic Top P must be between 0 and 1. Replace the saved value, choose Provider default (omit), or follow a valid native baseline.";
+  if (exclusiveAnthropicSampling(model) && temperature != null && topP != null)
+    return "This model accepts Temperature or Top P, not both, including native baseline values. Choose Provider default (omit) for one field and save it before setting the other. Follow native session can restore a conflicting baseline; no other saved setting was changed.";
+}
+function fieldControls(model: NativeModel, family: SupportedFamily | undefined, options?: SimpleStreamOptions): FieldControls {
   const outputMaximum = maximum(model);
   if (family === "gemini") return {
     temperature: { supported: true, reason: "Gemini supports an explicit sampling temperature.", minimum: 0, maximum: 2 },
     topP: { supported: true, reason: "Gemini supports an explicit Top P value.", minimum: 0, maximum: 1 },
     maxTokens: { supported: true, reason: "Gemini supports a bounded output limit.", minimum: 1, maximum: outputMaximum },
   };
-  if (family === "anthropic") return {
-    temperature: { supported: false, reason: "Anthropic sampling is unavailable here because support depends on the model and its effective thinking mode.", minimum: 0, maximum: 1 },
-    topP: { supported: false, reason: "Anthropic sampling is unavailable here because support depends on the model, effective thinking mode, and mutually exclusive provider parameters.", minimum: 0, maximum: 1 },
-    maxTokens: { supported: true, reason: "Set the requested Anthropic output budget; native request construction remains authoritative.", minimum: 1, maximum: outputMaximum },
-  };
+  if (family === "anthropic") {
+    const reason = anthropicSamplingReason(model, options);
+    return {
+      temperature: { supported: !reason, reason: reason ?? "The pinned native request accepts temperature for this effective thinking configuration.", minimum: 0, maximum: 1 },
+      topP: { supported: !reason, reason: reason ?? "The pinned native request accepts Top P for this effective thinking configuration.", minimum: 0, maximum: 1 },
+      maxTokens: { supported: true, reason: "Set the requested Anthropic output budget; native request construction remains authoritative.", minimum: 1, maximum: outputMaximum },
+    };
+  }
   const reason = "This field is unavailable for the current native model and endpoint.";
   return {
     temperature: { supported: false, reason, minimum: 0, maximum: 2 },
@@ -85,15 +150,34 @@ export class NativeAdvancedStreamControls {
       const family = supportedFamily(model);
       if (!family) return original(model, context, options);
       const selection = this.selection(model);
-      const controls = fieldControls(model, family);
+      const effective = family === "anthropic" ? this.effectiveOptions(model, options, selection) : options;
+      const controls = fieldControls(model, family, effective);
+      if (family === "anthropic" && controls.temperature.supported) {
+        const conflict = samplingConflict(model, selection, effective);
+        if (conflict) throw new OmpSettingsError("invalid-value", conflict);
+      }
       let next = options;
       for (const field of fields) {
         if (!controls[field].supported || !Object.hasOwn(selection, field)) continue;
         validate(field, selection[field], model);
-        next = { ...next, [field]: selection[field] ?? undefined };
+        if (!next || next === options) next = { ...options };
+        next[field] = selection[field] ?? undefined;
       }
       return original(model, context, next);
     };
+  }
+  private effectiveOptions(model: NativeModel, options?: SimpleStreamOptions, selection?: OmpStreamSelection): SimpleStreamOptions | undefined {
+    if (selection?.maxTokens !== undefined) options = { ...options, maxTokens: selection.maxTokens };
+    // This flag is added by the original SDK wrapper AFTER ours. Observe its
+    // exact native eligibility without modifying or replacing that wrapper.
+    const external = this.session.settings.get("externalThinking")
+      && this.session.agent.state.tools.some(tool => tool.name === "think") && supportsExternalThinking(model);
+    return external ? { ...options, forceReasoningOff: true } : options;
+  }
+  private baselineOptions(model: NativeModel, selection: OmpStreamSelection): SimpleStreamOptions | undefined {
+    const agent = this.session.agent;
+    return this.effectiveOptions(model, { reasoning: agent.state.thinkingLevel, disableReasoning: agent.state.disableReasoning,
+      thinkingBudgets: agent.thinkingBudgets, temperature: agent.temperature, topP: agent.topP }, selection);
   }
   private selection(model: NativeModel): OmpStreamSelection {
     const branch = this.session.sessionManager.getBranch();
@@ -122,20 +206,25 @@ export class NativeAdvancedStreamControls {
     const outputLimitConflict = selection.maxTokens !== undefined && outputMaximum !== null && outputMaximum !== undefined
       && selection.maxTokens > outputMaximum
       ? { saved: selection.maxTokens, maximum: outputMaximum } : undefined;
+    const options = model && family === "anthropic" ? this.baselineOptions(model, selection) : undefined;
+    const controls = model && fieldControls(model, family, options);
+    const conflict = model && family === "anthropic" && controls?.temperature.supported ? samplingConflict(model, selection, options) : undefined;
     return {
       // Older clients treat this flag as support for ALL three controls.
       supported: family === "gemini",
       reason: family === "gemini"
         ? "Customize sampling and the output limit for this conversation’s current Gemini model."
         : family === "anthropic"
-          ? "Update your desktop to edit this Anthropic model’s output budget. Anthropic sampling is not yet integrated."
+          ? "Update your desktop to edit Anthropic fields individually; availability depends on the pinned model and effective native thinking."
           : "These controls are available for trusted built-in Gemini and Anthropic models using their pinned provider endpoints.",
-      fields: model ? fieldControls(model, family) : {
+      fields: controls ?? {
         temperature: { supported: false, reason: "No native model is selected.", minimum: 0, maximum: 2 },
         topP: { supported: false, reason: "No native model is selected.", minimum: 0, maximum: 1 },
         maxTokens: { supported: false, reason: "No native model is selected.", minimum: 1, maximum: null },
       },
       ...(family === "anthropic" ? { outputBudgetNote: ANTHROPIC_OUTPUT_BUDGET_NOTE } : {}),
+      ...(family === "anthropic" && model && controls?.temperature.supported && exclusiveAnthropicSampling(model) ? { samplingConstraint: "Use Temperature or Top P, not both. To switch, explicitly save Provider default (omit) for the other field first, including when it follows a native baseline." } : {}),
+      ...(conflict ? { samplingConflict: conflict } : {}),
       model: model ? { provider: model.provider, id: model.id, api: model.api } : null,
       selection,
       ...(outputLimitConflict ? { outputLimitConflict } : {}),
@@ -147,10 +236,10 @@ export class NativeAdvancedStreamControls {
     const model = this.session.model;
     if (!model || !sameModel(request.model, model)) throw new OmpSettingsError("conflict", "The native model changed; reload before editing stream controls.");
     const family = supportedFamily(model);
-    if (!family) throw new OmpSettingsError("unsupported", "Advanced stream controls are not supported for this native model/API.");
     if (!fields.includes(request.field)) throw new OmpSettingsError("invalid-value", "Unknown advanced stream field.");
     const selection = this.selection(model);
-    const control = fieldControls(model, family)[request.field];
+    const options = family === "anthropic" ? this.baselineOptions(model, selection) : undefined;
+    const control = fieldControls(model, family, options)[request.field];
     if (request.action === "inherit") {
       if (request.value !== undefined) throw new OmpSettingsError("invalid-value", "Inherit does not accept a value.");
       delete selection[request.field];
@@ -163,6 +252,12 @@ export class NativeAdvancedStreamControls {
       validate(request.field, request.value, model);
       selection[request.field] = request.value;
     } else throw new OmpSettingsError("invalid-value", "Unknown advanced stream action.");
+    // Clearing a field always remains possible, even on an untrusted endpoint
+    // or while a different retained field needs recovery. Never rewrite it.
+    if (family === "anthropic" && control.supported && request.field !== "maxTokens" && request.action !== "inherit") {
+      const conflict = samplingConflict(model, selection, options);
+      if (conflict) throw new OmpSettingsError("invalid-value", conflict);
+    }
     this.session.sessionManager.appendCustomEntry(ENTRY, { model: { provider: model.provider, id: model.id, api: model.api }, selection });
   }
 }

@@ -144,6 +144,10 @@ export interface OmpAdvancedStreamControls {
   fields?: Record<OmpStreamField, { supported: boolean; reason: string; minimum: number; maximum: number | null }>;
   /** A requested budget can be adjusted by native thinking and account rules. */
   outputBudgetNote?: string;
+  /** Provider cross-field constraint; native inherited sampling participates. */
+  samplingConstraint?: string;
+  /** Retained or inherited values require explicit field-by-field recovery. */
+  samplingConflict?: string;
   model: { provider: string; id: string; api: string } | null;
   selection: OmpStreamSelection;
   native: { temperature: number | null; topP: number | null; maxTokens: number | null };

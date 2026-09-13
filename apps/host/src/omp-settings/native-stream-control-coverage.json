@@ -8,9 +8,9 @@
       "field": "temperature",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L399",
-      "status": "bounded-native-functional-verified",
+      "status": "bounded-google-verified-anthropic-authored-awaiting-validation",
       "settingsPaths": [],
-      "note": "Native SDK snapshots settings.temperature >=0 into Agent; AgentLoop passes temperature (Harmony retries add 0.05). Model-bound override precedes SDK streamFn; direct Google builder writes generationConfig.temperature. Other APIs/models remain required.",
+      "note": "Native SDK snapshots settings.temperature >=0 into Agent; AgentLoop passes temperature (Harmony retries add 0.05). Model-bound override precedes the unchanged SDK streamFn. Google writes generationConfig.temperature. Anthropic now checks trusted identity, pinned/effective supportsSamplingParams and actual effective thinking before applying temperature in [0,1]; active native/saved pair conflicts require explicit omission, never another field's silent rewrite. See anthropicExtension; its execution/acceptance is pending. Other APIs/models remain required.",
       "consumptionWindows": [
         {
           "file": "packages/coding-agent/src/sdk.ts",
@@ -47,9 +47,9 @@
       "field": "topP",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L400",
-      "status": "bounded-native-functional-verified",
+      "status": "bounded-google-verified-anthropic-authored-awaiting-validation",
       "settingsPaths": [],
-      "note": "SDK startup setting -> Agent.topP -> AgentLoop config -> mapOptionsForApi base -> direct Google generationConfig.topP. Other APIs/models remain required.",
+      "note": "SDK startup setting -> Agent.topP -> AgentLoop config -> mapOptionsForApi base -> provider builder. Direct Google support retains its historical evidence. Anthropic Top P in [0,1] now uses the same per-request native compatibility/thinking gate as temperature. Native inherited temperature participates in the explicit one-parameter constraint. Saved unsupported selections remain readable, recoverable and unapplied. See anthropicExtension for authored/unverified scope.",
       "consumptionWindows": [
         {
           "file": "packages/coding-agent/src/sdk.ts",
@@ -285,9 +285,9 @@
       "field": "maxTokens",
       "type": "number",
       "source": "https://github.com/can1357/oh-my-pi/blob/f241301c83726afe75a847e919b89977a54dafbe/packages/ai/src/types.ts#L417",
-      "status": "bounded-native-functional-verified",
+      "status": "bounded-google-verified-anthropic-output-budget-source",
       "settingsPaths": [],
-      "note": "No native sampling setting/Agent public maxTokens setter found. Model maxTokens supplies mapper fallback; model-bound wrapper supplies explicit SimpleStreamOptions.maxTokens before native mapper. Direct Google APIs do not inflate this limit for thinking; CCA does and is outside subset. A later lower native model limit preserves saved intent and exposes outputLimitConflict; revisioned explicit inherit/set remains reachable while excessive writes and dispatch are rejected.",
+      "note": "No native sampling setting/Agent public maxTokens setter found. Model-bound wrapper supplies SimpleStreamOptions.maxTokens before the unchanged native mapper. Direct Google APIs do not inflate it for thinking; CCA remains outside scope. Anthropic is a requested output budget: native thinking can increase it and native OAuth can cap it at 64000. Lower native limits retain saved intent and expose outputLimitConflict; revisioned explicit inherit/set remains reachable while excessive writes and dispatch reject. Original Anthropic output-only fixture/evidence remains unchanged.",
       "consumptionWindows": [
         {
           "file": "packages/ai/src/stream.ts",
@@ -941,9 +941,13 @@
       {
         "provider": "google-vertex",
         "api": "google-vertex"
+      },
+      {
+        "provider": "anthropic",
+        "api": "anthropic-messages"
       }
     ],
-    "modelScope": "Pinned native bundled Gemini identity via getBundledModel(provider,id), with exact bundled API/baseUrl/transport equality and no pi-native transport. A matching provider/id or gemini-* prefix alone is not provenance; custom endpoints and unlisted IDs are unsupported. Native account headers and configured output limits are preserved. No live provider acceptance claim.",
+    "modelScope": "Pinned native bundled Gemini and Anthropic identities via getBundledModel(provider,id), exact bundled API/baseUrl/transport equality and no pi-native transport. Anthropic additionally requires exact bundled identity; sampling requires unchanged requestModelId/effortRouting plus both bundled and effective native compatibility and actual thinking eligibility. Provider/id or a name prefix alone is not provenance. Account headers and configured output limits remain native. Anthropic additions are authored awaiting validation; historical Google verification is not extended to them.",
     "persistence": "native custom receipt agent-desktop.advanced-stream.v1 on owning session branch, model/API-bound; inherit returns original native Agent/SDK options; sampling null explicitly omits the parameter",
     "limitRecovery": "Persisted values retain intrinsic validation independently of a later native model limit. Snapshot outputLimitConflict:{saved,maximum} exposes excessive retained intent without making reads/revisions or other controls unavailable. Users explicitly inherit or replace the value; no clamp/drop occurs. New maxTokens writes and actual dispatch still enforce the current native limit.",
     "precedence": "native Agent/SDK options -> model-bound desktop selection -> unchanged native streamSimple mapper -> provider builder; native auth/model settings never changed",
@@ -961,6 +965,36 @@
       "apps/desktop/src/renderer/advanced-stream-state.ts"
     ],
     "wrapperRationale": "Native Agent exposes temperature/topP setters but no maxTokens setter. Global Agent sampling setters would leak model-bound intent into retry models. Install once per owned native AgentSession around its existing streamFn; read current native branch at each request. Native disposal fences requests; reopen constructs a fresh Agent. No auth/header/providerOptions/model-definition changes."
+  },
+  "anthropicExtension": {
+    "base": "93346d448cb810b86214cece643f6d98e47e26d1",
+    "status": "authored-awaiting-Root-validation-review-native-CUA",
+    "legacyContract": "supported=false remains unchanged for all Anthropic models; new clients use fields and optional samplingConstraint/samplingConflict.",
+    "effectiveThinking": "Observe native Agent reasoning/disableReasoning, thinking budgets and native external-thinking eligibility for snapshots. Recheck actual request reasoning/disableReasoning/forceReasoningOff, mandatory defaultSupportedEffort normalization, zero budget, non-interleaved lowered ceiling, requiresThinkingEnabled and prefix binding at dispatch. Never change thinking to make sampling available. Native 4.6 off can omit thinking and forward sampling; thinking-enabled/adaptive requests and bundled compat=false remain unavailable.",
+    "crossParameterRecovery": "Native inherited numeric sampling participates in the trusted 4.1-and-newer single-parameter editor constraint. Select Provider default (omit) and save the other field before setting one. No silent rewrite, clamp or drop. Active contradictions reject before the original stream. Clearing a field remains possible on unsupported endpoints and while another field is in conflict. Unsupported selections remain visible but are not applied.",
+    "persistenceAndConcurrency": "Existing native branch/model/API receipt and NativeSessionControls fingerprint/revision. Reload and switchback preserve pending drafts; other fields never auto-rebase after save. Late acknowledgements clear only the submitted edit and refresh current controls; failed/uncertain mutations are not replayed.",
+    "authoredProof": [
+      "apps/host/src/omp-settings/advanced-stream.test.ts",
+      "apps/desktop/src/renderer/advanced-stream-controls.test.tsx",
+      "apps/host/src/omp/fixtures/anthropic-sampling-request.ts"
+    ],
+    "nativeSources": [
+      "packages/ai/src/stream.ts:1764-1771,1925-1939,1977-2115",
+      "packages/ai/src/providers/anthropic.ts:3952-4005,4082-4094",
+      "packages/catalog/src/compat/resolve.ts:857",
+      "packages/catalog/src/model-thinking.ts:159-169",
+      "packages/coding-agent/src/sdk.ts:3534-3595",
+      "packages/coding-agent/src/tools/think.ts:9-39"
+    ],
+    "provenance": "Author inspected read-only Home-existing 18.1.10 packages with realpath/SHA256 recorded privately; this is not a pristine archive claim.",
+    "providerSources": [
+      "https://platform.claude.com/docs/en/api/messages/create",
+      "https://platform.claude.com/docs/en/release-notes/overview#august-5-2025",
+      "https://platform.claude.com/docs/en/models/haiku-4-5/migration-guide",
+      "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting",
+      "https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html"
+    ],
+    "evidenceBoundary": "No author test/build/SDK/fixture execution, native UI, provider request, independent review or publication. Root owns those gates. Existing verification below and frozen output-only evidence remain historical; neither establishes acceptance of this extension. No TopK/minP/repetition controls or native patches."
   },
   "complete": false,
   "verification": {
