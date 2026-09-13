@@ -25,7 +25,7 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
   }, [data, connected, localHostId]);
   const snapshot = data?.controls?.advancedStream;
   const availableFields = snapshot?.fields ? Object.values(snapshot.fields).some(field => field.supported) : snapshot?.supported;
-  const blocked = disabled || !connected || !data || data.loading || data.saving || !!data.error || !availableFields;
+  const blocked = disabled || !connected || !data || data.loading || data.saving || !!data.error || !(snapshot?.fields || availableFields);
   return <details className="advanced-stream-controls">
     <summary>Advanced sampling & output</summary>
     <div className="advanced-stream-panel">
@@ -39,8 +39,10 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
           {snapshot.model && <p className="advanced-stream-model">{snapshot.model.provider} / {snapshot.model.id} · {snapshot.model.api}</p>}
           <p>Applies to this conversation’s current model.</p>
           {snapshot.outputLimitConflict && <p role="alert">Saved output limit {snapshot.outputLimitConflict.saved} exceeds the current native model limit of {snapshot.outputLimitConflict.maximum}. Your saved value is retained. Change the output limit or choose Follow native session and save before sending.</p>}
+          {snapshot.samplingConstraint && <p>{snapshot.samplingConstraint}</p>}
+          {snapshot.samplingConflict && <p role="alert">{snapshot.samplingConflict}</p>}
           {disabled && <p role="status">Controls are read-only while a turn is running or the session is archived.</p>}
-          {availableFields && fields.map(field => {
+          {(snapshot.fields || availableFields) && fields.map(field => {
             const edit = data?.edits.get(field);
             const configured = snapshot.selection[field];
             const action = edit?.action ?? (configured === undefined ? "inherit" : configured === null ? "provider-default" : "set");

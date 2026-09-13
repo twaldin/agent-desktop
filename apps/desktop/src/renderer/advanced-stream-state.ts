@@ -78,6 +78,7 @@ export class AdvancedStreamState {
   discard(field: OmpStreamField) { this.edits.delete(field); this.notify(); }
   rebase(field: OmpStreamField) {
     const edit = this.edits.get(field), model = this.controls?.advancedStream?.model;
+    if (!this.connected || this.loading || this.saving || this.error) return;
     if (!edit || !model || !this.controls || model.provider !== edit.model.provider || model.id !== edit.model.id || model.api !== edit.model.api) return;
     edit.revision = this.controls.revision; edit.error = undefined; this.notify();
   }
@@ -85,7 +86,11 @@ export class AdvancedStreamState {
     const edit = this.edits.get(field);
     const snapshot = this.controls?.advancedStream;
     const availableFields = snapshot?.fields ? Object.values(snapshot.fields).some(item => item.supported) : snapshot?.supported;
-    if (!edit || !this.connected || this.loading || this.saving || this.error || !availableFields) return;
+    if (!edit || !this.connected || this.loading || this.saving || this.error || !(snapshot?.fields || availableFields)) return;
+    if (edit.revision !== this.controls?.revision || !snapshot?.model || snapshot.model.provider !== edit.model.provider
+      || snapshot.model.id !== edit.model.id || snapshot.model.api !== edit.model.api) {
+      edit.error = "Native controls changed. Reload and explicitly review this edit before saving."; this.notify(); return;
+    }
     if (snapshot?.fields?.[field].supported === false && edit.action !== "inherit") {
       edit.error = snapshot.fields[field].reason; this.notify(); return;
     }
@@ -94,12 +99,17 @@ export class AdvancedStreamState {
       edit.error = "Enter a finite number before saving."; this.notify(); return;
     }
     this.saving = true; this.#epoch++; edit.error = undefined; this.receipt = undefined; this.notify();
+    const epoch = this.#epoch;
     try {
       const controls = await this.bridge.setSessionControl(this.sessionId, { operation: "advanced-stream", model: edit.model,
         expectedRevision: edit.revision, field, action: edit.action, ...(edit.action === "set" ? { value } : {}) }, this.hostId);
       if (this.#stopped) return;
+      if (epoch !== this.#epoch || !this.connected) {
+        this.edits.delete(field);
+        this.receipt = "Saved by the owning host. Native controls changed while saving; reload to inspect the current result. No edit will be replayed.";
+        this.#again = true; return;
+      }
       this.controls = controls; this.error = undefined; this.edits.delete(field);
-      for (const other of this.edits.values()) if (other.revision === edit.revision) other.revision = controls.revision;
       this.receipt = "Saved by the owning host to this session branch. No provider request was sent.";
     } catch (error) {
       if (!this.#stopped) { edit.error = message(error); this.#again = true; }
