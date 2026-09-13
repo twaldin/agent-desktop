@@ -4,7 +4,7 @@ import { createContext, useContext, useId, useMemo, useState, type ReactNode } f
 import type { McpArtifact, TranscriptBlock, TranscriptMessage } from "../../../../packages/shared/src/protocol";
 import { Icon } from "./Icons";
 import { GoalIcon } from "./GoalIcons";
-import { messageBlocks, toolLinks, toolOutcome, TranscriptDisclosureState, type ToolLink } from "./transcript-state";
+import { goalDuration, goalCompletionTitle, messageBlocks, toolLinks, toolOutcome, TranscriptDisclosureState, type ToolLink } from "./transcript-state";
 import "./transcript.css";
 import { MarkdownText, TranscriptCode, TranscriptMarkdownContext } from "./MarkdownText";
 import { MarkdownViewState } from "./markdown-state";
@@ -61,16 +61,6 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
     </div>}
     {assistant && <div className="transcript-message-actions">{message.text && <button className="copy-message" onClick={async () => { try { await navigator.clipboard.writeText(message.text); setCopyState("copied"); } catch { setCopyState("failed"); } }}><span aria-live="polite">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed · retry" : "Copy"}</span></button>}{goalCompletion && <span className="transcript-goal-achievement" title={goalCompletionTitle(goalCompletion)}><GoalIcon name="achieved"/><span>Goal achieved in {goalDuration(goalCompletion.timeUsedSeconds)}</span></span>}{metadata && Object.keys(metadata).length > 0 && <details className="transcript-message-metadata"><summary>Response details</summary><dl>{metadata.provider && <><dt>Provider</dt><dd>{metadata.provider}</dd></>}{metadata.model && <><dt>Model</dt><dd>{metadata.model}</dd></>}{metadata.upstreamProvider && <><dt>Upstream provider</dt><dd>{metadata.upstreamProvider}</dd></>}{metadata.upstreamModel && <><dt>Upstream model</dt><dd>{metadata.upstreamModel}</dd></>}{complete && metadata.stopReason && <><dt>Native stop reason</dt><dd>{metadata.stopReason}</dd></>}{metadata.durationMs !== undefined && <><dt>Native duration</dt><dd>{metadata.durationMs} ms</dd></>}{metadata.usage && <><dt>Reported usage</dt><dd><pre>{JSON.stringify(metadata.usage, null, 2)}</pre></dd></>}</dl></details>}</div>}
   </article>;
-}
-function goalDuration(seconds: number) {
-  const total = Math.max(0, Math.round(seconds));
-  const minutes = Math.floor(total / 60), remainder = total % 60;
-  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
-}
-function goalCompletionTitle(completion: NonNullable<TranscriptMessage["goalCompletion"]>) {
-  const used = completion.tokensUsed.toLocaleString();
-  const budget = completion.tokenBudget === undefined ? "" : ` / ${completion.tokenBudget.toLocaleString()} token budget`;
-  return `${used} tokens used${budget} · ${goalDuration(completion.timeUsedSeconds)} active time`;
 }
 function Block({ block, blockKey, nativeEntryId, disclosures, calls, connected, allowWideBlocks = false, streaming = false, toolOutput = false }: { block: TranscriptBlock; blockKey: string; nativeEntryId?: string; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; connected: boolean; allowWideBlocks?: boolean; streaming?: boolean; toolOutput?: boolean }) {
   const images = useContext(ImageContext);

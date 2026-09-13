@@ -38,3 +38,14 @@ export class TranscriptDisclosureState {
   get(key: string, running = false) { return this.choices.get(key) ?? running; }
   set(key: string, value: boolean) { this.choices.set(key, value); }
 }
+
+export function goalDuration(seconds: number) {
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60), remainder = total % 60;
+  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
+export function goalCompletionTitle(completion: NonNullable<TranscriptMessage["goalCompletion"]>) {
+  const used = completion.tokensUsed.toLocaleString();
+  const budget = completion.tokenBudget === undefined ? "" : ` / ${completion.tokenBudget.toLocaleString()} token budget`;
+  return `${used} tokens used${budget} · ${goalDuration(completion.timeUsedSeconds)} active time`;
+}

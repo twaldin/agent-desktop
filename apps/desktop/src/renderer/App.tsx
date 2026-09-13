@@ -92,6 +92,7 @@ import type { ComposerSelectionPopupHandle } from "./ComposerSelectionPopup";
 import type { AttachmentMediaContext } from "./attachment-media";
 import { installAppShortcuts, type AppShortcutOptions } from "./app-shortcuts";
 import { errorMessage, useDesktop, useTranscript } from "./desktop-state";
+import { captureConversationMarkdown, conversationMarkdownIssue } from "./conversation-markdown";
 import { Icon } from "./Icons";
 import { TranscriptMessages } from "./Transcript";
 import { useTranscriptScroll } from "./use-transcript-scroll";
@@ -199,6 +200,11 @@ export function App() {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set(windowRestoration.state.expandedProjects));
   const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarSectionKey>>(() => new Set(windowRestoration.state.collapsedSidebarSections ?? defaultCollapsedSidebarSections()));
   const [actionError, setActionError] = useState<string | null>(null);
+  const markdownCopyRoute = useRef({ key: routeKey });
+  if (markdownCopyRoute.current.key !== routeKey) markdownCopyRoute.current = { key: routeKey };
+  const [markdownCopy, setMarkdownCopy] = useState<{ owner: { key: string }; state: "copying" | "copied" | "failed"; message: string } | null>(null);
+  const markdownCopyPending = useRef<object | null>(null);
+  const clipboardWritePending = useRef(false);
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
   const [addingProject, setAddingProject] = useState(false);
@@ -743,7 +749,38 @@ export function App() {
   recentOwners.forEach((owner, index) => { const target = recentChats[index]; if (target) recentActions[owner] = () => navigate(target.sessionId, target.hostId); });
   const ordinalEfforts = selection.levels.filter(level => level !== "auto" && level !== "off");
   const effortIndex = ordinalEfforts.indexOf(selection.thinking ?? "");
-  const copyText = (value: string) => { void navigator.clipboard.writeText(value).catch(cause => setActionError(errorMessage(cause))); };
+  const copyText = async (value: string) => {
+    if (clipboardWritePending.current) throw new Error("Wait for the current clipboard write to finish before copying again.");
+    clipboardWritePending.current = true;
+    try { await navigator.clipboard.writeText(value); }
+    finally { clipboardWritePending.current = false; }
+  };
+  const copyPath = (value: string) => { void copyText(value).catch(cause => { if (selectedRef.current === routeKey) setActionError(errorMessage(cause)); }); };
+  const markdownOwner = selected && selected.id === selectedId && selected.hostId === hostId ? { hostId, sessionId: selected.id } : null;
+  const markdownIssue = !chatRoute || !markdownOwner ? "Select the conversation to copy."
+    : !connected ? "Reconnect to load this conversation from its owning host before copying it."
+    : conversationMarkdownIssue(transcript, markdownOwner, markdownCopy?.state === "copying");
+  const canCopyMarkdown = markdownIssue === null;
+  async function copyConversationMarkdown() {
+    if (markdownCopyPending.current || selectedRef.current !== routeKey) return;
+    const owner = markdownCopyRoute.current, attempt = {};
+    markdownCopyPending.current = attempt;
+    setMenuOpen(false);
+    try {
+      if (markdownIssue || !markdownOwner || !selected) throw new Error(markdownIssue ?? "Select the conversation to copy.");
+      const payload = captureConversationMarkdown(transcript, markdownOwner, selected.title);
+      setMarkdownCopy({ owner, state: "copying", message: "Copying conversation as Markdown…" });
+      await copyText(payload);
+      if (markdownCopyRoute.current === owner && markdownCopyPending.current === attempt) setMarkdownCopy({ owner, state: "copied", message: "Copied conversation as Markdown" });
+    } catch (cause) {
+      if (markdownCopyRoute.current === owner && markdownCopyPending.current === attempt) setMarkdownCopy({ owner, state: "failed", message: `Failed to copy conversation as Markdown: ${errorMessage(cause)}` });
+    } finally {
+      if (markdownCopyPending.current === attempt) {
+        markdownCopyPending.current = null;
+        if (markdownCopyRoute.current !== owner) setMarkdownCopy(null);
+      }
+    }
+  }
   const skillTarget = workspaceTarget && !("filePath" in workspaceTarget) ? workspaceTarget : undefined;
   async function reloadSkills() {
     if (!connected) return;
@@ -806,7 +843,8 @@ export function App() {
           });
         },
         ...(selected && {
-          "copy-conversation-path": () => copyText(selected.sessionFile),
+          "copy-conversation-path": () => copyPath(selected.sessionFile),
+          ...(canCopyMarkdown && { "copy-conversation-markdown": () => { void copyConversationMarkdown(); } }),
           ...(connected && !busy && {
             "rename-thread": () => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); },
             ...(!selected.archived && { "archive-thread": () => { void archive(); } }),
@@ -814,7 +852,7 @@ export function App() {
           ...(writablePreferences && !sessionRead.busy && { "mark-thread-unread": () => { void sessionRead.mark(selected, true); } }),
           ...(writablePreferences && selectedSidebarItem && { "toggle-thread-pin": () => { void moveSidebarItem(preferences, organizedSidebar, selectedSidebarItem, organizedSidebar.sectionOf(selectedSidebarItem) === "pinned" ? null : "pinned").catch(cause => setActionError(errorMessage(cause))); } }),
         }),
-        ...((selected?.cwd ?? project?.path) && { "copy-working-directory": () => copyText((selected?.cwd ?? project?.path)!) }),
+        ...((selected?.cwd ?? project?.path) && { "copy-working-directory": () => copyPath((selected?.cwd ?? project?.path)!) }),
         ...(organizedSidebar.allChatSlots.length > 1 && { "previous-thread": () => adjacentChat(-1), "next-thread": () => adjacentChat(1) }),
         ...(nextAttention && { "next-thread-needing-attention": () => navigate(nextAttention.sessionId, nextAttention.hostId) }),
         ...(bottomPanelVisible && { "toggle-bottom-panel": () => dock.toggle("bottom") }),
@@ -1543,7 +1581,7 @@ export function App() {
   const connectionLabel = connected ? hostId === desktop.localHostId ? "Connected · This machine" : "Connected · Tailscale" : loading ? "Connecting…" : state ? "Offline · cached view" : "Host unavailable";
   const profileMenu = (triggerId?: string) => <ProfileMenu hosts={desktop.hosts} activeHostId={state?.host.id ?? route.hostId} hostName={activeHostName} connected={connected} connectionLabel={connectionLabel} onSelectHost={owner => navigate(null, owner, true)} onSettings={openSettings} onConnections={() => { setSettingsPage("connections"); openSettings(); }} onBuildStatus={() => setDialog("status")} onRefresh={() => desktop.refreshNetwork()} triggerId={triggerId}/>;
   // The right dock occupies the top-right corner of the titlebar band only when it renders as its own column.
-  const conversationActions = selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button onClick={() => { dock.open("side-chat"); setMenuOpen(false); }}>Side chat</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>;
+  const conversationActions = selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button disabled={!canCopyMarkdown} title={markdownIssue ?? undefined} onClick={() => { void copyConversationMarkdown(); }}>Copy as Markdown</button><button onClick={() => { dock.open("side-chat"); setMenuOpen(false); }}>Side chat</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>;
   const environmentAction = workspace && <button role="checkbox" aria-checked={environmentOpen} className={`icon-button ${environmentOpen ? "active" : ""}`} aria-label="Environment" title={environmentOpen ? "Hide environment" : "Show environment"} onClick={() => setEnvironmentOpen(value => !value)}><Icon name="sliders"/></button>;
   const fullWidthContent = !contentOverlayOpen && workspaceOpen && dock.snapshot.state.rightLayout === "full";
   const contentSide = resolveContentSide(dock.snapshot.state,taskDirection);
@@ -1622,6 +1660,7 @@ export function App() {
             {!selectedId && <p className="subtle-notice">Requests for {knownPendingSession?.title ?? "the session being started"} on {state.host.name}.</p>}
             <PendingInteractions bridge={bridge} hostId={hostId} sessionId={(selectedId ?? pendingSessionId)!} localHostId={desktop.localHostId} connected={connected}/>
           </>}
+          {markdownCopy?.owner === markdownCopyRoute.current && <div className={markdownCopy.state === "failed" ? "inline-error" : "subtle-notice"} role={markdownCopy.state === "failed" ? "alert" : "status"}><span>{markdownCopy.message}</span>{markdownCopy.state !== "copying" && <button className="icon-button small" onClick={() => setMarkdownCopy(null)} aria-label="Dismiss copy status"><Icon name="close"/></button>}</div>}
           {actionError && <div className="inline-error" role="alert"><span>{actionError}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
           {modeView?.conflict && !sameModeConflict(modeView) && draft.projectId && <div className="draft-conflict" role="alert"><strong>Work in changed on another device.</strong><p>Your prompt and other selections are preserved. Choose which execution mode to use for this project.</p><dl><dt>My choice</dt><dd>{executionModeLabel(modeView.draft.execution)}</dd><dt>Host’s saved choice</dt><dd>{executionModeLabel(modeView.conflict.execution)}</dd></dl><div><button className="secondary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"remote")}>Use saved mode</button><button className="primary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"local")}>Keep my mode</button></div></div>}
           {modeView?.status === "error" && draft.projectId && <div className="inline-error" role="alert"><span>{modeView.error ?? "The Work in choice was not saved to the host."}</span><button disabled={!connected} onClick={() => void drafts.flush(projectExecutionModeDraftId(draft.projectId!)).catch(() => {})}>Retry mode save</button></div>}

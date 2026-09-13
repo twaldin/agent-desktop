@@ -1136,3 +1136,9 @@ Explore exposes the existing Pull requests, Scheduled, Plugins and Archive route
 The production App and an isolated real host verified pointer reordering, keyboard pickup/move/drop/cancel, modal customization, nested context Reset by pointer and keyboard, and focus restoration. Native window captures and accessibility observations separately verified the keyboard flow at 1440×1000 logical points with a 275-point sidebar and 30-point default rows. The native fixture's unavailable-model notice remains visible; this is not provider or whole-App acceptance.
 
 Pinned modality, glyphs and default spacing are source-grounded. Whole-sidebar completion, hosted mode, matched 7982 pixels and material/display equality remain unclaimed. See [sidebar organization](sidebar-organization.md) for the preference, recovery and evidence boundaries.
+
+## Whole-conversation Markdown copy
+
+Copy as Markdown now shares one owner-bound operation across Conversation actions, the command menu and configurable keys. It preserves projected conversation content and explicit limitations, excludes hidden reasoning/provider metadata, and reports clipboard completion only for the captured owner and attempt. Loading, read failure, cached-only data and overlapping writes remain unavailable; drafts and native history are unchanged.
+
+On the original Work candidate `6bc882e`, typecheck/build, 16 focused tests/120 assertions and an isolated production-App run with 11 qualified native captures pass. Clipboard behavior was verified through a controlled API boundary without touching the system clipboard. Root integration checks are separate; the Work captures do not establish a native run of the composed source. This is not installed-release, OS clipboard or full reference-menu/pixel acceptance. See [transcript parity](transcript-parity.md#whole-conversation-copy-as-markdown) for the behavior and evidence boundaries.

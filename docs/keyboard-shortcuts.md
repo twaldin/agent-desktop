@@ -1,12 +1,13 @@
 # App shortcut ownership
 
-`App.tsx` connects the window-owned keymap controller to 91 installed command IDs from the 148-command catalogue. The remaining 50 IDs are required feature-lane dependencies; seven voice/avatar/account commands are explicit goal exclusions. This is not full keyboard parity. Settings shows installed support independently of current route availability; dispatch still requires an eligible live owner. Configured keys replace defaults once the local cache is resolved. See [stored chat search](session-search.md) for the command menu's backend contract.
+`App.tsx` connects the window-owned keymap controller to 93 installed command IDs from the 148-command catalogue. The remaining 48 IDs are required feature-lane dependencies; seven voice/avatar/account commands are explicit goal exclusions. This is not full keyboard parity. Settings shows installed support independently of current route availability; dispatch still requires an eligible live owner. Configured keys replace defaults once the local cache is resolved. See [stored chat search](session-search.md) for the command menu's backend contract.
 
 | macOS binding | Action | Availability |
 | --- | --- | --- |
 | Command+N / Command+Shift+O | New chat | App |
 | Command+K / Command+Shift+P | Command menu and chat search | App |
 | Unassigned; configurable | Switch chat / Keyboard shortcuts settings | App |
+| Unassigned; configurable | Copy as Markdown | Current connected, loaded native conversation; unavailable during loading, read failure or another pending clipboard write |
 | Command+1–9 or Control+1–9 | Go to numbered chat | Existing logical sidebar slot; the saved Number shortcuts target chooses the primary family |
 | Command+O | Open folder | Connected host and available project picker |
 | Command+B | Toggle sidebar | App |

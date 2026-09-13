@@ -32,13 +32,14 @@ export function useDesktop(bridge: DesktopBridge | undefined, requestedHostId?: 
 
 export function useTranscript(bridge: Pick<DesktopBridge, "getMessages" | "subscribe"> | undefined, sessionId: string | null, hostId: string | undefined, connected: boolean, localHostId?: string, activitySequence = 0) {
   const key = `agent-desktop:transcript:v1:${hostId}:${sessionId}`;
-  type Snapshot = { key: string; messages: TranscriptMessage[]; readSequence?: number; loaded: boolean; loading: boolean; error: string | null; cacheWarning: string | null };
-  const empty = (): Snapshot => ({ key, messages: [], loaded: false, loading: Boolean(sessionId && connected), error: null, cacheWarning: null });
+  type Snapshot = { key: string; owner: { hostId: string; sessionId: string } | null; source: "host" | "cache" | null; messages: TranscriptMessage[]; readSequence?: number; loaded: boolean; loading: boolean; error: string | null; cacheWarning: string | null };
+  const empty = (): Snapshot => ({ key, owner: null, source: null, messages: [], loaded: false, loading: Boolean(sessionId && connected), error: null, cacheWarning: null });
   const [snapshot, setSnapshot] = useState<Snapshot>(empty);
   const current = useRef(snapshot); current.current = snapshot;
   const refreshRef = useRef<() => void>(() => {});
   const activityRef = useRef(activitySequence); activityRef.current = activitySequence;
   useEffect(() => {
+    const owner = hostId && sessionId ? { hostId, sessionId } : null;
     let cancelled = false; let pending = false; let again = false; let receivedLive = false; let timer: ReturnType<typeof setTimeout> | undefined;
     const hasCurrentSnapshot = current.current.key === key && current.current.loaded;
     const update = (patch: Partial<Snapshot>) => { if (!cancelled) setSnapshot(previous => ({ ...(previous.key === key ? previous : empty()), ...patch, key })); };
@@ -47,7 +48,7 @@ export function useTranscript(bridge: Pick<DesktopBridge, "getMessages" | "subsc
     // rows, selection and focus while the next live snapshot is being fetched.
     if (!hasCurrentSnapshot && sessionId && hostId) void offlineCache.read(key).then(value => {
       const cached = JSON.parse(value ?? "[]");
-      if (!cancelled && !receivedLive && Array.isArray(cached)) update({ messages: cached, loaded: true, cacheWarning: null });
+      if (!cancelled && !receivedLive && Array.isArray(cached)) update({ messages: cached, owner, source: "cache", loaded: true, cacheWarning: null });
     }).catch(() => update({ cacheWarning: "The cached transcript could not be read. Reconnect to load it from its host." }));
     async function load() {
       if (!bridge || !sessionId || !connected || cancelled) return;
@@ -57,7 +58,7 @@ export function useTranscript(bridge: Pick<DesktopBridge, "getMessages" | "subsc
       try {
         const next = await bridge.getMessages(sessionId, hostId);
         if (cancelled) return;
-        receivedLive = true; update({ messages: next, loaded: true, readSequence, error: null });
+        receivedLive = true; update({ messages: next, owner, source: "host", loaded: true, readSequence, error: null });
         void offlineCache.write(key, JSON.stringify(next)).then(() => update({ cacheWarning: null }), () => update({ cacheWarning: "This transcript could not be cached for offline reading." }));
       } catch (cause) { update({ error: errorMessage(cause) }); }
       finally { pending = false; if (!cancelled) { update({ loading: false }); if (again) { again = false; schedule(); } } }
