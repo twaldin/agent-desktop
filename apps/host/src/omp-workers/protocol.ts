@@ -11,7 +11,7 @@ import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 import type { NativeSessionForkInput } from "../omp/session-fork";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 60;
+export const WORKER_PROTOCOL_VERSION = 61;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -62,6 +62,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }
   | { operation: "getPlan" }
+  | { operation: "getPlanExternalEditorAvailable" }
+  | { operation: "preparePlanExternalEditor"; args: import("../../../../packages/shared/src/plan-external-editor").PlanExternalEditorRequest }
   | { operation: "getPlanDocumentSection"; args: import("../../../../packages/shared/src/session-plan").PlanDocumentReadRequest }
   | { operation: "startPlanExecution"; args: { phaseId: string } }
   | { operation: "preparePlanDecision"; args: { commandId: string; request: import("../../../../packages/shared/src/session-plan").PlanMutationRequest } }

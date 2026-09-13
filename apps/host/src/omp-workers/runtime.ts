@@ -1,3 +1,5 @@
+import { parsePlanExternalEditorRequest } from "../../../../packages/shared/src/plan-external-editor";
+import { parsePreparedPlanExternalEditor } from "../omp/plan-external-editor";
 import type { OmpPlanExecutionRun } from "../omp/plan-execution-admission";
 import { parsePlanDecisionPreparation } from "../omp/plan-decision";
 import { parsePlanMutationRequest, parsePlanControlRequest, parsePlanControlResult, parseSessionPlan, parsePlanDocumentReadRequest, type SessionPlan, type PlanDocumentReadRequest } from "../../../../packages/shared/src/session-plan";
@@ -46,13 +48,14 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection" | "getPlanExternalEditorAvailable"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
   getPlan(): Promise<SessionPlan>;
+  getPlanExternalEditorAvailable(): Promise<boolean>;
   getPlanDocumentSection(request: PlanDocumentReadRequest): Promise<PlanDocumentSection>;
   getForceTool(): Promise<ForceToolState>;
   cancelForceTool(input: { ticket: ForceToolTicket; directiveId: string }): Promise<ForceToolCancelResult>;
@@ -1064,6 +1067,25 @@ export class WorkerRuntime {
         const value = parseSessionPlan(await client.request({ operation: "getPlan" }));
         if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file
           || value.ticket.nativeSessionId !== origin.id) throw new Error("The original Plan worker changed during inspection.");
+        return value;
+      },
+      getPlanExternalEditorAvailable: async () => {
+        if (disposeCall || client.failure) throw new Error("The original Plan editor worker is unavailable.");
+        const origin = { id: state().id, file: state().sessionFile };
+        const value = await client.request({ operation: "getPlanExternalEditorAvailable" });
+        if (typeof value !== "boolean" || disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file)
+          throw new Error("The original Plan editor capability could not be confirmed.");
+        return value;
+      },
+      preparePlanExternalEditor: async raw => {
+        if (disposeCall || client.failure) throw new Error("The original Plan editor worker is unavailable.");
+        const request = parsePlanExternalEditorRequest(raw);
+        const origin = { id: state().id, file: state().sessionFile, cwd: state().cwd };
+        if (request.sessionId !== origin.id) throw new Error("The Plan editor target changed before preparation.");
+        const value = parsePreparedPlanExternalEditor(await client.request({ operation: "preparePlanExternalEditor", args: request }), request);
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file || state().cwd !== origin.cwd
+          || value.nativeSessionId !== origin.id || value.sessionFile !== origin.file || value.cwd !== origin.cwd)
+          throw new Error("The original Plan editor worker changed during preparation.");
         return value;
       },
       getPlanDocumentSection: async raw => {

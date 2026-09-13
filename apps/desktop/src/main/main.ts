@@ -1,3 +1,4 @@
+import { registerPlanExternalEditorHandlers } from "./plan-external-editor-transport";
 import { requestForceToolState } from "./force-tool-transport";
 import { registerPlanReadHandler } from "./plan-transport";
 import { parsePullRequestWriteRequest } from '../../../../packages/shared/src/pull-request-write';
@@ -634,6 +635,7 @@ ipcMain.handle("host:force-tool-read", async (event, sessionId: string, hostId: 
   return requestForceToolState(await endpointFor(hostId), sessionId, commandId);
 });
 registerPlanReadHandler(ipcMain, assertTrustedSender, endpointFor);
+registerPlanExternalEditorHandlers(ipcMain, assertTrustedSender, endpointFor);
 ipcMain.handle("host:session-mcp", async (event, sessionId: string, hostId?: string, commandId?: string) => {
   assertTrustedSender(event); return requestSessionMcp(await endpointFor(hostId), sessionId, commandId);
 });

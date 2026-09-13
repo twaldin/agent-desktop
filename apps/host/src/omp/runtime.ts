@@ -1,5 +1,8 @@
 import { NativePlanExecutionAdmission, NativePlanMessageAdmissionError, type OmpPlanExecutionRun } from "./plan-execution-admission";
 import { NativePlanController, NativePlanError, resolveNativePlanInvocation } from "./plan-controller";
+import { getEditorCommand } from "@oh-my-pi/pi-coding-agent/utils/external-editor";
+import { parsePlanExternalEditorRequest, type PlanExternalEditorRequest } from "../../../../packages/shared/src/plan-external-editor";
+import { parsePreparedPlanExternalEditor, type PreparedPlanExternalEditor } from "./plan-external-editor";
 import { projectSessionPlan } from "./plan-state";
 import { parsePlanDecisionPreparation, type OmpPlanDecisionPreparation } from "./plan-decision";
 import { parsePlanControlRequest, parsePlanDocumentReadRequest, parsePlanMutationRequest,
@@ -153,6 +156,8 @@ export interface OmpSession {
   subscribe(listener: OmpEventListener): () => void;
   getForceTool(): ForceToolState;
   getPlan(): SessionPlan;
+  getPlanExternalEditorAvailable(): boolean;
+  preparePlanExternalEditor(request: PlanExternalEditorRequest): Promise<PreparedPlanExternalEditor>;
   getPlanDocumentSection(request: PlanDocumentReadRequest): PlanDocumentSection;
   controlPlan(request: PlanControlRequest): Promise<PlanControlResult>;
   preparePlanDecision(commandId: string, request: PlanMutationRequest): Promise<OmpPlanDecisionPreparation>;
@@ -1055,6 +1060,32 @@ export class OmpRuntime {
         },
         getPlan: readPlan,
         getPlanDocumentSection: readPlanDocumentSection,
+        getPlanExternalEditorAvailable: () => { assertSessionActive(); return !!getEditorCommand(); },
+        preparePlanExternalEditor: async raw => {
+          const request = parsePlanExternalEditorRequest(raw);
+          assertIdle();
+          const original = readPlan();
+          const current = () => {
+            const value = readPlan();
+            if (request.sessionId !== session.sessionId || request.ticket.epoch !== value.ticket.epoch
+              || request.ticket.nativeSessionId !== value.ticket.nativeSessionId || request.ticket.revision !== value.ticket.revision
+              || request.reviewId !== value.review?.id || request.reviewRevision !== value.review.revision
+              || request.documentRevision !== value.review.document?.documentRevision || value.review.status !== "ready"
+              || value.busyReason || value.reconciliationRequired || !value.enabled)
+              throw new Error("The original Plan editor owner is unavailable. Refresh before editing.");
+          };
+          current();
+          const editorCommand = getEditorCommand();
+          if (!editorCommand) throw new Error("No editor configured on the owning host. Set VISUAL or EDITOR.");
+          const prepared = await nativePlan.prepareExternalEditor(request);
+          current();
+          if (getEditorCommand() !== editorCommand || readPlan().ticket.revision !== original.ticket.revision)
+            throw new Error("The Plan editor configuration changed during preparation.");
+          return parsePreparedPlanExternalEditor({ request, nativeSessionId: session.sessionId, sessionFile: session.sessionFile,
+            cwd: manager.getCwd(), ...prepared, editorCommand,
+            environment: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+          }, request);
+        },
         controlPlan: async raw => {
           let dispatched = false;
           try {

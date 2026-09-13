@@ -17,6 +17,7 @@ import { PROPOSE_DEVICE_NAME, writeDeviceDispatch } from "@oh-my-pi/pi-coding-ag
 import { lookupBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { parseSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/parse";
 import { prompt } from "@oh-my-pi/pi-utils";
+import type { PlanExternalEditorRequest } from "../../../../packages/shared/src/plan-external-editor";
 
 const planModeApprovedPrompt = await Bun.file(new URL(import.meta.resolve(
   "@oh-my-pi/pi-coding-agent/prompts/system/plan-mode-approved",
@@ -567,6 +568,23 @@ export class NativePlanController {
     renderColumns: number; sectionId: string }): PlanReviewDocumentSectionProjection {
     const review = this.#ownedReview(input, { allowDismissed: true });
     return review.documentOwner.section(input.documentRevision, input.sectionId, input.renderColumns);
+  }
+
+  prepareExternalEditor(input: PlanExternalEditorRequest): Promise<{
+    content: string; extension: string; trimTrailingNewline: boolean;
+  }> {
+    return this.#operation(undefined, async () => {
+      const review = this.#ownedReview(input);
+      await this.#assertReviewArtifact(review); this.#ownedReview(input);
+      const owned = await this.#planPath(review.reference); this.#ownedReview(input);
+      if (input.edit.kind === "plan") return { content: review.content,
+        extension: path.extname(owned.absolute) || ".md", trimTrailingNewline: false };
+      const target = input.edit.target;
+      const section = review.documentOwner.section(input.documentRevision, target.sectionId, input.edit.renderColumns);
+      if (target.kind === "line" && !section.rows.some(row => row.rowId === target.rowId))
+        throw new NativePlanError("rejected", "The original annotation row is no longer in this rendered section.");
+      return { content: input.edit.note, extension: ".md", trimTrailingNewline: true };
+    });
   }
 
   async mutateReviewDocument(input: { reviewId: string; reviewRevision: string; action: PlanReviewDocumentAction;

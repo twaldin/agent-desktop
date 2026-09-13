@@ -1,3 +1,6 @@
+import { PlanExternalEditorHttp, type PlanExternalEditorHttpAction } from "./plan-external-editor-http";
+import { PlanExternalEditors } from "./plan-external-editors";
+import { PlanEditorTerminals } from "./plan-editor-terminal";
 import { PlanDecisionService } from "./plan-decisions";
 import { projectPlanDecisionJournalReceipt, SessionPlanHttp } from "./session-plan-http";
 import { SessionForceToolHttp, projectForceToolJournalReceipt } from "./session-force-tool-http";
@@ -150,6 +153,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let nativeTerminals: TmuxTerminalManager | undefined;
   let nativeTerminalsHttp: TmuxTerminalsHttp | undefined;
   let terminalCreationHttp: TerminalCreationHttp | undefined;
+  let planExternalEditors: PlanExternalEditors | undefined;
   let themeAssets: ThemeAssets | undefined;
   let goalContinuations: GoalContinuationController | undefined;
   let questionDeliveries: QuestionDeliveryController | undefined;
@@ -521,6 +525,28 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
   const htmlPreviews = new HtmlPreviewHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
   const sessionOutputs = new SessionOutputsHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
+  if (nativeTerminals) planExternalEditors = new PlanExternalEditors({
+    hostId: store.host.id, controlEpoch: crypto.randomUUID(), records: store.planExternalEditors,
+    terminals: new PlanEditorTerminals(dataDirectory, nativeTerminals),
+    capture: async id => {
+      const catalog = store.getSession(id), pending = handles.get(id);
+      if (stopping || !catalog || catalog.archived || !pending) return;
+      const handle = await pending.catch(() => undefined);
+      if (!handle) return;
+      const assertCurrent = () => {
+        const current = store.getSession(id), decision = store.getPlanDecisionForSession(id);
+        if (stopping || !current || current.archived || current.sessionFile !== catalog.sessionFile || current.cwd !== catalog.cwd
+          || handles.get(id) !== pending || handle.workerFailure || handle.id !== id
+          || handle.sessionFile !== catalog.sessionFile || handle.cwd !== catalog.cwd || executions.has(id)
+          || decision?.state === "pending" || decision?.state === "unknown")
+          throw new Error("The original Plan editor owner is unavailable or has an unresolved decision.");
+      };
+      assertCurrent();
+      return { handle, assertCurrent };
+    },
+  });
+  const planExternalEditorHttp = planExternalEditors ? new PlanExternalEditorHttp({ hostId: store.host.id,
+    service: planExternalEditors, sessionExists: id => !stopping && Boolean(store.getSession(id)) }) : undefined;
   const sessionPlanHttp = new SessionPlanHttp({ hostId: store.host.id,
     receipt: (sessionId, commandId) => projectPlanDecisionJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
     continuation: sessionId => planDecisions.continuation(sessionId),
@@ -1405,6 +1431,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (htmlResponse) return htmlResponse;
         const outputsResponse = await sessionOutputs.route(request, url);
         if (outputsResponse) return outputsResponse;
+        const editorRoute = /^\/v1\/sessions\/([^/]+)\/plan\/editor\/(capabilities|list|start|status|cancel|recovery)$/.exec(url.pathname);
+        if (editorRoute) {
+          if (!planExternalEditorHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING",
+            message: "The owning host needs its pinned native terminal bundle to run the configured editor." } },
+            { status: 503, headers: { "Cache-Control": "no-store" } });
+          return planExternalEditorHttp.route(request, editorRoute[1]!, editorRoute[2] as PlanExternalEditorHttpAction);
+        }
         const planResponse = await sessionPlanHttp.route(request, url);
         if (planResponse) return planResponse;
         const forceToolResponse = await forceToolHttp.route(request, url);
@@ -1662,6 +1695,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       try {
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
+        const planEditorDrain = planExternalEditors?.dispose();
+        void planEditorDrain?.catch(() => {});
         const pullRequestsDrain = pullRequests?.dispose();
         void pullRequestsDrain?.catch(() => {});
         const terminalCreationDrain = terminalCreationHttp?.dispose();
@@ -1685,7 +1720,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         // Start cancellation before waiting for requests that need those
         // workers to settle. Discovery may be blocked on a native network read.
         const outcomes = await Promise.allSettled([pullRequestsDrain, automations?.dispose(), runtime.dispose({preserveReconnect:true}), mcpOwnerDrain, networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain, browserAutocompleteDrain,
-          accounts!.dispose(), terminals!.shutdown(), nativeTerminals?.shutdown(), settings!.dispose(), themeAssets!.dispose(),
+          accounts!.dispose(), terminals!.shutdown(), (async () => {
+            const editorOutcome = await Promise.allSettled([planEditorDrain]);
+            const terminalOutcome = await Promise.allSettled([nativeTerminals?.shutdown()]);
+            const errors = [...editorOutcome, ...terminalOutcome].flatMap(value => value.status === "rejected" ? [value.reason] : []);
+            if (errors.length) throw new AggregateError(errors, "Plan editor and terminal cleanup failed.");
+          })(), settings!.dispose(), themeAssets!.dispose(),
           theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
         const errors = [...configurationOutcomes,...outcomes].flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
@@ -1710,7 +1750,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await Promise.allSettled([planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
       await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
     }
     finally {

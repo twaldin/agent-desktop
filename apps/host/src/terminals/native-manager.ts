@@ -43,6 +43,14 @@ interface Attachment {
 }
 interface Entry { record: NativeTerminalRecord; process?: Process; control?: TmuxControl; closing?: Promise<NativeTerminalInfo>; finalizing?: Promise<void>; snapshotting?: Promise<NativeTerminalHistory>; mutating: boolean }
 interface InputStream { lastSequence: number; receipts: Map<number, { hash: string; result: Promise<NativeTerminalInputReceipt> }> }
+interface NativeLaunch { application: string; args: string[]; payload?: string; shell: string }
+/** Host-only program launch. This type is deliberately absent from the terminal HTTP protocol. */
+export interface NativeOwnedCommand {
+  application: string;
+  args: readonly string[];
+  /** Complete environment captured from the owning worker. It is written only to a private launch payload. */
+  environment: Readonly<Record<string, string>>;
+}
 export interface TmuxTerminalManagerOptions {
   dataDirectory: string;
   hostId: string;
@@ -136,11 +144,11 @@ export class TmuxTerminalManager {
       throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The action directory is outside its owning Git root.");
     return actionCwd;
   }
-  private environmentLaunch(id: string, cwd: string, input?: LocalEnvironmentWorkerEnvironment, trustedActionRoot?: string): { application: string; args: string[]; payload?: string } {
+  private environmentLaunch(id: string, cwd: string, input?: LocalEnvironmentWorkerEnvironment, trustedActionRoot?: string): NativeLaunch {
     const actionRoot = trustedActionRoot ? this.actionCwd(trustedActionRoot, trustedActionRoot) : undefined;
     if (actionRoot && cwd !== actionRoot && !cwd.startsWith(`${actionRoot}${sep}`))
       throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The action directory is outside its owning Git root.");
-    if (!input) return { application: this.shell.application, args: this.shell.args };
+    if (!input) return { application: this.shell.application, args: this.shell.args, shell: basename(this.shell.application) };
     let worktree: string;
     try { worktree = realpathSync(input.worktreeRoot); }
     catch { throw new TerminalError("INVALID_TERMINAL_ENVIRONMENT", "The local environment worktree no longer exists."); }
@@ -164,7 +172,42 @@ export class TmuxTerminalManager {
     for (const key of ["TERM", "TERMINFO", "COLORTERM"]) lines.push(`export ${key}=${shellQuote(desired[key]!)}`);
     lines.push(removePayload, "trap - EXIT HUP INT TERM", `exec ${shellQuote(this.shell.application)}${this.shell.args.map(arg => ` ${shellQuote(arg)}`).join("")}`, "");
     atomicPrivateText(payload, lines.join("\n")); privateFile(payload);
-    return { application: "/bin/sh", args: [payload], payload };
+    return { application: "/bin/sh", args: [payload], payload, shell: basename(this.shell.application) };
+  }
+  private ownedCommandLaunch(id: string, command: NativeOwnedCommand): NativeLaunch {
+    let application: string;
+    try { application = realpathSync(command.application); }
+    catch { throw new TerminalError("INVALID_TERMINAL_COMMAND", "The host-owned terminal program is unavailable."); }
+    if (!isAbsolute(command.application) || application !== command.application || !statSync(application).isFile()
+      || !(statSync(application).mode & 0o111))
+      throw new TerminalError("INVALID_TERMINAL_COMMAND", "The host-owned terminal program must be a canonical executable file.");
+    if (!Array.isArray(command.args) || command.args.length > 256
+      || command.args.some(arg => typeof arg !== "string" || arg.includes("\0"))
+      || command.args.reduce((bytes, arg) => bytes + Buffer.byteLength(arg), 0) > 1024 * 1024)
+      throw new TerminalError("INVALID_TERMINAL_COMMAND", "The host-owned terminal arguments are invalid or exceed their bound.");
+    const entries = Object.entries(command.environment);
+    let environmentBytes = 0;
+    if (entries.length > 4096 || entries.some(([key, value]) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== "string" || value.includes("\0")) return true;
+      environmentBytes += Buffer.byteLength(key) + Buffer.byteLength(value);
+      return false;
+    }) || environmentBytes > 4 * 1024 * 1024)
+      throw new TerminalError("INVALID_TERMINAL_COMMAND", "The host-owned terminal environment is invalid or exceeds its bound.");
+
+    // Preserve the complete worker environment while the private tmux transport
+    // remains authoritative for its own terminal variables. Values stay in this
+    // owner-only file and never appear in tmux argv, catalog metadata or events.
+    const desired: Record<string, string> = { ...command.environment,
+      TERM: "xterm-256color", TERMINFO: this.bundle.terminfo, COLORTERM: "truecolor" };
+    delete desired.TMUX;
+    const inherited = this.environment();
+    const payload = join(this.store.directory, `environment-launch-${id}.sh`);
+    const lines = ["#!/bin/sh", "set -eu"];
+    for (const key of new Set([...Object.keys(inherited), "TMUX"])) if (!(key in desired) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) lines.push(`unset ${key}`);
+    for (const [key, value] of Object.entries(desired)) lines.push(`export ${key}=${shellQuote(value)}`);
+    lines.push(`exec ${shellQuote(application)}${command.args.map(arg => ` ${shellQuote(arg)}`).join("")}`, "");
+    atomicPrivateText(payload, lines.join("\n")); privateFile(payload);
+    return { application: "/bin/sh", args: [payload], payload, shell: basename(application) };
   }
   private args(...command: string[]): string[] { return [this.bundle.binary, "-u", "-S", this.catalog.socket, "-f", this.configPath, ...command]; }
   private async cli(command: string[], maximumBytes = 256 * 1024): Promise<string> {
@@ -220,7 +263,7 @@ export class TmuxTerminalManager {
         else if (row.id !== entry.record.info.id) throw new TerminalError("TERMINAL_OWNER_MISMATCH", "A native pane has no matching terminal identity.");
         entry.record.paneId = row.pane; entry.record.prepared = false; entry.record.info.pid = row.pid;
         entry.record.info.cols = row.cols; entry.record.info.rows = row.rows;
-        if (row.dead) { entry.record.info.status = "exited"; entry.record.info.exitedAt ??= Date.now(); entry.record.info.exitCode = row.code; }
+        if (row.dead) { entry.record.info.status = "exited"; entry.record.info.exitedAt ??= Date.now(); entry.record.info.exitCode = row.code; this.cleanupEnvironmentLaunch(entry.record.info.id); }
         else { entry.process = Process.fromPid(row.pid) ?? undefined; entry.record.info.status = "running"; delete entry.record.info.error; delete entry.record.info.exitedAt; this.controller(entry); }
       }
     } catch (error) {
@@ -230,7 +273,7 @@ export class TmuxTerminalManager {
       this.server = undefined; delete this.catalog.serverPid;
     }
   }
-  private interrupted(entry: Entry, message: string): void { entry.record.info = { ...entry.record.info, status: "interrupted", error: message, exitedAt: Date.now() }; this.state(entry); }
+  private interrupted(entry: Entry, message: string): void { entry.record.info = { ...entry.record.info, status: "interrupted", error: message, exitedAt: Date.now() }; this.cleanupEnvironmentLaunch(entry.record.info.id); this.state(entry); }
   private async panes(): Promise<{ session: string; pane: string; id: string; pid: number; dead: boolean; code: number; cols: number; rows: number }[]> {
     const text = await this.cli(["list-panes", "-a", "-F", "#{session_name}|#{pane_id}|#{@agent-terminal}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_width}|#{pane_height}"]);
     return text ? text.split("\n").map(line => { const [session, pane, id, pid, dead, code, cols, rows] = line.split("|"); return { session: session!, pane: pane!, id: id!, pid: Number(pid), dead: dead === "1", code: Number(code), cols: Number(cols), rows: Number(rows) }; }) : [];
@@ -260,6 +303,26 @@ export class TmuxTerminalManager {
     /** Host-private UUID reserved by the durable creation journal. */
     reservation?: { terminalId: string; validateOwner(): void },
   ): Promise<NativeTerminalInfo> {
+    return this.createWith(input, (id, cwd) => this.environmentLaunch(id, cwd, localEnvironment, action?.actionRoot), action, reservation);
+  }
+
+  /** Launch one host-owned program in a normal private tmux pane. The browser
+   * terminal API cannot supply or inspect this command or its environment. */
+  createOwnedCommand(
+    input: TerminalCreateOptions & { cwd: string },
+    command: NativeOwnedCommand,
+    reservation: { terminalId: string; validateOwner(): void },
+  ): Promise<NativeTerminalInfo> {
+    const captured: NativeOwnedCommand = { application: command.application, args: [...command.args], environment: { ...command.environment } };
+    return this.createWith(input, id => this.ownedCommandLaunch(id, captured), undefined, reservation);
+  }
+
+  private createWith(
+    input: TerminalCreateOptions & { cwd: string },
+    launchFor: (id: string, cwd: string) => NativeLaunch,
+    action?: { actionKey: string; actionRoot?: string },
+    reservation?: { terminalId: string; validateOwner(): void },
+  ): Promise<NativeTerminalInfo> {
     const operation = this.createTail.then(async () => {
       if (this.stopping) throw new TerminalError("TERMINALS_STOPPING", "The native terminal host is stopping.");
       targetKey(input.target); const cwd = realpathSync(input.cwd); if (!statSync(cwd).isDirectory()) throw new TerminalError("NOT_DIRECTORY", "The owning terminal directory must exist.");
@@ -272,14 +335,14 @@ export class TmuxTerminalManager {
       if (reservation && typeof reservation.validateOwner !== "function") throw new TerminalError("INVALID_TERMINAL_OWNER_CHECK", "Reserved creation requires its current host owner check.");
       if (this.entries.has(id)) throw new TerminalError("TERMINAL_ID_EXISTS", "This native terminal identity is already owned; creation was not repeated.");
       const size = dimensions(input.cols ?? 120, input.rows ?? 40);
-      const launch = this.environmentLaunch(id, cwd, localEnvironment, action?.actionRoot);
+      const launch = launchFor(id, cwd);
       try { await this.prepareServer(); reservation?.validateOwner(); }
       catch (error) {
         // No pane launch was dispatched, so this payload cannot still be opening.
         if (launch.payload) this.cleanupEnvironmentLaunch(id);
         throw error;
       }
-      const entry: Entry = { record: { info: { id, target: copy(input.target), cwd, shell: basename(this.shell.application), pid: null, ...size, status: "starting", createdAt: Date.now(), protocol: NATIVE_TERMINAL_PROTOCOL, serverGeneration: this.catalog.serverGeneration, geometryRevision: 1, inputEpoch: this.inputEpoch }, sessionName: `agent_${id.replaceAll("-", "")}`, prepared: true, ...(action ? { actionKey: action.actionKey } : {}) }, mutating: true };
+      const entry: Entry = { record: { info: { id, target: copy(input.target), cwd, shell: launch.shell, pid: null, ...size, status: "starting", createdAt: Date.now(), protocol: NATIVE_TERMINAL_PROTOCOL, serverGeneration: this.catalog.serverGeneration, geometryRevision: 1, inputEpoch: this.inputEpoch }, sessionName: `agent_${id.replaceAll("-", "")}`, prepared: true, ...(action ? { actionKey: action.actionKey } : {}) }, mutating: true };
       this.entries.set(id, entry); this.save(); this.state(entry);
       try {
         await this.cli(["new-session", "-d", "-s", entry.record.sessionName, "-x", String(size.cols), "-y", String(size.rows), "-c", cwd, launch.application, ...launch.args]);
@@ -290,7 +353,7 @@ export class TmuxTerminalManager {
         await this.cli(["set-option", "-p", "-t", row.pane, "@agent-terminal", id]);
         await this.cli(["set-window-option", "-t", entry.record.sessionName, "window-size", "manual"]);
         entry.record.prepared = false; entry.record.info.status = row.dead ? "exited" : "running";
-        if (row.dead) { entry.record.info.exitedAt = Date.now(); entry.record.info.exitCode = row.code; } else this.controller(entry);
+        if (row.dead) { entry.record.info.exitedAt = Date.now(); entry.record.info.exitCode = row.code; this.cleanupEnvironmentLaunch(id); } else this.controller(entry);
         this.save(); this.state(entry); return this.publicInfo(entry);
       } catch (error) { entry.record.info.error = error instanceof Error ? error.message : "Native terminal creation outcome is uncertain."; this.save(); this.state(entry); throw error; }
       finally { entry.mutating = false; }
@@ -554,7 +617,7 @@ export class TmuxTerminalManager {
         else if (row.dead) {
           entry.record.info = { ...entry.record.info, status: "exited", exitCode: row.code, exitedAt: Date.now() };
           this.save();
-          entry.finalizing = (async () => { await this.history(entry.record.info.id); await entry.control?.close(); entry.control = undefined; this.state(entry); })();
+          entry.finalizing = (async () => { await this.history(entry.record.info.id); await entry.control?.close(); entry.control = undefined; this.cleanupEnvironmentLaunch(entry.record.info.id); this.state(entry); })();
           try { await entry.finalizing; } finally { entry.finalizing = undefined; }
           changed = true;
         }

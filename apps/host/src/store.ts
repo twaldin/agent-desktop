@@ -44,6 +44,7 @@ import type { GitSubmissionReceipt, GitSubmissionTarget } from "../../../package
 import type { WorkspaceTarget } from "../../../packages/shared/src/workspace";
 import { AutomationRecords, initializeAutomationRecords } from "./automation-records";
 import { BrowserAutocompleteRecords } from "./browser-autocomplete-records";
+import { PlanExternalEditorRecords } from "./plan-external-editor-records";
 
 export type { DraftInput } from "../../../packages/shared/src/protocol";
 import type { DraftInput } from "../../../packages/shared/src/protocol";
@@ -121,6 +122,7 @@ export class HostStore {
   readonly automations: AutomationRecords;
   readonly pullRequestWrites: PullRequestWriteRecords;
   readonly browserAutocomplete: BrowserAutocompleteRecords;
+  readonly planExternalEditors: PlanExternalEditorRecords;
   private readonly db: Database;
   private readonly environmentPreparationStore: LocalEnvironmentPreparations;
 
@@ -132,7 +134,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 25) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 26) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -217,6 +219,11 @@ export class HostStore {
         () => this.readMetadata("browser-autocomplete-history.v1"),
         value => this.writeMetadata("browser-autocomplete-history.v1", value),
       );
+      this.planExternalEditors = new PlanExternalEditorRecords(this.db, this.host.id, () => {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(26);
+      });
       this.getDeviceAccessPolicy(); // Refuse corrupt or missing restrictions before serving any connection.
       this.recoverInterruptedSessions();
       this.recoverInterruptedGitSubmissions();
@@ -1210,9 +1217,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 25) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 26) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

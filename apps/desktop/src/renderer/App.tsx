@@ -1,3 +1,4 @@
+import type { PlanEditorPorts } from "./plan-external-editor-state";
 import { PlanExecutionContinuationControl, PlanReviewPanel } from "./PlanReviewPanel";
 import { useSessionPlan, type SessionPlanPorts } from "./use-session-plan";
 import type { PlanReviewPorts } from "./plan-review-model";
@@ -729,6 +730,19 @@ export function App() {
     else if (!planOpen && element?.open) element.close();
   }, [planOpen]);
   const hidePlan = () => { setPlanOpenOwner(undefined); requestAnimationFrame(() => planTrigger.current?.focus({ preventScroll: true })); };
+  const planEditorPorts = useMemo<PlanEditorPorts>(() => ({
+    bridge,
+    storage: { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) },
+    copy: copyText,
+    refreshPlan: async () => { await nativePlan.state.refresh(); },
+    openTerminal: (ownerHostId, ownerSessionId, terminalId) => {
+      const owner = planOwner.current;
+      if (!owner.enabled || owner.hostId !== ownerHostId || owner.sessionId !== ownerSessionId)
+        throw new Error("Select the original conversation before opening its editor terminal.");
+      dock.bindTerminal(terminalId, ownerHostId, { sessionId: ownerSessionId }, defaultTerminalLocation, "Plan editor");
+      setPlanOpenOwner(undefined);
+    },
+  }), [bridge, nativePlan.state, dock.bindTerminal, defaultTerminalLocation]);
   const planReviewPorts = useMemo<PlanReviewPorts>(() => ({
     mutate: async (owner, request) => {
       const current = () => planOwner.current.enabled && planOwner.current.hostId === owner.hostId && planOwner.current.sessionId === owner.sessionId;
@@ -2118,7 +2132,7 @@ export function App() {
         connected={connected && !selected?.archived && panelPlan.owner.hostId === hostId && panelPlan.owner.sessionId === selected?.id}
         fresh={nativePlan.view.fresh && !nativePlan.view.pending && !nativePlan.view.uncertain && panelPlan.value === nativePlan.view.value} open={planOpen}
         executionChoices={panelPlan.value.executionChoices} receipt={nativePlan.view.receipt} failure={nativePlan.view.failure} error={nativePlan.view.error}
-        {...planReviewPorts} copy={typeof navigator.clipboard?.writeText === "function" ? copyText : undefined}/>}
+        {...planReviewPorts} externalEditorPorts={planEditorPorts} copy={typeof navigator.clipboard?.writeText === "function" ? copyText : undefined}/>}
     </dialog>
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>

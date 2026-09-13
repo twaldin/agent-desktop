@@ -484,6 +484,12 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   sessionMcpApp?(sessionId: string, request: import("./session-mcp-app").NativeMcpAppRequest, hostId: string): Promise<import("./session-mcp-app").NativeMcpAppResponse>;
   readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;
   getPlan?(sessionId: string, hostId: string, commandId?: string): Promise<import("./session-plan").SessionPlanResponse>;
+  listPlanEditors?(sessionId: string, hostId: string, cursor?: string): Promise<import("./plan-external-editor").PlanExternalEditorList>;
+  getPlanEditorCapabilities?(sessionId: string, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorCapabilities>;
+  startPlanEditor?(request: import("./plan-external-editor").PlanExternalEditorRequest, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorObservation>;
+  getPlanEditorStatus?(request: import("./plan-external-editor").PlanExternalEditorRequest, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorObservation>;
+  cancelPlanEditor?(request: import("./plan-external-editor").PlanExternalEditorRequest, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorObservation>;
+  recoverPlanEditor?(request: import("./plan-external-editor").PlanExternalEditorRequest, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorRecovery>;
   getPlanDocumentSection?(request: import("./session-plan").PlanDocumentReadRequest, hostId: string): Promise<import("./session-plan").PlanDocumentResponse>;
   getForceTool?(sessionId: string, hostId: string, commandId?: string): Promise<import("./force-tool").ForceToolResponse>;
   getSessionMcp?(sessionId: string, hostId?: string, commandId?: string): Promise<import("./session-mcp").NativeSessionMcpResponse>;

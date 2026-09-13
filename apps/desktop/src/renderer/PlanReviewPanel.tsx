@@ -1,4 +1,7 @@
-import { useId, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { PlanReviewWithExternalEditor } from "./PlanExternalEditor";
+import type { PlanEditorPorts } from "./plan-external-editor-state";
+import type { PlanExternalEditorEdit } from "../../../../packages/shared/src/plan-external-editor";
+import { type ReactNode, useId, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { Icon } from "./Icons";
 import { MarkdownText } from "./MarkdownText";
 import { PierreSourceEditor } from "./PierreSourceEditor";
@@ -6,7 +9,7 @@ import { PlanDocumentReview } from "./PlanDocumentReview";
 import { PlanReviewModel, type PlanReviewInput, type PlanReviewPorts, type PlanReviewView } from "./plan-review-model";
 import "./plan-review-panel.css";
 
-export interface PlanReviewPanelProps extends PlanReviewInput, PlanReviewPorts { ownerLabel?: string }
+export interface PlanReviewPanelProps extends PlanReviewInput, PlanReviewPorts { ownerLabel?: string; externalEditorPorts?: PlanEditorPorts }
 
 /** Root provides the actual owner bridge. Local edit state never constitutes a
  * successful write, approval, or transition to a new native session. */
@@ -17,12 +20,14 @@ export function PlanReviewPanel(props: PlanReviewPanelProps) {
     props.connected, props.fresh, props.open, props.executionChoices, props.receipt, props.failure, props.error,
     props.mutate, props.dismiss, props.reopen, props.refresh, props.copy, props.openPlan, props.readDocumentSection]);
   const view = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
+  if (props.externalEditorPorts) return <PlanReviewWithExternalEditor model={model} view={view} id={id} ownerLabel={props.ownerLabel} ports={props.externalEditorPorts}/>;
   return <PlanReviewPanelView model={model} view={view} id={id} ownerLabel={props.ownerLabel}/>;
 }
 
 /** Shared rendering path for component event/prop tests; not a simulated bridge. */
-export function PlanReviewPanelView({ model, view, id, ownerLabel }: {
-  model: PlanReviewModel; view: PlanReviewView; id: string; ownerLabel?: string;
+export function PlanReviewPanelView({ model, view, id, ownerLabel, externalTools, annotationEditor }: {
+  model: PlanReviewModel; view: PlanReviewView; id: string; ownerLabel?: string; externalTools?: ReactNode;
+  annotationEditor?: { available: boolean; reason?: string; start(edit: PlanExternalEditorEdit): Promise<void> };
 }) {
   const review = view.plan.review, draft = view.draft, closed = !view.open || review?.status === "dismissed";
   const disabled = !!view.blockedReason, deciding = disabled || view.dirty;
@@ -65,6 +70,7 @@ export function PlanReviewPanelView({ model, view, id, ownerLabel }: {
       {receipt.execution === "not-entered" && <p>Execution was not admitted.</p>}
       {receipt.execution === "unknown" && <p>Execution admission is not confirmed. Check status; do not repeat the decision.</p>}
     </div>}
+    {externalTools}
     {!review || !draft ? <p className="plan-review-empty">No plan is available to review.</p> : <>
       {closed && <div className="plan-review-reopen"><p>Review dismissed. Your local edits and feedback are retained in this panel.</p>
         <button type="button" disabled={disabled} onClick={() => void model.auxiliary("reopen")}>Reopen plan review</button></div>}
@@ -76,12 +82,12 @@ export function PlanReviewPanelView({ model, view, id, ownerLabel }: {
           </div>
           <div>
             <button type="button" disabled={!view.canCopy || !!draft.pending} onClick={() => void model.auxiliary("copy")}>{view.canCopy ? "Copy plan" : "Copy unavailable"}</button>
-            <button type="button" disabled={!view.canOpenPlan || disabled || view.dirty} onClick={() => void model.auxiliary("open")}>{view.canOpenPlan ? "Open in editor" : "External editor unavailable"}</button>
+            {(view.canOpenPlan || !externalTools) && <button type="button" disabled={!view.canOpenPlan || disabled || view.dirty} onClick={() => void model.auxiliary("open")}>{view.canOpenPlan ? externalTools ? "Open plan file" : "Open in editor" : "External editor unavailable"}</button>}
           </div>
         </div>
         <p className="plan-review-reference">{review.reference}</p>
         {review.document && <PlanDocumentReview document={review.document} model={model} disabled={deciding || closed}
-          ownerKey={view.documentKey ?? ""}/>}
+          ownerKey={view.documentKey ?? ""} annotationEditor={annotationEditor}/>}
         {view.conflict && <div className="plan-review-conflict" role="alert"><p>The plan changed on the host. Your local edits are still here. Copy them before discarding if you need both versions.</p>
           <button type="button" disabled={!!draft.pending || draft.uncertain} onClick={() => model.discardEdits()}>Discard edits and load latest</button></div>}
         {view.dirty && <div className="plan-review-edit-actions"><span>Unsaved plan edits</span>

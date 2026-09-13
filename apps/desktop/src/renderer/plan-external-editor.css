@@ -1,0 +1,6 @@
+.plan-external-editor { margin: 10px 16px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-small,6px); min-width: 0; }
+.plan-external-editor-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.plan-external-editor ul { list-style:none; padding:0; margin:10px 0 0; }
+.plan-external-editor li { padding:8px 0; border-top:1px solid var(--border); overflow-wrap:anywhere; }
+.plan-external-editor li > span { display:block; margin-bottom:6px; }
+.plan-external-editor-recovery textarea { min-height:140px; max-height:35vh; font-family:var(--code-font-family,monospace); }

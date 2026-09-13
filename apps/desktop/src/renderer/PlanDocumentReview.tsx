@@ -1,3 +1,4 @@
+import type { PlanExternalEditorEdit } from "../../../../packages/shared/src/plan-external-editor";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { PlanDocumentSection, PlanDocumentSummary } from "../../../../packages/shared/src/plan-document";
 import type { PlanReviewModel } from "./plan-review-model";
@@ -6,8 +7,9 @@ import "./plan-document-review.css";
 const PAGE_ROWS = 200;
 /** OMP owns these section and rendered-row identities. The rich Markdown
  * preview is presentation; its source positions never identify annotations. */
-export function PlanDocumentReview({ document, model, disabled, ownerKey }: {
+export function PlanDocumentReview({ document, model, disabled, ownerKey, annotationEditor }: {
   document: PlanDocumentSummary; model: PlanReviewModel; disabled: boolean; ownerKey: string;
+  annotationEditor?: { available: boolean; reason?: string; start(edit: PlanExternalEditorEdit): Promise<void> };
 }) {
   const [section, setSection] = useState<PlanDocumentSection>();
   const [pending, setPending] = useState<string>();
@@ -101,6 +103,9 @@ export function PlanDocumentReview({ document, model, disabled, ownerKey }: {
       <label className="plan-document-note">{rowId ? "Line annotation" : "Section annotation"}
         <textarea value={note} disabled={disabled || deleting} onChange={event => setNote(event.target.value)} placeholder="What should change?"/></label>
       <button type="button" disabled={inactive || !selected || !note.trim()} onClick={() => void annotate()}>Add annotation</button>
+      {annotationEditor && <button type="button" disabled={inactive || !selected || !annotationEditor.available} title={annotationEditor.reason}
+        onClick={() => { if (selected) void annotationEditor.start({ kind: "annotation", note, renderColumns: selected.renderColumns,
+          target: rowId ? { kind: "line", sectionId: selected.sectionId, rowId } : { kind: "section", sectionId: selected.sectionId } }); }}>Write annotation in configured editor</button>}
       {document.feedback && <details className="plan-document-feedback"><summary>Refinement feedback</summary><pre>{document.feedback}</pre></details>}
     </>}
   </section>;

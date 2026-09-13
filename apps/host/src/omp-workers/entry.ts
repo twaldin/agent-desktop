@@ -344,6 +344,13 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getMessages": respond(true, requireSession().getMessages()); break;
       case "controlPlan": respond(true, parsePlanControlResult(await requireSession().controlPlan(parsePlanControlRequest(message.args)))); break;
       case "getPlan": respond(true, parseSessionPlan(requireSession().getPlan())); break;
+      case "getPlanExternalEditorAvailable": respond(true, requireSession().getPlanExternalEditorAvailable()); break;
+      case "preparePlanExternalEditor": {
+        const owner = requireSession();
+        const value = await owner.preparePlanExternalEditor(message.args);
+        if (requireSession() !== owner) throw new Error("The original Plan editor worker changed during preparation.");
+        respond(true, value); break;
+      }
       case "getPlanDocumentSection": {
         const input = parsePlanDocumentReadRequest(message.args);
         const owner = requireSession();
