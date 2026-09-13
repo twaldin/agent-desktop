@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@oh-my-pi/pi-ai": "18.1.10",
+    "@oh-my-pi/pi-catalog": "18.1.10",
     "@oh-my-pi/pi-coding-agent": "18.1.10",
     "@oh-my-pi/pi-natives": "18.1.10",
     "@oh-my-pi/pi-tui": "18.1.10",

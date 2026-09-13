@@ -1,0 +1,18 @@
+.advanced-stream-controls { margin-top: 8px; min-width: 0; color: var(--secondary); font-size: var(--small-font-size,12px); }
+.advanced-stream-controls > summary { cursor: pointer; padding: 6px 4px; width: fit-content; }
+.advanced-stream-controls :is(summary,button,select,input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.advanced-stream-panel { max-height: min(52vh,480px); overflow-y: auto; min-width: 0; padding: 12px; border: var(--border-width,1px) solid var(--border); border-radius: var(--radius-large,12px); background: var(--elevated-surface); }
+.advanced-stream-panel p { font-size: inherit; line-height: 1.5; margin: 7px 0; overflow-wrap: anywhere; }
+.advanced-stream-panel [role="alert"] { color: var(--danger); }
+.advanced-stream-heading,.advanced-stream-edit-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.advanced-stream-heading { justify-content: space-between; color: var(--text); }
+.advanced-stream-panel button { border: 1px solid var(--border); border-radius: var(--button-radius,7px); padding: 5px 9px; color: var(--text); background: var(--hover); font-size: inherit; }
+.advanced-stream-panel button:disabled { opacity: .5; cursor: not-allowed; }
+.advanced-stream-model { color: var(--text); }
+.advanced-stream-row { display: grid; grid-template-columns: minmax(100px,1fr) minmax(140px,1fr); gap: 8px 12px; align-items: center; padding: 12px 0; border-top: var(--divider-width,1px) solid var(--border); }
+.advanced-stream-row label { color: var(--text); }
+.advanced-stream-row :is(select,input) { width: 100%; min-width: 0; min-height: 32px; padding: 5px 9px; border: 1px solid var(--border); border-radius: var(--button-radius,7px); background: var(--elevated-surface); color: var(--text); font: inherit; }
+.advanced-stream-row input { grid-column: 2; }
+.advanced-stream-row :is(small,p,.advanced-stream-edit-actions) { grid-column: 1 / -1; }
+.advanced-stream-row small { line-height: 1.5; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .advanced-stream-row { grid-template-columns: minmax(0,1fr); } .advanced-stream-row input { grid-column: 1; } }

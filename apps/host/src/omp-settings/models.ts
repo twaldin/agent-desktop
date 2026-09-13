@@ -7,6 +7,7 @@ import { parseCliThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import { OmpSettingsError, requireSetting, settingPaths, validateSettingValue } from "./schema";
 import { settingStates } from "./store";
 import { publicModelCompatibility } from "./model-definitions";
+import { NativeAdvancedStreamControls } from "./advanced-stream";
 type NativeModel = NonNullable<AgentSession["model"]>;
 
 const PUBLIC_MODEL_FIELDS = [
@@ -86,7 +87,9 @@ export class NativeSessionControls {
   #revision = crypto.randomUUID();
   #overrides = new Set<string>();
   #durableApprovalOverride?: OmpApprovalMode;
+  #advancedStream: NativeAdvancedStreamControls;
   constructor(private session: AgentSession, durableApprovalOverride?: OmpApprovalMode) {
+    this.#advancedStream = new NativeAdvancedStreamControls(session);
     this.#durableApprovalOverride = durableApprovalOverride;
     if (durableApprovalOverride !== undefined) this.#overrides.add("tools.approvalMode");
   }
@@ -111,6 +114,7 @@ export class NativeSessionControls {
       model: session.model ? { provider: session.model.provider, id: session.model.id } : null,
       thinkingLevel: session.configuredThinkingLevel(), serviceTiers: { ...session.serviceTierByFamily },
       capabilities: session.model ? modelCapabilities(session.model) : null,
+      advancedStream: this.#advancedStream.read(),
       settings: states, overrides: [...this.#overrides], runtimeMutablePaths: settingPaths.filter(key => supportsSessionOverride(key) && !isCredential(key)),
       persistence: "native-session-model-thinking-tiers; runtime-settings-until-dispose",
       ...(this.#durableApprovalOverride === undefined ? {} : { durableApprovalOverride: this.#durableApprovalOverride }) };
@@ -122,6 +126,7 @@ export class NativeSessionControls {
   async mutate(request: OmpSessionControlMutation, changeModel: (choice: { provider: string; id: string }) => Promise<void>): Promise<OmpSessionControls> {
     if (request.expectedRevision !== this.read().revision) throw new OmpSettingsError("conflict", "Native session controls changed; reload before editing");
     switch (request.operation) {
+      case "advanced-stream": this.#advancedStream.mutate(request); break;
       case "model": await changeModel(request.model); break;
       case "thinking": {
         const level = request.level === undefined ? undefined : parseCliThinkingLevel(request.level);

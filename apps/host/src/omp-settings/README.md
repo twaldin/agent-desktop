@@ -22,6 +22,8 @@ A failed durable write stops admission and retains the draft. If native applicat
 
 `modelCapabilities` projects public capabilities, all native thinking fields, family-specific tier selectors, costs and allowlisted primitive compat flags. Sensitive URL/header/body/metadata fields are withheld. Native input-schema compatibility structures, routing, whenThinking and model identity are projected; remaining undeclared capability fields appear by name in `unmappedCapabilityFields`. `model-control-coverage.json` accounts for the pinned model and stream-option fields and distinguishes native runtime plumbing, implemented configuration and outstanding editors. It is evidence of remaining scope, not full parity acceptance.
 
+The composer’s bounded advanced stream section exposes temperature, Top P and output-token limits only for pinned bundled native Gemini identities with unchanged Google/Vertex API, endpoint and transport. Stop sequences and all other unmapped stream fields remain required coverage; `native-stream-control-coverage.json` records all 30 fields and the remaining active-session extension descriptor work. The section does not expose arbitrary provider options. Coverage bookkeeping belongs here and in the maintained ledger, not in the interactive controls; real applicability, persistence, validation and recovery guidance remains visible in the UI.
+
 `SettingsHttp` routes (after parent authentication):
 
 - GET `/v1/settings/catalog`
