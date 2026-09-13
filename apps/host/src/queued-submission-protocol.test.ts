@@ -10,6 +10,19 @@ import { parseCommandEnvelope } from "./validation";
 import { HostStore } from "./store";
 import { PreferencesStore } from "./preferences/store";
 
+test("active images require v17 without downgrade or accepting an omitted image body", async () => {
+  const image = { id: "image", kind: "image" as const, hostId: "owner", name: "capture.png", sha256: "a".repeat(64), bytes: 80, mimeType: "image/png" as const };
+  const attached: CommandEnvelope = { ...envelope, commandVersion: 17, command: { ...envelope.command as Extract<CommandEnvelope["command"], { type: "session.follow-up" }>, text: "", attachments: [image] } };
+  expect(parseCommandEnvelope(attached)).toEqual(attached);
+  expect(commandEndpoint(attached)).toBe("/v17/commands");
+  expect(commandEndpoint({ ...attached, commandVersion: 13 })).toBe("/v17/commands");
+  expect(() => parseCommandEnvelope({ ...attached, commandVersion: 13 })).toThrow();
+  const calls: string[] = [];
+  expect(await requestVersionedCommand(async route => { calls.push(route); throw new HostRequestError("missing", 404); }, attached))
+    .toMatchObject({ ok: false, error: { code: "FOLLOW_UP_IMAGES_PROTOCOL_UNSUPPORTED" } });
+  expect(calls).toEqual(["/v17/commands"]);
+});
+
 const envelope: CommandEnvelope = { id: "follow", commandVersion: 13, command: { type: "session.follow-up", sessionId: "session", text: "captured",
   delivery: "follow-up", approvalMode: "write", draft: { id: "session:session", revision: 4 } } };
 

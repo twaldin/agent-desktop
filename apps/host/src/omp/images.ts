@@ -50,12 +50,12 @@ export class NativeImagePrompt {
   get dispatched(): boolean { return this.#message !== undefined; }
 
   constructor(private prepared: PreparedPromptImage[], private text: string) {
-    if (text.trimStart().startsWith("/")) throw new Error("Image attachments are not supported on slash commands yet; no command was executed");
-    if (text.length > 500_000) throw new Error("Image prompt text exceeds the native durable-history limit");
     this.images = prepared.map(image => ({ type: "image", data: Buffer.from(image.data).toString("base64"), mimeType: image.attachment.mimeType }));
   }
 
-  async prepare(session: AgentSession, manager: SessionManager): Promise<void> {
+  async prepareQueue(session: AgentSession): Promise<void> {
+    if (this.text.trimStart().startsWith("/")) throw new Error("Image attachments are not supported on slash commands yet; no command was executed");
+    if (this.text.length > 500_000) throw new Error("Image prompt text exceeds the native durable-history limit");
     assertNativeImageModel(session);
     this.#model = JSON.stringify([session.model!.provider, session.model!.id]);
     const { normalizeModelContextImages } = await import("@oh-my-pi/pi-coding-agent/utils/image-loading");
@@ -64,6 +64,19 @@ export class NativeImagePrompt {
     const expected = await normalizeModelContextImages(this.images, { model: session.model });
     if (expected?.length !== this.prepared.length) throw new Error("Native image normalization did not preserve every image");
     this.#expected = expected.map(value => { const { data: _data, ...metadata } = readNativeImage(value); return metadata; });
+  }
+
+  /** Attribute the exact user object emitted by native steer/followUp. */
+  acceptQueued(session: AgentSession, message: NativeMessage): void {
+    assertNativeImageModel(session);
+    if (JSON.stringify([session.model!.provider, session.model!.id]) !== this.#model)
+      throw new Error("Native preflight changed the image model; this message was not queued");
+    this.#receipt = this.#verify(message);
+    this.#message = message;
+  }
+
+  async prepare(session: AgentSession, manager: SessionManager): Promise<void> {
+    await this.prepareQueue(session);
     const { sessionMessagePersistenceKey, sameMessageContent } = await import("@oh-my-pi/pi-coding-agent/session/turn-persistence");
     const agent = session.agent, original = agent.prompt;
     const wrapper = (async (...args: Parameters<typeof original>) => {

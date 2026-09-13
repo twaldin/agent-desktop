@@ -513,7 +513,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       }
       case "steer": respond(true, await requireSession().steer(message.args.text, message.args.expectedApprovalMode, message.args.options)); break;
       case "startFollowUp": {
-        const run = requireSession().startFollowUp(message.args.text, message.args.delivery, message.args.expectedApprovalMode);
+        const run = requireSession().startFollowUp(message.args.text, message.args.delivery, message.args.expectedApprovalMode, message.args.images);
         await Promise.all([
           run.accepted.then(value => respond(true, value, undefined, "accepted"), error => respond(false, undefined, error, "accepted")),
           run.completion.then(value => respond(true, value, undefined, "completion"), error => respond(false, undefined, error, "completion")),

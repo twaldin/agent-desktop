@@ -138,7 +138,7 @@ export interface OmpSession {
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
   steer(text: string, expectedApprovalMode?: OmpApprovalMode, options?: { images?: PreparedPromptImage[] }): Promise<OmpSteerReceipt>;
-  startFollowUp(text: string, delivery: "follow-up" | "steer", expectedApprovalMode?: OmpApprovalMode): OmpQueuedSubmissionRun;
+  startFollowUp(text: string, delivery: "follow-up" | "steer", expectedApprovalMode?: OmpApprovalMode, images?: PreparedPromptImage[]): OmpQueuedSubmissionRun;
   getQueuedMessages(): NativeQueuedMessagesSnapshot;
   mutateQueuedMessages(mutation: NativeQueuedMessageMutation): NativeQueuedMessageMutationReceipt;
   assertTaskLocationReady(): void;
@@ -1037,13 +1037,16 @@ export class OmpRuntime {
           if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode")) return { kind: "not-recorded", reason: "The running turn uses a different native permission mode. Stop it before changing permissions." };
           return steering.submit(text);
         },
-        startFollowUp: (text, delivery, expectedApprovalMode) => {
-          assertSessionActive();
-          if (admissionPending || mcpMutation) throw new Error("OMP is still accepting a prompt or reloading MCP servers");
-          if (interruptsInFlight || !session.isStreaming) throw new Error("There is no running native turn accepting a follow-up");
-          if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode"))
-            throw new Error("The running turn uses a different native permission mode. Stop it before changing permissions.");
-          return steering.start(text, delivery);
+        startFollowUp: (text, delivery, expectedApprovalMode, images) => {
+          const assertCurrent = () => {
+            assertSessionActive();
+            if (admissionPending || mcpMutation) throw new Error("OMP is still accepting a prompt or reloading MCP servers");
+            if (interruptsInFlight || !session.isStreaming) throw new Error("There is no running native turn accepting a follow-up");
+            if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode"))
+              throw new Error("The running turn uses a different native permission mode. Stop it before changing permissions.");
+          };
+          assertCurrent();
+          return steering.start(text, delivery, images, images?.length ? assertCurrent : undefined);
         },
         getQueuedMessages: () => { assertSessionActive(); return queuedMessages.snapshot(); },
         mutateQueuedMessages: mutation => { assertSessionActive(); return queuedMessages.mutate(mutation); },

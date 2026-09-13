@@ -2,6 +2,7 @@ import { hasRemoteExecution, sameNewChatExecution } from "../../../../packages/s
 import { sameEnvironmentSelection } from "../../../../packages/shared/src/environment-selection";
 import { parseDraftBrowserContinuation, type CommandEnvelope, type CommandResult, type Draft, type DraftBrowserContinuation, type FollowUpDelivery, type QueuedSubmissionReceipt } from "../../../../packages/shared/src/protocol";
 import { parseQueuedSubmissionReceipt } from "../../../../packages/shared/src/queued-submissions";
+import { sameImageAttachments } from "../../../../packages/shared/src/attachments";
 import type { LocalEnvironmentPreparationPublic } from "../../../../packages/shared/src/environment-preparations";
 import { detachedAnswerDraft, parseDetachedQuestionAnswers, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { hasRepeatedWholeFileSources } from "../../../../packages/shared/src/whole-file";
@@ -110,10 +111,12 @@ export class SubmissionController {
       const cached = JSON.parse(cache?.read(this.queuedCacheKey) ?? "{}");
       for (const [id, value] of Object.entries(cached)) {
         const item = value as PendingQueuedSubmission;
-        if (!item || item.send?.id !== id || item.send.commandVersion !== 13 || item.send.command.type !== "session.follow-up"
+        if (!item || item.send?.id !== id || ![13, 17].includes(item.send.commandVersion ?? 0) || item.send.command.type !== "session.follow-up"
           || item.send.command.sessionId !== item.sessionId || item.send.command.delivery !== item.delivery
           || item.send.command.draft.id !== item.draft?.id || item.send.command.draft.revision !== item.draft.revision
-          || item.send.command.text !== item.draft.text) throw new Error("Invalid queued submission cache");
+          || item.send.command.text !== item.draft.text
+          || !sameImageAttachments(item.send.command.attachments ?? [], item.draft.attachments ?? [])
+          || item.send.command.attachments !== undefined && item.send.commandVersion !== 17) throw new Error("Invalid queued submission cache");
         const receipt = item.receipt === undefined ? undefined : parseQueuedSubmissionReceipt(item.receipt);
         if (receipt && (receipt.commandId !== id || receipt.hostId !== hostId || receipt.sessionId !== item.sessionId || receipt.delivery !== item.delivery))
           throw new Error("Queued submission receipt owner changed");
@@ -142,10 +145,11 @@ export class SubmissionController {
   private async submitActiveExclusive(snapshot: Draft, sessionId: string, delivery: FollowUpDelivery,
     onSendCommand?: (submitted: Draft, commandId: string) => void) {
     const captured = captureDraft(snapshot, this.hostId);
-    if (captured.attachments?.length || captured.selectedTextAttachments?.length || captured.wholeFileAttachments?.length)
-      throw new Error("Attached content cannot be sent during an active turn yet. The draft was retained.");
+    if (captured.selectedTextAttachments?.length || captured.wholeFileAttachments?.length)
+      throw new Error("File content cannot be sent during an active turn yet. The draft was retained.");
     const retained = Object.values(this.queued).find(item => item.sessionId === sessionId
-      && item.draft.id === captured.id && item.draft.revision === captured.revision && item.draft.text === captured.text);
+      && item.draft.id === captured.id && item.draft.revision === captured.revision && item.draft.text === captured.text
+      && item.draft.approvalMode === captured.approvalMode && sameImageAttachments(item.draft.attachments ?? [], captured.attachments ?? []));
     if (retained) {
       const receipt = await this.exclusive(retained.send.id, () => this.inspectQueued(retained));
       if (receipt.phase === "queued" || receipt.outcome === "succeeded")
@@ -153,8 +157,10 @@ export class SubmissionController {
       throw new Error(receipt.message ?? "The original active-turn message was not queued. Its draft was retained.");
     }
     const id = crypto.randomUUID();
-    const send = { id, commandVersion: 13 as const, command: { type: "session.follow-up" as const, sessionId,
-      text: captured.text, delivery, approvalMode: captured.approvalMode, draft: { id: captured.id, revision: captured.revision } } };
+    const send = { id, commandVersion: captured.attachments?.length ? 17 as const : 13 as const, command: { type: "session.follow-up" as const, sessionId,
+      text: captured.text, delivery, approvalMode: captured.approvalMode,
+      ...(captured.attachments?.length ? { attachments: structuredClone(captured.attachments) } : {}),
+      draft: { id: captured.id, revision: captured.revision } } };
     const item: PendingQueuedSubmission = { draft: captured, sessionId, delivery, send, uncertain: false };
     this.queued[id] = item;
     this.saveQueued();

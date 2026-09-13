@@ -1,6 +1,6 @@
 # Durable draft attachments
 
-Status: the ordered-image slice is implemented in source 14 and remains uninstalled. Real native worker/HTTP admission, Linux storage and controlled Electron UI checks pass; provider images, native OS picker and physical cross-device acceptance remain pending. The composer is plain text plus image chips. Opaque file references, richer editing, image steering/slash commands and native text-model fallback remain separate requirements.
+Current active-turn image behavior is described in [Images in active Queue and Steer messages](active-image-follow-ups.md). The source-14 status and implementation plan below are historical checkpoints; they do not describe later release installation or active-turn image support. Real-provider interpretation, physical cross-device acceptance, slash-command images and native text-model fallback remain separate requirements.
 
 ## Implementation sequence after release 13
 

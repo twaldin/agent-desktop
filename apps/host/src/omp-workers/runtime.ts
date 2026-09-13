@@ -553,14 +553,15 @@ export class WorkerClient {
   }
 
   startFollowUp(text: string, delivery: import("@agent-desktop/shared").FollowUpDelivery,
-    expectedApprovalMode?: import("@agent-desktop/shared").OmpApprovalMode): import("../omp/steer").OmpQueuedSubmissionRun {
+    expectedApprovalMode?: import("@agent-desktop/shared").OmpApprovalMode, images?: import("../omp/images").PreparedPromptImage[]): import("../omp/steer").OmpQueuedSubmissionRun {
     if (this.failure) throw new WorkerFailureError(this.failure);
     if (this.#closing) throw new Error("OMP worker is closing");
     if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
+    const prepared = copyPreparedImages(images);
     const id = String(++this.#requestId);
     const accepted = this.#promise<{ kind: "queued"; delivery: import("@agent-desktop/shared").FollowUpDelivery }>(`${id}:accepted`, undefined, "queued-submission");
     const completion = this.#promise<import("../omp/steer").OmpSteerReceipt>(`${id}:completion`);
-    try { this.#send({ type: "request", id, operation: "startFollowUp", args: { text, delivery, expectedApprovalMode } }); }
+    try { this.#send({ type: "request", id, operation: "startFollowUp", args: { text, delivery, expectedApprovalMode, ...(prepared === undefined ? {} : { images: prepared }) } }); }
     catch (error) {
       for (const phase of ["accepted", "completion"] as const) {
         const key = `${id}:${phase}`, pending = this.#pending.get(key);
@@ -965,7 +966,7 @@ export class WorkerRuntime {
         if (options?.images?.length) return Promise.reject(new Error("Image attachments are not supported on steering input yet; no input was queued"));
         return client.request({ operation: "steer", args: { text, expectedApprovalMode, options } });
       },
-      startFollowUp: (text, delivery, expectedApprovalMode) => client.startFollowUp(text, delivery, expectedApprovalMode),
+      startFollowUp: (text, delivery, expectedApprovalMode, images) => client.startFollowUp(text, delivery, expectedApprovalMode, images),
       getQueuedMessages: () => client.request({ operation: "getQueuedMessages" }),
       mutateQueuedMessages: mutation => client.request({ operation: "mutateQueuedMessages", args: { mutation } }),
       assertTaskLocationReady: () => client.request({ operation: "assertTaskLocationReady" }),

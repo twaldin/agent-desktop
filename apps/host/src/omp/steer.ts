@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentSession, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { sameMessageContent, sessionMessagePersistenceKey } from "@oh-my-pi/pi-coding-agent/session/turn-persistence";
 import { isHiddenUserCompanion } from "@oh-my-pi/pi-coding-agent/session/queued-messages";
+import { copyPreparedImages, NativeImagePrompt, type PreparedPromptImage } from "./images";
 
 export type OmpSteerReceipt =
   | { kind: "user-message"; entryId: string }
@@ -22,6 +23,8 @@ interface Pending {
   flushing?: Promise<void>;
   checking?: Promise<void>;
   settled: boolean;
+  image?: NativeImagePrompt;
+  assertCurrent?: () => void;
 }
 
 /**
@@ -34,6 +37,8 @@ interface Pending {
 export class NativeSteerAdmission {
   #scope = new AsyncLocalStorage<Pending>();
   #pending = new Set<Pending>();
+  #dispatches = new Set<Promise<void>>();
+  #dispatchErrors: unknown[] = [];
   #messages = new Map<NativeMessage, Pending>();
   #original: AgentSession["agent"]["steer"];
   #wrapped: AgentSession["agent"]["steer"];
@@ -54,6 +59,7 @@ export class NativeSteerAdmission {
       const pending = this.#scope.getStore();
       if (!pending) return enqueue(message);
       if (pending.cancelled || this.#closed) throw new Error(pending.cancelled ?? "OMP steer admission is closed");
+      pending.assertCurrent?.();
       if (pending.message || message.role !== "user") throw new Error("Native steer did not produce one attributable user message");
       // Native persistence deduplicates by key + content. Reject a collision
       // before enqueue rather than borrow another entry's identity or alter a
@@ -64,6 +70,7 @@ export class NativeSteerAdmission {
       if (key && existing.some(item => sessionMessagePersistenceKey(item) === key && sameMessageContent(item, message))) {
         throw new Error("Native steer identity collides with an existing message; submit again after this rejection");
       }
+      pending.image?.acceptQueued(this.session, message);
       pending.message = message;
       this.#messages.set(message, pending);
       enqueue(message);
@@ -104,10 +111,17 @@ export class NativeSteerAdmission {
   }
 
   /** Separate exact native enqueue acknowledgement from durable entry settlement. */
-  start(text: string, delivery: "follow-up" | "steer"): OmpQueuedSubmissionRun {
-    return this.#start(delivery, () => delivery === "steer"
-      ? this.session.steer(text)
-      : this.session.followUp(text, undefined, { expandPromptTemplates: false }));
+  start(text: string, delivery: "follow-up" | "steer", images?: PreparedPromptImage[], assertCurrent?: () => void): OmpQueuedSubmissionRun {
+    const prepared = copyPreparedImages(images);
+    const image = prepared?.length ? new NativeImagePrompt(prepared, text) : undefined;
+    return this.#start(delivery, async () => {
+      if (image) await image.prepareQueue(this.session);
+      const cancelled = this.#scope.getStore()?.cancelled;
+      if (cancelled) throw new Error(cancelled);
+      assertCurrent?.();
+      if (delivery === "steer") await this.session.steer(text, image?.images);
+      else await this.session.followUp(text, image?.images, { expandPromptTemplates: false });
+    }, image, assertCurrent);
   }
 
   ownsQueuedMessage(message: NativeMessage): boolean {
@@ -128,13 +142,13 @@ export class NativeSteerAdmission {
     return true;
   }
 
-  #start(delivery: "follow-up" | "steer", dispatch: () => Promise<void>): OmpQueuedSubmissionRun {
+  #start(delivery: "follow-up" | "steer", dispatch: () => Promise<void>, image?: NativeImagePrompt, assertCurrent?: () => void): OmpQueuedSubmissionRun {
     if (this.#closed) {
       const failure = Promise.reject(new Error("OMP steer admission is closed"));
       void failure.catch(() => {});
       return { accepted: failure, completion: Promise.resolve({ kind: "not-recorded", reason: "OMP steer admission is closed" }) };
     }
-    const pending: Pending = { result: Promise.withResolvers<OmpSteerReceipt>(), accepted: Promise.withResolvers(), acceptedSettled: false, dispatched: false, settled: false };
+    const pending: Pending = { result: Promise.withResolvers<OmpSteerReceipt>(), accepted: Promise.withResolvers(), acceptedSettled: false, dispatched: false, settled: false, image, assertCurrent };
     this.#pending.add(pending);
     this.#timer ??= setInterval(() => {
       if (this.session.isStreaming || this.session.hasPostPromptWork) return;
@@ -143,7 +157,7 @@ export class NativeSteerAdmission {
       }
     }, 25);
     this.#timer.unref();
-    void this.#scope.run(pending, dispatch).then(() => {
+    const dispatching = this.#scope.run(pending, dispatch).then(() => {
       pending.dispatched = true;
       if (!pending.message) this.#finish(pending, { kind: "not-recorded", reason: "Native submission did not enqueue a user message" });
       else { pending.acceptedSettled = true; pending.accepted.resolve({ kind: "queued", delivery }); }
@@ -152,6 +166,11 @@ export class NativeSteerAdmission {
       if (!pending.acceptedSettled) { pending.acceptedSettled = true; pending.accepted.reject(error); }
       if (!pending.message || this.#removeQueued(pending)) this.#finish(pending, { kind: "not-recorded", reason: String(error) });
       else await this.#check(pending, `Native submission failed after leaving its queue: ${String(error)}`);
+    });
+    this.#dispatches.add(dispatching);
+    void dispatching.then(() => this.#dispatches.delete(dispatching), error => {
+      this.#dispatchErrors.push(error);
+      this.#dispatches.delete(dispatching);
     });
     void pending.accepted.promise.catch(() => {});
     void pending.result.promise.catch(() => {});
@@ -168,7 +187,13 @@ export class NativeSteerAdmission {
 
   /** Call after native abort/dispose has settled its in-flight event handlers. */
   async settleCancelled(reason: string): Promise<void> {
-    await Promise.all([...this.#pending].map(pending => this.#check(pending, reason)));
+    // Native image preparation can outlive abort. Keep the original enqueue
+    // guard installed until that continuation has returned; never unwrap it
+    // early and let a cancelled image start another turn.
+    await Promise.allSettled([...this.#dispatches]);
+    const checked = await Promise.allSettled([...this.#pending].map(pending => this.#check(pending, reason)));
+    const errors = [...this.#dispatchErrors.splice(0), ...checked.flatMap(result => result.status === "rejected" ? [result.reason] : [])];
+    if (errors.length) throw new AggregateError(errors, "Native queued submission cleanup failed");
   }
 
   close(): void {
@@ -219,6 +244,10 @@ export class NativeSteerAdmission {
 
   #finish(pending: Pending, receipt: OmpSteerReceipt): void {
     if (pending.settled) return;
+    if (receipt.kind === "user-message" && pending.image) {
+      try { pending.image.receipt(); }
+      catch (error) { receipt = { kind: "outcome-unknown", reason: `Native queued image content could not be verified: ${String(error)}` }; }
+    }
     pending.settled = true;
     this.#pending.delete(pending);
     if (pending.message) this.#messages.delete(pending.message);

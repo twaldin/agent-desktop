@@ -14,10 +14,10 @@ export function imageCapabilityIssue(capabilities: Capabilities) {
 function limits(capabilities: ImageAttachmentCapabilities) {
   return { count: Math.min(MAX_IMAGE_ATTACHMENTS, capabilities.maxImages), bytes: Math.min(MAX_IMAGE_ATTACHMENT_BYTES, capabilities.maxImageBytes), batch: Math.min(MAX_IMAGE_ATTACHMENT_BATCH_BYTES, capabilities.maxBatchBytes), pixels: Math.min(MAX_IMAGE_ATTACHMENT_PIXELS, capabilities.maxImagePixels) };
 }
-export function imageSendIssue(draft: Draft, running: boolean, capabilities: Capabilities, catalog?: OmpComposerCatalog, session?: SessionSummary | null, controls?: OmpSessionControls) {
+export function imageSendIssue(draft: Draft, running: boolean, capabilities: Capabilities, catalog?: OmpComposerCatalog, session?: SessionSummary | null, controls?: OmpSessionControls, followUpImages?: { commandVersion: 17 }) {
   if (!draft.attachments?.length) return undefined;
   if (imageCapabilityIssue(capabilities)) return imageCapabilityIssue(capabilities);
-  if (running) return "Images cannot steer a running response. Your draft is retained; wait for it to finish.";
+  if (running && followUpImages?.commandVersion !== 17) return "Images cannot steer a running response on this host. Your draft is retained; update the host or wait for it to finish.";
   if (draft.text.trimStart().startsWith("/")) return "Slash commands cannot include images. Your draft is retained; remove the images or use an ordinary prompt.";
   if (controls?.settings.find(setting => setting.path === "images.blockImages")?.effective === true) return "Images are blocked by this session’s native settings. Your draft is retained.";
   const selected = composerSelection(draft, catalog, session, controls);

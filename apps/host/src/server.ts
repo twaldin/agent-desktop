@@ -602,7 +602,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
-      drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13 } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput, sessionActivity = false): void {
@@ -778,7 +778,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17): Promise<CommandResult> {
     const command = envelope.command;
     const remoteError = remoteWorktreeProtocolError(command, commandVersion, id => store.getDraft(id), id => store.environmentPreparations.get(id));
     if (remoteError) return fail(envelope.id, remoteError.code, remoteError.message);
@@ -1069,36 +1069,41 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         return followUpResult(envelope.id, receipt);
       };
       const draft = store.getDraft(command.draft.id);
-      if (!draft || draft.revision !== command.draft.revision || draft.text !== command.text)
+      if (!draft || draft.revision !== command.draft.revision || draft.text !== command.text
+        || !sameImageAttachments(draft.attachments ?? [], command.attachments ?? []) || draft.wholeFileAttachments?.length || draft.selectedTextAttachments?.length)
         return settle({ phase: "settled", outcome: "not-recorded", message: "The captured follow-up draft changed before native admission." });
       const session = store.getSession(command.sessionId);
       if (!session || session.archived || session.status !== "running")
         return settle({ phase: "settled", outcome: "not-recorded", message: "There is no running conversation accepting this follow-up." });
-      let run: ReturnType<WorkerSession["startFollowUp"]>;
-      try {
-        const handle = await getHandle(command.sessionId);
-        if (!executions.has(command.sessionId) || !handle.isStreaming)
-          return settle({ phase: "settled", outcome: "not-recorded", message: "There is no running native turn accepting this follow-up." });
-        run = handle.startFollowUp(command.text, command.delivery, command.approvalMode);
-      } catch (error) {
-        const unknown = error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN";
-        return settle({ phase: "settled", outcome: unknown ? "unknown" : "not-recorded", message: errorMessage(error) });
-      }
-      const completion = run.completion.then(receipt => {
-        if (receipt.kind === "user-message") return settle({ phase: "settled", outcome: "succeeded", entryId: receipt.entryId });
-        return settle({ phase: "settled", outcome: receipt.kind === "not-recorded" ? "not-recorded" : "unknown", message: receipt.reason });
-      }, error => settle({ phase: "settled", outcome: "unknown", message: `Native follow-up settlement could not be verified: ${errorMessage(error)}` }));
-      void completion.catch(() => {});
-      try {
-        const accepted = await run.accepted;
-        if (accepted.delivery !== command.delivery) return settle({ phase: "settled", outcome: "unknown", message: "Native follow-up acknowledged a different delivery lane." });
-        const queued = store.advanceQueuedSubmission(envelope.id, requestHash, { phase: "queued" });
-        publishState();
-        return followUpResult(envelope.id, queued);
-      } catch (error) {
-        try { return await completion; }
-        catch { return settle({ phase: "settled", outcome: "unknown", message: `Native follow-up admission could not be verified: ${errorMessage(error)}` }); }
-      }
+      const admit = async (images?: import("./omp/images").PreparedPromptImage[]): Promise<CommandResult> => {
+        let run: ReturnType<WorkerSession["startFollowUp"]>;
+        try {
+          const handle = await getHandle(command.sessionId);
+          if (!executions.has(command.sessionId) || !handle.isStreaming)
+            return settle({ phase: "settled", outcome: "not-recorded", message: "There is no running native turn accepting this follow-up." });
+          run = handle.startFollowUp(command.text, command.delivery, command.approvalMode, images);
+        } catch (error) {
+          const unknown = error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN";
+          return settle({ phase: "settled", outcome: unknown ? "unknown" : "not-recorded", message: errorMessage(error) });
+        }
+        const completion = run.completion.then(receipt => {
+          if (receipt.kind === "user-message") return settle({ phase: "settled", outcome: "succeeded", entryId: receipt.entryId });
+          return settle({ phase: "settled", outcome: receipt.kind === "not-recorded" ? "not-recorded" : "unknown", message: receipt.reason });
+        }, error => settle({ phase: "settled", outcome: "unknown", message: `Native follow-up settlement could not be verified: ${errorMessage(error)}` }));
+        void completion.catch(() => {});
+        try {
+          const accepted = await run.accepted;
+          if (accepted.delivery !== command.delivery) return settle({ phase: "settled", outcome: "unknown", message: "Native follow-up acknowledged a different delivery lane." });
+          const queued = store.advanceQueuedSubmission(envelope.id, requestHash, { phase: "queued" });
+          publishState();
+          return followUpResult(envelope.id, queued);
+        } catch (error) {
+          try { return await completion; }
+          catch { return settle({ phase: "settled", outcome: "unknown", message: `Native follow-up admission could not be verified: ${errorMessage(error)}` }); }
+        }
+      };
+      try { return await (command.attachments === undefined ? admit() : attachments.withPrepared(command.attachments, admit)); }
+      catch (error) { return settle({ phase: "settled", outcome: "not-recorded", message: errorMessage(error) }); }
     });
     followUpAdmissionTails.set(command.sessionId, operation);
     const finish = () => { if (followUpAdmissionTails.get(command.sessionId) === operation) followUpAdmissionTails.delete(command.sessionId); };
@@ -1106,7 +1111,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return operation;
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -1355,23 +1360,24 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
         }
-        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname)) {
+        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname)) {
           const value = await request.json();
-          if (url.pathname !== "/v15/commands" && (value?.commandVersion === 15 || value?.command?.browserContinuation !== undefined)) return Response.json({code:"BROWSER_CONTINUATION_PROTOCOL_REQUIRED",error:"Browser continuation requires /v15/commands. This request was not accepted."},{status:422});
-          if (!["/v14/commands","/v15/commands"].includes(url.pathname) && (value?.commandVersion === 14 || value?.command?.type === "session.location.move" || value?.command?.type === "session.location.resume")) return Response.json({code:"TASK_LOCATION_PROTOCOL_REQUIRED",error:"Task location changes require /v14/commands. This request was not accepted."},{status:422});
-          if (!["/v13/commands","/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 13 || value?.command?.type === "session.follow-up")) return Response.json({ code: "FOLLOW_UP_PROTOCOL_REQUIRED", error: "Active-turn follow-ups require /v13/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 12 || hasRemoteWorktreeIntent(value?.command))) return Response.json({ code: "REMOTE_WORKTREE_PROTOCOL_REQUIRED", error: "Remote worktree starting refs require /v12/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 11 || value?.command?.type === "preferences.keymap.mutate")) return Response.json({ code: "KEYBINDINGS_PROTOCOL_REQUIRED", error: "Keyboard shortcut changes require /v11/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 10 || value?.command?.type === "workspace.mutate" && String(value?.command?.action?.type).startsWith("git.submit"))) return Response.json({ code: "GIT_SUBMISSION_PROTOCOL_REQUIRED", error: "Git submissions require /v10/commands. This request was not accepted." }, { status: 422 });
-          if(!["/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname)&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
-          if(!["/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
-          if (!["/v7/commands","/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
+          if (url.pathname !== "/v17/commands" && (value?.commandVersion === 17 || value?.command?.type === "session.follow-up" && Object.hasOwn(value.command,"attachments"))) return Response.json({code:"FOLLOW_UP_IMAGES_PROTOCOL_REQUIRED",error:"Active-turn images require /v17/commands. This request was not accepted."},{status:422});
+          if (!["/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 15 || value?.command?.browserContinuation !== undefined)) return Response.json({code:"BROWSER_CONTINUATION_PROTOCOL_REQUIRED",error:"Browser continuation requires /v15/commands. This request was not accepted."},{status:422});
+          if (!["/v14/commands","/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 14 || value?.command?.type === "session.location.move" || value?.command?.type === "session.location.resume")) return Response.json({code:"TASK_LOCATION_PROTOCOL_REQUIRED",error:"Task location changes require /v14/commands. This request was not accepted."},{status:422});
+          if (!["/v13/commands","/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 13 || value?.command?.type === "session.follow-up")) return Response.json({ code: "FOLLOW_UP_PROTOCOL_REQUIRED", error: "Active-turn follow-ups require /v13/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 12 || hasRemoteWorktreeIntent(value?.command))) return Response.json({ code: "REMOTE_WORKTREE_PROTOCOL_REQUIRED", error: "Remote worktree starting refs require /v12/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 11 || value?.command?.type === "preferences.keymap.mutate")) return Response.json({ code: "KEYBINDINGS_PROTOCOL_REQUIRED", error: "Keyboard shortcut changes require /v11/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 10 || value?.command?.type === "workspace.mutate" && String(value?.command?.action?.type).startsWith("git.submit"))) return Response.json({ code: "GIT_SUBMISSION_PROTOCOL_REQUIRED", error: "Git submissions require /v10/commands. This request was not accepted." }, { status: 422 });
+          if(!["/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname)&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
+          if(!["/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
+          if (!["/v7/commands","/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v17/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
           if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
-          const commandVersion = url.pathname === "/v15/commands" ? 15 : url.pathname === "/v14/commands" ? 14 : url.pathname === "/v13/commands" ? 13 : url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
+          const commandVersion = url.pathname === "/v17/commands" ? 17 : url.pathname === "/v15/commands" ? 15 : url.pathname === "/v14/commands" ? 14 : url.pathname === "/v13/commands" ? 13 : url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
           return Response.json(await dispatch(parseCommandEnvelope(value, commandVersion), commandVersion));
         }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);

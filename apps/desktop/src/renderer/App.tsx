@@ -573,7 +573,7 @@ export function App() {
   const knownPendingSession = state?.sessions.find(session => session.id === pendingSessionId);
   const wholeFileIssue = wholeFileSendIssue(draft, hostId, running, state?.wholeFiles);
   const selectedTextIssue = selectedTextSendIssue(draft, running, state?.selectedText);
-  const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls);
+  const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls, state?.queuedMessages?.submissions?.images);
   const imagesStaging = imageComposer.staging.length > 0;
   const worktreesAvailable = state?.newChatExecution?.commandVersion === 4 && state.newChatExecution.worktrees === true;
   const modeView = !selectedId && worktreesAvailable && draft.projectId ? projectExecutionModeView(drafts, draft.projectId, draft.execution) : undefined;
@@ -1061,6 +1061,8 @@ export function App() {
       }
       drafts.beginPendingSubmission(snapshot);
       if (running && (!selectedId || state?.queuedMessages?.submissions?.commandVersion !== 13)) throw new Error("Update the owning host to send active-turn follow-ups. The draft was retained.");
+      if (running && snapshot.attachments?.length && state?.queuedMessages?.submissions?.images?.commandVersion !== 17)
+        throw new Error("Update the owning host to send images during an active turn. The draft was retained.");
       const result = running
         ? await submissions.submitActive(snapshot, selectedId!, activeDelivery ?? (followUpQueueMode === "queue" ? "follow-up" : "steer"), (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId))
         : await submissions.submit(snapshot, selectedId ?? undefined, "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId), browserContinuation);
@@ -1649,7 +1651,7 @@ export function App() {
             ? `Delivery of an earlier message is unknown. Inspect command ${item.send.id} before sending it again.`
             : item.receipt?.message ?? "An earlier queued message was not recorded."}</span>{item.receipt?.outcome === "not-recorded"
               ? <button type="button" disabled={hasDraftContent(draft) || item.draft.id !== draftId} onClick={() => { try {
-                  submissions.restoreQueuedSubmission(item.send.id, restored => drafts.update(draftId, { text: restored.text })); textarea.current?.focus();
+                  submissions.restoreQueuedSubmission(item.send.id, restored => drafts.update(draftId, { text: restored.text, ...(restored.attachments === undefined ? {} : { attachments: restored.attachments }) })); textarea.current?.focus();
                 } catch (cause) { setActionError(errorMessage(cause)); } }}>Restore message</button>
               : <button type="button" disabled={!connected} onClick={() => void submissions.reconcileQueuedSubmission(item.send.id).then(receipt => {
                   if (receipt.outcome === "unknown") setActionError(receipt.message ?? `Delivery of command ${item.send.id} remains unknown.`);

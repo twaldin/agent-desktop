@@ -39,6 +39,65 @@ async function fixture(config = "", worker = "no-provider-worker.ts") {
   return { root, agentDir, cwd, gates, runtime, image, close: async () => { await runtime.dispose(); await rm(root, { recursive: true, force: true }); } };
 }
 
+test("active native Queue and Steer preserve original image bytes through IPC, history and reopen", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(path.join(f.gates, "mode"), "hold");
+    const session = await f.runtime.create({ cwd: f.cwd, interactions: true });
+    const prompt = session.startPrompt("hold image follow-ups", { model: vision });
+    await prompt.accepted;
+    const first = await f.image(png), second = await f.image(await new Bun.Image(png).resize(90, 50).jpeg().bytes());
+    const queued = session.startFollowUp("", "follow-up", undefined, [first]);
+    const steered = session.startFollowUp("inspect second image", "steer", undefined, [second]);
+    // The public parent API must copy before its caller can mutate borrowed bytes.
+    first.data.fill(0); second.attachment.name = "caller changed this after dispatch";
+    expect(await queued.accepted).toEqual({ kind: "queued", delivery: "follow-up" });
+    expect(await steered.accepted).toEqual({ kind: "queued", delivery: "steer" });
+    expect((await session.getQueuedMessages()).messages.map(item => [item.lane, item.text, item.imageCount]))
+      .toEqual([["steer", "inspect second image", 1], ["follow-up", "[Image]", 1]]);
+    await writeFile(path.join(f.gates, "mode"), "");
+    const receipts = await Promise.all([queued.completion, steered.completion]);
+    await prompt.completion;
+    const recorded = [];
+    for (const receipt of receipts) {
+      expect(receipt.kind).toBe("user-message");
+      if (receipt.kind !== "user-message") throw new Error(receipt.reason);
+      const bytes = await session.getImage(receipt.entryId, 1);
+      expect(hash(bytes.data)).toBe(bytes.sha256);
+      recorded.push({ entryId: receipt.entryId, sha256: bytes.sha256 });
+    }
+    expect(new Set(recorded.map(image => image.entryId)).size).toBe(2);
+    const input = JSON.parse(await readFile(path.join(f.gates, "provider-input.json"), "utf8"));
+    const imageHashes = input.flatMap((message: { content: { type: string; sha256?: string }[] }) => message.content.filter(block => block.type === "image").map(block => block.sha256));
+    expect(imageHashes.sort()).toEqual(recorded.map(image => image.sha256).sort());
+    const sourceFile = session.sessionFile;
+    await session.dispose();
+    const reopened = await f.runtime.open({ sessionFile: sourceFile });
+    for (const image of recorded) expect((await reopened.getImage(image.entryId, 1)).sha256).toBe(image.sha256);
+    expect((await reopened.getMessages()).filter(message => message.role === "user")).toHaveLength(3);
+  } finally { await f.close(); }
+}, 40_000);
+
+test("active images reject incompatible models and commands without entering the native queue", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(path.join(f.gates, "mode"), "hold");
+    const session = await f.runtime.create({ cwd: f.cwd, interactions: true });
+    const prompt = session.startPrompt("text-only held turn", { model: { provider: "image-contract", id: "text" } });
+    await prompt.accepted;
+    const image = await f.image(png);
+    const rejected = session.startFollowUp("", "follow-up", undefined, [image]);
+    await expect(rejected.accepted).rejects.toThrow("does not accept images");
+    expect(await rejected.completion).toMatchObject({ kind: "not-recorded" });
+    const command = session.startFollowUp("/image-effect", "steer", undefined, [image]);
+    await expect(command.accepted).rejects.toThrow("slash commands");
+    expect(await command.completion).toMatchObject({ kind: "not-recorded" });
+    expect((await session.getQueuedMessages()).messages).toEqual([]);
+    expect(await Bun.file(path.join(f.gates, "slash-executed")).exists()).toBe(false);
+    await session.abort(); await prompt.completion;
+  } finally { await f.close(); }
+}, 30_000);
+
 test("actual native worker records an image-only ordered turn, normalization receipts, lazy bytes and reopen (controlled provider)", async () => {
   const f = await fixture();
   try {

@@ -35,20 +35,20 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
-  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | undefined;
-  return { ...parseCommandBody(value, version ?? (transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,17].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17 | undefined;
+  return { ...parseCommandBody(value, version ?? (transportVersion === 17 ? 17 : transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
 }
-function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15): CommandEnvelope {
+function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17): CommandEnvelope {
   const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
   const type = text(input.type, "command type");
   if (Object.hasOwn(input, 'worktree') && type !== 'session.create') throw new Error('Only new conversations can select a worktree.');
   if (Object.hasOwn(input, 'environment') && type !== 'session.create') throw new Error('Only worktree creation accepts an environment selection.');
-  if (Object.hasOwn(input, "attachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept image attachments.");
+  if (Object.hasOwn(input, "attachments") && type !== "session.prompt" && type !== "session.steer" && !(type === "session.follow-up" && (commandVersion ?? 0) >= 17)) throw new Error("This command does not accept image attachments.");
   const attachments = Object.hasOwn(input, "attachments") ? parseImageAttachments(input.attachments) : undefined;
   if (Object.hasOwn(input, "selectedTextAttachments") && type !== "session.prompt" && type !== "session.steer") throw new Error("This command does not accept selected text.");
   const selectedTextAttachments = Object.hasOwn(input, "selectedTextAttachments") ? parseSelectedTextAttachments(input.selectedTextAttachments) : undefined;
@@ -135,12 +135,12 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
       ...(selectedTextAttachments === undefined ? {} : { selectedTextAttachments }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
     case "session.follow-up": {
-      if ((commandVersion ?? 0) < 13 || input.delivery !== "follow-up" && input.delivery !== "steer" || Object.keys(input).some(key => !["type","sessionId","text","delivery","approvalMode","draft"].includes(key)))
+      if ((commandVersion ?? 0) < 13 || input.delivery !== "follow-up" && input.delivery !== "steer" || Object.keys(input).some(key => !["type","sessionId","text","delivery","approvalMode","draft",...((commandVersion ?? 0) >= 17 ? ["attachments"] : [])].includes(key)))
         throw new Error("Active-turn follow-ups require command version 13 and one explicit delivery mode.");
       const draft = draftReference(input.draft);
       if (!draft) throw new Error("An active-turn follow-up requires its captured draft identity.");
       return { id, command: { type, sessionId: text(input.sessionId, "session ID"), text: promptText(), delivery: input.delivery,
-        draft, ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
+        draft, ...(attachments === undefined ? {} : { attachments }), ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }) } };
     }
     case "session.interrupt": return { id, command: { type, sessionId: text(input.sessionId, "session ID") } };
     case "session.btw.start": {

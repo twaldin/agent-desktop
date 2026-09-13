@@ -662,6 +662,52 @@ test("confirmed unrecorded active input remains recoverable while unknown delive
   expect(same.outcome).toBe("unknown"); expect(calls).toBe(3);
 });
 
+test("queued image retries and restoration retain the captured image metadata across reload", async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  const image = { id: "queued-image", hostId: "host-a", kind: "image" as const, name: "capture.png", sha256: "b".repeat(64), bytes: 80, mimeType: "image/png" as const };
+  const captured: Draft = { ...original, text: "", attachments: [image] };
+  const sender = async (envelope: CommandEnvelope): Promise<CommandResult> => {
+    calls.push(structuredClone(envelope));
+    if (calls.length === 1) throw new Error("response lost");
+    if (envelope.command.type !== "session.follow-up") throw new Error("wrong command");
+    return { ok: true, commandId: envelope.id, value: { type: "session.follow-up", receipt: { version: 1, commandId: envelope.id,
+      hostId: "host-a", sessionId: session.id, delivery: envelope.command.delivery, phase: "settled", outcome: "not-recorded",
+      message: "removed before delivery", revision: 3, createdAt: 1, updatedAt: 3 } } };
+  };
+  const first = new SubmissionController(sender, "host-a", storage);
+  await expect(first.submitActive(captured, session.id, "steer")).rejects.toThrow("response lost");
+  image.name = "later-mutated.png";
+  const reopened = new SubmissionController(sender, "host-a", storage);
+  expect(reopened.cacheWarning).toBeUndefined();
+  const pending = reopened.queuedEntries()[0]!;
+  expect(await reopened.reconcileQueuedSubmission(pending.send.id)).toMatchObject({ outcome: "not-recorded" });
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[0]).toMatchObject({ commandVersion: 17, command: { text: "", attachments: [{ name: "capture.png" }] } });
+  let restored: Draft | undefined;
+  reopened.restoreQueuedSubmission(pending.send.id, draft => { restored = draft; });
+  expect(restored?.attachments).toEqual([{ ...image, name: "capture.png" }]);
+  expect(reopened.queuedEntries()).toEqual([]);
+});
+
+test("empty image markers keep text follow-ups on v13 across uncertain retry and model changes", async () => {
+  const storage = cache(), calls: CommandEnvelope[] = [];
+  const first = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); throw new Error("response lost"); }, "host-a", storage);
+  const draft = { ...original, attachments: [] };
+  await expect(first.submitActive(draft, session.id, "follow-up")).rejects.toThrow("response lost");
+  const reopened = new SubmissionController(async envelope => {
+    calls.push(structuredClone(envelope));
+    if (envelope.command.type !== "session.follow-up") throw new Error("wrong command");
+    return { ok: true, commandId: envelope.id, value: { type: "session.follow-up", receipt: { version: 1, commandId: envelope.id,
+      hostId: "host-a", sessionId: session.id, delivery: envelope.command.delivery, phase: "queued", outcome: "pending", revision: 2, createdAt: 1, updatedAt: 2 } } };
+  }, "host-a", storage);
+  expect(reopened.cacheWarning).toBeUndefined();
+  await reopened.submitActive({ ...draft, model: edited.model, thinkingLevel: "high" }, session.id, "steer");
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[0]?.commandVersion).toBe(13);
+  expect(calls[0]?.command).not.toHaveProperty("attachments");
+  expect(reopened.queuedEntries()).toHaveLength(1);
+});
+
 test("definite unsupported follow-up rejection releases the retained command without treating it as ambiguous", async () => {
   const storage = cache();
   const controller = new SubmissionController(async envelope => ({ ok: false, commandId: envelope.id,

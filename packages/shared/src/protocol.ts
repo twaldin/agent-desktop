@@ -249,7 +249,7 @@ export interface HostState {
   wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number; inlineMentions?: { commandVersion: 8; repeatedSources?: { commandVersion: 9 } } };
   gitSubmissions?: { commandVersion: 10 };
   sessionSearch?: { version: 1 };
-  queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13 } };
+  queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13; images?: { commandVersion: 17 } } };
   taskLocations?: { version: 1; commandVersion: 14 };
   browserContinuations?: { version: 1; commandVersion: 15 };
   repositoryWatches?: { version: 1 };
@@ -278,7 +278,7 @@ export type HostCommand =
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
   | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
-  | { type: "session.follow-up"; sessionId: string; text: string; delivery: import("./queued-submissions").FollowUpDelivery; approvalMode?: OmpApprovalMode; draft: { id: string; revision: number } }
+  | { type: "session.follow-up"; sessionId: string; text: string; delivery: import("./queued-submissions").FollowUpDelivery; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.btw.start"; sessionId: string; question: string; draft?: { id: string; revision: number }; nativeCommand?: "btw" }
   | { type: "session.mcp.authorize"; hostId: string; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
@@ -295,7 +295,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17;
 }
 
 export interface ImageAdmission {

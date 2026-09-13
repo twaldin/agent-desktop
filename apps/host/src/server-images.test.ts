@@ -68,6 +68,72 @@ async function waitForFile(file: string) {
   expect(await Bun.file(file).exists()).toBe(true);
 }
 
+test("v17 image follow-up binds the saved draft and original host, deduplicates retries and reopens native bytes", async () => {
+  const f = await fixture();
+  try {
+    const image = await f.upload(), session = await f.session();
+    await writeFile(path.join(f.gates, "mode"), "hold");
+    expect((await f.command({ type: "session.prompt", sessionId: session.id, text: "hold image queue", model })).ok).toBe(true);
+    await waitForFile(path.join(f.gates, "provider-input.json"));
+    const draft: Draft = { id: `session:${session.id}`, revision: 0, updatedAt: 0, text: "inspect uploaded image", projectId: null, model, attachments: [image] };
+    expect((await f.command({ type: "draft.put", draft, expectedRevision: 0 }, undefined, 17)).ok).toBe(true);
+    const command: Extract<HostCommand, { type: "session.follow-up" }> = { type: "session.follow-up", sessionId: session.id, text: draft.text,
+      delivery: "follow-up", attachments: [image], draft: { id: draft.id, revision: 1 } };
+    const legacy = await f.request("/v13/commands", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: "wrong-version", command }) });
+    expect(legacy.status).toBe(422);
+    const missingBody = await f.command({ ...command, attachments: undefined }, "missing-body", 17);
+    expect(missingBody).toMatchObject({ ok: true, value: { receipt: { outcome: "not-recorded" } } });
+    const foreign = await f.command({ ...command, attachments: [{ ...image, hostId: "foreign" }] }, "foreign-image", 17);
+    expect(foreign).toMatchObject({ ok: true, value: { receipt: { outcome: "not-recorded" } } });
+    expect(f.host.store.getDraft(draft.id)?.attachments).toEqual([image]);
+    const id = "original-image-follow-up", queued = await f.command(command, id, 17);
+    expect(queued).toMatchObject({ ok: true, value: { receipt: { commandId: id, phase: "queued", outcome: "pending" } } });
+    expect(f.host.store.getDraft(draft.id)).toMatchObject({ text: "", attachments: [], revision: 2, lastConsumption: { commandId: id, submittedRevision: 1 } });
+    const newer = { ...draft, revision: 2, text: "newer unsent text", attachments: [] };
+    expect((await f.command({ type: "draft.put", draft: newer, expectedRevision: 2 }, undefined, 17)).ok).toBe(true);
+    expect(await f.command(command, id, 17)).toEqual(queued);
+    await writeFile(path.join(f.gates, "mode"), "");
+    await f.settled(session.id);
+    let final = await f.command(command, id, 17);
+    const deadline = Date.now() + 7000;
+    while (final.ok && final.value && "type" in final.value && final.value.type === "session.follow-up" && final.value.receipt.phase !== "settled" && Date.now() < deadline) {
+      await Bun.sleep(5); final = await f.command(command, id, 17);
+    }
+    expect(final).toMatchObject({ ok: true, value: { receipt: { outcome: "succeeded" } } });
+    if (!final.ok || !final.value || !("type" in final.value) || final.value.type !== "session.follow-up" || !final.value.receipt.entryId) throw new Error("missing native image entry");
+    const entryId = final.value.receipt.entryId;
+    const recordedRoute = `/v1/sessions/${session.id}/images/${entryId}/1`;
+    const recorded = await f.request(recordedRoute);
+    expect(recorded.status).toBe(200);
+    const recordedHash = digest(new Uint8Array(await recorded.arrayBuffer()));
+    expect((await f.messages(session.id)).filter(row => row.nativeId === entryId)).toHaveLength(1);
+    await f.restart();
+    expect(await f.command(command, id, 17)).toEqual(final);
+    expect(digest(new Uint8Array(await (await f.request(recordedRoute)).arrayBuffer()))).toBe(recordedHash);
+    expect(f.host.store.getDraft(draft.id)).toMatchObject({ text: "newer unsent text", attachments: [], revision: 3 });
+    expect((await f.messages(session.id)).filter(row => row.role === "user")).toHaveLength(2);
+  } finally { await f.close(); }
+}, 45_000);
+
+test("v13 text follow-up preserves an emptied image-aware draft through native queue admission", async () => {
+  const f = await fixture();
+  try {
+    const session = await f.session();
+    await writeFile(path.join(f.gates, "mode"), "hold");
+    expect((await f.command({ type: "session.prompt", sessionId: session.id, text: "held text turn", model })).ok).toBe(true);
+    await waitForFile(path.join(f.gates, "provider-input.json"));
+    const draft = { id: `session:${session.id}`, text: "text after image removal", projectId: null, model, attachments: [] };
+    expect((await f.command({ type: "draft.put", draft, expectedRevision: 0 })).ok).toBe(true);
+    const queued = await f.command({ type: "session.follow-up", sessionId: session.id, text: draft.text, delivery: "follow-up",
+      draft: { id: draft.id, revision: 1 } }, "empty-image-text", 13);
+    expect(queued).toMatchObject({ ok: true, value: { receipt: { phase: "queued", outcome: "pending" } } });
+    expect(f.host.store.getDraft(draft.id)).toMatchObject({ text: "", attachments: [], revision: 2 });
+    await writeFile(path.join(f.gates, "mode"), "");
+    await f.settled(session.id);
+    expect((await f.messages(session.id)).filter(row => row.role === "user")).toHaveLength(2);
+  } finally { await f.close(); }
+}, 30_000);
+
 test("authenticated image HTTP joins actual native admission, atomic draft consumption, retry and restart", async () => {
   const f = await fixture();
   try {

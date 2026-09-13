@@ -132,3 +132,19 @@ test("image send checks preserve drafts and use actual current native capabiliti
   expect(imageSendIssue(input, false, capabilities, catalog, session, controls)).toContain("blocked");
   expect(imageSendIssue({ ...input, attachments: [] }, true, undefined)).toBeUndefined();
 });
+
+test("active image composition requires follow-up capability and preserves model, settings and command checks", () => {
+  const input = draft({ attachments: [ref()] });
+  const model = { provider: "fixture", id: "vision" }, session = { model } as import("@agent-desktop/shared").SessionSummary;
+  const controls = { model, capabilities: { input: ["text", "image"] }, settings: [] } as unknown as OmpSessionControls;
+  const followUpImages = { commandVersion: 17 as const };
+  expect(imageSendIssue(input, true, capabilities, undefined, session, controls, followUpImages)).toBeUndefined();
+  expect(imageSendIssue(input, true, capabilities, undefined, session, controls)).toContain("cannot steer");
+  expect(imageSendIssue(input, true, undefined, undefined, session, controls, followUpImages)).toContain("unavailable");
+  expect(imageSendIssue({ ...input, text: "/help" }, true, capabilities, undefined, session, controls, followUpImages)).toContain("Slash commands");
+  controls.settings = [{ path: "images.blockImages", effective: true }] as OmpSessionControls["settings"];
+  expect(imageSendIssue(input, true, capabilities, undefined, session, controls, followUpImages)).toContain("blocked");
+  controls.settings = []; controls.capabilities!.input = ["text"];
+  expect(imageSendIssue(input, true, capabilities, undefined, session, controls, followUpImages)).toContain("does not accept images");
+  expect(input.attachments).toEqual([ref()]);
+});
