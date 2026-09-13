@@ -12,7 +12,7 @@ if (!process.argv[2] || !process.argv[3] || !basename(root).startsWith("native-h
   || process.env.AGENT_DESKTOP_DATA_DIR !== join(root, "host") || process.env.AGENT_DESKTOP_PROFILE_DIR !== join(root, "desktop")
   || process.env.PI_DISABLE_DOTENV !== "1" || process.env.PATH?.split(":")[0] !== join(root, "bin")) throw new Error("Use a fresh native-history-find-* HOME, separate evidence directory and exact isolated paths/private PATH.");
 const mode = process.env.NATIVE_FIND_MODE ?? "full";
-if (mode !== "full" && mode !== "capture-sequencing") throw new Error("NATIVE_FIND_MODE must be full or capture-sequencing.");
+if (mode !== "full" && mode !== "capture-sequencing" && mode !== "live-find") throw new Error("NATIVE_FIND_MODE must be full, capture-sequencing or live-find.");
 const osUser = userInfo(), username = execFileSync("/usr/bin/id", ["-un"], { encoding: "utf8" }).trim();
 if (process.env.USER !== username || process.env.LOGNAME !== username) throw new Error("USER and LOGNAME must match the observed OS user; record rather than mask OS metadata.");
 const bun = process.env.NATIVE_FIND_BUN, bundlePath = process.env.NATIVE_FIND_TMUX_BUNDLE;

@@ -14,7 +14,7 @@ if (!process.argv[2] || !process.argv[3] || !basename(root).startsWith("native-h
 const owner = JSON.parse(readFileSync(join(root, "fixture-owner.json"), "utf8"));
 if (owner.root !== root || owner.repo !== repo || process.env.NATIVE_FIND_HOST_ENTRY !== owner.hostEntry) throw new Error("Owned fixture mismatch.");
 const mode = process.env.NATIVE_FIND_MODE ?? "full";
-if (!["full", "capture-sequencing"].includes(mode) || owner.mode !== mode) throw new Error("Prepared native Find mode mismatch.");
+if (!["full", "capture-sequencing", "live-find"].includes(mode) || owner.mode !== mode) throw new Error("Prepared native Find mode mismatch.");
 const inspector = process.env.NATIVE_FIND_INSPECTOR, yabai = process.env.NATIVE_FIND_YABAI;
 if (!inspector || !isAbsolute(inspector) || !yabai || !isAbsolute(yabai)) throw new Error("Main must supply verified absolute native inspector and yabai paths.");
 const sha = value => createHash("sha256").update(value).digest("hex");

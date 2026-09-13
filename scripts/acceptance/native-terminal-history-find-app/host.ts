@@ -15,7 +15,7 @@ if (!basename(root).startsWith("native-history-find-") || process.env.HOME !== r
 const owner = JSON.parse(readFileSync(join(root, "fixture-owner.json"), "utf8"));
 if (owner.repo !== repo || owner.root !== root || process.env.NATIVE_FIND_HOST_ENTRY !== join(import.meta.dir, "host.ts")) throw new Error("Fixture ownership mismatch.");
 const mode = process.env.NATIVE_FIND_MODE ?? "full";
-if ((mode !== "full" && mode !== "capture-sequencing") || owner.mode !== mode) throw new Error("Prepared native Find mode mismatch.");
+if ((mode !== "full" && mode !== "capture-sequencing" && mode !== "live-find") || owner.mode !== mode) throw new Error("Prepared native Find mode mismatch.");
 if (existsSync(join(root, "context.json"))) throw new Error("Retained fixture host restart requires a separately recorded recovery run; no implicit reseeding.");
 const record = (kind: string) => appendFileSync(join(root, "guard-violations.jsonl"), JSON.stringify({ kind, pid: process.pid, at: Date.now() }) + "\n", { mode: 0o600 });
 const originalFetch = globalThis.fetch;
@@ -55,7 +55,7 @@ try {
   if (!draft.ok) throw new Error("Owned draft setup failed.");
   const tabs: DockTab[] = [];
   let dock = createDockState();
-  const roles: ReadonlyArray<"saved" | "other" | "live"> = mode === "capture-sequencing" ? ["live"] : ["saved", "other", "live"];
+  const roles: ReadonlyArray<"saved" | "other" | "live"> = mode === "full" ? ["saved", "other", "live"] : ["live"];
   for (const role of roles) {
     const terminal = object(object(await request("/v2/terminals/action", { type: "create", options: { target: { projectId: project.id }, cols: 80, rows: 24 } })).terminal);
     const id = text(terminal.id);
@@ -96,7 +96,7 @@ try {
   for await (const line of createInterface({ input: process.stdin, terminal: false })) {
     if (line === "stop") { await host.stop(); process.exit(0); }
     else if (line === "refresh-live") {
-      if (mode !== "full") throw new Error("Refreshing output is outside the minimal capture-sequencing diagnostic.");
+      if (mode === "capture-sequencing") throw new Error("Refreshing output is outside the minimal capture-sequencing diagnostic.");
       await writeFile(join(root, "refresh-live"), "emit another real output line\n");
     }
     else if (line === "snapshot") {
