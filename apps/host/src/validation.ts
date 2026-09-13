@@ -1,3 +1,4 @@
+import { parseForceToolPromptFields, parseForceToolCancel } from "../../../packages/shared/src/force-tool";
 import { parseDraftBrowserContinuation, parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativeSkillFileRef } from "@agent-desktop/shared";
 import { isAbsolute } from "node:path";
 import type { CommandEnvelope, ModelChoice } from "@agent-desktop/shared";
@@ -35,13 +36,13 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
-  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | undefined;
-  return { ...parseCommandBody(value, version ?? (transportVersion === 17 ? 17 : transportVersion === 16 ? 16 : transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | undefined;
+  return { ...parseCommandBody(value, version ?? (transportVersion === 18 ? 18 : transportVersion === 17 ? 17 : transportVersion === 16 ? 16 : transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
 }
-function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17): CommandEnvelope {
+function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18): CommandEnvelope {
   const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
@@ -56,6 +57,10 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
   const wholeFileAttachments = Object.hasOwn(input, "wholeFileAttachments") ? (commandVersion ?? 0) >= 9
     ? parseInlineWholeFileMentions(input.wholeFileAttachments, typeof input.text === "string" ? input.text.length : 0)
     : parseWholeFileAttachments(input.wholeFileAttachments,typeof input.text==="string"?input.text.length:undefined) : undefined;
+  const hasForceFields = Object.hasOwn(input, "forceTool") || Object.hasOwn(input, "forceRecovery");
+  if (hasForceFields && (type !== "session.prompt" || (commandVersion ?? 0) < 18))
+    throw new Error("Force-tool admission requires prompt command version 18.");
+  const forceFields = hasForceFields ? parseForceToolPromptFields(input) : {};
   const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
   const promptText = () => hasContext && input.text === "" ? "" : text(input.text, "prompt", hasContext ? 500_000 : 4_000_000);
   switch (type) {
@@ -139,7 +144,13 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
       })() }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
-    case "session.prompt": return { id, command: { type,
+    case "session.force.cancel": {
+      if ((commandVersion ?? 0) < 18 || Object.keys(input).some(key => !["type", "sessionId", "ticket", "directiveId"].includes(key)))
+        throw new Error("Force-tool cancellation requires command version 18.");
+      const { type: _type, ...request } = input;
+      return { id, command: { type, ...parseForceToolCancel(request) } };
+    }
+    case "session.prompt": return { id, command: { type, ...forceFields,
       sessionId: text(input.sessionId, "session ID"), text: promptText(),
       ...(attachments === undefined ? {} : { attachments }),
       ...(wholeFileAttachments === undefined ? {} : { wholeFileAttachments }),

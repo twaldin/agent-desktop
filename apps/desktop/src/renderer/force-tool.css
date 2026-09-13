@@ -1,0 +1,23 @@
+.force-tool-control { min-width: 0; color: var(--secondary); font-size: var(--small-font-size,12px); }
+.force-tool-count,.force-tool-attention { margin-left: 8px; font-size: inherit; }
+.force-tool-attention { color: var(--text); }
+.force-tool-panel { margin-top: 8px; padding: 12px; width: min(100%,420px); max-height: min(64vh,560px); overflow: auto; box-sizing: border-box; border: var(--border-width,1px) solid var(--border); border-radius: var(--radius-large,12px); background: var(--elevated-surface); }
+.force-tool-panel header,.force-tool-refresh,.force-tool-queue li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.force-tool-panel header { color: var(--text); }
+.force-tool-panel p { margin: 8px 0; font-size: inherit; line-height: 1.5; overflow-wrap: anywhere; }
+.force-tool-panel label { display: block; margin-top: 12px; margin-bottom: 5px; color: var(--text); }
+.force-tool-panel :is(select,textarea) { width: 100%; max-width: 100%; box-sizing: border-box; padding: 7px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-small,6px); font: inherit; }
+.force-tool-panel textarea { resize: vertical; min-height: 70px; }
+.force-tool-panel button { flex-shrink: 0; border: 1px solid var(--border); border-radius: var(--radius-small,6px); background: var(--surface); color: var(--text); padding: 5px 8px; font: inherit; cursor: pointer; }
+.force-tool-panel button:disabled { opacity: .5; cursor: default; }
+.force-tool-panel :is(button,select,textarea):focus-visible,.force-tool-control > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.force-tool-primary { margin-top: 4px; }
+.force-tool-panel :is(.force-tool-help,small) { color: var(--secondary); font-size: inherit; line-height: 1.5; }
+.force-tool-queue,.force-tool-recovery { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.force-tool-queue ul { padding: 0; margin: 6px 0; list-style: none; }
+.force-tool-queue li { padding: 7px 0; }
+.force-tool-queue li > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
+.force-tool-queue b { color: var(--text); }
+.force-tool-recovery small { display: block; margin-top: 6px; }
+.force-tool-panel [role=alert] { color: var(--danger); }
+@media (max-width: 420px) { .force-tool-panel { width: 100%; padding: 9px; } .force-tool-refresh { flex-wrap: wrap; } }

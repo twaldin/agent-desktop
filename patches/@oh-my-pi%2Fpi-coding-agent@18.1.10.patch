@@ -1,5 +1,5 @@
 diff --git a/dist/types/commit/conventional/service.d.ts b/dist/types/commit/conventional/service.d.ts
-index bd6991c..e5fb07a 100644
+index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e1882c5df 100644
 --- a/dist/types/commit/conventional/service.d.ts
 +++ b/dist/types/commit/conventional/service.d.ts
 @@ -8,6 +8,12 @@ export interface GenerateGitCommitOptions {
@@ -22,7 +22,7 @@ index bd6991c..e5fb07a 100644
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
 diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/types/extensibility/plugins/marketplace/cache.d.ts
-index 244fb84..c268062 100644
+index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b4da5d976 100644
 --- a/dist/types/extensibility/plugins/marketplace/cache.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/cache.d.ts
 @@ -22,7 +22,7 @@ export declare function getCachedPluginPath(cacheDir: string, marketplace: strin
@@ -35,7 +35,7 @@ index 244fb84..c268062 100644
   * Synchronous check — true when the cache directory exists on disk.
   * Uses `existsSync` because callers may need to run this check inline without async.
 diff --git a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
-index 54f6204..a1c142d 100644
+index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f5363c3a0c52 100644
 --- a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 @@ -3,7 +3,7 @@
@@ -65,7 +65,7 @@ index 54f6204..a1c142d 100644
   * Promote a temporary clone directory to its final cache location.
   *
 diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
-index 85d413a..21dbcd8 100644
+index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013cf45b464 100644
 --- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
 @@ -5,7 +5,7 @@
@@ -103,7 +103,7 @@ index 85d413a..21dbcd8 100644
      listInstalledPlugins(): Promise<InstalledPluginSummary[]>;
      setPluginEnabled(pluginId: string, enabled: boolean, scope?: "user" | "project"): Promise<void>;
 diff --git a/dist/types/extensibility/plugins/marketplace/types.d.ts b/dist/types/extensibility/plugins/marketplace/types.d.ts
-index 6d66e30..d8a6893 100644
+index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67738aec06 100644
 --- a/dist/types/extensibility/plugins/marketplace/types.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/types.d.ts
 @@ -88,10 +88,15 @@ export interface MarketplacesRegistry {
@@ -123,7 +123,7 @@ index 6d66e30..d8a6893 100644
      addedAt: string;
      updatedAt: string;
 diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
-index fb43dfe..9401964 100644
+index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d396253e88b 100644
 --- a/dist/types/mcp/client.d.ts
 +++ b/dist/types/mcp/client.d.ts
 @@ -1,3 +1,4 @@
@@ -140,7 +140,7 @@ index fb43dfe..9401964 100644
      onNotification?: (method: string, params: unknown) => void;
      onRequest?: (method: string, params: unknown) => Promise<unknown>;
 diff --git a/dist/types/mcp/errors.d.ts b/dist/types/mcp/errors.d.ts
-index 35c2750..31df5e7 100644
+index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6af7beb0ed 100644
 --- a/dist/types/mcp/errors.d.ts
 +++ b/dist/types/mcp/errors.d.ts
 @@ -15,6 +15,11 @@ interface MCPTransportErrorOptions {
@@ -165,7 +165,7 @@ index 35c2750..31df5e7 100644
  export declare function mcpTraceIdFromHeaders(headers: Headers): string | undefined;
  /** Preserve a server-provided JSON-RPC error without exposing credential-shaped data. */
 diff --git a/dist/types/mcp/loader.d.ts b/dist/types/mcp/loader.d.ts
-index 88cb17b..083b2f7 100644
+index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf0316ccd78bd 100644
 --- a/dist/types/mcp/loader.d.ts
 +++ b/dist/types/mcp/loader.d.ts
 @@ -21,6 +21,7 @@ export interface MCPToolsLoadResult {
@@ -177,7 +177,7 @@ index 88cb17b..083b2f7 100644
      onStatus?: (event: McpConnectionStatusEvent) => void;
      /** Whether to load project-level config (default: true) */
 diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index 9933dc7..3df0403 100644
+index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e9f515cdf 100644
 --- a/dist/types/mcp/manager.d.ts
 +++ b/dist/types/mcp/manager.d.ts
 @@ -39,6 +39,9 @@ export interface MCPLoadResult {
@@ -216,7 +216,7 @@ index 9933dc7..3df0403 100644
       * Refresh tools from a specific server.
 diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
 new file mode 100755
-index 0000000..5f5ec41
+index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e04e8a9c45
 --- /dev/null
 +++ b/dist/types/mcp/resource-subscriptions.d.ts
 @@ -0,0 +1,4 @@
@@ -225,7 +225,7 @@ index 0000000..5f5ec41
 +export declare function setManagedResourceSubscription(connection: MCPServerConnection, uri: string, enabled: boolean, options?: MCPRequestOptions): Promise<void>;
 +export declare function retainResourceSubscription(connection: MCPServerConnection, uri: string, options?: MCPRequestOptions): Promise<MCPResourceSubscription>;
 diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
-index 7a53726..9ad0821 100644
+index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d46cc55212 100644
 --- a/dist/types/mcp/tool-bridge.d.ts
 +++ b/dist/types/mcp/tool-bridge.d.ts
 @@ -13,6 +13,7 @@ import type { MCPAuthChallenge, MCPContent, MCPServerConnection, MCPToolDefiniti
@@ -250,7 +250,7 @@ index 7a53726..9ad0821 100644
      provider?: string;
      /** Provider display name (e.g., "Claude Code", "MCP Config") */
 diff --git a/dist/types/mcp/transports/sse.d.ts b/dist/types/mcp/transports/sse.d.ts
-index e448695..61c7a8a 100644
+index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110b6be85eb 100644
 --- a/dist/types/mcp/transports/sse.d.ts
 +++ b/dist/types/mcp/transports/sse.d.ts
 @@ -15,10 +15,10 @@ export declare class LegacySseTransport implements MCPTransport {
@@ -267,7 +267,7 @@ index e448695..61c7a8a 100644
 -export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
 +export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;
 diff --git a/dist/types/mcp/types.d.ts b/dist/types/mcp/types.d.ts
-index 8b623f5..90dfda5 100644
+index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bbe734d2ec 100644
 --- a/dist/types/mcp/types.d.ts
 +++ b/dist/types/mcp/types.d.ts
 @@ -155,6 +155,7 @@ export interface MCPImplementation {
@@ -279,7 +279,7 @@ index 8b623f5..90dfda5 100644
          listChanged?: boolean;
      };
 diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
-index e3b75c2..0a306d7 100644
+index e3b75c288b6c8ded7d709832d65a2cf993461374..bfa51d7b8fdd311b57d32d1e5d21645ccfdaab38 100644
 --- a/dist/types/sdk.d.ts
 +++ b/dist/types/sdk.d.ts
 @@ -191,6 +191,7 @@ export interface CreateAgentSessionOptions {
@@ -290,8 +290,92 @@ index e3b75c2..0a306d7 100644
      /** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
      mcpManager?: MCPManager;
      /** Enable LSP integration (tool, formatting, diagnostics, warmup). Default: true */
+@@ -303,6 +304,8 @@ export interface CreateAgentSessionOptions {
+ export interface CreateAgentSessionResult {
+     /** The created session */
+     session: AgentSession;
++    /** Captured main Agent constructor dialect; undefined retains its live PI_DIALECT fallback. */
++    readonly nativeDialect: Dialect | undefined;
+     /** Extensions result (loaded extensions + runtime) */
+     extensionsResult: LoadExtensionsResult;
+     /** Update tool UI context (interactive mode) */
+diff --git a/dist/types/session/agent-session.d.ts b/dist/types/session/agent-session.d.ts
+index c55844cb2f282616605e385234ee3888f0d84ce3..6900ab8d3601c32537fd1f336f6b31045f33bd8a 100644
+--- a/dist/types/session/agent-session.d.ts
++++ b/dist/types/session/agent-session.d.ts
+@@ -129,11 +129,13 @@ export declare class AgentSession {
+     /** Clear stale non-forcing pending preview invokers after a resolve dispatch proves none can run. */
+     clearPendingInvokers(): void;
+     /**
+-     * Force the next model call to target a specific active tool, then terminate
+-     * the agent loop. Pushes a two-step sequence [forced, "none"] so the model
+-     * calls exactly the forced tool once and then cannot call another.
++     * Request an active tool followed by a final-response request. Native provider
++     * compatibility and dialect policy may weaken or omit either request; queue
++     * resolution is not evidence that the requested tool executed.
+      */
+-    setForcedToolChoice(toolName: string): void;
++    setForcedToolChoice(toolName: string): string;
++    /** Observe original setter admissions synchronously after their queue push. */
++    subscribeForcedToolChoice(listener: (id: string, toolName: string) => void): () => void;
+     /** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
+     get toolChoiceQueue(): ToolChoiceQueue;
+     /** Peek the in-flight directive's invocation handler for the preview-resolution dispatch. */
+diff --git a/dist/types/session/tool-choice-queue.d.ts b/dist/types/session/tool-choice-queue.d.ts
+index 1c9f2ba7cb0cad11c065653e22694759c4775044..48c1b4951f2381341e88ac4dbe8ec0d2a186a0e0 100644
+--- a/dist/types/session/tool-choice-queue.d.ts
++++ b/dist/types/session/tool-choice-queue.d.ts
+@@ -26,6 +26,11 @@ export interface DirectiveCallbacks {
+     onInvoked?: (input: unknown) => Promise<unknown> | unknown;
+ }
+ export interface ToolChoiceDirective {
++    readonly id: string;
++    readonly sequence?: readonly ToolChoice[];
++    nextIndex: number;
++    replayIndex?: number;
++    requeued: boolean;
+     generator: Iterator<ToolChoice>;
+     /** Stable label for targeted removal and debugging (e.g. "user-force"). */
+     label: string;
+@@ -42,12 +47,33 @@ export interface PushOptions {
+     onRejected?: DirectiveCallbacks["onRejected"];
+     onInvoked?: DirectiveCallbacks["onInvoked"];
+ }
++export interface ToolChoiceQueueEntry {
++    readonly id: string;
++    readonly label: string;
++    readonly sequence?: readonly ToolChoice[];
++    readonly nextIndex: number;
++    readonly inFlightIndex?: number;
++    readonly requeued: boolean;
++}
++export interface ToolChoiceQueueSnapshot {
++    readonly revision: number;
++    readonly hasInFlight: boolean;
++    readonly directives: readonly ToolChoiceQueueEntry[];
++}
++export interface ToolChoiceQueueEvent {
++    readonly revision: number;
++    readonly type: "push" | "claim" | "resolve" | "reject" | "remove" | "clear" | "preview";
++    readonly id?: string;
++}
+ export declare function onceGen(choice: ToolChoice): Generator<ToolChoice, void, unknown>;
+ export declare class ToolChoiceQueue {
+     #private;
+-    pushOnce(choice: ToolChoice, options?: PushOptions): void;
+-    pushSequence(choices: ToolChoice[], options?: PushOptions): void;
+-    push(generator: Iterable<ToolChoice>, options?: PushOptions): void;
++    subscribe(listener: (event: ToolChoiceQueueEvent) => void): () => void;
++    snapshot(): ToolChoiceQueueSnapshot;
++    removeSequence(id: string): boolean;
++    pushOnce(choice: ToolChoice, options?: PushOptions): string;
++    pushSequence(choices: readonly ToolChoice[], options?: PushOptions): string;
++    push(generator: Iterable<ToolChoice>, options?: PushOptions): string;
+     /**
+      * Advance the head directive and return its next yield. Records the value
+      * as in-flight until resolve() or reject() is called.
 diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
-index 67ab2e0..28b1ef2 100644
+index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
 --- a/dist/types/tools/browser.d.ts
 +++ b/dist/types/tools/browser.d.ts
 @@ -1,3 +1,5 @@
@@ -338,7 +422,7 @@ index 67ab2e0..28b1ef2 100644
 +export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 new file mode 100755
-index 0000000..caed131
+index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ace39556d1
 --- /dev/null
 +++ b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 @@ -0,0 +1,37 @@
@@ -380,7 +464,7 @@ index 0000000..caed131
 +    assertCurrent(): void;
 +}): Readonly<CdpEvaluationOpening>;
 diff --git a/dist/types/tools/browser/cmux/cmux-tab.d.ts b/dist/types/tools/browser/cmux/cmux-tab.d.ts
-index f5d460b..75aae00 100644
+index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45e1a08493 100644
 --- a/dist/types/tools/browser/cmux/cmux-tab.d.ts
 +++ b/dist/types/tools/browser/cmux/cmux-tab.d.ts
 @@ -56,7 +56,7 @@ export interface RunCmuxCodeOptions {
@@ -419,7 +503,7 @@ index f5d460b..75aae00 100644
 +export declare function createRetainedCmuxTab(state: CmuxRetainedState, client: Pick<CmuxSocketClient, "request">): CmuxTab;
 diff --git a/dist/types/tools/browser/cmux/evaluation-channel.d.ts b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 new file mode 100755
-index 0000000..e6d2440
+index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f123e704b5
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 @@ -0,0 +1,8 @@
@@ -432,7 +516,7 @@ index 0000000..e6d2440
 +}
 +export declare function createCmuxEvaluationChannel(tab: CmuxTab, source: Pick<CmuxSocketClient, "request"> & { assertCurrent(): void }): Readonly<CmuxEvaluationChannel>;
 diff --git a/dist/types/tools/browser/cmux/socket-client.d.ts b/dist/types/tools/browser/cmux/socket-client.d.ts
-index e94d47c..e8f5c5c 100644
+index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9b15ebca6 100644
 --- a/dist/types/tools/browser/cmux/socket-client.d.ts
 +++ b/dist/types/tools/browser/cmux/socket-client.d.ts
 @@ -1,9 +1,17 @@
@@ -469,7 +553,7 @@ index e94d47c..e8f5c5c 100644
  }
 diff --git a/dist/types/tools/browser/cmux/surface-observation.d.ts b/dist/types/tools/browser/cmux/surface-observation.d.ts
 new file mode 100755
-index 0000000..6ebb03b
+index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b17305183
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/surface-observation.d.ts
 @@ -0,0 +1,14 @@
@@ -488,7 +572,7 @@ index 0000000..6ebb03b
 +/** Capture before creation/adoption. Does not connect, lease, or establish server incarnation. */
 +export declare function captureCmuxSurfaceObservation(client: CmuxSocketClient, timeoutMs: number): CmuxSurfaceObservation;
 diff --git a/dist/types/tools/browser/relay/protocol.d.ts b/dist/types/tools/browser/relay/protocol.d.ts
-index 6fd1252..58a7c0b 100644
+index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491ffac07771 100644
 --- a/dist/types/tools/browser/relay/protocol.d.ts
 +++ b/dist/types/tools/browser/relay/protocol.d.ts
 @@ -19,6 +19,9 @@ export interface TabSnapshot {
@@ -512,7 +596,7 @@ index 6fd1252..58a7c0b 100644
      tabs: TabSnapshot[];
 diff --git a/dist/types/tools/browser/run-context.d.ts b/dist/types/tools/browser/run-context.d.ts
 new file mode 100755
-index 0000000..8e4fc00
+index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc09ce3bcb
 --- /dev/null
 +++ b/dist/types/tools/browser/run-context.d.ts
 @@ -0,0 +1,9 @@
@@ -526,7 +610,7 @@ index 0000000..8e4fc00
 +}
 +export declare function createBrowserRunContext(session: ToolSession, snapshot?: SessionSnapshot): BrowserRunContext;
 diff --git a/dist/types/tools/browser/tab-protocol.d.ts b/dist/types/tools/browser/tab-protocol.d.ts
-index 4411a20..0d51ece 100644
+index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f5350b08b95 100644
 --- a/dist/types/tools/browser/tab-protocol.d.ts
 +++ b/dist/types/tools/browser/tab-protocol.d.ts
 @@ -40,7 +40,20 @@ export interface SessionSnapshot {
@@ -552,7 +636,7 @@ index 4411a20..0d51ece 100644
      browserWSEndpoint: string;
      safeDir: string;
 diff --git a/dist/types/tools/browser/tab-supervisor.d.ts b/dist/types/tools/browser/tab-supervisor.d.ts
-index a822a71..d613600 100644
+index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba2266bde73f7 100644
 --- a/dist/types/tools/browser/tab-supervisor.d.ts
 +++ b/dist/types/tools/browser/tab-supervisor.d.ts
 @@ -1,4 +1,5 @@
@@ -613,7 +697,7 @@ index a822a71..d613600 100644
 +export declare function openReservedCdpEvaluation(ownerSessionId: string, target: OwnerTabViewportTarget, operationId: string, timeoutMs: number): Promise<Readonly<import("./cdp-evaluation-channel.js").CdpEvaluationChannel>>;
 diff --git a/dist/types/tools/browser/target-observation.d.ts b/dist/types/tools/browser/target-observation.d.ts
 new file mode 100755
-index 0000000..0328314
+index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb421abd75
 --- /dev/null
 +++ b/dist/types/tools/browser/target-observation.d.ts
 @@ -0,0 +1,8 @@
@@ -626,7 +710,7 @@ index 0000000..0328314
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
 diff --git a/src/blob-broker/uploaders-object-storage.ts b/src/blob-broker/uploaders-object-storage.ts
-index 3ff2d47..8865e1b 100644
+index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906beeee2f0e 100644
 --- a/src/blob-broker/uploaders-object-storage.ts
 +++ b/src/blob-broker/uploaders-object-storage.ts
 @@ -254,7 +254,7 @@ function createS3Uploader(destination: BlobDestinationId, config: DestinationRun
@@ -639,7 +723,7 @@ index 3ff2d47..8865e1b 100644
  	for (const part of parts) length += part.byteLength;
  	const result = new Uint8Array(length);
 diff --git a/src/collab/protocol.ts b/src/collab/protocol.ts
-index 92e904f..4d14b74 100644
+index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959dd061c94 100644
 --- a/src/collab/protocol.ts
 +++ b/src/collab/protocol.ts
 @@ -111,7 +111,7 @@ export type CollabFrame =
@@ -652,7 +736,7 @@ index 92e904f..4d14b74 100644
  	new DataView(out.buffer).setUint32(0, peerId, false);
  	out.set(sealed, ENVELOPE_HEADER_LENGTH);
 diff --git a/src/collab/relay-client.ts b/src/collab/relay-client.ts
-index 8f2ea5c..3270855 100644
+index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11c80bb580 100644
 --- a/src/collab/relay-client.ts
 +++ b/src/collab/relay-client.ts
 @@ -52,7 +52,7 @@ export class CollabSocket {
@@ -674,7 +758,7 @@ index 8f2ea5c..3270855 100644
  			logger.debug("collab: dropping frame, reconnect buffer full", { t: frameType });
  			return;
 diff --git a/src/commit/conventional/service.ts b/src/commit/conventional/service.ts
-index de01f53..6e98843 100644
+index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f16816c4faa67 100644
 --- a/src/commit/conventional/service.ts
 +++ b/src/commit/conventional/service.ts
 @@ -29,6 +29,13 @@ export interface GenerateGitCommitOptions {
@@ -727,8 +811,133 @@ index de01f53..6e98843 100644
  		return { ...result, stagedAll };
  	} finally {
  		await inference.dispose();
+diff --git a/src/config/model-registry.ts b/src/config/model-registry.ts
+index 9b6317446d66d7a95aeee1545139719227909bdb..23218089a6a4ef70fdd9cb3ebf254e1154460d92 100644
+--- a/src/config/model-registry.ts
++++ b/src/config/model-registry.ts
+@@ -29,6 +29,7 @@ import { getBundledModels, getBundledProviders } from "@oh-my-pi/pi-catalog/mode
+ import {
+ 	googleAntigravityModelManagerOptions,
+ 	googleGeminiCliModelManagerOptions,
++	googleModelManagerOptions,
+ 	isCredentialScopedModelCacheProvider,
+ 	MODELS_DEV_CATALOG_PROVIDER_IDS,
+ 	modelsDevCatalogFallback,
+@@ -144,6 +145,36 @@ const ADDITIVE_MODELS_DEV_CATALOG_PROVIDER_ID_LOOKUP: Readonly<Record<string, tr
+ 		).map(providerId => [providerId, true as const]),
+ 	),
+ );
++const GOOGLE_GENERATIVE_AI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
++const GOOGLE_TOP_K_CACHE_PROVIDER_ID = "google:top-k-v1";
++
++function hasSameModelIdentityTuple(left: Model<Api>, right: Model<Api>): boolean {
++	return (
++		left.provider === right.provider &&
++		left.id === right.id &&
++		left.api === right.api &&
++		left.baseUrl === right.baseUrl &&
++		left.transport === right.transport &&
++		left.requestModelId === right.requestModelId &&
++		left.identity.class === right.identity.class &&
++		left.identity.family === right.identity.family &&
++		left.identity.revision === right.identity.revision &&
++		left.identity.effort === right.identity.effort &&
++		left.identity.thinkingVariant === right.identity.thinkingVariant &&
++		left.identity.logicalId === right.identity.logicalId
++	);
++}
++
++function isExactBundledGoogleModel(model: Model<Api>, bundled: Model<Api>): boolean {
++	return (
++		model.provider === "google" &&
++		model.api === "google-generative-ai" &&
++		model.baseUrl === GOOGLE_GENERATIVE_AI_BASE_URL &&
++		model.transport === undefined &&
++		bundled.identity.class === "gemini" &&
++		hasSameModelIdentityTuple(model, bundled)
++	);
++}
+ 
+ /**
+  * Bedrock provider-scoped fields to spread onto a model spec, dropping keys
+@@ -582,7 +613,10 @@ export class ModelRegistry {
+ 	}
+ 
+ 	/**
+-	 * Refresh dynamic metadata that can appear only after a local model loads.
++	 * Refresh selected-model metadata.
++	 *
++	 * Direct bundled Google models restore provider-observed Top K through a
++	 * dedicated capability cache or the native Models endpoint.
+ 	 *
+ 	 * llama.cpp exposes `meta.n_ctx` once a lazy-loaded instance is up
+ 	 * (#3310/#3311); LM Studio exposes `loaded_context_length` once it JIT-loads
+@@ -591,6 +625,63 @@ export class ModelRegistry {
+ 	 * and patch its context window to what the backend actually serves.
+ 	 */
+ 	async refreshSelectedModelMetadata(model: Model<Api>): Promise<Model<Api>> {
++		// Snapshot the caller's selection before any async credential or discovery work.
++		// This branch may update only Top K metadata for that exact captured route.
++		const selectedGoogleModel = {
++			...model,
++			identity: { ...model.identity },
++		};
++		const bundledGoogleModel =
++			selectedGoogleModel.provider === "google"
++				? getBundledModels("google").find(candidate => candidate.id === selectedGoogleModel.id)
++				: undefined;
++		if (bundledGoogleModel && isExactBundledGoogleModel(selectedGoogleModel, bundledGoogleModel)) {
++			const apiKey = await this.#peekApiKeyForProvider("google");
++			if (!isAuthenticated(apiKey)) return selectedGoogleModel;
++			try {
++				const manager = createModelManager<Api>({
++					...googleModelManagerOptions({ apiKey, fetch: this.#fetch }),
++					cacheDbPath: this.#cacheDbPath,
++					cacheProviderId: GOOGLE_TOP_K_CACHE_PROVIDER_ID,
++					dynamicModelsAuthoritative: true,
++				});
++				let result = await withModelDiscoveryTimeout(RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS, () =>
++					manager.refresh("online-if-uncached"),
++				);
++				let refreshed = result.models.find(candidate => candidate.id === selectedGoogleModel.id);
++				if (result.source === "cache" && refreshed !== undefined && refreshed.topK === undefined) {
++					result = await withModelDiscoveryTimeout(RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS, () =>
++						manager.refresh("online"),
++					);
++					refreshed = result.models.find(candidate => candidate.id === selectedGoogleModel.id);
++				}
++				const current = this.find(selectedGoogleModel.provider, selectedGoogleModel.id);
++				if (result.stale || !current || !hasSameModelIdentityTuple(selectedGoogleModel, current)) {
++					// Stale observations and selections rerouted during discovery cannot grant capability.
++					return { ...selectedGoogleModel, topK: undefined };
++				}
++				if (!refreshed || !hasSameModelIdentityTuple(selectedGoogleModel, refreshed)) {
++					// A successful listing without this exact selected route withdraws its capability.
++					return { ...selectedGoogleModel, topK: undefined };
++				}
++				if (
++					refreshed.topK !== null &&
++					(typeof refreshed.topK !== "number" ||
++						!Number.isSafeInteger(refreshed.topK) ||
++						refreshed.topK <= 0)
++				) {
++					return { ...selectedGoogleModel, topK: undefined };
++				}
++				return { ...selectedGoogleModel, topK: refreshed.topK };
++			} catch {
++				logger.warn("selected Google model metadata refresh failed", {
++					provider: selectedGoogleModel.provider,
++					model: selectedGoogleModel.id,
++				});
++				// An exceptional refresh establishes no current provider capability.
++				return { ...selectedGoogleModel, topK: undefined };
++			}
++		}
+ 		const discoveryConfig = this.#findLazyRuntimeDiscovery(model.provider);
+ 		if (!discoveryConfig) {
+ 			return model;
 diff --git a/src/export/share.ts b/src/export/share.ts
-index 1d1ed9e..6f9fbb8 100644
+index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2c980a559 100644
 --- a/src/export/share.ts
 +++ b/src/export/share.ts
 @@ -663,7 +663,7 @@ async function shareViaServer(
@@ -741,7 +950,7 @@ index 1d1ed9e..6f9fbb8 100644
  	try {
  		res = await fetch(base, {
 diff --git a/src/extensibility/plugins/marketplace/cache.ts b/src/extensibility/plugins/marketplace/cache.ts
-index 6745cc7..c919217 100644
+index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d172813bc57 100644
 --- a/src/extensibility/plugins/marketplace/cache.ts
 +++ b/src/extensibility/plugins/marketplace/cache.ts
 @@ -54,11 +54,56 @@ export function getCachedPluginPath(
@@ -838,7 +1047,7 @@ index 6745cc7..c919217 100644
  	} catch (err) {
  		// Clean up staging dir on any failure; leave existing targetPath intact
 diff --git a/src/extensibility/plugins/marketplace/fetcher.ts b/src/extensibility/plugins/marketplace/fetcher.ts
-index 389da79..75a3c78 100644
+index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb922d4f009 100644
 --- a/src/extensibility/plugins/marketplace/fetcher.ts
 +++ b/src/extensibility/plugins/marketplace/fetcher.ts
 @@ -5,14 +5,80 @@
@@ -971,7 +1180,7 @@ index 389da79..75a3c78 100644
  		const catalog = parseMarketplaceCatalog(content, displayPath);
  		return { catalog, clonePath: tmpDir };
 diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibility/plugins/marketplace/manager.ts
-index 72733e9..4e51c57 100644
+index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757a4a6f1f0 100644
 --- a/src/extensibility/plugins/marketplace/manager.ts
 +++ b/src/extensibility/plugins/marketplace/manager.ts
 @@ -16,7 +16,7 @@ import { normalizePluginRuntimeConfig } from "../runtime-config";
@@ -1078,7 +1287,7 @@ index 72733e9..4e51c57 100644
  			}
  		}
 diff --git a/src/extensibility/plugins/marketplace/types.ts b/src/extensibility/plugins/marketplace/types.ts
-index fd101ff..109e85f 100644
+index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d554741226d8fa67 100644
 --- a/src/extensibility/plugins/marketplace/types.ts
 +++ b/src/extensibility/plugins/marketplace/types.ts
 @@ -142,10 +142,16 @@ export interface MarketplacesRegistry {
@@ -1099,7 +1308,7 @@ index fd101ff..109e85f 100644
  	addedAt: string;
  	updatedAt: string;
 diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index fc71d73..3ac109c 100644
+index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2fba12efc0 100644
 --- a/src/mcp/client.ts
 +++ b/src/mcp/client.ts
 @@ -1,3 +1,5 @@
@@ -1202,7 +1411,7 @@ index fc71d73..3ac109c 100644
  	for (const result of results) {
  		if (result.status === "rejected") {
 diff --git a/src/mcp/errors.ts b/src/mcp/errors.ts
-index b779975..6d26911 100644
+index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6dab5207bb 100644
 --- a/src/mcp/errors.ts
 +++ b/src/mcp/errors.ts
 @@ -29,6 +29,12 @@ interface MCPTransportErrorOptions {
@@ -1260,7 +1469,7 @@ index b779975..6d26911 100644
  
  function errorCode(error: unknown): string | number | undefined {
 diff --git a/src/mcp/loader.ts b/src/mcp/loader.ts
-index 135a0c5..81aa537 100644
+index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e316020f6dd 100644
 --- a/src/mcp/loader.ts
 +++ b/src/mcp/loader.ts
 @@ -27,6 +27,7 @@ export interface MCPToolsLoadResult {
@@ -1280,7 +1489,7 @@ index 135a0c5..81aa537 100644
  			enableProjectConfig: options?.enableProjectConfig,
  			filterExa: options?.filterExa,
 diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index ffccf8e..2943118 100644
+index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fdd25740bb 100644
 --- a/src/mcp/manager.ts
 +++ b/src/mcp/manager.ts
 @@ -7,7 +7,7 @@
@@ -1655,7 +1864,7 @@ index ffccf8e..2943118 100644
  		// Replace tools from this server
 diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
 new file mode 100755
-index 0000000..f3f9a54
+index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba0687268aea9
 --- /dev/null
 +++ b/src/mcp/resource-subscriptions.ts
 @@ -0,0 +1,81 @@
@@ -1741,7 +1950,7 @@ index 0000000..f3f9a54
 +  });
 +}
 diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
-index 955b724..2b20d89 100644
+index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b464568a987 100644
 --- a/src/mcp/tool-bridge.ts
 +++ b/src/mcp/tool-bridge.ts
 @@ -33,7 +33,7 @@ import type {
@@ -1860,7 +2069,7 @@ index 955b724..2b20d89 100644
  					} catch (retryError) {
  						rethrowIfAborted(retryError, signal);
 diff --git a/src/mcp/transports/http.ts b/src/mcp/transports/http.ts
-index 9d12523..9f399a6 100644
+index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd14ad42e4 100644
 --- a/src/mcp/transports/http.ts
 +++ b/src/mcp/transports/http.ts
 @@ -486,6 +486,10 @@ export class HttpTransport implements MCPTransport {
@@ -1886,7 +2095,7 @@ index 9d12523..9f399a6 100644
  			}
  
 diff --git a/src/mcp/transports/sse.ts b/src/mcp/transports/sse.ts
-index a4d71ea..29d1697 100644
+index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73e71a1c4f 100644
 --- a/src/mcp/transports/sse.ts
 +++ b/src/mcp/transports/sse.ts
 @@ -10,6 +10,7 @@ import type {
@@ -1977,7 +2186,7 @@ index a4d71ea..29d1697 100644
  	return transport;
  }
 diff --git a/src/mcp/types.ts b/src/mcp/types.ts
-index 7a600a6..19e6282 100644
+index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8e7ea9a41 100644
 --- a/src/mcp/types.ts
 +++ b/src/mcp/types.ts
 @@ -187,6 +187,7 @@ export interface MCPImplementation {
@@ -1989,7 +2198,7 @@ index 7a600a6..19e6282 100644
  	sampling?: Record<string, never>;
  	experimental?: Record<string, unknown>;
 diff --git a/src/sdk.ts b/src/sdk.ts
-index d647c79..eb7f36f 100644
+index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe31ab5551b 100644
 --- a/src/sdk.ts
 +++ b/src/sdk.ts
 @@ -540,6 +540,8 @@ export interface CreateAgentSessionOptions {
@@ -2001,7 +2210,16 @@ index d647c79..eb7f36f 100644
  	/** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
  	mcpManager?: MCPManager;
  
-@@ -2005,6 +2007,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -662,6 +664,8 @@ export interface CreateAgentSessionOptions {
+ export interface CreateAgentSessionResult {
+ 	/** The created session */
+ 	session: AgentSession;
++	/** Captured main Agent constructor dialect; undefined retains its live PI_DIALECT fallback. */
++	readonly nativeDialect: Dialect | undefined;
+ 	/** Extensions result (loaded extensions + runtime) */
+ 	extensionsResult: LoadExtensionsResult;
+ 	/** Update tool UI context (interactive mode) */
+@@ -2005,6 +2009,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  				configuredLevel: settings.extensionsSourceLevel(),
  			}));
  		const mcpDiscoverOptions = {
@@ -2009,7 +2227,24 @@ index d647c79..eb7f36f 100644
  			onStatus: onMCPStatus,
  			enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
  			// Always filter Exa - we have native integration
-@@ -4288,6 +4291,20 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -3528,6 +3533,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 		};
+ 		const kimiApiFormatSetting = settings.get("providers.kimiApiFormat");
+ 		const kimiApiFormat = kimiApiFormatSetting === "auto" ? undefined : kimiApiFormatSetting;
++		const nativeDialect = resolveDialect(settings.get("tools.format"), model);
+ 		agent = new Agent({
+ 			initialState: {
+ 				systemPrompt,
+@@ -3610,7 +3616,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 			resolveFallbackTool: resolveDeviceTool,
+ 			intentTracing: !!intentField,
+ 			pruneToolDescriptions: inlineToolDescriptors,
+-			dialect: resolveDialect(settings.get("tools.format"), model),
++			dialect: nativeDialect,
+ 			abortOnFabricatedToolResult: settings.get("tools.abortOnFabricatedResult"),
+ 			getToolChoice: () => session?.nextToolChoiceDirective(),
+ 			onToolChoiceUnavailable: () => session?.toolChoiceQueue.reject("unavailable"),
+@@ -4288,6 +4294,20 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  			);
  		}
  
@@ -2030,8 +2265,316 @@ index d647c79..eb7f36f 100644
  		startDeferredMCPDiscovery?.(session);
  
  		// Route the initial tool surface through the Code Mode-aware path when the
+@@ -4305,6 +4325,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 
+ 		return {
+ 			session,
++			nativeDialect,
+ 			extensionsResult,
+ 			setToolUIContext,
+ 			mcpManager,
+diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
+index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..ce4671ff71d86dd26e9b944724c36b826ee0ea98 100644
+--- a/src/session/agent-session.ts
++++ b/src/session/agent-session.ts
+@@ -1917,12 +1917,20 @@ export class AgentSession {
+ 		this.#toolChoiceQueue.clearPendingInvokers();
+ 	}
+ 
++	#forcedToolChoiceListeners = new Set<(id: string, toolName: string) => void>();
++
++	/** Observe only original setter admissions, synchronously after their queue push. */
++	subscribeForcedToolChoice(listener: (id: string, toolName: string) => void): () => void {
++		this.#forcedToolChoiceListeners.add(listener);
++		return () => { this.#forcedToolChoiceListeners.delete(listener); };
++	}
++
+ 	/**
+-	 * Force the next model call to target a specific active tool, then terminate
+-	 * the agent loop. Pushes a two-step sequence [forced, "none"] so the model
+-	 * calls exactly the forced tool once and then cannot call another.
++	 * Request an active tool followed by a final-response request. Native provider
++	 * compatibility and dialect policy may weaken or omit either request; queue
++	 * resolution is not evidence that the requested tool executed.
+ 	 */
+-	setForcedToolChoice(toolName: string): void {
++	setForcedToolChoice(toolName: string): string {
+ 		if (!this.getActiveToolNames().includes(toolName)) {
+ 			throw new Error(`Tool "${toolName}" is not currently active.`);
+ 		}
+@@ -1932,10 +1940,14 @@ export class AgentSession {
+ 			throw new Error("Current model does not support forcing a specific tool.");
+ 		}
+ 
+-		this.#toolChoiceQueue.pushSequence([forced, "none"], {
++		const id = this.#toolChoiceQueue.pushSequence([forced, "none"], {
+ 			label: "user-force",
+ 			onRejected: info => (info.reason === "unavailable" ? "drop_sequence" : "requeue"),
+ 		});
++		for (const listener of this.#forcedToolChoiceListeners) {
++			try { listener(id, toolName); } catch { /* Observers cannot fail native arming. */ }
++		}
++		return id;
+ 	}
+ 
+ 	/** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
+diff --git a/src/session/tool-choice-queue.ts b/src/session/tool-choice-queue.ts
+index cacbb5a7975edb95253e3806cc77a25fce66b088..1938cbe928e39f592347578d085c540794e54984 100644
+--- a/src/session/tool-choice-queue.ts
++++ b/src/session/tool-choice-queue.ts
+@@ -1,4 +1,5 @@
+ import type { ToolChoice } from "@oh-my-pi/pi-ai";
++import { randomUUID } from "node:crypto";
+ 
+ // ── Callback types ──────────────────────────────────────────────────────────
+ 
+@@ -35,6 +36,13 @@ export interface DirectiveCallbacks {
+ // ── Directive ───────────────────────────────────────────────────────────────
+ 
+ export interface ToolChoiceDirective {
++	readonly id: string;
++	/** Detached immutable admission metadata; arbitrary iterators remain opaque. */
++	readonly sequence?: readonly ToolChoice[];
++	nextIndex: number;
++	/** A replay refers to the original step, not a new sequence step. */
++	replayIndex?: number;
++	requeued: boolean;
+ 	generator: Iterator<ToolChoice>;
+ 	/** Stable label for targeted removal and debugging (e.g. "user-force"). */
+ 	label: string;
+@@ -65,6 +73,7 @@ interface InFlight {
+ 	directive: ToolChoiceDirective;
+ 	yielded: ToolChoice;
+ 	invoked: boolean;
++	index: number;
+ }
+ 
+ /**
+@@ -81,10 +90,89 @@ interface PendingInvoker {
+ 	onInvoked: (input: unknown) => Promise<unknown> | unknown;
+ }
+ 
++export interface ToolChoiceQueueEntry {
++	readonly id: string;
++	readonly label: string;
++	readonly sequence?: readonly ToolChoice[];
++	readonly nextIndex: number;
++	readonly inFlightIndex?: number;
++	readonly requeued: boolean;
++}
++
++export interface ToolChoiceQueueSnapshot {
++	readonly revision: number;
++	readonly hasInFlight: boolean;
++	readonly directives: readonly ToolChoiceQueueEntry[];
++}
++
++export interface ToolChoiceQueueEvent {
++	readonly revision: number;
++	readonly type: "push" | "claim" | "resolve" | "reject" | "remove" | "clear" | "preview";
++	readonly id?: string;
++}
++
++function immutableChoice(choice: ToolChoice): ToolChoice {
++	if (typeof choice === "string") return choice;
++	if ("function" in choice) return Object.freeze({ ...choice, function: Object.freeze({ ...choice.function }) });
++	return Object.freeze({ ...choice });
++}
++
+ // ── Queue ───────────────────────────────────────────────────────────────────
+ 
+ export class ToolChoiceQueue {
+ 	#queue: ToolChoiceDirective[] = [];
++	#revision = 0;
++	#listeners = new Set<(event: ToolChoiceQueueEvent) => void>();
++
++	#changed(type: ToolChoiceQueueEvent["type"], id?: string): void {
++		const event = Object.freeze({ revision: ++this.#revision, type, ...(id ? { id } : {}) });
++		for (const listener of this.#listeners) {
++			// Observation must never change native callback outcomes.
++			try { listener(event); } catch { /* Observer failure is isolated. */ }
++		}
++	}
++
++	subscribe(listener: (event: ToolChoiceQueueEvent) => void): () => void {
++		this.#listeners.add(listener);
++		return () => { this.#listeners.delete(listener); };
++	}
++
++	snapshot(): ToolChoiceQueueSnapshot {
++		const entries = new Map<string, ToolChoiceQueueEntry>();
++		const inFlight = this.#inFlight;
++		for (const directive of this.#queue) {
++			const root = directive.sequenceRoot ?? directive;
++			const claimed = inFlight?.directive.id === root.id ? inFlight : undefined;
++			const nextIndex = directive.replayIndex !== undefined && directive.nextIndex === 0
++				? directive.replayIndex : root.nextIndex;
++			if (entries.has(root.id)) continue;
++			if (root.sequence && nextIndex >= root.sequence.length && !claimed) continue;
++			entries.set(root.id, Object.freeze({
++				id: root.id, label: root.label, sequence: root.sequence, nextIndex,
++				...(claimed ? { inFlightIndex: claimed.index } : {}), requeued: root.requeued,
++			}));
++		}
++		// A callback may have removed the queued root while a claim remains.
++		if (inFlight && !entries.has(inFlight.directive.id)) {
++			const root = inFlight.directive.sequenceRoot ?? inFlight.directive;
++			entries.set(root.id, Object.freeze({
++				id: root.id, label: root.label, sequence: root.sequence,
++				nextIndex: root.nextIndex, inFlightIndex: inFlight.index, requeued: root.requeued,
++			}));
++		}
++		return Object.freeze({ revision: this.#revision, hasInFlight: !!inFlight,
++			directives: Object.freeze([...entries.values()]) });
++	}
++
++	/** Idle exact-root removal; never invokes callbacks or removes another sequence. */
++	removeSequence(id: string): boolean {
++		if (this.#inFlight?.directive.id === id) return false;
++		const remaining = this.#queue.filter(directive => directive.id !== id);
++		if (remaining.length === this.#queue.length) return false;
++		this.#queue = remaining;
++		this.#changed("remove", id);
++		return true;
++	}
+ 	/**
+ 	 * In-flight yield awaiting resolve()/reject(). May outlive the run that
+ 	 * claimed it: a pre-model gate stop ends the run without a `turn_end`, and
+@@ -106,16 +194,24 @@ export class ToolChoiceQueue {
+ 
+ 	// ── Push ──────────────────────────────────────────────────────────────
+ 
+-	pushOnce(choice: ToolChoice, options?: PushOptions): void {
+-		this.push(onceGen(choice), options);
++	pushOnce(choice: ToolChoice, options?: PushOptions): string {
++		return this.pushSequence([choice], options);
++	}
++
++	pushSequence(choices: readonly ToolChoice[], options?: PushOptions): string {
++		const sequence = Object.freeze(choices.map(immutableChoice));
++		// Observe detached values without freezing or replacing the native choices:
++		// lifecycle callbacks still receive the caller's original yielded object.
++		return this.#push(choices, options, sequence);
+ 	}
+ 
+-	pushSequence(choices: ToolChoice[], options?: PushOptions): void {
+-		this.push(choices, options);
++	push(generator: Iterable<ToolChoice>, options?: PushOptions): string {
++		return this.#push(generator, options);
+ 	}
+ 
+-	push(generator: Iterable<ToolChoice>, options?: PushOptions): void {
++	#push(generator: Iterable<ToolChoice>, options?: PushOptions, sequence?: readonly ToolChoice[]): string {
+ 		const directive: ToolChoiceDirective = {
++			id: randomUUID(), sequence, nextIndex: 0, requeued: false,
+ 			generator: generator[Symbol.iterator](),
+ 			label: options?.label ?? "anonymous",
+ 			callbacks: {
+@@ -129,6 +225,8 @@ export class ToolChoiceQueue {
+ 		} else {
+ 			this.#queue.push(directive);
+ 		}
++		this.#changed("push", directive.id);
++		return directive.id;
+ 	}
+ 
+ 	// ── Consume ───────────────────────────────────────────────────────────
+@@ -143,9 +241,13 @@ export class ToolChoiceQueue {
+ 			const result = head.generator.next();
+ 			if (result.done) {
+ 				this.#queue.shift();
++				this.#changed("remove", head.id);
+ 				continue;
+ 			}
+-			this.#inFlight = { directive: head, yielded: result.value, invoked: false };
++			const index = head.replayIndex ?? head.nextIndex;
++			head.nextIndex++;
++			this.#inFlight = { directive: head, yielded: result.value, invoked: false, index };
++			this.#changed("claim", head.id);
+ 			return result.value;
+ 		}
+ 		return undefined;
+@@ -168,7 +270,11 @@ export class ToolChoiceQueue {
+ 		this.#inFlight = undefined;
+ 
+ 		this.#lastResolvedLabel = inFlight.directive.label;
+-		inFlight.directive.callbacks.onResolved?.({ choice: inFlight.yielded });
++		try {
++			inFlight.directive.callbacks.onResolved?.({ choice: inFlight.yielded });
++		} finally {
++			this.#changed("resolve", inFlight.directive.id);
++		}
+ 	}
+ 
+ 	/**
+@@ -181,6 +287,7 @@ export class ToolChoiceQueue {
+ 		this.#inFlight = undefined;
+ 		if (!inFlight) return;
+ 
++		try {
+ 		const outcome = inFlight.directive.callbacks.onRejected?.({
+ 			choice: inFlight.yielded,
+ 			reason,
+@@ -197,6 +304,8 @@ export class ToolChoiceQueue {
+ 			// callbacks so the replayed yield still executes and finalizes correctly,
+ 			// and can requeue itself again if the next turn also aborts or skips it.
+ 			this.#queue.unshift({
++				id: inFlight.directive.id, nextIndex: 0,
++				replayIndex: inFlight.index, requeued: true,
+ 				generator: onceGen(inFlight.yielded),
+ 				label: `${inFlight.directive.label}-requeued`,
+ 				sequenceRoot: inFlight.directive.sequenceRoot ?? inFlight.directive,
+@@ -206,6 +315,10 @@ export class ToolChoiceQueue {
+ 					onRejected: inFlight.directive.callbacks.onRejected,
+ 				},
+ 			});
++			(inFlight.directive.sequenceRoot ?? inFlight.directive).requeued = true;
++		}
++		} finally {
++			this.#changed("reject", inFlight.directive.id);
+ 		}
+ 	}
+ 
+@@ -239,17 +352,21 @@ export class ToolChoiceQueue {
+ 	): void {
+ 		this.removePendingInvoker(id);
+ 		this.#pendingInvokers.push({ id, sourceToolName, onInvoked });
++		this.#changed("preview", id);
+ 	}
+ 
+ 	/** Drop the pending invoker with this id (e.g. after it resolves). */
+ 	removePendingInvoker(id: string): void {
++		if (!this.#pendingInvokers.some(p => p.id === id)) return;
+ 		this.#pendingInvokers = this.#pendingInvokers.filter(p => p.id !== id);
++		this.#changed("preview", id);
+ 	}
+ 
+ 	/** Drop every pending preview invoker without touching hard tool-choice directives. */
+ 	clearPendingInvokers(): void {
+ 		if (this.#pendingInvokers.length === 0) return;
+ 		this.#pendingInvokers = [];
++		this.#changed("preview");
+ 	}
+ 
+ 	/** True when at least one non-forcing pending preview is registered. */
+@@ -277,6 +394,7 @@ export class ToolChoiceQueue {
+ 			this.reject("removed");
+ 		}
+ 		this.#queue = this.#queue.filter(d => d.label !== label);
++		this.#changed("remove");
+ 	}
+ 
+ 	/** Empty the queue and reject any in-flight yield. */
+@@ -287,6 +405,7 @@ export class ToolChoiceQueue {
+ 		this.#queue = [];
+ 		this.#pendingInvokers = [];
+ 		this.#lastResolvedLabel = undefined;
++		this.#changed("clear");
+ 	}
+ 
+ 	// ── Observation ───────────────────────────────────────────────────────
 diff --git a/src/tools/browser.ts b/src/tools/browser.ts
-index b191f31..50c0be1 100644
+index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
 --- a/src/tools/browser.ts
 +++ b/src/tools/browser.ts
 @@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
@@ -2277,7 +2820,7 @@ index b191f31..50c0be1 100644
  	params: BrowserParams,
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts
 new file mode 100755
-index 0000000..1fc2ad5
+index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd781508d8205f5
 --- /dev/null
 +++ b/src/tools/browser/cdp-evaluation-channel.ts
 @@ -0,0 +1,117 @@
@@ -2399,7 +2942,7 @@ index 0000000..1fc2ad5
 +	return Object.freeze({ ready, dispose });
 +}
 diff --git a/src/tools/browser/cmux/cmux-tab.ts b/src/tools/browser/cmux/cmux-tab.ts
-index eabba18..0028ae2 100644
+index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..0028ae2535d2236767a7c2ddcac2d9d31e8e36b2 100644
 --- a/src/tools/browser/cmux/cmux-tab.ts
 +++ b/src/tools/browser/cmux/cmux-tab.ts
 @@ -2,8 +2,8 @@ import * as fs from "node:fs";
@@ -2893,7 +3436,7 @@ index eabba18..0028ae2 100644
  
 diff --git a/src/tools/browser/cmux/evaluation-channel.ts b/src/tools/browser/cmux/evaluation-channel.ts
 new file mode 100755
-index 0000000..34d7f21
+index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcafb236cb08
 --- /dev/null
 +++ b/src/tools/browser/cmux/evaluation-channel.ts
 @@ -0,0 +1,130 @@
@@ -3028,7 +3571,7 @@ index 0000000..34d7f21
 +	});
 +}
 diff --git a/src/tools/browser/cmux/socket-client.ts b/src/tools/browser/cmux/socket-client.ts
-index 1741739..71e79d2 100644
+index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c078f1299 100644
 --- a/src/tools/browser/cmux/socket-client.ts
 +++ b/src/tools/browser/cmux/socket-client.ts
 @@ -12,6 +12,8 @@ type RequestJob = {
@@ -3345,7 +3888,7 @@ index 1741739..71e79d2 100644
  	#rejectAll(err: ToolError): void {
 diff --git a/src/tools/browser/cmux/surface-observation.ts b/src/tools/browser/cmux/surface-observation.ts
 new file mode 100755
-index 0000000..b6b4128
+index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da08d9aeefa
 --- /dev/null
 +++ b/src/tools/browser/cmux/surface-observation.ts
 @@ -0,0 +1,83 @@
@@ -3434,7 +3977,7 @@ index 0000000..b6b4128
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000..6367c08
+index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d338494fe8
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
 @@ -0,0 +1,300 @@
@@ -3739,7 +4282,7 @@ index 0000000..6367c08
 +	return { message: typeof value.message === "string" ? value.message : "Browser protocol request failed", code: typeof value.code === "number" ? value.code : -32000, data: value.data ?? value.originalMessage };
 +}
 diff --git a/src/tools/browser/registry.ts b/src/tools/browser/registry.ts
-index 1b1bf38..69c255e 100644
+index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993c48e980a 100644
 --- a/src/tools/browser/registry.ts
 +++ b/src/tools/browser/registry.ts
 @@ -77,6 +77,21 @@ export interface ReleaseBrowserOptions {
@@ -3834,7 +4377,7 @@ index 1b1bf38..69c255e 100644
  		handle.client.close();
  		return;
 diff --git a/src/tools/browser/relay/bridge.ts b/src/tools/browser/relay/bridge.ts
-index dededcc..486d572 100644
+index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d436e1d9de 100644
 --- a/src/tools/browser/relay/bridge.ts
 +++ b/src/tools/browser/relay/bridge.ts
 @@ -18,8 +18,8 @@
@@ -4896,7 +5439,7 @@ index dededcc..486d572 100644
  	}
  }
 diff --git a/src/tools/browser/relay/extension-assets/background.js.txt b/src/tools/browser/relay/extension-assets/background.js.txt
-index 560da85..85e7d1a 100644
+index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e841a8b1445 100644
 --- a/src/tools/browser/relay/extension-assets/background.js.txt
 +++ b/src/tools/browser/relay/extension-assets/background.js.txt
 @@ -7,6 +7,7 @@ var ws = null;
@@ -5001,7 +5544,7 @@ index 560da85..85e7d1a 100644
    socket.onclose = () => {
      if (ws !== socket)
 diff --git a/src/tools/browser/relay/protocol.ts b/src/tools/browser/relay/protocol.ts
-index baef431..f573512 100644
+index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a2203ff24 100644
 --- a/src/tools/browser/relay/protocol.ts
 +++ b/src/tools/browser/relay/protocol.ts
 @@ -21,6 +21,7 @@ export interface TabSnapshot {
@@ -5023,7 +5566,7 @@ index baef431..f573512 100644
  			tabs: TabSnapshot[];
 diff --git a/src/tools/browser/run-context.ts b/src/tools/browser/run-context.ts
 new file mode 100755
-index 0000000..4b24343
+index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0bef346f0
 --- /dev/null
 +++ b/src/tools/browser/run-context.ts
 @@ -0,0 +1,33 @@
@@ -5061,7 +5604,7 @@ index 0000000..4b24343
 +	};
 +}
 diff --git a/src/tools/browser/tab-protocol.ts b/src/tools/browser/tab-protocol.ts
-index 98cbe21..80be7e6 100644
+index 98cbe214ebfd047d98aaa566e539dcf285fbd684..80be7e60d1430e30e7d783a9352fa4f78788aa9d 100644
 --- a/src/tools/browser/tab-protocol.ts
 +++ b/src/tools/browser/tab-protocol.ts
 @@ -1,4 +1,5 @@
@@ -5150,7 +5693,7 @@ index 98cbe21..80be7e6 100644
  export interface Transport {
  	send(msg: WorkerOutbound | WorkerInbound, transferList?: Transferable[]): void;
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5..16cb150 100644
+index c6b8dd5f4d2217a615c0058f4129f9d3322456af..16cb150e8203a307653a6bcdad7909231fed9a35 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
 @@ -5,18 +5,24 @@ import {
@@ -7735,7 +8278,7 @@ index c6b8dd5..16cb150 100644
  }
  /**
 diff --git a/src/tools/browser/tab-worker-entry.ts b/src/tools/browser/tab-worker-entry.ts
-index 9c572c8..fbc9340 100644
+index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267ffe33f470 100644
 --- a/src/tools/browser/tab-worker-entry.ts
 +++ b/src/tools/browser/tab-worker-entry.ts
 @@ -6,6 +6,15 @@ import { WorkerCore } from "./tab-worker";
@@ -7784,7 +8327,7 @@ index 9c572c8..fbc9340 100644
 +}
 diff --git a/src/tools/browser/tab-worker-host.ts b/src/tools/browser/tab-worker-host.ts
 new file mode 100755
-index 0000000..c3045c8
+index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cca94d5352
 --- /dev/null
 +++ b/src/tools/browser/tab-worker-host.ts
 @@ -0,0 +1,296 @@
@@ -8085,7 +8628,7 @@ index 0000000..c3045c8
 +	return attempt;
 +}
 diff --git a/src/tools/browser/tab-worker.ts b/src/tools/browser/tab-worker.ts
-index 6e8281a..a822c09 100644
+index 6e8281a7b1a6d42d22775cef6fb786beda634897..a822c09e37414533ab18602d35bc4a8d9898ce0f 100644
 --- a/src/tools/browser/tab-worker.ts
 +++ b/src/tools/browser/tab-worker.ts
 @@ -3,13 +3,13 @@ import * as os from "node:os";
@@ -8707,7 +9250,7 @@ index 6e8281a..a822c09 100644
  }
 diff --git a/src/tools/browser/target-observation.ts b/src/tools/browser/target-observation.ts
 new file mode 100755
-index 0000000..d0148a7
+index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902d24582f4
 --- /dev/null
 +++ b/src/tools/browser/target-observation.ts
 @@ -0,0 +1,91 @@
@@ -8804,7 +9347,7 @@ index 0000000..d0148a7
 +}
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 new file mode 100755
-index 0000000..870b940
+index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8be412636
 --- /dev/null
 +++ b/src/tools/browser/worker-cdp-channel.ts
 @@ -0,0 +1,249 @@
@@ -9058,7 +9601,7 @@ index 0000000..870b940
 +	dispose(): Promise<void> { this.close(); return this.#done.promise; }
 +}
 diff --git a/src/tools/computer/worker-entry.ts b/src/tools/computer/worker-entry.ts
-index 14a0b4e..619e0a0 100644
+index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d589ce816a 100644
 --- a/src/tools/computer/worker-entry.ts
 +++ b/src/tools/computer/worker-entry.ts
 @@ -10,10 +10,11 @@ export function startComputerWorker(): void {
@@ -9119,128 +9662,3 @@ new mode 100644
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 old mode 100755
 new mode 100644
-diff --git a/src/config/model-registry.ts b/src/config/model-registry.ts
-index 9b63174..2321808 100644
---- a/src/config/model-registry.ts
-+++ b/src/config/model-registry.ts
-@@ -29,6 +29,7 @@ import { getBundledModels, getBundledProviders } from "@oh-my-pi/pi-catalog/mode
- import {
- 	googleAntigravityModelManagerOptions,
- 	googleGeminiCliModelManagerOptions,
-+	googleModelManagerOptions,
- 	isCredentialScopedModelCacheProvider,
- 	MODELS_DEV_CATALOG_PROVIDER_IDS,
- 	modelsDevCatalogFallback,
-@@ -144,6 +145,36 @@ const ADDITIVE_MODELS_DEV_CATALOG_PROVIDER_ID_LOOKUP: Readonly<Record<string, tr
- 		).map(providerId => [providerId, true as const]),
- 	),
- );
-+const GOOGLE_GENERATIVE_AI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-+const GOOGLE_TOP_K_CACHE_PROVIDER_ID = "google:top-k-v1";
-+
-+function hasSameModelIdentityTuple(left: Model<Api>, right: Model<Api>): boolean {
-+	return (
-+		left.provider === right.provider &&
-+		left.id === right.id &&
-+		left.api === right.api &&
-+		left.baseUrl === right.baseUrl &&
-+		left.transport === right.transport &&
-+		left.requestModelId === right.requestModelId &&
-+		left.identity.class === right.identity.class &&
-+		left.identity.family === right.identity.family &&
-+		left.identity.revision === right.identity.revision &&
-+		left.identity.effort === right.identity.effort &&
-+		left.identity.thinkingVariant === right.identity.thinkingVariant &&
-+		left.identity.logicalId === right.identity.logicalId
-+	);
-+}
-+
-+function isExactBundledGoogleModel(model: Model<Api>, bundled: Model<Api>): boolean {
-+	return (
-+		model.provider === "google" &&
-+		model.api === "google-generative-ai" &&
-+		model.baseUrl === GOOGLE_GENERATIVE_AI_BASE_URL &&
-+		model.transport === undefined &&
-+		bundled.identity.class === "gemini" &&
-+		hasSameModelIdentityTuple(model, bundled)
-+	);
-+}
- 
- /**
-  * Bedrock provider-scoped fields to spread onto a model spec, dropping keys
-@@ -582,7 +613,10 @@ export class ModelRegistry {
- 	}
- 
- 	/**
--	 * Refresh dynamic metadata that can appear only after a local model loads.
-+	 * Refresh selected-model metadata.
-+	 *
-+	 * Direct bundled Google models restore provider-observed Top K through a
-+	 * dedicated capability cache or the native Models endpoint.
- 	 *
- 	 * llama.cpp exposes `meta.n_ctx` once a lazy-loaded instance is up
- 	 * (#3310/#3311); LM Studio exposes `loaded_context_length` once it JIT-loads
-@@ -591,6 +625,63 @@ export class ModelRegistry {
- 	 * and patch its context window to what the backend actually serves.
- 	 */
- 	async refreshSelectedModelMetadata(model: Model<Api>): Promise<Model<Api>> {
-+		// Snapshot the caller's selection before any async credential or discovery work.
-+		// This branch may update only Top K metadata for that exact captured route.
-+		const selectedGoogleModel = {
-+			...model,
-+			identity: { ...model.identity },
-+		};
-+		const bundledGoogleModel =
-+			selectedGoogleModel.provider === "google"
-+				? getBundledModels("google").find(candidate => candidate.id === selectedGoogleModel.id)
-+				: undefined;
-+		if (bundledGoogleModel && isExactBundledGoogleModel(selectedGoogleModel, bundledGoogleModel)) {
-+			const apiKey = await this.#peekApiKeyForProvider("google");
-+			if (!isAuthenticated(apiKey)) return selectedGoogleModel;
-+			try {
-+				const manager = createModelManager<Api>({
-+					...googleModelManagerOptions({ apiKey, fetch: this.#fetch }),
-+					cacheDbPath: this.#cacheDbPath,
-+					cacheProviderId: GOOGLE_TOP_K_CACHE_PROVIDER_ID,
-+					dynamicModelsAuthoritative: true,
-+				});
-+				let result = await withModelDiscoveryTimeout(RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS, () =>
-+					manager.refresh("online-if-uncached"),
-+				);
-+				let refreshed = result.models.find(candidate => candidate.id === selectedGoogleModel.id);
-+				if (result.source === "cache" && refreshed !== undefined && refreshed.topK === undefined) {
-+					result = await withModelDiscoveryTimeout(RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS, () =>
-+						manager.refresh("online"),
-+					);
-+					refreshed = result.models.find(candidate => candidate.id === selectedGoogleModel.id);
-+				}
-+				const current = this.find(selectedGoogleModel.provider, selectedGoogleModel.id);
-+				if (result.stale || !current || !hasSameModelIdentityTuple(selectedGoogleModel, current)) {
-+					// Stale observations and selections rerouted during discovery cannot grant capability.
-+					return { ...selectedGoogleModel, topK: undefined };
-+				}
-+				if (!refreshed || !hasSameModelIdentityTuple(selectedGoogleModel, refreshed)) {
-+					// A successful listing without this exact selected route withdraws its capability.
-+					return { ...selectedGoogleModel, topK: undefined };
-+				}
-+				if (
-+					refreshed.topK !== null &&
-+					(typeof refreshed.topK !== "number" ||
-+						!Number.isSafeInteger(refreshed.topK) ||
-+						refreshed.topK <= 0)
-+				) {
-+					return { ...selectedGoogleModel, topK: undefined };
-+				}
-+				return { ...selectedGoogleModel, topK: refreshed.topK };
-+			} catch {
-+				logger.warn("selected Google model metadata refresh failed", {
-+					provider: selectedGoogleModel.provider,
-+					model: selectedGoogleModel.id,
-+				});
-+				// An exceptional refresh establishes no current provider capability.
-+				return { ...selectedGoogleModel, topK: undefined };
-+			}
-+		}
- 		const discoveryConfig = this.#findLazyRuntimeDiscovery(model.provider);
- 		if (!discoveryConfig) {
- 			return model;

@@ -1,3 +1,8 @@
+import { resolveOwnedDialectFromEnv } from "@oh-my-pi/pi-agent-core/agent-loop";
+import { NativeForceToolController } from "./force-tool";
+import { NativeForceToolAdmission, assertForceToolRecoveryAndEnter } from "./force-tool-admission";
+import { wrapForceToolRecoveryOutcome } from "./force-tool-recovery-outcome";
+import { parseForceToolPromptFields, type ForceToolCancelResult, type ForceToolState, type ForceToolTicket, type ForceToolGuard, type ForceToolRecovery } from "../../../../packages/shared/src/force-tool";
 import { HtmlPreviews } from './html-previews';
 import { parseHtmlPreviewRequest, type HtmlPreviewRequest, type HtmlPreviewLease } from '../../../../packages/shared/src/html-preview';
 import { inspectSessionOutputs, recordedGeneratedImage, sessionOutputBranch } from "./session-outputs";
@@ -86,7 +91,7 @@ export interface OmpSessionOptions {
   interactions?: boolean;
 }
 export interface OmpOpenOptions { expectedIdentity?: SessionStartupIdentity; sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
-export interface OmpPromptOptions { model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
+export interface OmpPromptOptions { commandId?: string; commandVersion?: number; forceTool?: ForceToolGuard; forceRecovery?: ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
 export interface OmpBrowserTabCreateResult {
   tab: NativeBrowserTabMetadata;
   targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
@@ -137,6 +142,8 @@ export interface OmpSession {
     backend: "cdp" | "cmux"; descriptor?: Record<string, unknown>; state?: Record<string, unknown>;
   }, transport: { post(frame: unknown): void; installReceiver?(receive:(frame:unknown)=>void):void; request(method: string, params: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<Record<string, unknown>> }): Promise<{ receive(frame: unknown): void; dispose(): Promise<void> }>;
   subscribe(listener: OmpEventListener): () => void;
+  getForceTool(): ForceToolState;
+  cancelForceTool(input: { ticket: ForceToolTicket; directiveId: string }): ForceToolCancelResult;
   startPrompt(text: string, options?: OmpPromptOptions): OmpPromptRun;
   prompt(text: string, options?: OmpPromptOptions): Promise<boolean>;
   steer(text: string, expectedApprovalMode?: OmpApprovalMode, options?: { images?: PreparedPromptImage[] }): Promise<OmpSteerReceipt>;
@@ -593,6 +600,48 @@ export class OmpRuntime {
         assertSessionActive();
         return accountBridge.list(session.sessionId);
       };
+      // The SDK returns the dialect selected for this Agent's constructor.
+      // Later settings edits must not invent a different wire owner.
+      const constructionDialect = result.nativeDialect;
+      let forceAdmissionDepth = 0;
+      let nativeForceDispatchDepth = 0;
+      const forceOwnerId = session.sessionId;
+      let forceOwnershipRevision = 0;
+      let previousForceOwnership: readonly unknown[] | undefined;
+      const getForceOwnershipRevision = () => {
+        // Scope depth only changes presentation. Revision follows the actual
+        // owner and canonical command identities, including runner replacement.
+        const current = [disposed, promotionState, session.sessionId, session.isDisposed, session.extensionRunner,
+          session.extensionRunner?.getCommand("force")?.handler,
+          session.customCommands.find(command => command.command.name === "force")?.command.execute];
+        if (previousForceOwnership && current.some((value, index) => value !== previousForceOwnership![index])) forceOwnershipRevision++;
+        previousForceOwnership = current;
+        return forceOwnershipRevision;
+      };
+      const forceTool = new NativeForceToolController(session, {
+        getDialect: () => constructionDialect ?? resolveOwnedDialectFromEnv(Bun.env.PI_DIALECT),
+        getOwnershipRevision: getForceOwnershipRevision,
+        getOwnershipReason: () => disposed || promotionState !== "idle" || session.sessionId !== forceOwnerId
+          ? "The original native force owner has retired."
+          : nativeForceDispatchDepth === 0 && (session.extensionRunner?.getCommand("force") || session.customCommands.some(command => command.command.name === "force"))
+            ? "An extension or custom command owns /force in this session." : undefined,
+        getBusyReason: () => (forceAdmissionDepth === 0 && (promptInFlight || admissionPending))
+          || accountMutation || goalMutation || mcpMutation || interruptsInFlight || session.hasPostPromptWork
+          || session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running"
+          ? "Resolve current native work before changing the force queue." : undefined,
+      });
+      const withinForceAdmission = <T>(operation: () => T): T => {
+        forceAdmissionDepth++;
+        try { return operation(); } finally { forceAdmissionDepth--; }
+      };
+      const forceAdmissionPort = {
+        getState: () => forceTool.getState(),
+        captureArm: <T>(input: Parameters<NativeForceToolController["captureArm"]>[0], invoke: () => T) => {
+          return withinForceAdmission(() => forceTool.captureArm(input, invoke));
+        },
+        cancel: (input: Parameters<NativeForceToolController["cancel"]>[0]) => forceTool.cancel(input),
+        assertRecovery: (input: ForceToolRecovery) => withinForceAdmission(() => forceTool.assertRecovery(input)),
+      };
       const handle: OmpSession = {
         get id() { return session.sessionId; },
         get sessionFile() { return session.sessionFile ?? sessionFile; },
@@ -929,9 +978,17 @@ export class OmpRuntime {
           assertSessionActive(); listeners.add(listener);
           return () => { listeners.delete(listener); };
         },
+        getForceTool: () => { assertSessionActive(); return forceTool.getState(); },
+        cancelForceTool: input => { assertSessionActive(); return forceTool.cancel(input); },
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
           if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          const forceFields = parseForceToolPromptFields(promptOptions);
+          if (forceFields.forceRecovery && ((promptOptions.commandVersion ?? 0) < 18 || !promptOptions.commandId))
+            throw new Error("Force prompt recovery requires command protocol 18 and its original operation identity.");
+          promptOptions = { ...promptOptions, ...forceFields };
+          if (promptOptions.forceRecovery && (promptOptions.images?.length || promptOptions.selectedText || promptOptions.wholeFiles))
+            throw new Error("Force prompt recovery retains plain text only; attached content was not admitted by the original arm.");
           const images = copyPreparedImages(promptOptions.images);
           // Detach the renderer/worker payload before native setup can await.
           // A selected context is persisted separately, so its ordinary user
@@ -950,9 +1007,16 @@ export class OmpRuntime {
           // special native message. Never append selected context before it.
           if ((selectedText || wholeFiles) && text.trimStart().startsWith("/")) throw new Error("Selected text and whole-file attachments are only supported for ordinary prompts; slash commands and skills were not executed.");
           const imagePrompt = images?.length ? new NativeImagePrompt(images, nativeText) : undefined;
+          const controller = new AbortController();
+          const assertForceAdmissionOwner = () => {
+            assertSessionActive();
+            if (admissionAbort !== controller || controller.signal.aborted || !admissionPending)
+              throw new Error("The original force prompt admission has retired.");
+          };
+          const forceAdmission = new NativeForceToolAdmission(forceAdmissionPort, session, promptOptions, assertForceAdmissionOwner);
+          let recoveryPromptEntered = false;
           promptInFlight = true;
           admissionPending = true;
-          const controller = new AbortController();
           admissionAbort = controller;
           let skillPrompt: NativeSkillPrompt | undefined;
           const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
@@ -968,11 +1032,11 @@ export class OmpRuntime {
               if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
               // Extension startup can add skills, so resolve them only after it
               // has completed, but before admission attribution is installed.
-              skillPrompt = NativeSkillPrompt.fromText(session, text);
+              skillPrompt = promptOptions.forceRecovery ? undefined : NativeSkillPrompt.fromText(session, text);
               if ((selectedText || wholeFiles) && skillPrompt) throw new Error("Selected text and whole-file attachments are not supported on native skill prompts; no input was executed.");
               if (skillPrompt && imagePrompt) throw new Error("Images on native skill invocations are not connected yet; the draft was retained.");
               // Startup extension messages are not receipts for the submitted draft.
-              const nativeRun = beginNativePrompt(manager, async () => {
+              const dispatchedRun = forceAdmission.wrapRun(beginNativePrompt(manager, async () => {
                 if (promptOptions.model) await session.setModel(this.#findModel(registry, promptOptions.model, session.settings));
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
                 if (promptOptions.thinkingLevel !== undefined) {
@@ -988,7 +1052,20 @@ export class OmpRuntime {
                 await wholeFiles?.prepare(session);
                 assertSessionActive();
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted after attachment context append");
+                if (promptOptions.forceRecovery) return assertForceToolRecoveryAndEnter(forceAdmissionPort, promptOptions.forceRecovery,
+                  assertForceAdmissionOwner, async () => {
+                    recoveryPromptEntered = true;
+                    return { agentInvoked: await session.prompt(nativeText) };
+                  });
                 return dispatchNativePrompt(session, nativeText, imagePrompt?.images, skillPrompt, {
+                  forceTool: forceAdmission,
+                  withNativeForceInvocation: operation => {
+                    // Synchronous, exact-token-checked sections only. Never hold
+                    // this exception across output/history awaits or recovery.
+                    nativeForceDispatchDepth++;
+                    try { return withinForceAdmission(operation); }
+                    finally { nativeForceDispatchDepth--; }
+                  },
                   inspectMcp: () => { assertSessionActive(); return mcp.read(); },
                   reloadMcp: async () => {
                     // This callback runs inside the existing native-command admission.
@@ -1025,7 +1102,9 @@ export class OmpRuntime {
                     return trackMcpMutation(mcp.reconnect({ epoch: ticket.epoch, expectedRevision: ticket.revision, serverName }));
                   },
                 });
-              }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt, selectedText, wholeFiles);
+              }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt, selectedText, wholeFiles, forceAdmission));
+              const nativeRun = promptOptions.forceRecovery
+                ? wrapForceToolRecoveryOutcome(dispatchedRun, () => recoveryPromptEntered) : dispatchedRun;
               void nativeRun.accepted.then(value => { if (value) nativeGoalController.resetSuppression(); receipt.resolve(value); }, receipt.reject);
               const completed = await nativeRun.completion;
               await nativeGoalController.settleFinalization();
@@ -1033,7 +1112,7 @@ export class OmpRuntime {
           })().catch(error => { receipt.reject(error); throw error; }).finally(() => { wholeFiles?.close(); selectedText?.close(); imagePrompt?.close(); skillPrompt?.close(); });
           void receipt.promise.catch(() => {});
           void completion.catch(() => {});
-          const run = { accepted: receipt.promise, completion };
+          const run = { accepted: receipt.promise, completion, get forceToolReceipt() { return forceAdmission.forceToolReceipt; } };
           const clearAdmission = () => { admissionPending = false; };
           void run.accepted.then(clearAdmission, clearAdmission);
           const clearTurn = () => { promptInFlight = false; admissionPending = false; admissionAbort = undefined; };
@@ -1158,6 +1237,7 @@ export class OmpRuntime {
             await Promise.allSettled([...mcpReads, ...(outputRead ? [outputRead] : [])]);
             const cleanupErrors = mcpDrains.flatMap(result => result.status === "rejected" ? [result.reason] : []);
             const clean = async (work: () => unknown) => { try { await work(); } catch (error) { cleanupErrors.push(error); } };
+            await clean(() => forceTool.dispose());
             await clean(() => session.beginDispose());
             await clean(() => session.dispose());
             await clean(() => steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified"));

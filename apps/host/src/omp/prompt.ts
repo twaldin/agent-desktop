@@ -1,5 +1,5 @@
 import type { SessionManager } from "@oh-my-pi/pi-coding-agent";
-import type { ImageAdmission, PromptAdmission } from "@agent-desktop/shared";
+import type { ForceToolReceipt, ImageAdmission, PromptAdmission } from "@agent-desktop/shared";
 
 export type OmpPromptReceipt = PromptAdmission;
 export class OmpPromptAdmissionError extends Error {
@@ -21,6 +21,8 @@ export interface OmpPromptRun {
   accepted: Promise<OmpPromptReceipt | null>;
   /** Actual native turn completion. Its boolean is not an acceptance receipt. */
   completion: Promise<boolean>;
+  /** Snapshot of the original force command, independent of prompt admission. */
+  readonly forceToolReceipt?: ForceToolReceipt;
 }
 
 /** The caller must exclude other user submissions until this admission settles. */
@@ -32,11 +34,18 @@ export function beginNativePrompt(
   skillAdmission?: { matchesEntry(entry: Parameters<NonNullable<SessionManager["onEntryAppended"]>>[0]): boolean; readonly name: string; readonly dispatched: boolean },
   selectedTextAdmission?: { readonly attempted: boolean; matches(message: unknown): boolean; persistBinding?(entryId: string): Promise<void> },
   wholeFileAdmission?: { readonly attempted: boolean; matches(message: unknown): boolean; observe(entry: Parameters<NonNullable<SessionManager["onEntryAppended"]>>[0]): void; persistBinding(userEntryId: string): Promise<void> },
+  forceAdmission?: { observeUserEntry(entryId: string): void; observeFlushedUserEntry(entryId: string): void; failure(error: unknown, unknown?: boolean): unknown },
 ): OmpPromptRun {
   const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
   let entryObserved = false;
   let commandHandled = false;
-  const admissionFailure = (error: unknown) => imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted || wholeFileAdmission?.attempted || commandHandled ? new OmpPromptAdmissionError(error) : error;
+  const admissionFailure = (error: unknown, forceUnknown = false) => {
+    // The force observer is also present on ordinary submissions. Preserve
+    // their existing uncertainty before adding any actual force receipt.
+    const failure = imageAdmission?.dispatched || skillAdmission?.dispatched || selectedTextAdmission?.attempted || wholeFileAdmission?.attempted || commandHandled
+      ? new OmpPromptAdmissionError(error) : error;
+    return forceAdmission ? forceAdmission.failure(failure, forceUnknown) : failure;
+  };
   const previousEntryListener = manager.onEntryAppended;
   const entryListener: NonNullable<typeof manager.onEntryAppended> = entry => {
     previousEntryListener?.(entry);
@@ -46,12 +55,14 @@ export function beginNativePrompt(
       || (imageAdmission && !imageAdmission.matches(entry.message))
       || (selectedTextAdmission && !selectedTextAdmission.matches(entry.message)))) return;
     entryObserved = true;
+    forceAdmission?.observeUserEntry(entry.id);
     // message_end precedes persistence. onEntryAppended follows native append;
     // flush additionally checks asynchronous writes and latched disk failures.
     void Promise.resolve().then(() => selectedTextAdmission?.persistBinding?.(entry.id)).then(() => wholeFileAdmission?.persistBinding(entry.id)).then(() => manager.flush()).then(() => {
+      forceAdmission?.observeFlushedUserEntry(entry.id);
       receipt.resolve(skillEntry ? { kind: "skill-message", entryId: entry.id, name: skillAdmission!.name }
         : { kind: "user-message", entryId: entry.id, ...(imageAdmission ? { images: imageAdmission.receipt() } : {}) });
-    }).catch(error => receipt.reject(admissionFailure(error)));
+    }).catch(error => receipt.reject(admissionFailure(error, true)));
   };
   manager.onEntryAppended = entryListener;
   const completion = (async () => {

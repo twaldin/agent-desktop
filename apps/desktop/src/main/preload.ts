@@ -188,6 +188,7 @@ const bridge: DesktopBridge = {
   openHtmlPreview: (sessionId, request, hostId) => ipcRenderer.invoke("host:html-preview", sessionId, request, hostId),
   releaseHtmlPreview: (sessionId, leaseId, hostId) => ipcRenderer.invoke("host:html-preview", sessionId, { leaseId }, hostId),
   getSessionOutputs: (sessionId, hostId) => ipcRenderer.invoke("host:session-outputs", sessionId, hostId),
+  getForceTool: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:force-tool-read", sessionId, hostId, commandId),
   getSessionMcp: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-mcp", sessionId, hostId, commandId),
   getSessionMcpAuthorization: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-mcp-authorization", sessionId, hostId, commandId),
   respondSessionMcpAuthorization: (sessionId, reply, hostId) => ipcRenderer.invoke("host:session-mcp-authorization-respond", sessionId, reply, hostId),

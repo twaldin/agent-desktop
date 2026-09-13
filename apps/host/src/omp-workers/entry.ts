@@ -2,7 +2,7 @@ import { WorkerBrowserEvaluationChannels } from "../omp-browser/evaluation";
 import { WorkerBrowserObservations } from "../omp-browser/observation";
 import { WorkerBrowserReservations } from "../omp-browser/reservation";
 import { WorkerBrowserCloses } from "../omp-browser/close";
-import { parseNativeMcpAuthorizationId, parseNativeMcpAuthorizationReply, parseNativeMcpAuthorizationStart } from "@agent-desktop/shared";
+import { parseForceToolCancel, parseForceToolCancelResult, parseForceToolCommandId, parseForceToolPromptFields, parseForceToolReceipt, parseForceToolState, parseNativeMcpAuthorizationId, parseNativeMcpAuthorizationReply, parseNativeMcpAuthorizationStart, type ForceToolReceipt } from "@agent-desktop/shared";
 import { parseNativeMcpAppRequest, parseNativeSessionMcpResourceRequest } from "@agent-desktop/shared";
 import { parseNativeSessionMcpReload, parseNativeSessionMcpReconnect } from "@agent-desktop/shared";
 import { parseBrowserControlRequest, parseBrowserNavigationUrl, parseGoalMutationRequest, parseResolveDetachedQuestionRequest } from "@agent-desktop/shared";
@@ -197,10 +197,10 @@ function browserMetadata(value: unknown): BrowserMetadataAvailability {
 async function request(message: Extract<ParentMessage, { type: "request" }>): Promise<void> {
   let admitted = false, ownsPromotion = false;
   const originId = session?.id, originFile = session?.sessionFile;
-  const respond = (ok: boolean, value?: unknown, error?: unknown, phase?: "accepted" | "completion") => {
+  const respond = (ok: boolean, value?: unknown, error?: unknown, phase?: "accepted" | "completion", forceToolReceipt?: ForceToolReceipt) => {
     send({ type: "response", id: message.id, ok, value,
       ...(message.operation === "requestBrowserEvaluation" ? { evaluation: { binding: message.args.binding, sequence: message.args.sequence } } : {}),
-      ...(error === undefined ? {} : { error: remoteError(error) }), phase, snapshot: snapshot() });
+      ...(error === undefined ? {} : { error: remoteError(error) }), ...(forceToolReceipt === undefined ? {} : { forceToolReceipt }), phase, snapshot: snapshot() });
   };
   try {
     if (stopping && message.operation !== "dispose" && message.operation !== "disposeBrowserEvaluation") throw new Error("OMP worker is stopping");
@@ -338,6 +338,13 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getSkillInventory": if (!runtime || session) throw new Error("Native skill inventory requires an initialized discovery worker."); respond(true, await runtime.getSkillInventory(message.args.cwd, { refresh: message.args.refresh })); break;
       case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
+      case "getForceTool": respond(true, parseForceToolState(requireSession().getForceTool())); break;
+      case "cancelForceTool": {
+        const active = requireSession();
+        const parsed = parseForceToolCancel({ sessionId: active.id, ...message.args });
+        respond(true, parseForceToolCancelResult(active.cancelForceTool({ ticket: parsed.ticket, directiveId: parsed.directiveId })));
+        break;
+      }
       case "getSessionActivity": {
         const active = requireSession();
         await active.refreshGoalUsage();
@@ -514,11 +521,37 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getSessionOutputs": respond(true, await requireSession().getSessionOutputs()); break;
       case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex, message.args.source)); break;
       case "startPrompt": {
-        const run = requireSession().startPrompt(message.args.text, message.args.options);
+        const forceFields = parseForceToolPromptFields(message.args.options ?? {});
+        const forceOperation = forceFields.forceTool !== undefined || forceFields.forceRecovery !== undefined;
+        const commandId = message.args.options?.commandId === undefined ? undefined
+          : forceOperation ? parseForceToolCommandId(message.args.options.commandId) : message.args.options.commandId;
+        if (forceOperation && (commandId === undefined || message.args.options?.commandVersion !== 18))
+          throw new Error("Force-tool prompt admission requires command version 18 and its original command identity.");
+        const options = message.args.options ? { ...message.args.options, ...forceFields, ...(commandId === undefined ? {} : { commandId }) } : undefined;
+        const run = requireSession().startPrompt(message.args.text, options);
+        const receipt = (error?: unknown): ForceToolReceipt | undefined => {
+          const native = error && typeof error === "object" && "forceToolReceipt" in error
+            ? (error as { forceToolReceipt?: unknown }).forceToolReceipt : undefined;
+          const retained = run.forceToolReceipt;
+          if ((native !== undefined || retained !== undefined) && commandId === undefined)
+            throw new Error("Native force-tool admission receipt omitted its original command identity.");
+          const parsedNative = native === undefined ? undefined : parseForceToolReceipt(native, commandId);
+          const parsedRetained = retained === undefined ? undefined : parseForceToolReceipt(retained, commandId);
+          if (parsedNative && parsedRetained && JSON.stringify(parsedNative) !== JSON.stringify(parsedRetained))
+            throw new Error("Native force-tool admission receipts changed during delivery.");
+          return parsedNative ?? parsedRetained;
+        };
+        const receiptFailure = (cause: unknown) => Object.assign(
+          new Error("Native force-tool admission receipt could not be verified.", { cause }),
+          { name: "OmpPromptAdmissionError", code: "OUTCOME_UNKNOWN" as const },
+        );
         // Preserve independent native acceptance and completion, including an
         // acceptance error after a dispatch has already begun.
         await Promise.all([
-          run.accepted.then(value => respond(true, value, undefined, "accepted"), error => respond(false, undefined, error, "accepted")),
+          run.accepted.then(
+            value => { try { respond(true, value, undefined, "accepted", receipt()); } catch (error) { respond(false, undefined, receiptFailure(error), "accepted"); } },
+            error => { try { respond(false, undefined, error, "accepted", receipt(error)); } catch (receiptError) { respond(false, undefined, receiptFailure(receiptError), "accepted"); } },
+          ),
           run.completion.then(value => respond(true, value, undefined, "completion"), error => respond(false, undefined, error, "completion")),
         ]);
         break;

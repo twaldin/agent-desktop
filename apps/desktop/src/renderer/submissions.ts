@@ -1,3 +1,6 @@
+import { ForceToolSubmissions, remainingForcePrompt, type NativeForceSubmission } from "./force-tool-submissions";
+import { parseForceToolGuard, parseForceToolReceipt, parseForceToolJournalReceipt, type ForceToolJournalReceipt, type ForceToolReceipt } from "../../../../packages/shared/src/protocol";
+import type { ForceToolRecoveryRequest } from "./force-tool-state";
 import { hasRemoteExecution, sameNewChatExecution } from "../../../../packages/shared/src/new-chat";
 import { sameEnvironmentSelection } from "../../../../packages/shared/src/environment-selection";
 import { parseDraftBrowserContinuation, type CommandEnvelope, type CommandResult, type Draft, type DraftBrowserContinuation, type FollowUpDelivery, type QueuedSubmissionReceipt } from "../../../../packages/shared/src/protocol";
@@ -18,6 +21,8 @@ export interface PendingSubmission {
   resume?: CommandEnvelope;
   send?: CommandEnvelope;
   uncertain: boolean;
+  force?: NativeForceSubmission;
+  forceToolReceipt?: ForceToolReceipt;
 }
 export interface PendingQueuedSubmission {
   draft: Draft;
@@ -47,7 +52,9 @@ export class SubmissionController {
   readonly cacheKey: string;
   readonly queuedCacheKey: string;
   cacheWarning: string | undefined;
-  constructor(private command: (envelope: CommandEnvelope) => Promise<CommandResult>, private hostId: string, private cache?: DraftCache) {
+  readonly forceTools: ForceToolSubmissions;
+  constructor(private command: (envelope: CommandEnvelope) => Promise<CommandResult>, private hostId: string, private cache?: DraftCache, private resolveNativeForce?: (sessionId: string, text: string) => Promise<boolean>) {
+    this.forceTools = new ForceToolSubmissions(command, hostId, cache);
     this.cacheKey = `agent-desktop:submissions:v1:${hostId}`;
     this.queuedCacheKey = `agent-desktop:queued-submissions:v1:${hostId}`;
     try {
@@ -60,11 +67,19 @@ export class SubmissionController {
           if (item.create?.command.type === 'session.create' && (item.create.command.model?.id !== captured.model?.id
             || item.create.command.model?.provider !== captured.model?.provider || item.create.command.approvalMode !== captured.approvalMode)) throw new Error('Pending creation differs from its captured model or permissions.');
           if (item.send && 'sessionId' in item.send.command && item.send.command.sessionId !== item.sessionId) throw new Error("Pending input belongs to a different session.");
-          const expectedVersion = commandVersion(captured);
+          if (item.force) {
+            if (item.force.nativeForce !== true || item.mode !== "prompt") throw new Error("Invalid native force submission.");
+            item.force = { nativeForce: true, ...(item.force.guard ? { guard: parseForceToolGuard(item.force.guard) } : {}) };
+          }
+          if (item.forceToolReceipt) {
+            if (!item.force || !item.send) throw new Error("Force receipt has no original command.");
+            item.forceToolReceipt = parseForceToolReceipt(item.forceToolReceipt, item.send.id);
+          }
+          const expectedVersion = item.force ? 18 : commandVersion(captured);
           if (item.mode !== "question" && item.send && item.send.commandVersion !== expectedVersion) throw new Error("Pending input requires its exact original command protocol.");
           if (item.create?.command.type === "session.create") {
             const continuation=item.create.command.browserContinuation===undefined?undefined:parseDraftBrowserContinuation(item.create.command.browserContinuation);
-            const createVersion=continuation?15:expectedVersion;
+            const createVersion=continuation?15:commandVersion(captured);
             if(item.create.commandVersion!==createVersion||continuation&&item.create.command.draft?.id!==captured.id) throw new Error("Pending browser continuation requires its exact original command protocol.");
           }
           if (item.create?.command.type === 'session.create' && !sameNewChatExecution(
@@ -86,6 +101,8 @@ export class SubmissionController {
           }
           if (item.send && (item.send.command.type === "session.prompt" || item.send.command.type === "session.steer")) {
             const command = item.send.command;
+            if (command.type === "session.prompt" && (command.forceRecovery !== undefined
+              || JSON.stringify(command.forceTool) !== JSON.stringify(item.force?.guard))) throw new Error("Pending force guard differs from its captured draft.");
             if (!sameDraftContent(captured, captureDraft({ ...captured, attachments: command.attachments, selectedTextAttachments: command.selectedTextAttachments, wholeFileAttachments: command.wholeFileAttachments }, hostId))
               || command.text !== captured.text || command.draft?.id !== captured.id || command.draft.revision !== captured.revision) throw new Error("Pending attachment metadata differs from its exact command.");
           }
@@ -103,7 +120,7 @@ export class SubmissionController {
             item.question = { ...item.question, answers };
           }
           this.pending[id] = { ...structuredClone(item), draft: captured,
-            uncertain: Boolean(item.resume || item.send || item.create && !item.preparation) };
+            uncertain: item.forceToolReceipt?.arm === "not-armed" ? false : Boolean(item.resume || item.send || item.create && !item.preparation) };
         }
       }
     } catch { this.cacheWarning = "Pending submission storage could not be read. Check conversation history before resending an earlier prompt."; }
@@ -126,6 +143,57 @@ export class SubmissionController {
   }
   get(id: string) { return this.pending[id] ? structuredClone(this.pending[id]) : undefined; }
   entries() { return Object.values(this.pending).map(item => structuredClone(item)); }
+  forceRecovery(sessionId: string) {
+    const item = Object.values(this.pending).find(value => value.sessionId === sessionId && value.forceToolReceipt
+      && value.forceToolReceipt.arm !== "not-armed" && value.forceToolReceipt.prompt !== "recorded" && value.forceToolReceipt.prompt !== "not-requested");
+    if (!item?.forceToolReceipt) return undefined;
+    try { return { receipt: structuredClone(item.forceToolReceipt), prompt: remainingForcePrompt(item.draft.text, item.forceToolReceipt) }; }
+    catch { return { receipt: structuredClone(item.forceToolReceipt), prompt: "" }; }
+  }
+  async checkForceOperation(sessionId: string, id: string) {
+    try {
+      const receipt = await this.forceTools.check(sessionId, id);
+      const item = Object.values(this.pending).find(value => value.sessionId === sessionId && value.forceToolReceipt?.epoch === receipt.epoch
+        && value.forceToolReceipt.directiveId === receipt.directiveId);
+      if (item) {
+        const settled = { draft: structuredClone(item.draft), originalCommandId: item.forceToolReceipt!.commandId };
+        delete this.pending[item.draft.id]; this.save(); return settled;
+      }
+    } finally { for (const listener of this.listeners) listener(); }
+  }
+  observeForceReceipt(sessionId: string, value: ForceToolJournalReceipt | undefined) {
+    if (!value) return;
+    const journal = parseForceToolJournalReceipt(value, value.commandId);
+    const item = Object.values(this.pending).find(entry => entry.sessionId === sessionId && entry.send?.id === journal.commandId && entry.force);
+    if (!item) return;
+    const receipt = journal.forceToolReceipt;
+    if (journal.state === "succeeded" && receipt && ["recorded", "not-requested"].includes(receipt.prompt)
+      || journal.state === "failed" && receipt?.arm === "not-armed") {
+      delete this.pending[item.draft.id]; this.save();
+      return { draft: structuredClone(item.draft), commandId: journal.commandId, accepted: journal.state === "succeeded" };
+    }
+    const uncertain = ["unknown", "absent", "pending"].includes(journal.state) || !receipt || receipt.arm === "unknown" || receipt.prompt === "unknown";
+    if (JSON.stringify(receipt) !== JSON.stringify(item.forceToolReceipt) || uncertain !== item.uncertain) {
+      if (receipt) item.forceToolReceipt = receipt;
+      item.uncertain = uncertain; this.save();
+    }
+  }
+  async recoverForcePrompt(sessionId: string, request: ForceToolRecoveryRequest) {
+    const item = Object.values(this.pending).find(value => value.sessionId === sessionId && value.send?.id === request.originalReceipt.commandId);
+    if (!item?.forceToolReceipt || JSON.stringify(item.forceToolReceipt) !== JSON.stringify(request.originalReceipt)) throw new Error("The original pending force receipt changed.");
+    await this.forceTools.recover(sessionId, request, item.draft);
+    // Recovery has its own receipt and intentionally does not consume/replace
+    // the current composer revision, which may contain newer work.
+    delete this.pending[item.draft.id]; this.save();
+    return structuredClone(item.draft);
+  }
+  async cancelForce(sessionId: string, request: { epoch: string; expectedRevision: number; directiveId: string }) {
+    const state = await this.forceTools.cancel(sessionId, request);
+    const item = Object.values(this.pending).find(value => value.sessionId === sessionId && value.forceToolReceipt?.epoch === request.epoch
+      && value.forceToolReceipt.directiveId === request.directiveId);
+    if (item) { delete this.pending[item.draft.id]; this.save(); }
+    return { state, draft: item ? structuredClone(item.draft) : undefined };
+  }
   queuedEntries() { return Object.values(this.queued).map(item => structuredClone(item)); }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private save() {
@@ -145,6 +213,8 @@ export class SubmissionController {
   private async submitActiveExclusive(snapshot: Draft, sessionId: string, delivery: FollowUpDelivery,
     onSendCommand?: (submitted: Draft, commandId: string) => void) {
     const captured = captureDraft(snapshot, this.hostId);
+    if (Object.values(this.pending).some(item => item.sessionId === sessionId && item.force && item.send))
+      throw new Error("Resolve the original force request before queuing another message.");
     if (captured.selectedTextAttachments?.length || captured.wholeFileAttachments?.length)
       throw new Error("File content cannot be sent during an active turn yet. The draft was retained.");
     const retained = Object.values(this.queued).find(item => item.sessionId === sessionId
@@ -230,6 +300,10 @@ export class SubmissionController {
     try {
       result = await this.command(structuredClone(envelope));
       if (result.commandId !== envelope.id) throw new Error("The host replied with a different command identity.");
+      if (phase === "send" && item.force) {
+        if (result.forceToolReceipt) item.forceToolReceipt = parseForceToolReceipt(result.forceToolReceipt, envelope.id);
+        if (result.ok && !item.forceToolReceipt) throw new Error("The host did not return the native force receipt.");
+      }
       if (result.ok && phase === "send" && envelope.command.type === "session.prompt" && (envelope.command.selectedTextAttachments?.length || envelope.command.wholeFileAttachments?.length)
         && (result.admission?.kind !== "user-message" || typeof result.admission.entryId !== "string" || !result.admission.entryId))
         throw new Error("The host did not return the native user receipt for this file-context submission.");
@@ -248,10 +322,22 @@ export class SubmissionController {
       throw new Error(`Delivery is uncertain. Retry the pending submission to check the same command; it will not send a new copy. ${result.error.message}`);
     }
     item.uncertain = false;
+    if (phase === "send" && item.force && !(!result.ok && result.error.code === "FORCE_TOOL_PROTOCOL_UNSUPPORTED") && (!result.ok || item.forceToolReceipt?.arm === "unknown"
+      || item.forceToolReceipt?.arm === "armed" && ["not-recorded", "unknown"].includes(item.forceToolReceipt.prompt))) {
+      if (item.forceToolReceipt?.arm !== "not-armed") {
+        item.uncertain = !item.forceToolReceipt || item.forceToolReceipt.arm === "unknown" || item.forceToolReceipt.prompt === "unknown";
+        this.save();
+        throw new Error(!result.ok ? result.error.message : "The native force armed, but its remaining prompt was not confirmed. Resolve it in Force tool before another send.");
+      }
+    }
     if (!result.ok) {
       // Polling may have established a preparation before the create handler
       // returned its recorded failure. Keep that original ownership envelope.
-      if (phase !== "create" || !item.preparation) item[phase] = undefined;
+      // A definite native refusal remains a settled envelope/receipt pair.
+      // Restore validates the receipt against this original command identity;
+      // dropping only the envelope would turn a normal refusal into bad cache.
+      const settledForceRefusal = phase === "send" && item.forceToolReceipt?.arm === "not-armed";
+      if (!settledForceRefusal && (phase !== "create" || !item.preparation)) item[phase] = undefined;
       this.save(); throw new Error(result.error.message);
     }
     return result.value;
@@ -268,20 +354,27 @@ export class SubmissionController {
   }
 
   submit(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer", onSendCommand?: (submitted: Draft, commandId: string) => void,
-    browserContinuation?: DraftBrowserContinuation) {
-    return this.exclusive(snapshot.id, () => this.submitExclusive(snapshot, sessionId, mode, onSendCommand, browserContinuation));
+    browserContinuation?: DraftBrowserContinuation, force?: NativeForceSubmission) {
+    return this.exclusive(snapshot.id, () => this.submitExclusive(snapshot, sessionId, mode, onSendCommand, browserContinuation, force));
   }
 
   private async submitExclusive(snapshot: Draft, sessionId: string | undefined, mode: "prompt" | "steer", onSendCommand?: (submitted: Draft, commandId: string) => void,
-    browserContinuation?: DraftBrowserContinuation) {
+    browserContinuation?: DraftBrowserContinuation, force?: NativeForceSubmission) {
     snapshot = captureDraft(snapshot, this.hostId);
+    if (force && this.cacheWarning) throw new Error(this.cacheWarning);
     let item = this.pending[snapshot.id];
+    if (sessionId && Object.values(this.pending).some(value => value.draft.id !== snapshot.id && value.sessionId === sessionId && value.force && value.send))
+      throw new Error("Resolve this conversation's original force request before sending another prompt.");
+    if (item?.forceToolReceipt && item.forceToolReceipt.arm !== "not-armed" && !item.uncertain)
+      throw new Error("Resolve the original armed force request in Force tool before sending another prompt.");
+    if (force && (mode !== "prompt" || snapshot.attachments?.length || snapshot.selectedTextAttachments?.length || snapshot.wholeFileAttachments?.length))
+      throw new Error("Native /force needs an idle plain-text draft. Its attachments were retained.");
     if (item?.preparation && !item.sessionId) throw new EnvironmentPreparationPause(item.preparation);
     if (item?.uncertain ? item.mode === "steer" && item.draft.wholeFileAttachments?.length : mode === "steer" && snapshot.wholeFileAttachments?.length) throw new Error("Whole files can be sent after the current response finishes. Your draft is preserved.");
     if (item?.uncertain ? item.mode === "steer" && item.draft.selectedTextAttachments?.length : mode === "steer" && snapshot.selectedTextAttachments?.length) throw new Error("Selected text cannot be sent while the agent is running yet. Wait for the response to finish.");
     if ((item?.uncertain ? item.mode === "steer" && item.draft.attachments?.length : mode === "steer" && snapshot.attachments?.length)) throw new Error("Image attachments cannot be sent while the agent is running. Wait for the response to finish.");
     if (!item?.uncertain && !item?.preparation) {
-      item = { draft: snapshot, sessionId: sessionId ?? item?.sessionId, mode, uncertain: false };
+      item = { draft: snapshot, sessionId: sessionId ?? item?.sessionId, mode, uncertain: false, ...(force ? { force: structuredClone(force) } : {}) };
       this.pending[snapshot.id] = item;
     }
     if (!item.sessionId) {
@@ -317,10 +410,14 @@ export class SubmissionController {
     const attachments = { ...(saved.attachments !== undefined ? { attachments: structuredClone(saved.attachments) } : {}),
       ...(saved.wholeFileAttachments !== undefined ? { wholeFileAttachments: structuredClone(saved.wholeFileAttachments) } : {}),
       ...(saved.selectedTextAttachments !== undefined ? { selectedTextAttachments: structuredClone(saved.selectedTextAttachments) } : {}) };
-    const version = commandVersion(saved);
+    if (!item.send && item.force && this.resolveNativeForce && !await this.resolveNativeForce(sessionId, saved.text)) {
+      if (item.force.guard) throw new Error("A custom command now owns the prepared force spelling. Rebuild the draft before sending.");
+      item.force = undefined; this.save();
+    }
+    const version = item.force ? 18 : commandVersion(saved);
     item.send ??= { id: crypto.randomUUID(), ...(version ? { commandVersion: version } : {}), command: item.mode === "steer"
       ? { type: "session.steer", sessionId, text: saved.text, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } }
-      : { type: "session.prompt", sessionId, text: saved.text, model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } } };
+      : { type: "session.prompt", sessionId, text: saved.text, ...(item.force?.guard ? { forceTool: structuredClone(item.force.guard) } : {}), model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } } };
     const send = item.send;
     this.save();
     onSendCommand?.(captureDraft(item.draft, this.hostId), send.id);

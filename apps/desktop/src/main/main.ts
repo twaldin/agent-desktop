@@ -1,3 +1,4 @@
+import { requestForceToolState } from "./force-tool-transport";
 import { parsePullRequestWriteRequest } from '../../../../packages/shared/src/pull-request-write';
 import { requestPullRequestWrite } from './pull-request-write-transport';
 import { parsePullRequestReadRequest } from '../../../../packages/shared/src/pull-requests';
@@ -625,6 +626,11 @@ ipcMain.handle("host:session-outputs", async (event, sessionId: string, hostId: 
   const endpoint = await endpointFor(requireImageOwner(hostId));
   assertTrustedSender(event);
   return requestSessionOutputs(endpoint, sessionId);
+});
+ipcMain.handle("host:force-tool-read", async (event, sessionId: string, hostId: string, commandId?: string) => {
+  assertTrustedSender(event);
+  if (typeof hostId !== "string" || !hostId) throw new Error("Select the force request's owning host.");
+  return requestForceToolState(await endpointFor(hostId), sessionId, commandId);
 });
 ipcMain.handle("host:session-mcp", async (event, sessionId: string, hostId?: string, commandId?: string) => {
   assertTrustedSender(event); return requestSessionMcp(await endpointFor(hostId), sessionId, commandId);

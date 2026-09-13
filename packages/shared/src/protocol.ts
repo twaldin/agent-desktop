@@ -1,3 +1,4 @@
+export * from "./force-tool";
 export * from "./session-outputs";
 export * from "./branch-query-transport";
 export * from "./browser-observation";
@@ -252,6 +253,7 @@ export interface HostState {
   gitSubmissions?: { commandVersion: 10 };
   sessionSearch?: { version: 1 };
   queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13; images?: { commandVersion: 17 } } };
+  forceTool?: { version: 1; commandVersion: 18 };
   taskLocations?: { version: 1; commandVersion: 14 };
   browserContinuations?: { version: 1; commandVersion: 15 };
   sessionForks?: typeof import("./session-fork").SESSION_FORK_CAPABILITY;
@@ -281,8 +283,9 @@ export type HostCommand =
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number }; browserContinuation?: import("./browser-continuation").DraftBrowserContinuation }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
-  | { type: "session.prompt"; sessionId: string; text: string; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
+  | { type: "session.prompt"; sessionId: string; text: string; forceTool?: import("./force-tool").ForceToolGuard; forceRecovery?: import("./force-tool").ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
+  | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancel)
   | { type: "session.follow-up"; sessionId: string; text: string; delivery: import("./queued-submissions").FollowUpDelivery; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; draft: { id: string; revision: number } }
   | { type: "session.question.answer"; sessionId: string; questionId: string; questionEntryId: string; answers: import('./detached-questions').DetachedQuestionAnswer[]; draft: { id: string; revision: number } }
   | { type: "session.btw.start"; sessionId: string; question: string; draft?: { id: string; revision: number }; nativeCommand?: "btw" }
@@ -300,7 +303,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18;
 }
 
 export interface ImageAdmission {
@@ -316,8 +319,8 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt }
-  | { ok: false; commandId: string; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
+  | { ok: true; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancelResult) }
+  | { ok: false; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
 
 export type HostEvent =
   | { sequence: number; type: "state"; state: HostState; /** Direct websocket replay barrier; absent on durable state events. */ replayComplete?: true }
@@ -475,6 +478,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   mcpOwner?: import("./mcp-owner").McpOwnerBridge;
   sessionMcpApp?(sessionId: string, request: import("./session-mcp-app").NativeMcpAppRequest, hostId: string): Promise<import("./session-mcp-app").NativeMcpAppResponse>;
   readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;
+  getForceTool?(sessionId: string, hostId: string, commandId?: string): Promise<import("./force-tool").ForceToolResponse>;
   getSessionMcp?(sessionId: string, hostId?: string, commandId?: string): Promise<import("./session-mcp").NativeSessionMcpResponse>;
   getSessionMcpAuthorization?(sessionId: string, hostId: string, commandId?: string): Promise<import("./session-mcp-authorization").NativeMcpAuthorizationResponse>;
   respondSessionMcpAuthorization?(sessionId: string, reply: import("./session-mcp-authorization").NativeMcpAuthorizationReply, hostId: string): Promise<import("./session-mcp-authorization").NativeMcpAuthorizationResponse>;

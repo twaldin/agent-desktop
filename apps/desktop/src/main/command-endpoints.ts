@@ -4,8 +4,9 @@ import { hasSessionForkIntent } from "../../../../packages/shared/src/session-fo
 import { HostRequestError } from "./host-transport";
 
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
-export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" | "/v14/commands" | "/v15/commands" | "/v16/commands" | "/v17/commands" {
+export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" | "/v14/commands" | "/v15/commands" | "/v16/commands" | "/v17/commands" | "/v18/commands" {
   const command = envelope.command;
+  if (envelope.commandVersion === 18 || command.type === "session.force.cancel" || command.type === "session.prompt" && (command.forceTool !== undefined || command.forceRecovery !== undefined)) return "/v18/commands";
   if (envelope.commandVersion === 17 || command.type === "session.follow-up" && command.attachments !== undefined) return "/v17/commands";
   if (envelope.commandVersion === 16 || hasSessionForkIntent(command)) return "/v16/commands";
   if (envelope.commandVersion === 15 || command.type === "session.create" && command.browserContinuation) return "/v15/commands";
@@ -38,6 +39,7 @@ export async function requestVersionedCommand(request: (path: string, body: unkn
   const endpoint = commandEndpoint(envelope);
   try { return await request(endpoint, envelope); }
   catch (error) {
+    if (endpoint === "/v18/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:"FORCE_TOOL_PROTOCOL_UNSUPPORTED",message:"Update the owning host to use native force requests. This request was not accepted."}} satisfies CommandResult;
     if (endpoint === "/v17/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:"FOLLOW_UP_IMAGES_PROTOCOL_UNSUPPORTED",message:"Update the owning host to send images during an active turn. The draft was retained."}} satisfies CommandResult;
     if (endpoint === '/v16/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:'FORK_PROTOCOL_UNSUPPORTED',message:'Update the owning host before forking this chat. This request was not accepted.'}} satisfies CommandResult;
     if (endpoint === '/v15/commands' && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:'BROWSER_CONTINUATION_PROTOCOL_UNSUPPORTED',message:'Update the owning host before sending a conversation with an open draft browser. This request was not accepted.'}} satisfies CommandResult;

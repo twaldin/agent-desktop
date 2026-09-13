@@ -1,3 +1,6 @@
+import { ForceToolControl } from "./ForceToolControl";
+import { forceCommandSpelling, nativeForceWinner, type NativeForceSubmission } from "./force-tool-submissions";
+import type { ForceToolPorts, ForceToolSnapshot } from "./force-tool-state";
 import { PullRequestComposers } from "./pull-request-composers";
 import { PullRequestCache } from './pull-request-cache';
 import { PullRequestsPage, PullRequestIcon } from './PullRequestsPage';
@@ -92,6 +95,7 @@ import type { ComposerSelectionPopupHandle } from "./ComposerSelectionPopup";
 import type { AttachmentMediaContext } from "./attachment-media";
 import { installAppShortcuts, type AppShortcutOptions } from "./app-shortcuts";
 import { errorMessage, useDesktop, useTranscript } from "./desktop-state";
+import { actionError as ownedActionError, clearRecoveredForceError, type ActionError } from "./action-error";
 import { captureConversationMarkdown, conversationMarkdownIssue } from "./conversation-markdown";
 import { Icon } from "./Icons";
 import { TranscriptMessages } from "./Transcript";
@@ -201,7 +205,8 @@ export function App() {
   const [showArchived, setShowArchived] = useState(windowRestoration.state.showArchived);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set(windowRestoration.state.expandedProjects));
   const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarSectionKey>>(() => new Set(windowRestoration.state.collapsedSidebarSections ?? defaultCollapsedSidebarSections()));
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionErrorState] = useState<ActionError | null>(null);
+  const setActionError = useCallback((message: string | null) => setActionErrorState(message === null ? null : ownedActionError(message)), []);
   const markdownCopyRoute = useRef({ key: routeKey });
   if (markdownCopyRoute.current.key !== routeKey) markdownCopyRoute.current = { key: routeKey };
   const [markdownCopy, setMarkdownCopy] = useState<{ owner: { key: string }; state: "copying" | "copied" | "failed"; message: string } | null>(null);
@@ -349,9 +354,16 @@ export function App() {
     let pair = stores.get(owner);
     if (!pair) {
       const cache = { read: (key: string) => localStorage.getItem(key), write: (key: string, value: string) => localStorage.setItem(key, value) };
-      pair = { drafts: new DraftController(attachmentDraftSender(owner, attachmentMedia, bridge), owner, cache), submissions: new SubmissionController(envelope => bridge.command(envelope, owner), owner, cache) };
+      pair = { drafts: new DraftController(attachmentDraftSender(owner, attachmentMedia, bridge), owner, cache), submissions: new SubmissionController(envelope => bridge.command(envelope, owner), owner, cache, async (sessionId, text) => {
+        if (!bridge.getComposerActions) throw new Error("Update this desktop to resolve native /force.");
+        const target = { sessionId }, catalog = await bridge.getComposerActions(target, false, owner);
+        assertComposerOwner(catalog, owner, target);
+        const native = nativeForceWinner(catalog, text), host = desktop.catalog.records.get(owner)?.state;
+        if (native && host?.forceTool?.commandVersion !== 18) throw new Error("Update the owning host to use native /force. The draft was retained.");
+        return native;
+      }) };
       for (const pending of pair.submissions.entries()) {
-        if (pending.send) pair.drafts.beginPendingSubmission(pending.draft, pending.send.id);
+        if (pending.send && pending.forceToolReceipt?.arm !== "not-armed") pair.drafts.beginPendingSubmission(pending.draft, pending.send.id);
         else if (!pending.uncertain) {
           pair.drafts.get(pending.draft.id, pending.draft);
           pair.drafts.finishSubmission(pending.draft.id, pending.draft, false);
@@ -573,6 +585,13 @@ export function App() {
   const transcriptReading = useTranscriptScroll(selectedId ? `${hostId}:${selectedId}` : undefined);
   const running = selected?.status === "running";
   const pendingSubmission = submissions.get(draftId);
+  const reportSubmissionError = (cause: unknown, sendingDraftId: string, submittedForceCommandId?: string) => {
+    const message = errorMessage(cause), pendingForce = submissions.get(sendingDraftId), receipt = pendingForce?.forceToolReceipt;
+    if (pendingForce?.sessionId && submittedForceCommandId && receipt?.commandId === submittedForceCommandId
+      && receipt.arm === "armed" && receipt.prompt === "not-recorded")
+      setActionErrorState(ownedActionError(message, { hostId, sessionId: pendingForce.sessionId, commandId: receipt.commandId }));
+    else setActionError(message);
+  };
   const queuedSubmissionRecoveries = selectedId ? submissions.queuedEntries().filter(item => item.sessionId === selectedId
     && item.receipt?.phase === "settled" && item.receipt.outcome !== "succeeded") : [];
   useEffect(() => {
@@ -581,6 +600,60 @@ export function App() {
   }, [drafts, draftId, selectedId, environmentAvailable, draft.execution?.type, draft.environment, Boolean(pendingSubmission), view.conflict]);
   const pendingSessionId = pendingSubmission?.sessionId;
   const knownPendingSession = state?.sessions.find(session => session.id === pendingSessionId);
+  const forceSessionId = selected?.id ?? pendingSessionId;
+  const forceOwner = useRef({ routeKey, draftId, sessionId: forceSessionId, connected, archived: Boolean(selected?.archived), model: selection.model });
+  useLayoutEffect(() => { forceOwner.current = { routeKey, draftId, sessionId: forceSessionId, connected, archived: Boolean(selected?.archived), model: selection.model }; });
+  const forceToolPorts = useMemo<ForceToolPorts>(() => {
+    let latest: ForceToolSnapshot | null = null;
+    const assertOwner = (owner: { hostId: string; sessionId: string }) => {
+      const current = forceOwner.current;
+      if (owner.hostId !== hostId || owner.sessionId !== current.sessionId || current.routeKey !== routeKey || !current.connected || current.archived)
+        throw new Error("Open the connected owning conversation before changing its force request.");
+    };
+    return {
+      read: async (owner, commandId) => {
+        assertOwner(owner);
+        const host = desktop.catalog.records.get(owner.hostId)?.state;
+        if (!bridge.getForceTool || host?.forceTool?.version !== 1 || host.forceTool.commandVersion !== 18)
+          return { protocolVersion: 1, ...owner, value: null, unavailable: "Update the owning host and desktop to inspect native force requests." };
+        const response = await bridge.getForceTool(owner.sessionId, owner.hostId, commandId);
+        const reconciled = submissions.observeForceReceipt(owner.sessionId, response.receipt);
+        if (reconciled) drafts.finishSubmission(reconciled.draft.id, reconciled.draft, reconciled.accepted, false, reconciled.commandId);
+        latest = response.value; return response;
+      },
+      insertDraft: (owner, insertion) => {
+        assertOwner(owner);
+        const current = drafts.get(draftId).draft, model = forceOwner.current.model;
+        if (submissions.get(draftId) || current.text !== insertion.expectedDraftText)
+          throw new Error("The composer or pending submission changed. Review its current text before inserting.");
+        if (!latest || latest.epoch !== insertion.guard.epoch || latest.revision !== insertion.guard.expectedRevision
+          || model?.provider !== latest.model?.provider || model?.id !== latest.model?.id)
+          throw new Error("The selected model differs from the owning worker. Apply the model and refresh its tools before preparing a force request.");
+        if (current.attachments?.length || current.selectedTextAttachments?.length || current.wholeFileAttachments?.length)
+          throw new Error("Native /force needs a plain-text draft. Remove its attachments before preparing it.");
+        // Persist the prepared binding before changing composer text. A failed
+        // cache write therefore cannot expose an unguarded prepared command.
+        submissions.forceTools.prepare(owner.sessionId, { ...current, text: insertion.text }, insertion.guard);
+        drafts.update(draftId, { text: insertion.text }); textarea.current?.focus();
+      },
+      cancel: async (owner, request) => {
+        assertOwner(owner);
+        const result = await submissions.cancelForce(owner.sessionId, request);
+        if (result.draft) drafts.finishSubmission(result.draft.id, result.draft, false);
+        return result.state;
+      },
+      recoverPrompt: async (owner, request) => {
+        assertOwner(owner);
+        const original = await submissions.recoverForcePrompt(owner.sessionId, request);
+        drafts.finishSubmission(original.id, original, false);
+        setActionErrorState(current => clearRecoveredForceError(current, {
+          hostId: owner.hostId, sessionId: owner.sessionId, commandId: request.originalReceipt.commandId,
+        }));
+        void refresh();
+      },
+    };
+  }, [bridge, hostId, routeKey, draftId, drafts, submissions, desktop.catalog]);
+
   const wholeFileIssue = wholeFileSendIssue(draft, hostId, running, state?.wholeFiles);
   const selectedTextIssue = selectedTextSendIssue(draft, running, state?.selectedText);
   const imageIssue = imageSendIssue(draft, running, state?.imageAttachments, composer.catalog, selected, composer.controls, state?.queuedMessages?.submissions?.images);
@@ -1150,7 +1223,7 @@ export function App() {
     submitting.current = true; draftBrowserOwners.beforeSubmission(); draftBrowserPages.beforeSubmission(); for (const controller of draftBrowserDocks.values()) controller.beforeSubmission();
     setBusy(true); setActionError(null);
     const sendingDraftId = draftId; const originalRoute = selectedRef.current;
-    let snapshot: Draft | undefined;
+    let snapshot: Draft | undefined, submittedForceCommandId: string | undefined;
     let sideHandled = false;
     try {
       const pending = submissions.get(sendingDraftId);
@@ -1183,13 +1256,33 @@ export function App() {
           return;
         }
       }
+      let force: NativeForceSubmission | undefined;
+      if (!pending?.uncertain && forceCommandSpelling(snapshot.text)) {
+        if (!bridge.getComposerActions) throw new Error("Update this desktop to resolve native /force. The draft was retained.");
+        if (!selectedId) {
+          // Project catalogs do not load live extension callbacks. Create the
+          // session first, then resolve the actual native winner before send.
+          force = { nativeForce: true };
+        } else {
+          const target = { sessionId: selectedId }, catalog = await bridge.getComposerActions(target, false, hostId);
+          assertComposerOwner(catalog, hostId, target);
+          if (selectedRef.current !== originalRoute) throw new Error("The conversation changed while resolving /force. Nothing was sent.");
+          force = submissions.forceTools.selection(selectedId, snapshot, nativeForceWinner(catalog, snapshot.text));
+          if (force && (state?.forceTool?.commandVersion !== 18 || state.forceTool.version !== 1))
+            throw new Error("Update the owning host to use native /force. The draft was retained.");
+        }
+        if (force && running) throw new Error("Wait for the current response to finish before sending native /force. The draft was retained.");
+      }
       drafts.beginPendingSubmission(snapshot);
-      if (running && (!selectedId || state?.queuedMessages?.submissions?.commandVersion !== 13)) throw new Error("Update the owning host to send active-turn follow-ups. The draft was retained.");
-      if (running && snapshot.attachments?.length && state?.queuedMessages?.submissions?.images?.commandVersion !== 17)
+      if (running && !pending?.force && (!selectedId || state?.queuedMessages?.submissions?.commandVersion !== 13)) throw new Error("Update the owning host to send active-turn follow-ups. The draft was retained.");
+      if (running && !pending?.force && snapshot.attachments?.length && state?.queuedMessages?.submissions?.images?.commandVersion !== 17)
         throw new Error("Update the owning host to send images during an active turn. The draft was retained.");
-      const result = running
+      const result = running && !pending?.force
         ? await submissions.submitActive(snapshot, selectedId!, activeDelivery ?? (followUpQueueMode === "queue" ? "follow-up" : "steer"), (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId))
-        : await submissions.submit(snapshot, selectedId ?? undefined, "prompt", (submitted, commandId) => drafts.beginPendingSubmission(submitted, commandId), browserContinuation);
+        : await submissions.submit(snapshot, selectedId ?? undefined, "prompt", (submitted, commandId) => {
+          if (force || pending?.force) submittedForceCommandId = commandId;
+          drafts.beginPendingSubmission(submitted, commandId);
+        }, browserContinuation, force);
       drafts.finishSubmission(sendingDraftId, result.submitted, true, false, result.commandId);
       await refresh(); transcript.refresh();
       // The awaited catalog is authoritative before React runs its ingest effect.
@@ -1202,7 +1295,7 @@ export function App() {
         const queued = submissions.queuedEntries().find(item => item.draft.id === sendingDraftId && item.draft.revision === snapshot!.revision);
         drafts.finishSubmission(sendingDraftId, snapshot, false, queued?.uncertain ?? submissions.get(sendingDraftId)?.uncertain, queued?.send.id ?? submissions.get(sendingDraftId)?.send?.id);
       }
-      if (!(cause instanceof EnvironmentPreparationPause)) setActionError(errorMessage(cause));
+      if (!(cause instanceof EnvironmentPreparationPause)) reportSubmissionError(cause, sendingDraftId, submittedForceCommandId);
     } finally { submitting.current = false; setBusy(false); if (!sideHandled) textarea.current?.focus(); }
   }
   async function resumeEnvironment() {
@@ -1727,7 +1820,7 @@ export function App() {
         </div>
       </header>
       {imageHash && themeImage.sha256 === imageHash && (themeImage.status === "loading" || themeImage.error) && <div className="connection-banner theme-image-status" role="status"><span>{themeImage.error ?? "Loading this device’s background image…"}</span>{themeImage.error && <button onClick={() => void themeImage.refresh()}><Icon name="refresh"/>Retry image</button>}</div>}
-      {(desktop.error || desktop.cacheWarning || drafts.cacheWarning || submissions.cacheWarning) && <div className="connection-banner" role="status"><span>{desktop.error ?? desktop.cacheWarning ?? drafts.cacheWarning ?? submissions.cacheWarning}</span><button onClick={() => void refresh()}><Icon name="refresh"/>Reconnect</button></div>}
+      {(desktop.error || desktop.cacheWarning || drafts.cacheWarning || submissions.cacheWarning || submissions.forceTools.cacheWarning) && <div className="connection-banner" role="status"><span>{desktop.error ?? desktop.cacheWarning ?? drafts.cacheWarning ?? submissions.cacheWarning ?? submissions.forceTools.cacheWarning}</span><button onClick={() => void refresh()}><Icon name="refresh"/>Reconnect</button></div>}
       {loading && !state ? <div className="center-state"><span className="spinner"/><h1>Connecting to your host</h1><p>Loading projects, models, and saved conversations.</p></div> : missingSession ? <div className="center-state"><h1>Conversation unavailable</h1><p>{connected ? "This conversation is not in the owning host’s catalog." : "This conversation is not in this device’s cached catalog. Its owning host is unavailable; the selected conversation is preserved."}</p><button className="secondary-button" onClick={() => navigate(null)}>New conversation</button></div> : <>
         {selectedId ? <div className="transcript-region"><div ref={transcriptReading.viewportRef} className="transcript-scroll" tabIndex={0} aria-label="Conversation transcript">
           <div className="transcript">
@@ -1747,7 +1840,7 @@ export function App() {
             <PendingInteractions bridge={bridge} hostId={hostId} sessionId={(selectedId ?? pendingSessionId)!} localHostId={desktop.localHostId} connected={connected}/>
           </>}
           {markdownCopy?.owner === markdownCopyRoute.current && <div className={markdownCopy.state === "failed" ? "inline-error" : "subtle-notice"} role={markdownCopy.state === "failed" ? "alert" : "status"}><span>{markdownCopy.message}</span>{markdownCopy.state !== "copying" && <button className="icon-button small" onClick={() => setMarkdownCopy(null)} aria-label="Dismiss copy status"><Icon name="close"/></button>}</div>}
-          {actionError && <div className="inline-error" role="alert"><span>{actionError}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
+          {actionError && <div className="inline-error" role="alert"><span>{actionError.message}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
           {modeView?.conflict && !sameModeConflict(modeView) && draft.projectId && <div className="draft-conflict" role="alert"><strong>Work in changed on another device.</strong><p>Your prompt and other selections are preserved. Choose which execution mode to use for this project.</p><dl><dt>My choice</dt><dd>{executionModeLabel(modeView.draft.execution)}</dd><dt>Host’s saved choice</dt><dd>{executionModeLabel(modeView.conflict.execution)}</dd></dl><div><button className="secondary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"remote")}>Use saved mode</button><button className="primary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"local")}>Keep my mode</button></div></div>}
           {modeView?.status === "error" && draft.projectId && <div className="inline-error" role="alert"><span>{modeView.error ?? "The Work in choice was not saved to the host."}</span><button disabled={!connected} onClick={() => void drafts.flush(projectExecutionModeDraftId(draft.projectId!)).catch(() => {})}>Retry mode save</button></div>}
           {pendingSubmission && (pendingSubmission.preparation || pendingSubmission.create?.command.type === "session.create" && pendingSubmission.create.command.environment !== undefined) && <EnvironmentPreparationCard key={`${hostId}:${pendingSubmission.preparation?.id ?? pendingSubmission.create?.id}`} bridge={bridge} hostId={hostId} pending={pendingSubmission} submissions={submissions} connected={connected} busy={busy} executionControls={state?.localEnvironments?.execution} resumeIssue={remoteWorktreeResumeIssue(pendingSubmission, state)} onResume={() => void resumeEnvironment()} onSettings={() => { if (pendingSubmission.draft.projectId) setEnvironmentProject({hostId,projectId:pendingSubmission.draft.projectId}); setSettingsPage("environments"); openSettings(); }}/>}
@@ -1825,6 +1918,23 @@ export function App() {
               <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : `Send (${normalSendShortcut})` : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
             </div>
           </form>
+          {forceSessionId && submissions.forceTools.pendingOperations(forceSessionId).map(operation => <div className="inline-error" role="status" key={operation.id}>
+            <span>{operation.kind === "cancel" ? "Force cancellation" : "Remaining prompt delivery"} needs reconciliation.</span>
+            <button type="button" disabled={!connected || busy} onClick={() => {
+              setBusy(true); void submissions.checkForceOperation(forceSessionId, operation.id).then(settled => {
+                if (settled) drafts.finishSubmission(settled.draft.id, settled.draft, false);
+                if (settled && operation.kind === "recover") setActionErrorState(current => clearRecoveredForceError(current, {
+                  hostId, sessionId: forceSessionId, commandId: settled.originalCommandId,
+                }));
+                void refresh();
+              }).catch(cause => setActionError(errorMessage(cause))).finally(() => setBusy(false));
+            }}>Check original operation</button>
+          </div>)}
+          {forceSessionId ? <ForceToolControl key={`${hostId}:${forceSessionId}`} owner={{hostId, sessionId:forceSessionId}}
+            ownerLabel={`${selected?.title ?? knownPendingSession?.title ?? "Current conversation"} · ${state?.host.name ?? "Unavailable host"}`}
+            ports={forceToolPorts} connected={connected && !selected?.archived} active={!contentOverlayOpen}
+            draftText={draft.text} recovery={submissions.forceRecovery(forceSessionId)}/>
+            : <p className="force-tool-help">Open a conversation to choose an active tool. Native /force can also be typed in this draft.</p>}
           <AdvancedStreamControls bridge={bridge} hostId={hostId} localHostId={desktop.localHostId} sessionId={selected?.id} connected={connected} disabled={Boolean(selected?.archived) || running}/>
           <div className="composer-footnote" aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : null}</div>
         </div>
@@ -1899,7 +2009,7 @@ export function App() {
     {sourcePreview && (!sourcePreview.current || sourcePreview.current()) && <ImagePreview key={`${sourcePreview.hostId}:${sourcePreview.source.id}`} dialogOnly media={attachmentMedia} source={sourcePreview.source.image} hostId={sourcePreview.hostId} connected={Boolean(desktop.catalog.records.get(sourcePreview.hostId)?.connected)} label={sourcePreview.source.label} onClose={() => setSourcePreview(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>
-      {dialog === "project" ? <form onSubmit={addRemoteProject}><p className="subtle-notice">Enter an existing absolute folder path on {state?.host.name}. The project and its sessions stay on that machine.</p>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="remote-project-path">Folder path</label><input id="remote-project-path" className="text-field" value={remotePath} onChange={event => setRemotePath(event.target.value)} placeholder="/home/you/projects/example" autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!remotePath.trim() || !connected || addingProject}>{addingProject ? "Adding…" : "Add project"}</button></div></form> : dialog === "rename" ? <form onSubmit={rename}>{actionError && <p className="inline-error" role="alert">{actionError}</p>}<label className="field-label" htmlFor="conversation-title">Name</label><input id="conversation-title" className="text-field" value={renameTitle} onChange={event => setRenameTitle(event.target.value)} autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!renameTitle.trim() || !connected}>Save</button></div></form> : <div className="build-status"><p>This connected desktop flow includes host selection and an aggregate project sidebar: projects, revisioned drafts, sessions, model selection, streaming, steering, stopping, rename, and archive.</p><p>Accounts, native OMP settings and pending requests, file/editor/Git/worktree panels, and terminal sessions use the owning host’s APIs. Shared sidebar organization and the theme file are connected. Attachments, richer review, browser panels, plugins, automations, remain incomplete.</p><p>The layout uses the pinned package and measured colors from the supplied screenshot. Full visual parity and physical cross-device acceptance remain pending.</p><p>{desktop.networkError ?? desktop.network?.error ?? (desktop.network?.status === "connected" ? "Tailscale discovery is connected." : "Tailscale discovery is not connected.")}</p><button className="secondary-button" onClick={() => void desktop.refreshNetwork()}>Refresh machines</button><div className="build-host">{state?.host.name ?? "Host unavailable"} · {state?.host.platform ?? "Unknown platform"}</div></div>}
+      {dialog === "project" ? <form onSubmit={addRemoteProject}><p className="subtle-notice">Enter an existing absolute folder path on {state?.host.name}. The project and its sessions stay on that machine.</p>{actionError && <p className="inline-error" role="alert">{actionError.message}</p>}<label className="field-label" htmlFor="remote-project-path">Folder path</label><input id="remote-project-path" className="text-field" value={remotePath} onChange={event => setRemotePath(event.target.value)} placeholder="/home/you/projects/example" autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!remotePath.trim() || !connected || addingProject}>{addingProject ? "Adding…" : "Add project"}</button></div></form> : dialog === "rename" ? <form onSubmit={rename}>{actionError && <p className="inline-error" role="alert">{actionError.message}</p>}<label className="field-label" htmlFor="conversation-title">Name</label><input id="conversation-title" className="text-field" value={renameTitle} onChange={event => setRenameTitle(event.target.value)} autoFocus/><div className="dialog-footer"><button className="secondary-button" type="button" onClick={() => setDialog(null)}>Cancel</button><button className="primary-button" type="submit" disabled={!renameTitle.trim() || !connected}>Save</button></div></form> : <div className="build-status"><p>This connected desktop flow includes host selection and an aggregate project sidebar: projects, revisioned drafts, sessions, model selection, streaming, steering, stopping, rename, and archive.</p><p>Accounts, native OMP settings and pending requests, file/editor/Git/worktree panels, and terminal sessions use the owning host’s APIs. Shared sidebar organization and the theme file are connected. Attachments, richer review, browser panels, plugins, automations, remain incomplete.</p><p>The layout uses the pinned package and measured colors from the supplied screenshot. Full visual parity and physical cross-device acceptance remain pending.</p><p>{desktop.networkError ?? desktop.network?.error ?? (desktop.network?.status === "connected" ? "Tailscale discovery is connected." : "Tailscale discovery is not connected.")}</p><button className="secondary-button" onClick={() => void desktop.refreshNetwork()}>Refresh machines</button><div className="build-host">{state?.host.name ?? "Host unavailable"} · {state?.host.platform ?? "Unknown platform"}</div></div>}
     </dialog>
   </div>{closeStatus}</>;
 }

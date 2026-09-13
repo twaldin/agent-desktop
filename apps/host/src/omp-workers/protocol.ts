@@ -1,4 +1,4 @@
-import type { SessionAccountSelection } from "@agent-desktop/shared";
+import type { ForceToolReceipt, ForceToolTicket, SessionAccountSelection } from "@agent-desktop/shared";
 import type { BrowserEvaluationBinding, BrowserEvaluationDescriptor, BrowserEvaluationFrame, BrowserEvaluationOperation } from "../omp-browser/evaluation-wire";
 import type { NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
 import type { NativePluginMutation, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
@@ -11,7 +11,7 @@ import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 import type { NativeSessionForkInput } from "../omp/session-fork";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 57;
+export const WORKER_PROTOCOL_VERSION = 58;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -61,6 +61,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "mutateMcpServer"; args: { cwd: string; mutation: NativeMcpMutation } }
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }
+  | { operation: "getForceTool" }
+  | { operation: "cancelForceTool"; args: { ticket: ForceToolTicket; directiveId: string } }
   | { operation: "mutateGoal"; args: { request: GoalMutationRequest } }
   | { operation: "getGoalContinuationEligibility" }
   | { operation: "startGoalContinuation"; args: { expectedGoalId: string } }
@@ -135,7 +137,7 @@ export type ChildMessage =
   | { type: "ready"; version: number }
   | { type: "recovered"; version: number; pid: number; instanceId: string; snapshot?: SessionSnapshot }
   | { type: "commitProgress"; id: string; message: string }
-  | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; evaluation?: { binding: BrowserEvaluationBinding; sequence: number }; snapshot?: SessionSnapshot }
+  | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; forceToolReceipt?: ForceToolReceipt; evaluation?: { binding: BrowserEvaluationBinding; sequence: number }; snapshot?: SessionSnapshot }
   | { type: "event"; sequence: number; event: WorkerEvent; snapshot?: SessionSnapshot }
   | { type: "fatal"; error: RemoteError };
 

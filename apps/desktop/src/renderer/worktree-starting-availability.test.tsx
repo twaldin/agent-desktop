@@ -6,6 +6,7 @@ import { hasRemoteExecution } from "../../../../packages/shared/src/new-chat";
 import { hasDraftContent } from "./drafts";
 import { EnvironmentPreparationPause, SubmissionController, type PendingSubmission } from "./submissions";
 import { EnvironmentPreparationCard } from "./EnvironmentPreparationCard";
+import { forceCommandSpelling } from "./force-tool-submissions";
 import { remoteWorktreeIssue, remoteWorktreeResumeIssue } from "./worktree-starting-availability";
 
 const capabilities: Pick<HostState, "newChatExecution" | "localEnvironments"> = {
@@ -70,11 +71,12 @@ test("actual App submit rechecks the owning host after the saved-draft await", a
     const owner = { connected: true, state: { ...capabilities, drafts: [] } };
     const records = new Map([["host-a", owner]]);
     let dispatched = 0; const errors: unknown[] = []; const beforeSubmission = { owners: 0, pages: 0, docks: 0 };
+    const reportSubmissionError = (cause: unknown) => { errors.push(cause); };
     const values = {
-      canSend: true, submitting: { current: false }, setBusy() {}, setActionError(value: unknown) { if (value) errors.push(value); }, draftId: remote.id, selectedRef: { current: "host-a:new" }, hostId: "host-a",
+      canSend: true, submitting: { current: false }, setBusy() {}, setActionError(value: unknown) { if (value) errors.push(value); }, reportSubmissionError, draftId: remote.id, selectedRef: { current: "host-a:new" }, hostId: "host-a",
       submissions: { get() { return undefined; }, queuedEntries() { return []; }, async submit(snapshot: Draft) { dispatched++; return { submitted: snapshot, sessionId: "new-session", commandId: "send-id" }; } },
       drafts: { async prepareSubmission() { return saved; }, beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: remote }; }, ingest() {} },
-      hasDraftContent, hasRemoteExecution, remoteWorktreeIssue, desktop: { catalog: { records } }, selectedId: null, running: false, nativeBtwQuestion() { return undefined; },
+      hasDraftContent, hasRemoteExecution, remoteWorktreeIssue, forceCommandSpelling, desktop: { catalog: { records } }, selectedId: null, running: false, nativeBtwQuestion() { return undefined; },
       draftBrowserOwners: { beforeSubmission() { beforeSubmission.owners++; } }, draftBrowserPages: { captureContinuation() { return undefined; }, beforeSubmission() { beforeSubmission.pages++; } },
       draftBrowserDocks: new Map([["fixture", { beforeSubmission() { beforeSubmission.docks++; } }]]),
       async refresh() {}, transcript: { refresh() {} }, navigate() {}, textarea: { current: { focus() {} } }, EnvironmentPreparationPause, errorMessage: String,

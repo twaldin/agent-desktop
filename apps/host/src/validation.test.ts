@@ -86,3 +86,27 @@ test("branch checkout requires an exact reviewed status and preserves only its b
     { type: "git.checkout", branch: "", expectedRevision: revision },
   ]) expect(() => parseCommandEnvelope({ id: "switch", command: { type: "workspace.mutate", target: { projectId: "project" }, action } })).toThrow();
 });
+
+test("force intent requires version18 and preserves one exact detached guard", () => {
+  const forceTool = { epoch: "worker-epoch", expectedRevision: 7, toolName: "read" };
+  const base = { id: "force-command", command: { type: "session.prompt", sessionId: "session", text: "/force read inspect this", forceTool } };
+  expect(() => parseCommandEnvelope(base, 17)).toThrow("version 18");
+  const accepted = parseCommandEnvelope(base, 18);
+  forceTool.expectedRevision = 8;
+  expect(accepted.command).toMatchObject({ forceTool: { epoch: "worker-epoch", expectedRevision: 7, toolName: "read" } });
+  expect(() => parseCommandEnvelope({ ...base, commandVersion: 17 }, 18)).toThrow("version 18");
+  expect(() => parseCommandEnvelope({ ...base, command: { ...base.command, forceRecovery: { epoch: "worker-epoch", expectedRevision: 8, directiveId: "directive" } } }, 18)).toThrow("mutually exclusive");
+  expect(() => parseCommandEnvelope({ ...base, command: { ...base.command, type: "session.steer" } }, 18)).toThrow();
+  expect(() => parseCommandEnvelope({ ...base, command: { ...base.command, forceTool: { ...forceTool, expectedRevision: -1 } } }, 18)).toThrow();
+});
+
+test("force cancellation preserves exact ticket and rejects extra or stale-format fields", () => {
+  const ticket = { epoch: "worker-epoch", revision: 3 };
+  const input = { id: "cancel-command", command: { type: "session.force.cancel", sessionId: "session", ticket, directiveId: "original-directive" } };
+  const accepted = parseCommandEnvelope(input, 18);
+  ticket.epoch = "replacement";
+  expect(accepted.command).toEqual({ type: "session.force.cancel", sessionId: "session", ticket: { epoch: "worker-epoch", revision: 3 }, directiveId: "original-directive" });
+  expect(() => parseCommandEnvelope(input, 17)).toThrow("version 18");
+  expect(() => parseCommandEnvelope({ ...input, command: { ...input.command, all: true } }, 18)).toThrow();
+  expect(() => parseCommandEnvelope({ ...input, command: { ...input.command, directiveId: "" } }, 18)).toThrow();
+});

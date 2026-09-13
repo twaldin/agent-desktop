@@ -1,3 +1,7 @@
+import { SessionForceToolHttp, projectForceToolJournalReceipt } from "./session-force-tool-http";
+import { forceToolReceiptFromError } from "./omp/force-tool-admission";
+import { assertForceToolRecoveryCommand } from "./force-tool-recovery";
+import { parseForceToolReceipt } from "../../../packages/shared/src/force-tool";
 import { PULL_REQUEST_WRITES_CAPABILITY } from "../../../packages/shared/src/pull-request-write";
 import { PullRequests } from "./pull-requests";
 import { PullRequestsHttp } from "./pull-requests-http";
@@ -474,6 +478,19 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
   const htmlPreviews = new HtmlPreviewHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
   const sessionOutputs = new SessionOutputsHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
+  const forceToolHttp = new SessionForceToolHttp({ hostId: store.host.id,
+    sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    existing: async id => {
+      const handle = await handles.get(id)?.catch(() => undefined);
+      return handle ? { getForceToolState: async () => {
+        const value = await handle.getForceTool();
+        if (stopping || await handles.get(id)?.catch(() => undefined) !== handle)
+          throw new Error("The original force-tool worker changed during inspection.");
+        return value;
+      } } : undefined;
+    },
+    receipt: (sessionId, commandId) => projectForceToolJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
+  });
   const sessionMcpHttp = new SessionMcpHttp({hostId:store.host.id, sessionExists:id=>!stopping && Boolean(store.getSession(id)),
     existing:async id=>handles.get(id)?.catch(()=>undefined),
     receipt:(sessionId,commandId)=>{
@@ -617,7 +634,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
       sessionForks: SESSION_FORK_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
-      drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, forceTool: { version: 1, commandVersion: 18 }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput, sessionActivity = false): void {
@@ -794,10 +811,12 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18): Promise<CommandResult> {
     const command = envelope.command;
     const remoteError = remoteWorktreeProtocolError(command, commandVersion, id => store.getDraft(id), id => store.environmentPreparations.get(id));
     if (remoteError) return fail(envelope.id, remoteError.code, remoteError.message);
+    if (commandVersion < 18 && (command.type === "session.force.cancel" || command.type === "session.prompt" && (command.forceTool || command.forceRecovery)))
+      return fail(envelope.id, "FORCE_TOOL_PROTOCOL_REQUIRED", "Force-tool commands require the current client protocol.");
     if (commandVersion < 16 && hasSessionForkIntent(command)) return fail(envelope.id, "FORK_PROTOCOL_REQUIRED", "Fork requires the current client protocol.");
     if (commandVersion < 11 && command.type === "preferences.keymap.mutate") return fail(envelope.id, "KEYBINDINGS_PROTOCOL_REQUIRED", "Keyboard shortcut changes require the current client protocol.");
     if (commandVersion < 13 && command.type === "session.follow-up") return fail(envelope.id, "FOLLOW_UP_PROTOCOL_REQUIRED", "Queued follow-ups require the current client protocol.");
@@ -1022,6 +1041,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (receipt.kind === "outcome-unknown") return fail(envelope.id, "OUTCOME_UNKNOWN", receipt.reason);
         return ok(undefined, receipt);
       }
+      case "session.force.cancel": {
+        // Inspect/cancel only the original loaded worker; never load a replacement
+        // session to recreate an already lost volatile directive.
+        const handle = await handles.get(command.sessionId)?.catch(() => undefined);
+        if (!handle || stopping) return fail(envelope.id, "FORCE_TOOL_UNAVAILABLE", "The original native worker is unavailable; its queue was not recreated.");
+        return ok({ type: "session.force.cancel", ...await handle.cancelForceTool({ ticket: command.ticket, directiveId: command.directiveId }) });
+      }
       case "session.prompt": {
         if (command.wholeFileAttachments?.some(file => file.source.hostId !== store.host.id)) return fail(envelope.id, "WHOLE_FILE_OWNER_MISMATCH", "Whole files must belong to this conversation’s host. Their references were preserved.");
         if (command.wholeFileAttachments?.length && (command.text.trimStart().startsWith("/") || command.text.includes("/skill:"))) return fail(envelope.id, "WHOLE_FILE_COMMAND_UNSUPPORTED", "Whole files are not connected to native commands or skills yet. No command was executed.");
@@ -1029,14 +1055,25 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (command.attachments?.length && command.text.trimStart().startsWith("/")) return fail(envelope.id, "IMAGE_COMMAND_UNSUPPORTED", "Image attachments are not supported on slash commands yet. No command was executed.");
         const prompt = async (images?: PreparedPromptImage[]) => {
         if (executions.has(command.sessionId)) throw new Error("This session is running. Steer or stop its current turn first.");
+        // Recovery may inspect an existing volatile owner, never create a new
+        // worker or authorize replacement text from a renderer-only receipt.
+        const recoveryOwner = command.forceRecovery ? handles.get(command.sessionId) : undefined;
+        const recoveryHandle = recoveryOwner ? await recoveryOwner : undefined;
+        if (command.forceRecovery) {
+          if (!recoveryHandle || stopping) throw new Error("The original force worker is unavailable; recovery did not recreate it.");
+          const state = await recoveryHandle.getForceTool();
+          if (handles.get(command.sessionId) !== recoveryOwner || stopping) throw new Error("The original force worker changed before recovery.");
+          assertForceToolRecoveryCommand(command, state, id => store.getCommand(id));
+        }
         if (command.approvalMode !== undefined) await applySessionApproval(command.sessionId, command.approvalMode);
-        const handle = await getHandle(command.sessionId);
+        const handle = recoveryHandle ?? await getHandle(command.sessionId);
+        if (recoveryOwner && (handles.get(command.sessionId) !== recoveryOwner || stopping)) throw new Error("The original force worker changed during recovery setup.");
         runtimeErrors.delete(command.sessionId);
         assertWorkspaceAvailable(handle.cwd);
         goalContinuations?.cancel(command.sessionId);
         const nativeTitleBefore = handle.title;
         updateSession(command.sessionId, { status: "running", error: undefined });
-        const turn = handle.startPrompt(command.text, { model: command.model, thinkingLevel: command.thinkingLevel, ...(command.wholeFileAttachments === undefined ? {} : { wholeFiles: { submissionId: envelope.id, attachments: command.wholeFileAttachments } }), ...(command.selectedTextAttachments === undefined ? {} : { selectedText: { submissionId: envelope.id, attachments: command.selectedTextAttachments } }), ...(images === undefined ? {} : { images }) });
+        const turn = handle.startPrompt(command.text, { commandId: envelope.id, commandVersion, forceTool: command.forceTool, forceRecovery: command.forceRecovery, model: command.model, thinkingLevel: command.thinkingLevel, ...(command.wholeFileAttachments === undefined ? {} : { wholeFiles: { submissionId: envelope.id, attachments: command.wholeFileAttachments } }), ...(command.selectedTextAttachments === undefined ? {} : { selectedText: { submissionId: envelope.id, attachments: command.selectedTextAttachments } }), ...(images === undefined ? {} : { images }) });
         let notificationOutcome: 'completed' | 'failed' | 'stopped' = 'failed';
         const completion = turn.completion.then(agentInvoked => {
           const error = runtimeErrors.get(command.sessionId);
@@ -1051,7 +1088,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }).finally(() => { if (executions.get(command.sessionId) === completion) executions.delete(command.sessionId); questionDeliveries?.request(command.sessionId); goalContinuations?.request(command.sessionId); });
         executions.set(command.sessionId, completion);
         const accepted = await turn.accepted;
-        if (!accepted) { automationPromptCompletions.delete(envelope.id); return fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying."); }
+        const forceToolReceipt = turn.forceToolReceipt === undefined ? undefined : parseForceToolReceipt(turn.forceToolReceipt, envelope.id);
+        if (!accepted) { automationPromptCompletions.delete(envelope.id); return { ...fail(envelope.id, "PROMPT_NOT_RECORDED", "OMP neither recorded a user message nor completed a native command. The draft was retained; inspect its outcome before retrying."), ...(forceToolReceipt ? { forceToolReceipt } : {}) }; }
         if (automationCommands.has(envelope)) automationPromptCompletions.set(envelope.id,
           accepted.kind === "native-command" ? Promise.resolve("completed") : completion.then(() => notificationOutcome));
         const automationOwned = automationCommands.has(envelope);
@@ -1063,7 +1101,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const current = store.getSession(command.sessionId)!;
         if (handle.title && handle.title !== nativeTitleBefore) updateSession(command.sessionId, { title: handle.title });
         else if (accepted.kind === "user-message" && current.title === "New conversation") updateSession(command.sessionId, { title: (command.text.trim().split("\n")[0] || command.attachments?.map(image => image.name).join(", ") || command.wholeFileAttachments?.map(file => file.source.path.split("/").at(-1)).join(", ") || (command.selectedTextAttachments?.length ? "Selected text conversation" : "Image conversation")).slice(0, 90) });
-        return ok(store.getSession(command.sessionId), accepted);
+        return { ...ok(store.getSession(command.sessionId), accepted), ...(forceToolReceipt ? { forceToolReceipt } : {}) };
         };
         return command.attachments === undefined ? prompt() : attachments.withPrepared(command.attachments, prompt);
       }
@@ -1130,7 +1168,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return operation;
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -1173,11 +1211,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       catch (error) { result = checkoutRefusalResult(envelope.id, command, error) ?? fail(envelope.id, error instanceof AttachmentRequestError || error instanceof AttachmentImageError ? error.code
         : command.type === "preferences.keymap.mutate" && (error instanceof PreferenceError || error instanceof KeybindingError) ? error.code
         : error instanceof SessionForkError ? error.code
-        : error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN" ? "OUTCOME_UNKNOWN" : "COMMAND_FAILED", errorMessage(error)); }
+        : error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN" ? "OUTCOME_UNKNOWN" : "COMMAND_FAILED", errorMessage(error));
+        const forceToolReceipt = command.type === "session.prompt" ? forceToolReceiptFromError(error, envelope.id) : undefined;
+        if (forceToolReceipt) result = { ...result, forceToolReceipt };
+      }
       let completed;
       try { completed = store.finishCommand(envelope.id, hash, result); }
       catch (error) {
-        return fail(envelope.id, "OUTCOME_UNKNOWN", `The command completed but its durable receipt could not be recorded. Inspect the original command before retrying. ${errorMessage(error)}`);
+        return { ...fail(envelope.id, "OUTCOME_UNKNOWN", `The command completed but its durable receipt could not be recorded. Inspect the original command before retrying. ${errorMessage(error)}`),
+          ...(result.forceToolReceipt ? { forceToolReceipt: result.forceToolReceipt } : {}) };
       }
       publishState();
       // A handler can atomically commit its successful receipt with native binding.
@@ -1284,6 +1326,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (htmlResponse) return htmlResponse;
         const outputsResponse = await sessionOutputs.route(request, url);
         if (outputsResponse) return outputsResponse;
+        const forceToolResponse = await forceToolHttp.route(request, url);
+        if (forceToolResponse) return forceToolResponse;
         const mcpStateResponse = await sessionMcpHttp.route(request, url);
         if (mcpStateResponse) return mcpStateResponse;
         const btwResponse = await btwHttp.route(request, url);
@@ -1385,26 +1429,29 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
         }
-        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname)) {
+        if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname)) {
           const value = await request.json();
-          if (url.pathname !== "/v16/commands" && (value?.commandVersion === 16 || hasSessionForkIntent(value?.command)))
+          if (url.pathname !== "/v18/commands" && (value?.commandVersion === 18 || value?.command?.type === "session.force.cancel"
+            || Object.hasOwn(value?.command ?? {}, "forceTool") || Object.hasOwn(value?.command ?? {}, "forceRecovery")))
+            return Response.json({ code: "FORCE_TOOL_PROTOCOL_REQUIRED", error: "Force-tool intent requires /v18/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 16 || hasSessionForkIntent(value?.command)))
             return Response.json({ code: "FORK_PROTOCOL_REQUIRED", error: "Fork requires /v16/commands. This request was not accepted." }, { status: 422 });
-          if (url.pathname !== "/v17/commands" && (value?.commandVersion === 17 || value?.command?.type === "session.follow-up" && Object.hasOwn(value.command,"attachments"))) return Response.json({code:"FOLLOW_UP_IMAGES_PROTOCOL_REQUIRED",error:"Active-turn images require /v17/commands. This request was not accepted."},{status:422});
-          if (!["/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 15 || value?.command?.browserContinuation !== undefined)) return Response.json({code:"BROWSER_CONTINUATION_PROTOCOL_REQUIRED",error:"Browser continuation requires /v15/commands. This request was not accepted."},{status:422});
-          if (!["/v14/commands","/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 14 || value?.command?.type === "session.location.move" || value?.command?.type === "session.location.resume")) return Response.json({code:"TASK_LOCATION_PROTOCOL_REQUIRED",error:"Task location changes require /v14/commands. This request was not accepted."},{status:422});
-          if (!["/v13/commands","/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 13 || value?.command?.type === "session.follow-up")) return Response.json({ code: "FOLLOW_UP_PROTOCOL_REQUIRED", error: "Active-turn follow-ups require /v13/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 12 || hasRemoteWorktreeIntent(value?.command))) return Response.json({ code: "REMOTE_WORKTREE_PROTOCOL_REQUIRED", error: "Remote worktree starting refs require /v12/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 11 || value?.command?.type === "preferences.keymap.mutate")) return Response.json({ code: "KEYBINDINGS_PROTOCOL_REQUIRED", error: "Keyboard shortcut changes require /v11/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 10 || value?.command?.type === "workspace.mutate" && String(value?.command?.action?.type).startsWith("git.submit"))) return Response.json({ code: "GIT_SUBMISSION_PROTOCOL_REQUIRED", error: "Git submissions require /v10/commands. This request was not accepted." }, { status: 422 });
-          if(!["/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname)&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
-          if(!["/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
-          if (!["/v7/commands","/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
-          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 17 || value?.command?.type === "session.follow-up" && Object.hasOwn(value.command,"attachments"))) return Response.json({code:"FOLLOW_UP_IMAGES_PROTOCOL_REQUIRED",error:"Active-turn images require /v17/commands. This request was not accepted."},{status:422});
+          if (!["/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 15 || value?.command?.browserContinuation !== undefined)) return Response.json({code:"BROWSER_CONTINUATION_PROTOCOL_REQUIRED",error:"Browser continuation requires /v15/commands. This request was not accepted."},{status:422});
+          if (!["/v14/commands","/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 14 || value?.command?.type === "session.location.move" || value?.command?.type === "session.location.resume")) return Response.json({code:"TASK_LOCATION_PROTOCOL_REQUIRED",error:"Task location changes require /v14/commands. This request was not accepted."},{status:422});
+          if (!["/v13/commands","/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 13 || value?.command?.type === "session.follow-up")) return Response.json({ code: "FOLLOW_UP_PROTOCOL_REQUIRED", error: "Active-turn follow-ups require /v13/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 12 || hasRemoteWorktreeIntent(value?.command))) return Response.json({ code: "REMOTE_WORKTREE_PROTOCOL_REQUIRED", error: "Remote worktree starting refs require /v12/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 11 || value?.command?.type === "preferences.keymap.mutate")) return Response.json({ code: "KEYBINDINGS_PROTOCOL_REQUIRED", error: "Keyboard shortcut changes require /v11/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 10 || value?.command?.type === "workspace.mutate" && String(value?.command?.action?.type).startsWith("git.submit"))) return Response.json({ code: "GIT_SUBMISSION_PROTOCOL_REQUIRED", error: "Git submissions require /v10/commands. This request was not accepted." }, { status: 422 });
+          if(!["/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname)&&(value?.commandVersion===9||hasRepeatedWholeFileIntent(value?.command)))return Response.json({code:"REPEATED_WHOLE_FILE_PROTOCOL_REQUIRED",error:"Repeated inline file mentions require /v9/commands. This request was not accepted."},{status:422});
+          if(!["/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname)&&(value?.commandVersion===8||hasInlineFileIntent(value?.command)))return Response.json({code:"INLINE_FILE_PROTOCOL_REQUIRED",error:"Inline file positions require /v8/commands. This request was not accepted."},{status:422});
+          if (!["/v7/commands","/v8/commands","/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 7 || hasWholeFileIntent(value?.command))) return Response.json({ code: "WHOLE_FILE_PROTOCOL_REQUIRED", error: "Whole files require /v7/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 6 || hasSelectedTextIntent(value?.command))) return Response.json({ code: "SELECTED_TEXT_PROTOCOL_REQUIRED", error: "Selected text requires /v6/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 5 || hasEnvironmentIntent(value?.command))) return Response.json({ code: "ENVIRONMENT_PROTOCOL_REQUIRED", error: "Environment intent requires /v5/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && (value?.commandVersion === 4 || hasNewChatIntent(value?.command))) return Response.json({ code: "NEW_CHAT_PROTOCOL_REQUIRED", error: "Worktree intent requires /v4/commands. This request was not accepted." }, { status: 422 });
+          if (!["/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands"].includes(url.pathname) && hasAttachmentIntent(value?.command)) return Response.json({ code: "ATTACHMENT_PROTOCOL_REQUIRED", error: "Image attachment intent requires /v3/commands. This request was not accepted." }, { status: 422 });
           if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
-          const commandVersion = url.pathname === "/v17/commands" ? 17 : url.pathname === "/v16/commands" ? 16 : url.pathname === "/v15/commands" ? 15 : url.pathname === "/v14/commands" ? 14 : url.pathname === "/v13/commands" ? 13 : url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
+          const commandVersion = url.pathname === "/v18/commands" ? 18 : url.pathname === "/v17/commands" ? 17 : url.pathname === "/v16/commands" ? 16 : url.pathname === "/v15/commands" ? 15 : url.pathname === "/v14/commands" ? 14 : url.pathname === "/v13/commands" ? 13 : url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
           return Response.json(await dispatch(parseCommandEnvelope(value, commandVersion), commandVersion));
         }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);

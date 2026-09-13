@@ -141,3 +141,81 @@ describe("native prompt admission contract", () => {
     await expect(run.completion).rejects.toThrow("command disk failure");
   });
 });
+
+// The force observer is injected here to isolate actual append/flush ordering.
+// Native queue/handler semantics are exercised by the force admission suite.
+describe("force receipt at the native persistence boundary", () => {
+  test.each(["dispatch", "flush"])("an unused force observer preserves ordinary image uncertainty at %s failure", async point => {
+    const manager = await nativeManager();
+    const originalFlush = manager.flush.bind(manager);
+    const message = { role: "user" as const, content: "Dispatched image admission", timestamp: 1 };
+    try {
+      if (point === "flush") manager.flush = async () => { throw new Error("Uncertified image storage"); };
+      const run = beginNativePrompt(manager, async () => {
+        if (point === "dispatch") throw new Error("Uncertified image storage");
+        manager.appendMessage(message);
+        return { agentInvoked: true };
+      }, async () => {}, { matches: value => value === message, receipt: () => [], dispatched: true },
+      undefined, undefined, undefined, {
+        observeUserEntry() {}, observeFlushedUserEntry() {},
+        // An observer without a force command returns the original error.
+        failure: error => error,
+      });
+      await expect(run.accepted).rejects.toMatchObject({ name: "OmpPromptAdmissionError", code: "OUTCOME_UNKNOWN" });
+      await expect(run.completion).rejects.toThrow("Uncertified image storage");
+    } finally { manager.flush = originalFlush; await manager.close(); }
+  });
+
+  test("publishes the flushed force entry before accepted continuations", async () => {
+    const manager = await nativeManager();
+    const turn = Promise.withResolvers<void>();
+    const phases: string[] = [];
+    let observed: string | undefined;
+    let flushed: string | undefined;
+    try {
+      const run = beginNativePrompt(manager, async () => {
+        manager.appendMessage({ role: "user", content: "Force optional prompt", timestamp: 1 });
+        await turn.promise;
+        return { agentInvoked: true };
+      }, async () => {}, undefined, undefined, undefined, undefined, {
+        observeUserEntry(id) { observed = id; phases.push("append"); },
+        observeFlushedUserEntry(id) { flushed = id; phases.push("flush"); },
+        failure(error) { return error; },
+      });
+      const accepted = await run.accepted;
+      phases.push("accepted");
+      expect(accepted).toEqual({ kind: "user-message", entryId: observed! });
+      expect(flushed).toBe(observed);
+      expect(phases).toEqual(["append", "flush", "accepted"]);
+      const disk = (await readFile(manager.getSessionFile()!, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      expect(disk.some(entry => entry.id === flushed && entry.message?.content === "Force optional prompt")).toBe(true);
+      turn.resolve();
+      expect(await run.completion).toBe(true);
+    } finally { turn.resolve(); await manager.close(); }
+  });
+
+  test("failed persistence reports uncertain force admission and never a flushed entry", async () => {
+    const manager = await nativeManager();
+    const classifications: boolean[] = [];
+    let flushed = false;
+    const storage = { onEntryAppended: manager.onEntryAppended, flush: async () => { throw new Error("Force disk failure"); } };
+    try {
+      const run = beginNativePrompt(storage, async () => {
+        const id = manager.appendMessage({ role: "user", content: "Unconfirmed force prompt", timestamp: 1 });
+        storage.onEntryAppended?.(manager.getEntry(id)!);
+        return { agentInvoked: true };
+      }, async () => {}, undefined, undefined, undefined, undefined, {
+        observeUserEntry() {},
+        observeFlushedUserEntry() { flushed = true; },
+        failure(error, uncertain = false) {
+          classifications.push(uncertain);
+          return Object.assign(new Error("Force receipt retained", { cause: error }), { code: "OUTCOME_UNKNOWN", forceToolReceipt: { commandId: "original-force", arm: "armed", prompt: "unknown" } });
+        },
+      });
+      await expect(run.accepted).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN", forceToolReceipt: { commandId: "original-force", arm: "armed", prompt: "unknown" } });
+      await expect(run.completion).rejects.toThrow("Force disk failure");
+      expect(classifications).toContain(true);
+      expect(flushed).toBe(false);
+    } finally { await manager.close(); }
+  });
+});

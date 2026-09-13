@@ -4,7 +4,7 @@ import { copyEvaluationBinding, copyEvaluationFrame, copyEvaluationValue, evalua
 import { requestWorkerBrowserReservation, type WorkerBrowserReservationStatus } from "../omp-browser/reservation";
 import { requestWorkerBrowserClose, type WorkerBrowserCloseResult } from "../omp-browser/close";
 import type { NativeMarketplaceCatalog, NativePluginAcquisition } from "../../../../packages/shared/src/plugin-acquisition";
-import type { NativeMcpAuthorizationSnapshot, NativeMcpAuthorizationReply, NativeMcpAuthorizationStart } from "@agent-desktop/shared";
+import { parseForceToolCancelResult, parseForceToolCommandId, parseForceToolPromptFields, parseForceToolReceipt, parseForceToolState, type ForceToolCancelResult, type ForceToolReceipt, type ForceToolState, type ForceToolTicket, type NativeMcpAuthorizationSnapshot, type NativeMcpAuthorizationReply, type NativeMcpAuthorizationStart } from "@agent-desktop/shared";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from "@agent-desktop/shared";
 import type { BrowserControlRequest, BrowserDocumentContext, ComposerCompletionQuery, DetachedQuestionDeliveryReceipt, DetachedQuestionSnapshot, GoalMutationRequest, NativeGoalActivity, ResolveDetachedQuestionReceipt, ResolveDetachedQuestionRequest } from "@agent-desktop/shared";
 import type { NativeComposerCatalog, NativeComposerCompletions, NativeSkillInventoryCatalog } from "../omp/composer-actions";
@@ -42,12 +42,14 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
+  getForceTool(): Promise<ForceToolState>;
+  cancelForceTool(input: { ticket: ForceToolTicket; directiveId: string }): Promise<ForceToolCancelResult>;
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
   getGoalContinuationEligibility(): Promise<GoalContinuationEligibility>;
   startGoalContinuation(expectedGoalId: string): OmpGoalContinuationRun;
@@ -118,9 +120,10 @@ interface Pending {
   reject(error: unknown): void;
   timeout?: ReturnType<typeof setTimeout>;
   onProgress?: (message: string) => void;
-  uncertainTransport?: "prompt-admission" | "queued-submission" | "question-resolution" | "mcp-authorization";
+  uncertainTransport?: "prompt-admission" | "queued-submission" | "question-resolution" | "mcp-authorization" | "force-cancel";
   evaluationDisposal?: boolean;
   evaluation?: { binding: BrowserEvaluationBinding; sequence: number };
+  forceTool?: { commandId: string; capture(receipt: ForceToolReceipt): void };
 }
 
 /** Host-internal worker lifecycle client; exported for focused transport contract tests. */
@@ -246,6 +249,7 @@ export class WorkerClient {
     if (pending?.uncertainTransport === "prompt-admission") return new OmpPromptAdmissionError(error);
     if (pending?.uncertainTransport === "queued-submission") return Object.assign(new Error("Queued submission delivery is unknown. Inspect its durable receipt before retrying.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
     if (pending?.uncertainTransport === "question-resolution") return new DetachedQuestionOutcomeUnknown(error);
+    if (pending?.uncertainTransport === "force-cancel") return Object.assign(new Error("Native force cancellation delivery is unknown. Inspect the live queue before retrying.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
     return error;
   }
 
@@ -351,6 +355,17 @@ export class WorkerClient {
       this.#pending.delete(key);
       clearTimeout(pending.timeout);
       let responseValue = message.value;
+      let forceToolReceipt: ForceToolReceipt | undefined;
+      try {
+        if (message.forceToolReceipt !== undefined) {
+          if (!pending.forceTool) throw new Error("Unsolicited force-tool receipt");
+          forceToolReceipt = parseForceToolReceipt(message.forceToolReceipt, pending.forceTool.commandId);
+          pending.forceTool.capture(forceToolReceipt);
+        }
+      } catch (cause) {
+        pending.reject(this.#transportFailure(pending, new Error("OMP worker returned an invalid force-tool receipt.", { cause })));
+        return;
+      }
       if (pending.evaluation) {
         try {
           if (!message.evaluation || evaluationKey(message.evaluation.binding) !== evaluationKey(pending.evaluation.binding)
@@ -378,6 +393,7 @@ export class WorkerClient {
         const error = new Error(message.error?.message ?? "OMP worker operation failed");
         error.name = message.error?.name ?? "Error";
         if (message.error?.code === "OUTCOME_UNKNOWN") Object.assign(error, { code: "OUTCOME_UNKNOWN" });
+        if (forceToolReceipt) Object.assign(error, { forceToolReceipt: { ...forceToolReceipt } });
         pending.reject(error);
       }
     }
@@ -536,10 +552,22 @@ export class WorkerClient {
     if ((options?.images?.length || options?.selectedText?.attachments?.length || options?.wholeFiles?.attachments?.length) && (this.snapshot?.isStreaming || this.snapshot?.hasPostPromptWork || [...this.#pending.keys()].some(key => key.endsWith(":completion")))) {
       throw new Error("OMP session is busy; attached content was not dispatched");
     }
-    const preparedOptions = options ? { ...options, images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles, text.length) } : undefined;
+    const forceFields = parseForceToolPromptFields(options ?? {});
+    const forceOperation = forceFields.forceTool !== undefined || forceFields.forceRecovery !== undefined;
+    const commandId = options?.commandId === undefined ? undefined
+      : forceOperation ? parseForceToolCommandId(options.commandId) : options.commandId;
+    if (forceOperation && (commandId === undefined || options?.commandVersion !== 18))
+      throw new Error("Force-tool prompt admission requires command version 18 and its original command identity.");
+    const preparedOptions = options ? { ...options, ...forceFields, ...(commandId === undefined ? {} : { commandId }), images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles, text.length) } : undefined;
     const id = String(++this.#requestId);
-    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(`${id}:accepted`, undefined, Boolean(preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length || preparedOptions?.wholeFiles?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
+    let forceToolReceipt: ForceToolReceipt | undefined;
+    const acceptedKey = `${id}:accepted`;
+    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(acceptedKey, undefined, Boolean(preparedOptions?.forceTool || preparedOptions?.forceRecovery || preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length || preparedOptions?.wholeFiles?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
     const completion = this.#promise<boolean>(`${id}:completion`);
+    if (preparedOptions?.commandId !== undefined) this.#pending.get(acceptedKey)!.forceTool = {
+      commandId: preparedOptions.commandId,
+      capture: receipt => { forceToolReceipt = { ...receipt }; },
+    };
     try { this.#send({ type: "request", id, operation: "startPrompt", args: { text, options: preparedOptions } }); }
     catch (error) {
       for (const phase of ["accepted", "completion"]) {
@@ -549,7 +577,7 @@ export class WorkerClient {
         this.#pending.delete(key);
       }
     }
-    return { accepted, completion };
+    return { accepted, completion, get forceToolReceipt() { return forceToolReceipt && { ...forceToolReceipt }; } };
   }
 
   startFollowUp(text: string, delivery: import("@agent-desktop/shared").FollowUpDelivery,
@@ -977,6 +1005,18 @@ export class WorkerRuntime {
       },
       subscribe: listener => client.subscribe(listener),
       subscribeWorkerFailure: listener => client.subscribeFailure(listener),
+      getForceTool: async () => parseForceToolState(await client.request({ operation: "getForceTool" })),
+      cancelForceTool: async input => {
+        const value = await client.request({ operation: "cancelForceTool", args: input }, 15_000, "force-cancel");
+        try {
+          const result = parseForceToolCancelResult(value);
+          if (result.cancelledDirectiveId !== input.directiveId) throw new Error("Native force cancellation receipt changed directive identity.");
+          return result;
+        }
+        catch (cause) {
+          throw Object.assign(new Error("Native force cancellation returned an invalid receipt. Inspect the live queue before retrying.", { cause }), { code: "OUTCOME_UNKNOWN" as const });
+        }
+      },
       startPrompt: (text, options) => client.startPrompt(text, options),
       prompt: (text, options) => client.startPrompt(text, options).completion,
       steer: (text, expectedApprovalMode, options) => {

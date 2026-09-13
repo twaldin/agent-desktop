@@ -73,3 +73,90 @@ test("reauth refuses unavailable servers and bridges while native extension prec
   expect(shadow.calls()).toBe(0);
   expect(shadow.entries).toEqual([]);
 });
+
+// These controls exercise the actual native parser and app dispatch precedence;
+// the injected admission port does not count as native queue/provider proof.
+function forceRouting(shadow?: string, prepared = false) {
+  const value = fixture(mcp("succeeded"));
+  let nativeCalls = 0, shadowCalls = 0;
+  if (shadow) Object.assign(value.session, { extensionRunner: {
+    getCommand: (name: string) => name === shadow ? { handler: async () => { shadowCalls++; } } : undefined,
+    createCommandContext: () => ({}), runScoped: async (run: () => Promise<void>) => run(), emitError() {},
+  } });
+  const bridges: NativeCommandBridges = { ...value.bridges, forceTool: {
+    options: prepared ? { forceTool: { epoch: "original", expectedRevision: 1, toolName: "read" } } : {},
+    async dispatch(parsed, builtin) {
+      nativeCalls++;
+      expect(builtin.name).toBe("force");
+      expect(parsed.args).toBe("read inspect");
+      return { agentInvoked: false, handledCommand: "force" };
+    },
+  } };
+  return { ...value, bridges, nativeCalls: () => nativeCalls, shadowCalls: () => shadowCalls };
+}
+
+test("native force aliases retain exact extension token ownership", async () => {
+  const canonicalShadow = forceRouting("force");
+  expect(await dispatchNativePrompt(canonicalShadow.session, "/force read inspect", undefined, undefined, canonicalShadow.bridges)).toMatchObject({ handledCommand: "force" });
+  expect(canonicalShadow.nativeCalls()).toBe(0);
+  expect(canonicalShadow.shadowCalls()).toBe(1);
+  await dispatchNativePrompt(canonicalShadow.session, "/force:read inspect", undefined, undefined, canonicalShadow.bridges);
+  expect(canonicalShadow.nativeCalls()).toBe(1);
+  const aliasShadow = forceRouting("force:read");
+  await dispatchNativePrompt(aliasShadow.session, "/force:read inspect", undefined, undefined, aliasShadow.bridges);
+  expect(aliasShadow.nativeCalls()).toBe(0);
+  expect(aliasShadow.shadowCalls()).toBe(1);
+  await dispatchNativePrompt(aliasShadow.session, "/force read inspect", undefined, undefined, aliasShadow.bridges);
+  expect(aliasShadow.nativeCalls()).toBe(1);
+});
+
+test("prepared force guard refuses changed text and a newly shadowing handler before effects", async () => {
+  const plain = forceRouting(undefined, true);
+  await expect(dispatchNativePrompt(plain.session, "edited ordinary text", undefined, undefined, plain.bridges)).rejects.toThrow("prepared force command changed");
+  expect(plain.nativeCalls()).toBe(0);
+  const shadow = forceRouting("force", true);
+  await expect(dispatchNativePrompt(shadow.session, "/force read inspect", undefined, undefined, shadow.bridges)).rejects.toThrow("no longer owns");
+  expect(shadow.nativeCalls()).toBe(0);
+  expect(shadow.shadowCalls()).toBe(0);
+});
+
+test("resolved force alias scope survives canonical shadowing but refuses a new exact winner after output", async () => {
+  for (const replacement of ["unchanged", "extension", "custom"] as const) {
+    const value = forceRouting("force");
+    const entered = Promise.withResolvers<void>(), output = Promise.withResolvers<void>();
+    let scopeDepth = 0, promptEntries = 0, synchronousSections = 0;
+    value.bridges.withNativeForceInvocation = operation => {
+      scopeDepth++;
+      try { return operation(); } finally { scopeDepth--; }
+    };
+    value.bridges.forceTool!.dispatch = async (_parsed, _builtin, _invoke, _readOutput, scope) => {
+      if (!scope) throw new Error("Original invocation scope was not supplied");
+      scope(() => { expect(scopeDepth).toBe(1); synchronousSections++; });
+      entered.resolve();
+      await output.promise;
+      scope(() => { expect(scopeDepth).toBe(1); synchronousSections++; promptEntries++; });
+      return { agentInvoked: true };
+    };
+    const pending = dispatchNativePrompt(value.session, "/force:read inspect", undefined, undefined, value.bridges);
+    void pending.catch(() => {});
+    await entered.promise;
+    expect(scopeDepth).toBe(0);
+    if (replacement === "extension") Object.assign(value.session.extensionRunner!, {
+      getCommand: (name: string) => name === "force" || name === "force:read" ? { handler: async () => {} } : undefined,
+    });
+    if (replacement === "custom") Object.assign(value.session, {
+      customCommands: [{ command: { name: "force:read", execute: async () => "unexpected" } }],
+    });
+    output.resolve();
+    if (replacement === "unchanged") {
+      expect(await pending).toEqual({ agentInvoked: true });
+      expect(promptEntries).toBe(1);
+      expect(synchronousSections).toBe(2);
+    } else {
+      await expect(pending).rejects.toThrow("original native force invocation changed");
+      expect(promptEntries).toBe(0);
+      expect(synchronousSections).toBe(1);
+    }
+    expect(scopeDepth).toBe(0);
+  }
+});
