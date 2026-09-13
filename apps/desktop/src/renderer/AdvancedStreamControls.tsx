@@ -24,7 +24,8 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
     return () => { unsubscribe(); data.stop(); };
   }, [data, connected, localHostId]);
   const snapshot = data?.controls?.advancedStream;
-  const blocked = disabled || !connected || !data || data.loading || data.saving || !!data.error || !snapshot?.supported;
+  const availableFields = snapshot?.fields ? Object.values(snapshot.fields).some(field => field.supported) : snapshot?.supported;
+  const blocked = disabled || !connected || !data || data.loading || data.saving || !!data.error || !availableFields;
   return <details className="advanced-stream-controls">
     <summary>Advanced sampling & output</summary>
     <div className="advanced-stream-panel">
@@ -34,12 +35,12 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
         {data?.loading && <p role="status">Loading native session controls…</p>}
         {data?.error && <p role="alert">{data.error} Reload before saving; your edits are retained.</p>}
         {snapshot ? <>
-          <p>{snapshot.reason}</p>
+          {(!snapshot.fields || !availableFields) && <p>{snapshot.reason}</p>}
           {snapshot.model && <p className="advanced-stream-model">{snapshot.model.provider} / {snapshot.model.id} · {snapshot.model.api}</p>}
           <p>Applies to this conversation’s current model.</p>
           {snapshot.outputLimitConflict && <p role="alert">Saved output limit {snapshot.outputLimitConflict.saved} exceeds the current native model limit of {snapshot.outputLimitConflict.maximum}. Your saved value is retained. Change the output limit or choose Follow native session and save before sending.</p>}
           {disabled && <p role="status">Controls are read-only while a turn is running or the session is archived.</p>}
-          {snapshot.supported && fields.map(field => {
+          {availableFields && fields.map(field => {
             const edit = data?.edits.get(field);
             const configured = snapshot.selection[field];
             const action = edit?.action ?? (configured === undefined ? "inherit" : configured === null ? "provider-default" : "set");
@@ -48,19 +49,23 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
             const modelChanged = !!edit && (!currentModel || currentModel.provider !== edit.model.provider || currentModel.id !== edit.model.id || currentModel.api !== edit.model.api);
             const stale = !!edit && edit.revision !== data?.controls?.revision;
             const native = snapshot.native[field];
+            const capability = snapshot.fields?.[field];
+            const available = capability?.supported ?? snapshot.supported;
+            const label = field === "maxTokens" && snapshot.outputBudgetNote ? "Requested output budget" : labels[field];
             return <div className="advanced-stream-row" key={field}>
-              <label htmlFor={`${id}-${field}-mode`}>{labels[field]}</label>
+              <label htmlFor={`${id}-${field}-mode`}>{label}</label>
               <select id={`${id}-${field}-mode`} disabled={blocked || modelChanged} value={action} onChange={event => data?.edit(field, event.target.value as StreamEdit["action"], text)}>
                 <option value="inherit">Follow native session</option>
-                {field !== "maxTokens" && <option value="provider-default">Provider default (omit)</option>}
-                <option value="set">Custom value</option>
+                {field !== "maxTokens" && <option value="provider-default" disabled={!available}>Provider default (omit)</option>}
+                <option value="set" disabled={!available}>Custom value</option>
               </select>
-              {action === "set" && <input aria-label={`${labels[field]} value`} type="number" inputMode={field === "maxTokens" ? "numeric" : "decimal"}
-                min={field === "maxTokens" ? 1 : 0} max={field === "temperature" ? 2 : field === "topP" ? 1 : native ?? undefined} step={field === "maxTokens" ? 1 : "any"}
-                value={text} disabled={blocked || modelChanged} onChange={event => data?.edit(field, "set", event.target.value)}/>}
-              <small>Native baseline: {native === null ? "provider default / omitted" : native}. {field === "maxTokens" ? "Includes the native model’s output budget; resetting restores its default limit." : "Follow preserves native session sampling; provider default explicitly omits this parameter."}</small>
+              {action === "set" && <input aria-label={`${label} value`} type="number" inputMode={field === "maxTokens" ? "numeric" : "decimal"}
+                min={capability?.minimum ?? (field === "maxTokens" ? 1 : 0)} max={capability ? capability.maximum ?? undefined : field === "temperature" ? 2 : field === "topP" ? 1 : native ?? undefined} step={field === "maxTokens" ? 1 : "any"}
+                value={text} disabled={blocked || modelChanged || !available} onChange={event => data?.edit(field, "set", event.target.value)}/>}
+              {capability && <p role={available ? undefined : "status"}>{capability.reason}{!available && configured !== undefined ? " Your saved value is retained but is not applied here. Choose Follow native session to clear it." : ""}</p>}
+              <small>Native baseline: {native === null ? "provider default / omitted" : native}. {field === "maxTokens" ? snapshot.outputBudgetNote ?? "Includes the native model’s output budget; resetting restores its default limit." : "Follow preserves native session sampling; provider default explicitly omits this parameter when available."}</small>
               {edit && <div className="advanced-stream-edit-actions">
-                <button type="button" disabled={blocked || stale || modelChanged} onClick={() => void data?.save(field)}>{data?.saving ? "Saving…" : "Save"}</button>
+                <button type="button" disabled={blocked || stale || modelChanged || !available && action !== "inherit"} onClick={() => void data?.save(field)}>{data?.saving ? "Saving…" : "Save"}</button>
                 <button type="button" disabled={data?.saving} onClick={() => data?.discard(field)}>Discard edit</button>
                 {stale && !modelChanged && <button type="button" disabled={blocked} onClick={() => data?.rebase(field)}>Use refreshed revision</button>}
               </div>}

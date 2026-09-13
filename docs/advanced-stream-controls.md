@@ -1,0 +1,15 @@
+# Conversation sampling and output budgets
+
+The expandable Advanced sampling & output section edits the owning native session’s current branch, model and API. Saving uses the host revision and records the selection in the native session journal. It does not send a provider request or change host configuration. Reload, reconnect and reopen preserve saved intent; stale or offline edits require an explicit save.
+
+Built-in Gemini models using their bundled API, endpoint and transport support temperature, Top P and an output limit. Temperature ranges from 0 to 2, Top P from 0 to 1. Follow native session removes the branch override; Provider default explicitly omits a sampling parameter. An older host without per-field availability retains this existing Gemini behavior.
+
+Built-in Anthropic models using their bundled identity, API, endpoint and transport expose a **requested output budget**. Native request construction remains authoritative: thinking can raise this budget, and Anthropic OAuth can cap it at 64,000. The UI shows the catalog model ceiling, not a guaranteed effective response limit. API-key requests are not artificially limited to the OAuth ceiling. An excessive saved budget after a model-limit change remains visible and blocks dispatch until changed or explicitly cleared.
+
+Anthropic sampling is not yet exposed here. Model compatibility, thinking, and mutually exclusive sampling parameters need their own complete integration. The UI keeps those controls unavailable, explains why, and allows an old saved override to be cleared without silently deleting it. Existing native sampling settings remain with the native session. Codex and unverified or redirected model endpoints remain unavailable; matching a provider name alone does not establish support.
+
+The legacy all-fields flag remains false for Anthropic. New clients read each field’s availability; older desktops therefore hide this section’s edits instead of offering sampling that the host would reject. New desktops continue to accept older Gemini host snapshots without per-field metadata.
+
+The host forwards selected supported fields through the original native stream chain. It does not duplicate thinking-budget calculation, OAuth credential classification, or provider payload construction. Controlled request experiments establish builder behavior, not provider acceptance: in particular, a synthetic success response does not establish that simultaneously supplied sampling parameters are valid. Anthropic’s [migration guide](https://platform.claude.com/docs/en/models/sonnet-5/migration-guide) documents model-specific sampling removal and the one-at-a-time constraint on Haiku 4.5.
+
+Controlled host and renderer tests cover field availability, clearing retained unavailable sampling, independent output edits, lowered-limit recovery, unchanged Gemini behavior, and endpoint/Codex refusal. Native request-construction, actual App interaction and live-provider acceptance remain separate evidence boundaries; this source delta alone does not establish them.

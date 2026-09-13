@@ -137,8 +137,13 @@ export interface OmpStreamSelection {
   maxTokens?: number;
 }
 export interface OmpAdvancedStreamControls {
+  /** Legacy all-fields availability. New clients use fields when present. */
   supported: boolean;
   reason: string;
+  /** New hosts report each field independently. Omitted preserves the older Gemini contract. */
+  fields?: Record<OmpStreamField, { supported: boolean; reason: string; minimum: number; maximum: number | null }>;
+  /** A requested budget can be adjusted by native thinking and account rules. */
+  outputBudgetNote?: string;
   model: { provider: string; id: string; api: string } | null;
   selection: OmpStreamSelection;
   native: { temperature: number | null; topP: number | null; maxTokens: number | null };
