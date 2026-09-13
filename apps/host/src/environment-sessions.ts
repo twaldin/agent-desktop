@@ -145,6 +145,10 @@ export class EnvironmentSessions {
         `Environment preparation ${preparationId} was not found`,
       );
     }
+    if (current.forkSource) {
+      return this.finishFailure(commandId, hash, "FORK_PREPARATION_REQUIRES_OWNER",
+        "Resume this preparation from its original conversation's Fork operation.");
+    }
     if (current.revision !== expectedRevision) {
       return this.finishFailure(
         commandId,

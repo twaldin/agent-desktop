@@ -35,13 +35,13 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,17].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
-  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17 | undefined;
-  return { ...parseCommandBody(value, version ?? (transportVersion === 17 ? 17 : transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | undefined;
+  return { ...parseCommandBody(value, version ?? (transportVersion === 17 ? 17 : transportVersion === 16 ? 16 : transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
 }
-function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 17): CommandEnvelope {
+function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17): CommandEnvelope {
   const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
@@ -59,6 +59,26 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
   const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
   const promptText = () => hasContext && input.text === "" ? "" : text(input.text, "prompt", hasContext ? 500_000 : 4_000_000);
   switch (type) {
+    case "session.fork": {
+      if ((commandVersion ?? 0) < 16 || Object.keys(input).some(key => !["type", "sessionId", "expectedRevision", "execution"].includes(key)))
+        throw new Error("Fork requires command version 16 and an owned destination.");
+      const execution = object(input.execution);
+      let parsed: import("@agent-desktop/shared").NewChatExecution;
+      if (execution.type === "local" && Object.keys(execution).every(key => key === "type")) parsed = { type: "local" };
+      else if (execution.type === "worktree" && Object.keys(execution).every(key => ["type", "startingState"].includes(key))) {
+        const startingState = parseWorktreeStartingState(execution.startingState);
+        if (startingState.type !== "working-tree") throw new Error("Fork worktrees start from the current working tree.");
+        parsed = { type: "worktree", startingState };
+      } else throw new Error("Invalid Fork destination.");
+      const expectedRevision = text(input.expectedRevision, "Fork revision", 64);
+      if (!/^[a-f0-9]{64}$/.test(expectedRevision)) throw new Error("Invalid Fork revision.");
+      return { id, command: { type, sessionId: text(input.sessionId, "session ID"), expectedRevision, execution: parsed } };
+    }
+    case "session.fork.resume": {
+      if ((commandVersion ?? 0) < 16 || Object.keys(input).some(key => !["type", "sessionId", "operationId"].includes(key)))
+        throw new Error("Fork recovery requires command version 16 and its original operation.");
+      return { id, command: { type, sessionId: text(input.sessionId, "session ID"), operationId: text(input.operationId, "Fork operation ID") } };
+    }
     case "session.location.move": {
       if ((commandVersion ?? 0) < 14 || Object.keys(input).some(key => !["type","sessionId","expectedRevision","target"].includes(key))) throw new Error("Task location changes require command version 14.");
       const target = object(input.target), kind = target.kind;

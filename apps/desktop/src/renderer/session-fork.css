@@ -1,0 +1,11 @@
+/* Pinned wfr → RV/kfr uses the Electron suggestion-row tokens: 5px vertical
+   padding, 20px text line, 8px content gaps and a 16px leading icon. */
+.session-fork-menu .composer-autocomplete-row { min-height: 30px; padding: 5px 8px; line-height: 20px; gap: 8px; }
+.session-fork-row-content { display: flex; align-items: center; flex: 1; min-width: 0; gap: 8px; }
+.session-fork-row-content .completion-label { flex: none; max-width: 60%; }
+.session-fork-menu .composer-autocomplete-row:focus-visible { outline: none; background: var(--selected); }
+.session-fork-menu .composer-autocomplete-row:disabled { color: var(--secondary); opacity: .5; cursor: default; }
+.session-fork-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; padding: 8px 12px; border: var(--border-width, 1px) solid var(--border); border-radius: var(--radius, 8px); color: var(--secondary); font-size: var(--small-font-size, 12px); }
+.session-fork-status[role=alert] { color: var(--danger); }
+.session-fork-status code { flex-basis: 100%; overflow-wrap: anywhere; }
+.session-fork-status button { color: var(--text); }
