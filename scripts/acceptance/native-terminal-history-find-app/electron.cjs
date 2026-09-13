@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, nativeTheme, screen, session } = require("electron");
 const { appendFileSync, existsSync, readFileSync, writeFileSync } = require("node:fs");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
+const { promisify } = require("node:util");
+const execFileAsync = promisify(execFile);
 const { createHash } = require("node:crypto");
 const { createInterface } = require("node:readline");
 const { basename, isAbsolute, join, resolve } = require("node:path");
@@ -65,22 +67,31 @@ function ownedWindow() {
   if (windows.length !== 1) fail("ambiguous-actual-app-window");
   return windows[0];
 }
+async function readNativeMetadata(command, args, label) {
+  let output;
+  try {
+    output = await execFileAsync(command, args, { encoding: "utf8", timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    append("native-probe-command-observations.jsonl", { label, command, args, ...output });
+    return JSON.parse(output.stdout);
+  } catch (error) {
+    fail("native-metadata-command-failed", { label, command, args, error: String(error), code: error.code, signal: error.signal,
+      killed: error.killed, stdout: error.stdout ?? output?.stdout, stderr: error.stderr ?? output?.stderr });
+  }
+}
 async function probe(label, requireBinding = true) {
   const window = ownedWindow();
-  const cg = JSON.parse(execFileSync(inspector, ["metadata", String(process.pid)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }));
+  const cg = await readNativeMetadata(inspector, ["metadata", String(process.pid)], label);
   const owned = cg.windows.filter(value => value.kCGWindowOwnerPID === process.pid && value.kCGWindowIsOnscreen && value.kCGWindowLayer === 0);
   if (!cg.accessibilityPermission || !cg.screenCapturePermission || cg.frontmost !== true || owned.length !== 1 || !window.isFocused()) fail("native-permission-window-or-foreground-binding", { label, cg, electronFocused: window.isFocused() });
   const native = owned[0], bounds = window.getBounds(), contentBounds = window.getContentBounds();
-  const manager = JSON.parse(execFileSync(yabai, ["-m", "query", "--windows", "--window", String(native.kCGWindowNumber)], { encoding: "utf8" }));
-  const ax = execFileSync("/usr/bin/osascript", ["-e", `tell application "System Events"
-set ownedProcess to first application process whose unix id is ${process.pid}
-tell ownedProcess
-if (count of windows) is not 1 then error "Ambiguous owned AX window"
-set p to position of window 1
-set s to size of window 1
-return {item 1 of p, item 2 of p, item 1 of s, item 2 of s}
-end tell
-end tell`], { encoding: "utf8" }).trim().split(",").map(Number);
+  const manager = await readNativeMetadata(yabai, ["-m", "query", "--windows", "--window", String(native.kCGWindowNumber)], label);
+  const axInventory = cg.ax, axWindow = axInventory?.windows?.[0], ax = axWindow?.bounds;
+  if (cg.pid !== process.pid || axInventory?.pid !== process.pid || axInventory.queryError !== 0
+    || axInventory.windowCount !== 1 || !Array.isArray(axInventory.windows) || axInventory.windows.length !== 1
+    || axWindow?.pidError !== 0 || axWindow.pid !== process.pid || axWindow.position?.error !== 0 || axWindow.size?.error !== 0
+    || !ax || !["x", "y", "width", "height"].every(key => Number.isFinite(ax[key])) || ax.width <= 0 || ax.height <= 0) {
+    fail("actual-ax-inventory-or-window-unavailable", { label, cg, axInventory, ownedCGCount: owned.length, native, bounds, manager });
+  }
   const renderer = await window.webContents.executeJavaScript(`(async () => {
     await document.fonts.ready;
     const visible = node => node.getClientRects().length && !node.closest('[hidden]');
@@ -132,7 +143,7 @@ end tell`], { encoding: "utf8" }).trim().split(",").map(Number);
     || b.X !== bounds.x || b.Y !== bounds.y || b.Width !== bounds.width || b.Height !== bounds.height
     || manager.frame.x !== bounds.x || manager.frame.y !== bounds.y || manager.frame.w !== bounds.width || manager.frame.h !== bounds.height
     || renderer.url !== new URL("file://" + join(repo, "apps/desktop/dist/renderer/index.html")).href
-    || ax.length !== 4 || ax.some((value, i) => value !== [bounds.x, bounds.y, bounds.width, bounds.height][i])
+    || ax.x !== bounds.x || ax.y !== bounds.y || ax.width !== bounds.width || ax.height !== bounds.height
     || renderer.screenX !== bounds.x || renderer.screenY !== bounds.y || renderer.visualViewport?.scale !== 1
     || renderer.width * zoomFactor !== contentBounds.width || renderer.height * zoomFactor !== contentBounds.height
     || renderer.dpr !== display.scaleFactor * zoomFactor) fail("actual-geometry-zoom-or-floating-drift", { label, cg, ax, manager, bounds, contentBounds, renderer, zoomFactor });
@@ -145,7 +156,7 @@ end tell`], { encoding: "utf8" }).trim().split(",").map(Number);
     if (expected.fonts[role] && expected.fonts[role] !== value) fail("bound-output-font-drift", { label, role, expected: expected.fonts[role], observed: value });
     expected.fonts[role] = value;
   }
-  return { label, pid: process.pid, cgWindow: native.kCGWindowNumber, cg, ax: { x: ax[0], y: ax[1], width: ax[2], height: ax[3] },
+  return { label, pid: process.pid, cgWindow: native.kCGWindowNumber, cg, ax: { ...ax, inventory: axInventory },
     window: { bounds, contentBounds, aspect: bounds.width / bounds.height, fullscreen: window.isFullScreen(), zoomFactor, zoomLevel: window.webContents.getZoomLevel() },
     display, nativeDisplay, displayBinding, fonts, fontBindings: requireBinding ? { ...expected.fonts } : fonts,
     manager, renderer, nativeTheme: { source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors }, appPeerObserved, at: Date.now() };
@@ -153,21 +164,28 @@ end tell`], { encoding: "utf8" }).trim().split(",").map(Number);
 async function boot() {
   const connection = JSON.parse(readFileSync(join(root, "host/connection.json"), "utf8"));
   if (!loopback(new URL(connection.origin))) fail("nonloopback-owning-host");
-  const response = await fetch(connection.origin + "/v1/peers", { headers: { Authorization: `Bearer ${connection.token}` } });
-  const peers = await response.json();
-  if (!response.ok || !Array.isArray(peers.hosts) || peers.hosts.length !== 0) fail("prelaunch-nonzero-peers");
-  append("prelaunch-peer-observations.jsonl", { status: peers.status, discoveredPeers: peers.hosts.length });
-  await app.whenReady();
-  session.defaultSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+  // Complete real peer admission synchronously: yielding here can make Electron
+  // ready before production main registers its privileged protocols.
+  const peers = JSON.parse(execFileSync(process.env.NATIVE_FIND_BUN, ["--no-env-file", "-e", `
+    const connection = await Bun.file(process.env.AGENT_DESKTOP_DATA_DIR + "/connection.json").json();
+    if (!["127.0.0.1", "localhost", "[::1]"].includes(new URL(connection.origin).hostname)) throw Error("Nonloopback peer preflight");
+    const response = await fetch(connection.origin + "/v1/peers", { headers: { Authorization: "Bearer " + connection.token, "X-Agent-Host-Id": connection.hostId } });
+    const peers = await response.json();
+    console.log(JSON.stringify({ ok: response.ok, hostId: connection.hostId, status: peers.status, discoveredPeers: Array.isArray(peers.hosts) ? peers.hosts.length : null }));
+  `], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 }));
+  if (!peers.ok || peers.hostId !== connection.hostId || peers.discoveredPeers !== 0) fail("prelaunch-nonzero-peers");
+  append("prelaunch-peer-observations.jsonl", { status: peers.status, discoveredPeers: peers.discoveredPeers });
+  const ready = app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
     const url = new URL(details.url);
     if (["http:", "https:", "ws:", "wss:"].includes(url.protocol) && !loopback(url)) {
       appendFileSync(join(root, "guard-violations.jsonl"), JSON.stringify({ kind: "chromium-nonloopback-request", origin: url.origin, at: Date.now() }) + "\n", { mode: 0o600 });
       callback({ cancel: true }); return;
     }
     callback({});
-  });
+  }));
   // Actual production main owns the ordinary window, preload, bridge, App and terminal view.
   require(join(repo, "apps/desktop/dist/main.cjs"));
+  await ready;
   for await (const line of createInterface({ input: process.stdin, terminal: false })) {
     const [command, label, width, height, zoom = "1"] = line.trim().split(/\s+/);
     if (!command) continue;
