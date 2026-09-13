@@ -14,7 +14,7 @@ if (owner.root !== root || owner.repo !== repo || process.env.NATIVE_FIND_HOST_E
 const inspector = process.env.NATIVE_FIND_INSPECTOR, yabai = process.env.NATIVE_FIND_YABAI;
 if (!inspector || !isAbsolute(inspector) || !yabai || !isAbsolute(yabai)) throw new Error("Main must supply verified absolute native inspector and yabai paths.");
 const sha = value => createHash("sha256").update(value).digest("hex");
-const stableTheme = renderer => JSON.stringify({ root: renderer.theme.root, body: renderer.theme.body, source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors });
+const stableTheme = renderer => JSON.stringify({ root: renderer.theme.root, body: renderer.theme.body, fontTokens: renderer.fontTokens, source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors });
 if (sha(readFileSync(join(root, "bin/tailscale"))) !== owner.tailscaleSha256) throw new Error("Private refusing tailscale executable changed.");
 if (inspector !== owner.helperHashes.inspector.path || yabai !== owner.helperHashes.yabai.path
   || sha(readFileSync(inspector)) !== owner.helperHashes.inspector.sha256 || sha(readFileSync(yabai)) !== owner.helperHashes.yabai.sha256) throw new Error("Verified native helper changed.");
@@ -69,7 +69,7 @@ async function probe(label, requireBinding = true) {
   const window = ownedWindow();
   const cg = JSON.parse(execFileSync(inspector, ["metadata", String(process.pid)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }));
   const owned = cg.windows.filter(value => value.kCGWindowOwnerPID === process.pid && value.kCGWindowIsOnscreen && value.kCGWindowLayer === 0);
-  if (!cg.accessibilityPermission || !cg.screenCapturePermission || owned.length !== 1) fail("native-permission-or-window-binding");
+  if (!cg.accessibilityPermission || !cg.screenCapturePermission || cg.frontmost !== true || owned.length !== 1 || !window.isFocused()) fail("native-permission-window-or-foreground-binding", { label, cg, electronFocused: window.isFocused() });
   const native = owned[0], bounds = window.getBounds(), contentBounds = window.getContentBounds();
   const manager = JSON.parse(execFileSync(yabai, ["-m", "query", "--windows", "--window", String(native.kCGWindowNumber)], { encoding: "utf8" }));
   const ax = execFileSync("/usr/bin/osascript", ["-e", `tell application "System Events"
@@ -81,11 +81,30 @@ set s to size of window 1
 return {item 1 of p, item 2 of p, item 1 of s, item 2 of s}
 end tell
 end tell`], { encoding: "utf8" }).trim().split(",").map(Number);
-  const renderer = await window.webContents.executeJavaScript(`(() => {
+  const renderer = await window.webContents.executeJavaScript(`(async () => {
+    await document.fonts.ready;
     const visible = node => node.getClientRects().length && !node.closest('[hidden]');
     const history = [...document.querySelectorAll('.native-terminal-history')].find(visible);
-    const css = node => { const s = getComputedStyle(node); return { colorScheme:s.colorScheme, background:s.backgroundColor, color:s.color, fontFamily:s.fontFamily, fontSize:s.fontSize, lineHeight:s.lineHeight }; };
+    const css = node => { const s = getComputedStyle(node); return { colorScheme:s.colorScheme, background:s.backgroundColor, color:s.color, fontFamily:s.fontFamily, fontSize:s.fontSize, lineHeight:s.lineHeight, fontStyle:s.fontStyle, fontWeight:s.fontWeight, fontStretch:s.fontStretch, letterSpacing:s.letterSpacing, fontFeatureSettings:s.fontFeatureSettings, fontVariationSettings:s.fontVariationSettings, fontKerning:s.fontKerning }; };
+    const rootStyle = getComputedStyle(document.documentElement);
+    const fontTokens = Object.fromEntries(['--terminal-font','--terminal-font-size','--code-font','--code-font-size','--code-font-weight','--code-line-height'].map(name=>[name,rootStyle.getPropertyValue(name).trim()]));
+    const sample = 'MWil0 [] .* İ 😀';
+    const fonts = [];
+    const font = (role, node) => {
+      const style = css(node), shorthand = style.fontStyle+' '+style.fontWeight+' '+style.fontSize+' '+style.fontFamily;
+      const context = new OffscreenCanvas(1,1).getContext('2d');
+      if (!context) throw new Error('Actual font metrics unavailable');
+      context.font = shorthand;
+      const measured = context.measureText(sample);
+      const metrics = Object.fromEntries(['width','actualBoundingBoxLeft','actualBoundingBoxRight','actualBoundingBoxAscent','actualBoundingBoxDescent','fontBoundingBoxAscent','fontBoundingBoxDescent'].map(name=>[name,measured[name]]));
+      fonts.push({ role, ready:document.fonts.check(shorthand,sample), font:context.font, sample,
+        style:Object.fromEntries(Object.entries(style).filter(([name])=>!['colorScheme','background','color'].includes(name))), metrics });
+    };
+    font('root',document.documentElement); font('body',document.body);
+    for (const node of document.querySelectorAll('.native-terminal-grid .xterm-char-measure-element')) font('native-output',node);
+    for (const node of history?.querySelectorAll('pre') ?? []) font('history-output',node);
     return { url:location.href, screenX, screenY, width:innerWidth, height:innerHeight, aspect:innerWidth/innerHeight, dpr:devicePixelRatio,
+      fontsReady:document.fonts.status==='loaded', fontTokens, fonts,
       visualViewport:visualViewport && { width:visualViewport.width, height:visualViewport.height, scale:visualViewport.scale },
       theme:{ rootClass:document.documentElement.className, rootData:{...document.documentElement.dataset}, root:css(document.documentElement), body:css(document.body), terminal:history?css(history):null },
       active:{ tag:document.activeElement?.tagName, label:document.activeElement?.getAttribute('aria-label'), text:document.activeElement?.textContent?.slice(0,160) },
@@ -96,6 +115,19 @@ end tell`], { encoding: "utf8" }).trim().split(",").map(Number);
   })()`);
   if (renderer.history) renderer.history.sections = renderer.history.sections.map(({ text, ...value }) => ({ ...value, textLength: text.length, textSha256: sha(text) }));
   const b = native.kCGWindowBounds, display = screen.getDisplayMatching(bounds), zoomFactor = window.webContents.getZoomFactor();
+  const nativeDisplays = cg.screens?.filter(value => value.id === display.id) ?? [];
+  const nativeDisplay = nativeDisplays[0];
+  if (nativeDisplays.length !== 1 || !Number.isFinite(nativeDisplay?.backingScale) || nativeDisplay.backingScale <= 0 || nativeDisplay.backingScale !== display.scaleFactor
+    || !["width", "height", "pixelWidth", "pixelHeight"].every(key => Number.isInteger(nativeDisplay?.mode?.[key]) && nativeDisplay.mode[key] > 0)) fail("actual-native-display-mode-or-backing-unavailable", { label, nativeDisplays, display });
+  const displayBinding = JSON.stringify({ native: nativeDisplay, electron: display, dpr: renderer.dpr });
+  const fonts = {};
+  if (!renderer.fontsReady || !renderer.fonts.length) fail("actual-fonts-not-ready", { label, renderer });
+  for (const font of renderer.fonts) {
+    if (!font.ready || !Object.values(font.metrics).every(Number.isFinite)) fail("actual-output-font-not-ready", { label, font });
+    const value = JSON.stringify(font);
+    if (fonts[font.role] && fonts[font.role] !== value) fail("inconsistent-output-font-role", { label, fonts, font });
+    fonts[font.role] = value;
+  }
   if (manager.id !== native.kCGWindowNumber || manager.pid !== process.pid || !manager["has-ax-reference"] || !manager["is-floating"] || manager["is-native-fullscreen"] || window.isFullScreen()
     || b.X !== bounds.x || b.Y !== bounds.y || b.Width !== bounds.width || b.Height !== bounds.height
     || manager.frame.x !== bounds.x || manager.frame.y !== bounds.y || manager.frame.w !== bounds.width || manager.frame.h !== bounds.height
@@ -107,10 +139,16 @@ end tell`], { encoding: "utf8" }).trim().split(",").map(Number);
   if (requireBinding && (!expected || !appPeerObserved || expected.pid !== process.pid || expected.cgWindow !== native.kCGWindowNumber
     || JSON.stringify(expected.bounds) !== JSON.stringify(bounds) || expected.space !== manager.space || expected.display !== manager.display
     || expected.zoomFactor !== zoomFactor || expected.width !== renderer.width || expected.height !== renderer.height
-    || expected.theme !== stableTheme(renderer))) fail("input-capture-preflight-not-bound", { label, expected, cg, ax, manager, bounds, contentBounds, renderer, zoomFactor, appPeerObserved });
+    || expected.displayBinding !== displayBinding || expected.theme !== stableTheme(renderer))) fail("input-capture-preflight-not-bound", { label, expected, cg, ax, manager, bounds, contentBounds, renderer, display, nativeDisplay, zoomFactor, appPeerObserved });
+  // New mounted output roles bind once; closing history never erases an observed font.
+  if (requireBinding) for (const [role, value] of Object.entries(fonts)) {
+    if (expected.fonts[role] && expected.fonts[role] !== value) fail("bound-output-font-drift", { label, role, expected: expected.fonts[role], observed: value });
+    expected.fonts[role] = value;
+  }
   return { label, pid: process.pid, cgWindow: native.kCGWindowNumber, cg, ax: { x: ax[0], y: ax[1], width: ax[2], height: ax[3] },
     window: { bounds, contentBounds, aspect: bounds.width / bounds.height, fullscreen: window.isFullScreen(), zoomFactor, zoomLevel: window.webContents.getZoomLevel() },
-    display, manager, renderer, nativeTheme: { source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors }, appPeerObserved, at: Date.now() };
+    display, nativeDisplay, displayBinding, fonts, fontBindings: requireBinding ? { ...expected.fonts } : fonts,
+    manager, renderer, nativeTheme: { source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors }, appPeerObserved, at: Date.now() };
 }
 async function boot() {
   const connection = JSON.parse(readFileSync(join(root, "host/connection.json"), "utf8"));
@@ -140,7 +178,8 @@ async function boot() {
       const observed = await probe(label, false);
       if (!appPeerObserved || observed.window.bounds.width !== Number(width) || observed.window.bounds.height !== Number(height) || observed.window.zoomFactor !== Number(zoom)) fail("requested-layout-not-actually-observed");
       expected = { pid: process.pid, cgWindow: observed.cgWindow, bounds: observed.window.bounds, space: observed.manager.space, display: observed.manager.display,
-        zoomFactor: observed.window.zoomFactor, width: observed.renderer.width, height: observed.renderer.height, theme: stableTheme(observed.renderer) };
+        zoomFactor: observed.window.zoomFactor, width: observed.renderer.width, height: observed.renderer.height,
+        displayBinding: observed.displayBinding, fonts: { ...observed.fonts }, theme: stableTheme(observed.renderer) };
       writeFileSync(file, JSON.stringify({ kind: "actual-layout-binding", observed, expected }, null, 2), { flag: "wx", mode: 0o600 });
     } else if (command === "probe") writeFileSync(file, JSON.stringify(await probe(label), null, 2), { flag: "wx", mode: 0o600 });
     else if (command === "capture") {

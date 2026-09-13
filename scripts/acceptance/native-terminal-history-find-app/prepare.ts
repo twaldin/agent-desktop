@@ -32,7 +32,7 @@ await writeFile(join(root, "agent/config.yml"), "extensions: []\nretry:\n  enabl
 execFileSync("/usr/bin/git", ["init", "--quiet", join(root, "project")]);
 const source = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
 const sourcePaths = ["apps/desktop/src/renderer/NativeTerminalPanel.tsx", "apps/desktop/src/renderer/native-terminal-panel.css", "apps/desktop/src/renderer/native-terminal-history-find.ts", "apps/desktop/src/renderer/native-terminal-history-find.test.ts",
-  ...["prepare.ts", "host.ts", "worker.ts", "electron.cjs", "emit-history.sh", "cases.json"].map(name => `scripts/acceptance/native-terminal-history-find-app/${name}`)];
+  ...["prepare.ts", "host.ts", "worker.ts", "electron.cjs", "emit-history.sh", "cases.json", "native-inspect.swift"].map(name => `scripts/acceptance/native-terminal-history-find-app/${name}`)];
 const sourceHashes = Object.fromEntries(await Promise.all(sourcePaths.map(async name => [name, createHash("sha256").update(await readFile(join(repo, name))).digest("hex")])));
 const helperHashes = { inspector: { path: inspector, sha256: createHash("sha256").update(await readFile(inspector)).digest("hex") }, yabai: { path: yabai, sha256: createHash("sha256").update(await readFile(yabai)).digest("hex") } };
 const owner = { kind: "native-history-find", root, evidence, repo, source, hostEntry, bundle: { directory: bundle.directory, digest: bundle.digest },

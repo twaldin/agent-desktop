@@ -24,7 +24,7 @@
     "NATIVE_FIND_BUN": "<verified absolute Bun executable>",
     "NATIVE_FIND_HOST_ENTRY": "<this-repository>/scripts/acceptance/native-terminal-history-find-app/host.ts",
     "NATIVE_FIND_TMUX_BUNDLE": "<verified immutable bundle directory>",
-    "NATIVE_FIND_INSPECTOR": "<Main-verified read-only native-inspect executable supporting metadata PID>",
+    "NATIVE_FIND_INSPECTOR": "<Main-verified executable compiled from this fixture's native-inspect.swift; metadata PID must include frontmost and screens id/backingScale/physical mode>",
     "NATIVE_FIND_YABAI": "<verified absolute yabai executable>",
     "NATIVE_FIND_CDP_PORT": "<owned unique loopback port if Main needs read-only browser inspection>"
   },
@@ -37,10 +37,11 @@
     "Any guard-violations.jsonl entry or native input attempt from Find fails the run. Do not suppress, overwrite or relabel failed attempts. No live reference, personal profile/account, clipboard test or provider send."
   ],
   "physicalGate": [
-    "Main owns one exact on-screen candidate PID/CG/AX window. Inspect and float ONLY that owned window through existing native controls; no global yabai setting change.",
+    "Main owns one exact on-screen candidate PID/CG/AX window. Inspect and float ONLY that owned window through existing native controls; no global yabai setting change. Bind/probe/capture require both actual native frontmost PID and Electron window focus.",
     "Baseline actual native bounds1440x1000 at zoom1 if the display fits. After native setup, send app stdin: bind baseline 1440 1000 1. This verifies actual bounds, not requested bounds.",
     "Before EVERY physical pointer/key action, send app stdin: probe <unique-before-action-label>, wait for its ready log, inspect the actual bound target/occlusion, then use native pointer/SystemEvents exact-PID input. The fixture never calls DOM click/focus or synthesizes native history.",
-    "After the view settles, send app stdin: capture <unique-label>. It records native CG raster and before/after CG/AX/PID, display/Space/yabai floating/fullscreen, native/content/renderer bounds and aspect, DPR/display scale, direct zoom and resolved theme. Drift fails with original evidence retained.",
+    "After the view settles, send app stdin: capture <unique-label>. It records native CG raster and before/after CG/AX/PID, display/Space/yabai floating/fullscreen, native/content/renderer bounds and aspect, DPR, exact native screen ID/backingScale/physical mode width/height/pixelWidth/pixelHeight, direct zoom and resolved theme. The native screen must match Electron display.id and scale; missing fields or bound display/mode/backing changes fail with original evidence retained.",
+    "Every probe awaits document.fonts.ready and requires fontsReady plus readiness checks and finite platform text metrics for actual root/body/native-output/history-output font roles. Root font tokens stay baseline-bound. A newly mounted output role binds once on its first observation; hiding/unmounting it does not erase that binding, and later font/style/metric changes fail. This permits initial no-history to mounted-history without relaxing previously observed fonts.",
     "Intentional compact actual720x700 at zoom1 is a separate case: resize only the owned floating window and send bind compact 720 700 1. Never label managed half/quarter tiling as requested geometry.",
     "All captures remain NOT pixel-comparable because no reference comparison or matched reference geometry/zoom/theme is established. No style compensation or threshold relaxation."
   ],
