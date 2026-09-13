@@ -18,6 +18,7 @@ export interface PrepareEnvironmentWorktree {
   model?: ModelChoice;
   approvalMode?: OmpApprovalMode;
   environment: { configPath: string; revision: string } | null;
+  forkSource?: LocalEnvironmentPreparation["forkSource"];
 }
 
 type RunOptions = Pick<LocalEnvironmentRunInput, "signal" | "onOutput" | "timeoutMs" | "maxOutputBytes" | "baseEnvironment">;
@@ -58,7 +59,7 @@ export class WorktreeEnvironmentLifecycle {
     const worktreePath = await this.workspaces.sessionWorktreeDestination(project.id, name, directories);
     onDestination?.(worktreePath);
     let record = this.store.createEnvironmentPreparation({ id: input.commandId, projectId: project.id, sourceRoot: project.path,
-      worktreePath, startingState: input.startingState, draft: input.draft, model: input.model, approvalMode: input.approvalMode,
+      worktreePath, startingState: input.startingState, draft: input.draft, model: input.model, approvalMode: input.approvalMode, forkSource: input.forkSource,
       environment: configuration, directories });
     return this.createWorktree(record);
   }

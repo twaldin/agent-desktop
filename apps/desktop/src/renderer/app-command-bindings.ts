@@ -18,6 +18,7 @@ export const APP_COMMAND_BINDING_OWNERS = {
   focusBrowserAddressBar: "browser-address",
   stepWorkspaceLayout: "step-workspace-layout",
   keyboardShortcuts: "keyboard-shortcuts",
+  forkThread: "fork-thread",
   openCommandMenu: "search", searchChats: "search-chats", openFolder: "open-folder",
 } as const satisfies Record<string, AppShortcut>;
 

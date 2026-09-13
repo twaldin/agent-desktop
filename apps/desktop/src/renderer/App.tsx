@@ -138,6 +138,8 @@ import { EnvironmentCard } from "./EnvironmentCard";
 import { useTaskLocation } from "./task-location-state";
 import { SideChat } from "./SideChat";
 import { BtwState } from "./btw-state";
+import { SessionFork, type SessionForkMenuRequest } from "./SessionFork";
+import { SessionForkState, type ForkExecution } from "./session-fork-state";
 import { nativeBtwQuestion } from "../../../../packages/shared/src/btw";
 import { assertComposerOwner } from "./composer-autocomplete";
 import { BrowserPanel } from "./BrowserPanel";
@@ -313,6 +315,7 @@ export function App() {
   }, [imageResources]);
   const stores = useMemo(() => new Map<string, { drafts: DraftController; submissions: SubmissionController; state?: typeof state; connected?: boolean }>(), [bridge]);
   const sideChatControllers = useMemo(() => new Map<string, BtwState>(), [bridge]);
+  const forkControllers = useMemo(() => new Map<string, SessionForkState>(), [bridge]);
   function controllers(owner: string) {
     let pair = stores.get(owner);
     if (!pair) {
@@ -573,6 +576,60 @@ export function App() {
     expandAfterNavigation.current = id ? `${owner ?? ""}:${id}` : undefined;
     if (focusComposer) requestAnimationFrame(() => textarea.current?.focus());
   }, [route.hostId, state?.host.id, desktop.localHostId]);
+  let forkController = selected ? forkControllers.get(`${hostId}:${selected.id}`) : undefined;
+  if (selected && !forkController) {
+    forkController = new SessionForkState(bridge, hostId, selected.id, { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value) });
+    forkControllers.set(`${hostId}:${selected.id}`, forkController);
+  }
+  const forkSupported = state?.sessionForks?.version === 1 && state.sessionForks.commandVersion === 16;
+  const forkOwner = useMemo(() => ({ data: forkController, enabled: Boolean(forkController && forkSupported && connected && !contentOverlayOpen && !selected?.archived && selected?.status === "idle") }),
+    [forkController, forkSupported, connected, contentOverlayOpen, selected?.archived, selected?.status]);
+  const forkOwnerRef = useRef(forkOwner);
+  const [forkMenu, setForkMenu] = useState<{ owner: typeof forkOwner; request: SessionForkMenuRequest }>();
+  useLayoutEffect(() => {
+    forkOwnerRef.current = forkOwner;
+    if (forkMenu && forkMenu.owner !== forkOwner) setForkMenu(undefined);
+  }, [forkOwner, forkMenu]);
+  useEffect(() => {
+    if (!forkController) return;
+    const off = forkController.subscribe(redraw);
+    forkController.setConnection(connected, forkSupported);
+    if (connected && forkSupported) void forkController.refresh();
+    return () => { off(); forkController.setConnection(false, forkSupported); };
+  }, [forkController, connected, forkSupported]);
+  useEffect(() => bridge.subscribe(event => {
+    if (event.type === "session.fork" && event.hostId === hostId && event.sessionId === forkController?.sessionId && connected) void forkController.refresh();
+  }), [bridge, forkController, hostId, connected]);
+  const canFork = forkOwner.enabled && forkController?.canStart;
+  function openForkMenu(anchor: HTMLElement | null = textarea.current?.element ?? null) {
+    const owner = forkOwnerRef.current;
+    if (!anchor || !owner.enabled || !owner.data?.canStart) return;
+    const editor = textarea.current, start = editor?.selectionStart, end = editor?.selectionEnd;
+    setMenuOpen(false);
+    setForkMenu({ owner, request: { anchor, restoreFocus() {
+      if (forkOwnerRef.current !== owner || !anchor.isConnected) return;
+      anchor.focus({ preventScroll: true });
+      if (anchor === editor?.element && start !== undefined && end !== undefined) editor.setSelectionRange(start, end);
+    } } });
+  }
+  async function openForkedChat(owner = forkOwnerRef.current) {
+    const data = owner.data;
+    if (!data?.child || forkOwnerRef.current !== owner || !owner.enabled) return;
+    try {
+      await desktop.catalog.refreshHost(data.hostId);
+      if (forkOwnerRef.current !== owner || !owner.enabled) return;
+      const child = data.takeChild();
+      if (child) navigate(child.id, child.hostId);
+    } catch (cause) { if (forkOwnerRef.current === owner) setActionError(errorMessage(cause)); }
+  }
+  async function runFork(execution?: ForkExecution) {
+    const owner = forkOwnerRef.current, data = owner.data;
+    if (!owner.enabled || !data || (execution ? !data.canStart : !data.canResume)) return;
+    forkMenu?.request.restoreFocus(); setForkMenu(undefined);
+    if (execution) await data.start(execution); else await data.resume();
+    await data.refresh();
+    if (forkOwnerRef.current === owner && data.child) await openForkedChat(owner);
+  }
   useEffect(() => bridge.subscribeNotificationNavigation?.(target => navigate(target.sessionId, target.hostId)), [bridge, navigate]);
   // Bind legacy/new local routes once identity is known; never replace an
   // explicit unavailable remote owner with the local machine.
@@ -690,7 +747,7 @@ export function App() {
   const currentShortcutOptions: AppShortcutOptions = {
     ...(commandKeymap && { bindings: appCommandBindings.bindings }),
     composer: () => textarea.current?.element ?? null,
-    blocked: () => Boolean(dialog || menuOpen || fileSearchOwner || commandMenuMode),
+    blocked: () => Boolean(dialog || menuOpen || forkMenu || fileSearchOwner || commandMenuMode),
     actions: {
       ...sidebarChatActions(organizedSidebar.chatSlots, navigate),
       ...(!contentOverlayOpen ? numberedMainTaskActions(taskTargets, taskDirection, selectMainTask) : {}),
@@ -702,6 +759,7 @@ export function App() {
       sidebar: () => setSidebarOpen(value => !value),
       settings: () => openSettings(),
       "keyboard-shortcuts": () => { setSettingsPage("keyboard-shortcuts"); openSettings(); },
+      ...(canFork && { "fork-thread": () => openForkMenu() }),
       // The pinned keyboard command opens search; pointer Files keeps its distinct panel route.
       ...(filesAction && workspaceOwner && { files: () => setFileSearchOwner(workspaceOwner) }),
       ...(sideChatAction && { "side-chat": () => sideChatAction.onSelect("right") }),
@@ -739,7 +797,7 @@ export function App() {
     if (definition.id === "nextTab" || definition.id === "previousTab") return [];
     if (!owner || !onSelect || definition.referenceFamily !== "webview" || (definition.numberShortcutFamily === "sidebar" || definition.numberShortcutFamily === "tabs")) return [];
     return [{ id: definition.id, title: definition.title, description: definition.description.replace(/\bCodex\b/g, "Agent Desktop"),
-      group: definition.group, shortcut: appCommandShortcutLabel(appCommandBindings.bindings, owner), deferUntilClose: owner === "browser-address", onSelect }];
+      group: definition.group, shortcut: appCommandShortcutLabel(appCommandBindings.bindings, owner), deferUntilClose: owner === "browser-address" || owner === "fork-thread", onSelect }];
   });
   const commandMenuHosts = [...desktop.catalog.records].flatMap(([id, record]) => record.state ? [{ id, name: record.state.host.name, connected: record.connected, searchAvailable: record.state.sessionSearch?.version === 1 }] : []);
   const commandMenuRecentChats = commandMenuRecents([...desktop.catalog.records].flatMap(([hostId, record]) => (record.state?.sessions ?? []).filter(session => !session.archived).map(session => ({ hostId, sessionId: session.id, title: session.title, updatedAt: session.updatedAt,
@@ -795,7 +853,27 @@ export function App() {
     finally { setAddingProject(false); }
   }
   async function submit(activeDelivery?: "follow-up" | "steer") {
-    if (!canSend || submitting.current) return;
+    if (submitting.current) return;
+    const typedFork = drafts.get(draftId).draft.text;
+    if (!submissions.get(draftId)?.uncertain && /^\s*\/fork(?:\s|$)/.test(typedFork)) {
+      const owner = forkOwnerRef.current;
+      submitting.current = true; setBusy(true); setActionError(null);
+      try {
+        if (!selectedId || !connected || !bridge.getComposerActions) throw new Error("Open a connected chat to resolve /fork. The draft was retained.");
+        const target = { sessionId: selectedId }, catalog = await bridge.getComposerActions(target, false, hostId);
+        assertComposerOwner(catalog, hostId, target);
+        if (forkOwnerRef.current !== owner || drafts.get(draftId).draft.text !== typedFork) throw new Error("The chat or draft changed while resolving /fork. Nothing was sent.");
+        const native = catalog.commands.find(value => value.name === "fork" && value.availability !== "shadowed");
+        if (native?.source.kind === "builtin") {
+          if (!owner.enabled || !owner.data?.canStart || !/^\s*\/fork\s*$/.test(typedFork) || hasDraftContent({ ...drafts.get(draftId).draft, text: "" }))
+            throw new Error("Fork requires an idle chat and an otherwise empty composer. The draft was retained.");
+          openForkMenu(); return;
+        }
+        if (!native || !["executable", "partial"].includes(native.availability)) throw new Error("The owning host did not expose a supported /fork action. The draft was retained.");
+      } catch (cause) { setActionError(errorMessage(cause)); return; }
+      finally { submitting.current = false; setBusy(false); }
+    }
+    if (!canSend) return;
     let browserContinuation;
     try {
       if (!selectedId && !submissions.get(draftId)?.uncertain) {
@@ -945,6 +1023,7 @@ export function App() {
     bridge, hostId, target: workspaceTarget, draftId, text: draft.text, connected,
     disabled: Boolean(selected?.archived || missingSession || busy || pendingSubmission?.uncertain || settingsOpen),
     input: textarea, readText: () => drafts.get(draftId).draft.text,
+    fork: forkSupported && forkController ? { data: forkController, emptyComposer: !hasDraftContent({ ...draft, text: "" }), run: runFork } : undefined,
     insertFile: state?.wholeFiles?.inlineMentions?.commandVersion===8 ? (source,range) => {
       if(!textarea.current)throw new Error('The composer is unavailable. Your draft is unchanged.');
       const file=appendWholeFile(drafts.get(draftId).draft,hostId,source,{textOffset:range.start,allowRepeated:state?.wholeFiles?.inlineMentions?.repeatedSources?.commandVersion===9}).findLast(item=>item.source.hostId===source.hostId&&item.source.path===source.path)!;
@@ -1292,7 +1371,7 @@ export function App() {
   const connectionLabel = connected ? hostId === desktop.localHostId ? "Connected · This machine" : "Connected · Tailscale" : loading ? "Connecting…" : state ? "Offline · cached view" : "Host unavailable";
   const profileMenu = (triggerId?: string) => <ProfileMenu hosts={desktop.hosts} activeHostId={state?.host.id ?? route.hostId} hostName={activeHostName} connected={connected} connectionLabel={connectionLabel} onSelectHost={owner => navigate(null, owner, true)} onSettings={openSettings} onConnections={() => { setSettingsPage("connections"); openSettings(); }} onBuildStatus={() => setDialog("status")} onRefresh={() => desktop.refreshNetwork()} triggerId={triggerId}/>;
   // The right dock occupies the top-right corner of the titlebar band only when it renders as its own column.
-  const conversationActions = selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button><button onClick={() => { dock.open("side-chat"); setMenuOpen(false); }}>Side chat</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>;
+  const conversationActions = selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button>{forkSupported && <button disabled={!canFork} title={forkController?.error ?? forkController?.value?.local.reason} onClick={() => openForkMenu(document.querySelector<HTMLElement>('[aria-label="Conversation actions"]'))}>Fork chat</button>}<button onClick={() => { dock.open("side-chat"); setMenuOpen(false); }}>Side chat</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>;
   const environmentAction = workspace && <button role="checkbox" aria-checked={environmentOpen} className={`icon-button ${environmentOpen ? "active" : ""}`} aria-label="Environment" title={environmentOpen ? "Hide environment" : "Show environment"} onClick={() => setEnvironmentOpen(value => !value)}><Icon name="sliders"/></button>;
   const fullWidthContent = !contentOverlayOpen && workspaceOpen && dock.snapshot.state.rightLayout === "full";
   const contentSide = resolveContentSide(dock.snapshot.state,taskDirection);
@@ -1386,6 +1465,9 @@ export function App() {
           {composer.catalog && !permissionChoice.supported && <p className="subtle-notice">This host does not support saved composer permission choices yet. Update the owning host to enable this control; its native permissions continue to apply.</p>}
           {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
           {selected && <GoalStrip key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
+          {forkController && <SessionFork data={forkController} request={forkMenu?.owner === forkOwner ? forkMenu.request : undefined}
+            onClose={restore => { if (restore) forkMenu?.request.restoreFocus(); setForkMenu(undefined); }}
+            onSelect={execution => void runFork(execution)} onResume={() => void runFork()} onOpenChild={() => void openForkedChat()}/>}
           {!selectedId && <ComposerContext onCheckoutBlocked={openBranchSwitch} ref={composerContext} hostId={hostId} hostName={state?.host.name ?? hostId} hosts={desktop.hosts} projects={state?.projects ?? []} projectId={draft.projectId} connected={connected} addingProject={addingProject} workspace={workspace}
             environment={draft.environment} environmentAvailable={environmentAvailable} environments={environmentCatalog ? {items:environmentCatalog.items,loading:environmentCatalog.loading,error:environmentCatalog.error ?? environmentCatalog.cacheWarning,refresh:() => { void environmentCatalog.refresh(); }} : undefined}
             onEnvironment={environment => drafts.update(draftId,{environment})} onOpenEnvironmentSettings={() => { if (draft.projectId) setEnvironmentProject({hostId,projectId:draft.projectId}); setSettingsPage("environments"); openSettings(); }}

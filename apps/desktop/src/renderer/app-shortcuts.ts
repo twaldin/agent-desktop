@@ -1,7 +1,7 @@
 import { KeyboardAcceleratorMatcher } from "./keyboard-accelerators";
 export type NumberedChatShortcut = `thread-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 export type NumberedTaskShortcut = `task-tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
-export type AppShortcut = "step-workspace-layout" | "next-task-tab" | "previous-task-tab" | NumberedTaskShortcut | NumberedChatShortcut | "new-chat" | "search" | "search-chats" | "open-folder" | "sidebar" | "settings" | "keyboard-shortcuts" | "files" | "side-chat" | "browser" | "browser-address" | "terminal" | "review" | "toggle-side-panel";
+export type AppShortcut = "step-workspace-layout" | "next-task-tab" | "previous-task-tab" | NumberedTaskShortcut | NumberedChatShortcut | "new-chat" | "search" | "search-chats" | "open-folder" | "sidebar" | "settings" | "keyboard-shortcuts" | "files" | "side-chat" | "browser" | "browser-address" | "terminal" | "review" | "toggle-side-panel" | "fork-thread";
 export type AppShortcutPlatform = "mac" | "other";
 type ShortcutKey = Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "repeat" | "isComposing" | "keyCode" | "defaultPrevented" | "getModifierState">;
 

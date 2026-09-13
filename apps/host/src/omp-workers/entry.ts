@@ -36,6 +36,7 @@ const browserEvaluations = new WorkerBrowserEvaluationChannels(browserReservatio
 let nativeDisposal: Promise<void> | undefined;
 let commitGeneration: Promise<import("./protocol").CommitGenerationResult> | undefined;
 let commitAbort: AbortController | undefined;
+let nativeFork: Promise<import("./protocol").NativeSessionForkResult> | undefined;
 let session: OmpSession | undefined;
 let initializing = false;
 let stopping = false;
@@ -205,6 +206,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
     if (stopping && message.operation !== "dispose" && message.operation !== "disposeBrowserEvaluation") throw new Error("OMP worker is stopping");
     const interactive = ["listInteractions", "respondInteraction", "cancelInteractions", "dispose"].includes(message.operation);
     if ((promotionInFlight || promotedOwnerRetired) && !interactive) throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
+    if (message.operation === "flushSession" && activeRequests) throw new Error("Wait for the current native operation before flushing for Fork.");
     if (message.operation === "promoteBtw") {
       if (activeRequests) throw new Error("Wait for the current native operation before promoting a side answer.");
       promotionInFlight = ownsPromotion = true;
@@ -264,6 +266,16 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
           return { ...generated, message: formatConventionalCommit(generated.commit) };
         })();
         respond(true, await commitGeneration);
+        break;
+      }
+      case "forkSession": {
+        if (!runtime || session || nativeFork || activeRequests !== 1) throw new Error("Fork requires a fresh isolated discovery worker.");
+        nativeFork = runtime.forkSession(message.args);
+        respond(true, await nativeFork);
+        break;
+      }
+      case "flushSession": {
+        respond(true, await requireSession().flushSession());
         break;
       }
       case "getMarketplaceCatalog":

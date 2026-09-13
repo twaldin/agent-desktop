@@ -130,7 +130,7 @@ export class HostStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
       const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-      if (version > 24) throw new Error(`Unsupported host state schema version ${version}`);
+      if (version > 25) throw new Error(`Unsupported host state schema version ${version}`);
       this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -512,6 +512,11 @@ export class HostStore {
         if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
         this.requireVersion(13);
       }
+      if (command?.type === "session.fork" || command?.type === "session.fork.resume") {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(25);
+      }
       const now = Date.now();
       const record: CommandRecord = {
         id, requestHash, ...(command === undefined ? {} : { command }),
@@ -697,6 +702,13 @@ export class HostStore {
       const project = this.getProject(input.projectId);
       if (!project || project.hostId !== this.host.id) throw new Error("Unknown local-environment project");
       if (project.path !== input.sourceRoot) throw new Error("Local-environment source root differs from its project");
+      if (input.forkSource) {
+        const source = this.getSession(input.forkSource.id), command = this.getCommand(input.id)?.command;
+        if (!source || command?.type !== "session.fork" || command.sessionId !== source.id || source.projectId !== project.id
+          || source.cwd !== input.forkSource.cwd || source.sessionFile !== input.forkSource.sessionFile)
+          throw new Error("Fork worktree preparation lost its captured source owner.");
+        this.requireVersion(25);
+      }
       this.requireVersion(input.directories !== undefined ? 6 : 5);
       if (hasRemoteStartingState(input.startingState)) this.requireRemoteStartingVersion();
       return this.environmentPreparationStore.create(input);
@@ -741,6 +753,53 @@ export class HostStore {
       sourceRoot: preparation.sourceRoot,
       worktreeRoot,
     };
+  }
+
+  /** Bind a proven, closed native child and its empty draft without touching the source draft. */
+  finishSessionFork(commandId: string, input: import("./session-fork").SessionForkIntent): CommandResult {
+    return this.db.transaction(() => {
+      const claim = this.getCommand(commandId), key = `session-fork.v1:${input.source.id}`;
+      const intent = this.readMetadata<import("./session-fork").SessionForkIntent>(key);
+      const command = claim?.command;
+      if (!claim || !intent || intent.commandId !== input.commandId
+        || !(command?.type === "session.fork" && commandId === intent.commandId && command.sessionId === intent.source.id
+          || command?.type === "session.fork.resume" && command.operationId === intent.commandId && command.sessionId === intent.source.id))
+        throw new Error("Fork binding lost its original command ownership.");
+      if (claim.state === "done") return claim.result!;
+      const child = intent.child, source = this.getSession(intent.source.id);
+      if (!child || !source || source.hostId !== this.host.id || child.hostId !== this.host.id
+        || child.id === source.id || child.sessionFile === intent.source.sessionFile || child.sessionFile !== intent.targetFile
+        || child.cwd !== intent.targetCwd || child.projectId !== intent.source.projectId
+        || !["binding", "complete"].includes(intent.state))
+        throw new Error("Fork binding differs from its proven native child.");
+      if (intent.state === "binding") {
+        if (this.getSession(child.id) || this.getDraft(`session:${child.id}`)) throw new Error("Fork cannot replace an existing child or draft.");
+        this.upsertSession(child);
+        const draft = this.putDraft({ id: `session:${child.id}`, text: "", projectId: child.projectId, model: child.model,
+          ...(child.approvalOverride ? { approvalMode: child.approvalOverride } : {}) }, 0);
+        if (!draft.ok) throw new Error("The new Fork composer could not be bound.");
+        if (intent.environment) this.writeMetadata(`session-environment:${child.id}`, { cwd: child.cwd, environment: intent.environment });
+        if (intent.execution.type === "worktree") {
+          const preparation = this.environmentPreparations.get(intent.commandId);
+          if (!preparation || preparation.forkSource?.id !== source.id || preparation.projectId !== child.projectId
+            || preparation.worktreePath !== intent.worktreePath) throw new Error("Fork lost its owned worktree preparation.");
+          this.environmentPreparations.transition(preparation.id, preparation.revision, { type: "native-fork.confirmed", sessionId: child.id });
+        }
+        this.writeMetadata(key, { ...intent, state: "complete", error: undefined });
+      } else if (this.getSession(child.id)?.sessionFile !== child.sessionFile) {
+        throw new Error("The completed Fork child is no longer bound to its recorded file.");
+      }
+      const result: CommandResult = { ok: true, commandId, value: {
+        type: "session.forked", commandId: intent.commandId, sourceSessionId: intent.source.id, session: child,
+      } };
+      if (commandId !== intent.commandId) {
+        const original = this.getCommand(intent.commandId);
+        if (original?.state === "pending" && original.command?.type === "session.fork" && original.command.sessionId === intent.source.id)
+          this.finishCommand(original.id, original.requestHash, { ...result, commandId: original.id });
+      }
+      this.finishCommand(commandId, claim.requestHash, result);
+      return result;
+    }).immediate();
   }
 
   finishBtwPromotion(commandId: string, session: SessionSummary, environment: LocalEnvironmentWorkerEnvironment | undefined,
@@ -1054,9 +1113,9 @@ export class HostStore {
 
   /** Never downgrade: old hosts must refuse even after an override is cleared. */
   private requirePermissionVersion(): void { this.requireVersion(2); }
-  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24): void {
+  private requireVersion(minimum: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25): void {
     const current = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (current > 24) throw new Error(`Unsupported host state schema version ${current}`);
+    if (current > 25) throw new Error(`Unsupported host state schema version ${current}`);
     if (current < minimum) this.db.exec(`PRAGMA user_version = ${minimum}`);
   }
 }

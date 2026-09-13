@@ -182,6 +182,7 @@ const bridge: DesktopBridge = {
   cancelSessionSearch: (requestId, hostId) => ipcRenderer.invoke("host:session-search-cancel", requestId, hostId),
   getMessages: (sessionId, hostId) => ipcRenderer.invoke("host:messages", sessionId, hostId),
   getTaskLocation: (sessionId, hostId) => ipcRenderer.invoke("host:task-location", sessionId, hostId),
+  getSessionFork: (sessionId, hostId) => ipcRenderer.invoke("host:session-fork", sessionId, hostId),
   getQueuedMessages: (sessionId, hostId) => ipcRenderer.invoke("host:queued-messages", sessionId, hostId),
   mutateQueuedMessages: (sessionId, mutation, hostId) => ipcRenderer.invoke("host:queued-messages-mutate", sessionId, mutation, hostId),
   subscribeQueuedMessages: listener => {

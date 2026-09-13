@@ -23,6 +23,8 @@ interface LocalEnvironmentPreparationBase {
   hostId: string;
   projectId: string;
   sourceRoot: string;
+  /** Admission-only source for a fork's working-tree snapshot; child setup remains project-owned. */
+  forkSource?: { id: string; cwd: string; sessionFile: string };
   worktreePath: string;
   startingState: WorktreeStartingState;
   draft: { id: string; revision: number };
@@ -59,6 +61,7 @@ export interface LocalEnvironmentPreparationInput {
   id: string;
   projectId: string;
   sourceRoot: string;
+  forkSource?: LocalEnvironmentPreparation["forkSource"];
   worktreePath: string;
   startingState: WorktreeStartingState;
   draft: { id: string; revision: number };
@@ -78,6 +81,7 @@ export type LocalEnvironmentPreparationTransition =
   | { type: "setup.succeeded"; result: LocalEnvironmentRunResult }
   | { type: "native-create.started" }
   | { type: "native-create.succeeded"; sessionId: string }
+  | { type: "native-fork.confirmed"; sessionId: string }
   | { type: "cleanup.started" }
   | { type: "cleanup.failed"; result: LocalEnvironmentRunResult }
   | { type: "cleanup.succeeded"; result?: LocalEnvironmentRunResult }
@@ -214,6 +218,8 @@ export class LocalEnvironmentPreparations {
     const now = Date.now(), base: LocalEnvironmentPreparationBase = {
       id: identifier(input.id, "Preparation identity"), revision: 1, hostId: this.hostId,
       projectId: identifier(input.projectId, "Project identity"), sourceRoot, worktreePath,
+      ...(input.forkSource ? { forkSource: { id: identifier(input.forkSource.id, "Fork source identity"),
+        cwd: absolute(input.forkSource.cwd, "Fork source directory"), sessionFile: absolute(input.forkSource.sessionFile, "Fork source file") } } : {}),
       startingState: parseWorktreeStartingState(input.startingState), draft: { id: identifier(input.draft.id, "Draft identity"), revision: input.draft.revision },
       ...(input.model ? { model: structuredClone(input.model) } : {}), ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
       environment: selectedEnvironment, phase: "validated", createdAt: now, updatedAt: now,
@@ -353,6 +359,11 @@ export class LocalEnvironmentPreparations {
       case "setup.succeeded": require("setup-running"); next.setupResult = storedResult(transition.result, "succeeded"); next.environmentDelta = delta(transition.result.environmentDelta); next.phase = "setup-succeeded"; break;
       case "native-create.started": require(current.environment ? "setup-succeeded" : "worktree-created"); next.phase = "native-creating"; break;
       case "native-create.succeeded": require("native-creating"); next.sessionId = identifier(transition.sessionId, "Session identity"); next.phase = "session-created"; break;
+      case "native-fork.confirmed":
+        require("native-creating", "unknown");
+        if (!current.forkSource || current.phase === "unknown" && current.uncertainOperation !== "native-create")
+          throw new Error("Only a proven Fork child can complete this native preparation.");
+        next.sessionId = identifier(transition.sessionId, "Session identity"); next.phase = "session-created"; break;
       case "cleanup.started": require("worktree-created", "setup-failed", "setup-succeeded", "session-created", "cleanup-failed"); next.phase = "cleanup-running"; break;
       case "cleanup.failed": require("cleanup-running"); next.cleanupResult = storedResult(transition.result, "failed"); next.phase = "cleanup-failed"; break;
       case "cleanup.succeeded": require("cleanup-running"); if (transition.result) next.cleanupResult = storedResult(transition.result, "succeeded"); next.phase = "cleanup-succeeded"; break;

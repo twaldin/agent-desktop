@@ -1051,6 +1051,12 @@ Work graphical installation evidence: `.data/ui-acceptance/work-desktop-release1
 - Shared preferences/sidebar organization converge across authenticated peers. Theme files and Appearance controls preserve conflicts, last-valid values, symlinks and modes. A real temporary theme/image converged across all three installed hosts, then restoration converged to the original theme. All 484 native OMP settings, scoped file editing, model/thinking/tier controls and the schema-backed model-definition editor are connected; account-specific settings acceptance remains separate.
 - On-demand maintenance reports compare pinned references and static candidate inventories without adopting updates. The recorded local report found 41 unchanged, zero changed and six unknown surfaces. Packaged checks also exercised host changes and remote outage/reconnect. One Home app window is isolated in space 9; launches reuse its profile, and rollback bundles are stored inactive to prevent accidental duplicate launches.
 
+## Whole-chat Fork source and actual-App checkpoint
+
+The existing application command, Conversation actions and native builtin `/fork` now reach host-owned current-workspace/same-worktree and eligible new-worktree destinations. Native history is copied into a distinct child; source identity, file and draft attachments remain intact, and the new child starts with an empty composer. Durable binding recovery never replays an uncertain fork. The implementation introduces command16, worker55 and store25; it does not replace later protocol capabilities.
+
+Canonical `bun run test` verification passes40 tests/348 assertions across7 exact suites, with typecheck and build passing. A real production host/SDK/Git smoke separately verifies source-worktree dirty-state capture and unknown-outcome no-replay. Actual App run006 passes5 scenario groups with3 real Fork commands and8 qualified native captures, including lost acknowledgement plus renderer reload and projectless eligibility. The Enter activation correction is confirmed; all earlier readiness, input and reload-time guard failures remain retained. Private evidence: `.data/fork-scope/`. Reference conditions are unmatched; no pixel-parity, provider execution, cross-device or final integration-review acceptance is claimed.
+
 ## Evidence
 
 Private local evidence remains under `.data/` and `.reference/`:

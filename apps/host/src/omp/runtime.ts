@@ -58,6 +58,7 @@ import { NativeGoalController, type GoalContinuationEligibility, type OmpGoalCon
 import { NativeDetachedQuestions, type OmpDetachedQuestionDeliveryRun } from "./detached-questions";
 import { NativeBtwController } from "./btw";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
+import { forkNativeSession, type NativeSessionForkInput, type NativeSessionForkResult } from "./session-fork";
 export type { PreparedPromptImage, OmpRecordedImage } from "./images";
 export type { OmpPromptRun, OmpPromptReceipt } from "./prompt";
 export type { OmpSteerReceipt } from "./steer";
@@ -98,6 +99,7 @@ export interface OmpSession {
   readonly createdAt: number;
   readonly modelFallbackMessage: string | undefined;
   getMessages(): TranscriptMessage[];
+  flushSession(): Promise<{ sessionId: string; sessionFile: string; cwd: string }>;
   getSessionActivity(): NativeSessionActivity;
   refreshGoalUsage(): Promise<void>;
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
@@ -248,7 +250,7 @@ export class OmpRuntime {
   #discovery = new Map<string, NativeContext>();
   #discoveryTails = new Map<string, Promise<unknown>>();
   #sessions = new Set<OmpSession>();
-  #setups = new Set<Promise<OmpSession>>();
+  #setups = new Set<Promise<unknown>>();
   #reservedFiles = new Set<string>();
   #disposed = false;
   #disposeCall?: Promise<void>;
@@ -345,13 +347,17 @@ export class OmpRuntime {
     return this.#withDiscovery(cwd, false, async context => composerCompletions(await discoverComposerActions(cwd, this.#agentDir, context.settings), query), false);
   }
 
-  #setup(operation: () => Promise<OmpSession>): Promise<OmpSession> {
+  #setup<T>(operation: () => Promise<T>): Promise<T> {
     this.#assertActive();
     const pending = operation();
     this.#setups.add(pending);
     const remove = () => { this.#setups.delete(pending); };
     void pending.then(remove, remove);
     return pending;
+  }
+
+  forkSession(input: NativeSessionForkInput): Promise<NativeSessionForkResult> {
+    return this.#setup(() => forkNativeSession(input));
   }
 
   create(options: OmpSessionOptions): Promise<OmpSession> {
@@ -550,9 +556,9 @@ export class OmpRuntime {
         assertSessionActive();
         if (promptInFlight || accountMutation || goalMutation || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
-      const assertTaskLocationReady = () => {
+      const assertSnapshotReady = (operation = "moving this task") => {
         assertIdle();
-        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || mcpApps.pending) throw new Error("Resolve queued messages, questions, side answers, MCP reads, and interrupts before moving this task.");
+        if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || mcpApps.pending) throw new Error(`Resolve queued messages, questions, side answers, MCP reads, and interrupts before ${operation}.`);
       };
       const taskLocationOutcomeUnknown = (message: string) => Object.assign(new Error(message), { name: "TaskLocationOutcomeUnknown", code: "OUTCOME_UNKNOWN" });
       const trackMcpMutation = <T>(run: Promise<T>) => {
@@ -592,6 +598,15 @@ export class OmpRuntime {
         getMessages: () => {
           assertSessionActive();
           return transcript();
+        },
+        flushSession: async () => {
+          assertSnapshotReady("forking this conversation");
+          const source = { sessionId: manager.getSessionId(), sessionFile: session.sessionFile ?? sessionFile, cwd: manager.getCwd() };
+          await manager.flush();
+          assertSnapshotReady("forking this conversation");
+          if (manager.getSessionId() !== source.sessionId || (session.sessionFile ?? sessionFile) !== source.sessionFile || manager.getCwd() !== source.cwd)
+            throw new Error("The native source identity changed while flushing for Fork.");
+          return source;
         },
         getSessionActivity: () => {
           // IPC needs final identity/activity metadata while this worker retires.
@@ -999,9 +1014,9 @@ export class OmpRuntime {
         },
         getQueuedMessages: () => { assertSessionActive(); return queuedMessages.snapshot(); },
         mutateQueuedMessages: mutation => { assertSessionActive(); return queuedMessages.mutate(mutation); },
-        assertTaskLocationReady,
+        assertTaskLocationReady: assertSnapshotReady,
         moveSession: async cwd => {
-          assertTaskLocationReady();
+          assertSnapshotReady();
           const destination = await requireDirectory(cwd), source = manager.getCwd();
           if (destination === source) return { id: session.sessionId, cwd: source, sessionFile: session.sessionFile! };
           await session.settings.flush(); await manager.flush();
