@@ -1,0 +1,8 @@
+{
+  "name": "reset-dialog-narrow-720x700",
+  "responsive": true,
+  "bounds": { "x": 560, "y": 180, "width": 720, "height": 700 },
+  "viewport": { "width": 720, "height": 700 },
+  "dpr": 2,
+  "zoom": 1
+}
