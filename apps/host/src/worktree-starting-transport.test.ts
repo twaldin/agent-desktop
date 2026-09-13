@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import type { CommandEnvelope, Draft, HostCommand } from "@agent-desktop/shared";
+import { hasSessionForkIntent, type CommandEnvelope, type Draft, type HostCommand } from "@agent-desktop/shared";
 import { hasRemoteWorktreeIntent, hasNewChatIntent, remoteWorktreeProtocolError } from "./new-chat-protocol";
 import { hasApprovalIntent } from "./approval";
 import { hasAttachmentIntent } from "./attachment-protocol";
@@ -22,7 +22,7 @@ async function route() {
   const end = source.indexOf("        const messagePath =", start);
   if (start < 0 || end < 0) throw new Error("Command route source boundary changed");
   const calls: Array<{ envelope: CommandEnvelope; version: number }> = [];
-  const deps = { parseCommandEnvelope, hasRemoteWorktreeIntent, hasNewChatIntent, hasApprovalIntent, hasAttachmentIntent, hasEnvironmentIntent,
+  const deps = { parseCommandEnvelope, hasSessionForkIntent, hasRemoteWorktreeIntent, hasNewChatIntent, hasApprovalIntent, hasAttachmentIntent, hasEnvironmentIntent,
     hasSelectedTextIntent, hasWholeFileIntent, hasInlineFileIntent, hasRepeatedWholeFileIntent,
     dispatch: async (envelope: CommandEnvelope, version: number) => { calls.push({ envelope, version }); return { ok: true }; } };
   const body = `return async function(request) { const url = new URL(request.url); ${source.slice(start, end)} return new Response(null, {status:404}); }`;
@@ -94,9 +94,9 @@ test("actual server execution gate rejects older remote commands", async () => {
   const start = source.indexOf("    const command = envelope.command;", source.indexOf("  async function execute("));
   const end = source.indexOf("    if (commandVersion < 11", start);
   const code = source.slice(start, end);
-  const gate = new Function("envelope", "commandVersion", "store", "remoteWorktreeProtocolError", "fail", code) as (...args: unknown[]) => unknown;
+  const gate = new Function("envelope", "commandVersion", "store", "remoteWorktreeProtocolError", "hasSessionForkIntent", "fail", code) as (...args: unknown[]) => unknown;
   const store = { getDraft: () => draft, environmentPreparations: { get: () => ({ startingState: remote }) } };
   const fail = (id: string, error: string) => ({ id, error });
-  expect(gate({ id: "original", command }, 11, store, remoteWorktreeProtocolError, fail)).toEqual({ id: "original", error: "REMOTE_WORKTREE_PROTOCOL_REQUIRED" });
-  expect(gate({ id: "original", command }, 12, store, remoteWorktreeProtocolError, fail)).toBeUndefined();
+  expect(gate({ id: "original", command }, 11, store, remoteWorktreeProtocolError, hasSessionForkIntent, fail)).toEqual({ id: "original", error: "REMOTE_WORKTREE_PROTOCOL_REQUIRED" });
+  expect(gate({ id: "original", command }, 12, store, remoteWorktreeProtocolError, hasSessionForkIntent, fail)).toBeUndefined();
 });
