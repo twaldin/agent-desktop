@@ -30,6 +30,12 @@ The Files panel's filter is a narrow exception: its configured `searchFiles` bin
 
 Local behavior stays with its existing owner: composer submission follows `general.sendBehavior`; ProseMirror owns composer history; file editors own Save, search, selection and Go to line; terminals own terminal input; dock tabs own navigation and move/close admission. Configurability delegates to these owners rather than duplicating their mutations. Go to line registers after the parent frame ref attaches, so its first mounted editor is immediately eligible without a later active-state change. Browser address focus stays with the current chat/draft and refuses another panel's control.
 
+## Reset confirmation
+
+**Reset all to defaults** opens an HTML `<dialog>` modal centered in the application viewport. Its scoped `margin: auto` restores centering after the global stylesheet reset; it does not change reset admission or preference storage. Cancel and Escape close the dialog, preserve the keymap and revision, and return focus to the opener.
+
+The disposable production-App check records the uncorrected dialog at CSS-pixel position `(0, 0)` and the corrected dialog at `(510, 413)` in a 1440×1000 viewport, then `(150, 263)` in a separately declared 720×700 case, all at DPR 2 / zoom 1. Both corrected centers have zero measured offset; Cancel/Escape preserve the seeded record without issuing a reset. Native captures and CG/AX/theme/window-manager conditions are retained under `.data/keyboard-reset-dialog-*`. The first baseline opening's stale image is retained separately from the valid second-opening native reproduction. This is centering/dismissal evidence, not reference pixel parity or reset-confirmation execution.
+
 ## General send behavior
 
 General offers Enter, modifier-Enter, and modifier-Enter-if-multiline. The conditional mode sends a single-line draft with Enter and requires modifier-Enter for a multiline draft; Shift+Enter inserts a newline. Modifier+Shift+Enter chooses the opposite queued-follow-up/steer delivery from the saved follow-up mode.
