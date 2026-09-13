@@ -16,3 +16,10 @@
 .native-terminal-history-toolbar > strong { margin-right: auto; }
 .native-terminal-history-content { flex: 1; min-height: 0; overflow: auto; }
 .native-terminal-history pre { overflow: auto; margin: 0; padding: 10px; font: var(--terminal-font-size, 13px)/var(--code-line-height, 1.2) var(--terminal-font, var(--code-font, monospace)); white-space: pre; user-select: text; }
+.native-terminal-history-toolbar button[aria-controls] { display: inline-flex; align-items: center; gap: 5px; }
+.native-terminal-history-find { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.native-terminal-history-find input { flex: 1 1 160px; min-width: 0; max-width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--button-radius, 5px); background: var(--terminal-surface, var(--app-surface)); color: var(--text); font: inherit; font-size: 12px; }
+.native-terminal-history-find > button { flex-shrink: 0; min-height: 28px; padding: 4px 7px; border-radius: var(--button-radius, 5px); font-size: 11px; }
+.native-terminal-history-find-status { flex-basis: 100%; min-width: 0; color: var(--secondary); font-size: 11px; overflow-wrap: anywhere; }
+.native-terminal-history-capture { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-terminal-history-match { background: color-mix(in srgb, var(--accent) 28%, transparent); color: inherit; outline: 1px solid var(--accent); outline-offset: 0; border-radius: 2px; }

@@ -1,0 +1,165 @@
+{
+  "scope": "Main-only actual production App/host/native tmux acceptance. Source preparation is not a passed runtime or pixel verdict.",
+  "entrypoints": {
+    "prepare": "bun --no-env-file scripts/acceptance/native-terminal-history-find-app/prepare.ts <new-native-history-find-HOME> <new-private-evidence-directory>",
+    "host": "Under hub: verified Bun --no-env-file scripts/acceptance/native-terminal-history-find-app/host.ts <prepared-HOME>; wait for Native history Find host ready.",
+    "app": "Under a new Main native lease and hub: verified installed Electron scripts/acceptance/native-terminal-history-find-app/electron.cjs <prepared-HOME> <this-repository>; wait for actual App ready and app-peer-observations.jsonl with discoveredPeers0, then use the initialManagerAdmission contract before any physical/window action.",
+    "nativePrerequisite": "Main supplies NATIVE_FIND_TMUX_BUNDLE pointing at an existing immutable verified darwin-arm64 bundle. No fixture build, install, terminal-runtime replacement or global tmux/yabai change."
+  },
+  "environment": {
+    "policy": "Use env -i for preparation, host and Electron; preserve the identical explicit variables. Never inherit provider credentials or personal configuration.",
+    "HOME": "<prepared-HOME>",
+    "USER": "<observed /usr/bin/id -un>",
+    "LOGNAME": "<same observed OS user>",
+    "LANG": "en_US.UTF-8",
+    "SHELL": "/bin/zsh",
+    "PATH": "<prepared-HOME>/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "TMPDIR": "/private/tmp",
+    "PI_DISABLE_DOTENV": "1",
+    "PI_CODING_AGENT_DIR": "<prepared-HOME>/agent",
+    "AGENT_DESKTOP_DATA_DIR": "<prepared-HOME>/host",
+    "AGENT_DESKTOP_PROFILE_DIR": "<prepared-HOME>/desktop",
+    "AGENT_DESKTOP_PROJECT_ROOT": "<this-repository>",
+    "AGENT_DESKTOP_BUN": "<prepared-HOME>/bin/guarded-bun",
+    "NATIVE_FIND_BUN": "<verified absolute Bun executable>",
+    "NATIVE_FIND_HOST_ENTRY": "<this-repository>/scripts/acceptance/native-terminal-history-find-app/host.ts",
+    "NATIVE_FIND_TMUX_BUNDLE": "<verified immutable bundle directory>",
+    "NATIVE_FIND_INSPECTOR": "<Main-verified executable compiled from this fixture's native-inspect.swift; metadata PID must include frontmost and screens id/backingScale/physical mode>",
+    "NATIVE_FIND_YABAI": "<verified absolute yabai executable>",
+    "NATIVE_FIND_MODE": "<full by default; capture-sequencing or live-find only under their bounded contracts below>",
+    "NATIVE_FIND_CDP_PORT": "<owned unique loopback port if Main needs read-only browser inspection>"
+  },
+  "captureSequencing": {
+    "scope": "Set NATIVE_FIND_MODE=capture-sequencing identically for fresh preparation, host and App. Do NOT run the full cases/final outage below: this diagnostic creates ONE genuine live native pane, admits only TWO setup inputs, and takes only the two specified originals. No saved/other owner setup or transition, refresh, compact, broad Find acceptance or cause claim.",
+    "ownership": "All common isolation and strict native geometry/display/font gates remain. Fresh HOME/evidence only; Main grants a new lease after source gates. Complete initialManagerAdmission before any float/resize, then bind the exact native CG/AX surface before read-only browser attachment and reprobe ownership counts after attachment. Keep Main asynchronous screencapture; no fixed paint wait, invalidation, DOM focus, CSS change, input replay or threshold relaxation.",
+    "chronology": [
+      "The external native driver writes unique per-action records with operation/target, exact helper identity, dispatch start/return timestamps and exit/stdout/stderr. Dispatch return is NOT delivered input.",
+      "actual-key-inputs.jsonl passively records actual WebContents keyDown/keyUp and timestamps. Do not synthesize events or resend a batch merely because its dispatch returned before delivery.",
+      "Wait read-only for the actual expected query/index/section; no fixed delay. Retain the settled observation and strict before-input probe. Probe history exposes query, matchIndex, matchCount, activeSection and activeVisible.",
+      "capture-chronology.jsonl records capture-start with settled state, actual asynchronous screenshot return/error, and subsequent original-image inspection report. Each capture JSON separately records commandReceivedAt/captureStartedAt/captureFinishedAt/afterObservedAt.",
+      "View each original PNG immediately after its before/after metadata checks and BEFORE any next input. Retain image-read start/end and literal visible query/index/count/section in the external inspection receipt; never infer them from DOM or stable:true.",
+      "Report that original through app stdin: inspect <unique-inspection-label> <capture-label> <actual-PNG-sha256> <visibly-observed-query> <visibly-observed-index> <visibly-observed-count> <scrollback|screen|saved>. The report timestamp is not the image-read timestamp. Values are operator observations, not an automated pixel oracle. A mismatch is recorded before refusal; do not recapture or overwrite it.",
+      "While an original awaits inspection, diagnostic bind/probe/capture commands refuse, so no fresh pre-input admission can advance the sequence. After the second inspected original, the diagnostic is complete; no further UI input or broad cases."
+    ],
+    "sequence": [
+      "Physically open the sole live pane's History and Find; type needle once. Observe original delivered key receipts and settled query=needle/index1/count82/Native scrollback text with exact owning capture hashes.",
+      "Send capture sequence-baseline. Check its native before/after conditions, then view sequence-baseline.png and record its actual visible state. Only if it visibly agrees, send inspect inspected-baseline sequence-baseline <PNG-sha256> needle 1 82 scrollback. Otherwise report the values actually seen; preserve refusal and stop.",
+      "After successful original baseline inspection, run one fresh strict pre-input probe and perform ONE physical Previous action. Retain dispatch return and settled query=needle/index82/count82/Saved normal screen; do not press Next or any other navigation.",
+      "Send capture sequence-previous. Check before/after conditions, then view sequence-previous.png BEFORE any further input. Report the visible state with inspect inspected-previous sequence-previous <PNG-sha256> <actual-query> <actual-index> <actual-count> <actual-section>. Only an actually matching82/82 Saved normal original qualifies as this bounded sequence matching.",
+      "Stop and preserve on any drift/refusal/divergence. After either bounded match or failure, stop only the owned App/host, release CDP, prove PID/CG/socket cleanup and retain raw hashes. No source correction or second activation within the same scope. A match proves only this sequence, not a cause, pixel parity or full Find acceptance."
+    ]
+  },
+  "liveFind": {
+    "scope": "Set NATIVE_FIND_MODE=live-find identically in fresh prepare/host/App. ONE genuine live native pane and only its TWO existing setup inputs. This covers remaining live behavior, not a replay of diagnostic007 or saved/other setup. Full and capture-sequencing modes retain their separate contracts.",
+    "admission": "Main/Luna source gates and a new explicit native lease precede launch. Apply all common fresh-profile, real OSUSER, private refusing Tailscale, actual host/App peer0 and loopback-only guards. After actual peer0, send admit initial-manager and await its ready banner/record before any physical action or float/resize. Then bind CG/AX1 and actual1440x1000/DPR2/zoom1/display/Space/theme/fonts before browser attachment and reprobe counts. No source/CSS/input/capture primitive changes, fixed paint wait, invalidation, DOM focus setter or command replay.",
+    "records": [
+      "Retain exact physical dispatch start/return and passive actual-key-inputs.jsonl receipts. Wait read-only for delivered and settled query/index/count/section/focus; dispatch return alone is not delivery. Inspect the actual unoccluded native target after every strict before-input probe.",
+      "Use ordinary guarded capture <unique-label>, not the diagnostic sequence/inspect protocol. Verify before/after native geometry/theme/fonts and view EACH original PNG immediately BEFORE the next input. Record image-read start/end, original SHA and literal visible state externally; stable:true or DOM state alone is not image acceptance.",
+      "Compare every rendered pre text hash and owner/generation/revision to the genuine owning native capture throughout local query/navigation/clear/close actions. Preserve whitespace and section identity. Text/capture metadata may change only after the explicit same-owner refresh; record both old and new native data.",
+      "Retain every refusal, unsettled observation and divergence. Stop on drift/failure rather than replaying a possibly delivered key or relabeling an old image. No clipboard/provider input and no native-terminal-input call from Find."
+    ],
+    "cases": [
+      {
+        "id": "live-keyboard-wrap-and-sections",
+        "action": "Physically open History/Find and type needle once. With query focus, native ShiftEnter wraps first to last and native Enter wraps last to first. Separately search SCREEN needle and NORMAL needle using physical query controls.",
+        "expect": "Actual delivered modifier/key receipts, correct index/count/section from genuine capture data, visible active mark and retained query focus. Section-specific queries expose Captured native screen and Saved normal screen within this same live pane, not a saved-owner transition."
+      },
+      {
+        "id": "live-literal-and-case",
+        "action": "Search a case variant such as NeEdLe, then literal [x].* through real native typing.",
+        "expect": "Case-insensitive counts equal independent literal counts of the native strings; punctuation is searched literally, not as regex. Original pre text hashes and capture identity remain unchanged."
+      },
+      {
+        "id": "live-no-match-clear-and-close",
+        "action": "Type one distinctive absent query; Clear; type a valid query; Escape while query-focused. Reopen and focus a capture section through native keyboard navigation, then Escape there. Reopen and use Close Find.",
+        "expect": "Truthful no-match and disabled navigation, empty-query state after Clear, and usable local Find. Both Escape locations and Close restore the Find opener without closing the pane or delivering PTY input. Reopening has no stale query/selection. Record actual focus before and after every close."
+      },
+      {
+        "id": "live-explicit-refresh",
+        "action": "Keep needle and a non-first active match. Send existing host refresh-live once; observe the real emitted REFRESH line in an owning snapshot. Before clicking Refresh history, retain proof the UI still shows its older capture. Then physically request Refresh history.",
+        "expect": "Same owner/generation and retained query; new genuine revision/text recompute count and active position. Compare old/new native snapshots and all three rendered pre hashes. No manufactured reply, hidden auto-refresh or additional setup input."
+      },
+      {
+        "id": "live-compact",
+        "action": "Separately float/resize only the owned window and bind compact720x700 atzoom1. Exercise query input, Next/Previous, Clear, Close and native keyboard movement to the active match; inspect every original before next input.",
+        "expect": "Reachable controls, visible count/section, preserved whitespace and active-match reveal without stealing query focus. Actual native/content/renderer bounds, scale, font readiness and zoom remain recorded; do not merge compact evidence with wide or unknown reference geometry."
+      },
+      {
+        "id": "live-offline-last",
+        "action": "LAST, retain a live capture and Find query plus a final owning snapshot/session count, then stop only the supervised owning host. Observe actual App disconnection and any real guarded retained-profile autolaunch refusal; do not restart/reseed. Continue local Find over the retained capture.",
+        "expect": "Truthful offline/previous-capture notices and unavailable Refresh history, while local count/navigation remains usable against unchanged retained pre hashes. No false saved/live claim, replacement shell, implicit recovery or PTY input. Preserve refusal/error receipts; disabled refresh is verified as such, not forced through an API."
+      }
+    ],
+    "remainingSeparate": "Saved/other-owner transition acceptance requires a separate owner scope and cannot be inferred from this live-only mode. Evidence from distinct bounded scopes must be combined explicitly; no single full run, diagnostic007/cause, actual composing-IME, truncated-true or pixel-parity claim follows.",
+    "cleanup": "After completion or first refusal, stop only owned App/host, release browser and prove owned PID/CG/CDP/tmux closure plus source stability. Preserve raw controls/keys/native snapshots/original images/inspection chronology and hashes. Main alone seals evidence and authorizes any later scope."
+  },
+  "isolation": [
+    "Preparation refuses non-empty profile/evidence directories and installs an executable private PATH tailscale that returns exit1, never synthesized peer JSON.",
+    "Observe actual OS user metadata, source/Bun/bundle/shim hashes in prepared.json. Native shell selection still uses the existing OS-user/default-shell policy.",
+    "The real host uses tailscale:false and verifies its actual peer list0 before project/native terminal writes. The real production App host:peers handler must independently return0 before UI commands and first physical input.",
+    "Real native manager/HTTP inputs start emit-history.sh inside disposable owned native panes. All three capture sections come from actual PTY output; no history/screen reply is generated in JavaScript.",
+    "The actual production main/preload/App and original handlers remain in use. Provider commands and any App native-terminal-input call are rejected and recorded. Installed nonloopback fetch/WebSocket/Chromium guards remain active; native worker discovery delegates the original ModelRegistry.refresh to documented offline mode.",
+    "Any guard-violations.jsonl entry or native input attempt from Find fails the run. Do not suppress, overwrite or relabel failed attempts. No live reference, personal profile/account, clipboard test or provider send."
+  ],
+  "initialManagerAdmission": {
+    "purpose": "App-ready and unique CG/AX existence do not establish a yabai mapping.008 retained exactly one not-found receipt; registration delay, exclusion/stale mapping and CG identity churn remain unproven alternatives. This is fixture admission, not an application fix.",
+    "call": "After actual App peer0, send app stdin admit initial-manager ONCE. Do not query/retry/fallback manually, float/resize/bind, attach browser or issue physical input while initial admission is pending. Wait for Native history Find admit ready initial-manager and retain initial-manager.json.",
+    "bound": "The once-only initial-unbound operation follows the existing20-second passive readiness pattern with50ms sampling spacing; it is not a paint wait or physical-action retry. Individual metadata commands are bounded by remaining admission time. Every native/manager observation and exact pending receipt remains in initial-manager-admission.jsonl.",
+    "identity": "Pin exact process/CG/Electron window/WebContents identities and the sole owned AX window association (PID/index/role/subrole, with CG/AX/Electron bounds agreeing on each observation). Abort changed identity, missing/ambiguous ownership, permissions/focus loss or inconsistent geometry. Unbound native geometry may move as the manager registers it, but no mismatched geometry is accepted.",
+    "pendingOnly": "ONLY exit1 with empty stdout, no signal/kill and the exact queried-ID could-not-locate-window stderr is pending. Never substitute another window or accept other errors. Success must map that exact PID/CG ID with an AX reference and matching fresh native bounds. Unexpected errors/invalid replies/identity changes/deadline all stop and preserve originals.",
+    "afterAdmission": "Only after successful admission may the operator float/resize that pinned window and run the existing strict bind/probe/capture gates. Those gates retain immediate failure, including manager not-found; no post-binding retries. Admission cannot be restarted or used to reacquire a different window."
+  },
+  "physicalGate": [
+    "Main owns one exact on-screen candidate PID/CG/AX window. Complete initialManagerAdmission before any physical action or manager float/resize. Then float ONLY the admitted owned window through existing native controls; no global yabai setting change. Bind/probe/capture require the admitted identity, actual native frontmost PID and Electron window focus.",
+    "Baseline actual native bounds1440x1000 at zoom1 if the display fits. After native setup, send app stdin: bind baseline 1440 1000 1. This verifies actual bounds, not requested bounds.",
+    "Before EVERY physical pointer/key action, send app stdin: probe <unique-before-action-label>, wait for its ready log, inspect the actual bound target/occlusion, then use native pointer/SystemEvents exact-PID input. The fixture never calls DOM click/focus or synthesizes native history.",
+    "After the view settles, send app stdin: capture <unique-label>. It records native CG raster and before/after CG/AX/PID, display/Space/yabai floating/fullscreen, native/content/renderer bounds and aspect, DPR, exact native screen ID/backingScale/physical mode width/height/pixelWidth/pixelHeight, direct zoom and resolved theme. The native screen must match Electron display.id and scale; missing fields or bound display/mode/backing changes fail with original evidence retained.",
+    "Every probe awaits document.fonts.ready and requires fontsReady plus readiness checks and finite platform text metrics for actual root/body/native-output/history-output font roles. Root font tokens stay baseline-bound. A newly mounted output role binds once on its first observation; hiding/unmounting it does not erase that binding, and later font/style/metric changes fail. This permits initial no-history to mounted-history without relaxing previously observed fonts.",
+    "Intentional compact actual720x700 at zoom1 is a separate case: resize only the owned floating window and send bind compact 720 700 1. Never label managed half/quarter tiling as requested geometry.",
+    "All captures remain NOT pixel-comparable because no reference comparison or matched reference geometry/zoom/theme is established. No style compensation or threshold relaxation."
+  ],
+  "cases": [
+    {
+      "id": "live-history",
+      "action": "Select the restored History Find — live dock tab; open History through its actual footer.",
+      "expect": "Native scrollback, captured screen and saved normal screen match seed-live-history.json and current owning snapshots. Live/capture-revision/timestamp notices remain explicit; any native truncated flag is shown, never suppressed."
+    },
+    {
+      "id": "literal-count-and-sections",
+      "action": "Open Find, type needle through native input. Use Previous from the initial match and Next to wrap; use Enter/ShiftEnter while query-focused. Also search SCREEN needle and NORMAL needle to reveal each corresponding capture section.",
+      "expect": "Exact count across existing capture sections; active match and section label agree. Case-insensitive literal query [x].* searches literal punctuation, not regex. Only the current match is marked; all pre text hashes remain exact."
+    },
+    {
+      "id": "no-match-clear-close",
+      "action": "Enter a distinctive absent query; Clear; re-enter needle; Escape from the query and from a keyboard-focused capture section; reopen and use Close Find.",
+      "expect": "No-match state and disabled navigation, empty-query state, and opener focus restoration are real. Find closes locally without closing the pane or sending keys to PTY. Query does not persist after closing Find."
+    },
+    {
+      "id": "same-owner-refresh",
+      "action": "Keep needle and a non-first active match. Send host stdin refresh-live, wait for real emitted REFRESH output using an owning snapshot, then click Refresh history.",
+      "expect": "Query remains local to the same owner; updated capture revision/text recompute the count and active match. Until explicit refresh, the view remains the previous read-only capture. No synthetic response or UI history mutation."
+    },
+    {
+      "id": "saved-and-owner-transition",
+      "action": "With live Find open, select History Find — saved and open History/Find; then select History Find — other and open its History/Find.",
+      "expect": "Saved pane has actual live:false history, no running-shell claim. Another terminal never inherits the first pane's query, active index or captured text. Each view resolves its own terminal ID/generation/revision."
+    },
+    {
+      "id": "compact",
+      "action": "Use the separately bound720x700 layout. Exercise input, Next/Previous, Clear, Close and keyboard scrolling of the active match.",
+      "expect": "Controls remain reachable, count/labels visible, output whitespace preserved and active match revealed without moving focus from the query. Record actual viewport/zoom/scale; no comparison to an unknown reference."
+    },
+    {
+      "id": "offline-last",
+      "action": "Last, retain a live capture and Find query, then stop only the supervised owning host. Its guarded auto-launch path refuses retained-profile reseeding. Inspect actual App disconnect and continue local Find on the retained capture.",
+      "expect": "Offline/previous-capture notices are truthful; refresh is unavailable, local search remains usable and no native input or implicit replacement shell is created. Any real failed refresh retains prior capture with an error rather than false saved output. No recovery restart claimed."
+    }
+  ],
+  "finalChecks": [
+    "Use host stdin snapshot before the final outage to retain actual native snapshots and nativeSessions0. Compare revision/text hashes around local Find interactions; capturedAt may differ across explicit native history reads.",
+    "App native-terminal-input guard attempts must remain0; setup-inputs.jsonl contains only the six admitted setup inputs before App interaction. Other native actions such as attach/heartbeat/reply/focus are separately logged, not mislabeled user input.",
+    "Record installed guard results, actual peer observations, native auth/command/session metadata and source/compiled-bundle hashes. Do not print connection tokens or credential values.",
+    "Stop only the owned App and host, release CDP, confirm owned CG window gone, and preserve all profiles/evidence/failures. Main alone seals gates/native acceptance and later ONE independent original review pair.",
+    "The prepared emitter does not force native truncation. If the real capture is not truncated, do not claim a runtime truncated-true case; retain the unchanged notice logic and its honest native flag."
+  ]
+}
