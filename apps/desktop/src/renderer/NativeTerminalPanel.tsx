@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { NativeTerminalHistory, NativeTerminalInfo } from "../../../../packages/shared/src/terminals";
 import type { NativeTerminalClient } from "./native-terminal-bridge";
 import type { WorkspaceTarget } from "../../../../packages/shared/src/workspace";
 import { Icon } from "./Icons";
 import { newestNativeTerminal } from "./native-terminal-state";
 import type { NativeTerminalView, NativeTerminalViewState } from "./native-terminal-view";
+import { activeNativeHistoryMatch, findNativeHistory, stepNativeHistoryMatch, type NativeHistorySelection } from "./native-terminal-history-find";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal-panel.css";
 import "./native-terminal-panel.css";
@@ -72,11 +73,17 @@ export function NativeTerminalPanel({ bridge, target, hostId, connected, onClose
   </section>;
 }
 
+type NativeHistoryRead = { owner: string; capture?: NativeTerminalHistory; busy: boolean; error?: string };
+
 export function NativeTerminalViewport({ bridge, hostId, terminal, connected, embedded = false, onNewTerminal }: { bridge: NativeTerminalClient; hostId: string; terminal: NativeTerminalInfo; connected: boolean; embedded?: boolean; onNewTerminal?(): void }) {
   const element = useRef<HTMLDivElement>(null), handle = useRef<NativeTerminalView | undefined>(undefined);
   const current = useRef({ terminal, connected }); current.current = { terminal, connected };
   const [state, setState] = useState<NativeTerminalViewState>({ terminal, ready: false, restoring: running(terminal), inputPaused: false, inputBusy: false, hasSelection: false });
-  const [history, setHistory] = useState<NativeTerminalHistory>(), [historyOpen, setHistoryOpen] = useState(false), [historyError, setHistoryError] = useState<string>(), [historyBusy, setHistoryBusy] = useState(false);
+  const historyOwner = JSON.stringify([hostId, terminal.id]), historyOwnerRef = useRef(historyOwner), historyRequest = useRef(0);
+  historyOwnerRef.current = historyOwner;
+  const [historyRead, setHistoryRead] = useState<NativeHistoryRead>({ owner: historyOwner, busy: false }), [historyOpen, setHistoryOpen] = useState(false);
+  const ownedHistory = historyRead.owner === historyOwner ? historyRead : undefined;
+  const history = ownedHistory?.capture, historyError = ownedHistory?.error, historyBusy = ownedHistory?.busy ?? false;
   useEffect(() => {
     let alive = true;
     void import("./native-terminal-view").then(({ NativeTerminalView }) => { if (alive && element.current) handle.current = new NativeTerminalView(element.current, bridge, hostId, current.current.terminal, current.current.connected, setState); }).catch(cause => { if (alive) setState(value => ({ ...value, error: errorText(cause), restoring: false })); });
@@ -84,11 +91,30 @@ export function NativeTerminalViewport({ bridge, hostId, terminal, connected, em
   }, [bridge, hostId, terminal.id]);
   useEffect(() => { handle.current?.setConnected(connected); }, [connected]);
   useEffect(() => { handle.current?.updateTerminal(terminal); }, [terminal.status, terminal.geometryRevision, terminal.inputEpoch, terminal.serverGeneration, terminal.attachable]);
+  useEffect(() => {
+    historyRequest.current++; setHistoryRead({ owner: historyOwner, busy: false }); setHistoryOpen(false);
+    return () => { historyRequest.current++; };
+  }, [bridge, historyOwner]);
+  useEffect(() => {
+    if (!connected) {
+      historyRequest.current++;
+      setHistoryRead(value => value.owner === historyOwner ? { ...value, busy: false } : value);
+    }
+  }, [connected, historyOwner]);
   const loadHistory = async () => {
-    setHistoryOpen(true); setHistoryBusy(true); setHistoryError(undefined);
-    try { const result = await bridge.nativeTerminalQuery({ type: "history", terminalId: terminal.id }, hostId); if (result.type !== "history") throw new Error("Invalid terminal history response."); setHistory(result.history); }
-    catch (cause) { setHistoryError(errorText(cause)); }
-    finally { setHistoryBusy(false); }
+    if (!current.current.connected || historyOwnerRef.current !== historyOwner) return;
+    const request = ++historyRequest.current;
+    const stillOwned = () => request === historyRequest.current && historyOwnerRef.current === historyOwner && current.current.connected;
+    setHistoryOpen(true);
+    setHistoryRead(value => ({ owner: historyOwner, capture: value.owner === historyOwner ? value.capture : undefined, busy: true }));
+    try {
+      const result = await bridge.nativeTerminalQuery({ type: "history", terminalId: terminal.id }, hostId);
+      if (!stillOwned()) return;
+      if (result.type !== "history" || result.history.terminalId !== terminal.id) throw new Error("Invalid terminal history response.");
+      setHistoryRead({ owner: historyOwner, capture: result.history, busy: false });
+    } catch (cause) {
+      if (stillOwned()) setHistoryRead(value => ({ owner: historyOwner, capture: value.owner === historyOwner ? value.capture : undefined, busy: false, error: errorText(cause) }));
+    }
   };
   return <div className="terminal-view native-terminal-view" role={embedded ? undefined : "tabpanel"} id={`native-terminal-view-${terminal.id}`} aria-labelledby={embedded ? undefined : `native-terminal-tab-${terminal.id}`} onKeyDownCapture={event => {
     if (!onNewTerminal || event.nativeEvent.isComposing || event.key !== "t" || !event.metaKey || event.altKey || event.ctrlKey || event.shiftKey
@@ -98,8 +124,53 @@ export function NativeTerminalViewport({ bridge, hostId, terminal, connected, em
     {state.restoring && <p className="terminal-notice" role="status">Attaching to the native pane…</p>}
     {(state.error || state.inputError) && <div className="terminal-view-notices">{state.error && <p className="terminal-notice error" role="alert">{state.error}</p>}{state.inputError && <p className="terminal-notice error" role="alert">{state.inputError}{state.inputPaused && <button className="secondary-button" disabled={!connected || state.inputBusy || !state.ready} onClick={() => handle.current?.resumeInput()}>Resume input</button>}</p>}</div>}
     <div className="native-terminal-scrollport" hidden={historyOpen}><div className="native-terminal-grid" ref={element}/></div>
-    {historyOpen && <div className="native-terminal-history"><div className="native-terminal-history-toolbar"><strong>Native scrollback</strong><button className="secondary-button" onClick={() => { setHistoryOpen(false); handle.current?.focus(); }}>Return to terminal</button><button disabled={!connected || historyBusy} onClick={() => void loadHistory()}>Refresh history</button></div><p className="terminal-notice">{historyBusy ? "Reading native history…" : history?.live ? "Read-only capture from the live pane." : "Read-only saved history; the owning pane is no longer live."}{history?.truncated ? " The capture is bounded; older lines may be omitted." : ""}</p>{historyError && <p className="terminal-notice error" role="alert">{historyError}</p>}<div className="native-terminal-history-content"><pre tabIndex={0} aria-label="Native scrollback text">{history?.history ?? ""}</pre>{history?.screen !== undefined && <><p className="terminal-notice">Captured screen</p><pre tabIndex={0} aria-label="Captured native screen">{history.screen}</pre></>}{history?.savedNormalScreen && <><p className="terminal-notice">Saved normal screen</p><pre tabIndex={0} aria-label="Saved normal screen">{history.savedNormalScreen}</pre></>}</div></div>}
+    {historyOpen && <NativeTerminalHistoryCapture key={historyOwner} hostId={hostId} capture={history} busy={historyBusy} error={historyError} connected={connected} serverGeneration={terminal.serverGeneration} onRefresh={() => void loadHistory()} onReturn={() => { setHistoryOpen(false); handle.current?.focus(); }}/>}
     <footer className="terminal-view-footer"><span className="truncate" title={terminal.cwd}>{terminal.cwd}</span><span title="Shared accepted grid for every viewer">{state.terminal.cols}×{state.terminal.rows}</span><button disabled={!connected || !state.ready || state.terminal.status !== "running"} onClick={() => void handle.current?.usePanelSize()} title="Resize the shared pane for all viewers">Use this panel’s size</button><button disabled={!state.hasSelection} onClick={() => handle.current?.copySelection()}>Copy selection</button><button disabled={!connected || historyBusy} onClick={() => void loadHistory()}>History</button><button disabled={!connected} onClick={() => handle.current?.refresh()}>Refresh output</button></footer>
     {!running(state.terminal) && <p className="terminal-notice">{state.terminal.status === "interrupted" ? "The owning terminal was interrupted. Its saved history remains available." : `Shell ${state.terminal.status}${state.terminal.exitCode === undefined ? "" : ` with code ${state.terminal.exitCode}`}.`}</p>}{state.terminal.error && <p className="terminal-notice error" role="alert">{state.terminal.error}</p>}
+  </div>;
+}
+
+function NativeTerminalHistoryCapture({ hostId, capture, busy, error, connected, serverGeneration, onRefresh, onReturn }: {
+  hostId: string; capture?: NativeTerminalHistory; busy: boolean; error?: string; connected: boolean; serverGeneration: string;
+  onRefresh(): void; onReturn(): void;
+}) {
+  const [findOpen, setFindOpen] = useState(false), [query, setQuery] = useState(""), [selection, setSelection] = useState<NativeHistorySelection>();
+  const opener = useRef<HTMLButtonElement>(null), input = useRef<HTMLInputElement>(null), activeElement = useRef<HTMLElement>(null), findId = useId();
+  const search = useMemo(() => capture ? findNativeHistory(hostId, capture, query) : undefined, [hostId, capture, query]);
+  const active = search && findOpen ? activeNativeHistoryMatch(search, selection) : undefined;
+  useEffect(() => { activeElement.current?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [active?.key, active?.index]);
+  const closeFind = () => { setFindOpen(false); setQuery(""); setSelection(undefined); opener.current?.focus(); };
+  const move = (direction: 1 | -1) => { if (search) setSelection(stepNativeHistoryMatch(search, selection, direction)); };
+  const sectionLabel = search?.sections.find(section => section.id === active?.section)?.label;
+  return <div className="native-terminal-history" aria-busy={busy} data-history-generation={capture?.serverGeneration} data-history-revision={capture?.revision} data-history-captured-at={capture?.capturedAt} onKeyDown={event => {
+    if (!findOpen || event.nativeEvent.isComposing) return;
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeFind(); }
+    else if (event.target === input.current && event.key === "Enter" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault(); event.stopPropagation(); move(event.shiftKey ? -1 : 1);
+    }
+  }}>
+    <div className="native-terminal-history-toolbar">
+      <strong>Native scrollback</strong>
+      <button type="button" ref={opener} disabled={!capture} aria-expanded={findOpen} aria-controls={findId} onClick={() => { if (findOpen) closeFind(); else setFindOpen(true); }}><Icon name="search"/>Find</button>
+      <button type="button" className="secondary-button" onClick={onReturn}>Return to terminal</button>
+      <button type="button" disabled={!connected || busy} onClick={onRefresh}>Refresh history</button>
+    </div>
+    {findOpen && <div id={findId} className="native-terminal-history-find" role="search" aria-label="Find in native history">
+      <input ref={input} autoFocus type="search" aria-label="Find in captured terminal text" aria-describedby={`${findId}-status`} placeholder="Find in captured text" title="Literal text, case-insensitive" value={query} onChange={event => { setQuery(event.target.value); setSelection(undefined); }}/>
+      <button type="button" disabled={!search?.total} aria-label="Previous match" title="Previous match (Shift Enter in Find)" onClick={() => move(-1)}>Previous</button>
+      <button type="button" disabled={!search?.total} aria-label="Next match" title="Next match (Enter in Find)" onClick={() => move(1)}>Next</button>
+      <button type="button" disabled={query === ""} onClick={() => { setQuery(""); setSelection(undefined); input.current?.focus(); }}>Clear</button>
+      <button type="button" className="icon-button" aria-label="Close Find" title="Close Find (Escape)" onClick={closeFind}><Icon name="close"/></button>
+      <span id={`${findId}-status`} className="native-terminal-history-find-status" role="status" aria-live="polite" aria-atomic="true">{query === "" ? "Enter text to find" : !active ? "No matches in this capture" : `${active.index + 1} of ${search?.total} matches · ${sectionLabel}`}</span>
+    </div>}
+    <p className="terminal-notice">{busy ? `Reading native history…${capture ? " Showing the previous capture until refresh completes." : ""}` : capture ? capture.live ? "Read-only capture from the live pane." : "Read-only saved history; the owning pane is no longer live." : "No native history capture has been loaded."}{capture?.truncated ? " The capture is bounded; older lines may be omitted." : ""}</p>
+    {capture && <p className="terminal-notice native-terminal-history-capture" title={`Server generation ${capture.serverGeneration}; revision ${capture.revision}`}>Captured {new Date(capture.capturedAt).toLocaleString()} · Revision {capture.revision}</p>}
+    {!connected && <p className="terminal-notice" role="status">Owning host offline. Find searches only the last captured text; reconnect to refresh.</p>}
+    {capture && capture.serverGeneration !== serverGeneration && <p className="terminal-notice" role="status">The terminal generation changed. This is the previous capture; refresh to read the current owner.</p>}
+    {error && <p className="terminal-notice error" role="alert">{error}{capture ? " The previous capture is retained." : ""}</p>}
+    <div className="native-terminal-history-content">{search?.sections.map(section => <div key={section.id}>
+      {section.id !== "history" && <p className="terminal-notice">{section.id === "screen" ? "Captured screen" : "Saved normal screen"}</p>}
+      <pre tabIndex={0} aria-label={section.label}>{active?.section === section.id ? <>{section.text.slice(0, active.start)}<mark className="native-terminal-history-match" ref={activeElement} aria-current="true">{section.text.slice(active.start, active.end)}</mark>{section.text.slice(active.end)}</> : section.text}</pre>
+    </div>)}</div>
   </div>;
 }

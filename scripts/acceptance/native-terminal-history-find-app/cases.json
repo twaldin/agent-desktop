@@ -1,0 +1,91 @@
+{
+  "scope": "Main-only actual production App/host/native tmux acceptance. Source preparation is not a passed runtime or pixel verdict.",
+  "entrypoints": {
+    "prepare": "bun --no-env-file scripts/acceptance/native-terminal-history-find-app/prepare.ts <new-native-history-find-HOME> <new-private-evidence-directory>",
+    "host": "Under hub: verified Bun --no-env-file scripts/acceptance/native-terminal-history-find-app/host.ts <prepared-HOME>; wait for Native history Find host ready.",
+    "app": "Under a new Main native lease and hub: verified installed Electron scripts/acceptance/native-terminal-history-find-app/electron.cjs <prepared-HOME> <this-repository>; wait for actual App ready and app-peer-observations.jsonl with discoveredPeers0.",
+    "nativePrerequisite": "Main supplies NATIVE_FIND_TMUX_BUNDLE pointing at an existing immutable verified darwin-arm64 bundle. No fixture build, install, terminal-runtime replacement or global tmux/yabai change."
+  },
+  "environment": {
+    "policy": "Use env -i for preparation, host and Electron; preserve the identical explicit variables. Never inherit provider credentials or personal configuration.",
+    "HOME": "<prepared-HOME>",
+    "USER": "<observed /usr/bin/id -un>",
+    "LOGNAME": "<same observed OS user>",
+    "LANG": "en_US.UTF-8",
+    "SHELL": "/bin/zsh",
+    "PATH": "<prepared-HOME>/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "TMPDIR": "/private/tmp",
+    "PI_DISABLE_DOTENV": "1",
+    "PI_CODING_AGENT_DIR": "<prepared-HOME>/agent",
+    "AGENT_DESKTOP_DATA_DIR": "<prepared-HOME>/host",
+    "AGENT_DESKTOP_PROFILE_DIR": "<prepared-HOME>/desktop",
+    "AGENT_DESKTOP_PROJECT_ROOT": "<this-repository>",
+    "AGENT_DESKTOP_BUN": "<prepared-HOME>/bin/guarded-bun",
+    "NATIVE_FIND_BUN": "<verified absolute Bun executable>",
+    "NATIVE_FIND_HOST_ENTRY": "<this-repository>/scripts/acceptance/native-terminal-history-find-app/host.ts",
+    "NATIVE_FIND_TMUX_BUNDLE": "<verified immutable bundle directory>",
+    "NATIVE_FIND_INSPECTOR": "<Main-verified read-only native-inspect executable supporting metadata PID>",
+    "NATIVE_FIND_YABAI": "<verified absolute yabai executable>",
+    "NATIVE_FIND_CDP_PORT": "<owned unique loopback port if Main needs read-only browser inspection>"
+  },
+  "isolation": [
+    "Preparation refuses non-empty profile/evidence directories and installs an executable private PATH tailscale that returns exit1, never synthesized peer JSON.",
+    "Observe actual OS user metadata, source/Bun/bundle/shim hashes in prepared.json. Native shell selection still uses the existing OS-user/default-shell policy.",
+    "The real host uses tailscale:false and verifies its actual peer list0 before project/native terminal writes. The real production App host:peers handler must independently return0 before UI commands and first physical input.",
+    "Real native manager/HTTP inputs start emit-history.sh inside disposable owned native panes. All three capture sections come from actual PTY output; no history/screen reply is generated in JavaScript.",
+    "The actual production main/preload/App and original handlers remain in use. Provider commands and any App native-terminal-input call are rejected and recorded. Installed nonloopback fetch/WebSocket/Chromium guards remain active; native worker discovery delegates the original ModelRegistry.refresh to documented offline mode.",
+    "Any guard-violations.jsonl entry or native input attempt from Find fails the run. Do not suppress, overwrite or relabel failed attempts. No live reference, personal profile/account, clipboard test or provider send."
+  ],
+  "physicalGate": [
+    "Main owns one exact on-screen candidate PID/CG/AX window. Inspect and float ONLY that owned window through existing native controls; no global yabai setting change.",
+    "Baseline actual native bounds1440x1000 at zoom1 if the display fits. After native setup, send app stdin: bind baseline 1440 1000 1. This verifies actual bounds, not requested bounds.",
+    "Before EVERY physical pointer/key action, send app stdin: probe <unique-before-action-label>, wait for its ready log, inspect the actual bound target/occlusion, then use native pointer/SystemEvents exact-PID input. The fixture never calls DOM click/focus or synthesizes native history.",
+    "After the view settles, send app stdin: capture <unique-label>. It records native CG raster and before/after CG/AX/PID, display/Space/yabai floating/fullscreen, native/content/renderer bounds and aspect, DPR/display scale, direct zoom and resolved theme. Drift fails with original evidence retained.",
+    "Intentional compact actual720x700 at zoom1 is a separate case: resize only the owned floating window and send bind compact 720 700 1. Never label managed half/quarter tiling as requested geometry.",
+    "All captures remain NOT pixel-comparable because no reference comparison or matched reference geometry/zoom/theme is established. No style compensation or threshold relaxation."
+  ],
+  "cases": [
+    {
+      "id": "live-history",
+      "action": "Select the restored History Find — live dock tab; open History through its actual footer.",
+      "expect": "Native scrollback, captured screen and saved normal screen match seed-live-history.json and current owning snapshots. Live/capture-revision/timestamp notices remain explicit; any native truncated flag is shown, never suppressed."
+    },
+    {
+      "id": "literal-count-and-sections",
+      "action": "Open Find, type needle through native input. Use Previous from the initial match and Next to wrap; use Enter/ShiftEnter while query-focused. Also search SCREEN needle and NORMAL needle to reveal each corresponding capture section.",
+      "expect": "Exact count across existing capture sections; active match and section label agree. Case-insensitive literal query [x].* searches literal punctuation, not regex. Only the current match is marked; all pre text hashes remain exact."
+    },
+    {
+      "id": "no-match-clear-close",
+      "action": "Enter a distinctive absent query; Clear; re-enter needle; Escape from the query and from a keyboard-focused capture section; reopen and use Close Find.",
+      "expect": "No-match state and disabled navigation, empty-query state, and opener focus restoration are real. Find closes locally without closing the pane or sending keys to PTY. Query does not persist after closing Find."
+    },
+    {
+      "id": "same-owner-refresh",
+      "action": "Keep needle and a non-first active match. Send host stdin refresh-live, wait for real emitted REFRESH output using an owning snapshot, then click Refresh history.",
+      "expect": "Query remains local to the same owner; updated capture revision/text recompute the count and active match. Until explicit refresh, the view remains the previous read-only capture. No synthetic response or UI history mutation."
+    },
+    {
+      "id": "saved-and-owner-transition",
+      "action": "With live Find open, select History Find — saved and open History/Find; then select History Find — other and open its History/Find.",
+      "expect": "Saved pane has actual live:false history, no running-shell claim. Another terminal never inherits the first pane's query, active index or captured text. Each view resolves its own terminal ID/generation/revision."
+    },
+    {
+      "id": "compact",
+      "action": "Use the separately bound720x700 layout. Exercise input, Next/Previous, Clear, Close and keyboard scrolling of the active match.",
+      "expect": "Controls remain reachable, count/labels visible, output whitespace preserved and active match revealed without moving focus from the query. Record actual viewport/zoom/scale; no comparison to an unknown reference."
+    },
+    {
+      "id": "offline-last",
+      "action": "Last, retain a live capture and Find query, then stop only the supervised owning host. Its guarded auto-launch path refuses retained-profile reseeding. Inspect actual App disconnect and continue local Find on the retained capture.",
+      "expect": "Offline/previous-capture notices are truthful; refresh is unavailable, local search remains usable and no native input or implicit replacement shell is created. Any real failed refresh retains prior capture with an error rather than false saved output. No recovery restart claimed."
+    }
+  ],
+  "finalChecks": [
+    "Use host stdin snapshot before the final outage to retain actual native snapshots and nativeSessions0. Compare revision/text hashes around local Find interactions; capturedAt may differ across explicit native history reads.",
+    "App native-terminal-input guard attempts must remain0; setup-inputs.jsonl contains only the six admitted setup inputs before App interaction. Other native actions such as attach/heartbeat/reply/focus are separately logged, not mislabeled user input.",
+    "Record installed guard results, actual peer observations, native auth/command/session metadata and source/compiled-bundle hashes. Do not print connection tokens or credential values.",
+    "Stop only the owned App and host, release CDP, confirm owned CG window gone, and preserve all profiles/evidence/failures. Main alone seals gates/native acceptance and later ONE independent original review pair.",
+    "The prepared emitter does not force native truncation. If the real capture is not truncated, do not claim a runtime truncated-true case; retain the unchanged notice logic and its honest native flag."
+  ]
+}
