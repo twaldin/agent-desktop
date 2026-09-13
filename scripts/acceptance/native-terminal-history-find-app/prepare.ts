@@ -29,7 +29,8 @@ const tailscale = "#!/bin/sh\nprintf '%s\\n' 'Tailscale is refused by the isolat
 await writeFile(join(root, "bin/tailscale"), tailscale, { flag: "wx", mode: 0o700 });
 await chmod(join(root, "bin/tailscale"), 0o700);
 const hostEntry = join(import.meta.dir, "host.ts");
-await writeFile(join(root, "bin/guarded-bun"), '#!/bin/sh\nset -eu\n: "${NATIVE_FIND_BUN:?}"\n: "${NATIVE_FIND_HOST_ENTRY:?}"\nexec "$NATIVE_FIND_BUN" --no-env-file "$NATIVE_FIND_HOST_ENTRY" "$HOME"\n', { flag: "wx", mode: 0o700 });
+const guardedBun = join(root, "bin/guarded-bun");
+await writeFile(guardedBun, '#!/bin/sh\nset -eu\n: "${NATIVE_FIND_BUN:?}"\n: "${NATIVE_FIND_HOST_ENTRY:?}"\nexec "$NATIVE_FIND_BUN" --no-env-file "$NATIVE_FIND_HOST_ENTRY" "$HOME"\n', { flag: "wx", mode: 0o700 });
 await writeFile(join(root, "agent/config.yml"), "extensions: []\nretry:\n  enabled: false\n", { flag: "wx", mode: 0o600 });
 execFileSync("/usr/bin/git", ["init", "--quiet", join(root, "project")]);
 const source = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
@@ -39,7 +40,8 @@ const sourceHashes = Object.fromEntries(await Promise.all(sourcePaths.map(async 
 const helperHashes = { inspector: { path: inspector, sha256: createHash("sha256").update(await readFile(inspector)).digest("hex") }, yabai: { path: yabai, sha256: createHash("sha256").update(await readFile(yabai)).digest("hex") } };
 const owner = { kind: "native-history-find", mode, root, evidence, repo, source, hostEntry, bundle: { directory: bundle.directory, digest: bundle.digest },
   osUser, username, helperHashes, environment: { HOME: root, USER: process.env.USER, LOGNAME: process.env.LOGNAME, SHELL: process.env.SHELL, LANG: process.env.LANG, PATH: process.env.PATH },
-  tailscaleSha256: createHash("sha256").update(tailscale).digest("hex"), bunSha256: createHash("sha256").update(await readFile(bun)).digest("hex"), sourceHashes };
+  tailscaleSha256: createHash("sha256").update(tailscale).digest("hex"), guardedBunSha256: createHash("sha256").update(await readFile(guardedBun)).digest("hex"),
+  bunSha256: createHash("sha256").update(await readFile(bun)).digest("hex"), sourceHashes };
 await writeFile(join(root, "fixture-owner.json"), JSON.stringify(owner, null, 2), { flag: "wx", mode: 0o600 });
 await writeFile(join(evidence, "prepared.json"), JSON.stringify(owner, null, 2), { flag: "wx", mode: 0o600 });
 console.log(JSON.stringify({ ready: true, mode, root, evidence, source, bundleDigest: bundle.digest, hostEntry,

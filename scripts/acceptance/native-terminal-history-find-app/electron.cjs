@@ -8,10 +8,11 @@ const { createInterface } = require("node:readline");
 const { basename, isAbsolute, join, resolve } = require("node:path");
 const { setTimeout: waitForReadiness } = require("node:timers/promises");
 const root = resolve(process.argv[2] || ""), repo = resolve(process.argv[3] || "");
+const guardedBun = join(root, "bin/guarded-bun");
 if (!process.argv[2] || !process.argv[3] || !basename(root).startsWith("native-history-find-") || process.env.HOME !== root
   || process.env.AGENT_DESKTOP_DATA_DIR !== join(root, "host") || process.env.AGENT_DESKTOP_PROFILE_DIR !== join(root, "desktop")
   || process.env.PI_CODING_AGENT_DIR !== join(root, "agent") || process.env.PI_DISABLE_DOTENV !== "1" || process.env.PATH?.split(":")[0] !== join(root, "bin")
-  || process.env.AGENT_DESKTOP_BUN !== join(root, "bin/guarded-bun")) throw new Error("Exact isolated native Find launch environment required.");
+  || process.env.AGENT_DESKTOP_BUN !== guardedBun) throw new Error("Exact isolated native Find launch environment required.");
 const owner = JSON.parse(readFileSync(join(root, "fixture-owner.json"), "utf8"));
 if (owner.root !== root || owner.repo !== repo || process.env.NATIVE_FIND_HOST_ENTRY !== owner.hostEntry) throw new Error("Owned fixture mismatch.");
 const mode = process.env.NATIVE_FIND_MODE ?? "full";
@@ -21,6 +22,7 @@ if (!inspector || !isAbsolute(inspector) || !yabai || !isAbsolute(yabai)) throw 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const stableTheme = renderer => JSON.stringify({ root: renderer.theme.root, body: renderer.theme.body, fontTokens: renderer.fontTokens, source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors });
 if (sha(readFileSync(join(root, "bin/tailscale"))) !== owner.tailscaleSha256) throw new Error("Private refusing tailscale executable changed.");
+if (sha(readFileSync(guardedBun)) !== owner.guardedBunSha256) throw new Error("Private guarded Bun executable changed.");
 if (inspector !== owner.helperHashes.inspector.path || yabai !== owner.helperHashes.yabai.path
   || sha(readFileSync(inspector)) !== owner.helperHashes.inspector.sha256 || sha(readFileSync(yabai)) !== owner.helperHashes.yabai.sha256) throw new Error("Verified native helper changed.");
 const append = (file, value) => appendFileSync(join(owner.evidence, file), JSON.stringify({ ...value, at: Date.now() }) + "\n", { mode: 0o600 });

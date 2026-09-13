@@ -38,7 +38,7 @@ func axRecord(_ read: (value: CFTypeRef?, error: AXError)) -> [String: Any] {
 }
 
 let arguments = CommandLine.arguments
- guard arguments.count == 3, arguments[1] == "metadata", let pid = pid_t(arguments[2]), pid > 0 else {
+guard arguments.count == 3, arguments[1] == "metadata", let pid = pid_t(arguments[2]), pid > 0 else {
     fputs("Expected metadata and an owned PID.\n", stderr)
     exit(2)
 }
