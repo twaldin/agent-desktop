@@ -83,7 +83,12 @@ export class AdvancedStreamState {
   }
   async save(field: OmpStreamField): Promise<void> {
     const edit = this.edits.get(field);
-    if (!edit || !this.connected || this.loading || this.saving || this.error || !this.controls?.advancedStream?.supported) return;
+    const snapshot = this.controls?.advancedStream;
+    const availableFields = snapshot?.fields ? Object.values(snapshot.fields).some(item => item.supported) : snapshot?.supported;
+    if (!edit || !this.connected || this.loading || this.saving || this.error || !availableFields) return;
+    if (snapshot?.fields?.[field].supported === false && edit.action !== "inherit") {
+      edit.error = snapshot.fields[field].reason; this.notify(); return;
+    }
     const value = edit.action === "set" && edit.text.trim() !== "" ? Number(edit.text) : undefined;
     if (edit.action === "set" && (value === undefined || !Number.isFinite(value))) {
       edit.error = "Enter a finite number before saving."; this.notify(); return;
