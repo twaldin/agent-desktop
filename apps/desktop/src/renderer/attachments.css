@@ -20,7 +20,7 @@
 .image-preview-thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .image-preview-loading, .image-preview-error { display: flex; min-height: 48px; align-items: center; justify-content: center; flex-direction: column; gap: 5px; font-size: var(--small-font-size); color: var(--secondary); overflow-wrap: anywhere; }
 .image-preview-error button { font: inherit; color: inherit; }
-.image-preview-dialog { box-sizing: border-box; width: min(920px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 14px; border: var(--border-width) solid var(--border); border-radius: var(--radius-large); color: var(--text); background: var(--app-surface); }
+.image-preview-dialog { box-sizing: border-box; width: min(920px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); margin: auto; padding: 14px; border: var(--border-width) solid var(--border); border-radius: var(--radius-large); color: var(--text); background: var(--app-surface); }
 .image-preview-dialog::backdrop { background: rgb(0 0 0 / .65); }
 .image-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .image-preview-heading span { min-width: 0; overflow-wrap: anywhere; }
