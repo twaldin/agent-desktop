@@ -21,6 +21,7 @@ export const APP_COMMAND_BINDING_OWNERS = {
   openCommandMenu: "search", searchChats: "search-chats", openFolder: "open-folder",
   findInThread: "find-in-thread",
   copyConversationPath: "copy-conversation-path", copyWorkingDirectory: "copy-working-directory",
+  copyConversationMarkdown: "copy-conversation-markdown",
   renameThread: "rename-thread", archiveThread: "archive-thread",
   markThreadUnread: "mark-thread-unread", toggleThreadPin: "toggle-thread-pin",
   "composer.openModelPicker": "composer-open-model-picker",
