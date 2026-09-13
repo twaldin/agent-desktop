@@ -75,7 +75,7 @@ const controls = (revision: string, temperature: number): OmpSessionControls => 
 
 test("online Reload and Save remain usable when only the local host identity resolves", async () => {
   let native = controls("initial", 0.6);
-  const bridge = {
+  const bridge: Pick<DesktopBridge, "getSessionControls" | "setSessionControl" | "subscribe"> = {
     getSessionControls: async () => native,
     setSessionControl: async (sessionId, mutation, hostId) => {
       if (sessionId !== "session" || hostId !== "owner" || mutation.expectedRevision !== native.revision)
@@ -86,7 +86,7 @@ test("online Reload and Save remain usable when only the local host identity res
       return native;
     },
     subscribe: () => () => {},
-  } satisfies Pick<DesktopBridge, "getSessionControls" | "setSessionControl" | "subscribe">;
+  };
   // The real component uses only these three controlled DesktopBridge operations.
   const desktopBridge = bridge as DesktopBridge;
   const hooks = driver();
