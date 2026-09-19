@@ -4,7 +4,9 @@ import { classifyResetObservation, sanitizeResetObservation, type ResetAccountAd
 import { nativeResetAccountKey } from "./omp/session-usage";
 import type { HostStore } from "./store";
 
-export type NativeResetProvenance = ResetAutomaticEvidence["provenance"];
+export type NativeResetProvenance = Omit<ResetAutomaticEvidence["provenance"], "reportRevision">;
+export type NativeResetAttemptProvenance = ResetAutomaticEvidence["provenance"];
+export type NativeResetLegacyProvenance = NativeResetAttemptProvenance;
 export type NativeResetPolicyValues = ResetAutomaticEvidence["policy"];
 export type NativeResetAccountEvidence = ResetAutomaticEvidence["account"];
 export type NativeResetCreditEvidence = ResetAutomaticEvidence["credit"];
@@ -54,7 +56,7 @@ export interface NativeResetPersistenceProof {
 export interface NativeResetFinish { state: "settled" | "held" | "cancelled" | "failed"; refresh: "not-needed" | "complete" | "failed"; applied: number; attemptIds: readonly string[] }
 export type NativeResetClosureReason = "invalidated" | "oversized" | "restarted" | "worker-lost";
 export interface NativeResetPassRecord {
-  version: 1;
+  version: 2;
   hostId: string;
   passId: string;
   provenance: NativeResetProvenance;
@@ -63,13 +65,18 @@ export interface NativeResetPassRecord {
   startRevision: string;
   createdAt: number;
   updatedAt: number;
-  plan?: { plannedAtMs: number; actions: NativeResetPlannedAction[] };
+  plan?: { reportRevision: string; plannedAtMs: number; actions: NativeResetPlannedAction[] };
   /** Native same-session join: this pass emitted only joined→finished against the original running pass; it never plans, consents or admits. */
   joinedToPassId?: string;
   decision: NativeResetDecision;
   persistence?: NativeResetPersistenceProof & { recordedAt: number };
   finish?: NativeResetFinish & { recordedAt: number };
   closed?: { reason: NativeResetClosureReason; at: number };
+}
+interface NativeResetLegacyPassRecord extends Omit<NativeResetPassRecord, "version" | "provenance" | "plan"> {
+  version: 1;
+  provenance: NativeResetLegacyProvenance;
+  plan?: { plannedAtMs: number; actions: NativeResetPlannedAction[] };
 }
 export interface NativeResetCompletion {
   attemptId: string;
@@ -92,7 +99,7 @@ export type NativeResetHoldReason =
   | "fenced" | "manual-collision" | "incompatible" | "unjoinable" | "stale-generation";
 export type NativeResetAdmission =
   | { kind: "execute"; attemptId: string; passId: string; key: string; generation: string; credentialId: number; creditId: string; redeemRequestId: string; settlement: Promise<NativeResetCompletion> }
-  | { kind: "join"; attemptId: string; passId: string; originPassId: string; provenance: NativeResetProvenance; key: string; credentialId: number; creditId: string; redeemRequestId: string; settlement: Promise<NativeResetCompletion> }
+  | { kind: "join"; attemptId: string; passId: string; originPassId: string; provenance: NativeResetAttemptProvenance; key: string; credentialId: number; creditId: string; redeemRequestId: string; settlement: Promise<NativeResetCompletion> }
   | { kind: "hold"; reason: NativeResetHoldReason };
 export interface NativeResetAdmitInput {
   current: { workerEpoch: string; nativeSessionId: string; selectionRevision: string; policyRevision: string };
@@ -114,14 +121,14 @@ export interface NativeResetAttemptView {
   completion?: NativeResetCheckpointCompletion;
 }
 export type NativeResetPassView =
-  | { passId: string; status: "malformed" }
+  | { passId: string; status: "malformed" | "legacy" }
   | { passId: string; status: "started" | "joined" | "planned" | "finished" | "closed"; record: NativeResetPassRecord; attempts: NativeResetAttemptView[] };
 export interface NativeResetAttemptInspection {
   attemptId: string;
   attempt?: ResetAdmissionAttempt;
   state: NativeResetAttemptState;
   passId?: string;
-  provenance?: NativeResetProvenance;
+  provenance?: NativeResetAttemptProvenance;
   observed: NativeResetObserved;
   /** A settlement promise is still pending in this process (possibly already fenced unknown by loss notification). */
   live: boolean;
@@ -163,12 +170,13 @@ const FINISH_STATES = ["settled", "held", "cancelled", "failed"] as const, REFRE
 
 export function sanitizeNativeResetProvenance(value: unknown): NativeResetProvenance {
   const v = record(value, "provenance");
+  if (Object.hasOwn(v, "reportRevision")) fail("Native reset origin cannot claim a report revision.");
   return {
     hostId: str(v.hostId, 128, "provenance host"), sessionId: id(v.sessionId, "provenance session"), sessionFile: str(v.sessionFile, 4096, "provenance session file"),
     cwd: str(v.cwd, 4096, "provenance cwd"), workerEpoch: id(v.workerEpoch, "provenance worker epoch"), nativeSessionId: id(v.nativeSessionId, "provenance native session"),
     passId: id(v.passId, "pass id"), trigger: oneOf(v.trigger, TRIGGERS, "provenance trigger"), source: oneOf(v.source, SOURCES, "provenance source"),
     startedAtMs: int(v.startedAtMs, "provenance start time"), provider: str(v.provider, 64, "provenance provider"), modelId: str(v.modelId, 256, "provenance model"),
-    reportRevision: str(v.reportRevision, 128, "provenance report revision"), selectionRevision: str(v.selectionRevision, 128, "provenance selection revision"),
+    selectionRevision: str(v.selectionRevision, 128, "provenance selection revision"),
     policyRevision: str(v.policyRevision, 128, "provenance policy revision"),
   };
 }
@@ -243,18 +251,47 @@ const sanitizeDecision = (value: unknown): NativeResetDecision => {
 };
 function sanitizePassRecord(value: unknown, hostId: string): NativeResetPassRecord {
   const v = record(value, "pass record");
-  if (v.version !== 1 || v.hostId !== hostId) fail("Foreign native reset pass record.");
+  if (v.version !== 2 || v.hostId !== hostId) fail("Foreign native reset pass record.");
   const provenance = sanitizeNativeResetProvenance(v.provenance), passId = id(v.passId, "pass id");
   if (provenance.passId !== passId || provenance.hostId !== hostId) fail("Native reset pass record identity mismatch.");
   let plan: NativeResetPassRecord["plan"];
   if (v.plan !== undefined) {
     const p = record(v.plan, "plan");
     if (!Array.isArray(p.actions) || p.actions.length > NATIVE_RESET_MAX_ACTIONS) return fail("Invalid native reset plan.");
-    const actions = p.actions.map(sanitizePlannedAction);
+    const rawActions = p.actions as unknown[];
+    const actions = rawActions.map(sanitizePlannedAction);
     if (new Set(actions.map(action => action.key)).size !== actions.length) fail("Invalid native reset plan accounts.");
-    plan = { plannedAtMs: int(p.plannedAtMs, "plan time"), actions };
+    plan = { reportRevision: hex(p.reportRevision, "plan report revision"), plannedAtMs: int(p.plannedAtMs, "plan time"), actions };
   }
   let persistence: NativeResetPassRecord["persistence"], finish: NativeResetPassRecord["finish"], closed: NativeResetPassRecord["closed"];
+  if (v.persistence !== undefined) persistence = { ...sanitizePersistence(v.persistence), recordedAt: int(record(v.persistence, "persistence").recordedAt, "persistence time") };
+  if (v.finish !== undefined) { const f = record(v.finish, "finish"); finish = { ...sanitizeFinish(f), recordedAt: int(f.recordedAt, "finish time") }; }
+  if (v.closed !== undefined) { const c = record(v.closed, "closure"); closed = { reason: oneOf(c.reason, ["invalidated", "oversized", "restarted", "worker-lost"] as const, "closure reason"), at: int(c.at, "closure time") }; }
+  return defined({ version: 2 as const, hostId, passId, provenance, policy: sanitizeNativeResetPolicyValues(v.policy), startRevision: str(v.startRevision, 128, "start revision"),
+    createdAt: int(v.createdAt, "creation time"), updatedAt: int(v.updatedAt, "update time"), plan, joinedToPassId: v.joinedToPassId === undefined ? undefined : id(v.joinedToPassId, "joined pass id"),
+    decision: sanitizeDecision(v.decision), persistence, finish, closed });
+}
+/** Exact v1 reader for retained rows. It is inspection/recovery-only: its start-time
+ * report claim is never promoted into a v2 sealed plan revision. */
+function sanitizeLegacyPassRecord(value: unknown, hostId: string): NativeResetLegacyPassRecord {
+  const v = record(value, "legacy pass record");
+  if (v.version !== 1 || v.hostId !== hostId) fail("Foreign native reset legacy pass record.");
+  const rawProvenance = record(v.provenance, "legacy provenance");
+  const reportRevision = str(rawProvenance.reportRevision, 128, "legacy provenance report revision");
+  const { reportRevision: _legacyReportRevision, ...origin } = rawProvenance;
+  const provenance = { ...sanitizeNativeResetProvenance(origin), reportRevision };
+  const passId = id(v.passId, "pass id");
+  if (provenance.passId !== passId || provenance.hostId !== hostId) fail("Native reset legacy pass record identity mismatch.");
+  let plan: NativeResetLegacyPassRecord["plan"];
+  if (v.plan !== undefined) {
+    const p = record(v.plan, "legacy plan");
+    if (!Array.isArray(p.actions) || p.actions.length > NATIVE_RESET_MAX_ACTIONS) fail("Invalid native reset legacy plan.");
+    const rawActions = p.actions as unknown[];
+    const actions = rawActions.map(sanitizePlannedAction);
+    if (new Set(actions.map(action => action.key)).size !== actions.length) fail("Invalid native reset legacy plan accounts.");
+    plan = { plannedAtMs: int(p.plannedAtMs, "legacy plan time"), actions };
+  }
+  let persistence: NativeResetLegacyPassRecord["persistence"], finish: NativeResetLegacyPassRecord["finish"], closed: NativeResetLegacyPassRecord["closed"];
   if (v.persistence !== undefined) persistence = { ...sanitizePersistence(v.persistence), recordedAt: int(record(v.persistence, "persistence").recordedAt, "persistence time") };
   if (v.finish !== undefined) { const f = record(v.finish, "finish"); finish = { ...sanitizeFinish(f), recordedAt: int(f.recordedAt, "finish time") }; }
   if (v.closed !== undefined) { const c = record(v.closed, "closure"); closed = { reason: oneOf(c.reason, ["invalidated", "oversized", "restarted", "worker-lost"] as const, "closure reason"), at: int(c.at, "closure time") }; }
@@ -282,7 +319,7 @@ interface LiveAttempt {
   fenced?: ResetUnknownReason;
   completion?: NativeResetCompletion;
 }
-interface LoadedPass { passId: string; record?: NativeResetPassRecord }
+interface LoadedPass { passId: string; record?: NativeResetPassRecord; legacy?: NativeResetLegacyPassRecord }
 interface AttemptLookup { state: NativeResetAttemptState; attempt?: ResetAdmissionAttempt }
 
 /** Durable owner of native automatic reset passes: consent checkpoints, plan evidence and live
@@ -308,6 +345,15 @@ export class NativeResetPolicy {
   #recover(): void {
     this.#store.transactionMetadata(() => {
       for (const loaded of this.#loadAll()) {
+        if (loaded.legacy) {
+          for (const action of loaded.legacy.plan?.actions ?? []) {
+            const checkpoint = action.checkpoint;
+            if (checkpoint?.role === "origin" && !checkpoint.completion && this.#attempt(checkpoint.attemptId).state === "dispatching") {
+              try { this.#admissions.markAutomaticUnknown(checkpoint.attemptId, "restarted"); } catch {}
+            }
+          }
+          continue;
+        }
         const pass = loaded.record; if (!pass) continue;
         let changed = false;
         for (const action of pass.plan?.actions ?? []) {
@@ -330,8 +376,13 @@ export class NativeResetPolicy {
     try {
       const raw = this.#store.readMetadata<unknown>(`${PASS_PREFIX}${passId}`, PASS_MAX_BYTES);
       if (raw === undefined) return { passId };
-      const record = sanitizePassRecord(raw, this.#store.host.id);
-      return record.passId === passId ? { passId, record } : { passId };
+      const rawRecord = record(raw, "pass record");
+      if (rawRecord.version === 1 && rawRecord.hostId === this.#store.host.id) {
+        const legacy = sanitizeLegacyPassRecord(raw, this.#store.host.id);
+        return legacy.passId === passId ? { passId, legacy } : { passId };
+      }
+      const parsed = sanitizePassRecord(raw, this.#store.host.id);
+      return parsed.passId === passId ? { passId, record: parsed } : { passId };
     } catch { return { passId }; }
   }
   /** Any retained row counts, including oversized or unparseable ones. */
@@ -421,18 +472,21 @@ export class NativeResetPolicy {
       if (provenance.startedAtMs <= this.#floor()) throw new Error("Native reset pass start time is at or below the retired floor.");
       this.#makeRoom();
       const at = this.#now();
-      const pass: NativeResetPassRecord = defined({ version: 1 as const, hostId: this.#store.host.id, passId: provenance.passId, provenance, policy, startRevision: this.#admissions.revision(), createdAt: at, updatedAt: at, joinedToPassId, decision: { state: "none" as const } });
+      const pass: NativeResetPassRecord = defined({ version: 2 as const, hostId: this.#store.host.id, passId: provenance.passId, provenance, policy, startRevision: this.#admissions.revision(), createdAt: at, updatedAt: at, joinedToPassId, decision: { state: "none" as const } });
       this.#write(pass);
       return pass;
     });
   }
 
-  plan(passId: string, input: { plannedAtMs: number; actions: readonly { native: CodexResetAction; account: NativeResetAccountEvidence }[] }): NativeResetPassRecord {
+  plan(passId: string, input: { reportRevision: string; plannedAtMs: number; actions: readonly { native: CodexResetAction; account: NativeResetAccountEvidence }[] }): NativeResetPassRecord {
     const pass = this.#open(passId);
     if (pass.joinedToPassId !== undefined) throw new Error("A joined native reset pass has no plan of its own.");
     if (pass.plan) throw new Error("Native reset pass is already planned.");
-    const plannedAtMs = int(input.plannedAtMs, "plan time");
+    const reportRevision = hex(input.reportRevision, "plan report revision"), plannedAtMs = int(input.plannedAtMs, "plan time");
     if (!Array.isArray(input.actions)) throw new Error("Invalid native reset plan.");
+    for (let index = 0; index < input.actions.length; index += 1) {
+      if (!Object.hasOwn(input.actions, index)) throw new Error("Invalid native reset plan: every action index must be present.");
+    }
     if (input.actions.length > NATIVE_RESET_MAX_ACTIONS) {
       // Durably reject the whole pass: a shortened retry of the same native plan would silently drop actions.
       pass.closed = { reason: "oversized", at: this.#now() };
@@ -465,7 +519,7 @@ export class NativeResetPolicy {
         if (existing?.generation !== undefined) action.expectedGeneration = existing.generation;
         if (existing && existing.state !== "settled") action.joinOnly = true;
       }
-      pass.plan = { plannedAtMs, actions };
+      pass.plan = { reportRevision, plannedAtMs, actions };
       this.#write(pass);
     });
     if (invalidated) throw invalidated;
@@ -556,7 +610,7 @@ export class NativeResetPolicy {
         credentialId: live.evidence.account.credentialId, creditId: live.evidence.credit.id, redeemRequestId: live.evidence.redeemRequestId, settlement: live.promise };
     }
     if (existing?.generation !== action.expectedGeneration || action.joinOnly) return hold("stale-generation");
-    const evidence: ResetAutomaticEvidence = { provenance: p, policy: pass.policy, action: evidenceAction, account, credit, compatibilityHash, redeemRequestId: randomUUID() };
+    const evidence: ResetAutomaticEvidence = { provenance: { ...p, reportRevision: pass.plan.reportRevision }, policy: pass.policy, action: evidenceAction, account, credit, compatibilityHash, redeemRequestId: randomUUID() };
     const admitted = this.#store.transactionMetadata(() => {
       const admitted = this.#admissions.admitAutomatic({ key: action.key, expectedGeneration: action.expectedGeneration, operationId: pass.passId, evidence });
       action.checkpoint = { attemptId: admitted.attemptId, role: "origin", originPassId: pass.passId, redeemRequestId: evidence.redeemRequestId, admittedAt: this.#now() };
@@ -679,7 +733,7 @@ export class NativeResetPolicy {
 
   inspectPass(passId: string): NativeResetPassView | undefined {
     const loaded = this.#load(id(passId, "pass id"));
-    if (!loaded.record) return this.#exists(loaded.passId) ? { passId: loaded.passId, status: "malformed" } : undefined;
+    if (!loaded.record) return loaded.legacy ? { passId: loaded.passId, status: "legacy" } : this.#exists(loaded.passId) ? { passId: loaded.passId, status: "malformed" } : undefined;
     const pass = loaded.record;
     const attempts = (pass.plan?.actions ?? []).flatMap((action): NativeResetAttemptView[] => {
       const checkpoint = action.checkpoint; if (!checkpoint) return [];

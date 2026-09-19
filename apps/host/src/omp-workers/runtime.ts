@@ -34,6 +34,8 @@ import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } fro
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
 import { connectWorkerEndpoint, type WorkerReconnectEndpoint } from "./reconnect-wire";
+import { ResetPolicyHostChannel } from "./reset-policy-channel";
+import { parseResetPolicyWireRequest, type ResetPolicyWireRequest, type ResetPolicyWireResult } from "./reset-policy-wire";
 
 export interface WorkerFailure {
   type: "worker_failure";
@@ -128,6 +130,15 @@ export interface WorkerRuntimeOptions {
    * Omitted inherits native CLI/provider/profile configuration unchanged. */
   environment?: Record<string, string | undefined>;
   onWorkerFailure?: (failure: WorkerFailure) => void;
+  createResetPolicyOwner?: (context: Readonly<{ workerEpoch: string; workerPid: number; snapshot: SessionSnapshot }>) => WorkerResetPolicyOwner;
+}
+
+export interface WorkerResetPolicyOwner {
+  handle(request: ResetPolicyWireRequest): Promise<ResetPolicyWireResult>;
+  beginClose(): void;
+  workerLost(): void;
+  workerExited(): void | Promise<void>;
+  drain(): Promise<void>;
 }
 
 interface Pending {
@@ -166,6 +177,15 @@ export class WorkerClient {
   #evaluationRoutes = new Map<string, { post: (frame: BrowserEvaluationFrame) => void; lost: (error: unknown) => void }>();
   #evaluationDisposals = new Map<string, Promise<unknown>>();
   #retainedEvaluations = new Map<string, { binding: BrowserEvaluationBinding; evaluation: WorkerBrowserEvaluation }>();
+  #resetPolicyExpectedEpoch?: string;
+  #resetPolicyOwner?: WorkerResetPolicyOwner;
+  #resetPolicyChannel?: ResetPolicyHostChannel;
+  #resetPolicyCloseStarted = false;
+  #resetPolicyLost = false;
+  #resetPolicyExited?: Promise<void>;
+  #resetPolicyChannelDrain?: Promise<void>;
+  #resetPolicyOwnerDrain?: Promise<void>;
+  #resetPolicyErrors: unknown[] = [];
   snapshot?: SessionSnapshot;
   failure?: WorkerFailure;
 
@@ -213,6 +233,7 @@ export class WorkerClient {
         serialization: "advanced",
         ipc: (message: unknown) => this.#receive(message),
         onExit: (child, exitCode, signalCode) => {
+          this.#resetPolicyWorkerExited();
           this.#closed.resolve({ exitCode, signalCode });
           clearTimeout(this.#readyDeadline);
           if (!this.#closing) {
@@ -223,6 +244,7 @@ export class WorkerClient {
         onDisconnect: () => {
           // Exit notification normally follows immediately. A process that
           // disconnected without exiting must not keep owning its session.
+          if (!this.#closing) this.#resetPolicyWorkerLost();
           const check = setTimeout(() => {
             if (!this.#closing && !this.failure && !this.#reconnectEndpoint) {
               this.#fail("OMP worker IPC disconnected");
@@ -241,6 +263,72 @@ export class WorkerClient {
 
   get pid(): number { return this.#pid || this.#process?.pid || 0; }
   get reconnectEndpoint(): WorkerReconnectEndpoint|undefined{return this.#reconnectEndpoint;}
+
+  prepareResetPolicy(workerEpoch: string): void {
+    if (this.#reconnectEndpoint || this.#resetPolicyExpectedEpoch || this.#resetPolicyOwner)
+      throw new Error("Reset-policy worker ownership has already been prepared");
+    if (!workerEpoch) throw new Error("Reset-policy worker epoch is required");
+    this.#resetPolicyExpectedEpoch = workerEpoch;
+  }
+
+  attachResetPolicyOwner(snapshot: SessionSnapshot,
+    factory: NonNullable<WorkerRuntimeOptions["createResetPolicyOwner"]>): void {
+    const workerEpoch = this.#resetPolicyExpectedEpoch;
+    if (!workerEpoch || this.#resetPolicyOwner || this.#resetPolicyChannel)
+      throw new Error("Reset-policy worker ownership is not awaiting activation");
+    const owner = factory(Object.freeze({ workerEpoch, workerPid: this.pid, snapshot }));
+    if (!owner || typeof owner.handle !== "function" || typeof owner.beginClose !== "function"
+      || typeof owner.workerLost !== "function" || typeof owner.workerExited !== "function" || typeof owner.drain !== "function")
+      throw new Error("Reset-policy owner factory returned an invalid owner");
+    this.#resetPolicyOwner = owner;
+    this.#resetPolicyChannel = new ResetPolicyHostChannel({ workerEpoch, rootSessionId: snapshot.id },
+      request => owner.handle(request), response => this.#send(response));
+  }
+
+  #beginResetPolicyClose(): void {
+    if (!this.#resetPolicyOwner || this.#resetPolicyCloseStarted) return;
+    this.#resetPolicyCloseStarted = true;
+    this.#resetPolicyChannel?.beginClose();
+    try { this.#resetPolicyOwner.beginClose(); }
+    catch (error) { this.#resetPolicyErrors.push(error); }
+  }
+
+  #resetPolicyWorkerLost(): void {
+    if (!this.#resetPolicyOwner || this.#resetPolicyLost) return;
+    this.#beginResetPolicyClose();
+    this.#resetPolicyLost = true;
+    try { this.#resetPolicyOwner.workerLost(); }
+    catch (error) { this.#resetPolicyErrors.push(error); }
+  }
+
+  #sealResetPolicyChannel(): void {
+    if (!this.#resetPolicyChannel || this.#resetPolicyChannelDrain) return;
+    this.#resetPolicyChannelDrain = this.#resetPolicyChannel.finish();
+    void this.#resetPolicyChannelDrain.catch(() => {});
+  }
+
+  #resetPolicyWorkerExited(): void {
+    if (!this.#resetPolicyOwner || this.#resetPolicyExited) return;
+    this.#beginResetPolicyClose();
+    this.#sealResetPolicyChannel();
+    try { this.#resetPolicyExited = Promise.resolve(this.#resetPolicyOwner.workerExited()); }
+    catch (error) { this.#resetPolicyExited = Promise.reject(error); }
+    void this.#resetPolicyExited.catch(() => {});
+  }
+
+  async #drainResetPolicy(): Promise<void> {
+    if (!this.#resetPolicyOwner) return;
+    this.#sealResetPolicyChannel();
+    this.#resetPolicyOwnerDrain ??= Promise.resolve().then(() => this.#resetPolicyOwner!.drain());
+    const results = await Promise.allSettled([
+      this.#resetPolicyExited ?? Promise.resolve(),
+      this.#resetPolicyChannelDrain ?? Promise.resolve(),
+      this.#resetPolicyOwnerDrain,
+    ]);
+    const errors = [...this.#resetPolicyErrors,
+      ...results.flatMap(result => result.status === "rejected" ? [result.reason] : [])];
+    if (errors.length) throw new AggregateError(errors, "OMP worker reset-policy ownership did not drain cleanly");
+  }
 
   #rejectPending(error: unknown): void {
     this.#ready.reject(error);
@@ -271,6 +359,7 @@ export class WorkerClient {
 
   #fail(message: string, pid = this.pid, exitCode?: number | null, signalCode?: number | null): void {
     if (this.failure) return;
+    if (!this.#resetPolicyExited) this.#resetPolicyWorkerLost();
     clearTimeout(this.#readyDeadline);
     this.failure = { type: "worker_failure", message, pid, sessionId: this.snapshot?.id, exitCode, signalCode };
     if (this.snapshot) this.snapshot = { ...this.snapshot, isStreaming: false, hasPostPromptWork: false };
@@ -284,6 +373,24 @@ export class WorkerClient {
   #receive(value: unknown): void {
     if (!value || typeof value !== "object" || !("type" in value)) return;
     const message = value as ChildMessage;
+    if (message.type === "resetPolicyRequest") {
+      if (this.#resetPolicyChannel) {
+        void this.#resetPolicyChannel.receive(message).catch(error => {
+          this.#fail(`The host could not consume a reset-policy request: ${error instanceof Error ? error.message : String(error)}`);
+          this.#process?.kill("SIGKILL");
+        });
+      } else {
+        try {
+          const request = parseResetPolicyWireRequest(message);
+          this.#send({ type: "resetPolicyResponse", binding: request.binding, requestId: request.requestId,
+            response: { ok: false, error: { name: "Error", message: "Reset-policy owner is unavailable" } } });
+        } catch (error) {
+          this.#fail(`The host could not refuse an unavailable reset-policy request: ${error instanceof Error ? error.message : String(error)}`);
+          this.#process?.kill("SIGKILL");
+        }
+      }
+      return;
+    }
     if (this.#holdRetained && (message.type === "retainedBrowserFrame" || message.type === "retainedBrowserRequest" || message.type === "browserEvaluationFrame")) {
       if (this.#retainedInbox.length >= 256) { this.#fail("OMP worker retained-browser reconnect backlog exceeded its bound", this.pid); return; }
       this.#retainedInbox.push(message); return;
@@ -402,6 +509,7 @@ export class WorkerClient {
         try {
           this.#send({ type: "disposeAck", id: message.id });
           this.#disposeAcknowledged = true;
+          this.#sealResetPolicyChannel();
         } catch (error) { pending.reject(error); return; }
       }
       if (message.ok) pending.resolve(responseValue);
@@ -692,13 +800,19 @@ export class WorkerClient {
       if (options.requireAcknowledgement && !this.#disposeAcknowledged) throw new Error("OMP worker closed without required disposal acknowledgement");
     });
     this.#closing = true;
+    this.#beginResetPolicyClose();
     this.#closeCall = (async () => {
-      const deadline = setTimeout(() => { if (this.#process) this.#process.kill("SIGKILL"); else { try { process.kill(this.pid, "SIGKILL"); } catch {} } }, this.#options.shutdownTimeoutMs ?? 15_000);
+      const errors: unknown[] = [];
+      const shutdownTimeoutMs = this.#resetPolicyOwner
+        ? Math.max(this.#options.shutdownTimeoutMs ?? 15_000, 30_000)
+        : this.#options.shutdownTimeoutMs ?? 15_000;
+      const deadline = setTimeout(() => { if (this.#process) this.#process.kill("SIGKILL"); else { try { process.kill(this.pid, "SIGKILL"); } catch {} } }, shutdownTimeoutMs);
       try {
         if (!this.failure && (!this.#process || this.#process.exitCode === null)) {
-          await this.request({ operation: "dispose" }, this.#options.shutdownTimeoutMs ?? 15_000);
+          await this.request({ operation: "dispose" }, shutdownTimeoutMs);
         }
         const closed = this.#process ? { exitCode: await this.#process.exited, signalCode: this.#process.signalCode } : await this.#closed.promise;
+        if (this.#process) this.#resetPolicyWorkerExited();
         const exitCode = closed.exitCode;
         if (this.#requireDisposeAcknowledgement && !this.#disposeAcknowledged) {
           throw new Error(`OMP worker exited before required disposal acknowledgement (code ${exitCode ?? "unknown"}, signal ${closed.signalCode ?? "none"})`);
@@ -706,14 +820,22 @@ export class WorkerClient {
         if (this.#disposeAcknowledged && exitCode !== undefined && exitCode !== 0) {
           throw new Error(`OMP worker exited unsuccessfully after disposal acknowledgement (code ${exitCode}, signal ${closed.signalCode ?? "none"})`);
         }
+      } catch (error) {
+        errors.push(error);
       } finally {
         clearTimeout(deadline);
         // Failed startup/disposal must not orphan a file-owning child.
-        if (this.#process?.exitCode === null) { this.#process.kill("SIGKILL"); await this.#process.exited; }
+        if (this.#process?.exitCode === null) {
+          this.#process.kill("SIGKILL");
+          try { await this.#process.exited; } catch (error) { errors.push(error); }
+        }
+        try { await this.#drainResetPolicy(); } catch (error) { errors.push(error); }
         this.#socket?.close();
         this.#events.clear(); this.#failures.clear();
         this.#rejectPending(new Error("OMP worker closed"));
       }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "OMP worker shutdown failed");
     })();
     return this.#closeCall;
   }
@@ -724,6 +846,7 @@ export class WorkerClient {
     if(!this.#reconnectEndpoint)throw new Error("OMP worker has no recovery endpoint");
     if(this.#closing)return;
     this.#closing=true;
+    this.#resetPolicyWorkerLost();
     const error=Object.assign(new Error("Host detached from the retained browser worker; request outcome is unknown."),{code:"OUTCOME_UNKNOWN" as const});
     this.#ready.reject(error);
     for(const pending of this.#pending.values()){clearTimeout(pending.timeout);pending.reject(this.#transportFailure(pending,error));}
@@ -769,6 +892,9 @@ export class WorkerRuntime {
   async #spawn(init: WorkerInit, onEvent?: WorkerEventListener, localEnvironment?: LocalEnvironmentWorkerEnvironment, signal?: AbortSignal): Promise<WorkerClient> {
     this.#assertActive();
     signal?.throwIfAborted();
+    const resetPolicyWorkerEpoch = this.#options.createResetPolicyOwner && (init.mode === "create" || init.mode === "open")
+      ? crypto.randomUUID() : undefined;
+    if (resetPolicyWorkerEpoch) init = { ...init, resetPolicy: { workerEpoch: resetPolicyWorkerEpoch } };
     const worktreeRoot = localEnvironment?.worktreeRoot;
     const environment = localEnvironment
       ? localEnvironmentForWorker(this.#options.environment ?? process.env, localEnvironment)
@@ -792,6 +918,7 @@ export class WorkerRuntime {
     this.#assertActive();
     signal?.throwIfAborted();
     const client = new WorkerClient(options, environment, startupDirectory);
+    if (resetPolicyWorkerEpoch) client.prepareResetPolicy(resetPolicyWorkerEpoch);
     this.#clients.add(client);
     const cancel = () => { void client.close().catch(() => {}); };
     signal?.addEventListener("abort", cancel, { once: true });
@@ -804,6 +931,7 @@ export class WorkerRuntime {
       if (init.mode === "create" && client.snapshot!.cwd !== init.options.cwd) throw new Error("OMP worker initialization changed working directory");
       if (init.mode === "open" && (client.snapshot!.id !== init.options.expectedIdentity?.id || client.snapshot!.cwd !== init.options.expectedIdentity.cwd)) throw new Error("OMP worker initialization changed session identity");
       if ((init.mode === "browser" || init.mode === "mcp-owner") && (client.snapshot || initialized?.ownerId !== init.owner.id || initialized.cwd !== init.owner.cwd)) throw new Error("OMP browser owner initialization changed identity");
+      if (resetPolicyWorkerEpoch) client.attachResetPolicyOwner(client.snapshot!, this.#options.createResetPolicyOwner!);
       return client;
     } catch (error) {
       try { await client.close(); } finally { this.#clients.delete(client); }

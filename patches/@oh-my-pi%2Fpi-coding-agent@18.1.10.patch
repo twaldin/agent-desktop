@@ -21,6 +21,42 @@ index bd6991c..e5fb07a 100644
  export declare function generateGitCommit(options: GenerateGitCommitOptions): Promise<GeneratedGitCommit>;
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
+diff --git a/dist/types/config/settings.d.ts b/dist/types/config/settings.d.ts
+index 75ba58a..d2b1661 100644
+--- a/dist/types/config/settings.d.ts
++++ b/dist/types/config/settings.d.ts
+@@ -36,6 +36,22 @@ export interface SettingsOptions {
+     /** Extra config.yml-style overlays loaded after global/project settings */
+     configFiles?: string[];
+ }
++export interface PersistedSettingsSnapshot {
++    readonly writable: boolean;
++    readonly cwd: string;
++    readonly agentDir: string;
++    /** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
++    readonly projectDiscoveryStatus: "warning-free" | "incomplete";
++    readonly global: Partial<Record<SettingPath, unknown>>;
++    readonly project: Partial<Record<SettingPath, unknown>>;
++    readonly effective: Partial<Record<SettingPath, unknown>>;
++}
++export interface PersistedSettingsReadback {
++    readonly writable: boolean;
++    readonly cwd: string;
++    readonly agentDir: string;
++    read(): Promise<PersistedSettingsSnapshot>;
++}
+ /**
+  * Drop entries from capability-provided project settings whose non-object
+  * value would shadow an entire settings group. `.claude/settings.json` is
+@@ -139,6 +155,8 @@ export declare class Settings {
+      */
+     flush(): Promise<void>;
+     cloneForCwd(cwd: string): Promise<Settings>;
++    /** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
++    capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback;
+     /**
+      * Re-read the current global, project, and explicit overlay layers from disk
+      * without replacing this instance or discarding runtime overrides.
 diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/types/extensibility/plugins/marketplace/cache.d.ts
 index 244fb84..c268062 100644
 --- a/dist/types/extensibility/plugins/marketplace/cache.d.ts
@@ -470,7 +506,7 @@ index e3b75c2..6849a00 100644
      extensionsResult: LoadExtensionsResult;
      /** Update tool UI context (interactive mode) */
 diff --git a/dist/types/session/agent-session-types.d.ts b/dist/types/session/agent-session-types.d.ts
-index 7fd5684..e211590 100644
+index 7fd5684..5b7d787 100644
 --- a/dist/types/session/agent-session-types.d.ts
 +++ b/dist/types/session/agent-session-types.d.ts
 @@ -1,5 +1,5 @@
@@ -480,7 +516,7 @@ index 7fd5684..e211590 100644
  import type { postmortem } from "@oh-my-pi/pi-utils";
  import type { AdvisorConfig } from "../advisor/index.js";
  import type { AsyncJob, AsyncJobDeliveryState, AsyncJobManager } from "../async/index.js";
-@@ -20,8 +20,104 @@ import type { FileSlashCommand } from "../extensibility/slash-commands.js";
+@@ -20,8 +20,106 @@ import type { FileSlashCommand } from "../extensibility/slash-commands.js";
  import type { SecretObfuscator } from "../secrets/obfuscator.js";
  import type { ConfiguredThinkingLevel } from "../thinking.js";
  import type { XdevState } from "../tools/xdev.js";
@@ -513,6 +549,8 @@ index 7fd5684..e211590 100644
 +export type ResetPlanSnapshot = Readonly<{
 +    pass: ResetPass;
 +    plannedAtMs: number;
++    /** SHA-256 of the exact semantic usage-report input used by this plan. */
++    reportRevision: string;
 +    plan: Readonly<CodexResetPlan>;
 +}>;
 +/** One exact, durably admitted native call. Never retarget or replay this permit. */
@@ -586,7 +624,7 @@ index 7fd5684..e211590 100644
  /** Maximum time the interactive shutdown path waits for Mnemopi consolidation. */
  export declare const SHUTDOWN_CONSOLIDATE_BUDGET_MS = 1500;
  /** Options controlling session disposal. */
-@@ -209,6 +305,8 @@ export interface AgentSessionConfig {
+@@ -209,6 +307,8 @@ export interface AgentSessionConfig {
      preferWebsockets?: boolean;
      /** Codex saved-reset coordinator; defaults to the process-wide singleton so concurrent sessions can't double-spend. Inject a fresh one in tests. */
      codexResetCoordinator?: CodexAutoRedeemCoordinator;
@@ -667,6 +705,30 @@ index c55844c..0a8056a 100644
      /** Models whose live `/usage` reports map to a quantitative provider scope. */
      getUsageReportingModelSelectors(reports: readonly UsageReport[]): string[];
      /** List stored OAuth accounts for the current model provider and mark this session's active account. */
+diff --git a/dist/types/session/codex-auto-reset.d.ts b/dist/types/session/codex-auto-reset.d.ts
+index 5ebc702..bead2c5 100644
+--- a/dist/types/session/codex-auto-reset.d.ts
++++ b/dist/types/session/codex-auto-reset.d.ts
+@@ -154,12 +154,19 @@ export interface CodexResetPlan {
+     /** Diagnostics for `logger.debug` and tests. */
+     skipped: CodexResetSkip[];
+ }
++export interface CodexResetBoundPlan {
++    plan: CodexResetPlan;
++    /** SHA-256 of the ordered, versioned report fields the planner reads. */
++    reportRevision: string;
++}
+ /**
+  * Plan which saved Codex resets to spend right now. Pure: a function of the
+  * snapshot inputs only. Callers execute the returned actions in order,
+  * re-checking `attemptedKeys` immediately before each consume.
+  */
+ export declare function planCodexResetRedemptions(input: CodexResetPlanInput): CodexResetPlan;
++/** Plan once and bind the exact effective report projection used by that call. */
++export declare function planCodexResetRedemptionsWithReportRevision(input: CodexResetPlanInput): CodexResetBoundPlan;
+ /** One attempt per (account, weekly-reset-minute) block episode. */
+ export declare function blockedAttemptKey(accountKey: string, weeklyResetsAtMs: number): string;
+ /** One attempt per (account, credit-expiry-minute) salvage episode. */
 diff --git a/dist/types/session/tool-choice-queue.d.ts b/dist/types/session/tool-choice-queue.d.ts
 index 1c9f2ba..48c1b49 100644
 --- a/dist/types/session/tool-choice-queue.d.ts
@@ -1413,6 +1475,176 @@ index 9b63174..2321808 100644
  		const discoveryConfig = this.#findLazyRuntimeDiscovery(model.provider);
  		if (!discoveryConfig) {
  			return model;
+diff --git a/src/config/settings.ts b/src/config/settings.ts
+index 418b33a..381325b 100644
+--- a/src/config/settings.ts
++++ b/src/config/settings.ts
+@@ -31,7 +31,7 @@ import {
+ } from "@oh-my-pi/pi-utils";
+ import { withFileLock } from "@oh-my-pi/pi-utils/file-lock";
+ import { JSONC, YAML } from "bun";
+-import { invalidate as invalidateCapabilityFsCache } from "../capability/fs";
++import { clearCache as clearCapabilityFsCache, invalidate as invalidateCapabilityFsCache } from "../capability/fs";
+ import { type Settings as SettingsCapabilityItem, settingsCapability } from "../capability/settings";
+ import type { ModelRole } from "../config/model-roles";
+ import { loadCapability } from "../discovery";
+@@ -133,8 +133,27 @@ type ProjectSettingsReadResult = {
+ 	settings: RawSettings;
+ 	fileSettings: RawSettings;
+ 	shellPathSource: string | undefined;
++	discoveryWarningFree: boolean;
+ };
+ 
++export interface PersistedSettingsSnapshot {
++	readonly writable: boolean;
++	readonly cwd: string;
++	readonly agentDir: string;
++	/** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
++	readonly projectDiscoveryStatus: "warning-free" | "incomplete";
++	readonly global: Partial<Record<SettingPath, unknown>>;
++	readonly project: Partial<Record<SettingPath, unknown>>;
++	readonly effective: Partial<Record<SettingPath, unknown>>;
++}
++
++export interface PersistedSettingsReadback {
++	readonly writable: boolean;
++	readonly cwd: string;
++	readonly agentDir: string;
++	read(): Promise<PersistedSettingsSnapshot>;
++}
++
+ type ConfigOverlayReadResult = {
+ 	settings: RawSettings;
+ 	shellPathSource: string | undefined;
+@@ -511,6 +530,7 @@ export class Settings {
+ 	#modifiedGlobalModelRoleMutations = new Map<string, PendingYamlMutation>();
+ 	/** Changes whenever a live API mutates a persisted layer. */
+ 	#persistedMutationGeneration = 0;
++	#readbackScopeGeneration = 0;
+ 	/**
+ 	 * Original process-wide model-role overrides captured before a project edit
+ 	 * temporarily replaced them via `#updateRuntimeModelRoleOverride`. Restored
+@@ -660,6 +680,7 @@ export class Settings {
+ 	 * Triggers hooks for settings that have side effects.
+ 	 */
+ 	set<P extends SettingPath>(path: P, value: SettingValue<P>): void {
++		this.#readbackScopeGeneration++;
+ 		const prev = this.get(path);
+ 		const segments = path.split(".");
+ 		this.#captureGlobalMutation(path, this.#modifiedPathMutations, getByPath(this.#global, segments));
+@@ -682,6 +703,7 @@ export class Settings {
+ 	 * Apply runtime overrides (not persisted).
+ 	 */
+ 	override<P extends SettingPath>(path: P, value: SettingValue<P>): void {
++		this.#readbackScopeGeneration++;
+ 		if (path === "modelRoles") {
+ 			this.#savedRuntimeModelRoleOverrides.clear();
+ 		}
+@@ -696,6 +718,7 @@ export class Settings {
+ 	 * Clear a runtime override.
+ 	 */
+ 	clearOverride(path: SettingPath): void {
++		this.#readbackScopeGeneration++;
+ 		if (path === "modelRoles") {
+ 			this.#savedRuntimeModelRoleOverrides.clear();
+ 		}
+@@ -815,6 +838,35 @@ export class Settings {
+ 		return cloned;
+ 	}
+ 
++	/** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
++	capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback {
++		const selected = [...new Set(paths)];
++		const generation = this.#readbackScopeGeneration;
++		const cwd = this.#cwd;
++		const agentDir = this.#agentDir;
++		const configFiles = [...this.#configFiles];
++		const overrides = structuredClone(this.#overrides);
++		const writable = this.#persist;
++		const read = async (): Promise<PersistedSettingsSnapshot> => {
++			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
++				throw new Error("Settings readback scope changed");
++			}
++			clearCapabilityFsCache();
++			const detached = new Settings({ cwd, agentDir, readOnly: true });
++			detached.#configFiles = configFiles;
++			detached.#overrides = structuredClone(overrides);
++			const discoveryWarningFree = await detached.#loadPersistedReadback();
++			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
++				throw new Error("Settings readback scope changed");
++			}
++			const pick = (layer: RawSettings): Partial<Record<SettingPath, unknown>> => Object.fromEntries(selected.map(path => [path, structuredClone(getByPath(layer, path.split(".")))]));
++			return Object.freeze({ writable, cwd, agentDir, projectDiscoveryStatus: discoveryWarningFree ? "warning-free" as const : "incomplete" as const,
++				global: Object.freeze(pick(detached.#global)), project: Object.freeze(pick(detached.#project)),
++				effective: Object.freeze(Object.fromEntries(selected.map(path => [path, structuredClone(detached.get(path))]))) });
++		};
++		return Object.freeze({ writable, cwd, agentDir, read });
++	}
++
+ 	/**
+ 	 * Re-read the current global, project, and explicit overlay layers from disk
+ 	 * without replacing this instance or discarding runtime overrides.
+@@ -909,6 +961,7 @@ export class Settings {
+ 	async reloadForCwd(cwd: string): Promise<void> {
+ 		const normalized = path.normalize(cwd);
+ 		if (normalized === this.#cwd) return;
++		this.#readbackScopeGeneration++;
+ 		await this.flush();
+ 		this.#restoreRuntimeModelRoleOverrides();
+ 		const prevModelRoles = this.get("modelRoles");
+@@ -1412,6 +1465,25 @@ export class Settings {
+ 		return this;
+ 	}
+ 
++	async #loadPersistedReadback(): Promise<boolean> {
++		const [globalResult, projectResult] = await Promise.allSettled([
++			this.#readExistingMainYaml(false),
++			this.#readProjectSettings(false),
++		]);
++		if (globalResult.status === "rejected") throw globalResult.reason;
++		if (projectResult.status === "rejected") throw projectResult.reason;
++		this.#configPath = globalResult.value.configPath;
++		this.#global = globalResult.value.settings ?? {};
++		this.#project = projectResult.value.settings;
++		this.#projectFileSettings = projectResult.value.fileSettings;
++		this.#projectShellPathSource = projectResult.value.shellPathSource;
++		const overlay = await this.#readConfigOverlays(false);
++		this.#configOverlay = overlay.settings;
++		this.#overlayShellPathSource = overlay.shellPathSource;
++		this.#rebuildMerged();
++		return projectResult.value.discoveryWarningFree;
++	}
++
+ 	#readYamlGeneration(filePath: string): YamlGeneration {
+ 		try {
+ 			const source = fs.readFileSync(filePath, "utf8");
+@@ -1811,8 +1883,10 @@ export class Settings {
+ 	async #readProjectSettings(quarantineInvalid: boolean): Promise<ProjectSettingsReadResult> {
+ 		let shellPathSource: string | undefined;
+ 		let merged: RawSettings = {};
++		let discoveryWarningFree = true;
+ 		try {
+ 			const result = await loadCapability(settingsCapability.id, { cwd: this.#cwd });
++			discoveryWarningFree = result.warnings.length === 0;
+ 			for (const item of result.items as SettingsCapabilityItem[]) {
+ 				if (item.level === "project") {
+ 					merged = this.#deepMerge(merged, dropSettingsGroupShadows(item.data as RawSettings, item.path));
+@@ -1820,6 +1894,7 @@ export class Settings {
+ 				}
+ 			}
+ 		} catch {
++			discoveryWarningFree = false;
+ 			shellPathSource = undefined;
+ 			// Capability discovery is best-effort; the native project config below
+ 			// remains authoritative for its model-role layer and must not be hidden.
+@@ -1837,6 +1912,7 @@ export class Settings {
+ 			settings: this.#migrateRawSettings(merged, quarantineInvalid),
+ 			fileSettings: structuredClone(nativeProject),
+ 			shellPathSource,
++			discoveryWarningFree,
+ 		};
+ 	}
+ 
 diff --git a/src/export/share.ts b/src/export/share.ts
 index 1d1ed9e..6f9fbb8 100644
 --- a/src/export/share.ts
@@ -4146,7 +4378,7 @@ index d647c79..f38f066 100644
  			setToolUIContext,
  			mcpManager,
 diff --git a/src/session/agent-session-types.ts b/src/session/agent-session-types.ts
-index bead7e3..ac355d9 100644
+index bead7e3..1add988 100644
 --- a/src/session/agent-session-types.ts
 +++ b/src/session/agent-session-types.ts
 @@ -14,6 +14,9 @@ import type {
@@ -4159,7 +4391,7 @@ index bead7e3..ac355d9 100644
  	ServiceTierByFamily,
  	SimpleStreamOptions,
  	ToolChoice,
-@@ -38,9 +41,97 @@ import type { FileSlashCommand } from "../extensibility/slash-commands";
+@@ -38,9 +41,99 @@ import type { FileSlashCommand } from "../extensibility/slash-commands";
  import type { SecretObfuscator } from "../secrets/obfuscator";
  import type { ConfiguredThinkingLevel } from "../thinking";
  import type { XdevState } from "../tools/xdev";
@@ -4196,6 +4428,8 @@ index bead7e3..ac355d9 100644
 +export type ResetPlanSnapshot = Readonly<{
 +	pass: ResetPass;
 +	plannedAtMs: number;
++	/** SHA-256 of the exact semantic usage-report input used by this plan. */
++	reportRevision: string;
 +	plan: Readonly<CodexResetPlan>;
 +}>;
 +
@@ -4258,7 +4492,7 @@ index bead7e3..ac355d9 100644
  /** Maximum time the interactive shutdown path waits for Mnemopi consolidation. */
  export const SHUTDOWN_CONSOLIDATE_BUDGET_MS = 1_500;
  
-@@ -233,6 +324,8 @@ export interface AgentSessionConfig {
+@@ -233,6 +326,8 @@ export interface AgentSessionConfig {
  	preferWebsockets?: boolean;
  	/** Codex saved-reset coordinator; defaults to the process-wide singleton so concurrent sessions can't double-spend. Inject a fresh one in tests. */
  	codexResetCoordinator?: CodexAutoRedeemCoordinator;
@@ -4268,7 +4502,7 @@ index bead7e3..ac355d9 100644
  	onPayload?: SimpleStreamOptions["onPayload"];
  	/** Provider response hook used by the active session request path. */
 diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
-index ea17642..dcf077c 100644
+index ea17642..e9b698b 100644
 --- a/src/session/agent-session.ts
 +++ b/src/session/agent-session.ts
 @@ -61,6 +61,7 @@ import type {
@@ -4307,7 +4541,15 @@ index ea17642..dcf077c 100644
  	ResolvedRoleModel,
  	RestoredQueuedMessage,
  	RoleModelCycle,
-@@ -380,6 +392,92 @@ import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
+@@ -277,6 +289,7 @@ import {
+ 	isTerminalRedeemOutcome,
+ 	overlayLiveResetCredits,
+ 	planCodexResetRedemptions,
++	planCodexResetRedemptionsWithReportRevision,
+ 	REDEEM_RETRY_DEFER_MS,
+ 	SWEEP_MIN_INTERVAL_MS,
+ 	shouldEvaluateCodexAutoRedeem,
+@@ -380,6 +393,92 @@ import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
  const PLAN_MODE_REMINDER_MAX = 3;
  const POST_PROMPT_DRAIN_TIMEOUT_MS = 5_000;
  
@@ -4400,7 +4642,7 @@ index ea17642..dcf077c 100644
  /** Internal marker for hook messages queued through the agent loop */
  // ============================================================================
  // Constants
-@@ -679,6 +777,16 @@ export class AgentSession {
+@@ -679,6 +778,16 @@ export class AgentSession {
  	#modelDiscoveryAbortController = new AbortController();
  	/** Process-wide by default (double-spend safety across sessions); injectable for tests. */
  	#codexResetCoordinator: CodexAutoRedeemCoordinator;
@@ -4417,7 +4659,7 @@ index ea17642..dcf077c 100644
  	// Extension system
  	#extensionRunner: ExtensionRunner | undefined = undefined;
  	#getEvalPreludes: (() => readonly EvalPreludeDefinition[]) | undefined;
-@@ -1164,6 +1272,7 @@ export class AgentSession {
+@@ -1164,6 +1273,7 @@ export class AgentSession {
  		this.#preparedExtensions = config.preparedExtensions;
  		this.#extensionPaths = config.extensionPaths;
  		this.#codexResetCoordinator = config.codexResetCoordinator ?? defaultCodexAutoRedeemCoordinator;
@@ -4425,7 +4667,7 @@ index ea17642..dcf077c 100644
  		const bashHost: BashRunnerHost = {
  			agent: this.agent,
  			sessionManager: this.sessionManager,
-@@ -1917,12 +2026,20 @@ export class AgentSession {
+@@ -1917,12 +2027,20 @@ export class AgentSession {
  		this.#toolChoiceQueue.clearPendingInvokers();
  	}
  
@@ -4450,7 +4692,7 @@ index ea17642..dcf077c 100644
  		if (!this.getActiveToolNames().includes(toolName)) {
  			throw new Error(`Tool "${toolName}" is not currently active.`);
  		}
-@@ -1932,10 +2049,14 @@ export class AgentSession {
+@@ -1932,10 +2050,14 @@ export class AgentSession {
  			throw new Error("Current model does not support forcing a specific tool.");
  		}
  
@@ -4466,7 +4708,7 @@ index ea17642..dcf077c 100644
  	}
  
  	/** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
-@@ -4371,6 +4492,10 @@ export class AgentSession {
+@@ -4371,6 +4493,10 @@ export class AgentSession {
  	beginDispose(): void {
  		this.#isDisposed = true;
  		this.#modelDiscoveryAbortController.abort();
@@ -4477,7 +4719,7 @@ index ea17642..dcf077c 100644
  		this.#queuedMessageDrainBlocked = false;
  		this.#usagePreflightReadyForNextModelCall = false;
  		this.#detachUsageBeforeQueueDequeue?.();
-@@ -4529,6 +4654,16 @@ export class AgentSession {
+@@ -4529,6 +4655,16 @@ export class AgentSession {
  		}
  		const advisorRecorderClosed = this.#advisors.recorderClosed();
  		const results = await Promise.allSettled([
@@ -4494,7 +4736,7 @@ index ea17642..dcf077c 100644
  			this.#disposeOwnedAsyncJobs(),
  			this.#eval.disposeKernels(),
  			this.#releaseOwnedBrowserTabs(this.sessionManager.getSessionId()),
-@@ -9794,9 +9929,89 @@ export class AgentSession {
+@@ -9794,9 +9930,104 @@ export class AgentSession {
  	}
  
  	async fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null> {
@@ -4582,11 +4824,26 @@ index ea17642..dcf077c 100644
 +					undefined,
 +				)
 +			: undefined;
++		let capturedSweep: CodexResetOwnedRun | undefined;
++		let ownedSweep: CodexResetOwnedRun | undefined;
++		if (owner && sweepPass) {
++			const captured = this.#openCodexResetRun(owner, sweepPass);
++			capturedSweep = captured;
++			const starting = this.#checkpointCodexReset(captured, { phase: "started", pass: captured.pass });
++			const trackedStart = starting.then(() => undefined);
++			this.#codexResetPendingFetches.add(trackedStart);
++			void trackedStart.then(() => this.#codexResetPendingFetches.delete(trackedStart));
++			if (await starting) {
++				ownedSweep = captured;
++			} else {
++				this.#settleCodexResetRun(captured, Promise.resolve());
++			}
++		}
 +		const fetch = authStorage.fetchUsageReports({
  			baseUrlResolver: provider => {
  				if (provider === "google-antigravity") {
  					const mode = this.settings.get("providers.antigravityEndpoint");
-@@ -9810,11 +10025,29 @@ export class AgentSession {
+@@ -9810,11 +10041,57 @@ export class AgentSession {
  			},
  			signal,
  		});
@@ -4598,27 +4855,55 @@ index ea17642..dcf077c 100644
 +			this.#codexResetPendingFetches.add(tracked);
 +			void tracked.then(() => this.#codexResetPendingFetches.delete(tracked));
 +		}
-+		const reports = await fetch;
++		let reports: UsageReport[] | null;
++		try {
++			reports = await fetch;
++		} catch (error) {
++			if (ownedSweep) {
++				this.#markCodexResetRun(ownedSweep, "failed");
++				this.#settleCodexResetRun(ownedSweep, Promise.resolve());
++			}
++			throw error;
++		}
  		// Every fresh usage snapshot doubles as the salvage-sweep heartbeat: the
  		// status line calls this every 5 minutes while the TUI is open, so
  		// expiring saved Codex resets are caught even when nothing is blocked.
 -		if (reports) this.#maybeScheduleCodexResetSweep(reports);
 -		return reports;
-+		if (!reports) return { reports, scheduled: undefined, adopted: [] };
-+		const scheduled = this.#maybeScheduleCodexResetSweep(reports, owner && sweepPass ? { owner, pass: sweepPass } : undefined);
++		if (!reports) {
++			if (ownedSweep) {
++				this.#markCodexResetRun(ownedSweep, "held");
++				this.#settleCodexResetRun(ownedSweep, Promise.resolve());
++			}
++			return { reports, scheduled: capturedSweep, adopted: [] };
++		}
++		if (owner && !ownedSweep) return { reports, scheduled: capturedSweep, adopted: [] };
++		let scheduled: CodexResetOwnedRun | undefined;
++		try {
++			scheduled = this.#maybeScheduleCodexResetSweep(reports, ownedSweep);
++		} catch (error) {
++			if (ownedSweep) {
++				this.#markCodexResetRun(ownedSweep, "failed");
++				this.#settleCodexResetRun(ownedSweep, Promise.resolve());
++			}
++			throw error;
++		}
 +		const coordinator = this.#codexResetCoordinator;
 +		const adopted: Promise<unknown>[] = [];
-+		if (!scheduled) {
-+			// The sweep gate deferred to work already in flight (a blocked pass
-+			// or an earlier sweep): that is the policy work this fetch joins.
-+			if (coordinator.sweepInFlight && coordinator.sweepPromise) adopted.push(coordinator.sweepPromise);
-+			for (const run of coordinator.inFlightByAccount.values()) adopted.push(run);
++		// A prestarted owned pass still settles when its gate defers to existing
++		// work. Join that original work as well; do not mistake the held local
++		// pass for the sweep/account run that actually owns the receipt.
++		if (coordinator.sweepInFlight && coordinator.sweepPromise) {
++			if (codexResetRunByPromise.get(coordinator.sweepPromise) !== scheduled) adopted.push(coordinator.sweepPromise);
++		}
++		for (const run of coordinator.inFlightByAccount.values()) {
++			if (codexResetRunByPromise.get(run) !== scheduled && !adopted.includes(run)) adopted.push(run);
 +		}
 +		return { reports, scheduled, adopted };
  	}
  
  	/** Models whose live `/usage` reports map to a quantitative provider scope. */
-@@ -9888,11 +10121,14 @@ export class AgentSession {
+@@ -9888,11 +10165,14 @@ export class AgentSession {
  	/**
  	 * Ask before the first auto-spend (`codexResets.autoRedeem === "unset"`).
  	 * The answer is persisted, so this fires at most once per install. Headless
@@ -4634,7 +4919,7 @@ index ea17642..dcf077c 100644
  	): Promise<boolean> {
  		const first = actions[0];
  		if (!first) return false;
-@@ -9906,6 +10142,11 @@ export class AgentSession {
+@@ -9906,6 +10186,11 @@ export class AgentSession {
  					"codex-auto-reset",
  				);
  			}
@@ -4646,7 +4931,7 @@ index ea17642..dcf077c 100644
  			return false;
  		}
  
-@@ -9918,17 +10159,23 @@ export class AgentSession {
+@@ -9918,17 +10203,23 @@ export class AgentSession {
  			actions.length === 1
  				? `Spend a saved Codex rate-limit reset?\n${lines[0]}`
  				: `Spend ${actions.length} saved Codex rate-limit resets?\n${lines.join("\n")}`;
@@ -4680,7 +4965,7 @@ index ea17642..dcf077c 100644
  			if (choice === "Yes") {
  				this.settings.set("codexResets.autoRedeem", "yes");
  				return true;
-@@ -9942,21 +10189,125 @@ export class AgentSession {
+@@ -9942,21 +10233,125 @@ export class AgentSession {
  		return false;
  	}
  
@@ -4800,9 +5085,10 @@ index ea17642..dcf077c 100644
 -		const cfg = this.settings.getGroup("codexResets");
 +		const cfg = owned?.pass.policy ?? this.settings.getGroup("codexResets");
  		const model = this.model;
-+		const plannedAtMs = Date.now();
- 		const plan = planCodexResetRedemptions({
+-		const plan = planCodexResetRedemptions({
 -			nowMs: Date.now(),
++		const plannedAtMs = Date.now();
++		const input = {
 +			nowMs: plannedAtMs,
  			trigger,
 -			provider: model?.provider ?? "",
@@ -4812,11 +5098,25 @@ index ea17642..dcf077c 100644
  			settings: {
  				enabled: shouldEvaluateCodexAutoRedeem(cfg.autoRedeem),
  				minBlockedMinutes: Math.max(0, cfg.minBlockedMinutes),
-@@ -9973,34 +10324,72 @@ export class AgentSession {
+@@ -9969,38 +10364,85 @@ export class AgentSession {
+ 			deferredUntilByKey: coordinator.deferredUntilByKey,
+ 			lastAttemptAtByAccount: coordinator.lastAttemptAtByAccount,
+ 			activeBlockUnblockAtMs,
+-		});
++		};
++		const bound = owned ? planCodexResetRedemptionsWithReportRevision(input) : undefined;
++		const plan = bound?.plan ?? planCodexResetRedemptions(input);
  		if (plan.skipped.length > 0) {
  			logger.debug("codex-auto-reset: plan", { trigger, actions: plan.actions.length, skipped: plan.skipped });
  		}
-+		if (owned) owned.snapshot = deepFreeze({ pass: owned.pass, plannedAtMs, plan: structuredClone(plan) });
++		if (owned && bound) {
++			owned.snapshot = deepFreeze({
++				pass: owned.pass,
++				plannedAtMs,
++				reportRevision: bound.reportRevision,
++				plan: structuredClone(plan),
++			});
++		}
  		return plan;
  	}
  
@@ -4894,7 +5194,7 @@ index ea17642..dcf077c 100644
  			} catch (error) {
  				// Thrown transport failure (network error, 15s timeout): same policy
  				// as a non-terminal code — release the episode and retry after the
-@@ -10013,8 +10402,18 @@ export class AgentSession {
+@@ -10013,8 +10455,18 @@ export class AgentSession {
  					account: action.accountKey,
  					error: String(error),
  				});
@@ -4913,7 +5213,7 @@ index ea17642..dcf077c 100644
  			if (!isTerminalRedeemOutcome(outcome.code)) {
  				// `nothing_to_reset` (limits not constrained enough yet) or a
  				// transport failure: the credit is STILL BANKED. Release the episode
-@@ -10063,7 +10462,27 @@ export class AgentSession {
+@@ -10063,7 +10515,27 @@ export class AgentSession {
  					}
  					break;
  				default:
@@ -4942,7 +5242,7 @@ index ea17642..dcf077c 100644
  						this.emitNotice(
  							"warning",
  							`Codex auto-redeem for ${action.label} failed (${outcome.code}); will retry later.`,
-@@ -10077,10 +10496,361 @@ export class AgentSession {
+@@ -10077,10 +10549,361 @@ export class AgentSession {
  					}
  					break;
  			}
@@ -5306,7 +5606,7 @@ index ea17642..dcf077c 100644
  	}
  
  	/**
-@@ -10098,7 +10868,9 @@ export class AgentSession {
+@@ -10098,7 +10921,9 @@ export class AgentSession {
  	 * active account has no credits. The "unset" mode asks before spending;
  	 * "yes" skips the prompt; "no" avoids the eligibility IO entirely.
  	 * Per-account in-flight dedup lets concurrent sessions adopt one pass
@@ -5317,7 +5617,7 @@ index ea17642..dcf077c 100644
  	 */
  	async #maybeAutoRedeemCodexReset(activeBlockUnblockAtMs?: number): Promise<boolean> {
  		const coordinator = this.#codexResetCoordinator;
-@@ -10112,10 +10884,41 @@ export class AgentSession {
+@@ -10112,10 +10937,41 @@ export class AgentSession {
  		const identity = authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
  		const accountKey = (identity?.accountId ?? identity?.email)?.trim().toLowerCase();
  		if (!accountKey) return false;
@@ -5360,7 +5660,7 @@ index ea17642..dcf077c 100644
  			// Live data: the cached report predates the block that got us here.
  			await authStorage.invalidateUsageCache("openai-codex");
  			const reports = await this.fetchUsageReports();
-@@ -10132,24 +10935,50 @@ export class AgentSession {
+@@ -10132,24 +10988,50 @@ export class AgentSession {
  					error: String(error),
  				});
  			}
@@ -5421,7 +5721,7 @@ index ea17642..dcf077c 100644
  		return run;
  	}
  
-@@ -10159,35 +10988,69 @@ export class AgentSession {
+@@ -10159,35 +11041,83 @@ export class AgentSession {
  	 * rule in `./codex-auto-reset`) across ALL stored accounts, regardless of
  	 * the active model or blocked state. Fire-and-forget: never delays the
  	 * fetch, never runs concurrently with itself or a blocked pass, and the
@@ -5435,32 +5735,45 @@ index ea17642..dcf077c 100644
 +	 */
 +	#maybeScheduleCodexResetSweep(
 +		reports: UsageReport[],
-+		ownership: { owner: CodexResetPolicyOwner; pass: ResetPass } | undefined,
++		owned: CodexResetOwnedRun | undefined,
 +	): CodexResetOwnedRun | undefined {
++		const finishWithoutSchedule = (state: ResetSettlement["state"]): CodexResetOwnedRun | undefined => {
++			if (owned) {
++				this.#markCodexResetRun(owned, state);
++				this.#settleCodexResetRun(owned, Promise.resolve());
++			}
++			return owned;
++		};
  		const coordinator = this.#codexResetCoordinator;
  		const cfg = this.settings.getGroup("codexResets");
 -		if (!shouldEvaluateCodexAutoRedeem(cfg.autoRedeem) || cfg.salvageHorizonHours <= 0) return;
-+		if (!shouldEvaluateCodexAutoRedeem(cfg.autoRedeem) || cfg.salvageHorizonHours <= 0) return undefined;
- 		// A blocked pass is planning over the same snapshot; let it own the spend.
+-		// A blocked pass is planning over the same snapshot; let it own the spend.
 -		if (coordinator.sweepInFlight || coordinator.inFlightByAccount.size > 0) return;
-+		if (coordinator.sweepInFlight || coordinator.inFlightByAccount.size > 0) return undefined;
++		if (!shouldEvaluateCodexAutoRedeem(cfg.autoRedeem) || cfg.salvageHorizonHours <= 0) {
++			return finishWithoutSchedule("held");
++		}
++		// A blocked pass or earlier sweep owns the spend. Settle this prestarted
++		// origin, but let the report caller adopt and report the original work.
++		if (coordinator.sweepInFlight || coordinator.inFlightByAccount.size > 0) {
++			finishWithoutSchedule("held");
++			return undefined;
++		}
  		const now = Date.now();
 -		if (now - coordinator.lastSweepAt < SWEEP_MIN_INTERVAL_MS) return;
 -		if (!reports.some(r => r.provider === "openai-codex" && (r.resetCredits?.credits?.length ?? 0) > 0)) return;
-+		if (now - coordinator.lastSweepAt < SWEEP_MIN_INTERVAL_MS) return undefined;
++		if (now - coordinator.lastSweepAt < SWEEP_MIN_INTERVAL_MS) return finishWithoutSchedule("held");
 +		if (!reports.some(r => r.provider === "openai-codex" && (r.resetCredits?.credits?.length ?? 0) > 0)) {
-+			return undefined;
++			return finishWithoutSchedule("held");
 +		}
 +		// No new owned admission once disposal began.
-+		if (ownership && this.#isDisposed) return undefined;
-+		const owned = ownership ? this.#openCodexResetRun(ownership.owner, ownership.pass) : undefined;
++		if (owned && this.#isDisposed) return finishWithoutSchedule("cancelled");
  		coordinator.sweepInFlight = true;
  		coordinator.lastSweepAt = now;
 -		coordinator.sweepPromise = (async () => {
 -			const identity = this.#modelRegistry.authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
 -			const plan = this.#planCodexResets("sweep", reports, identity, coordinator);
+-			if (plan.actions.length === 0) return;
 +		const sweep = (async () => {
-+			if (owned && !(await this.#checkpointCodexReset(owned, { phase: "started", pass: owned.pass }))) return;
 +			// An owned sweep plans against the identity captured before the fetch;
 +			// the unowned path reads it here, inside the contained body, as before.
 +			const identity = owned
@@ -5470,7 +5783,10 @@ index ea17642..dcf077c 100644
 +			if (owned?.snapshot && !(await this.#checkpointCodexReset(owned, { phase: "planned", snapshot: owned.snapshot }))) {
 +				return;
 +			}
- 			if (plan.actions.length === 0) return;
++			if (plan.actions.length === 0) {
++				if (owned) this.#markCodexResetRun(owned, "held");
++				return;
++			}
  			if (
  				shouldPromptCodexAutoRedeem(cfg.autoRedeem) &&
 -				!(await this.#confirmCodexAutoRedeem(plan.actions, coordinator))
@@ -5505,6 +5821,129 @@ index ea17642..dcf077c 100644
  	}
  
  	/**
+diff --git a/src/session/codex-auto-reset.ts b/src/session/codex-auto-reset.ts
+index c7005fd..3585c5f 100644
+--- a/src/session/codex-auto-reset.ts
++++ b/src/session/codex-auto-reset.ts
+@@ -225,15 +225,89 @@ interface AccountSnapshot {
+ 	creditExpiresAtMs: number | undefined;
+ }
+ 
++export interface CodexResetBoundPlan {
++	plan: CodexResetPlan;
++	/** SHA-256 of the ordered, versioned report fields the planner reads. */
++	reportRevision: string;
++}
++
++interface CodexResetPlannerResult {
++	plan: CodexResetPlan;
++	reportRevision?: string;
++}
++
++function reportLabelValue(value: unknown): string | undefined {
++	return typeof value === "string" && value.trim() ? value : undefined;
++}
++
++function reportMatchValue(value: unknown): string | undefined {
++	return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : undefined;
++}
++
+ /**
+- * Plan which saved Codex resets to spend right now. Pure: a function of the
+- * snapshot inputs only. Callers execute the returned actions in order,
+- * re-checking `attemptedKeys` immediately before each consume.
++ * Project only report facts that can affect action selection, skips, active
++ * matching, or report-derived action labels. Object key order is fixed here;
++ * report, limit, and credit array order stays intact where first-match and tie
++ * behavior can observe it. Provider payloads, display notes, and raw data are
++ * deliberately absent.
+  */
+-export function planCodexResetRedemptions(input: CodexResetPlanInput): CodexResetPlan {
++function codexResetReportRevision(reports: UsageReport[] | null): string {
++	const projection = {
++		schema: "codex-reset-report-input.v1",
++		reports:
++			reports?.map(report => ({
++				provider: report.provider,
++				fetchedAt: report.fetchedAt,
++				metadata: {
++					accountId: reportLabelValue(report.metadata?.accountId),
++					account_id: reportMatchValue(report.metadata?.account_id),
++					email: reportLabelValue(report.metadata?.email),
++					projectId: reportMatchValue(report.metadata?.projectId),
++					orgId: reportMatchValue(report.metadata?.orgId),
++					limitReached: report.metadata?.limitReached === true,
++				},
++				limits: report.limits.map(limit => ({
++					id: limit.id,
++					scope: {
++						accountId: reportMatchValue(limit.scope.accountId),
++						projectId: reportMatchValue(limit.scope.projectId),
++					},
++					...(limit.id === "openai-codex:primary" || limit.id === "openai-codex:secondary"
++						? { usedFraction: limit.amount.usedFraction, resetsAt: limit.window?.resetsAt }
++						: {}),
++				})),
++				resetCredits: report.resetCredits
++					? {
++						availableCount: report.resetCredits.availableCount,
++						credits: report.resetCredits.credits?.map(credit => {
++							const status = credit.status ?? "available";
++							const parsedExpiry = credit.expiresAt ? Date.parse(credit.expiresAt) : Number.NaN;
++							return {
++								status,
++								expiresAtMs: Number.isNaN(parsedExpiry) ? null : parsedExpiry,
++							};
++						}),
++					}
++					: undefined,
++			})) ?? null,
++	};
++	return new Bun.CryptoHasher("sha256").update(JSON.stringify(projection)).digest("hex");
++}
++
++/** One shared planner implementation; owned calls additionally bind its report input. */
++function planCodexResetRedemptionsInternal(
++	input: CodexResetPlanInput,
++	bindReportRevision: boolean,
++): CodexResetPlannerResult {
++	const reportRevision = bindReportRevision ? codexResetReportRevision(input.reports) : undefined;
+ 	const { nowMs, settings } = input;
+ 	const skipped: CodexResetSkip[] = [];
+-	if (!settings.enabled) return { actions: [], skipped: [{ accountKey: "*", rule: "account", reason: "disabled" }] };
++	if (!settings.enabled) {
++		return {
++			plan: { actions: [], skipped: [{ accountKey: "*", rule: "account", reason: "disabled" }] },
++			reportRevision,
++		};
++	}
+ 
+ 	// Rule-wide gates for `blocked-account`: a redeem can only unblock the turn
+ 	// when the turn is actually on Codex, and it is unknown whether a credit
+@@ -555,7 +629,22 @@ export function planCodexResetRedemptions(input: CodexResetPlanInput): CodexRese
+ 	}
+ 
+ 	const actions = restore ? [restore, ...salvages] : salvages;
+-	return { actions, skipped };
++	return { plan: { actions, skipped }, reportRevision };
++}
++
++/**
++ * Plan which saved Codex resets to spend right now. Pure: a function of the
++ * snapshot inputs only. Callers execute the returned actions in order,
++ * re-checking `attemptedKeys` immediately before each consume.
++ */
++export function planCodexResetRedemptions(input: CodexResetPlanInput): CodexResetPlan {
++	return planCodexResetRedemptionsInternal(input, false).plan;
++}
++
++/** Plan once and bind the exact effective report projection used by that call. */
++export function planCodexResetRedemptionsWithReportRevision(input: CodexResetPlanInput): CodexResetBoundPlan {
++	const result = planCodexResetRedemptionsInternal(input, true);
++	return { plan: result.plan, reportRevision: result.reportRevision! };
+ }
+ 
+ /** One attempt per (account, weekly-reset-minute) block episode. */
 diff --git a/src/session/tool-choice-queue.ts b/src/session/tool-choice-queue.ts
 index cacbb5a..1938cbe 100644
 --- a/src/session/tool-choice-queue.ts
@@ -13363,123 +13802,3 @@ new mode 100644
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 old mode 100755
 new mode 100644
-diff --git a/dist/types/config/settings.d.ts b/dist/types/config/settings.d.ts
-index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..d2b16611809d616750fec998342d481142c732e7 100644
---- a/dist/types/config/settings.d.ts
-+++ b/dist/types/config/settings.d.ts
-@@ -38,0 +39,16 @@ export interface SettingsOptions {
-+export interface PersistedSettingsSnapshot {
-+    readonly writable: boolean;
-+    readonly cwd: string;
-+    readonly agentDir: string;
-+    /** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
-+    readonly projectDiscoveryStatus: "warning-free" | "incomplete";
-+    readonly global: Partial<Record<SettingPath, unknown>>;
-+    readonly project: Partial<Record<SettingPath, unknown>>;
-+    readonly effective: Partial<Record<SettingPath, unknown>>;
-+}
-+export interface PersistedSettingsReadback {
-+    readonly writable: boolean;
-+    readonly cwd: string;
-+    readonly agentDir: string;
-+    read(): Promise<PersistedSettingsSnapshot>;
-+}
-@@ -141,0 +158,2 @@ export declare class Settings {
-+    /** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
-+    capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback;
-diff --git a/src/config/settings.ts b/src/config/settings.ts
-index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe2851ef7a552 100644
---- a/src/config/settings.ts
-+++ b/src/config/settings.ts
-@@ -34 +34 @@ import { JSONC, YAML } from "bun";
--import { invalidate as invalidateCapabilityFsCache } from "../capability/fs";
-+import { clearCache as clearCapabilityFsCache, invalidate as invalidateCapabilityFsCache } from "../capability/fs";
-@@ -135,0 +136 @@ type ProjectSettingsReadResult = {
-+	discoveryWarningFree: boolean;
-@@ -137,0 +139,18 @@ type ProjectSettingsReadResult = {
-+export interface PersistedSettingsSnapshot {
-+	readonly writable: boolean;
-+	readonly cwd: string;
-+	readonly agentDir: string;
-+	/** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
-+	readonly projectDiscoveryStatus: "warning-free" | "incomplete";
-+	readonly global: Partial<Record<SettingPath, unknown>>;
-+	readonly project: Partial<Record<SettingPath, unknown>>;
-+	readonly effective: Partial<Record<SettingPath, unknown>>;
-+}
-+
-+export interface PersistedSettingsReadback {
-+	readonly writable: boolean;
-+	readonly cwd: string;
-+	readonly agentDir: string;
-+	read(): Promise<PersistedSettingsSnapshot>;
-+}
-+
-@@ -513,0 +533 @@ export class Settings {
-+	#readbackScopeGeneration = 0;
-@@ -662,0 +683 @@ export class Settings {
-+		this.#readbackScopeGeneration++;
-@@ -684,0 +706 @@ export class Settings {
-+		this.#readbackScopeGeneration++;
-@@ -698,0 +721 @@ export class Settings {
-+		this.#readbackScopeGeneration++;
-@@ -817,0 +841,29 @@ export class Settings {
-+	/** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
-+	capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback {
-+		const selected = [...new Set(paths)];
-+		const generation = this.#readbackScopeGeneration;
-+		const cwd = this.#cwd;
-+		const agentDir = this.#agentDir;
-+		const configFiles = [...this.#configFiles];
-+		const overrides = structuredClone(this.#overrides);
-+		const writable = this.#persist;
-+		const read = async (): Promise<PersistedSettingsSnapshot> => {
-+			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
-+				throw new Error("Settings readback scope changed");
-+			}
-+			clearCapabilityFsCache();
-+			const detached = new Settings({ cwd, agentDir, readOnly: true });
-+			detached.#configFiles = configFiles;
-+			detached.#overrides = structuredClone(overrides);
-+			const discoveryWarningFree = await detached.#loadPersistedReadback();
-+			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
-+				throw new Error("Settings readback scope changed");
-+			}
-+			const pick = (layer: RawSettings): Partial<Record<SettingPath, unknown>> => Object.fromEntries(selected.map(path => [path, structuredClone(getByPath(layer, path.split(".")))]));
-+			return Object.freeze({ writable, cwd, agentDir, projectDiscoveryStatus: discoveryWarningFree ? "warning-free" as const : "incomplete" as const,
-+				global: Object.freeze(pick(detached.#global)), project: Object.freeze(pick(detached.#project)),
-+				effective: Object.freeze(Object.fromEntries(selected.map(path => [path, structuredClone(detached.get(path))]))) });
-+		};
-+		return Object.freeze({ writable, cwd, agentDir, read });
-+	}
-+
-@@ -911,0 +964 @@ export class Settings {
-+		this.#readbackScopeGeneration++;
-@@ -1414,0 +1468,19 @@ export class Settings {
-+	async #loadPersistedReadback(): Promise<boolean> {
-+		const [globalResult, projectResult] = await Promise.allSettled([
-+			this.#readExistingMainYaml(false),
-+			this.#readProjectSettings(false),
-+		]);
-+		if (globalResult.status === "rejected") throw globalResult.reason;
-+		if (projectResult.status === "rejected") throw projectResult.reason;
-+		this.#configPath = globalResult.value.configPath;
-+		this.#global = globalResult.value.settings ?? {};
-+		this.#project = projectResult.value.settings;
-+		this.#projectFileSettings = projectResult.value.fileSettings;
-+		this.#projectShellPathSource = projectResult.value.shellPathSource;
-+		const overlay = await this.#readConfigOverlays(false);
-+		this.#configOverlay = overlay.settings;
-+		this.#overlayShellPathSource = overlay.shellPathSource;
-+		this.#rebuildMerged();
-+		return projectResult.value.discoveryWarningFree;
-+	}
-+
-@@ -1813,0 +1886 @@ export class Settings {
-+		let discoveryWarningFree = true;
-@@ -1815,0 +1889 @@ export class Settings {
-+			discoveryWarningFree = result.warnings.length === 0;
-@@ -1822,0 +1897 @@ export class Settings {
-+			discoveryWarningFree = false;
-@@ -1839,0 +1915 @@ export class Settings {
-+			discoveryWarningFree,

@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
  */
 interface Settlement { state: "settled" | "held" | "cancelled" | "failed"; applied: number; attemptIds: string[]; refresh: "not-needed" | "complete" | "failed" }
 const UNOWNED: Settlement = { state: "settled", applied: 0, attemptIds: [], refresh: "not-needed" };
+const HELD: Settlement = { state: "held", applied: 0, attemptIds: [], refresh: "not-needed" };
 async function run(scenario: string, timeoutMs = 45_000): Promise<Record<string, any>> {
   const directory = await realpath(await mkdtemp(path.join(tmpdir(), "agent-desktop-reset-policy-native-")));
   let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -35,6 +36,9 @@ async function run(scenario: string, timeoutMs = 45_000): Promise<Record<string,
 }
 const finished = (result: { finished: { settlement: Settlement }[] }): Settlement[] => result.finished.map(entry => entry.settlement);
 const phases = (journal: { phase: string }[]) => journal.map(entry => entry.phase);
+const triggerPhases = (journal: Record<string, any>[], trigger: "blocked" | "sweep") => journal
+  .filter(entry => (entry.pass?.trigger ?? entry.snapshot?.trigger) === trigger)
+  .map(entry => entry.phase);
 
 // --- N1 default parity -------------------------------------------------------
 test("N1 owner absent: sweep salvages exactly the pure planner's actions with native request ids, no prompt, floor-gated re-sweep", async () => {
@@ -67,16 +71,17 @@ test("N1 `no`: no reset-policy owner pass or spend; the blocked turn fails fast"
   const { no, configUnchanged } = await run("policy-no-blocked");
   expect(no.streamCalls).toEqual(["usage-limit"]);
   expect(no.consumes).toBe(0);
-  expect(no.ownerJournal).toEqual([]);
+  expect(phases(no.ownerJournal)).toEqual(["started", "finished"]);
+  expect(no.ownerJournal.at(-1)?.settlement).toEqual(HELD);
   expect(no.retries.at(-1)).toMatchObject({ type: "auto_retry_end", success: false });
-  expect(no.policy).toEqual(UNOWNED);
+  expect(no.policy).toEqual(HELD);
   expect(configUnchanged).toBe(true);
 }, 60_000);
 
 // --- N2 full pool policy ---------------------------------------------------------
 test("N2 blocked pass: one native-ranked restore then eligible salvages, identical to the pure planner, exact clock and exact permits", async () => {
   const { pool } = await run("pool-blocked-restore-salvage");
-  expect(pool.owner.plannerParity).toEqual([{ passId: expect.any(String), equal: true }]);
+  expect(pool.owner.plannerParity).toEqual([{ passId: expect.any(String), equal: true, revisionEqual: true }]);
   expect(pool.planned.actions.map((action: { reason: string; accountKey: string; blockedWindows?: string[]; active: boolean }) =>
     [action.reason, action.accountKey, action.blockedWindows, action.active])).toEqual([["blocked-account", "acct-a", ["5h"], true], ["expiring-credit", "acct-b", undefined, false]]);
   expect(pool.planned.skipped).toContainEqual({ accountKey: "acct-c", rule: "expiring-credit", reason: "no-expiring-credit" });
@@ -138,16 +143,49 @@ test("N2 stale zero: the native sweep gate stays closed on a zero usage count ev
   expect(staleZero.reportedCount).toBe(0);
   expect(staleZero.creditListings).toBe(0);
   expect(staleZero.sweepScheduled).toBe(false);
-  expect(staleZero.ownerJournal).toEqual([]);
+  expect(phases(staleZero.ownerJournal)).toEqual(["started", "finished"]);
+  expect(staleZero.ownerJournal.at(-1)?.settlement).toEqual(HELD);
   expect(staleZero.consumes).toBe(0);
-  expect(staleZero.policy).toEqual(UNOWNED);
+  expect(staleZero.policy).toEqual(HELD);
 }, 60_000);
 
 test("fast-settled owned sweep with nothing to do still journals and aggregates as an empty settlement", async () => {
   const { zero } = await run("sweep-zero-actions");
   expect(phases(zero.ownerJournal)).toEqual(["started", "planned", "finished"]);
   expect(zero.admissions).toBe(0); expect(zero.consumes).toBe(0);
-  expect(zero.policy).toEqual(UNOWNED);
+  expect(zero.policy).toEqual(HELD);
+}, 60_000);
+
+test("report binding: sweep starts before report IO and seals the one planner input revision", async () => {
+  const { binding } = await run("report-binding-sweep-order");
+  expect(binding.boundaryOrder[0]).toBe("checkpoint:started");
+  expect(binding.boundaryOrder.indexOf("checkpoint:started")).toBeLessThan(binding.boundaryOrder.indexOf("transport:usage"));
+  expect(binding.owner.plannerParity).toEqual([{ passId: expect.any(String), equal: true, revisionEqual: true }]);
+  expect(binding.planned.reportRevision).toMatch(/^[0-9a-f]{64}$/);
+  expect(binding.finished.filter((entry: { passId: string }) => entry.passId === binding.planned.passId)).toHaveLength(1);
+  expect(binding.finished.filter((entry: { passId: string }) => entry.passId !== binding.planned.passId))
+    .toEqual([expect.objectContaining({ settlement: HELD })]);
+  expect(binding.policy.state).toBe("settled");
+}, 60_000);
+
+test("report binding: report rejection wins over a failing finished checkpoint and drains failed", async () => {
+  const { bindingError } = await run("report-binding-fetch-error");
+  expect(bindingError.fetchError).toBe("controlled aggregate report failure");
+  expect(bindingError.boundaryOrder).toEqual(["checkpoint:started", "checkpoint:finished"]);
+  expect(bindingError.finished[0].settlement).toMatchObject({ state: "failed", applied: 0 });
+  expect(bindingError.drained).toMatchObject({ state: "failed", applied: 0 });
+}, 60_000);
+
+test("report binding: rejected start still performs plain report fetch and cleans exactly once without planning", async () => {
+  const { bindingStartError } = await run("report-binding-start-error");
+  expect(bindingStartError.reportCount).toBe(1);
+  expect(bindingStartError.boundaryOrder[0]).toBe("checkpoint:started");
+  expect(bindingStartError.boundaryOrder).toContain("transport:usage");
+  expect(phases(bindingStartError.owner.journal)).toEqual(["started", "finished"]);
+  expect(bindingStartError.owner.journal.filter((entry: { phase: string }) => entry.phase === "finished")).toHaveLength(1);
+  expect(bindingStartError.owner.journal.some((entry: { phase: string }) => entry.phase === "planned")).toBe(false);
+  expect(bindingStartError.policy).toEqual({ state: "failed", applied: 0, attemptIds: [], refresh: "not-needed" });
+  expect(bindingStartError.consumes).toBe(0);
 }, 60_000);
 
 // --- N3 exact clock and identity ------------------------------------------------
@@ -219,8 +257,8 @@ test("N4 Yes: one whole-plan native select with the exact native wording, verifi
     { label: "Yes", description: "Redeem now and remember yes for future eligible Codex resets." }, { label: "No", description: "Do not auto-redeem saved Codex resets." }] }]);
   expect(decision.secondResponseRejected).toBe("OMP interaction is no longer pending");
   expect(decision.owner.presented).toEqual([{ passId: expect.any(String), actions: 2, answer: "Yes" }]);
-  expect(phases(decision.owner.journal).slice(0, 4)).toEqual(["started", "planned", "answer", "setting-written"]);
-  expect(decision.owner.journal[2].answer).toBe("Yes");
+  expect(triggerPhases(decision.owner.journal, "blocked").slice(0, 4)).toEqual(["started", "planned", "answer", "setting-written"]);
+  expect(decision.owner.journal.find((entry: Record<string, any>) => entry.phase === "answer" && entry.snapshot?.trigger === "blocked")?.answer).toBe("Yes");
   expect(decision.owner.persistence).toEqual([{ mode: "yes", flushed: true, persisted: "yes", project: undefined, effective: "yes", shadowed: false }]);
   expect(decision.persistedAutoRedeem).toBe("yes"); expect(decision.effectiveAutoRedeem).toBe("yes");
   expect(decision.configRest).toMatchObject({ extensions: [], defaultThinkingLevel: "low", retry: expect.objectContaining({ maxDelayMs: 5000 }) });
@@ -238,8 +276,9 @@ test("N4 No: the select answer is journaled and persisted as `no`; no spend, and
   expect(decision.consumes).toEqual([]);
   expect(finished(decision)[0]).toMatchObject({ state: "settled", applied: 0, attemptIds: [] });
   expect(decision.streamCalls).toEqual(["usage-limit"]);
-  expect(decision.secondFetch.ownedCheckpoints).toEqual([]);
-  expect(decision.secondFetch.policy).toEqual(UNOWNED);
+  expect(phases(decision.secondFetch.ownedCheckpoints)).toEqual(["started", "finished"]);
+  expect(decision.secondFetch.ownedCheckpoints.at(-1)?.settlement).toEqual(HELD);
+  expect(decision.secondFetch.policy).toEqual(HELD);
 }, 60_000);
 
 test("N4 dismiss: no answer, no write, no spend, pass cancelled", async () => {
@@ -258,7 +297,7 @@ test("N4 headless: the one-shot native notice stands in for the prompt; the owne
   const { headless } = await run("decision-headless");
   expect(headless.notices.filter((notice: { source?: string }) => notice.source === "codex-auto-reset")).toHaveLength(1);
   expect(headless.owner.presented).toEqual([]);
-  expect(phases(headless.owner.journal)).toEqual(["started", "planned", "answer", "finished"]);
+  expect(triggerPhases(headless.owner.journal, "blocked")).toEqual(["started", "planned", "answer", "finished"]);
   expect(headless.owner.journal[2].answer).toBeUndefined();
   expect(headless.consumes).toBe(0); expect(headless.configUnchanged).toBe(true);
   expect(finished(headless)[0]).toMatchObject({ state: "cancelled", applied: 0 });
@@ -369,7 +408,7 @@ test("N8 completion failure: the observed reset is retained, further dispatch st
 
 test("N8 pre-dispatch checkpoint rejection stops the pass before any consume", async () => {
   const { completion } = await run("checkpoint-planned-throws");
-  expect(phases(completion.owner.journal)).toEqual(["started", "planned", "finished"]);
+  expect(triggerPhases(completion.owner.journal, "blocked")).toEqual(["started", "planned", "finished"]);
   expect(completion.owner.admissions).toEqual([]); expect(completion.consumes).toEqual([]);
   expect(finished(completion)[0]).toMatchObject({ state: "failed", applied: 0 });
   expect(completion.streamCalls).toEqual(["usage-limit"]);

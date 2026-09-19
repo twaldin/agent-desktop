@@ -33,15 +33,45 @@ interface Pending {
   resetTimeout(): void;
 }
 
+interface DecisionBindingScope {
+  active: boolean;
+  calls: number;
+  bind(interactionId: string): Promise<void>;
+  error?: Error;
+  invalidate?: (error: Error) => void;
+}
+
 /** Only serializable requests cross the process boundary; callbacks remain here. */
 export class OmpInteractionBridge implements ExtensionUIContext {
   readonly timeoutStartsOnPresentation = false;
   #pending = new Map<string, Pending>();
   #permissionMarkers: symbol[] = [];
   #callSignal = new AsyncLocalStorage<AbortSignal>();
+  #decisionBinding = new AsyncLocalStorage<DecisionBindingScope>();
+  #cancellationGeneration = 0;
 
   runWithSignal<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
     return this.#callSignal.run(signal, work);
+  }
+  async runWithDecisionBinding<T>(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<T>): Promise<T> {
+    const scope: DecisionBindingScope = { active: true, calls: 0, bind };
+    try {
+      try {
+        const result = await this.#decisionBinding.run(scope, selectNative);
+        if (scope.calls !== 1) throw scope.error ?? new Error("Native reset decision must create exactly one select interaction");
+        if (scope.invalidate) {
+          const error = scope.error ??= new Error("Native reset decision must await its select interaction");
+          scope.invalidate(error);
+          throw error;
+        }
+        return result;
+      } catch (error) {
+        if (scope.calls !== 1) throw scope.error ?? new Error("Native reset decision must create exactly one select interaction");
+        throw error;
+      }
+    } finally {
+      scope.active = false;
+    }
   }
   #disposed = false;
   constructor(readonly sessionId: string, private emit: (event: OmpBridgeEvent) => void) {}
@@ -65,6 +95,44 @@ export class OmpInteractionBridge implements ExtensionUIContext {
   }
 
   #request(fields: Omit<OmpInteraction, "id" | "sessionId" | "createdAt" | "actions">, options?: ExtensionUIDialogOptions): Promise<string | boolean | undefined> {
+    const decision = this.#decisionBinding.getStore();
+    if (decision) {
+      if (!decision.active || fields.method !== "select" || ++decision.calls !== 1) {
+        const error = decision.error ??= new Error("Native reset decision must create exactly one select interaction");
+        decision.invalidate?.(error);
+        return Promise.reject(error);
+      }
+      return this.#requestBound(fields, options, decision);
+    }
+    return this.#publish(fields, options);
+  }
+
+  async #requestBound(fields: Omit<OmpInteraction, "id" | "sessionId" | "createdAt" | "actions">, options: ExtensionUIDialogOptions | undefined, scope: DecisionBindingScope): Promise<string | boolean | undefined> {
+    const scopedSignal = this.#callSignal.getStore();
+    if (this.#disposed) throw new Error("OMP interaction bridge is disposed");
+    if (scopedSignal?.aborted || options?.signal?.aborted) return undefined;
+    if (options?.timeout !== undefined && (!Number.isFinite(options.timeout) || options.timeout < 0 || options.timeout > 2_147_483_647)) {
+      throw new Error("Invalid native interaction timeout");
+    }
+    const id = crypto.randomUUID();
+    const generation = this.#cancellationGeneration;
+    let invalidate!: (error: Error) => void;
+    const invalidated = new Promise<never>((_, reject) => { invalidate = reject; });
+    void invalidated.catch(() => {});
+    scope.invalidate = invalidate;
+    try {
+      await Promise.race([scope.bind(id), invalidated]);
+    } finally {
+      if (scope.invalidate === invalidate) scope.invalidate = undefined;
+    }
+    if (scope.error) throw scope.error;
+    if (!scope.active || this.#disposed || generation !== this.#cancellationGeneration || scopedSignal?.aborted || options?.signal?.aborted) {
+      return undefined;
+    }
+    return this.#publish(fields, options, id, scope);
+  }
+
+  #publish(fields: Omit<OmpInteraction, "id" | "sessionId" | "createdAt" | "actions">, options?: ExtensionUIDialogOptions, id = crypto.randomUUID(), decision?: DecisionBindingScope): Promise<string | boolean | undefined> {
     const scopedSignal = this.#callSignal.getStore();
     if (scopedSignal) options = { ...options, signal: options?.signal ? AbortSignal.any([scopedSignal, options.signal]) : scopedSignal };
     if (this.#disposed) return Promise.reject(new Error("OMP interaction bridge is disposed"));
@@ -74,7 +142,7 @@ export class OmpInteractionBridge implements ExtensionUIContext {
       return Promise.reject(new Error("Invalid native interaction timeout"));
     }
     const request: OmpInteraction = {
-      ...fields, id: crypto.randomUUID(), sessionId: this.sessionId, createdAt: Date.now(), actions: [],
+      ...fields, id, sessionId: this.sessionId, createdAt: Date.now(), actions: [],
       ...(this.#permissionMarkers.shift() ? { notificationKind: "permission" as const } : {}),
       ...(options?.initialIndex === undefined ? {} : { initialIndex: options.initialIndex }),
       ...(options?.outline === undefined ? {} : { outline: options.outline }),
@@ -89,10 +157,12 @@ export class OmpInteractionBridge implements ExtensionUIContext {
     if (options?.timeout !== undefined) request.actions.push("timeoutReset");
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let invalidate: ((error: Error) => void) | undefined;
+      const clearDecision = () => { if (decision && decision.invalidate === invalidate) decision.invalidate = undefined; };
       const abort = () => finish(cancelled, "aborted");
       const finish = (value: string | boolean | undefined, reason: InteractionEndReason) => {
         if (!this.#pending.delete(request.id)) return;
-        clearTimeout(timer);
+        clearTimeout(timer); clearDecision();
         options?.signal?.removeEventListener("abort", abort);
         try {
           this.emit({ type: "extension_interaction_resolved", sessionId: this.sessionId, id: request.id, reason });
@@ -108,6 +178,15 @@ export class OmpInteractionBridge implements ExtensionUIContext {
         timer = setTimeout(() => finish(cancelled, "timeout"), options.timeout);
         timer.unref();
       };
+      invalidate = error => {
+        if (!this.#pending.delete(request.id)) return;
+        clearTimeout(timer); clearDecision();
+        options?.signal?.removeEventListener("abort", abort);
+        try { this.emit({ type: "extension_interaction_resolved", sessionId: this.sessionId, id: request.id, reason: "cancelled" }); }
+        catch { /* Scope invalidation remains the caller-visible failure. */ }
+        reject(error);
+      };
+      if (decision) decision.invalidate = invalidate;
       this.#pending.set(request.id, { request, options, finish, resetTimeout });
       options?.signal?.addEventListener("abort", abort, { once: true });
       try {
@@ -115,7 +194,7 @@ export class OmpInteractionBridge implements ExtensionUIContext {
         this.emit({ type: "extension_interaction_requested", interaction: structuredClone(request) });
         if (options?.timeout !== undefined) options.onTimeoutStart?.();
       } catch (error) {
-        this.#pending.delete(request.id); clearTimeout(timer);
+        this.#pending.delete(request.id); clearTimeout(timer); clearDecision();
         options?.signal?.removeEventListener("abort", abort); reject(error);
       }
     });
@@ -155,6 +234,7 @@ export class OmpInteractionBridge implements ExtensionUIContext {
   }
 
   cancelAll(reason: Exclude<InteractionEndReason, "answered" | "navigated" | "timeout"> = "cancelled"): void {
+    this.#cancellationGeneration++;
     for (const item of [...this.#pending.values()]) item.finish(item.request.method === "confirm" ? false : undefined, reason);
   }
   dispose(): void { this.#disposed = true; this.cancelAll("disposed"); }

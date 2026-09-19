@@ -10,9 +10,10 @@ import { projectNativeErrorMessage } from "./events";
 import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 import type { NativeSessionForkInput } from "../omp/session-fork";
 import type { TodoMutationRequest } from "../../../../packages/shared/src/session-todos";
+import type { ResetPolicyWireRequest, ResetPolicyWireResponse } from "./reset-policy-wire";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 65;
+export const WORKER_PROTOCOL_VERSION = 66;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -29,7 +30,7 @@ export interface SessionSnapshot {
   modelFallbackMessage?: string;
   activity: NativeSessionActivity;
 }
-export type WorkerInit = { agentDir?: string } & (
+export type WorkerInit = { agentDir?: string; resetPolicy?: { workerEpoch: string } } & (
   | { mode: "create"; options: Omit<OmpSessionOptions, "onEvent"> }
   | { mode: "open"; options: Omit<OmpOpenOptions, "onEvent"> }
   | { mode: "discovery" }
@@ -139,6 +140,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "setApprovalOverride"; args: { mode?: OmpApprovalMode; expectedRevision: string } }
   | { operation: "dispose" };
 export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
+  | ResetPolicyWireResponse
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserResponse"; binding: BrowserEvaluationBinding; id: string; ok: boolean; value?: Record<string, unknown>; error?: RemoteError }
@@ -148,6 +150,7 @@ export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | { type: "disposeAck"; id: string };
 export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" | "PLAN_REJECTED" | "TODOS_REJECTED" }
 export type ChildMessage =
+  | ResetPolicyWireRequest
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserRequest"; binding: BrowserEvaluationBinding; id: string; method: string; params: Record<string, unknown>; options?: { timeoutMs?: number } }

@@ -46,7 +46,8 @@ const configs: Record<string, ScenarioConfig> = {
   "owner-absent-sweep": { autoRedeem: "yes" }, "owner-absent-blocked": { autoRedeem: "yes" }, "policy-no-blocked": { autoRedeem: "no" },
   "pool-blocked-restore-salvage": { autoRedeem: "yes" }, "pool-reserve": { autoRedeem: "yes", keepCredits: 1 }, "pool-spark": { autoRedeem: "yes" },
   "pool-other-provider-sweep": { autoRedeem: "yes" }, "pool-synthesized-live429": { autoRedeem: "yes" }, "pool-stale-zero-gate": { autoRedeem: "yes" },
-  "sweep-zero-actions": { autoRedeem: "yes" },
+  "sweep-zero-actions": { autoRedeem: "yes" }, "report-binding-sweep-order": { autoRedeem: "yes" },
+  "report-binding-fetch-error": { autoRedeem: "yes" }, "report-binding-start-error": { autoRedeem: "yes" },
   "clock-identity": { autoRedeem: "unset" }, "retarget-account-started": { autoRedeem: "yes" }, "retarget-model-planned": { autoRedeem: "yes" },
   "retarget-model-started": { autoRedeem: "yes" },
   "guard-refused": { autoRedeem: "yes" }, "guard-policy-change": { autoRedeem: "yes" }, "identity-removed": { autoRedeem: "yes" },
@@ -86,7 +87,8 @@ await writeFile(path.join(agentDir, "models.yml"), JSON.stringify({ providers: {
 const native = await import("@oh-my-pi/pi-coding-agent");
 const { AgentRegistry, AuthStorage: NativeAuthStorage, createAgentSession, ModelRegistry: NativeModelRegistry, SessionManager: NativeSessionManager,
   Settings: NativeSettings, SqliteAuthCredentialStore } = native;
-const { defaultCodexAutoRedeemCoordinator, isTerminalRedeemOutcome, overlayLiveResetCredits, planCodexResetRedemptions } = await import("@oh-my-pi/pi-coding-agent/session/codex-auto-reset");
+const { defaultCodexAutoRedeemCoordinator, isTerminalRedeemOutcome, overlayLiveResetCredits, planCodexResetRedemptions,
+  planCodexResetRedemptionsWithReportRevision } = await import("@oh-my-pi/pi-coding-agent/session/codex-auto-reset");
 const { invalidate: invalidateFsCache } = await import("@oh-my-pi/pi-coding-agent/capability/fs");
 const { AssistantMessageEventStream } = await import("@oh-my-pi/pi-ai/utils/event-stream");
 const { pickSoonestExpiringCredit } = await import("@oh-my-pi/pi-ai/usage/openai-codex-reset");
@@ -127,6 +129,7 @@ const availableCount = (account: FixtureAccount) => account.credits.filter(credi
 type Route = "usage" | "credits" | "consume" | "unknown";
 interface TransportRequest { method: string; route: Route; account?: string; body?: Record<string, unknown>; at: number }
 const transportRequests: TransportRequest[] = [];
+const boundaryOrder: string[] = [];
 let escapedTransport = 0;
 /** Optional holds: a request on the gated route waits until released (or its native signal aborts). */
 const gates: Partial<Record<Route, ReturnType<typeof Promise.withResolvers<void>>>> = {};
@@ -158,6 +161,7 @@ const usageFetch = Object.assign(async (input: Parameters<typeof fetch>[0], init
   const body = request.method === "POST" ? (await request.json()) as Record<string, unknown> : undefined;
   const record: TransportRequest = { method: request.method, route, account: target?.key ?? accountId, body, at: Date.now() };
   transportRequests.push(record);
+  boundaryOrder.push(`transport:${route}`);
   if (route === "unknown" || !target) { escapedTransport++; throw new Error(`Unowned Codex transport request: ${request.method} ${url.pathname}`); }
   reached[route]?.resolve(record); delete reached[route];
   const gate = gates[route];
@@ -227,7 +231,8 @@ function describePass(pass: ResetPlanSnapshot["pass"]) {
     codexBaseUrl: pass.codexBaseUrl, identity: pass.identity, activeBlockUnblockAtMs: pass.activeBlockUnblockAtMs, policy: pass.policy, startedAtMs: pass.startedAtMs };
 }
 function describeSnapshot(snapshot: ResetPlanSnapshot) {
-  return { passId: snapshot.pass.passId, trigger: snapshot.pass.trigger, plannedAtMs: snapshot.plannedAtMs, actions: snapshot.plan.actions, skipped: snapshot.plan.skipped };
+  return { passId: snapshot.pass.passId, trigger: snapshot.pass.trigger, plannedAtMs: snapshot.plannedAtMs, reportRevision: snapshot.reportRevision,
+    actions: snapshot.plan.actions, skipped: snapshot.plan.skipped };
 }
 function describeObservation(observation: ResetObservation) {
   return { consumeBoundary: observation.consumeBoundary, result: observation.result.kind === "outcome" ? { kind: "outcome", code: observation.result.outcome.code,
@@ -242,7 +247,8 @@ class FixtureOwner implements CodexResetPolicyOwner {
   readonly guardCalls: { attemptId: string; identity: ResetCreditConsumeIdentity; allowed: boolean }[] = [];
   readonly completions: Record<string, unknown>[] = [];
   readonly persistence: Record<string, unknown>[] = [];
-  readonly plannerParity: { passId: string; equal: boolean; expected?: CodexResetPlan; actual?: CodexResetPlan }[] = [];
+  readonly plannerParity: { passId: string; equal: boolean; revisionEqual: boolean; expected?: CodexResetPlan; actual?: CodexResetPlan;
+    expectedRevision?: string; actualRevision?: string }[] = [];
   readonly fenced = new Set<string>();
   readonly #inFlight = new Map<string, InFlightAttempt>();
   readonly #permits = new Map<string, { attemptKey: string; accountKey: string }>();
@@ -251,6 +257,7 @@ class FixtureOwner implements CodexResetPolicyOwner {
   /** The live session Settings instance whose native `set` this owner must prove persisted. */
   attach(settings: Settings): void { this.#settings = settings; }
   async checkpoint(event: ResetCheckpoint): Promise<void> {
+    boundaryOrder.push(`checkpoint:${event.phase}`);
     const entry: Record<string, unknown> = { phase: event.phase };
     if (event.phase === "started" || event.phase === "finished" || event.phase === "joined") entry.pass = describePass(event.pass);
     if (event.phase === "joined") entry.originalPassId = event.originalPassId;
@@ -293,13 +300,15 @@ class FixtureOwner implements CodexResetPolicyOwner {
     if (snapshot.pass.trigger === "blocked") {
       reports = overlayLiveResetCredits(reports, await this.auth.listResetCredits({ provider: "openai-codex", sessionId: snapshot.pass.nativeSessionId, baseUrlResolver }));
     }
-    const expected = planCodexResetRedemptions({ nowMs: snapshot.plannedAtMs, trigger: snapshot.pass.trigger, provider: snapshot.pass.provider, modelId: snapshot.pass.modelId,
+    const expected = planCodexResetRedemptionsWithReportRevision({ nowMs: snapshot.plannedAtMs, trigger: snapshot.pass.trigger, provider: snapshot.pass.provider, modelId: snapshot.pass.modelId,
       settings: { enabled: snapshot.pass.policy.autoRedeem !== "no", minBlockedMinutes: snapshot.pass.policy.minBlockedMinutes, keepCredits: snapshot.pass.policy.keepCredits,
         salvageHorizonMs: snapshot.pass.policy.salvageHorizonHours * HOUR },
       identity: snapshot.pass.identity, reports, attemptedKeys: new Set(), deferredUntilByKey: new Map(), lastAttemptAtByAccount: new Map(),
       activeBlockUnblockAtMs: snapshot.pass.activeBlockUnblockAtMs });
     const actual = structuredClone(snapshot.plan) as CodexResetPlan;
-    this.plannerParity.push({ passId: snapshot.pass.passId, equal: Bun.deepEquals(expected, actual, true), expected, actual });
+    this.plannerParity.push({ passId: snapshot.pass.passId, equal: Bun.deepEquals(expected.plan, actual, true),
+      revisionEqual: expected.reportRevision === snapshot.reportRevision, expected: expected.plan, actual,
+      expectedRevision: expected.reportRevision, actualRevision: snapshot.reportRevision });
   }
   async presentDecision(snapshot: ResetPlanSnapshot, selectNative: () => Promise<NativeResetAnswer>): Promise<void> {
     const entry: FixtureOwner["presented"][number] = { passId: snapshot.pass.passId, actions: snapshot.plan.actions.length, answer: "not-invoked" };
@@ -364,7 +373,8 @@ class FixtureOwner implements CodexResetPolicyOwner {
 function ownerEvidence(owner: FixtureOwner) {
   return { journal: owner.journal, presented: owner.presented, admissions: owner.admissions, guardCalls: owner.guardCalls, completions: owner.completions,
     persistence: owner.persistence, fenced: [...owner.fenced],
-    plannerParity: owner.plannerParity.map(entry => ({ passId: entry.passId, equal: entry.equal, ...(entry.equal ? {} : { expected: entry.expected, actual: entry.actual }) })) };
+    plannerParity: owner.plannerParity.map(entry => ({ passId: entry.passId, equal: entry.equal, revisionEqual: entry.revisionEqual,
+      ...((entry.equal && entry.revisionEqual) ? {} : { expected: entry.expected, actual: entry.actual, expectedRevision: entry.expectedRevision, actualRevision: entry.actualRevision }) })) };
 }
 const finishedSettlements = (owner: FixtureOwner, trigger?: "blocked" | "sweep") => owner.journal
   .filter(entry => entry.phase === "finished" && (!trigger || (entry.pass as { trigger: string }).trigger === trigger))
@@ -487,7 +497,7 @@ async function readConfig() {
 }
 const plannedSnapshot = (owner: FixtureOwner, trigger: "blocked" | "sweep") => owner.journal
   .find(entry => entry.phase === "planned" && (entry.snapshot as { trigger: string }).trigger === trigger)?.snapshot as
-  { plannedAtMs: number; actions: CodexResetPlan["actions"]; skipped: CodexResetPlan["skipped"] } | undefined;
+  { plannedAtMs: number; reportRevision: string; actions: CodexResetPlan["actions"]; skipped: CodexResetPlan["skipped"] } | undefined;
 
 // ---------------------------------------------------------------------------
 // Scenarios
@@ -601,6 +611,42 @@ try {
       const fixture = await openSession(auth, { model: "codex", owner }); closers.push(fixture.close);
       const { policy } = await fixture.session.fetchUsageReportsWithResetPolicy({ source: "manual" });
       result.zero = { policy, ownerJournal: owner.journal, finished: finishedSettlements(owner, "sweep"), consumes: consumes().length, admissions: owner.admissions.length };
+      break;
+    }
+    case "report-binding-sweep-order": {
+      const a = account("a", { creditsExpireInMs: [1 * HOUR], weeklyUsed: 0.6 });
+      auth = await seedPool([a]);
+      const owner = new FixtureOwner(auth, await readOnlyRegistry(auth), { verifyPlanner: true });
+      const fixture = await openSession(auth, { model: "codex", owner }); closers.push(fixture.close);
+      boundaryOrder.length = 0;
+      const { policy } = await fixture.session.fetchUsageReportsWithResetPolicy({ source: "manual" });
+      result.binding = { policy, boundaryOrder: [...boundaryOrder], owner: ownerEvidence(owner), planned: plannedSnapshot(owner, "sweep"),
+        finished: finishedSettlements(owner, "sweep"), consumes: consumeSummary() };
+      break;
+    }
+    case "report-binding-fetch-error": {
+      const seeded = await seedPool([account("a", { creditsExpireInMs: [1 * HOUR] })]);
+      const routed = new NativeAuthStorage(await SqliteAuthCredentialStore.open(getAgentDbPath(agentDir)), { usageFetch,
+        fetchUsageReports: () => Promise.reject(new Error("controlled aggregate report failure")) });
+      await routed.reload(); closers.push(async () => seeded.close()); auth = routed;
+      const owner = new FixtureOwner(auth, await readOnlyRegistry(auth), { failCheckpoint: "finished" });
+      const fixture = await openSession(auth, { model: "codex", owner }); closers.push(fixture.close);
+      boundaryOrder.length = 0;
+      let fetchError: string | undefined;
+      try { await fixture.session.fetchUsageReportsWithResetPolicy({ source: "manual" }); }
+      catch (error) { fetchError = error instanceof Error ? error.message : String(error); }
+      const drained = await fixture.session.drainCodexResetPolicy();
+      result.bindingError = { fetchError, drained, boundaryOrder: [...boundaryOrder], owner: ownerEvidence(owner), finished: finishedSettlements(owner, "sweep") };
+      break;
+    }
+    case "report-binding-start-error": {
+      auth = await seedPool([account("a", { creditsExpireInMs: [1 * HOUR] })]);
+      const owner = new FixtureOwner(auth, await readOnlyRegistry(auth), { failCheckpoint: "started" });
+      const fixture = await openSession(auth, { model: "codex", owner }); closers.push(fixture.close);
+      boundaryOrder.length = 0;
+      const { reports, policy } = await fixture.session.fetchUsageReportsWithResetPolicy({ source: "manual" });
+      result.bindingStartError = { reportCount: reports?.length ?? null, policy, boundaryOrder: [...boundaryOrder], owner: ownerEvidence(owner),
+        finished: finishedSettlements(owner, "sweep"), consumes: consumes().length };
       break;
     }
     case "clock-identity": {

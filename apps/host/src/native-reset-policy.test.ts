@@ -11,6 +11,7 @@ import { nativeResetAccountKey } from "./omp/session-usage";
 const directories: string[] = [], stores: HostStore[] = [];
 afterEach(async () => { for (const store of stores.splice(0)) store.close(); for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
+const REPORT = "a".repeat(64);
 const T0 = 1_700_000_000_000;
 /** A well-formed attempt id that no authority row backs. */
 const GHOST = "00000000-0000-4000-8000-000000000000";
@@ -48,7 +49,7 @@ async function fixture(options: { maxPasses?: number } = {}) {
   const provenance = (over: Partial<NativeResetProvenance> = {}): NativeResetProvenance => {
     const n = ++sequence;
     return { hostId, sessionId: `session-${n}`, sessionFile: `/tmp/session-${n}.jsonl`, cwd: "/tmp/project", workerEpoch: "epoch-1", nativeSessionId: `native-${n}`, passId: `pass-${n}`,
-      trigger: "blocked", source: "blocked", startedAtMs: T0 + n, provider: "openai-codex", modelId: "gpt-5-codex", reportRevision: "report-1", selectionRevision: "selection-1", policyRevision: "policy-1", ...over };
+      trigger: "blocked", source: "blocked", startedAtMs: T0 + n, provider: "openai-codex", modelId: "gpt-5-codex", selectionRevision: "selection-1", policyRevision: "policy-1", ...over };
   };
   const reopen = (target: HostStore) => { target.close(); stores.splice(stores.indexOf(target), 1); return open(); };
   const failWrites = (target: HostStore, key: string, times = Number.POSITIVE_INFINITY) => {
@@ -65,7 +66,7 @@ async function fixture(options: { maxPasses?: number } = {}) {
     const timed = actions.map(action => ({ ...action, native: { ...action.native,
       remainingMs: action.native.remainingMs === undefined ? undefined : action.native.remainingMs - (plannedAtMs - (T0 + 11)),
     } }));
-    owner.plan(p.passId, { plannedAtMs, actions: timed });
+    owner.plan(p.passId, { reportRevision: REPORT, plannedAtMs, actions: timed });
     return p;
   };
   const admit = (owner: NativeResetPolicy, p: NativeResetProvenance, index = 0, over: Partial<NativeResetAdmitInput> = {}) =>
@@ -83,7 +84,7 @@ test("compatible automatic passes join the first live attempt; completion settle
   expect(first.redeemRequestId).toMatch(/^[0-9a-f-]{36}$/);
   const attempt = f.admissions.getAttempt(first.attemptId)!;
   expect(attempt.kind).toBe("automatic");
-  expect(attempt.evidence?.provenance).toEqual(p1);
+  expect(attempt.evidence?.provenance).toEqual({ ...p1, reportRevision: REPORT });
   expect(attempt.evidence?.action).toEqual({ index: 0, reason: "blocked-account", nativeAttemptKey: "blocked:acct-a:28333333", plannedAtMs: p1.startedAtMs + 10, blockedUntilMs: p1.startedAtMs + 10 + 3_600_000 });
   const second = f.admit(f.policy, p2);
   expect(second.kind).toBe("join");
@@ -160,7 +161,7 @@ test("accounts admit independently and a global revision change only invalidates
   f.policy.start({ provenance: p3, policy: policy() });
   f.policy.complete(b.attemptId, executor(p1), RESET);
   f.execute(f.admit(f.policy, f.planned(f.policy, [{ native: nativeB, account: accountB }]), 0, { account: accountB, credit: credit({ id: "RateLimitResetCredit_b2", fingerprint: hex("a") }) }));
-  expect(() => f.policy.plan(p3.passId, { plannedAtMs: p3.startedAtMs + 10, actions: [{ native: native(), account: account() }] })).toThrow();
+  expect(() => f.policy.plan(p3.passId, { reportRevision: REPORT, plannedAtMs: p3.startedAtMs + 10, actions: [{ native: native(), account: account() }] })).toThrow();
   expect(f.policy.inspectPass(p3.passId)).toMatchObject({ status: "closed", record: { closed: { reason: "invalidated" } } });
   expect(f.admit(f.policy, p3)).toEqual({ kind: "hold", reason: "closed" });
   expect(f.policy.requestDecision(p3.passId)).toBe(false);
@@ -204,7 +205,7 @@ test("stale native identity or changed binding holds without consuming; exact cr
   const expiresAt = "2026-10-01T00:00:00.000Z", plannedAtMs = T0 + 500;
   const p2 = f.provenance();
   f.policy.start({ provenance: p2, policy: policy() });
-  f.policy.plan(p2.passId, { plannedAtMs, actions: [{ native: native({ reason: "expiring-credit", attemptKey: "salvage:acct-a:1", expiresInMs: Date.parse(expiresAt) - plannedAtMs, salvageWindow: "weekly" }), account: account() }] });
+  f.policy.plan(p2.passId, { reportRevision: REPORT, plannedAtMs, actions: [{ native: native({ reason: "expiring-credit", attemptKey: "salvage:acct-a:1", expiresInMs: Date.parse(expiresAt) - plannedAtMs, salvageWindow: "weekly" }), account: account() }] });
   expect(f.admit(f.policy, p2, 0, { credit: credit({ expiresAt: "2026-10-02T00:00:00.000Z" }) })).toEqual({ kind: "hold", reason: "binding-changed" });
   const salvage = f.execute(f.admit(f.policy, p2, 0, { credit: credit({ expiresAt }) }));
   const evidence = f.admissions.getAttempt(salvage.attemptId)!.evidence!;
@@ -309,7 +310,7 @@ test("malformed, foreign and partial pass records are retained conservatively wi
   expect(r.policy.inspectPass("pass-foreign")).toEqual({ passId: "pass-foreign", status: "malformed" });
   expect(r.policy.inspectPass("pass-none")).toBeUndefined();
   expect(() => r.policy.start({ provenance: { ...started, passId: "pass-garbage" }, policy: policy() })).toThrow(/retained/);
-  expect(() => r.policy.plan("pass-garbage", { plannedAtMs: T0, actions: [] })).toThrow(/malformed/);
+  expect(() => r.policy.plan("pass-garbage", { reportRevision: REPORT, plannedAtMs: T0, actions: [] })).toThrow(/malformed/);
   expect(r.policy.admit("pass-garbage", 0, { current: current(started), account: account(), credit: credit() })).toEqual({ kind: "hold", reason: "unknown-pass" });
   // The unplanned pass from the previous process is interrupted; the ghost checkpoint is reported, never resolved.
   expect(r.policy.inspectPass(started.passId)).toMatchObject({ status: "closed", record: { closed: { reason: "restarted" } } });
@@ -431,7 +432,7 @@ test("disposal bars new work and drains only actual completions", async () => {
   f.policy.beginDispose();
   expect(f.policy.disposing).toBe(true);
   expect(() => f.policy.start({ provenance: f.provenance(), policy: policy() })).toThrow(/disposing/);
-  expect(() => f.policy.plan(p2.passId, { plannedAtMs: T0, actions: [] })).toThrow(/disposing/);
+  expect(() => f.policy.plan(p2.passId, { reportRevision: REPORT, plannedAtMs: T0, actions: [] })).toThrow(/disposing/);
   expect(f.policy.requestDecision(p2.passId)).toBe(false);
   expect(f.policy.admit(p2.passId, 0, { current: current(p2), account: accountB, credit: credit() })).toEqual({ kind: "hold", reason: "disposing" });
   expect(f.admissions.inspect(KEY_B)).toBeUndefined();
@@ -481,7 +482,7 @@ test("duplicate pass starts return the retained record and never replace provena
   expect(retained.plan?.actions[0]).toMatchObject({ key: KEY_A, nativeAttemptKey: "blocked:acct-a:28333333" });
   expect(() => f.policy.start({ provenance: { ...p, cwd: "/tmp/elsewhere" }, policy: policy("unset") })).toThrow(/retained/);
   expect(() => f.policy.start({ provenance: p, policy: policy("yes") })).toThrow(/retained/);
-  expect(() => f.policy.plan(p.passId, { plannedAtMs: T0, actions: [] })).toThrow(/already planned/);
+  expect(() => f.policy.plan(p.passId, { reportRevision: REPORT, plannedAtMs: T0, actions: [] })).toThrow(/already planned/);
   f.policy.requestDecision(p.passId);
   f.policy.answer(p.passId, "Yes");
   expect(f.policy.start({ provenance: p, policy: policy("unset") }).decision).toMatchObject({ answer: "Yes" });
@@ -499,7 +500,7 @@ test("a complete 128-action plan is retained whole across reopen while 129 actio
   expect(NATIVE_RESET_MAX_ACTIONS).toBe(128);
   const full = f.provenance();
   f.policy.start({ provenance: full, policy: policy() });
-  const planned = f.policy.plan(full.passId, { plannedAtMs: full.startedAtMs + 10, actions: fleet(128) });
+  const planned = f.policy.plan(full.passId, { reportRevision: REPORT, plannedAtMs: full.startedAtMs + 10, actions: fleet(128) });
   expect(planned.plan?.actions.length).toBe(128);
   expect(planned.plan?.actions[127]).toMatchObject({ index: 127, key: nativeResetAccountKey(fleet(128)[127]!.account), nativeAttemptKey: "blocked:acct-127:1" });
   const last = fleet(128)[127]!;
@@ -507,9 +508,9 @@ test("a complete 128-action plan is retained whole across reopen while 129 actio
   expect(admitted.kind).toBe("execute");
   const over = f.provenance();
   f.policy.start({ provenance: over, policy: policy() });
-  expect(() => f.policy.plan(over.passId, { plannedAtMs: over.startedAtMs + 10, actions: fleet(129) })).toThrow(/exceeds 128/);
+  expect(() => f.policy.plan(over.passId, { reportRevision: REPORT, plannedAtMs: over.startedAtMs + 10, actions: fleet(129) })).toThrow(/exceeds 128/);
   expect(f.policy.inspectPass(over.passId)).toMatchObject({ status: "closed", record: { closed: { reason: "oversized" } }, attempts: [] });
-  expect(() => f.policy.plan(over.passId, { plannedAtMs: over.startedAtMs + 10, actions: fleet(128) })).toThrow(/closed/);
+  expect(() => f.policy.plan(over.passId, { reportRevision: REPORT, plannedAtMs: over.startedAtMs + 10, actions: fleet(128) })).toThrow(/closed/);
   expect(f.policy.requestDecision(over.passId)).toBe(false);
   expect(f.admit(f.policy, over, 0, { account: fleet(1)[0]!.account, credit: credit() })).toEqual({ kind: "hold", reason: "closed" });
   expect(f.admissions.inspect(nativeResetAccountKey(fleet(1)[0]!.account))).toBeUndefined();
@@ -540,7 +541,7 @@ test("native same-session joins are retained against their original pass without
   expect(() => f.policy.joined({ provenance: f.provenance({ sessionId: original.sessionId }), policy: policy() }, joined.passId)).toThrow(/original/);
   expect(() => f.policy.joined({ provenance: { ...joinedProvenance, passId: "pass-self" }, policy: policy() }, "pass-self")).toThrow(/itself/);
   // The joined pass owns nothing: no plan, decision or admission; only its native finish is recorded.
-  expect(() => f.policy.plan(joined.passId, { plannedAtMs: T0, actions: [{ native: native(), account: account() }] })).toThrow(/joined/);
+  expect(() => f.policy.plan(joined.passId, { reportRevision: REPORT, plannedAtMs: T0, actions: [{ native: native(), account: account() }] })).toThrow(/joined/);
   expect(f.policy.requestDecision(joined.passId)).toBe(false);
   expect(f.admit(f.policy, joinedProvenance)).toEqual({ kind: "hold", reason: "unplanned" });
   expect(f.admissions.listAttempts().map(attempt => attempt.id)).toEqual([running.attemptId]);
@@ -646,4 +647,91 @@ test("confirmed exit still releases live waiters when storage cannot acknowledge
   const reopened = f.reopen(f.store);
   expect(reopened.admissions.inspect(KEY_A)?.state).toBe("unknown");
   expect(reopened.admissions.getAttempt(admitted.attemptId)?.observation).toBeUndefined();
+});
+
+test("origin start carries no future report claim and plan seals one strict digest exactly once", async () => {
+  const f = await fixture();
+  const p = f.provenance();
+  expect("reportRevision" in p).toBe(false);
+  const started = f.policy.start({ provenance: p, policy: policy("yes") });
+  expect("reportRevision" in started.provenance).toBe(false);
+  expect(() => f.policy.start({ provenance: { ...f.provenance(), reportRevision: REPORT } as NativeResetProvenance, policy: policy("yes") })).toThrow(/cannot claim/);
+  expect(() => f.policy.plan(p.passId, { reportRevision: "A".repeat(64), plannedAtMs: p.startedAtMs + 1, actions: [] })).toThrow(/report revision/);
+  expect(() => f.policy.plan(p.passId, { reportRevision: "", plannedAtMs: p.startedAtMs + 1, actions: [] })).toThrow(/report revision/);
+  const sealed = f.policy.plan(p.passId, { reportRevision: REPORT, plannedAtMs: p.startedAtMs + 1, actions: [] });
+  expect(sealed.plan?.reportRevision).toBe(REPORT);
+  expect(() => f.policy.plan(p.passId, { reportRevision: "b".repeat(64), plannedAtMs: p.startedAtMs + 2, actions: [] })).toThrow(/already planned/);
+});
+
+test("plan writes its report revision and complete plan atomically", async () => {
+  const f = await fixture();
+  const p = f.provenance();
+  f.policy.start({ provenance: p, policy: policy("yes") });
+  const restore = f.failWrites(f.store, `native-reset-policy.v1:pass:${p.passId}`, 1);
+  expect(() => f.policy.plan(p.passId, { reportRevision: REPORT, plannedAtMs: p.startedAtMs + 1, actions: [{ native: native(), account: account() }] })).toThrow(/fixture write failure/);
+  restore();
+  const afterFailure = f.policy.inspectPass(p.passId);
+  expect(afterFailure?.status).toBe("started");
+  if (!afterFailure || afterFailure.status !== "started") throw new Error("missing pass");
+  expect(afterFailure.record.plan).toBeUndefined();
+  const sealed = f.policy.plan(p.passId, { reportRevision: REPORT, plannedAtMs: p.startedAtMs + 1, actions: [{ native: native(), account: account() }] });
+  expect(sealed.plan).toMatchObject({ reportRevision: REPORT, actions: [{ index: 0 }] });
+});
+
+test("sparse and malformed plans reject before mutating the durable pass and reopen remains valid", async () => {
+  const f = await fixture();
+  const p = f.provenance();
+  f.policy.start({ provenance: p, policy: policy("yes") });
+  const key = `native-reset-policy.v1:pass:${p.passId}`;
+  const before = f.store.readMetadata<unknown>(key);
+  expect(() => f.policy.plan(p.passId, { reportRevision: REPORT, plannedAtMs: p.startedAtMs + 1,
+    actions: new Array(1) as { native: CodexResetAction; account: NativeResetAccountEvidence }[] })).toThrow(/every action index/);
+  expect(f.store.readMetadata<unknown>(key)).toEqual(before);
+  expect(() => f.policy.plan(p.passId, { reportRevision: REPORT, plannedAtMs: p.startedAtMs + 1,
+    actions: [{ native: { ...native(), target: null } as unknown as CodexResetAction, account: account() }] })).toThrow(/action target/);
+  expect(f.store.readMetadata<unknown>(key)).toEqual(before);
+  const reopened = f.reopen(f.store);
+  const inspected = reopened.policy.inspectPass(p.passId);
+  expect(inspected?.status).toBe("closed");
+  if (!inspected || inspected.status !== "closed") throw new Error("reopened pass was not valid");
+  expect(inspected.record.closed?.reason).toBe("restarted");
+  expect(inspected.record.plan).toBeUndefined();
+});
+
+test("sealed report revision survives reopen and is copied into the unchanged canonical attempt evidence", async () => {
+  const f = await fixture();
+  const p = f.planned(f.policy);
+  const admitted = f.execute(f.admit(f.policy, p));
+  const attempt = f.admissions.getAttempt(admitted.attemptId);
+  expect(attempt?.kind).toBe("automatic");
+  if (!attempt || attempt.kind !== "automatic") throw new Error("missing automatic attempt");
+  expect(attempt.evidence.provenance.reportRevision).toBe(REPORT);
+  expect(f.policy.inspectPass(p.passId)).toMatchObject({ record: { version: 2, provenance: { passId: p.passId }, plan: { reportRevision: REPORT } } });
+  f.policy.workerExited(p.workerEpoch);
+  const reopened = f.reopen(f.store);
+  expect(reopened.policy.inspectPass(p.passId)).toMatchObject({ record: { plan: { reportRevision: REPORT } } });
+  const reopenedAttempt = reopened.admissions.getAttempt(admitted.attemptId);
+  expect(reopenedAttempt?.kind).toBe("automatic");
+  if (!reopenedAttempt || reopenedAttempt.kind !== "automatic") throw new Error("missing reopened automatic attempt");
+  expect(reopenedAttempt.evidence).toEqual(attempt.evidence);
+  expect(reopenedAttempt.evidenceHash).toBe(attempt.evidenceHash);
+});
+
+test("exact v1 rows remain raw legacy history, fence old dispatches, and consume capacity without gaining a sealed report", async () => {
+  const f = await fixture({ maxPasses: 1 });
+  const p = f.planned(f.policy);
+  const admitted = f.execute(f.admit(f.policy, p));
+  const key = `native-reset-policy.v1:pass:${p.passId}`;
+  const rawCurrent = f.store.readMetadata<Record<string, unknown>>(key)!;
+  const currentPlan = rawCurrent.plan as Record<string, unknown>;
+  const legacy = { ...rawCurrent, version: 1, provenance: { ...(rawCurrent.provenance as object), reportRevision: "c64-start-report" },
+    plan: { plannedAtMs: currentPlan.plannedAtMs, actions: currentPlan.actions } };
+  f.store.writeMetadata(key, legacy);
+  const rawBefore = f.store.readMetadata<unknown>(key);
+  const reopened = f.reopen(f.store);
+  expect(reopened.policy.inspectPass(p.passId)).toEqual({ passId: p.passId, status: "legacy" });
+  expect(reopened.store.readMetadata<unknown>(key)).toEqual(rawBefore);
+  expect(reopened.admissions.getAttempt(admitted.attemptId)).toMatchObject({ state: "unknown", unknownReason: "restarted" });
+  expect(() => reopened.policy.start({ provenance: f.provenance(), policy: policy("yes") })).toThrow(/full/);
+  expect(reopened.policy.admit(p.passId, 0, { current: current(p), account: account(), credit: credit() })).toEqual({ kind: "hold", reason: "unknown-pass" });
 });

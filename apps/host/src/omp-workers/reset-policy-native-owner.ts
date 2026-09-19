@@ -1,0 +1,165 @@
+import type {
+  CodexResetPolicyOwner, NativeResetAnswer, ResetAdmission, ResetCheckpoint,
+  ResetObservation, ResetPass, ResetPermit, ResetPlanSnapshot,
+} from "@oh-my-pi/pi-coding-agent";
+import type { ResetCreditConsumeIdentity } from "@oh-my-pi/pi-ai";
+import { isDeepStrictEqual } from "node:util";
+import { ResetPolicyChannel } from "./reset-policy-channel";
+import type { ResetObservationWire, ResetPolicyWireEvidence } from "./reset-policy-wire";
+
+type Evidence<K extends ResetPolicyWireEvidence["kind"]> = Extract<ResetPolicyWireEvidence, { kind: K }>;
+
+/** A capability captured from one original native pass. Implementations must
+ * retain the actual AgentSession/AuthStorage/Settings instances, not resolve
+ * them again by ID. No production factory is supplied by this bridge. */
+export interface NativeResetPassContext {
+  readonly source: Evidence<"source">;
+  assertCurrent(): void;
+  plan(snapshot: ResetPlanSnapshot): Promise<Evidence<"plan">>;
+  persistence(snapshot: ResetPlanSnapshot, mode: "yes" | "no"): Promise<Evidence<"persistence">>;
+  admission(snapshot: ResetPlanSnapshot, actionIndex: number): Promise<{
+    evidence: Evidence<"admission">;
+    beforeConsume(identity: ResetCreditConsumeIdentity): boolean;
+  }>;
+  runDecision(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<NativeResetAnswer>): Promise<unknown>;
+}
+
+type Pass = { readonly native: ResetPass; readonly context: NativeResetPassContext };
+type IssuedPermit = { readonly pass: Pass; readonly wire: Omit<ResetPermit, "beforeConsume">; completing: boolean };
+const MAX_PASSES = 128;
+
+/** Connects the native awaited callbacks to the original worker's private
+ * channel. Evidence capture and the synchronous native consume guard remain
+ * child-local; no callback or credential object is serialized. */
+export class NativeResetChannelOwner implements CodexResetPolicyOwner {
+  readonly #passes = new Map<string, Pass>();
+  readonly #capturing = new Set<string>();
+  readonly #permits = new WeakMap<ResetPermit, IssuedPermit>();
+  #closing = false;
+
+  constructor(readonly channel: ResetPolicyChannel, private capture: (pass: ResetPass) => NativeResetPassContext) {}
+
+  #original(pass: ResetPass): Pass {
+    const current = this.#passes.get(pass.passId);
+    if (!current || current.native.nativeSessionId !== pass.nativeSessionId
+      || !isDeepStrictEqual(current.native, pass)) throw new Error("Reset pass is not the original captured pass");
+    return current;
+  }
+
+  async checkpoint(event: ResetCheckpoint): Promise<void> {
+    const native = "pass" in event ? event.pass : event.snapshot.pass;
+    let pass: Pass;
+    if (event.phase === "started" || event.phase === "joined") {
+      if (this.#closing || this.#passes.has(native.passId) || this.#capturing.has(native.passId)
+        || this.#passes.size + this.#capturing.size >= MAX_PASSES) throw new Error("Reset pass capture is unavailable");
+      this.#capturing.add(native.passId);
+      try {
+        const context = this.capture(native);
+        context.assertCurrent();
+        pass = { native: structuredClone(native), context };
+        this.#passes.set(native.passId, pass);
+      } finally { this.#capturing.delete(native.passId); }
+    } else pass = this.#original(native);
+    let evidence: ResetPolicyWireEvidence | undefined;
+    try {
+      if (event.phase === "started" || event.phase === "joined") evidence = pass.context.source;
+      else if (event.phase === "planned") {
+        pass.context.assertCurrent();
+        evidence = await pass.context.plan(event.snapshot);
+        pass.context.assertCurrent();
+      } else if (event.phase === "setting-written") {
+        // The native Settings.set has already happened. A failed proof must be
+        // recorded as failed, not replaced with another write or inferred Yes.
+        try { evidence = await pass.context.persistence(event.snapshot, event.mode); }
+        catch (error) {
+          try {
+            await this.channel.request(native.nativeSessionId, native.passId, { kind: "checkpoint", event }, { kind: "persistence", status: "failed" });
+          } catch (recordError) {
+            throw new AggregateError([error, recordError], "Native settings readback and failure accounting both failed");
+          }
+          throw error;
+        }
+      }
+      await this.channel.request(native.nativeSessionId, native.passId, { kind: "checkpoint", event }, evidence);
+    } finally {
+      if (event.phase === "finished") this.#passes.delete(native.passId);
+    }
+  }
+
+  async presentDecision(snapshot: ResetPlanSnapshot, selectNative: () => Promise<NativeResetAnswer>): Promise<void> {
+    const pass = this.#original(snapshot.pass);
+    pass.context.assertCurrent();
+    const prepared = await this.channel.request(pass.native.nativeSessionId, pass.native.passId, { kind: "decision.prepare", snapshot });
+    if (prepared.kind !== "decision.prepared") throw new Error("Reset decision was not prepared");
+    pass.context.assertCurrent();
+    await pass.context.runDecision(async interactionId => {
+      pass.context.assertCurrent();
+      await this.channel.request(pass.native.nativeSessionId, pass.native.passId,
+        { kind: "decision.bind", decisionId: prepared.decisionId, interactionId });
+      pass.context.assertCurrent();
+    }, selectNative);
+  }
+
+  async admit(snapshot: ResetPlanSnapshot, actionIndex: number): Promise<ResetAdmission> {
+    const pass = this.#original(snapshot.pass);
+    pass.context.assertCurrent();
+    const captured = await pass.context.admission(snapshot, actionIndex);
+    pass.context.assertCurrent();
+    const reply = await this.channel.request(pass.native.nativeSessionId, pass.native.passId,
+      { kind: "admit", snapshot, actionIndex }, captured.evidence);
+    if (reply.kind === "admission.hold") return { kind: "hold", reason: reply.reason };
+    if (reply.kind === "admission.join") {
+      const settled = this.channel.request(pass.native.nativeSessionId, pass.native.passId, { kind: "join", joinId: reply.joinId })
+        .then(result => {
+          if (result.kind !== "joined") throw new Error("Reset join returned no native observation");
+          return result.observation;
+        });
+      // Observe immediately; native may wait for another callback before joining.
+      void settled.catch(() => {});
+      return { kind: "join", attemptId: reply.attemptId, settled };
+    }
+    if (reply.kind !== "admission.execute") throw new Error("Reset admission returned no decision");
+    const wire = reply.permit;
+    let checked = false;
+    const permit: ResetPermit = Object.freeze({ ...wire, beforeConsume: (identity: ResetCreditConsumeIdentity) => {
+      if (checked) return false;
+      checked = true;
+      try {
+        pass.context.assertCurrent();
+        return !this.#closing && identity.provider === "openai-codex"
+          && identity.credentialId === wire.target.credentialId && identity.creditId === wire.creditId
+          && wire.target.credentialId === captured.evidence.account.credentialId
+          && wire.creditId === captured.evidence.credit.id
+          && reply.consumeIdentity.provider === identity.provider
+          && reply.consumeIdentity.credentialId === identity.credentialId
+          && reply.consumeIdentity.creditId === identity.creditId
+          && (["accountId", "orgId", "projectId"] as const).every(key => reply.consumeIdentity[key] === identity[key])
+          && (identity.accountId !== undefined || reply.consumeIdentity.email === identity.email)
+          && captured.beforeConsume(identity);
+      } catch { return false; }
+    } });
+    // Even if ownership changed during admission, return the original permit
+    // with a refusing guard. Native then reports the real no-consume outcome;
+    // throwing here would strand an already durable host admission.
+    this.#permits.set(permit, { pass, wire, completing: false });
+    return { kind: "execute", permit };
+  }
+
+  async complete(permit: ResetPermit, observation: ResetObservation): Promise<void> {
+    const issued = this.#permits.get(permit);
+    if (!issued || issued.completing) throw new Error("Reset permit is foreign or already completing");
+    issued.completing = true;
+    const safe: ResetObservationWire = observation.result.kind === "error"
+      ? { consumeBoundary: observation.consumeBoundary, result: { kind: "error", error: { name: "Error", message: "Native reset operation failed" } } }
+      : { consumeBoundary: observation.consumeBoundary, result: { kind: "outcome", outcome: {
+          ok: observation.result.outcome.ok, code: observation.result.outcome.code,
+          ...(observation.result.outcome.creditId === undefined ? {} : { creditId: observation.result.outcome.creditId }),
+        } } };
+    await this.channel.request(issued.pass.native.nativeSessionId, issued.pass.native.passId,
+      { kind: "complete", permit: issued.wire, observation: safe });
+  }
+
+  beginClose(): void { this.#closing = true; this.channel.beginClose(); }
+  /** Call only after native callbacks have drained, never before their final checkpoints. */
+  finish(): Promise<void> { this.#closing = true; return this.channel.finish(); }
+}
