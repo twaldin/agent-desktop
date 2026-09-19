@@ -7,6 +7,7 @@ import { hasAttachmentIntent } from "./attachment-protocol";
 import { hasEnvironmentIntent } from "./environment-protocol";
 import { hasSelectedTextIntent } from "./selected-text-protocol";
 import { hasWholeFileIntent, hasInlineFileIntent, hasRepeatedWholeFileIntent } from "./whole-file-protocol";
+import { usageCommandHeaders } from "./session-usage-http";
 import { parseCommandEnvelope } from "./validation";
 
 const remote = { type: "branch" as const, branchName: "topic", remoteRef: "refs/remotes/origin/topic" };
@@ -24,6 +25,8 @@ async function route() {
   const calls: Array<{ envelope: CommandEnvelope; version: number }> = [];
   const deps = { parseCommandEnvelope, hasSessionForkIntent, hasRemoteWorktreeIntent, hasNewChatIntent, hasApprovalIntent, hasAttachmentIntent, hasEnvironmentIntent,
     hasSelectedTextIntent, hasWholeFileIntent, hasInlineFileIntent, hasRepeatedWholeFileIntent,
+    usageCommandHeaders,
+    store: { host: { id: "host" } },
     dispatch: async (envelope: CommandEnvelope, version: number) => { calls.push({ envelope, version }); return { ok: true }; } };
   const body = `return async function(request) { const url = new URL(request.url); ${source.slice(start, end)} return new Response(null, {status:404}); }`;
   const handle = new Function(...Object.keys(deps), body)(...Object.values(deps)) as (request: Request) => Promise<Response>;
