@@ -66,7 +66,7 @@ export async function packageHost(options: { version: string; output: string; re
   const excluded = new Set(options.excludeSources ?? []);
   if (!options.nativeBundles?.length) throw new Error("Include the verified native terminal runtime with --tmux-bundle before packaging this host version.");
   const files = ["package.json", "bun.lock", "apps/host/package.json", "apps/desktop/package.json", "packages/shared/package.json",
-    "scripts/install-host.ts", "scripts/package-host.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts", ...await sources(join(repository, "apps/host/src"), repository, excluded),
+    "scripts/install-host.ts", "scripts/package-host.ts", "scripts/restore-pinned-omp-cli-mode.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts", ...await sources(join(repository, "apps/host/src"), repository, excluded),
     ...await sources(join(repository, "packages/shared/src"), repository, excluded), ...patchedDependencySources(manifest)].sort();
   const staging = await mkdtemp(join(tmpdir(), "agent-desktop-package-"));
   try {

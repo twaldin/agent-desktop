@@ -16,7 +16,7 @@ export async function packageManagedOmp(output: string, version: string) {
   assertHostRuntimePins(manifest);
   if (!manifest.patchedDependencies?.["@oh-my-pi/pi-utils@18.1.10"]) throw new Error("Managed dotenv patch is required.");
   const files = ["package.json", "bun.lock", "apps/host/package.json", "apps/desktop/package.json", "packages/shared/package.json",
-    "apps/host/src/runtime-ownership.ts", ...Object.values(manifest.patchedDependencies) as string[]];
+    "apps/host/src/runtime-ownership.ts", "scripts/restore-pinned-omp-cli-mode.ts", ...Object.values(manifest.patchedDependencies) as string[]];
   await mkdir(join(output, "bin"), {recursive:true});
   output = await realpath(output);
   for (const file of files) {

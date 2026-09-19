@@ -1,5 +1,5 @@
 diff --git a/dist/types/commit/conventional/service.d.ts b/dist/types/commit/conventional/service.d.ts
-index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e1882c5df 100644
+index bd6991c..e5fb07a 100644
 --- a/dist/types/commit/conventional/service.d.ts
 +++ b/dist/types/commit/conventional/service.d.ts
 @@ -8,6 +8,12 @@ export interface GenerateGitCommitOptions {
@@ -22,7 +22,7 @@ index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
 diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/types/extensibility/plugins/marketplace/cache.d.ts
-index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b4da5d976 100644
+index 244fb84..c268062 100644
 --- a/dist/types/extensibility/plugins/marketplace/cache.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/cache.d.ts
 @@ -22,7 +22,7 @@ export declare function getCachedPluginPath(cacheDir: string, marketplace: strin
@@ -35,7 +35,7 @@ index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b
   * Synchronous check — true when the cache directory exists on disk.
   * Uses `existsSync` because callers may need to run this check inline without async.
 diff --git a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
-index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f5363c3a0c52 100644
+index 54f6204..a1c142d 100644
 --- a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 @@ -3,7 +3,7 @@
@@ -65,7 +65,7 @@ index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f536
   * Promote a temporary clone directory to its final cache location.
   *
 diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
-index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013cf45b464 100644
+index 85d413a..21dbcd8 100644
 --- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
 @@ -5,7 +5,7 @@
@@ -103,7 +103,7 @@ index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013
      listInstalledPlugins(): Promise<InstalledPluginSummary[]>;
      setPluginEnabled(pluginId: string, enabled: boolean, scope?: "user" | "project"): Promise<void>;
 diff --git a/dist/types/extensibility/plugins/marketplace/types.d.ts b/dist/types/extensibility/plugins/marketplace/types.d.ts
-index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67738aec06 100644
+index 6d66e30..d8a6893 100644
 --- a/dist/types/extensibility/plugins/marketplace/types.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/types.d.ts
 @@ -88,10 +88,15 @@ export interface MarketplacesRegistry {
@@ -123,7 +123,7 @@ index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67
      addedAt: string;
      updatedAt: string;
 diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
-index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d396253e88b 100644
+index fb43dfe..9401964 100644
 --- a/dist/types/mcp/client.d.ts
 +++ b/dist/types/mcp/client.d.ts
 @@ -1,3 +1,4 @@
@@ -140,7 +140,7 @@ index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d39
      onNotification?: (method: string, params: unknown) => void;
      onRequest?: (method: string, params: unknown) => Promise<unknown>;
 diff --git a/dist/types/mcp/errors.d.ts b/dist/types/mcp/errors.d.ts
-index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6af7beb0ed 100644
+index 35c2750..31df5e7 100644
 --- a/dist/types/mcp/errors.d.ts
 +++ b/dist/types/mcp/errors.d.ts
 @@ -15,6 +15,11 @@ interface MCPTransportErrorOptions {
@@ -165,7 +165,7 @@ index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6a
  export declare function mcpTraceIdFromHeaders(headers: Headers): string | undefined;
  /** Preserve a server-provided JSON-RPC error without exposing credential-shaped data. */
 diff --git a/dist/types/mcp/loader.d.ts b/dist/types/mcp/loader.d.ts
-index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf0316ccd78bd 100644
+index 88cb17b..083b2f7 100644
 --- a/dist/types/mcp/loader.d.ts
 +++ b/dist/types/mcp/loader.d.ts
 @@ -21,6 +21,7 @@ export interface MCPToolsLoadResult {
@@ -177,7 +177,7 @@ index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf031
      onStatus?: (event: McpConnectionStatusEvent) => void;
      /** Whether to load project-level config (default: true) */
 diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e9f515cdf 100644
+index 9933dc7..3df0403 100644
 --- a/dist/types/mcp/manager.d.ts
 +++ b/dist/types/mcp/manager.d.ts
 @@ -39,6 +39,9 @@ export interface MCPLoadResult {
@@ -216,7 +216,7 @@ index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e
       * Refresh tools from a specific server.
 diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e04e8a9c45
+index 0000000..5f5ec41
 --- /dev/null
 +++ b/dist/types/mcp/resource-subscriptions.d.ts
 @@ -0,0 +1,4 @@
@@ -225,7 +225,7 @@ index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e0
 +export declare function setManagedResourceSubscription(connection: MCPServerConnection, uri: string, enabled: boolean, options?: MCPRequestOptions): Promise<void>;
 +export declare function retainResourceSubscription(connection: MCPServerConnection, uri: string, options?: MCPRequestOptions): Promise<MCPResourceSubscription>;
 diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
-index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d46cc55212 100644
+index 7a53726..9ad0821 100644
 --- a/dist/types/mcp/tool-bridge.d.ts
 +++ b/dist/types/mcp/tool-bridge.d.ts
 @@ -13,6 +13,7 @@ import type { MCPAuthChallenge, MCPContent, MCPServerConnection, MCPToolDefiniti
@@ -250,7 +250,7 @@ index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d4
      provider?: string;
      /** Provider display name (e.g., "Claude Code", "MCP Config") */
 diff --git a/dist/types/mcp/transports/sse.d.ts b/dist/types/mcp/transports/sse.d.ts
-index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110b6be85eb 100644
+index e448695..61c7a8a 100644
 --- a/dist/types/mcp/transports/sse.d.ts
 +++ b/dist/types/mcp/transports/sse.d.ts
 @@ -15,10 +15,10 @@ export declare class LegacySseTransport implements MCPTransport {
@@ -267,7 +267,7 @@ index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110
 -export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
 +export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;
 diff --git a/dist/types/mcp/types.d.ts b/dist/types/mcp/types.d.ts
-index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bbe734d2ec 100644
+index 8b623f5..90dfda5 100644
 --- a/dist/types/mcp/types.d.ts
 +++ b/dist/types/mcp/types.d.ts
 @@ -155,6 +155,7 @@ export interface MCPImplementation {
@@ -279,7 +279,7 @@ index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bb
          listChanged?: boolean;
      };
 diff --git a/dist/types/modes/components/plan-review-overlay.d.ts b/dist/types/modes/components/plan-review-overlay.d.ts
-index 5dad6c38d23106b9a4254454e1286827e39e904c..4184a146709a623da89eebc0e9a251a2247bced1 100644
+index 5dad6c3..4184a14 100644
 --- a/dist/types/modes/components/plan-review-overlay.d.ts
 +++ b/dist/types/modes/components/plan-review-overlay.d.ts
 @@ -18,28 +18,8 @@
@@ -314,7 +314,7 @@ index 5dad6c38d23106b9a4254454e1286827e39e904c..4184a146709a623da89eebc0e9a251a2
      /** Invoked with the chosen option label (never a disabled one). */
      onPick: (label: string) => void;
 diff --git a/dist/types/modes/interactive-mode.d.ts b/dist/types/modes/interactive-mode.d.ts
-index 4965e2bd73dd47532ac9b08c5a9625d7c1093ef1..170b339567661af0804128e2d24e38b48886d6d3 100644
+index 4965e2b..170b339 100644
 --- a/dist/types/modes/interactive-mode.d.ts
 +++ b/dist/types/modes/interactive-mode.d.ts
 @@ -58,7 +58,7 @@ export declare function computeEditorMaxHeight(terminalRows: number): number;
@@ -328,7 +328,7 @@ index 4965e2bd73dd47532ac9b08c5a9625d7c1093ef1..170b339567661af0804128e2d24e38b4
      /** Providers that were migrated during startup */
 diff --git a/dist/types/plan-mode/plan-review-document.d.ts b/dist/types/plan-mode/plan-review-document.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..d1fcab9826b04deb4c1937ea2e3707d7381b74a3
+index 0000000..d1fcab9
 --- /dev/null
 +++ b/dist/types/plan-mode/plan-review-document.d.ts
 @@ -0,0 +1,89 @@
@@ -423,7 +423,7 @@ index 0000000000000000000000000000000000000000..d1fcab9826b04deb4c1937ea2e3707d7
 +export declare function combinePlanReviewFeedback(documentFeedback: string, additionalFeedback: string): string;
 diff --git a/dist/types/plan-mode/startup.d.ts b/dist/types/plan-mode/startup.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..baaa5c1bb346acd306704b6dfca58974846b00cb
+index 0000000..baaa5c1
 --- /dev/null
 +++ b/dist/types/plan-mode/startup.d.ts
 @@ -0,0 +1,3 @@
@@ -431,10 +431,28 @@ index 0000000000000000000000000000000000000000..baaa5c1bb346acd306704b6dfca58974
 +import type { SessionManager } from "../session/session-manager.js";
 +export declare function shouldEnterPlanModeOnStartup(sessionManager: Pick<SessionManager, "buildSessionContext" | "getEntries">, sessionSettings: Pick<Settings, "get">): boolean;
 diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
-index e3b75c288b6c8ded7d709832d65a2cf993461374..bfa51d7b8fdd311b57d32d1e5d21645ccfdaab38 100644
+index e3b75c2..6849a00 100644
 --- a/dist/types/sdk.d.ts
 +++ b/dist/types/sdk.d.ts
-@@ -191,6 +191,7 @@ export interface CreateAgentSessionOptions {
+@@ -18,7 +18,7 @@ import { type LocalProtocolOptions } from "./internal-urls/index.js";
+ import { MCPManager, type MCPToolsLoadResult } from "./mcp/index.js";
+ import type { MnemopiSessionState } from "./mnemopi/state.js";
+ import { type AgentRef, AgentRegistry } from "./registry/agent-registry.js";
+-import { AgentSession, type PlanYolo, type Prewalk } from "./session/agent-session.js";
++import { AgentSession, type CodexResetPolicyOwner, type PlanYolo, type Prewalk } from "./session/agent-session.js";
+ import type { AuthStorage } from "./session/auth-storage.js";
+ import { SessionManager } from "./session/session-manager.js";
+ import { type BuildSystemPromptResult } from "./system-prompt.js";
+@@ -40,6 +40,8 @@ export interface CreateAgentSessionOptions {
+     authStorage?: AuthStorage;
+     /** Model registry. Default: discoverModels(authStorage, agentDir) */
+     modelRegistry?: ModelRegistry;
++    /** Optional durable owner for native saved-reset policy; omitted preserves native behavior. */
++    codexResetPolicyOwner?: CodexResetPolicyOwner;
+     /**
+      * Request credential resolver. Defaults to the model registry's normal
+      * session-affine resolver. Security scans use this narrow seam to keep one
+@@ -191,6 +193,7 @@ export interface CreateAgentSessionOptions {
       * true.
       */
      enableMCP?: boolean;
@@ -442,7 +460,7 @@ index e3b75c288b6c8ded7d709832d65a2cf993461374..bfa51d7b8fdd311b57d32d1e5d21645c
      /** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
      mcpManager?: MCPManager;
      /** Enable LSP integration (tool, formatting, diagnostics, warmup). Default: true */
-@@ -303,6 +304,8 @@ export interface CreateAgentSessionOptions {
+@@ -303,6 +306,8 @@ export interface CreateAgentSessionOptions {
  export interface CreateAgentSessionResult {
      /** The created session */
      session: AgentSession;
@@ -451,10 +469,145 @@ index e3b75c288b6c8ded7d709832d65a2cf993461374..bfa51d7b8fdd311b57d32d1e5d21645c
      /** Extensions result (loaded extensions + runtime) */
      extensionsResult: LoadExtensionsResult;
      /** Update tool UI context (interactive mode) */
+diff --git a/dist/types/session/agent-session-types.d.ts b/dist/types/session/agent-session-types.d.ts
+index 7fd5684..e211590 100644
+--- a/dist/types/session/agent-session-types.d.ts
++++ b/dist/types/session/agent-session-types.d.ts
+@@ -1,5 +1,5 @@
+ import type { Agent, AgentMessage, AgentTool, AgentToolContext, StreamFn, ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+-import type { Context, Effort, ImageContent, Message, MessageAttribution, Model, OAuthAccountSummary, ServiceTierByFamily, SimpleStreamOptions, ToolChoice } from "@oh-my-pi/pi-ai";
++import type { Context, Effort, ImageContent, Message, MessageAttribution, Model, OAuthAccountIdentity, OAuthAccountSummary, ResetCreditConsumeIdentity, ResetCreditRedeemOutcome, ServiceTierByFamily, SimpleStreamOptions, ToolChoice } from "@oh-my-pi/pi-ai";
+ import type { postmortem } from "@oh-my-pi/pi-utils";
+ import type { AdvisorConfig } from "../advisor/index.js";
+ import type { AsyncJob, AsyncJobDeliveryState, AsyncJobManager } from "../async/index.js";
+@@ -20,8 +20,104 @@ import type { FileSlashCommand } from "../extensibility/slash-commands.js";
+ import type { SecretObfuscator } from "../secrets/obfuscator.js";
+ import type { ConfiguredThinkingLevel } from "../thinking.js";
+ import type { XdevState } from "../tools/xdev.js";
+-import type { CodexAutoRedeemCoordinator } from "./codex-auto-reset.js";
++import type { CodexAutoRedeemCoordinator, CodexResetPlan } from "./codex-auto-reset.js";
+ import type { SessionManager } from "./session-manager.js";
++/** The native selector's exact answer; undefined never authorizes a spend. */
++export type NativeResetAnswer = "Yes" | "No" | undefined;
++export type ResetPolicySnapshot = Readonly<{
++    autoRedeem: "unset" | "yes" | "no";
++    minBlockedMinutes: number;
++    keepCredits: number;
++    salvageHorizonHours: number;
++}>;
++/** Original native provenance. passId is not the account/episode deduplication key. */
++export type ResetPass = Readonly<{
++    passId: string;
++    nativeSessionId: string;
++    trigger: "blocked" | "sweep";
++    source: "manual" | "background" | "blocked";
++    startedAtMs: number;
++    provider: string;
++    modelId: string;
++    codexBaseUrl?: string;
++    identity?: Readonly<OAuthAccountIdentity>;
++    activeBlockUnblockAtMs?: number;
++    policy: ResetPolicySnapshot;
++}>;
++/** A detached, deeply frozen copy of the unchanged native planner's result. */
++export type ResetPlanSnapshot = Readonly<{
++    pass: ResetPass;
++    plannedAtMs: number;
++    plan: Readonly<CodexResetPlan>;
++}>;
++/** One exact, durably admitted native call. Never retarget or replay this permit. */
++export type ResetPermit = Readonly<{
++    attemptId: string;
++    target: Readonly<{ credentialId: number }>;
++    creditId: string;
++    redeemRequestId: string;
++    beforeConsume: (identity: ResetCreditConsumeIdentity) => boolean;
++}>;
++export type ConsumeBoundary = "not-reached" | "refused" | "passed";
++/** Worker-local observation; owners must sanitize errors before durable/IPC projection. */
++export type ResetObservation = Readonly<{
++    consumeBoundary: ConsumeBoundary;
++    result: {
++        kind: "outcome";
++        outcome: ResetCreditRedeemOutcome;
++    } | {
++        kind: "error";
++        error: unknown;
++    };
++}>;
++export type ResetAdmission = {
++    kind: "execute";
++    permit: ResetPermit;
++} | {
++    kind: "join";
++    attemptId: string;
++    settled: Promise<ResetObservation>;
++} | {
++    kind: "hold";
++    reason: "unknown" | "stale" | "identity-unresolved" | "credit-unavailable" | "owner-unavailable";
++};
++/** Settlement of native work, not a claim that every credit was redeemed. */
++export type ResetSettlement = Readonly<{
++    state: "settled" | "held" | "cancelled" | "failed";
++    applied: number;
++    attemptIds: readonly string[];
++    refresh: "not-needed" | "complete" | "failed";
++}>;
++export type ResetCheckpoint = {
++    phase: "started";
++    pass: ResetPass;
++} | {
++    phase: "planned";
++    snapshot: ResetPlanSnapshot;
++} | {
++    phase: "joined";
++    pass: ResetPass;
++    originalPassId: string;
++} | {
++    phase: "answer";
++    snapshot: ResetPlanSnapshot;
++    answer: NativeResetAnswer;
++} | {
++    phase: "setting-written";
++    snapshot: ResetPlanSnapshot;
++    mode: "yes" | "no";
++} | {
++    phase: "finished";
++    pass: ResetPass;
++    settlement: ResetSettlement;
++};
++/** Optional original-session owner. Methods are awaited durability barriers, not telemetry. */
++export interface CodexResetPolicyOwner {
++    checkpoint(event: ResetCheckpoint): Promise<void>;
++    presentDecision(snapshot: ResetPlanSnapshot, selectNative: () => Promise<NativeResetAnswer>): Promise<void>;
++    admit(snapshot: ResetPlanSnapshot, actionIndex: number): Promise<ResetAdmission>;
++    complete(permit: ResetPermit, observation: ResetObservation): Promise<void>;
++}
+ /** Maximum time the interactive shutdown path waits for Mnemopi consolidation. */
+ export declare const SHUTDOWN_CONSOLIDATE_BUDGET_MS = 1500;
+ /** Options controlling session disposal. */
+@@ -209,6 +305,8 @@ export interface AgentSessionConfig {
+     preferWebsockets?: boolean;
+     /** Codex saved-reset coordinator; defaults to the process-wide singleton so concurrent sessions can't double-spend. Inject a fresh one in tests. */
+     codexResetCoordinator?: CodexAutoRedeemCoordinator;
++    /** Optional durable owner; native reset planning and unowned defaults remain unchanged. */
++    codexResetPolicyOwner?: CodexResetPolicyOwner;
+     /** Provider payload hook used by the active session request path. */
+     onPayload?: SimpleStreamOptions["onPayload"];
+     /** Provider response hook used by the active session request path. */
 diff --git a/dist/types/session/agent-session.d.ts b/dist/types/session/agent-session.d.ts
-index c55844cb2f282616605e385234ee3888f0d84ce3..6900ab8d3601c32537fd1f336f6b31045f33bd8a 100644
+index c55844c..0a8056a 100644
 --- a/dist/types/session/agent-session.d.ts
 +++ b/dist/types/session/agent-session.d.ts
+@@ -53,7 +53,7 @@ import type { TodoPhase } from "../tools/todo.js";
+ import type { WorkPoolYieldItem } from "../task/workpool-yield.js";
+ import type { VibeModeState } from "../vibe/state.js";
+ import type { AgentSessionEvent, AgentSessionEventListener } from "./agent-session-events.js";
+-import type { AgentSessionConfig, AgentSessionDisposeOptions, AsyncJobSnapshot, CommandMetadataChangedListener, ContextUsageBreakdown, DroppedPrompt, FollowUpOptions, FreshSessionResult, HandoffResult, ModelCycleResult, Prewalk, PromptOptions, ResetSessionContextResult, ResolvedRoleModel, RestoredQueuedMessage, RoleModelCycle, RoleModelCycleResult, SessionHandoffOptions, SessionOAuthAccountList, SessionStats, UsageFallbackConfirmer } from "./agent-session-types.js";
++import type { AgentSessionConfig, AgentSessionDisposeOptions, AsyncJobSnapshot, CommandMetadataChangedListener, ContextUsageBreakdown, DroppedPrompt, FollowUpOptions, FreshSessionResult, HandoffResult, ModelCycleResult, Prewalk, PromptOptions, ResetSessionContextResult, ResetSettlement, ResolvedRoleModel, RestoredQueuedMessage, RoleModelCycle, RoleModelCycleResult, SessionHandoffOptions, SessionOAuthAccountList, SessionStats, UsageFallbackConfirmer } from "./agent-session-types.js";
+ import type { ClientBridge } from "./client-bridge.js";
+ import { type CustomMessage, type CustomMessagePayload } from "./messages.js";
+ import type { ServingModel } from "./retry-fallback-chains.js";
 @@ -129,11 +129,13 @@ export declare class AgentSession {
      /** Clear stale non-forcing pending preview invokers after a resolve dispatch proves none can run. */
      clearPendingInvokers(): void;
@@ -473,8 +626,49 @@ index c55844cb2f282616605e385234ee3888f0d84ce3..6900ab8d3601c32537fd1f336f6b3104
      /** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
      get toolChoiceQueue(): ToolChoiceQueue;
      /** Peek the in-flight directive's invocation handler for the preview-resolution dispatch. */
+@@ -1079,6 +1081,40 @@ export declare class AgentSession {
+      */
+     get contextUsageRevision(): number;
+     fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null>;
++    /**
++     * Fetch usage like {@link AgentSession.fetchUsageReports}, then wait for
++     * exactly the owned Codex reset-policy work this fetch scheduled or
++     * adopted: the sweep it started, or — when the native sweep gate deferred
++     * to work already in flight — that in-flight sweep/blocked pass, including
++     * each pass's completion callbacks and post-reset refresh. Report and
++     * policy outcomes stay separate: a report failure throws like the plain
++     * fetch; a policy failure is reported in `policy`. Adopted owner-tracked work
++     * reports its original settlement, including work owned by another
++     * session. Unowned native work is awaited and reported as `held`. Requires a configured
++     * `codexResetPolicyOwner`; the plain fetch stays the unowned path. Never
++     * call this from inside a pass or its refresh: it would join itself.
++     */
++    fetchUsageReportsWithResetPolicy(options?: {
++        signal?: AbortSignal;
++        source?: "manual" | "background";
++    }): Promise<{
++        reports: UsageReport[] | null;
++        policy: ResetSettlement;
++    }>;
++    /**
++     * Wait until every owned Codex reset pass of THIS session has settled:
++     * eligibility, select, consume, owner completion and post-reset refresh,
++     * plus owned usage fetches that could still schedule one. Settled means
++     * the promises finished, not that credits were reset: the returned
++     * settlement aggregates the drained passes, so a failed completion or
++     * checkpoint acknowledgement surfaces as `state: "failed"` and stays
++     * inspectable through the owner. Required ordering at shutdown:
++     * `beginDispose()` (fences new admission, cancels a pending select) →
++     * this drain → `dispose()`; `dispose()` itself runs this drain bounded by
++     * a 20s deadline. A consume already dispatched still runs to its native
++     * timeout rather than being aborted.
++     */
++    drainCodexResetPolicy(): Promise<ResetSettlement>;
+     /** Models whose live `/usage` reports map to a quantitative provider scope. */
+     getUsageReportingModelSelectors(reports: readonly UsageReport[]): string[];
+     /** List stored OAuth accounts for the current model provider and mark this session's active account. */
 diff --git a/dist/types/session/tool-choice-queue.d.ts b/dist/types/session/tool-choice-queue.d.ts
-index 1c9f2ba7cb0cad11c065653e22694759c4775044..48c1b4951f2381341e88ac4dbe8ec0d2a186a0e0 100644
+index 1c9f2ba..48c1b49 100644
 --- a/dist/types/session/tool-choice-queue.d.ts
 +++ b/dist/types/session/tool-choice-queue.d.ts
 @@ -26,6 +26,11 @@ export interface DirectiveCallbacks {
@@ -527,7 +721,7 @@ index 1c9f2ba7cb0cad11c065653e22694759c4775044..48c1b4951f2381341e88ac4dbe8ec0d2
       * Advance the head directive and return its next yield. Records the value
       * as in-flight until resolve() or reject() is called.
 diff --git a/dist/types/slash-commands/helpers/todo.d.ts b/dist/types/slash-commands/helpers/todo.d.ts
-index c619619197a2ac41b648c611dbea5c8c441f6e5a..ae8b05001632d848360251f5241650ee9e8cebf6 100644
+index c619619..ae8b050 100644
 --- a/dist/types/slash-commands/helpers/todo.d.ts
 +++ b/dist/types/slash-commands/helpers/todo.d.ts
 @@ -1,3 +1,29 @@
@@ -561,7 +755,7 @@ index c619619197a2ac41b648c611dbea5c8c441f6e5a..ae8b05001632d848360251f5241650ee
  /** ACP/text-mode `/todo` handler. Shared by both dispatchers via the spec. */
  export declare function handleTodoAcp(command: ParsedSlashCommand, runtime: SlashCommandRuntime): Promise<SlashCommandResult>;
 diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
-index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
+index 67ab2e0..28b1ef2 100644
 --- a/dist/types/tools/browser.d.ts
 +++ b/dist/types/tools/browser.d.ts
 @@ -1,3 +1,5 @@
@@ -608,7 +802,7 @@ index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969e
 +export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ace39556d1
+index 0000000..caed131
 --- /dev/null
 +++ b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 @@ -0,0 +1,37 @@
@@ -650,7 +844,7 @@ index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ac
 +    assertCurrent(): void;
 +}): Readonly<CdpEvaluationOpening>;
 diff --git a/dist/types/tools/browser/cmux/cmux-tab.d.ts b/dist/types/tools/browser/cmux/cmux-tab.d.ts
-index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45e1a08493 100644
+index f5d460b..75aae00 100644
 --- a/dist/types/tools/browser/cmux/cmux-tab.d.ts
 +++ b/dist/types/tools/browser/cmux/cmux-tab.d.ts
 @@ -56,7 +56,7 @@ export interface RunCmuxCodeOptions {
@@ -689,7 +883,7 @@ index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45
 +export declare function createRetainedCmuxTab(state: CmuxRetainedState, client: Pick<CmuxSocketClient, "request">): CmuxTab;
 diff --git a/dist/types/tools/browser/cmux/evaluation-channel.d.ts b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f123e704b5
+index 0000000..e6d2440
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 @@ -0,0 +1,8 @@
@@ -702,7 +896,7 @@ index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f1
 +}
 +export declare function createCmuxEvaluationChannel(tab: CmuxTab, source: Pick<CmuxSocketClient, "request"> & { assertCurrent(): void }): Readonly<CmuxEvaluationChannel>;
 diff --git a/dist/types/tools/browser/cmux/socket-client.d.ts b/dist/types/tools/browser/cmux/socket-client.d.ts
-index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9b15ebca6 100644
+index e94d47c..e8f5c5c 100644
 --- a/dist/types/tools/browser/cmux/socket-client.d.ts
 +++ b/dist/types/tools/browser/cmux/socket-client.d.ts
 @@ -1,9 +1,17 @@
@@ -739,7 +933,7 @@ index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9
  }
 diff --git a/dist/types/tools/browser/cmux/surface-observation.d.ts b/dist/types/tools/browser/cmux/surface-observation.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b17305183
+index 0000000..6ebb03b
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/surface-observation.d.ts
 @@ -0,0 +1,14 @@
@@ -758,7 +952,7 @@ index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b
 +/** Capture before creation/adoption. Does not connect, lease, or establish server incarnation. */
 +export declare function captureCmuxSurfaceObservation(client: CmuxSocketClient, timeoutMs: number): CmuxSurfaceObservation;
 diff --git a/dist/types/tools/browser/relay/protocol.d.ts b/dist/types/tools/browser/relay/protocol.d.ts
-index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491ffac07771 100644
+index 6fd1252..58a7c0b 100644
 --- a/dist/types/tools/browser/relay/protocol.d.ts
 +++ b/dist/types/tools/browser/relay/protocol.d.ts
 @@ -19,6 +19,9 @@ export interface TabSnapshot {
@@ -782,7 +976,7 @@ index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491f
      tabs: TabSnapshot[];
 diff --git a/dist/types/tools/browser/run-context.d.ts b/dist/types/tools/browser/run-context.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc09ce3bcb
+index 0000000..8e4fc00
 --- /dev/null
 +++ b/dist/types/tools/browser/run-context.d.ts
 @@ -0,0 +1,9 @@
@@ -796,7 +990,7 @@ index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc
 +}
 +export declare function createBrowserRunContext(session: ToolSession, snapshot?: SessionSnapshot): BrowserRunContext;
 diff --git a/dist/types/tools/browser/tab-protocol.d.ts b/dist/types/tools/browser/tab-protocol.d.ts
-index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f5350b08b95 100644
+index 4411a20..0d51ece 100644
 --- a/dist/types/tools/browser/tab-protocol.d.ts
 +++ b/dist/types/tools/browser/tab-protocol.d.ts
 @@ -40,7 +40,20 @@ export interface SessionSnapshot {
@@ -822,7 +1016,7 @@ index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f53
      browserWSEndpoint: string;
      safeDir: string;
 diff --git a/dist/types/tools/browser/tab-supervisor.d.ts b/dist/types/tools/browser/tab-supervisor.d.ts
-index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba2266bde73f7 100644
+index a822a71..d613600 100644
 --- a/dist/types/tools/browser/tab-supervisor.d.ts
 +++ b/dist/types/tools/browser/tab-supervisor.d.ts
 @@ -1,4 +1,5 @@
@@ -883,7 +1077,7 @@ index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba226
 +export declare function openReservedCdpEvaluation(ownerSessionId: string, target: OwnerTabViewportTarget, operationId: string, timeoutMs: number): Promise<Readonly<import("./cdp-evaluation-channel.js").CdpEvaluationChannel>>;
 diff --git a/dist/types/tools/browser/target-observation.d.ts b/dist/types/tools/browser/target-observation.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb421abd75
+index 0000000..0328314
 --- /dev/null
 +++ b/dist/types/tools/browser/target-observation.d.ts
 @@ -0,0 +1,8 @@
@@ -896,7 +1090,7 @@ index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
 diff --git a/dist/types/tools/todo.d.ts b/dist/types/tools/todo.d.ts
-index cc45c4c5b419c81432a7f94562508de51fd61379..19dc56c0adb44273bb10ca7c05025df70d7e457b 100644
+index cc45c4c..19dc56c 100644
 --- a/dist/types/tools/todo.d.ts
 +++ b/dist/types/tools/todo.d.ts
 @@ -1,10 +1,11 @@
@@ -959,7 +1153,7 @@ index cc45c4c5b419c81432a7f94562508de51fd61379..19dc56c0adb44273bb10ca7c05025df7
   * Report whether `content` likely names the same work as any entry in
   * `descriptions`. Used by the sticky todo panel to light up a pending todo
 diff --git a/src/blob-broker/uploaders-object-storage.ts b/src/blob-broker/uploaders-object-storage.ts
-index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906beeee2f0e 100644
+index 3ff2d47..8865e1b 100644
 --- a/src/blob-broker/uploaders-object-storage.ts
 +++ b/src/blob-broker/uploaders-object-storage.ts
 @@ -254,7 +254,7 @@ function createS3Uploader(destination: BlobDestinationId, config: DestinationRun
@@ -972,7 +1166,7 @@ index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906b
  	for (const part of parts) length += part.byteLength;
  	const result = new Uint8Array(length);
 diff --git a/src/collab/protocol.ts b/src/collab/protocol.ts
-index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959dd061c94 100644
+index 92e904f..4d14b74 100644
 --- a/src/collab/protocol.ts
 +++ b/src/collab/protocol.ts
 @@ -111,7 +111,7 @@ export type CollabFrame =
@@ -985,7 +1179,7 @@ index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959
  	new DataView(out.buffer).setUint32(0, peerId, false);
  	out.set(sealed, ENVELOPE_HEADER_LENGTH);
 diff --git a/src/collab/relay-client.ts b/src/collab/relay-client.ts
-index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11c80bb580 100644
+index 8f2ea5c..3270855 100644
 --- a/src/collab/relay-client.ts
 +++ b/src/collab/relay-client.ts
 @@ -52,7 +52,7 @@ export class CollabSocket {
@@ -1007,7 +1201,7 @@ index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11
  			logger.debug("collab: dropping frame, reconnect buffer full", { t: frameType });
  			return;
 diff --git a/src/commit/conventional/service.ts b/src/commit/conventional/service.ts
-index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f16816c4faa67 100644
+index de01f53..6e98843 100644
 --- a/src/commit/conventional/service.ts
 +++ b/src/commit/conventional/service.ts
 @@ -29,6 +29,13 @@ export interface GenerateGitCommitOptions {
@@ -1061,7 +1255,7 @@ index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f1681
  	} finally {
  		await inference.dispose();
 diff --git a/src/config/model-registry.ts b/src/config/model-registry.ts
-index 9b6317446d66d7a95aeee1545139719227909bdb..23218089a6a4ef70fdd9cb3ebf254e1154460d92 100644
+index 9b63174..2321808 100644
 --- a/src/config/model-registry.ts
 +++ b/src/config/model-registry.ts
 @@ -29,6 +29,7 @@ import { getBundledModels, getBundledProviders } from "@oh-my-pi/pi-catalog/mode
@@ -1186,7 +1380,7 @@ index 9b6317446d66d7a95aeee1545139719227909bdb..23218089a6a4ef70fdd9cb3ebf254e11
  		if (!discoveryConfig) {
  			return model;
 diff --git a/src/export/share.ts b/src/export/share.ts
-index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2c980a559 100644
+index 1d1ed9e..6f9fbb8 100644
 --- a/src/export/share.ts
 +++ b/src/export/share.ts
 @@ -663,7 +663,7 @@ async function shareViaServer(
@@ -1199,7 +1393,7 @@ index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2
  	try {
  		res = await fetch(base, {
 diff --git a/src/extensibility/plugins/marketplace/cache.ts b/src/extensibility/plugins/marketplace/cache.ts
-index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d172813bc57 100644
+index 6745cc7..c919217 100644
 --- a/src/extensibility/plugins/marketplace/cache.ts
 +++ b/src/extensibility/plugins/marketplace/cache.ts
 @@ -54,11 +54,56 @@ export function getCachedPluginPath(
@@ -1296,7 +1490,7 @@ index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d17
  	} catch (err) {
  		// Clean up staging dir on any failure; leave existing targetPath intact
 diff --git a/src/extensibility/plugins/marketplace/fetcher.ts b/src/extensibility/plugins/marketplace/fetcher.ts
-index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb922d4f009 100644
+index 389da79..75a3c78 100644
 --- a/src/extensibility/plugins/marketplace/fetcher.ts
 +++ b/src/extensibility/plugins/marketplace/fetcher.ts
 @@ -5,14 +5,80 @@
@@ -1429,7 +1623,7 @@ index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb9
  		const catalog = parseMarketplaceCatalog(content, displayPath);
  		return { catalog, clonePath: tmpDir };
 diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibility/plugins/marketplace/manager.ts
-index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757a4a6f1f0 100644
+index 72733e9..4e51c57 100644
 --- a/src/extensibility/plugins/marketplace/manager.ts
 +++ b/src/extensibility/plugins/marketplace/manager.ts
 @@ -16,7 +16,7 @@ import { normalizePluginRuntimeConfig } from "../runtime-config";
@@ -1536,7 +1730,7 @@ index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757
  			}
  		}
 diff --git a/src/extensibility/plugins/marketplace/types.ts b/src/extensibility/plugins/marketplace/types.ts
-index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d554741226d8fa67 100644
+index fd101ff..109e85f 100644
 --- a/src/extensibility/plugins/marketplace/types.ts
 +++ b/src/extensibility/plugins/marketplace/types.ts
 @@ -142,10 +142,16 @@ export interface MarketplacesRegistry {
@@ -1557,7 +1751,7 @@ index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d5547412
  	addedAt: string;
  	updatedAt: string;
 diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2fba12efc0 100644
+index fc71d73..3ac109c 100644
 --- a/src/mcp/client.ts
 +++ b/src/mcp/client.ts
 @@ -1,3 +1,5 @@
@@ -1660,7 +1854,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2f
  	for (const result of results) {
  		if (result.status === "rejected") {
 diff --git a/src/mcp/errors.ts b/src/mcp/errors.ts
-index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6dab5207bb 100644
+index b779975..6d26911 100644
 --- a/src/mcp/errors.ts
 +++ b/src/mcp/errors.ts
 @@ -29,6 +29,12 @@ interface MCPTransportErrorOptions {
@@ -1718,7 +1912,7 @@ index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6d
  
  function errorCode(error: unknown): string | number | undefined {
 diff --git a/src/mcp/loader.ts b/src/mcp/loader.ts
-index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e316020f6dd 100644
+index 135a0c5..81aa537 100644
 --- a/src/mcp/loader.ts
 +++ b/src/mcp/loader.ts
 @@ -27,6 +27,7 @@ export interface MCPToolsLoadResult {
@@ -1738,7 +1932,7 @@ index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e31
  			enableProjectConfig: options?.enableProjectConfig,
  			filterExa: options?.filterExa,
 diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fdd25740bb 100644
+index ffccf8e..2943118 100644
 --- a/src/mcp/manager.ts
 +++ b/src/mcp/manager.ts
 @@ -7,7 +7,7 @@
@@ -2113,7 +2307,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fd
  		// Replace tools from this server
 diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba0687268aea9
+index 0000000..f3f9a54
 --- /dev/null
 +++ b/src/mcp/resource-subscriptions.ts
 @@ -0,0 +1,81 @@
@@ -2199,7 +2393,7 @@ index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba068
 +  });
 +}
 diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
-index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b464568a987 100644
+index 955b724..2b20d89 100644
 --- a/src/mcp/tool-bridge.ts
 +++ b/src/mcp/tool-bridge.ts
 @@ -33,7 +33,7 @@ import type {
@@ -2318,7 +2512,7 @@ index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b46
  					} catch (retryError) {
  						rethrowIfAborted(retryError, signal);
 diff --git a/src/mcp/transports/http.ts b/src/mcp/transports/http.ts
-index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd14ad42e4 100644
+index 9d12523..9f399a6 100644
 --- a/src/mcp/transports/http.ts
 +++ b/src/mcp/transports/http.ts
 @@ -486,6 +486,10 @@ export class HttpTransport implements MCPTransport {
@@ -2344,7 +2538,7 @@ index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd
  			}
  
 diff --git a/src/mcp/transports/sse.ts b/src/mcp/transports/sse.ts
-index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73e71a1c4f 100644
+index a4d71ea..29d1697 100644
 --- a/src/mcp/transports/sse.ts
 +++ b/src/mcp/transports/sse.ts
 @@ -10,6 +10,7 @@ import type {
@@ -2435,7 +2629,7 @@ index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73
  	return transport;
  }
 diff --git a/src/mcp/types.ts b/src/mcp/types.ts
-index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8e7ea9a41 100644
+index 7a600a6..19e6282 100644
 --- a/src/mcp/types.ts
 +++ b/src/mcp/types.ts
 @@ -187,6 +187,7 @@ export interface MCPImplementation {
@@ -2447,7 +2641,7 @@ index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8
  	sampling?: Record<string, never>;
  	experimental?: Record<string, unknown>;
 diff --git a/src/modes/components/plan-review-overlay.ts b/src/modes/components/plan-review-overlay.ts
-index 9799cc1357df9c62fa64b16fe6cee8d50f523989..c600c9073599b60751233b4e90b7c3a25d510018 100644
+index 9799cc1..c600c90 100644
 --- a/src/modes/components/plan-review-overlay.ts
 +++ b/src/modes/components/plan-review-overlay.ts
 @@ -50,7 +50,16 @@ import {
@@ -3006,7 +3200,7 @@ index 9799cc1357df9c62fa64b16fe6cee8d50f523989..c600c9073599b60751233b4e90b7c3a2
  		lines: string[],
  		anchors: BodyRowAnchor[],
 diff --git a/src/modes/controllers/todo-command-controller.ts b/src/modes/controllers/todo-command-controller.ts
-index 2213681fc67053b30251ae06dd1f024af015afd0..c56ef3e2b746ede301f283394080b2d8c37a8f80 100644
+index 2213681..c56ef3e 100644
 --- a/src/modes/controllers/todo-command-controller.ts
 +++ b/src/modes/controllers/todo-command-controller.ts
 @@ -1,13 +1,13 @@
@@ -3079,7 +3273,7 @@ index 2213681fc67053b30251ae06dd1f024af015afd0..c56ef3e2b746ede301f283394080b2d8
  }
  
 diff --git a/src/modes/interactive-mode.ts b/src/modes/interactive-mode.ts
-index 536c6c816b3cad8bf75be98e036463ed09aa4ad7..51cd2b960acb87fca78a1b8f8e3cbc4b756f82b1 100644
+index 536c6c8..51cd2b9 100644
 --- a/src/modes/interactive-mode.ts
 +++ b/src/modes/interactive-mode.ts
 @@ -1,3 +1,5 @@
@@ -3110,7 +3304,7 @@ index 536c6c816b3cad8bf75be98e036463ed09aa4ad7..51cd2b960acb87fca78a1b8f8e3cbc4b
  export interface InteractiveModeOptions {
 diff --git a/src/plan-mode/plan-review-document.ts b/src/plan-mode/plan-review-document.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..09da944d6756e72da02bc751a4a6175758c0d1ae
+index 0000000..09da944
 --- /dev/null
 +++ b/src/plan-mode/plan-review-document.ts
 @@ -0,0 +1,665 @@
@@ -3781,7 +3975,7 @@ index 0000000000000000000000000000000000000000..09da944d6756e72da02bc751a4a61757
 +}
 diff --git a/src/plan-mode/startup.ts b/src/plan-mode/startup.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..fae1433db4856caae18ccc5b9fd80500bb493072
+index 0000000..fae1433
 --- /dev/null
 +++ b/src/plan-mode/startup.ts
 @@ -0,0 +1,16 @@
@@ -3802,10 +3996,34 @@ index 0000000000000000000000000000000000000000..fae1433db4856caae18ccc5b9fd80500
 +	);
 +}
 diff --git a/src/sdk.ts b/src/sdk.ts
-index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe31ab5551b 100644
+index d647c79..569bcd3 100644
 --- a/src/sdk.ts
 +++ b/src/sdk.ts
-@@ -540,6 +540,8 @@ export interface CreateAgentSessionOptions {
+@@ -156,7 +156,13 @@ import {
+ 	obfuscateProviderContext,
+ 	type SecretObfuscator,
+ } from "./secrets";
+-import { AgentSession, type InitialRetryFallbackState, type PlanYolo, type Prewalk } from "./session/agent-session";
++import {
++	AgentSession,
++	type CodexResetPolicyOwner,
++	type InitialRetryFallbackState,
++	type PlanYolo,
++	type Prewalk,
++} from "./session/agent-session";
+ import { discoverAuthStorage as discoverAuthStorageFromConfig } from "./session/auth-broker-config";
+ import type { AuthStorage } from "./session/auth-storage";
+ import { DateCwdReminderInjector } from "./session/date-cwd-reminder";
+@@ -388,6 +394,8 @@ export interface CreateAgentSessionOptions {
+ 	authStorage?: AuthStorage;
+ 	/** Model registry. Default: discoverModels(authStorage, agentDir) */
+ 	modelRegistry?: ModelRegistry;
++	/** Optional durable owner for native saved-reset policy; omitted preserves native behavior. */
++	codexResetPolicyOwner?: CodexResetPolicyOwner;
+ 	/**
+ 	 * Request credential resolver. Defaults to the model registry's normal
+ 	 * session-affine resolver. Security scans use this narrow seam to keep one
+@@ -540,6 +548,8 @@ export interface CreateAgentSessionOptions {
  	 * true.
  	 */
  	enableMCP?: boolean;
@@ -3814,7 +4032,7 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe3
  	/** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
  	mcpManager?: MCPManager;
  
-@@ -662,6 +664,8 @@ export interface CreateAgentSessionOptions {
+@@ -662,6 +672,8 @@ export interface CreateAgentSessionOptions {
  export interface CreateAgentSessionResult {
  	/** The created session */
  	session: AgentSession;
@@ -3823,7 +4041,7 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe3
  	/** Extensions result (loaded extensions + runtime) */
  	extensionsResult: LoadExtensionsResult;
  	/** Update tool UI context (interactive mode) */
-@@ -2005,6 +2009,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -2005,6 +2017,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  				configuredLevel: settings.extensionsSourceLevel(),
  			}));
  		const mcpDiscoverOptions = {
@@ -3831,7 +4049,7 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe3
  			onStatus: onMCPStatus,
  			enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
  			// Always filter Exa - we have native integration
-@@ -3528,6 +3533,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -3528,6 +3541,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  		};
  		const kimiApiFormatSetting = settings.get("providers.kimiApiFormat");
  		const kimiApiFormat = kimiApiFormatSetting === "auto" ? undefined : kimiApiFormatSetting;
@@ -3839,7 +4057,7 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe3
  		agent = new Agent({
  			initialState: {
  				systemPrompt,
-@@ -3610,7 +3616,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -3610,7 +3624,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  			resolveFallbackTool: resolveDeviceTool,
  			intentTracing: !!intentField,
  			pruneToolDescriptions: inlineToolDescriptors,
@@ -3848,7 +4066,15 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe3
  			abortOnFabricatedToolResult: settings.get("tools.abortOnFabricatedResult"),
  			getToolChoice: () => session?.nextToolChoiceDirective(),
  			onToolChoiceUnavailable: () => session?.toolChoiceQueue.reject("unavailable"),
-@@ -4288,6 +4294,20 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -3787,6 +3801,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 			sideStreamFn: settingsAwareStreamFn,
+ 			advisorStreamFn: settingsAwareStreamFn,
+ 			preferWebsockets: preferOpenAICodexWebsockets,
++			codexResetPolicyOwner: options.codexResetPolicyOwner,
+ 			convertToLlm: convertToLlmFinal,
+ 			rebuildSystemPrompt,
+ 			getXdevToolEntries: () => (toolSession.xdev ? xdevEntries(toolSession.xdev) : []),
+@@ -4288,6 +4303,20 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  			);
  		}
  
@@ -3869,7 +4095,7 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe3
  		startDeferredMCPDiscovery?.(session);
  
  		// Route the initial tool surface through the Code Mode-aware path when the
-@@ -4305,6 +4325,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -4305,6 +4334,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  
  		return {
  			session,
@@ -3877,11 +4103,287 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..bfece8b9326fdb176aa7558b07b1cfe3
  			extensionsResult,
  			setToolUIContext,
  			mcpManager,
+diff --git a/src/session/agent-session-types.ts b/src/session/agent-session-types.ts
+index bead7e3..ac355d9 100644
+--- a/src/session/agent-session-types.ts
++++ b/src/session/agent-session-types.ts
+@@ -14,6 +14,9 @@ import type {
+ 	MessageAttribution,
+ 	Model,
+ 	OAuthAccountSummary,
++	OAuthAccountIdentity,
++	ResetCreditConsumeIdentity,
++	ResetCreditRedeemOutcome,
+ 	ServiceTierByFamily,
+ 	SimpleStreamOptions,
+ 	ToolChoice,
+@@ -38,9 +41,97 @@ import type { FileSlashCommand } from "../extensibility/slash-commands";
+ import type { SecretObfuscator } from "../secrets/obfuscator";
+ import type { ConfiguredThinkingLevel } from "../thinking";
+ import type { XdevState } from "../tools/xdev";
+-import type { CodexAutoRedeemCoordinator } from "./codex-auto-reset";
++import type { CodexAutoRedeemCoordinator, CodexResetPlan } from "./codex-auto-reset";
+ import type { SessionManager } from "./session-manager";
+ 
++/** The native selector's exact answer; undefined never authorizes a spend. */
++export type NativeResetAnswer = "Yes" | "No" | undefined;
++
++export type ResetPolicySnapshot = Readonly<{
++	autoRedeem: "unset" | "yes" | "no";
++	minBlockedMinutes: number;
++	keepCredits: number;
++	salvageHorizonHours: number;
++}>;
++
++/** Original native provenance. passId is not the account/episode deduplication key. */
++export type ResetPass = Readonly<{
++	passId: string;
++	nativeSessionId: string;
++	trigger: "blocked" | "sweep";
++	source: "manual" | "background" | "blocked";
++	startedAtMs: number;
++	provider: string;
++	modelId: string;
++	codexBaseUrl?: string;
++	identity?: Readonly<OAuthAccountIdentity>;
++	activeBlockUnblockAtMs?: number;
++	policy: ResetPolicySnapshot;
++}>;
++
++/** A detached, deeply frozen copy of the unchanged native planner's result. */
++export type ResetPlanSnapshot = Readonly<{
++	pass: ResetPass;
++	plannedAtMs: number;
++	plan: Readonly<CodexResetPlan>;
++}>;
++
++/** One exact, durably admitted native call. Never retarget or replay this permit. */
++export type ResetPermit = Readonly<{
++	attemptId: string;
++	target: Readonly<{ credentialId: number }>;
++	creditId: string;
++	redeemRequestId: string;
++	beforeConsume: (identity: ResetCreditConsumeIdentity) => boolean;
++}>;
++
++export type ConsumeBoundary = "not-reached" | "refused" | "passed";
++
++/** Worker-local observation; owners must sanitize errors before durable/IPC projection. */
++export type ResetObservation = Readonly<{
++	consumeBoundary: ConsumeBoundary;
++	result: { kind: "outcome"; outcome: ResetCreditRedeemOutcome } | { kind: "error"; error: unknown };
++}>;
++
++export type ResetAdmission =
++	| { kind: "execute"; permit: ResetPermit }
++	| { kind: "join"; attemptId: string; settled: Promise<ResetObservation> }
++	| {
++			kind: "hold";
++			reason: "unknown" | "stale" | "identity-unresolved" | "credit-unavailable" | "owner-unavailable";
++	  };
++
++/** Settlement of native work, not a claim that every credit was redeemed. */
++export type ResetSettlement = Readonly<{
++	state: "settled" | "held" | "cancelled" | "failed";
++	applied: number;
++	attemptIds: readonly string[];
++	refresh: "not-needed" | "complete" | "failed";
++}>;
++
++export type ResetCheckpoint =
++	| { phase: "started"; pass: ResetPass }
++	| { phase: "planned"; snapshot: ResetPlanSnapshot }
++	| { phase: "joined"; pass: ResetPass; originalPassId: string }
++	| { phase: "answer"; snapshot: ResetPlanSnapshot; answer: NativeResetAnswer }
++	| { phase: "setting-written"; snapshot: ResetPlanSnapshot; mode: "yes" | "no" }
++	| { phase: "finished"; pass: ResetPass; settlement: ResetSettlement };
++
++/**
++ * Optional original-session owner for native reset decisions and durable admission.
++ * Methods are awaited barriers, not telemetry. Absent owners retain native policy.
++ */
++export interface CodexResetPolicyOwner {
++	checkpoint(event: ResetCheckpoint): Promise<void>;
++	/** Invoke selectNative exactly once; the session retains the actual answer. */
++	presentDecision(
++		snapshot: ResetPlanSnapshot,
++		selectNative: () => Promise<NativeResetAnswer>,
++	): Promise<void>;
++	admit(snapshot: ResetPlanSnapshot, actionIndex: number): Promise<ResetAdmission>;
++	complete(permit: ResetPermit, observation: ResetObservation): Promise<void>;
++}
++
+ /** Maximum time the interactive shutdown path waits for Mnemopi consolidation. */
+ export const SHUTDOWN_CONSOLIDATE_BUDGET_MS = 1_500;
+ 
+@@ -233,6 +324,8 @@ export interface AgentSessionConfig {
+ 	preferWebsockets?: boolean;
+ 	/** Codex saved-reset coordinator; defaults to the process-wide singleton so concurrent sessions can't double-spend. Inject a fresh one in tests. */
+ 	codexResetCoordinator?: CodexAutoRedeemCoordinator;
++	/** Optional durable owner; native reset planning and unowned defaults remain unchanged. */
++	codexResetPolicyOwner?: CodexResetPolicyOwner;
+ 	/** Provider payload hook used by the active session request path. */
+ 	onPayload?: SimpleStreamOptions["onPayload"];
+ 	/** Provider response hook used by the active session request path. */
 diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
-index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..ce4671ff71d86dd26e9b944724c36b826ee0ea98 100644
+index ea17642..dcf077c 100644
 --- a/src/session/agent-session.ts
 +++ b/src/session/agent-session.ts
-@@ -1917,12 +1917,20 @@ export class AgentSession {
+@@ -61,6 +61,7 @@ import type {
+ 	ProviderResponseMetadata,
+ 	ProviderSessionState,
+ 	ResetCreditAccountStatus,
++	ResetCreditConsumeIdentity,
+ 	ResetCreditRedeemOutcome,
+ 	ResetCreditTarget,
+ 	ServiceTier,
+@@ -233,16 +234,27 @@ import type {
+ 	AgentSessionConfig,
+ 	AgentSessionDisposeOptions,
+ 	AsyncJobSnapshot,
++	CodexResetPolicyOwner,
+ 	CommandMetadataChangedListener,
++	ConsumeBoundary,
+ 	ContextUsageBreakdown,
+ 	DroppedPrompt,
+ 	FollowUpOptions,
+ 	FreshSessionResult,
+ 	HandoffResult,
+ 	ModelCycleResult,
++	NativeResetAnswer,
+ 	Prewalk,
+ 	PromptOptions,
++	ResetAdmission,
++	ResetCheckpoint,
++	ResetObservation,
++	ResetPass,
++	ResetPermit,
++	ResetPlanSnapshot,
++	ResetPolicySnapshot,
+ 	ResetSessionContextResult,
++	ResetSettlement,
+ 	ResolvedRoleModel,
+ 	RestoredQueuedMessage,
+ 	RoleModelCycle,
+@@ -380,6 +392,92 @@ import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
+ const PLAN_MODE_REMINDER_MAX = 3;
+ const POST_PROMPT_DRAIN_TIMEOUT_MS = 5_000;
+ 
++/** Bound on draining owned Codex reset work during dispose: native consume timeout plus owner callbacks. */
++const CODEX_RESET_DISPOSE_DRAIN_TIMEOUT_MS = 20_000;
++
++/**
++ * Owner-tracked run behind a process-wide coordinator promise (blocked
++ * in-flight entry or sweep). A same-account joiner in another session names
++ * the original pass through it without relabeling; the joining report method
++ * maps adopted coordinator work back to this session's runs. Unowned native
++ * work has no entry and is never fabricated into one.
++ */
++const codexResetRunByPromise = new WeakMap<Promise<unknown>, CodexResetOwnedRun>();
++
++/** Settlement precedence: a worse state never regresses within one pass. */
++const CODEX_RESET_STATE_RANK: Record<ResetSettlement["state"], number> = {
++	settled: 0,
++	cancelled: 1,
++	held: 2,
++	failed: 3,
++};
++
++/** Redeem codes pi-ai synthesizes before reaching the consume guard; no request was sent. */
++const CODEX_RESET_PRE_GUARD_CODES: Record<string, true> = { no_account: true, account_unavailable: true };
++
++/** Only documented terminal results and the native retryable no-op are resolved outcomes. */
++function hasKnownCodexResetOutcome(code: string): boolean {
++	return isTerminalRedeemOutcome(code) || code === "nothing_to_reset";
++}
++
++/** Policy outcome when nothing owned was scheduled or adopted. */
++const CODEX_RESET_EMPTY_SETTLEMENT: ResetSettlement = Object.freeze({
++	state: "settled",
++	applied: 0,
++	attemptIds: Object.freeze([]) as readonly string[],
++	refresh: "not-needed",
++});
++
++/**
++ * Aggregate settlements of several runs: worst state, summed applied,
++ * concatenated attempt ids, worst refresh. `unattributed` counts adopted
++ * coordinator work this session does not own; its outcome is unknown here,
++ * so it can only be reported as held.
++ */
++function aggregateCodexResetSettlements(runs: readonly CodexResetOwnedRun[], unattributed: number): ResetSettlement {
++	if (runs.length === 0 && unattributed === 0) return CODEX_RESET_EMPTY_SETTLEMENT;
++	let state: ResetSettlement["state"] = unattributed > 0 ? "held" : "settled";
++	let refresh: ResetSettlement["refresh"] = "not-needed";
++	let applied = 0;
++	const attemptIds: string[] = [];
++	for (const run of runs) {
++		if (CODEX_RESET_STATE_RANK[run.state] > CODEX_RESET_STATE_RANK[state]) state = run.state;
++		if (run.refresh === "failed" || (run.refresh === "complete" && refresh === "not-needed")) refresh = run.refresh;
++		applied += run.applied;
++		attemptIds.push(...run.attemptIds);
++	}
++	return Object.freeze({ state, applied, attemptIds: Object.freeze(attemptIds), refresh });
++}
++
++function deepFreeze<T>(value: T): T {
++	if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
++	Object.freeze(value);
++	for (const key of Object.keys(value)) deepFreeze((value as Record<string, unknown>)[key]);
++	return value;
++}
++
++/**
++ * One owner-tracked Codex reset pass (blocked, sweep or join). The pass, its
++ * completion callbacks and its post-reset refresh settle through `settled`,
++ * which never rejects; `drainCodexResetPolicy` and the joining report method
++ * wait on it and read the final state afterwards.
++ */
++interface CodexResetOwnedRun {
++	owner: CodexResetPolicyOwner;
++	pass: ResetPass;
++	/** Set once by the planner call; deep-frozen copy with the exact planning clock. */
++	snapshot: ResetPlanSnapshot | undefined;
++	/** Policy the pass expects at every later admission; only this pass's own verified setting write moves it. */
++	expectedPolicy: ResetPolicySnapshot;
++	state: ResetSettlement["state"];
++	applied: number;
++	attemptIds: string[];
++	refresh: ResetSettlement["refresh"];
++	/** Post-reset usage refresh child; the pass holds its coordinator guards until it settles. */
++	refreshTask: Promise<void> | undefined;
++	settled: Promise<void>;
++}
++
+ /** Internal marker for hook messages queued through the agent loop */
+ // ============================================================================
+ // Constants
+@@ -679,6 +777,16 @@ export class AgentSession {
+ 	#modelDiscoveryAbortController = new AbortController();
+ 	/** Process-wide by default (double-spend safety across sessions); injectable for tests. */
+ 	#codexResetCoordinator: CodexAutoRedeemCoordinator;
++	/** Optional durable owner of reset decisions/admission; absent keeps the native policy paths unchanged. */
++	#codexResetPolicyOwner: CodexResetPolicyOwner | undefined;
++	/** Owner-tracked passes (blocked, sweep, join) still settling, including their completion callbacks and post-reset refresh. */
++	#codexResetOwnedRuns = new Set<CodexResetOwnedRun>();
++	/** Owned usage fetches still in flight: each may schedule a sweep, so drain waits for them before deciding it is empty. */
++	#codexResetPendingFetches = new Set<Promise<unknown>>();
++	/** Aborted by `beginDispose`: cancels a pending owned native select; never touches a dispatched consume. */
++	#codexResetPreDispatchAbort = new AbortController();
++	/** Set when a dispatched owned consume bypassed the guard (installed pi-ai lacks the seam): no further owned dispatch here. */
++	#codexResetOwnerDispatchFenced = false;
+ 	// Extension system
+ 	#extensionRunner: ExtensionRunner | undefined = undefined;
+ 	#getEvalPreludes: (() => readonly EvalPreludeDefinition[]) | undefined;
+@@ -1164,6 +1272,7 @@ export class AgentSession {
+ 		this.#preparedExtensions = config.preparedExtensions;
+ 		this.#extensionPaths = config.extensionPaths;
+ 		this.#codexResetCoordinator = config.codexResetCoordinator ?? defaultCodexAutoRedeemCoordinator;
++		this.#codexResetPolicyOwner = config.codexResetPolicyOwner;
+ 		const bashHost: BashRunnerHost = {
+ 			agent: this.agent,
+ 			sessionManager: this.sessionManager,
+@@ -1917,12 +2026,20 @@ export class AgentSession {
  		this.#toolChoiceQueue.clearPendingInvokers();
  	}
  
@@ -3906,7 +4408,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..ce4671ff71d86dd26e9b944724c36b82
  		if (!this.getActiveToolNames().includes(toolName)) {
  			throw new Error(`Tool "${toolName}" is not currently active.`);
  		}
-@@ -1932,10 +1940,14 @@ export class AgentSession {
+@@ -1932,10 +2049,14 @@ export class AgentSession {
  			throw new Error("Current model does not support forcing a specific tool.");
  		}
  
@@ -3922,8 +4424,1047 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..ce4671ff71d86dd26e9b944724c36b82
  	}
  
  	/** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
+@@ -4371,6 +4492,10 @@ export class AgentSession {
+ 	beginDispose(): void {
+ 		this.#isDisposed = true;
+ 		this.#modelDiscoveryAbortController.abort();
++		// Owned Codex reset work: no new admission and no pending native select
++		// after this point; an already-dispatched consume keeps its own timeout
++		// and is drained by `drainCodexResetPolicy`, never aborted here.
++		this.#codexResetPreDispatchAbort.abort();
+ 		this.#queuedMessageDrainBlocked = false;
+ 		this.#usagePreflightReadyForNextModelCall = false;
+ 		this.#detachUsageBeforeQueueDequeue?.();
+@@ -4529,6 +4654,16 @@ export class AgentSession {
+ 		}
+ 		const advisorRecorderClosed = this.#advisors.recorderClosed();
+ 		const results = await Promise.allSettled([
++			// Owned Codex reset work: `beginDispose` above already fenced new
++			// admission and cancelled a pending select; a dispatched consume
++			// finishes its native timeout and journals against its owner.
++			this.#codexResetPolicyOwner
++				? withTimeout(
++						this.drainCodexResetPolicy(),
++						CODEX_RESET_DISPOSE_DRAIN_TIMEOUT_MS,
++						"Timed out draining owned Codex reset work during dispose",
++					)
++				: Promise.resolve(),
+ 			this.#disposeOwnedAsyncJobs(),
+ 			this.#eval.disposeKernels(),
+ 			this.#releaseOwnedBrowserTabs(this.sessionManager.getSessionId()),
+@@ -9794,9 +9929,89 @@ export class AgentSession {
+ 	}
+ 
+ 	async fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null> {
++		return (await this.#fetchUsageReports(signal, "background")).reports;
++	}
++
++	/**
++	 * Fetch usage like {@link AgentSession.fetchUsageReports}, then wait for
++	 * exactly the owned Codex reset-policy work this fetch scheduled or
++	 * adopted: the sweep it started, or — when the native sweep gate deferred
++	 * to work already in flight — that in-flight sweep/blocked pass, including
++	 * each pass's completion callbacks and post-reset refresh. Report and
++	 * policy outcomes stay separate: a report failure throws like the plain
++	 * fetch; a policy failure is reported in `policy`. Adopted owner-tracked work
++	 * reports its original settlement, including work owned by another
++	 * session. Unowned native work is awaited and reported as `held`. Requires a configured
++	 * `codexResetPolicyOwner`; the plain fetch stays the unowned path. Never
++	 * call this from inside a pass or its refresh: it would join itself.
++	 */
++	async fetchUsageReportsWithResetPolicy(
++		options: { signal?: AbortSignal; source?: "manual" | "background" } = {},
++	): Promise<{ reports: UsageReport[] | null; policy: ResetSettlement }> {
++		if (!this.#codexResetPolicyOwner) {
++			throw new Error("fetchUsageReportsWithResetPolicy requires a configured codexResetPolicyOwner");
++		}
++		const { reports, scheduled, adopted } = await this.#fetchUsageReports(options.signal, options.source ?? "manual");
++		const runs: CodexResetOwnedRun[] = scheduled ? [scheduled] : [];
++		let unattributed = 0;
++		for (const promise of adopted) {
++			// Owner-tracked work (this or another session) reports its real
++			// settlement; unowned native work is awaited but never fabricated.
++			const run = codexResetRunByPromise.get(promise);
++			if (!run) unattributed++;
++			else if (!runs.includes(run)) runs.push(run);
++		}
++		await Promise.all([...adopted, ...runs.map(run => run.settled)]);
++		return { reports, policy: aggregateCodexResetSettlements(runs, unattributed) };
++	}
++
++	/**
++	 * Wait until every owned Codex reset pass of THIS session has settled:
++	 * eligibility, select, consume, owner completion and post-reset refresh,
++	 * plus owned usage fetches that could still schedule one. Settled means
++	 * the promises finished, not that credits were reset: the returned
++	 * settlement aggregates the drained passes, so a failed completion or
++	 * checkpoint acknowledgement surfaces as `state: "failed"` and stays
++	 * inspectable through the owner. Required ordering at shutdown:
++	 * `beginDispose()` (fences new admission, cancels a pending select) →
++	 * this drain → `dispose()`; `dispose()` itself runs this bounded by
++	 * {@link CODEX_RESET_DISPOSE_DRAIN_TIMEOUT_MS}. A consume already
++	 * dispatched still runs to its native timeout rather than being aborted.
++	 */
++	async drainCodexResetPolicy(): Promise<ResetSettlement> {
++		const drained = new Set<CodexResetOwnedRun>();
++		while (this.#codexResetOwnedRuns.size > 0 || this.#codexResetPendingFetches.size > 0) {
++			const runs = [...this.#codexResetOwnedRuns];
++			for (const run of runs) drained.add(run);
++			await Promise.all([...runs.map(run => run.settled), ...this.#codexResetPendingFetches]);
++		}
++		return aggregateCodexResetSettlements([...drained], 0);
++	}
++
++	/**
++	 * Usage fetch plus the salvage-sweep heartbeat. With an owner, the sweep's
++	 * provenance (model, session, active identity, policy, source) is captured
++	 * synchronously here, before the report IO, so a selection change during
++	 * the fetch cannot retarget it; the fetch itself is tracked for drain.
++	 * Returns the run this fetch scheduled and the coordinator work its sweep
++	 * gate deferred to, for the joining report method.
++	 */
++	async #fetchUsageReports(
++		signal: AbortSignal | undefined,
++		source: "manual" | "background",
++	): Promise<{ reports: UsageReport[] | null; scheduled: CodexResetOwnedRun | undefined; adopted: Promise<unknown>[] }> {
+ 		const authStorage = this.#modelRegistry.authStorage;
+-		if (!authStorage.fetchUsageReports) return null;
+-		const reports = await authStorage.fetchUsageReports({
++		if (!authStorage.fetchUsageReports) return { reports: null, scheduled: undefined, adopted: [] };
++		const owner = this.#codexResetPolicyOwner;
++		const sweepPass = owner
++			? this.#captureCodexResetPass(
++					"sweep",
++					source,
++					authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId),
++					undefined,
++				)
++			: undefined;
++		const fetch = authStorage.fetchUsageReports({
+ 			baseUrlResolver: provider => {
+ 				if (provider === "google-antigravity") {
+ 					const mode = this.settings.get("providers.antigravityEndpoint");
+@@ -9810,11 +10025,29 @@ export class AgentSession {
+ 			},
+ 			signal,
+ 		});
++		if (owner) {
++			const tracked = fetch.then(
++				() => undefined,
++				() => undefined,
++			);
++			this.#codexResetPendingFetches.add(tracked);
++			void tracked.then(() => this.#codexResetPendingFetches.delete(tracked));
++		}
++		const reports = await fetch;
+ 		// Every fresh usage snapshot doubles as the salvage-sweep heartbeat: the
+ 		// status line calls this every 5 minutes while the TUI is open, so
+ 		// expiring saved Codex resets are caught even when nothing is blocked.
+-		if (reports) this.#maybeScheduleCodexResetSweep(reports);
+-		return reports;
++		if (!reports) return { reports, scheduled: undefined, adopted: [] };
++		const scheduled = this.#maybeScheduleCodexResetSweep(reports, owner && sweepPass ? { owner, pass: sweepPass } : undefined);
++		const coordinator = this.#codexResetCoordinator;
++		const adopted: Promise<unknown>[] = [];
++		if (!scheduled) {
++			// The sweep gate deferred to work already in flight (a blocked pass
++			// or an earlier sweep): that is the policy work this fetch joins.
++			if (coordinator.sweepInFlight && coordinator.sweepPromise) adopted.push(coordinator.sweepPromise);
++			for (const run of coordinator.inFlightByAccount.values()) adopted.push(run);
++		}
++		return { reports, scheduled, adopted };
+ 	}
+ 
+ 	/** Models whose live `/usage` reports map to a quantitative provider scope. */
+@@ -9888,11 +10121,14 @@ export class AgentSession {
+ 	/**
+ 	 * Ask before the first auto-spend (`codexResets.autoRedeem === "unset"`).
+ 	 * The answer is persisted, so this fires at most once per install. Headless
+-	 * hosts get a one-shot notice per episode instead of a prompt.
++	 * hosts get a one-shot notice per episode instead of a prompt. With an
++	 * owned pass the same native select is scoped through the owner's
++	 * `presentDecision`, and the setting write is verified before it counts.
+ 	 */
+ 	async #confirmCodexAutoRedeem(
+ 		actions: CodexResetAction[],
+ 		coordinator: CodexAutoRedeemCoordinator,
++		owned: CodexResetOwnedRun | undefined,
+ 	): Promise<boolean> {
+ 		const first = actions[0];
+ 		if (!first) return false;
+@@ -9906,6 +10142,11 @@ export class AgentSession {
+ 					"codex-auto-reset",
+ 				);
+ 			}
++			if (owned?.snapshot) {
++				// A notice is not a decision: journal "no answer" so the owner never infers consent.
++				await this.#checkpointCodexReset(owned, { phase: "answer", snapshot: owned.snapshot, answer: undefined });
++				this.#markCodexResetRun(owned, "cancelled");
++			}
+ 			return false;
+ 		}
+ 
+@@ -9918,17 +10159,23 @@ export class AgentSession {
+ 			actions.length === 1
+ 				? `Spend a saved Codex rate-limit reset?\n${lines[0]}`
+ 				: `Spend ${actions.length} saved Codex rate-limit resets?\n${lines.join("\n")}`;
++		const choices = [
++			{
++				label: "Yes",
++				description: "Redeem now and remember yes for future eligible Codex resets.",
++			},
++			{
++				label: "No",
++				description: "Do not auto-redeem saved Codex resets.",
++			},
++		];
++		if (owned?.snapshot) {
++			return this.#confirmOwnedCodexAutoRedeem(owned, owned.snapshot, () =>
++				runner.getUIContext().select(question, choices, { signal: this.#codexResetPreDispatchAbort.signal }),
++			);
++		}
+ 		try {
+-			const choice = await runner.getUIContext().select(question, [
+-				{
+-					label: "Yes",
+-					description: "Redeem now and remember yes for future eligible Codex resets.",
+-				},
+-				{
+-					label: "No",
+-					description: "Do not auto-redeem saved Codex resets.",
+-				},
+-			]);
++			const choice = await runner.getUIContext().select(question, choices);
+ 			if (choice === "Yes") {
+ 				this.settings.set("codexResets.autoRedeem", "yes");
+ 				return true;
+@@ -9942,21 +10189,125 @@ export class AgentSession {
+ 		return false;
+ 	}
+ 
+-	/** Run the pure planner over a usage snapshot with this session's settings. */
++	/**
++	 * Owned decision: the owner scopes the native select to its durable
++	 * decision, but native code captures the actual answer itself, lets the
++	 * closure run once and journals the answer. Then the existing native
++	 * `settings.set` runs once, guarded by an effective-policy check before
++	 * and after, and the awaited `setting-written` checkpoint is where the
++	 * owner flushes, reads back and proves the persisted transition; a
++	 * rejection there withholds consent. Returning without invoking or
++	 * settling the closure never synthesizes Yes.
++	 */
++	async #confirmOwnedCodexAutoRedeem(
++		owned: CodexResetOwnedRun,
++		snapshot: ResetPlanSnapshot,
++		select: () => Promise<string | undefined>,
++	): Promise<boolean> {
++		let invoked = false;
++		let selectError: unknown;
++		let answer: NativeResetAnswer;
++		const selectNative = async (): Promise<NativeResetAnswer> => {
++			if (invoked) throw new Error("codex-auto-reset: the native select runs once per decision");
++			invoked = true;
++			let choice: string | undefined;
++			try {
++				choice = await select();
++			} catch (error) {
++				selectError = error;
++				throw error;
++			}
++			answer = choice === "Yes" ? "Yes" : choice === "No" ? "No" : undefined;
++			return answer;
++		};
++		let presentError: unknown;
++		try {
++			await owned.owner.presentDecision(snapshot, selectNative);
++		} catch (error) {
++			presentError = error;
++		}
++		if (!(await this.#checkpointCodexReset(owned, { phase: "answer", snapshot, answer }))) return false;
++		if (selectError !== undefined) {
++			// The native prompt itself failed or was cancelled (e.g. disposal
++			// aborted it): same containment as the unowned path — no write, no spend.
++			this.#markCodexResetRun(owned, "cancelled");
++			logger.warn("codex-auto-reset prompt failed", { error: String(selectError) });
++			return false;
++		}
++		if (presentError !== undefined) {
++			// Owner failure: contained so ordinary blocked recovery continues; no write, no spend.
++			this.#markCodexResetRun(owned, "failed");
++			logger.warn("codex-auto-reset: owner presentDecision failed", { error: String(presentError) });
++			return false;
++		}
++		if (answer === undefined) {
++			this.#markCodexResetRun(owned, "cancelled");
++			return false;
++		}
++		const mode = answer === "Yes" ? "yes" : "no";
++		if (!this.#codexResetPolicyMatches(owned.expectedPolicy)) {
++			// The policy moved under the prompt: never overwrite that edit with
++			// this answer, and never spend against a plan made under the old one.
++			this.#markCodexResetRun(owned, "held");
++			logger.warn("codex-auto-reset: codexResets settings changed under the prompt; not writing", {
++				pass: owned.pass.passId,
++			});
++			return false;
++		}
++		this.settings.set("codexResets.autoRedeem", mode);
++		const effective = this.settings.get("codexResets.autoRedeem");
++		if (effective === mode) {
++			// The only transition this pass may adopt into its expected policy.
++			owned.expectedPolicy = Object.freeze({ ...owned.expectedPolicy, autoRedeem: mode });
++		} else if (effective === owned.expectedPolicy.autoRedeem) {
++			// A project, overlay or runtime layer keeps the effective mode: the
++			// global write stands, but only this plan's explicit answer is
++			// authorized; standing consent is not claimed.
++			this.emitNotice(
++				"warning",
++				`Codex auto-redeem "${mode}" was saved to the global config, but a project, overlay or runtime setting keeps it "${effective}"; future eligible resets will prompt again.`,
++				"codex-auto-reset",
++			);
++		} else {
++			this.#markCodexResetRun(owned, "held");
++			logger.warn("codex-auto-reset: effective autoRedeem changed under the prompt; holding", { effective });
++			return false;
++		}
++		// The owner flushes, reads the global file back and verifies the
++		// transition here; failure or an unverified write withholds consent.
++		if (!(await this.#checkpointCodexReset(owned, { phase: "setting-written", snapshot, mode }))) return false;
++		if (!this.#codexResetPolicyMatches(owned.expectedPolicy)) {
++			this.#markCodexResetRun(owned, "held");
++			logger.warn("codex-auto-reset: codexResets settings changed during persistence; holding", {
++				pass: owned.pass.passId,
++			});
++			return false;
++		}
++		return answer === "Yes";
++	}
++
++	/**
++	 * Run the pure planner over a usage snapshot with this session's settings.
++	 * The planning clock is captured once; an owned pass keeps a deep-frozen
++	 * copy of the plan with that exact clock so absolute action times never
++	 * drift across a prompt.
++	 */
+ 	#planCodexResets(
+ 		trigger: CodexResetTrigger,
+ 		reports: UsageReport[] | null,
+ 		identity: OAuthAccountIdentity | undefined,
+ 		coordinator: CodexAutoRedeemCoordinator,
+-		activeBlockUnblockAtMs?: number,
++		activeBlockUnblockAtMs: number | undefined,
++		owned: CodexResetOwnedRun | undefined,
+ 	): CodexResetPlan {
+-		const cfg = this.settings.getGroup("codexResets");
++		const cfg = owned?.pass.policy ?? this.settings.getGroup("codexResets");
+ 		const model = this.model;
++		const plannedAtMs = Date.now();
+ 		const plan = planCodexResetRedemptions({
+-			nowMs: Date.now(),
++			nowMs: plannedAtMs,
+ 			trigger,
+-			provider: model?.provider ?? "",
+-			modelId: model?.id ?? "",
++			provider: owned?.pass.provider ?? model?.provider ?? "",
++			modelId: owned?.pass.modelId ?? model?.id ?? "",
+ 			settings: {
+ 				enabled: shouldEvaluateCodexAutoRedeem(cfg.autoRedeem),
+ 				minBlockedMinutes: Math.max(0, cfg.minBlockedMinutes),
+@@ -9973,34 +10324,72 @@ export class AgentSession {
+ 		if (plan.skipped.length > 0) {
+ 			logger.debug("codex-auto-reset: plan", { trigger, actions: plan.actions.length, skipped: plan.skipped });
+ 		}
++		if (owned) owned.snapshot = deepFreeze({ pass: owned.pass, plannedAtMs, plan: structuredClone(plan) });
+ 		return plan;
+ 	}
+ 
+ 	/**
+ 	 * Spend planned resets in order, re-checking the process-wide attempt set
+ 	 * immediately before each consume so a concurrent pass can never
+-	 * double-spend an episode. Returns how many credits were actually redeemed.
++	 * double-spend an episode. Returns how many resets were observed (own
++	 * redemptions plus joined known resets) so the caller can retry at once.
++	 * An owned pass admits each action durably first, dispatches exactly one
++	 * guarded AuthStorage call per permit, and awaits paired completion
++	 * before the next action.
+ 	 */
+ 	async #executeCodexResetActions(
+ 		actions: CodexResetAction[],
+ 		coordinator: CodexAutoRedeemCoordinator,
++		owned: CodexResetOwnedRun | undefined,
+ 	): Promise<number> {
+ 		const authStorage = this.#modelRegistry.authStorage;
+ 		let redeemed = 0;
+-		for (const action of actions) {
++		let joinedResets = 0;
++		for (const [index, action] of actions.entries()) {
+ 			if (coordinator.attemptedKeys.has(action.attemptKey)) continue;
++			let admittedPermit: ResetPermit | undefined;
++			if (owned) {
++				const admitted = await this.#admitOwnedCodexReset(owned, index, action, coordinator);
++				if (admitted === "stop") break;
++				if (admitted === "skip") continue;
++				if (admitted.kind === "join") {
++					if (await this.#joinOwnedCodexResetAttempt(owned, admitted)) joinedResets++;
++					continue;
++				}
++				admittedPermit = admitted.permit;
++			}
++			const dispatch = owned && admittedPermit ? { owned, permit: admittedPermit } : undefined;
+ 			// Commit the attempt BEFORE acting so this episode can never re-enter.
+ 			coordinator.attemptedKeys.add(action.attemptKey);
+ 			coordinator.lastAttemptAtByAccount.set(action.accountKey, Date.now());
+ 			let outcome: ResetCreditRedeemOutcome;
++			const guard = { boundary: "not-reached" as ConsumeBoundary };
+ 			try {
+-				outcome = await authStorage.redeemResetCredit({
+-					target: action.target,
+-					baseUrlResolver: provider => this.#modelRegistry.getProviderBaseUrl?.(provider),
+-					// Not tied to the retry abort controller: aborting a consume
+-					// mid-flight leaves credit state unknown.
+-					signal: AbortSignal.timeout(15_000),
+-				});
++				outcome = dispatch
++					? await authStorage.redeemResetCredit({
++							target: dispatch.permit.target,
++							creditId: dispatch.permit.creditId,
++							redeemRequestId: dispatch.permit.redeemRequestId,
++							requireExplicitOutcome: true,
++							// Synchronous final admission inside pi-ai: no await sits
++							// between a true answer and the consume request.
++							beforeConsume: identity => {
++								const allowed = this.#guardOwnedCodexResetConsume(dispatch.owned, action, dispatch.permit, identity);
++								guard.boundary = allowed ? "passed" : "refused";
++								return allowed;
++							},
++							baseUrlResolver: () => dispatch.owned.pass.codexBaseUrl,
++							// Not tied to the retry abort controller or disposal: aborting
++							// a consume mid-flight leaves credit state unknown.
++							signal: AbortSignal.timeout(15_000),
++						})
++					: await authStorage.redeemResetCredit({
++							target: action.target,
++							baseUrlResolver: provider => this.#modelRegistry.getProviderBaseUrl?.(provider),
++							// Not tied to the retry abort controller: aborting a consume
++							// mid-flight leaves credit state unknown.
++							signal: AbortSignal.timeout(15_000),
++						});
+ 			} catch (error) {
+ 				// Thrown transport failure (network error, 15s timeout): same policy
+ 				// as a non-terminal code — release the episode and retry after the
+@@ -10013,8 +10402,18 @@ export class AgentSession {
+ 					account: action.accountKey,
+ 					error: String(error),
+ 				});
++				if (dispatch) {
++					this.#markCodexResetRun(dispatch.owned, "held");
++					dispatch.owned.attemptIds.push(dispatch.permit.attemptId);
++					const observation: ResetObservation = {
++						consumeBoundary: guard.boundary,
++						result: { kind: "error", error },
++					};
++					if (!(await this.#completeOwnedCodexReset(dispatch.owned, dispatch.permit, observation))) break;
++				}
+ 				continue;
+ 			}
++			if (dispatch) this.#noteOwnedCodexResetOutcome(dispatch.owned, dispatch.permit, action, outcome, guard.boundary);
+ 			if (!isTerminalRedeemOutcome(outcome.code)) {
+ 				// `nothing_to_reset` (limits not constrained enough yet) or a
+ 				// transport failure: the credit is STILL BANKED. Release the episode
+@@ -10063,7 +10462,27 @@ export class AgentSession {
+ 					}
+ 					break;
+ 				default:
+-					if (action.reason === "blocked-account") {
++					if (dispatch && guard.boundary === "passed" && !hasKnownCodexResetOutcome(outcome.code)) {
++						// Owned unknown is held for inspection, never promised another consume.
++						this.emitNotice(
++							"warning",
++							`Codex reset for ${action.label} returned an unrecognized outcome (${outcome.code}); the credit state is unknown and held for inspection.`,
++							"codex-auto-reset",
++						);
++					} else if (dispatch && outcome.code === "admission_rejected") {
++						// The guard refused before any request: the episode waits for a fresh pass.
++						if (action.reason === "blocked-account") {
++							this.emitNotice(
++								"warning",
++								`Codex reset for ${action.label} was refused at the admission guard; held for a fresh pass.`,
++								"codex-auto-reset",
++							);
++						} else {
++							logger.debug("codex-auto-reset: consume refused at the admission guard", {
++								account: action.accountKey,
++							});
++						}
++					} else if (action.reason === "blocked-account") {
+ 						this.emitNotice(
+ 							"warning",
+ 							`Codex auto-redeem for ${action.label} failed (${outcome.code}); will retry later.`,
+@@ -10077,10 +10496,361 @@ export class AgentSession {
+ 					}
+ 					break;
+ 			}
++			if (dispatch) {
++				const observation: ResetObservation = {
++					consumeBoundary: guard.boundary,
++					result: { kind: "outcome", outcome },
++				};
++				if (!(await this.#completeOwnedCodexReset(dispatch.owned, dispatch.permit, observation))) break;
++			}
+ 		}
+ 		// Reflect the reset in the next snapshot (redeem already invalidated the cache).
+-		if (redeemed > 0) void this.fetchUsageReports();
+-		return redeemed;
++		if (redeemed > 0) {
++			if (owned) {
++				owned.refreshTask = this.fetchUsageReports().then(
++					() => {
++						owned.refresh = "complete";
++					},
++					error => {
++						// The reset stays observed; only the refresh failed.
++						owned.refresh = "failed";
++						logger.warn("codex-auto-reset: post-reset usage refresh failed", { error: String(error) });
++					},
++				);
++			} else {
++				void this.fetchUsageReports();
++			}
++		}
++		return redeemed + joinedResets;
++	}
++
++	/**
++	 * Owned pre-dispatch gate for one action: native invalidation checks, the
++	 * awaited durable admission, then the attempted-state recheck after that
++	 * await. `stop` ends the pass, `skip` moves to the next action.
++	 */
++	async #admitOwnedCodexReset(
++		owned: CodexResetOwnedRun,
++		index: number,
++		action: CodexResetAction,
++		coordinator: CodexAutoRedeemCoordinator,
++	): Promise<"stop" | "skip" | Exclude<ResetAdmission, { kind: "hold" }>> {
++		const snapshot = owned.snapshot;
++		if (!snapshot) {
++			this.#markCodexResetRun(owned, "failed");
++			return "stop";
++		}
++		if (this.#isDisposed) {
++			this.#markCodexResetRun(owned, "cancelled");
++			return "stop";
++		}
++		if (this.#codexResetOwnerDispatchFenced) {
++			this.#markCodexResetRun(owned, "failed");
++			return "stop";
++		}
++		if (!this.#codexResetPolicyMatches(owned.expectedPolicy)) {
++			// Unrelated settings edits invalidate the planned episode; only the
++			// verified own answer may have moved the expected policy.
++			this.#markCodexResetRun(owned, "held");
++			logger.warn("codex-auto-reset: codexResets settings changed during the pass; holding", { pass: owned.pass.passId });
++			return "stop";
++		}
++		if (!this.#codexResetSourceMatches(owned.pass)) {
++			// The selection/session/active identity that started this pass no
++			// longer exists; the plan still covers every account, but its
++			// original source is gone, so the episode waits for a fresh pass.
++			this.#markCodexResetRun(owned, "held");
++			logger.warn("codex-auto-reset: original source changed during the pass; holding", { pass: owned.pass.passId });
++			return "stop";
++		}
++		let admission: ResetAdmission;
++		try {
++			admission = await owned.owner.admit(snapshot, index);
++		} catch (error) {
++			this.#markCodexResetRun(owned, "failed");
++			logger.warn("codex-auto-reset: owner admission failed", { pass: owned.pass.passId, error: String(error) });
++			return "stop";
++		}
++		if (admission.kind === "hold") {
++			this.#markCodexResetRun(owned, "held");
++			if (action.reason === "blocked-account") {
++				this.emitNotice(
++					"warning",
++					`Codex reset for ${action.label} is held (${admission.reason}); inspect the host reset ledger.`,
++					"codex-auto-reset",
++				);
++			} else {
++				logger.debug("codex-auto-reset: admission held", { account: action.accountKey, reason: admission.reason });
++			}
++			return "skip";
++		}
++		if (admission.kind === "join") return admission;
++		// Recheck native attempted state after the await: a concurrent pass in
++		// this process may have claimed the episode, and disposal may have begun.
++		if (coordinator.attemptedKeys.has(action.attemptKey) || this.#isDisposed) {
++			const disposed = this.#isDisposed;
++			owned.attemptIds.push(admission.permit.attemptId);
++			await this.#completeOwnedCodexReset(owned, admission.permit, {
++				consumeBoundary: "not-reached",
++				result: {
++					kind: "error",
++					error: new Error(
++						disposed
++							? "codex-auto-reset: session disposal began before dispatch"
++							: "codex-auto-reset: episode claimed by a concurrent pass before dispatch",
++					),
++				},
++			});
++			if (disposed) {
++				this.#markCodexResetRun(owned, "cancelled");
++				return "stop";
++			}
++			return "skip";
++		}
++		return admission;
++	}
++
++	/**
++	 * Join the original attempt's receipt: never calls AuthStorage, never
++	 * touches the coordinator, never emits a duplicate success notice. Only a
++	 * known `reset` counts as observed (for the immediate retry); it is not a
++	 * new applied reset of this pass. An unknown receipt (error, unreached or
++	 * refused boundary, no explicit outcome) leaves this pass held; a receipt
++	 * that never settles leaves it failed.
++	 */
++	async #joinOwnedCodexResetAttempt(
++		owned: CodexResetOwnedRun,
++		admission: Extract<ResetAdmission, { kind: "join" }>,
++	): Promise<boolean> {
++		owned.attemptIds.push(admission.attemptId);
++		let observation: ResetObservation;
++		try {
++			observation = await admission.settled;
++		} catch (error) {
++			this.#markCodexResetRun(owned, "failed");
++			logger.warn("codex-auto-reset: joined attempt did not settle", {
++				attemptId: admission.attemptId,
++				error: String(error),
++			});
++			return false;
++		}
++		if (
++			observation.result.kind === "error" ||
++			observation.consumeBoundary !== "passed" ||
++			!hasKnownCodexResetOutcome(observation.result.outcome.code)
++		) {
++			this.#markCodexResetRun(owned, "held");
++			return false;
++		}
++		return observation.result.outcome.code === "reset";
++	}
++
++	/**
++	 * Synchronous final admission at pi-ai's consume boundary, after its
++	 * credential/token awaits. Rechecks every native invalidation — disposal,
++	 * fence, the resolved identity against the permit, the original source
++	 * tuple (model, native session, active identity), base URL, policy and
++	 * the episode claim — then the owner's own guard; false or a throw means
++	 * no request. Nothing here awaits.
++	 */
++	#guardOwnedCodexResetConsume(
++		owned: CodexResetOwnedRun,
++		action: CodexResetAction,
++		permit: ResetPermit,
++		identity: ResetCreditConsumeIdentity,
++	): boolean {
++		try {
++			if (this.#isDisposed || this.#codexResetOwnerDispatchFenced) return false;
++			if (
++				identity.provider !== "openai-codex" ||
++				identity.credentialId !== permit.target.credentialId ||
++				identity.creditId !== permit.creditId
++			) {
++				return false;
++			}
++			if (action.target.accountId && identity.accountId !== action.target.accountId) return false;
++			if (!this.#codexResetSourceMatches(owned.pass)) return false;
++			if (this.#modelRegistry.getProviderBaseUrl?.("openai-codex") !== owned.pass.codexBaseUrl) return false;
++			if (!this.#codexResetPolicyMatches(owned.expectedPolicy)) return false;
++			if (!this.#codexResetCoordinator.attemptedKeys.has(action.attemptKey)) return false;
++			return permit.beforeConsume(identity) === true;
++		} catch (error) {
++			logger.warn("codex-auto-reset: consume guard threw; refusing", { error: String(error) });
++			return false;
++		}
++	}
++
++	/** Record the observed outcome against the permit and detect a guard bypass by an unpatched pi-ai. */
++	#noteOwnedCodexResetOutcome(
++		owned: CodexResetOwnedRun,
++		permit: ResetPermit,
++		action: CodexResetAction,
++		outcome: ResetCreditRedeemOutcome,
++		boundary: ConsumeBoundary,
++	): void {
++		owned.attemptIds.push(permit.attemptId);
++		if (outcome.code === "reset") owned.applied++;
++		if (boundary !== "passed" || !hasKnownCodexResetOutcome(outcome.code)) this.#markCodexResetRun(owned, "held");
++		if (boundary === "not-reached" && !CODEX_RESET_PRE_GUARD_CODES[outcome.code]) {
++			// pi-ai returned a consume outcome without invoking the guard: the
++			// installed package lacks the admission seam. The observed outcome
++			// stands, but this session dispatches no further owned spend.
++			this.#codexResetOwnerDispatchFenced = true;
++			this.#markCodexResetRun(owned, "failed");
++			logger.error("codex-auto-reset: consume bypassed the owner guard; installed pi-ai lacks beforeConsume", {
++				account: action.accountKey,
++				code: outcome.code,
++			});
++			this.emitNotice(
++				"error",
++				`Codex reset for ${action.label} was dispatched without the owner's admission guard (${outcome.code}); no further owned resets will run in this session. Inspect the host reset ledger.`,
++				"codex-auto-reset",
++			);
++		}
++	}
++
++	/**
++	 * Awaited paired completion. A failure cannot erase the observed native
++	 * result; it marks the pass failed and stops additional dispatch.
++	 */
++	async #completeOwnedCodexReset(
++		owned: CodexResetOwnedRun,
++		permit: ResetPermit,
++		observation: ResetObservation,
++	): Promise<boolean> {
++		try {
++			await owned.owner.complete(permit, observation);
++			return true;
++		} catch (error) {
++			this.#markCodexResetRun(owned, "failed");
++			logger.warn("codex-auto-reset: owner completion failed; stopping further dispatch", {
++				attemptId: permit.attemptId,
++				error: String(error),
++			});
++			this.emitNotice(
++				"warning",
++				"A Codex reset completion could not be journaled; further owned resets are stopped for this pass. Inspect the host reset ledger.",
++				"codex-auto-reset",
++			);
++			return false;
++		}
++	}
++
++	/** Awaited durability barrier; a rejection stops the pass before any consume. */
++	async #checkpointCodexReset(
++		owned: CodexResetOwnedRun,
++		event: ResetCheckpoint,
++	): Promise<boolean> {
++		try {
++			await owned.owner.checkpoint(event);
++			return true;
++		} catch (error) {
++			this.#markCodexResetRun(owned, "failed");
++			logger.warn("codex-auto-reset: owner checkpoint failed", {
++				phase: event.phase,
++				pass: owned.pass.passId,
++				error: String(error),
++			});
++			return false;
++		}
++	}
++
++	#markCodexResetRun(owned: CodexResetOwnedRun, state: ResetSettlement["state"]): void {
++		if (CODEX_RESET_STATE_RANK[state] > CODEX_RESET_STATE_RANK[owned.state]) owned.state = state;
++	}
++
++	#codexResetPolicyMatches(expected: ResetPolicySnapshot): boolean {
++		const cfg = this.settings.getGroup("codexResets");
++		return (
++			cfg.autoRedeem === expected.autoRedeem &&
++			cfg.minBlockedMinutes === expected.minBlockedMinutes &&
++			cfg.keepCredits === expected.keepCredits &&
++			cfg.salvageHorizonHours === expected.salvageHorizonHours
++		);
++	}
++
++	/**
++	 * Whether the source that started a pass still exists: same model
++	 * selection, same native session, same active Codex identity. The plan
++	 * still covers every stored account; this never filters targets to the
++	 * active account, it only invalidates a pass whose origin changed.
++	 */
++	#codexResetSourceMatches(pass: ResetPass): boolean {
++		const model = this.model;
++		if ((model?.provider ?? "") !== pass.provider || (model?.id ?? "") !== pass.modelId) return false;
++		if (this.sessionId !== pass.nativeSessionId) return false;
++		const identity = this.#modelRegistry.authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
++		const original = pass.identity;
++		return (
++			identity?.accountId === original?.accountId &&
++			identity?.email === original?.email &&
++			identity?.orgId === original?.orgId &&
++			identity?.projectId === original?.projectId
++		);
++	}
++
++	/** Capture immutable pass provenance synchronously, before the first await of a pass. */
++	#captureCodexResetPass(
++		trigger: CodexResetTrigger,
++		source: ResetPass["source"],
++		identity: OAuthAccountIdentity | undefined,
++		activeBlockUnblockAtMs: number | undefined,
++	): ResetPass {
++		const cfg = this.settings.getGroup("codexResets");
++		const model = this.model;
++		return Object.freeze({
++			passId: Bun.randomUUIDv7(),
++			nativeSessionId: this.sessionId,
++			trigger,
++			source,
++			startedAtMs: Date.now(),
++			provider: model?.provider ?? "",
++			modelId: model?.id ?? "",
++			codexBaseUrl: this.#modelRegistry.getProviderBaseUrl?.("openai-codex"),
++			identity: identity ? Object.freeze({ ...identity }) : undefined,
++			activeBlockUnblockAtMs,
++			policy: Object.freeze({
++				autoRedeem: cfg.autoRedeem,
++				minBlockedMinutes: cfg.minBlockedMinutes,
++				keepCredits: cfg.keepCredits,
++				salvageHorizonHours: cfg.salvageHorizonHours,
++			}),
++		});
++	}
++
++	#openCodexResetRun(owner: CodexResetPolicyOwner, pass: ResetPass): CodexResetOwnedRun {
++		return {
++			owner,
++			pass,
++			snapshot: undefined,
++			expectedPolicy: pass.policy,
++			state: "settled",
++			applied: 0,
++			attemptIds: [],
++			refresh: "not-needed",
++			refreshTask: undefined,
++			settled: Promise.resolve(),
++		};
++	}
++
++	/**
++	 * Track an owned pass until its guarded body (which already includes the
++	 * post-reset refresh) and the finished checkpoint have settled. `body`
++	 * never rejects: both entry points catch.
++	 */
++	#settleCodexResetRun(owned: CodexResetOwnedRun, body: Promise<unknown>): void {
++		owned.settled = body
++			.then(async () => {
++				const settlement: ResetSettlement = Object.freeze({
++					state: owned.state,
++					applied: owned.applied,
++					attemptIds: Object.freeze([...owned.attemptIds]),
++					refresh: owned.refresh,
++				});
++				await this.#checkpointCodexReset(owned, { phase: "finished", pass: owned.pass, settlement });
++			})
++			.finally(() => this.#codexResetOwnedRuns.delete(owned));
++		this.#codexResetOwnedRuns.add(owned);
+ 	}
+ 
+ 	/**
+@@ -10098,7 +10868,9 @@ export class AgentSession {
+ 	 * active account has no credits. The "unset" mode asks before spending;
+ 	 * "yes" skips the prompt; "no" avoids the eligibility IO entirely.
+ 	 * Per-account in-flight dedup lets concurrent sessions adopt one pass
+-	 * instead of double-spending.
++	 * instead of double-spending. With an owner, the pass provenance is
++	 * captured here before any await and a same-account joiner is journaled
++	 * against the original pass instead of relabeling it.
+ 	 */
+ 	async #maybeAutoRedeemCodexReset(activeBlockUnblockAtMs?: number): Promise<boolean> {
+ 		const coordinator = this.#codexResetCoordinator;
+@@ -10112,10 +10884,41 @@ export class AgentSession {
+ 		const identity = authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
+ 		const accountKey = (identity?.accountId ?? identity?.email)?.trim().toLowerCase();
+ 		if (!accountKey) return false;
++		const owner = this.#codexResetPolicyOwner;
++		// No new owned admission once disposal began.
++		if (owner && this.#isDisposed) return false;
+ 		const existing = coordinator.inFlightByAccount.get(accountKey);
+-		if (existing) return existing;
++		if (existing) {
++			const original = codexResetRunByPromise.get(existing);
++			if (!owner || !original) {
++				// Unowned original (or no owner here): plain native adoption; nothing
++				// is fabricated into a durable pass or completion.
++				if (owner) logger.debug("codex-auto-reset: adopting an unowned in-flight pass", { account: accountKey });
++				return existing;
++			}
++			const owned = this.#openCodexResetRun(
++				owner,
++				this.#captureCodexResetPass("blocked", "blocked", identity, activeBlockUnblockAtMs),
++			);
++			const joined = (async (): Promise<boolean> => {
++				await this.#checkpointCodexReset(owned, {
++					phase: "joined",
++					pass: owned.pass,
++					originalPassId: original.pass.passId,
++				});
++				// Adopt the original pass either way: joining spends nothing, and the
++				// retry decision needs the original's observed result.
++				return existing;
++			})();
++			this.#settleCodexResetRun(owned, joined);
++			return joined;
++		}
++		const owned = owner
++			? this.#openCodexResetRun(owner, this.#captureCodexResetPass("blocked", "blocked", identity, activeBlockUnblockAtMs))
++			: undefined;
+ 
+ 		const run = (async (): Promise<boolean> => {
++			if (owned && !(await this.#checkpointCodexReset(owned, { phase: "started", pass: owned.pass }))) return false;
+ 			// Live data: the cached report predates the block that got us here.
+ 			await authStorage.invalidateUsageCache("openai-codex");
+ 			const reports = await this.fetchUsageReports();
+@@ -10132,24 +10935,50 @@ export class AgentSession {
+ 					error: String(error),
+ 				});
+ 			}
+-			const plan = this.#planCodexResets("blocked", effectiveReports, identity, coordinator, activeBlockUnblockAtMs);
++			const plan = this.#planCodexResets(
++				"blocked",
++				effectiveReports,
++				identity,
++				coordinator,
++				activeBlockUnblockAtMs,
++				owned,
++			);
++			if (owned?.snapshot && !(await this.#checkpointCodexReset(owned, { phase: "planned", snapshot: owned.snapshot }))) {
++				return false;
++			}
+ 			if (plan.actions.length === 0) return false;
+ 			if (
+ 				shouldPromptCodexAutoRedeem(cfg.autoRedeem) &&
+-				!(await this.#confirmCodexAutoRedeem(plan.actions, coordinator))
++				!(await this.#confirmCodexAutoRedeem(plan.actions, coordinator, owned))
+ 			) {
+ 				return false;
+ 			}
+-			return (await this.#executeCodexResetActions(plan.actions, coordinator)) > 0;
+-		})()
+-			.catch(error => {
+-				// Eligibility IO (cache invalidation / usage fetch) failed; the
+-				// retry pipeline must keep running, so a blocked pass never rejects.
+-				logger.warn("codex-auto-reset: blocked pass failed", { account: accountKey, error: String(error) });
+-				return false;
++			return (await this.#executeCodexResetActions(plan.actions, coordinator, owned)) > 0;
++		})().catch(error => {
++			// Eligibility IO (cache invalidation / usage fetch) failed; the
++			// retry pipeline must keep running, so a blocked pass never rejects.
++			if (owned) this.#markCodexResetRun(owned, "failed");
++			logger.warn("codex-auto-reset: blocked pass failed", { account: accountKey, error: String(error) });
++			return false;
++		});
++		if (!owned) {
++			const unowned = run.finally(() => coordinator.inFlightByAccount.delete(accountKey));
++			coordinator.inFlightByAccount.set(accountKey, unowned);
++			return unowned;
++		}
++		// The owned pass keeps its per-account in-flight guard until the
++		// post-reset refresh settles, so that refresh can neither schedule a
++		// recursive sweep nor let a same-account joiner start a second consume.
++		// The retry decision itself is not delayed by the refresh.
++		const guarded = run
++			.then(async result => {
++				await owned.refreshTask;
++				return result;
+ 			})
+ 			.finally(() => coordinator.inFlightByAccount.delete(accountKey));
+-		coordinator.inFlightByAccount.set(accountKey, run);
++		coordinator.inFlightByAccount.set(accountKey, guarded);
++		codexResetRunByPromise.set(guarded, owned);
++		this.#settleCodexResetRun(owned, guarded);
+ 		return run;
+ 	}
+ 
+@@ -10159,35 +10988,69 @@ export class AgentSession {
+ 	 * rule in `./codex-auto-reset`) across ALL stored accounts, regardless of
+ 	 * the active model or blocked state. Fire-and-forget: never delays the
+ 	 * fetch, never runs concurrently with itself or a blocked pass, and the
+-	 * attempt keys make re-sweeps of the same snapshot no-ops.
+-	 */
+-	#maybeScheduleCodexResetSweep(reports: UsageReport[]): void {
++	 * attempt keys make re-sweeps of the same snapshot no-ops. An owned sweep
++	 * uses the provenance captured before the fetch's IO, keeps the sweep
++	 * guard until its post-reset refresh settles, and is returned so the
++	 * joining report method waits on exactly this run.
++	 */
++	#maybeScheduleCodexResetSweep(
++		reports: UsageReport[],
++		ownership: { owner: CodexResetPolicyOwner; pass: ResetPass } | undefined,
++	): CodexResetOwnedRun | undefined {
+ 		const coordinator = this.#codexResetCoordinator;
+ 		const cfg = this.settings.getGroup("codexResets");
+-		if (!shouldEvaluateCodexAutoRedeem(cfg.autoRedeem) || cfg.salvageHorizonHours <= 0) return;
++		if (!shouldEvaluateCodexAutoRedeem(cfg.autoRedeem) || cfg.salvageHorizonHours <= 0) return undefined;
+ 		// A blocked pass is planning over the same snapshot; let it own the spend.
+-		if (coordinator.sweepInFlight || coordinator.inFlightByAccount.size > 0) return;
++		if (coordinator.sweepInFlight || coordinator.inFlightByAccount.size > 0) return undefined;
+ 		const now = Date.now();
+-		if (now - coordinator.lastSweepAt < SWEEP_MIN_INTERVAL_MS) return;
+-		if (!reports.some(r => r.provider === "openai-codex" && (r.resetCredits?.credits?.length ?? 0) > 0)) return;
++		if (now - coordinator.lastSweepAt < SWEEP_MIN_INTERVAL_MS) return undefined;
++		if (!reports.some(r => r.provider === "openai-codex" && (r.resetCredits?.credits?.length ?? 0) > 0)) {
++			return undefined;
++		}
++		// No new owned admission once disposal began.
++		if (ownership && this.#isDisposed) return undefined;
++		const owned = ownership ? this.#openCodexResetRun(ownership.owner, ownership.pass) : undefined;
+ 		coordinator.sweepInFlight = true;
+ 		coordinator.lastSweepAt = now;
+-		coordinator.sweepPromise = (async () => {
+-			const identity = this.#modelRegistry.authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
+-			const plan = this.#planCodexResets("sweep", reports, identity, coordinator);
++		const sweep = (async () => {
++			if (owned && !(await this.#checkpointCodexReset(owned, { phase: "started", pass: owned.pass }))) return;
++			// An owned sweep plans against the identity captured before the fetch;
++			// the unowned path reads it here, inside the contained body, as before.
++			const identity = owned
++				? owned.pass.identity
++				: this.#modelRegistry.authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
++			const plan = this.#planCodexResets("sweep", reports, identity, coordinator, undefined, owned);
++			if (owned?.snapshot && !(await this.#checkpointCodexReset(owned, { phase: "planned", snapshot: owned.snapshot }))) {
++				return;
++			}
+ 			if (plan.actions.length === 0) return;
+ 			if (
+ 				shouldPromptCodexAutoRedeem(cfg.autoRedeem) &&
+-				!(await this.#confirmCodexAutoRedeem(plan.actions, coordinator))
++				!(await this.#confirmCodexAutoRedeem(plan.actions, coordinator, owned))
+ 			) {
+ 				return;
+ 			}
+-			await this.#executeCodexResetActions(plan.actions, coordinator);
+-		})()
+-			.catch(error => logger.warn("codex-reset sweep failed", { error: String(error) }))
++			await this.#executeCodexResetActions(plan.actions, coordinator, owned);
++		})().catch(error => {
++			if (owned) this.#markCodexResetRun(owned, "failed");
++			logger.warn("codex-reset sweep failed", { error: String(error) });
++		});
++		if (!owned) {
++			coordinator.sweepPromise = sweep.finally(() => {
++				coordinator.sweepInFlight = false;
++			});
++			return undefined;
++		}
++		// Hold the sweep guard through the post-reset refresh (see the blocked pass).
++		const guarded = sweep
++			.then(() => owned.refreshTask)
+ 			.finally(() => {
+ 				coordinator.sweepInFlight = false;
+ 			});
++		coordinator.sweepPromise = guarded;
++		codexResetRunByPromise.set(guarded, owned);
++		this.#settleCodexResetRun(owned, guarded);
++		return owned;
+ 	}
+ 
+ 	/**
 diff --git a/src/session/tool-choice-queue.ts b/src/session/tool-choice-queue.ts
-index cacbb5a7975edb95253e3806cc77a25fce66b088..1938cbe928e39f592347578d085c540794e54984 100644
+index cacbb5a..1938cbe 100644
 --- a/src/session/tool-choice-queue.ts
 +++ b/src/session/tool-choice-queue.ts
 @@ -1,4 +1,5 @@
@@ -4178,7 +5719,7 @@ index cacbb5a7975edb95253e3806cc77a25fce66b088..1938cbe928e39f592347578d085c5407
  
  	// ── Observation ───────────────────────────────────────────────────────
 diff --git a/src/slash-commands/helpers/todo.ts b/src/slash-commands/helpers/todo.ts
-index 28f2a69080275d4b421ac8e7f15a46a347350fc1..002c4b8dbce14b91e0deeedf2eb60b127970a179 100644
+index 28f2a69..002c4b8 100644
 --- a/src/slash-commands/helpers/todo.ts
 +++ b/src/slash-commands/helpers/todo.ts
 @@ -1,11 +1,11 @@
@@ -4501,7 +6042,7 @@ index 28f2a69080275d4b421ac8e7f15a46a347350fc1..002c4b8dbce14b91e0deeedf2eb60b12
  			return usage(
  				"/todo edit requires the TUI editor; use /todo export then /todo import for non-interactive edits.",
 diff --git a/src/tools/browser.ts b/src/tools/browser.ts
-index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
+index b191f31..50c0be1 100644
 --- a/src/tools/browser.ts
 +++ b/src/tools/browser.ts
 @@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
@@ -4747,7 +6288,7 @@ index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9
  	params: BrowserParams,
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd781508d8205f5
+index 0000000..1fc2ad5
 --- /dev/null
 +++ b/src/tools/browser/cdp-evaluation-channel.ts
 @@ -0,0 +1,117 @@
@@ -4869,7 +6410,7 @@ index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd78150
 +	return Object.freeze({ ready, dispose });
 +}
 diff --git a/src/tools/browser/cmux/cmux-tab.ts b/src/tools/browser/cmux/cmux-tab.ts
-index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..0028ae2535d2236767a7c2ddcac2d9d31e8e36b2 100644
+index eabba18..0028ae2 100644
 --- a/src/tools/browser/cmux/cmux-tab.ts
 +++ b/src/tools/browser/cmux/cmux-tab.ts
 @@ -2,8 +2,8 @@ import * as fs from "node:fs";
@@ -5363,7 +6904,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..0028ae2535d2236767a7c2ddcac2d9d3
  
 diff --git a/src/tools/browser/cmux/evaluation-channel.ts b/src/tools/browser/cmux/evaluation-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcafb236cb08
+index 0000000..34d7f21
 --- /dev/null
 +++ b/src/tools/browser/cmux/evaluation-channel.ts
 @@ -0,0 +1,130 @@
@@ -5498,7 +7039,7 @@ index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcaf
 +	});
 +}
 diff --git a/src/tools/browser/cmux/socket-client.ts b/src/tools/browser/cmux/socket-client.ts
-index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c078f1299 100644
+index 1741739..71e79d2 100644
 --- a/src/tools/browser/cmux/socket-client.ts
 +++ b/src/tools/browser/cmux/socket-client.ts
 @@ -12,6 +12,8 @@ type RequestJob = {
@@ -5815,7 +7356,7 @@ index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c
  	#rejectAll(err: ToolError): void {
 diff --git a/src/tools/browser/cmux/surface-observation.ts b/src/tools/browser/cmux/surface-observation.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da08d9aeefa
+index 0000000..b6b4128
 --- /dev/null
 +++ b/src/tools/browser/cmux/surface-observation.ts
 @@ -0,0 +1,83 @@
@@ -5904,7 +7445,7 @@ index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da0
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d338494fe8
+index 0000000..6367c08
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
 @@ -0,0 +1,300 @@
@@ -6209,7 +7750,7 @@ index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d3
 +	return { message: typeof value.message === "string" ? value.message : "Browser protocol request failed", code: typeof value.code === "number" ? value.code : -32000, data: value.data ?? value.originalMessage };
 +}
 diff --git a/src/tools/browser/registry.ts b/src/tools/browser/registry.ts
-index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993c48e980a 100644
+index 1b1bf38..69c255e 100644
 --- a/src/tools/browser/registry.ts
 +++ b/src/tools/browser/registry.ts
 @@ -77,6 +77,21 @@ export interface ReleaseBrowserOptions {
@@ -6304,7 +7845,7 @@ index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993
  		handle.client.close();
  		return;
 diff --git a/src/tools/browser/relay/bridge.ts b/src/tools/browser/relay/bridge.ts
-index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d436e1d9de 100644
+index dededcc..486d572 100644
 --- a/src/tools/browser/relay/bridge.ts
 +++ b/src/tools/browser/relay/bridge.ts
 @@ -18,8 +18,8 @@
@@ -7366,7 +8907,7 @@ index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d4
  	}
  }
 diff --git a/src/tools/browser/relay/extension-assets/background.js.txt b/src/tools/browser/relay/extension-assets/background.js.txt
-index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e841a8b1445 100644
+index 560da85..85e7d1a 100644
 --- a/src/tools/browser/relay/extension-assets/background.js.txt
 +++ b/src/tools/browser/relay/extension-assets/background.js.txt
 @@ -7,6 +7,7 @@ var ws = null;
@@ -7471,7 +9012,7 @@ index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e84
    socket.onclose = () => {
      if (ws !== socket)
 diff --git a/src/tools/browser/relay/protocol.ts b/src/tools/browser/relay/protocol.ts
-index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a2203ff24 100644
+index baef431..f573512 100644
 --- a/src/tools/browser/relay/protocol.ts
 +++ b/src/tools/browser/relay/protocol.ts
 @@ -21,6 +21,7 @@ export interface TabSnapshot {
@@ -7493,7 +9034,7 @@ index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a
  			tabs: TabSnapshot[];
 diff --git a/src/tools/browser/run-context.ts b/src/tools/browser/run-context.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0bef346f0
+index 0000000..4b24343
 --- /dev/null
 +++ b/src/tools/browser/run-context.ts
 @@ -0,0 +1,33 @@
@@ -7531,7 +9072,7 @@ index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0
 +	};
 +}
 diff --git a/src/tools/browser/tab-protocol.ts b/src/tools/browser/tab-protocol.ts
-index 98cbe214ebfd047d98aaa566e539dcf285fbd684..80be7e60d1430e30e7d783a9352fa4f78788aa9d 100644
+index 98cbe21..80be7e6 100644
 --- a/src/tools/browser/tab-protocol.ts
 +++ b/src/tools/browser/tab-protocol.ts
 @@ -1,4 +1,5 @@
@@ -7620,7 +9161,7 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..80be7e60d1430e30e7d783a9352fa4f7
  export interface Transport {
  	send(msg: WorkerOutbound | WorkerInbound, transferList?: Transferable[]): void;
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5f4d2217a615c0058f4129f9d3322456af..16cb150e8203a307653a6bcdad7909231fed9a35 100644
+index c6b8dd5..16cb150 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
 @@ -5,18 +5,24 @@ import {
@@ -10205,7 +11746,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..16cb150e8203a307653a6bcdad790923
  }
  /**
 diff --git a/src/tools/browser/tab-worker-entry.ts b/src/tools/browser/tab-worker-entry.ts
-index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267ffe33f470 100644
+index 9c572c8..fbc9340 100644
 --- a/src/tools/browser/tab-worker-entry.ts
 +++ b/src/tools/browser/tab-worker-entry.ts
 @@ -6,6 +6,15 @@ import { WorkerCore } from "./tab-worker";
@@ -10254,7 +11795,7 @@ index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267f
 +}
 diff --git a/src/tools/browser/tab-worker-host.ts b/src/tools/browser/tab-worker-host.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cca94d5352
+index 0000000..c3045c8
 --- /dev/null
 +++ b/src/tools/browser/tab-worker-host.ts
 @@ -0,0 +1,296 @@
@@ -10555,7 +12096,7 @@ index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cc
 +	return attempt;
 +}
 diff --git a/src/tools/browser/tab-worker.ts b/src/tools/browser/tab-worker.ts
-index 6e8281a7b1a6d42d22775cef6fb786beda634897..a822c09e37414533ab18602d35bc4a8d9898ce0f 100644
+index 6e8281a..a822c09 100644
 --- a/src/tools/browser/tab-worker.ts
 +++ b/src/tools/browser/tab-worker.ts
 @@ -3,13 +3,13 @@ import * as os from "node:os";
@@ -11177,7 +12718,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..a822c09e37414533ab18602d35bc4a8d
  }
 diff --git a/src/tools/browser/target-observation.ts b/src/tools/browser/target-observation.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902d24582f4
+index 0000000..d0148a7
 --- /dev/null
 +++ b/src/tools/browser/target-observation.ts
 @@ -0,0 +1,91 @@
@@ -11274,7 +12815,7 @@ index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902
 +}
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8be412636
+index 0000000..870b940
 --- /dev/null
 +++ b/src/tools/browser/worker-cdp-channel.ts
 @@ -0,0 +1,249 @@
@@ -11528,7 +13069,7 @@ index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8
 +	dispose(): Promise<void> { this.close(); return this.#done.promise; }
 +}
 diff --git a/src/tools/computer/worker-entry.ts b/src/tools/computer/worker-entry.ts
-index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d589ce816a 100644
+index 14a0b4e..619e0a0 100644
 --- a/src/tools/computer/worker-entry.ts
 +++ b/src/tools/computer/worker-entry.ts
 @@ -10,10 +10,11 @@ export function startComputerWorker(): void {
@@ -11545,7 +13086,7 @@ index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d5
  		onMessage(handler) {
  			if (inbox) return inbox.bind(message => handler(message as ComputerWorkerInbound));
 diff --git a/src/tools/todo.ts b/src/tools/todo.ts
-index e3dfab8776a86e26170e9b19ff6d0808922619a8..4771b33fab8a5268f1df6ea3b3e31af60c50ed3a 100644
+index e3dfab8..4771b33 100644
 --- a/src/tools/todo.ts
 +++ b/src/tools/todo.ts
 @@ -1,5 +1,5 @@

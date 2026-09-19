@@ -15,7 +15,7 @@ test("new package declares schema1 through 26 and hashes the standalone guard; i
   const root = await mkdtemp(join(tmpdir(), "agent-package-schema-contract-")); directories.push(root);
   const repository = join(root, "repository"), native = join(root, "native-contract-fixture");
   for (const [file, value] of Object.entries({
-    "package.json": JSON.stringify({ packageManager: "bun@1.3.14", dependencies: { "@oh-my-pi/pi-ai": "18.1.10", "@oh-my-pi/pi-coding-agent": "18.1.10", "@oh-my-pi/pi-natives": "18.1.10", "@oh-my-pi/pi-tui": "18.1.10", "@oh-my-pi/pi-utils": "18.1.10" }, patchedDependencies: { "@oh-my-pi/pi-coding-agent@18.1.10": "patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch" } }),
+    "package.json": JSON.stringify({ packageManager: "bun@1.3.14", scripts: { postinstall: "bun scripts/restore-pinned-omp-cli-mode.ts" }, dependencies: { "@oh-my-pi/pi-ai": "18.1.10", "@oh-my-pi/pi-coding-agent": "18.1.10", "@oh-my-pi/pi-natives": "18.1.10", "@oh-my-pi/pi-tui": "18.1.10", "@oh-my-pi/pi-utils": "18.1.10" }, patchedDependencies: { "@oh-my-pi/pi-coding-agent@18.1.10": "patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch" } }),
     "bun.lock": "packaging-only lock fixture\n", "apps/host/package.json": "{}", "apps/desktop/package.json": "{}", "packages/shared/package.json": "{}",
     "apps/host/src/server.ts": "// Packaging-only fixture; never launched.\n", "apps/host/src/packaged-entry.ts": "// inert packaged entry fixture; never launched.\n",
     "apps/host/src/runtime-ownership.ts": "export {};\n", "apps/host/src/omp-workers/packaged-entry.ts": "// inert worker entry fixture; never launched.\n",
@@ -24,7 +24,7 @@ test("new package declares schema1 through 26 and hashes the standalone guard; i
   const ompPatch = "diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts\n";
   await mkdir(join(repository, "patches"), { recursive: true });
   await writeFile(join(repository, "patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch"), ompPatch);
-  for (const file of ["scripts/package-host.ts", "scripts/install-host.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts"]) {
+  for (const file of ["scripts/package-host.ts", "scripts/install-host.ts", "scripts/restore-pinned-omp-cli-mode.ts", "scripts/terminal-upgrade-guard.ts", "scripts/host-state-compatibility.ts"]) {
     await mkdir(dirname(join(repository, file)), { recursive: true }); await copyFile(join(import.meta.dir, "..", file), join(repository, file));
   }
   // Only tests metadata transport/hash coverage. No fixture terminal, host, or provider is executed.
@@ -42,9 +42,14 @@ test("new package declares schema1 through 26 and hashes the standalone guard; i
   const manifest = JSON.parse(await readFile(join(unpacked, "host-artifact.json"), "utf8")) as HostArtifact;
   expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
   expect(manifest.files["scripts/host-state-compatibility.ts"]).toBe(hash(await readFile(join(repository, "scripts/host-state-compatibility.ts"))));
+  expect(manifest.files["scripts/restore-pinned-omp-cli-mode.ts"]).toBe(hash(await readFile(join(repository, "scripts/restore-pinned-omp-cli-mode.ts"))));
   expect(manifest.files["patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch"]).toBe(hash(ompPatch));
   const guard = await readFile(join(unpacked, "scripts/host-state-compatibility.ts"));
   expect(hash(guard)).toBe(manifest.files["scripts/host-state-compatibility.ts"]!);
+  const packagedManifest = JSON.parse(await readFile(join(unpacked, "package.json"), "utf8"));
+  expect(packagedManifest.scripts.postinstall).toBe("bun scripts/restore-pinned-omp-cli-mode.ts");
+  expect(hash(await readFile(join(unpacked, "scripts/restore-pinned-omp-cli-mode.ts"))))
+    .toBe(manifest.files["scripts/restore-pinned-omp-cli-mode.ts"]!);
   expect(hash(await readFile(output))).toBe(result.sha256);
   await writeFile(join(unpacked, "package.json"), "tampered\n");
   await expect(verifyArtifact(unpacked)).rejects.toThrow("Artifact verification failed: package.json");
