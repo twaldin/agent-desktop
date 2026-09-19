@@ -1,0 +1,5 @@
+# Original-session reset-policy owner factory
+
+The selected `@oh-my-pi/pi-coding-agent` 18.1.10 patch adds the optional synchronous `codexResetPolicyOwnerFactory`. `createAgentSession` invokes it exactly once after the real `AgentSession` exists and startup cleanup owns it, but before startup awaits or exposes the session. The frozen binding contains that session's original `Settings`, `ModelRegistry`, and `AuthStorage` objects. Direct-owner and factory options are mutually exclusive; malformed and Promise results fail startup through the normal session disposal and registry cleanup path. Promise rejections are observed, but the SDK cannot undo arbitrary effects a caller starts inside its factory.
+
+Task, vibe, nested, same-process, and cold-revived sessions inherit the factory itself. Each new actual session therefore receives a newly created owner bound to its own native objects. The API does not look up sessions by provider ID or a process-global registry, and it grants no reset authority by itself.
