@@ -22,10 +22,10 @@ index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
 diff --git a/dist/types/config/settings.d.ts b/dist/types/config/settings.d.ts
-index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..b0761777f30088f222eea2d3d112d04592ef2f43 100644
+index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..16bf8eae033e6b9ba976739d9df7dc00764bfa1e 100644
 --- a/dist/types/config/settings.d.ts
 +++ b/dist/types/config/settings.d.ts
-@@ -36,6 +36,36 @@ export interface SettingsOptions {
+@@ -36,6 +36,42 @@ export interface SettingsOptions {
      /** Extra config.yml-style overlays loaded after global/project settings */
      configFiles?: string[];
  }
@@ -59,10 +59,16 @@ index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..b0761777f30088f222eea2d3d112d045
 +    readonly available: boolean;
 +    readonly targetId: string | null;
 +}
++/** Opaque continuity guard for one native reset-policy pass on an exact Settings instance. */
++export interface ResetPolicySettingsObservation {
++    assertCurrent(): void;
++    adoptNativeAutoRedeemSet(mode: "yes" | "no"): void;
++    dispose(): void;
++}
  /**
   * Drop entries from capability-provided project settings whose non-object
   * value would shadow an entire settings group. `.claude/settings.json` is
-@@ -94,6 +124,7 @@ export declare class Settings {
+@@ -94,6 +130,7 @@ export declare class Settings {
       */
      static isolated(overrides?: Partial<Record<SettingPath, unknown>>, options?: {
          storage?: AgentStorage | null;
@@ -70,7 +76,7 @@ index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..b0761777f30088f222eea2d3d112d045
      }): Settings;
      /**
       * Get the global singleton.
-@@ -139,6 +170,18 @@ export declare class Settings {
+@@ -139,6 +176,20 @@ export declare class Settings {
       */
      flush(): Promise<void>;
      cloneForCwd(cwd: string): Promise<Settings>;
@@ -84,6 +90,8 @@ index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..b0761777f30088f222eea2d3d112d045
 +    getResetPolicySettingsWriter(): ResetPolicySettingsWriter | null;
 +    /** Dispose the writer created by this original Settings instance. */
 +    disableResetPolicyPersistence(): void;
++    /** Capture synchronous loaded-state continuity for one native reset-policy pass. */
++    captureResetPolicySettingsObservation(): ResetPolicySettingsObservation;
 +    /** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
 +    capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback;
      /**
@@ -1566,7 +1574,7 @@ index 9b6317446d66d7a95aeee1545139719227909bdb..23218089a6a4ef70fdd9cb3ebf254e11
  		if (!discoveryConfig) {
  			return model;
 diff --git a/src/config/settings.ts b/src/config/settings.ts
-index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6399a774c 100644
+index 418b33a4373bd96e31a5807be8dac03e225792ee..d3c1d335cff88c4217f728f1b665dffe0c0f1f41 100644
 --- a/src/config/settings.ts
 +++ b/src/config/settings.ts
 @@ -31,7 +31,7 @@ import {
@@ -1578,7 +1586,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  import { type Settings as SettingsCapabilityItem, settingsCapability } from "../capability/settings";
  import type { ModelRole } from "../config/model-roles";
  import { loadCapability } from "../discovery";
-@@ -133,13 +133,114 @@ type ProjectSettingsReadResult = {
+@@ -133,13 +133,121 @@ type ProjectSettingsReadResult = {
  	settings: RawSettings;
  	fileSettings: RawSettings;
  	shellPathSource: string | undefined;
@@ -1622,6 +1630,13 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
 +export interface ResetPolicyWriterReadback {
 +	readonly available: boolean;
 +	readonly targetId: string | null;
++}
++
++/** Opaque continuity guard for one native reset-policy pass on an exact Settings instance. */
++export interface ResetPolicySettingsObservation {
++	assertCurrent(): void;
++	adoptNativeAutoRedeemSet(mode: "yes" | "no"): void;
++	dispose(): void;
 +}
 +
  type ConfigOverlayReadResult = {
@@ -1693,7 +1708,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  export interface SettingsOptions {
  	/** Current working directory for project settings discovery */
  	cwd?: string;
-@@ -475,6 +576,8 @@ export class Settings {
+@@ -475,6 +583,8 @@ export class Settings {
  	#cwd: string;
  	#agentDir: string;
  	#storage: AgentStorage | null = null;
@@ -1702,15 +1717,20 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  
  	#configFiles: string[] = [];
  	/** Global settings from config.yml/config.yaml */
-@@ -511,6 +614,7 @@ export class Settings {
+@@ -511,6 +621,12 @@ export class Settings {
  	#modifiedGlobalModelRoleMutations = new Map<string, PendingYamlMutation>();
  	/** Changes whenever a live API mutates a persisted layer. */
  	#persistedMutationGeneration = 0;
 +	#readbackScopeGeneration = 0;
++	#lastReadbackScopeOperation:
++		| { generation: number; kind: "set"; path: SettingPath; value: unknown; adoptedBy?: object }
++		| { generation: number; kind: "other" }
++		| undefined;
++	#resetPolicyObservationReloadsInFlight = 0;
  	/**
  	 * Original process-wide model-role overrides captured before a project edit
  	 * temporarily replaced them via `#updateRuntimeModelRoleOverride`. Restored
-@@ -607,10 +711,11 @@ export class Settings {
+@@ -607,10 +723,11 @@ export class Settings {
  	 */
  	static isolated(
  		overrides: Partial<Record<SettingPath, unknown>> = {},
@@ -1723,34 +1743,34 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  		instance.#rebuildMerged();
  		return instance;
  	}
-@@ -660,6 +765,10 @@ export class Settings {
+@@ -660,6 +777,10 @@ export class Settings {
  	 * Triggers hooks for settings that have side effects.
  	 */
  	set<P extends SettingPath>(path: P, value: SettingValue<P>): void {
 +		if (this.#resetPolicyWriter && isResetPolicySettingPath(path)) {
 +			this.#stageResetPolicyMutation(this.#resetPolicyWriter, path, value);
 +		}
-+		this.#readbackScopeGeneration++;
++		this.#advanceReadbackScope({ kind: "set", path, value });
  		const prev = this.get(path);
  		const segments = path.split(".");
  		this.#captureGlobalMutation(path, this.#modifiedPathMutations, getByPath(this.#global, segments));
-@@ -682,6 +791,7 @@ export class Settings {
+@@ -682,6 +803,7 @@ export class Settings {
  	 * Apply runtime overrides (not persisted).
  	 */
  	override<P extends SettingPath>(path: P, value: SettingValue<P>): void {
-+		this.#readbackScopeGeneration++;
++		this.#advanceReadbackScope();
  		if (path === "modelRoles") {
  			this.#savedRuntimeModelRoleOverrides.clear();
  		}
-@@ -696,6 +806,7 @@ export class Settings {
+@@ -696,6 +818,7 @@ export class Settings {
  	 * Clear a runtime override.
  	 */
  	clearOverride(path: SettingPath): void {
-+		this.#readbackScopeGeneration++;
++		this.#advanceReadbackScope();
  		if (path === "modelRoles") {
  			this.#savedRuntimeModelRoleOverrides.clear();
  		}
-@@ -793,6 +904,9 @@ export class Settings {
+@@ -793,6 +916,9 @@ export class Settings {
  		if (this.#modifiedProjectModelRoles.size > 0) {
  			await this.#saveProjectNow();
  		}
@@ -1760,7 +1780,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  	}
  
  	async cloneForCwd(cwd: string): Promise<Settings> {
-@@ -810,11 +924,259 @@ export class Settings {
+@@ -810,11 +936,360 @@ export class Settings {
  		cloned.#configOverlay = structuredClone(this.#configOverlay);
  		cloned.#overlayShellPathSource = this.#overlayShellPathSource;
  		cloned.#overrides = this.#buildOriginalOverrides();
@@ -1830,7 +1850,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
 +		resetPolicyWritersByTarget.set(physicalPath, new WeakRef(token));
 +		this.#resetPolicyWriter = token;
 +		this.#ownsResetPolicyWriter = true;
-+		this.#readbackScopeGeneration++;
++		this.#advanceReadbackScope();
 +		return token;
 +	}
 +
@@ -1855,7 +1875,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
 +		}
 +		this.#resetPolicyWriter = undefined;
 +		this.#ownsResetPolicyWriter = false;
-+		this.#readbackScopeGeneration++;
++		this.#advanceReadbackScope();
 +	}
 +
 +	#attachResetPolicyWriter(writer: ResetPolicySettingsWriter): void {
@@ -1866,8 +1886,109 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
 +		}
 +		if (this.#resetPolicyWriter !== writer) {
 +			this.#resetPolicyWriter = writer;
-+			this.#readbackScopeGeneration++;
++			this.#advanceReadbackScope();
 +		}
++	}
++
++	#advanceReadbackScope(operation?: { kind: "set"; path: SettingPath; value: unknown }): void {
++		const generation = ++this.#readbackScopeGeneration;
++		this.#lastReadbackScopeOperation = operation
++			? { generation, kind: "set", path: operation.path, value: structuredClone(operation.value) }
++			: { generation, kind: "other" };
++	}
++
++	#resetPolicyObservationSnapshot(): {
++		global: readonly unknown[];
++		project: readonly unknown[];
++		overlay: readonly unknown[];
++		runtime: readonly unknown[];
++		effective: readonly unknown[];
++	} {
++		const pick = (layer: RawSettings): readonly unknown[] =>
++			Object.freeze([...RESET_POLICY_SETTING_PATHS].map(settingPath => structuredClone(getByPath(layer, settingPath.split(".")))));
++		return Object.freeze({
++			global: pick(this.#global),
++			project: pick(this.#project),
++			overlay: pick(this.#configOverlay),
++			runtime: pick(this.#overrides),
++			effective: Object.freeze([...RESET_POLICY_SETTING_PATHS].map(settingPath => structuredClone(this.get(settingPath)))),
++		});
++	}
++
++	/** Capture synchronous loaded-state continuity for one native reset-policy pass. */
++	captureResetPolicySettingsObservation(): ResetPolicySettingsObservation {
++		if (this.#resetPolicyObservationReloadsInFlight > 0) {
++			throw new Error("Settings reload is in progress");
++		}
++		let generation = this.#readbackScopeGeneration;
++		let snapshot = this.#resetPolicyObservationSnapshot();
++		const cwd = this.#cwd;
++		const agentDir = this.#agentDir;
++		const writer = this.#resetPolicyWriter;
++		let adopted = false;
++		let disposed = false;
++		const identity = {};
++		const assertLiveScope = (): void => {
++			const writerState = writer ? resetPolicyWriterStates.get(writer) : undefined;
++			if (disposed) throw new Error("Settings observation is disposed");
++			if (this.#resetPolicyObservationReloadsInFlight > 0) throw new Error("Settings reload is in progress");
++			if (
++				this.#cwd !== cwd ||
++				this.#agentDir !== agentDir ||
++				this.#resetPolicyWriter !== writer ||
++				(writer !== undefined && (!writerState || writerState.disposed))
++			) {
++				throw new Error("Settings observation changed");
++			}
++		};
++		const assertCurrent = (): void => {
++			assertLiveScope();
++			if (
++				this.#readbackScopeGeneration !== generation ||
++				!Bun.deepEquals(this.#resetPolicyObservationSnapshot(), snapshot)
++			) {
++				throw new Error("Settings observation changed");
++			}
++		};
++		const adoptNativeAutoRedeemSet = (mode: "yes" | "no"): void => {
++			assertLiveScope();
++			if (adopted) throw new Error("Native auto-redeem setting was already adopted");
++			const operation = this.#lastReadbackScopeOperation;
++			if (
++				this.#readbackScopeGeneration !== generation + 1 ||
++				operation?.generation !== this.#readbackScopeGeneration ||
++				operation.kind !== "set" ||
++				operation.path !== "codexResets.autoRedeem" ||
++				operation.value !== mode ||
++				operation.adoptedBy !== undefined
++			) {
++				throw new Error("Settings observation did not receive the expected native auto-redeem set");
++			}
++			const next = this.#resetPolicyObservationSnapshot();
++			const autoRedeemIndex = [...RESET_POLICY_SETTING_PATHS].indexOf("codexResets.autoRedeem");
++			const withoutAutoRedeem = (values: readonly unknown[]): readonly unknown[] =>
++				values.filter((_, index) => index !== autoRedeemIndex);
++			if (
++				next.global[autoRedeemIndex] !== mode ||
++				!Bun.deepEquals(withoutAutoRedeem(next.global), withoutAutoRedeem(snapshot.global)) ||
++				!Bun.deepEquals(next.project, snapshot.project) ||
++				!Bun.deepEquals(next.overlay, snapshot.overlay) ||
++				!Bun.deepEquals(next.runtime, snapshot.runtime)
++			) {
++				throw new Error("Settings observation changed outside the native auto-redeem set");
++			}
++			generation = this.#readbackScopeGeneration;
++			snapshot = next;
++			adopted = true;
++			operation.adoptedBy = identity;
++		};
++		return Object.freeze({
++			assertCurrent,
++			adoptNativeAutoRedeemSet,
++			dispose: (): void => {
++				disposed = true;
++			},
++		});
 +	}
 +
 +	#stageResetPolicyMutation(writer: ResetPolicySettingsWriter, settingPath: ResetPolicySettingPath, value: unknown): void {
@@ -2020,15 +2141,60 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  	/**
  	 * Re-read the current global, project, and explicit overlay layers from disk
  	 * without replacing this instance or discarding runtime overrides.
-@@ -909,6 +1271,7 @@ export class Settings {
+@@ -827,11 +1302,15 @@ export class Settings {
+ 		if (!this.#persist) return;
+ 		if (this.#reloadFromDiskPromise) return this.#reloadFromDiskPromise;
+ 
++		this.#advanceReadbackScope();
++		this.#resetPolicyObservationReloadsInFlight++;
+ 		const reload = this.#reloadPersistedLayers();
+ 		this.#reloadFromDiskPromise = reload;
+ 		try {
+ 			await reload;
+ 		} finally {
++			this.#advanceReadbackScope();
++			this.#resetPolicyObservationReloadsInFlight--;
+ 			if (this.#reloadFromDiskPromise === reload) {
+ 				this.#reloadFromDiskPromise = undefined;
+ 			}
+@@ -909,18 +1388,25 @@ export class Settings {
  	async reloadForCwd(cwd: string): Promise<void> {
  		const normalized = path.normalize(cwd);
  		if (normalized === this.#cwd) return;
-+		this.#readbackScopeGeneration++;
- 		await this.flush();
- 		this.#restoreRuntimeModelRoleOverrides();
- 		const prevModelRoles = this.get("modelRoles");
-@@ -1412,6 +1775,25 @@ export class Settings {
+-		await this.flush();
+-		this.#restoreRuntimeModelRoleOverrides();
+-		const prevModelRoles = this.get("modelRoles");
+-		const prevCodeModeValues = this.#codeModeSignalSnapshot();
+-		this.#cwd = normalized;
+-		if (this.#persist) {
+-			this.#project = await this.#loadProjectSettings();
++		this.#advanceReadbackScope();
++		this.#resetPolicyObservationReloadsInFlight++;
++		try {
++			await this.flush();
++			this.#restoreRuntimeModelRoleOverrides();
++			const prevModelRoles = this.get("modelRoles");
++			const prevCodeModeValues = this.#codeModeSignalSnapshot();
++			this.#cwd = normalized;
++			if (this.#persist) {
++				this.#project = await this.#loadProjectSettings();
++			}
++			this.#rebuildMerged();
++			this.#fireEffectiveSettingChanged("modelRoles", this.get("modelRoles"), prevModelRoles);
++			this.#fireCodeModeChangeIfNeeded(prevCodeModeValues);
++			this.#fireAllHooks();
++		} finally {
++			this.#advanceReadbackScope();
++			this.#resetPolicyObservationReloadsInFlight--;
+ 		}
+-		this.#rebuildMerged();
+-		this.#fireEffectiveSettingChanged("modelRoles", this.get("modelRoles"), prevModelRoles);
+-		this.#fireCodeModeChangeIfNeeded(prevCodeModeValues);
+-		this.#fireAllHooks();
+ 	}
+ 
+ 	// ─────────────────────────────────────────────────────────────────────────
+@@ -1412,6 +1898,25 @@ export class Settings {
  		return this;
  	}
  
@@ -2054,7 +2220,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  	#readYamlGeneration(filePath: string): YamlGeneration {
  		try {
  			const source = fs.readFileSync(filePath, "utf8");
-@@ -1811,8 +2193,10 @@ export class Settings {
+@@ -1811,8 +2316,10 @@ export class Settings {
  	async #readProjectSettings(quarantineInvalid: boolean): Promise<ProjectSettingsReadResult> {
  		let shellPathSource: string | undefined;
  		let merged: RawSettings = {};
@@ -2065,7 +2231,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  			for (const item of result.items as SettingsCapabilityItem[]) {
  				if (item.level === "project") {
  					merged = this.#deepMerge(merged, dropSettingsGroupShadows(item.data as RawSettings, item.path));
-@@ -1820,6 +2204,7 @@ export class Settings {
+@@ -1820,6 +2327,7 @@ export class Settings {
  				}
  			}
  		} catch {
@@ -2073,7 +2239,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  			shellPathSource = undefined;
  			// Capability discovery is best-effort; the native project config below
  			// remains authoritative for its model-role layer and must not be hidden.
-@@ -1837,6 +2222,7 @@ export class Settings {
+@@ -1837,6 +2345,7 @@ export class Settings {
  			settings: this.#migrateRawSettings(merged, quarantineInvalid),
  			fileSettings: structuredClone(nativeProject),
  			shellPathSource,
@@ -2081,6 +2247,35 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6
  		};
  	}
  
+@@ -2803,13 +3312,22 @@ export class Settings {
+ 						}
+ 					}
+ 					setByPath(current, ["modelRoles"], mergedRoles);
+-					shouldWrite = true;
+-				}
++						shouldWrite = true;
++					}
+ 
+-				// Update our global with any external changes we preserved.
+-				this.#global = current;
+-				if (shouldWrite) {
+-					await this.#writeYamlAtomically(writePath, this.#global);
++					// Update our global with any external changes we preserved.
++					const previousResetPolicyGlobal = [...RESET_POLICY_SETTING_PATHS].map(settingPath =>
++						structuredClone(getByPath(this.#global, settingPath.split("."))),
++					);
++					const nextResetPolicyGlobal = [...RESET_POLICY_SETTING_PATHS].map(settingPath =>
++						structuredClone(getByPath(current, settingPath.split("."))),
++					);
++					this.#global = current;
++					if (!Bun.deepEquals(previousResetPolicyGlobal, nextResetPolicyGlobal)) {
++						this.#advanceReadbackScope();
++					}
++					if (shouldWrite) {
++						await this.#writeYamlAtomically(writePath, this.#global);
+ 				}
+ 				this.#quarantinedYamlTargets.delete(configPath);
+ 				// These pending roles were included in this write. Remove each
 diff --git a/src/export/share.ts b/src/export/share.ts
 index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2c980a559 100644
 --- a/src/export/share.ts
