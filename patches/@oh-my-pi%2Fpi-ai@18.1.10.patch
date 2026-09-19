@@ -1,19 +1,1808 @@
-diff --git a/src/auth-storage.ts b/src/auth-storage.ts
---- a/src/auth-storage.ts
-+++ b/src/auth-storage.ts
-@@ -950,6 +950,11 @@
+diff --git a/dist/types/auth/reset-account-evidence.d.ts b/dist/types/auth/reset-account-evidence.d.ts
+new file mode 100755
+index 0000000..5b21db7
+--- /dev/null
++++ b/dist/types/auth/reset-account-evidence.d.ts
+@@ -0,0 +1,9 @@
++import type { AuthCredential, ResetAccountEvidence } from "../auth-storage.js";
++/** Internal constructor: only the backend supplies durable namespace/incarnation, never token bytes. */
++export declare function createResetAccountEvidence(authAuthority: string, incarnation: string, provider: string, credentialId: number, credential: AuthCredential): ResetAccountEvidence | undefined;
++/** Checks the native reset identity slice, excluding cosmetic org names and bearer data. */
++export declare function matchesResetAccountCredential(evidence: ResetAccountEvidence | undefined, provider: string, credentialId: number, credential: AuthCredential): evidence is ResetAccountEvidence;
++/** Missing/unsupported evidence is never equivalent, including two missing values. */
++export declare function sameResetAccountEvidence(left: ResetAccountEvidence | undefined, right: ResetAccountEvidence | undefined): boolean;
++/** Whitelisted detached value: never spread an extension/backing-store object into a public proof. */
++export declare function snapshotResetAccountEvidence(evidence: ResetAccountEvidence): ResetAccountEvidence;
+diff --git a/dist/types/auth/sqlite-credential-store.d.ts b/dist/types/auth/sqlite-credential-store.d.ts
+index 44e2df0..2f4757d 100644
+--- a/dist/types/auth/sqlite-credential-store.d.ts
++++ b/dist/types/auth/sqlite-credential-store.d.ts
+@@ -6,7 +6,7 @@
+  */
+ import { Database } from "bun:sqlite";
+ import { isSqliteBusyError, isSqliteCorruptionError } from "@oh-my-pi/pi-utils";
+-import type { AuthCredential, AuthCredentialStore, CredentialRefreshLeaseFence, DisabledCredentialSummary, StoredAuthCredential, StoredCredentialBlock } from "../auth-storage.js";
++import type { AuthCredential, AuthCredentialStore, CredentialRefreshLeaseFence, DisabledCredentialSummary, ResetAccountEvidence, StoredAuthCredential, StoredCredentialBlock } from "../auth-storage.js";
+ import type { OAuthCredentials } from "../registry/oauth/types.js";
+ import type { ClientUsageReport, ClientUsageSummary, UsageHistoryEntry, UsageHistoryQuery } from "../usage.js";
+ export declare const USAGE_REPORT_TTL_MS: number;
+@@ -45,6 +45,14 @@ export declare class SqliteAuthCredentialStore implements AuthCredentialStore {
+      */
+     tryDisableAuthCredentialIfMatches(id: number, expectedData: string, disabledCause: string, lease?: CredentialRefreshLeaseFence): boolean;
+     deleteAuthCredentialsForProvider(provider: string, disabledCause: string): void;
++    /**
++     * Current reset-account evidence for exactly one active OAuth row. The
++     * lookup is keyed on `(provider, id)` with no provider fallback, excludes
++     * disabled rows, and returns undefined for API keys, undecodable data, or
++     * rows whose incarnation is not yet durable. Compare against evidence
++     * pinned from an earlier snapshot with `sameResetAccountEvidence`.
++     */
++    getResetAccountEvidence(provider: string, credentialId: number): ResetAccountEvidence | undefined;
+     getCache(key: string, options?: {
+         includeExpired?: boolean;
+     }): string | null;
+diff --git a/dist/types/auth-broker/remote-store.d.ts b/dist/types/auth-broker/remote-store.d.ts
+index bd2301f..f338b42 100644
+--- a/dist/types/auth-broker/remote-store.d.ts
++++ b/dist/types/auth-broker/remote-store.d.ts
+@@ -1,4 +1,4 @@
+-import { type AuthCredential, type AuthCredentialStore, type DisabledCredentialSummary, type OAuthCredential, type StoredAuthCredential, type StoredCredentialBlock } from "../auth-storage.js";
++import { type AuthCredential, type AuthCredentialStore, type DisabledCredentialSummary, type OAuthCredential, type ResetAccountEvidence, type StoredAuthCredential, type StoredCredentialBlock } from "../auth-storage.js";
+ import type { OAuthCredentials } from "../registry/oauth/types.js";
+ import type { Provider } from "../types.js";
+ import type { ClientUsageIdentity, ObservedUsageEntry, UsageReport } from "../usage.js";
+@@ -52,6 +52,14 @@ export declare class RemoteAuthCredentialStore implements AuthCredentialStore {
+     /** Re-hydrate the in-memory snapshot from the broker. */
+     refreshSnapshot(): Promise<SnapshotResponse>;
+     listAuthCredentials(provider?: string): StoredAuthCredential[];
++    /**
++     * Broker-supplied reset-account proof for exactly `(provider, credentialId)`
++     * as last observed from the broker, or `undefined` when the row is not
++     * mirrored, the broker never sent proof for it (legacy broker, capability
++     * not negotiated, non-OAuth row) or a local mirror update changed its bearer
++     * or scope without fresh server evidence. Synchronous: no round-trip or minting.
++     */
++    getResetAccountEvidence(provider: string, credentialId: number): ResetAccountEvidence | undefined;
+     /** Broker-backed disabled tombstones; empty against brokers predating the endpoint. */
+     listDisabledCredentials(provider?: string, signal?: AbortSignal): Promise<DisabledCredentialSummary[]>;
+     getCredentialBlock(credentialId: number, providerKey: string, blockScope: string): number | undefined;
+@@ -65,6 +73,10 @@ export declare class RemoteAuthCredentialStore implements AuthCredentialStore {
+      * In-memory update from a successful refresh through the broker. AuthStorage
+      * calls this after `#replaceCredentialAt`; the broker already persisted the
+      * authoritative row, so we just mirror it.
++     *
++     * Keep server proof only for the bearer already supplied by a server frame
++     * (the refresh response is ingested before AuthStorage mirrors it here).
++     * A local token change without that frame is not a server-proven refresh.
+      */
+     updateAuthCredential(id: number, credential: AuthCredential): void;
+     deleteAuthCredential(id: number, disabledCause: string): void;
+diff --git a/dist/types/auth-broker/types.d.ts b/dist/types/auth-broker/types.d.ts
+index a64a75a..3a708e4 100644
+--- a/dist/types/auth-broker/types.d.ts
++++ b/dist/types/auth-broker/types.d.ts
+@@ -19,6 +19,13 @@ export interface RefresherSchedule {
+     nextSweepInMs: number;
+ }
+ export type CredentialBlockSnapshot = Omit<StoredCredentialBlock, "credentialId">;
++/**
++ * One credential row as served on the wire. `resetAccountEvidence` (inherited
++ * from {@link AuthCredentialSnapshotEntry}) is the broker host's own
++ * server-backed proof for this exact row and is present ONLY when the client
++ * advertised {@link AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1}; older
++ * strict clients reject unknown keys, so the server omits it otherwise.
++ */
+ export type SnapshotEntry = AuthCredentialSnapshotEntry & {
+     rotatesInMs: number | null;
+     blocks?: CredentialBlockSnapshot[];
+@@ -54,7 +61,11 @@ export interface ClientUsageSummaryResponse {
+     generatedAt: number;
+     clients: ClientUsageClientSummary[];
+ }
+-/** POST /v1/credential/:id/refresh response body. */
++/**
++ * POST /v1/credential/:id/refresh response body. `entry.resetAccountEvidence`
++ * is the post-refresh server proof for the row, only for clients that
++ * negotiated {@link AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1}.
++ */
+ export interface CredentialRefreshResponse {
+     entry: AuthCredentialSnapshotEntry;
+ }
+@@ -93,7 +104,11 @@ export interface CredentialUploadRequest {
+     provider: string;
+     credential: AuthCredential;
+ }
+-/** POST /v1/credential response body — redacted snapshot of the provider's rows after upsert. */
++/**
++ * POST /v1/credential response body — redacted snapshot of the provider's rows
++ * after upsert. Each entry carries `resetAccountEvidence` only for clients that
++ * negotiated {@link AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1}.
++ */
+ export interface CredentialUploadResponse {
+     entries: AuthCredentialSnapshotEntry[];
+ }
+@@ -131,10 +146,27 @@ export type SnapshotStreamEvent = SnapshotStreamSnapshotEvent | SnapshotStreamEn
+  * unauthenticated for liveness probes; everything else requires a bearer.
+  */
+ export declare const AUTH_BROKER_API_PREFIX = "/v1";
+-/** Request header used by clients to advertise optional auth-broker protocol features. */
++/**
++ * Request header used by clients to advertise optional auth-broker protocol
++ * features as a comma-separated list. Every capability is additive: a server
++ * that does not recognise one ignores it, and a server never emits a
++ * capability-gated field to a client that did not advertise it.
++ */
+ export declare const AUTH_BROKER_CAPABILITIES_HEADER = "OMP-Auth-Broker-Capabilities";
+ /** Client understands independent Codex `chat` and `spark` credential-block scopes. */
+ export declare const AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES = "codex-meter-block-scopes";
++/**
++ * Client accepts the optional `resetAccountEvidence` field (version 1 shape)
++ * on snapshot entries, SSE `entry` frames, refresh responses and upload
++ * responses. The value is the broker host's server-backed proof for that
++ * exact row, sourced from its own credential store — never derived from the
++ * URL, bearer token, labels or the client's own view. Without this
++ * capability the field is omitted entirely, which keeps the published strict
++ * (`"+": "reject"`) client schemas valid.
++ */
++export declare const AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1 = "reset-account-evidence-v1";
++/** Every optional protocol feature this client build understands; the literal capabilities header value. */
++export declare const AUTH_BROKER_CLIENT_CAPABILITIES = "codex-meter-block-scopes,reset-account-evidence-v1";
+ /** Default port when none is configured. Loopback-only, no external exposure. */
+ export declare const DEFAULT_AUTH_BROKER_BIND = "127.0.0.1:8765";
+ /** Default broker→provider refresh skew. Refresh credentials this close to expiry. */
+diff --git a/dist/types/auth-broker/wire-schemas.d.ts b/dist/types/auth-broker/wire-schemas.d.ts
+index 00c99e2..732e4de 100644
+--- a/dist/types/auth-broker/wire-schemas.d.ts
++++ b/dist/types/auth-broker/wire-schemas.d.ts
+@@ -13,7 +13,7 @@
+  * they round-trip through the broker instead of being dropped (see below).
+  */
+ import { type FluentType } from "@oh-my-pi/omptype";
+-import { type ApiKeyCredential, type AuthCredential, type AuthCredentialSnapshotEntry, type DisabledCredentialSummary, type OAuthCredential, type RemoteOAuthCredential, type SnapshotCredential } from "../auth-storage.js";
++import { type ApiKeyCredential, type AuthCredential, type AuthCredentialSnapshotEntry, type DisabledCredentialSummary, type OAuthCredential, type RemoteOAuthCredential, type ResetAccountEvidence, type SnapshotCredential } from "../auth-storage.js";
+ import type { ClientUsageReportRequest, ClientUsageReportResponse, ClientUsageSummaryResponse, CredentialBlockRequest, CredentialBlockResponse, CredentialBlockSnapshot, CredentialBlocksDeleteResponse, CredentialDisableResponse, CredentialRefreshResponse, CredentialUploadRequest, CredentialUploadResponse, DisabledCredentialsResponse, HealthzResponse, RefresherSchedule, SnapshotEntry, SnapshotResponse, SnapshotStreamEntryEvent, SnapshotStreamEvent, SnapshotStreamRemovedEvent, SnapshotStreamSnapshotEvent, UsageHistoryResponse, UsageResponse, UsageStaleResponse } from "./types.js";
+ /** Real OAuth credential (broker-side) — refresh token is the actual upstream value. */
+ export declare const oauthCredentialSchema: FluentType<OAuthCredential>;
+@@ -24,6 +24,15 @@ export declare const apiKeyCredentialSchema: FluentType<ApiKeyCredential>;
+ export declare const writableAuthCredentialSchema: FluentType<AuthCredential>;
+ /** Discriminated union returned in snapshots (refresh is sentinel for OAuth). */
+ export declare const snapshotCredentialSchema: FluentType<SnapshotCredential>;
++/**
++ * Server-backed reset-account proof for one credential row (capability
++ * `reset-account-evidence-v1`). Secret-free by construction: it carries the
++ * broker host's store authority plus a SHA-256 binding over the row's
++ * persisted incarnation and scope metadata, never a token. Strict shape — a
++ * future version bumps `version` and its own capability rather than adding
++ * keys here.
++ */
++export declare const resetAccountEvidenceSchema: FluentType<ResetAccountEvidence>;
+ export declare const credentialSnapshotEntrySchema: FluentType<AuthCredentialSnapshotEntry>;
+ export declare const credentialBlockSnapshotSchema: FluentType<CredentialBlockSnapshot>;
+ export declare const snapshotEntrySchema: FluentType<SnapshotEntry>;
+diff --git a/dist/types/auth-storage.d.ts b/dist/types/auth-storage.d.ts
+index bdbe686..6d50ca7 100644
+--- a/dist/types/auth-storage.d.ts
++++ b/dist/types/auth-storage.d.ts
+@@ -52,6 +52,8 @@ export interface StoredAuthCredential {
+     provider: string;
+     credential: AuthCredential;
+     disabledCause: string | null;
++    /** Proof attached to this exact stored row snapshot, never a later replacement. */
++    resetAccountEvidence?: ResetAccountEvidence;
+ }
+ /** One persisted rate-limit block: credential row id + provider-type key + optional scope. */
+ export interface StoredCredentialBlock {
+@@ -223,6 +225,8 @@ export interface AuthCredentialSnapshotEntry {
+     provider: string;
+     credential: SnapshotCredential;
+     identityKey: string | null;
++    /** Optional negotiated backend proof; absent means unavailable, never client-invented. */
++    resetAccountEvidence?: ResetAccountEvidence;
+ }
+ /**
+  * Wire-shaped snapshot exported by {@link AuthStorage.exportSnapshot} and
+@@ -258,6 +262,8 @@ export interface AuthCredentialStore {
+     /** Optional hook to notify the underlying store that usage report cache is stale. */
+     invalidateUsageCache?(signal?: AbortSignal): Promise<void>;
+     listAuthCredentials(provider?: string): StoredAuthCredential[];
++    /** Current exact-row backend proof; synchronous and secret-free. Unsupported stores omit this capability. */
++    getResetAccountEvidence?(provider: string, credentialId: number): ResetAccountEvidence | undefined;
+     /**
+      * Optional store hook to re-hydrate the credential snapshot from its
+      * backing source. Remote broker stores re-fetch `GET /v1/snapshot` so a
+@@ -558,6 +564,8 @@ export interface OAuthAccess {
+     /** Organization/workspace the credential is scoped to (Anthropic/ChatGPT multi-subscription). */
+     orgId?: string;
+     orgName?: string;
++    /** Original loaded-row proof retained across refresh; absent if that binding could not be revalidated. */
++    resetAccountEvidence?: ResetAccountEvidence;
+ }
+ /**
+  * Identity slice of the credential a successful {@link AuthStorage.login}
+@@ -597,6 +605,22 @@ export interface OAuthAccountIdentity {
+     orgId?: string;
+     orgName?: string;
+ }
++/**
++ * Secret-free identity of one backend-qualified OAuth credential incarnation.
++ * Token-only refresh preserves it; explicit relink/replacement or scope changes do not.
++ * Broker proof names observed server state, not a cross-service lease. Never log these values.
++ */
++export type ResetAccountEvidence = Readonly<{
++    version: 1;
++    provider: string;
++    credentialId: number;
++    authAuthority: string;
++    credentialFingerprint: string;
++    accountId?: string;
++    email?: string;
++    projectId?: string;
++    orgId?: string;
++}>;
+ export type OAuthAccessResolution = ({
+     ok: true;
+ } & OAuthAccess) | ({
+@@ -652,6 +676,12 @@ export interface StoredOAuthRefreshResult<T extends OAuthCredential = OAuthCrede
   * Identifies which stored account to redeem a saved rate-limit reset for.
   * Any one field is enough; `credentialId` is the most precise.
   */
 +/** Resolved native identity at the synchronous saved-reset dispatch boundary. No token bytes. */
 +export interface ResetCreditConsumeIdentity {
 +  provider: string; credentialId?: number; accountId?: string; email?: string; projectId?: string; orgId?: string; creditId: string;
++    resetAccountEvidence?: ResetAccountEvidence;
++}
++
+ export interface ResetCreditTarget {
+     credentialId?: number;
+     accountId?: string;
+@@ -884,6 +914,12 @@ export declare class AuthStorage {
+      * metadata paths; it does not refresh tokens, rank usage, or advance selection.
+      */
+     getOAuthAccountIdentity(provider: string, sessionId?: string): OAuthAccountIdentity | undefined;
++    /**
++     * Synchronous exact-row evidence from this original storage, without refresh, selection or network.
++     * Undefined means unsupported, unresolved, closed, or stale versus the backing store.
++     * A remote store can substantiate only its latest observed server snapshot, not a global lease.
++     */
++    getResetAccountEvidence(provider: string, credentialId: number): ResetAccountEvidence | undefined;
+     /**
+      * Get all credentials.
+      */
+@@ -1142,6 +1178,14 @@ export declare class AuthStorage {
+         target: ResetCreditTarget;
+         provider?: string;
+         creditId?: string;
++        /** Stable identity for this one admitted native request; omitted preserves native generation. */
++        redeemRequestId?: string;
++        /** Opt in to unknown for absent/malformed provider outcome codes. */
++        requireExplicitOutcome?: boolean;
++        /** Opt in to exact original backend/incarnation admission; unavailable or changed evidence sends no consume. */
++        expectedAccountEvidence?: ResetAccountEvidence;
++        /** Synchronous final admission after credential refresh, immediately before consume. False or throw sends no request. */
++        beforeConsume?: (identity: ResetCreditConsumeIdentity) => boolean;
+         baseUrlResolver?: (provider: string) => string | undefined;
+         signal?: AbortSignal;
+     }): Promise<ResetCreditRedeemOutcome>;
+diff --git a/dist/types/usage/openai-codex-reset.d.ts b/dist/types/usage/openai-codex-reset.d.ts
+index 6d7586b..576cc14 100644
+--- a/dist/types/usage/openai-codex-reset.d.ts
++++ b/dist/types/usage/openai-codex-reset.d.ts
+@@ -64,5 +64,7 @@ export declare function pickSoonestExpiringCredit(credits: readonly CodexResetCr
+ export declare function consumeCodexResetCredit(auth: CodexResetAuth & {
+     creditId: string;
+     redeemRequestId?: string;
++    /** Missing or malformed outcome is unknown when opted in. Defaults to native legacy interpretation. */
++    requireExplicitOutcome?: boolean;
+ }): Promise<CodexResetConsumeResult>;
+ export {};
+diff --git a/src/auth/reset-account-evidence.ts b/src/auth/reset-account-evidence.ts
+new file mode 100755
+index 0000000..89404e4
+--- /dev/null
++++ b/src/auth/reset-account-evidence.ts
+@@ -0,0 +1,59 @@
++import { createHash } from "node:crypto";
++import type { AuthCredential, ResetAccountEvidence } from "../auth-storage";
++
++const scopeKeys = ["accountId", "email", "projectId", "orgId"] as const;
++const text = (value: unknown): string | undefined => typeof value === "string" && value.trim().length > 0 ? value : undefined;
++
++/** Internal constructor: only the backend supplies durable namespace/incarnation, never token bytes. */
++export function createResetAccountEvidence(
++	authAuthority: string,
++	incarnation: string,
++	provider: string,
++	credentialId: number,
++	credential: AuthCredential,
++): ResetAccountEvidence | undefined {
++	if (credential.type !== "oauth" || !provider || !Number.isSafeInteger(credentialId) || credentialId < 1 ||
++		!authAuthority || authAuthority.length > 256 || /[\u0000-\u001f]/.test(authAuthority) || !/^[a-f0-9]{32}$/.test(incarnation)) return undefined;
++	const accountId = text(credential.accountId), email = text(credential.email);
++	if (!accountId && !email) return undefined;
++	const projectId = text(credential.projectId), orgId = text(credential.orgId);
++	const credentialFingerprint = createHash("sha256").update(JSON.stringify([
++		"reset-account-evidence-v1", authAuthority, incarnation, provider, credentialId,
++		accountId ?? null, email ?? null, projectId ?? null, orgId ?? null,
++	])).digest("hex");
++	return Object.freeze({ version: 1, provider, credentialId, authAuthority, credentialFingerprint,
++		...(accountId ? { accountId } : {}), ...(email ? { email } : {}),
++		...(projectId ? { projectId } : {}), ...(orgId ? { orgId } : {}) });
++}
++
++/** Checks the native reset identity slice, excluding cosmetic org names and bearer data. */
++export function matchesResetAccountCredential(
++	evidence: ResetAccountEvidence | undefined,
++	provider: string,
++	credentialId: number,
++	credential: AuthCredential,
++): evidence is ResetAccountEvidence {
++	return evidence != null && evidence.version === 1 && credential.type === "oauth" &&
++		evidence.provider === provider && evidence.credentialId === credentialId &&
++		typeof evidence.authAuthority === "string" && evidence.authAuthority.length > 0 && evidence.authAuthority.length <= 256 &&
++		!/[\u0000-\u001f]/.test(evidence.authAuthority) &&
++		typeof evidence.credentialFingerprint === "string" && /^[a-f0-9]{64}$/.test(evidence.credentialFingerprint) &&
++		!!(text(evidence.accountId) || text(evidence.email)) &&
++		scopeKeys.every(key => evidence[key] === text(credential[key]));
++}
++
++/** Missing/unsupported evidence is never equivalent, including two missing values. */
++export function sameResetAccountEvidence(left: ResetAccountEvidence | undefined, right: ResetAccountEvidence | undefined): boolean {
++	return left != null && right != null && left.version === 1 && right.version === 1 &&
++		left.provider === right.provider && left.credentialId === right.credentialId &&
++		left.authAuthority === right.authAuthority && left.credentialFingerprint === right.credentialFingerprint &&
++		scopeKeys.every(key => left[key] === right[key]);
++}
++
++/** Whitelisted detached value: never spread an extension/backing-store object into a public proof. */
++export function snapshotResetAccountEvidence(evidence: ResetAccountEvidence): ResetAccountEvidence {
++	return Object.freeze({ version: evidence.version, provider: evidence.provider, credentialId: evidence.credentialId,
++		authAuthority: evidence.authAuthority, credentialFingerprint: evidence.credentialFingerprint,
++		...(evidence.accountId ? { accountId: evidence.accountId } : {}), ...(evidence.email ? { email: evidence.email } : {}),
++		...(evidence.projectId ? { projectId: evidence.projectId } : {}), ...(evidence.orgId ? { orgId: evidence.orgId } : {}) });
++}
+diff --git a/src/auth/sqlite-credential-store.ts b/src/auth/sqlite-credential-store.ts
+index 1f09c56..c77153c 100644
+--- a/src/auth/sqlite-credential-store.ts
++++ b/src/auth/sqlite-credential-store.ts
+@@ -5,6 +5,8 @@
+  * and remote stores share the same contract.
+  */
+ import { Database, type Statement } from "bun:sqlite";
++import { createHash, randomBytes } from "node:crypto";
++import { realpathSync, statSync } from "node:fs";
+ import * as fs from "node:fs/promises";
+ import * as path from "node:path";
+ import { parseAlibabaTokenPlanCredential } from "@oh-my-pi/pi-catalog/wire/alibaba-token-plan";
+@@ -22,12 +24,14 @@ import type {
+ 	CredentialRefreshLeaseFence,
+ 	DisabledCredentialSummary,
+ 	OAuthCredential,
++	ResetAccountEvidence,
+ 	StoredAuthCredential,
+ 	StoredCredentialBlock,
+ } from "../auth-storage";
+ import * as AIError from "../error";
+ import type { OAuthCredentials } from "../registry/oauth/types";
+ import type { Provider } from "../types";
++import { createResetAccountEvidence } from "./reset-account-evidence";
+ import type {
+ 	ClientProviderUsage,
+ 	ClientUsageReport,
+@@ -69,6 +73,8 @@ type AuthRow = {
+ 	data: string;
+ 	disabled_cause: string | null;
+ 	identity_key: string | null;
++	/** Durable row incarnation (32 hex chars); NULL only transiently before backfill. */
++	reset_incarnation: string | null;
+ };
+ 
+ /** {@link AuthRow} plus `updated_at` — disabled-tombstone queries surface when the row was torn down. */
+@@ -88,11 +94,28 @@ type SerializedCredentialRecord = {
+ 	identityKey: string | null;
+ };
+ 
+-const AUTH_SCHEMA_VERSION = 7;
++const AUTH_SCHEMA_VERSION = 8;
+ const SQLITE_NOW_EPOCH = "CAST(strftime('%s','now') AS INTEGER)";
+ const LEGACY_CODEX_BLOCK_PROVIDER_KEY = "openai-codex:oauth";
+ const LEGACY_CODEX_BLOCK_SCOPE = "shared";
+ const CODEX_METER_BLOCK_SCOPES = ["chat", "spark"] as const;
++/** Fresh row incarnation, minted inside SQLite so triggers and native writes share one source. */
++const FRESH_RESET_INCARNATION_SQL = "lower(hex(randomblob(16)))";
++const AUTH_ROW_COLUMNS = "id, provider, credential_type, data, disabled_cause, identity_key, reset_incarnation";
++
++/**
++ * Account-scope fields read from the persisted credential JSON by the
++ * incarnation trigger. Any change (including a bearer-only refresh that also
++ * moves one of these) rotates the row incarnation; token bytes never
++ * participate. Malformed JSON compares as NULL instead of failing the write.
++ */
++const RESET_SCOPE_CHANGED_SQL = ["accountId", "email", "projectId", "orgId"]
++	.map(field => {
++		const extract = (row: "NEW" | "OLD") =>
++			`CASE WHEN json_valid(${row}.data) THEN json_extract(${row}.data, '$.${field}') END`;
++		return `${extract("NEW")} IS NOT ${extract("OLD")}`;
++	})
++	.join(" OR ");
+ 
+ // SQLite error classifiers live in pi-utils so the credential store and the
+ // model cache share one implementation; re-exported here to preserve the
+@@ -162,8 +185,35 @@ function normalizeDisabledCause(disabledCause: string): string {
+ 	return normalized.length > 0 ? normalized : "disabled";
+ }
+ 
+-function toStoredAuthCredential(row: AuthRow, credential: AuthCredential): StoredAuthCredential {
+-	return { id: row.id, provider: row.provider, credential, disabledCause: row.disabled_cause };
++/**
++ * Map a row plus its decoded credential to the public shape. Evidence is
++ * attached only when the row is active OAuth with a durable incarnation, and
++ * is derived from this exact row snapshot (never re-read later).
++ */
++function toStoredAuthCredential(
++	authAuthority: string | null,
++	row: AuthRow,
++	credential: AuthCredential,
++): StoredAuthCredential {
++	const stored: StoredAuthCredential = {
++		id: row.id,
++		provider: row.provider,
++		credential,
++		disabledCause: row.disabled_cause,
++	};
++	const evidence = rowResetAccountEvidence(authAuthority, row, credential);
++	if (evidence) stored.resetAccountEvidence = evidence;
++	return stored;
++}
++
++function rowResetAccountEvidence(
++	authAuthority: string | null,
++	row: AuthRow,
++	credential: AuthCredential,
++): ResetAccountEvidence | undefined {
++	if (authAuthority === null || row.disabled_cause !== null || credential.type !== "oauth") return undefined;
++	if (!row.reset_incarnation) return undefined;
++	return createResetAccountEvidence(authAuthority, row.reset_incarnation, row.provider, row.id, credential);
+ }
+ 
+ function resolveProviderCredentialIdentityKey(provider: string, identifiers: string[]): string | null {
+@@ -356,6 +406,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 	#listDisabledByProviderStmt: Statement;
+ 	#insertStmt: Statement;
+ 	#updateStmt: Statement;
++	#relinkStmt: Statement;
++	#getActiveByIdStmt: Statement;
+ 	#deleteStmt: Statement;
+ 	#deleteIfMatchesStmt: Statement;
+ 	#updateIfMatchesStmt: Statement;
+@@ -386,39 +438,57 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 	#dataVersion: number;
+ 	#authRevision: number;
+ 	#localAuthRevision: number;
++	/**
++	 * Backend-qualified namespace for reset-account evidence: persisted
++	 * per-database seed hashed with the physical file identity (see
++	 * {@link #resolveResetAuthority}). Fixed for this handle's lifetime.
++	 */
++	#authAuthority: string | null;
+ 	#closed = false;
+ 
+ 	constructor(db: Database) {
+ 		this.#db = db;
+ 		this.#initializeSchema();
++		this.#authAuthority = this.#resolveResetAuthority();
+ 		this.#dataVersion = this.#readDataVersion();
+ 		this.#authRevision = this.#readAuthRevision();
+ 		this.#localAuthRevision = this.#readLocalAuthRevision();
+ 
+ 		this.#listActiveStmt = this.#db.prepare(
+-			"SELECT id, provider, credential_type, data, disabled_cause, identity_key FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY id ASC",
++			`SELECT ${AUTH_ROW_COLUMNS} FROM auth_credentials WHERE disabled_cause IS NULL ORDER BY id ASC`,
+ 		);
+ 		this.#listActiveByProviderStmt = this.#db.prepare(
+-			"SELECT id, provider, credential_type, data, disabled_cause, identity_key FROM auth_credentials WHERE provider = ? AND disabled_cause IS NULL ORDER BY id ASC",
++			`SELECT ${AUTH_ROW_COLUMNS} FROM auth_credentials WHERE provider = ? AND disabled_cause IS NULL ORDER BY id ASC`,
++		);
++		this.#getActiveByIdStmt = this.#db.prepare(
++			`SELECT ${AUTH_ROW_COLUMNS} FROM auth_credentials WHERE id = ? AND provider = ? AND disabled_cause IS NULL`,
+ 		);
+ 		this.#listDisabledStmt = this.#db.prepare(
+-			"SELECT id, provider, credential_type, data, disabled_cause, identity_key, updated_at FROM auth_credentials WHERE disabled_cause IS NOT NULL ORDER BY id ASC",
++			`SELECT ${AUTH_ROW_COLUMNS}, updated_at FROM auth_credentials WHERE disabled_cause IS NOT NULL ORDER BY id ASC`,
+ 		);
+ 		this.#listDisabledByProviderStmt = this.#db.prepare(
+-			"SELECT id, provider, credential_type, data, disabled_cause, identity_key, updated_at FROM auth_credentials WHERE provider = ? AND disabled_cause IS NOT NULL ORDER BY id ASC",
++			`SELECT ${AUTH_ROW_COLUMNS}, updated_at FROM auth_credentials WHERE provider = ? AND disabled_cause IS NOT NULL ORDER BY id ASC`,
+ 		);
+ 		this.#insertStmt = this.#db.prepare(
+ 			`INSERT INTO auth_credentials (provider, credential_type, data, identity_key, created_at, updated_at) VALUES (?, ?, ?, ?, ${SQLITE_NOW_EPOCH}, ${SQLITE_NOW_EPOCH}) RETURNING id`,
+ 		);
++		// Classify native refresh writes explicitly. Older/unclassified writers
++		// cannot distinguish same-account relinks from refreshes, so they rotate.
+ 		this.#updateStmt = this.#db.prepare(
+-			`UPDATE auth_credentials SET credential_type = ?, data = ?, identity_key = ?, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ?`,
++			`UPDATE auth_credentials SET credential_type = ?, data = ?, identity_key = ?, reset_refresh_version = reset_refresh_version + 1, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ?`,
++		);
++		// Explicit login/upsert/replacement relink: always mints a new incarnation
++		// even when the account scope is byte-identical, so a same-account
++		// re-login is never mistaken for an ordinary refresh.
++		this.#relinkStmt = this.#db.prepare(
++			`UPDATE auth_credentials SET credential_type = ?, data = ?, identity_key = ?, reset_incarnation = ${FRESH_RESET_INCARNATION_SQL}, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ?`,
+ 		);
+ 		this.#updateIfMatchesStmt = this.#db.prepare(
+-			`UPDATE auth_credentials SET credential_type = ?, data = ?, identity_key = ?, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ? AND data = ? AND disabled_cause IS NULL`,
++			`UPDATE auth_credentials SET credential_type = ?, data = ?, identity_key = ?, reset_refresh_version = reset_refresh_version + 1, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ? AND data = ? AND disabled_cause IS NULL`,
+ 		);
+ 		this.#updateIfMatchesWithLeaseStmt = this.#db.prepare(
+ 			`UPDATE auth_credentials
+-			SET credential_type = ?, data = ?, identity_key = ?, updated_at = ${SQLITE_NOW_EPOCH}
++			SET credential_type = ?, data = ?, identity_key = ?, reset_refresh_version = reset_refresh_version + 1, updated_at = ${SQLITE_NOW_EPOCH}
+ 			WHERE id = ? AND data = ? AND disabled_cause IS NULL
+ 				AND EXISTS (
+ 					SELECT 1 FROM auth_credential_refresh_leases
+@@ -651,6 +721,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 			this.#createAuthCredentialRefreshLeasesTable();
+ 			this.#createAuthCredentialBlockCompatibilityObjects();
+ 			this.#createAuthChangeTrackingObjects();
++			this.#ensureResetAccountEvidenceObjects();
+ 			this.#writeAuthSchemaVersion(AUTH_SCHEMA_VERSION);
+ 			return;
+ 		}
+@@ -673,6 +744,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 			this.#createAuthCredentialBlockCompatibilityObjects();
+ 		}
+ 		this.#createAuthChangeTrackingObjects();
++		this.#ensureResetAccountEvidenceObjects();
+ 		this.#backfillCredentialIdentityKeys();
+ 		// Rewriting an already-current version row is a no-op write transaction
+ 		// on every boot; only persist when the recorded version actually changes.
+@@ -742,6 +814,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 				data TEXT NOT NULL,
+ 				disabled_cause TEXT DEFAULT NULL,
+ 				identity_key TEXT DEFAULT NULL,
++				reset_incarnation TEXT DEFAULT NULL,
+ 				created_at INTEGER NOT NULL DEFAULT (${SQLITE_NOW_EPOCH}),
+ 				updated_at INTEGER NOT NULL DEFAULT (${SQLITE_NOW_EPOCH})
+ 			);
+@@ -770,13 +843,20 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 		`);
+ 	}
+ 
+-	#createAuthChangeTrackingObjects(): void {
++	#createAuthChangeRevisionTable(): void {
+ 		this.#db.run(`
+ 			CREATE TABLE IF NOT EXISTS auth_change_revision (
+ 				id INTEGER PRIMARY KEY CHECK (id = 1),
+-				revision INTEGER NOT NULL
++				revision INTEGER NOT NULL,
++				reset_authority TEXT DEFAULT NULL
+ 			);
+ 			INSERT OR IGNORE INTO auth_change_revision (id, revision) VALUES (1, 0);
++		`);
++	}
++
++	#createAuthChangeTrackingObjects(): void {
++		this.#createAuthChangeRevisionTable();
++		this.#db.run(`
+ 			CREATE TEMP TABLE IF NOT EXISTS auth_local_change_revision (
+ 				id INTEGER PRIMARY KEY CHECK (id = 1),
+ 				revision INTEGER NOT NULL
+@@ -995,6 +1075,9 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 		if (fromVersion < 7) {
+ 			this.#migrateAuthSchemaV6ToV7();
+ 		}
++		if (fromVersion < 8) {
++			this.#migrateAuthSchemaV7ToV8();
++		}
+ 	}
+ 
+ 	#migrateAuthSchemaV0ToV1(): void {
+@@ -1166,9 +1249,151 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 		migrate.immediate();
+ 	}
+ 
++	/**
++	 * v8 adds reset-account evidence: `auth_change_revision.reset_authority`
++	 * (per-database namespace seed) and `auth_credentials.reset_incarnation`
++	 * (per-row incarnation), a native refresh marker and lifecycle triggers.
++	 * Runs under an immediate transaction so concurrent openers serialize; the
++	 * installer re-checks every piece under the lock, so the loser is a no-op.
++	 */
++	#migrateAuthSchemaV7ToV8(): void {
++		const migrate = this.#db.transaction(() => {
++			this.#createAuthChangeRevisionTable();
++			this.#installResetAccountEvidenceObjects();
++			this.#writeAuthSchemaVersion(8);
++		});
++		migrate.immediate();
++	}
++
++	/**
++	 * Reset-account evidence rests on two durable facts: a per-database
++	 * namespace seed and a per-row incarnation. Both are additive and
++	 * idempotent; a steady-state boot only reads. Triggers keep incarnations
++	 * honest for every writer sharing the file, including pre-v8 binaries and
++	 * hand-written SQL:
++	 *  - INSERT always mints a fresh incarnation, so a recreated or copied row
++	 *    can never inherit an old one even when it supplies a value;
++	 *  - UPDATE rotates when provider / type / identity_key / disabled_cause
++	 *    change or any account-scope field in the credential JSON moves;
++	 *    classified native refreshes preserve it; unclassified data writes rotate.
++	 * Explicit relinks (upsert / replacement) rotate in their own SET clause.
++	 */
++	#ensureResetAccountEvidenceObjects(): void {
++		if (!this.#resetAccountEvidenceObjectsMissing()) return;
++		const install = this.#db.transaction(() => this.#installResetAccountEvidenceObjects());
++		install.immediate();
++	}
++
++	#resetAccountEvidenceObjectsMissing(): boolean {
++		if (!this.#hasColumn("auth_credentials", "reset_incarnation")) return true;
++		if (!this.#hasColumn("auth_credentials", "reset_refresh_version")) return true;
++		if (!this.#hasColumn("auth_change_revision", "reset_authority")) return true;
++		const triggers = this.#db
++			.query(
++				"SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN ('auth_reset_incarnation_insert', 'auth_reset_incarnation_update')",
++			)
++			.get() as { n?: number } | null;
++		if ((triggers?.n ?? 0) < 2) return true;
++		if (this.#readResetAuthoritySeed() === null) return true;
++		const unassigned = this.#db
++			.query("SELECT 1 AS present FROM auth_credentials WHERE reset_incarnation IS NULL LIMIT 1")
++			.get();
++		return unassigned !== null;
++	}
++
++	/** MUST run inside a write transaction; every step re-checks so racing installers converge. */
++	#installResetAccountEvidenceObjects(): void {
++		if (!this.#hasColumn("auth_change_revision", "reset_authority")) {
++			this.#db.run("ALTER TABLE auth_change_revision ADD COLUMN reset_authority TEXT DEFAULT NULL");
++		}
++		if (!this.#hasColumn("auth_credentials", "reset_incarnation")) {
++			this.#db.run("ALTER TABLE auth_credentials ADD COLUMN reset_incarnation TEXT DEFAULT NULL");
++		}
++		if (!this.#hasColumn("auth_credentials", "reset_refresh_version")) {
++			this.#db.run("ALTER TABLE auth_credentials ADD COLUMN reset_refresh_version INTEGER NOT NULL DEFAULT 0");
++		}
++		this.#db.run("INSERT OR IGNORE INTO auth_change_revision (id, revision) VALUES (1, 0)");
++		// Seed once; a peer's seed wins if it committed first. Never rewrite an
++		// existing seed: that would re-namespace every proof on every open.
++		this.#db
++			.query("UPDATE auth_change_revision SET reset_authority = ? WHERE id = 1 AND reset_authority IS NULL")
++			.run(randomBytes(16).toString("hex"));
++		this.#db.run(
++			`UPDATE auth_credentials SET reset_incarnation = ${FRESH_RESET_INCARNATION_SQL} WHERE reset_incarnation IS NULL`,
++		);
++		this.#db.run(`
++			CREATE TRIGGER IF NOT EXISTS auth_reset_incarnation_insert
++			AFTER INSERT ON auth_credentials
++			BEGIN
++				UPDATE auth_credentials SET reset_incarnation = ${FRESH_RESET_INCARNATION_SQL} WHERE id = NEW.id;
++			END;
++		`);
++		this.#db.run(`
++			CREATE TRIGGER IF NOT EXISTS auth_reset_incarnation_update
++			AFTER UPDATE ON auth_credentials
++			WHEN NEW.reset_incarnation IS NULL
++				OR NEW.id IS NOT OLD.id
++				OR NEW.provider IS NOT OLD.provider
++				OR NEW.credential_type IS NOT OLD.credential_type
++				OR NEW.identity_key IS NOT OLD.identity_key
++				OR NEW.disabled_cause IS NOT OLD.disabled_cause
++				OR (NEW.data IS NOT OLD.data
++					AND NEW.reset_refresh_version IS OLD.reset_refresh_version
++					AND NEW.reset_incarnation IS OLD.reset_incarnation)
++				OR ${RESET_SCOPE_CHANGED_SQL}
++			BEGIN
++				UPDATE auth_credentials SET reset_incarnation = ${FRESH_RESET_INCARNATION_SQL} WHERE id = NEW.id;
++			END;
++		`);
++	}
++
++	#hasColumn(table: "auth_credentials" | "auth_change_revision", column: string): boolean {
++		const columns = this.#db.query(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
++		return columns.some(entry => entry.name === column);
++	}
++
++	#readResetAuthoritySeed(): string | null {
++		const row = this.#db.query("SELECT reset_authority FROM auth_change_revision WHERE id = 1").get() as {
++			reset_authority?: string | null;
++		} | null;
++		const seed = row?.reset_authority;
++		return typeof seed === "string" && seed.length > 0 ? seed : null;
++	}
++
++	/**
++	 * Namespace for every proof this handle emits. The persisted seed alone
++	 * would travel with a byte-for-byte copy of the file, so file-backed
++	 * databases fold in the resolved path and inode: two handles (or a reopen)
++	 * on the same physical file agree, an independent copy or a rename-restore
++	 * differs. In-memory databases are their own namespace via the seed.
++	 * Returns null when the seed is unavailable; evidence is then withheld
++	 * rather than minted against an unstable namespace.
++	 */
++	#resolveResetAuthority(): string | null {
++		const seed = this.#readResetAuthoritySeed();
++		if (seed === null) {
++			logger.warn("SqliteAuthCredentialStore reset authority seed unavailable; reset-account evidence disabled");
++			return null;
++		}
++		const filename = this.#db.filename;
++		let physical = "memory";
++		if (filename && filename !== ":memory:") {
++			try {
++				const resolved = realpathSync(path.resolve(filename));
++				const metadata = statSync(resolved, { bigint: true });
++				if (metadata.ino <= 0n) return null;
++				physical = `file\0${resolved}\0${metadata.dev}\0${metadata.ino}\0${metadata.birthtimeNs}`;
++			} catch {
++				// Unknown physical identity is unsupported, never a path-only substitute.
++				return null;
++			}
++		}
++		return createHash("sha256").update(`pi-ai:reset-authority:v1\0${seed}\0${physical}`).digest("hex");
++	}
++
+ 	#backfillCredentialIdentityKeys(): void {
+ 		const selectRowsStmt = this.#db.prepare(
+-			"SELECT id, provider, credential_type, data, disabled_cause, identity_key FROM auth_credentials WHERE identity_key IS NULL ORDER BY id ASC",
++			`SELECT ${AUTH_ROW_COLUMNS} FROM auth_credentials WHERE identity_key IS NULL ORDER BY id ASC`,
+ 		);
+ 		let rows: AuthRow[];
+ 		try {
+@@ -1205,7 +1430,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 		for (const row of rows) {
+ 			const credential = deserializeCredential(row);
+ 			if (!credential) continue;
+-			results.push(toStoredAuthCredential(row, credential));
++			results.push(toStoredAuthCredential(this.#authAuthority, row, credential));
+ 		}
+ 		return results;
+ 	}
+@@ -1260,8 +1485,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 				);
+ 				if (match) {
+ 					matchedExistingIds.add(match.id);
+-					this.#updateStmt.run(serialized.credentialType, serialized.data, serialized.identityKey, match.id);
+-					result.push({ id: match.id, provider: providerName, credential, disabledCause: null });
++					this.#relinkStmt.run(serialized.credentialType, serialized.data, serialized.identityKey, match.id);
++					result.push(this.#writtenStoredCredential(match.id, providerName, credential));
+ 				} else {
+ 					const row = this.#insertStmt.get(
+ 						providerName,
+@@ -1270,7 +1495,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 						serialized.identityKey,
+ 					) as { id?: number } | undefined;
+ 					if (row?.id) {
+-						result.push({ id: row.id, provider: providerName, credential, disabledCause: null });
++						result.push(this.#writtenStoredCredential(row.id, providerName, credential));
+ 					}
+ 				}
+ 			}
+@@ -1289,6 +1514,17 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 		return result;
+ 	}
+ 
++	/**
++	 * Public shape for a row the current transaction just wrote. Re-reads the
++	 * row so the attached evidence carries the incarnation as committed by
++	 * this write (and its triggers), never a value captured before the write.
++	 */
++	#writtenStoredCredential(id: number, provider: string, credential: AuthCredential): StoredAuthCredential {
++		const row = this.#getActiveByIdStmt.get(id, provider) as AuthRow | undefined | null;
++		if (!row) return { id, provider, credential, disabledCause: null };
++		return toStoredAuthCredential(this.#authAuthority, row, credential);
++	}
++
+ 	upsertAuthCredentialForProvider(provider: string, credential: AuthCredential): StoredAuthCredential[] {
+ 		const upsert = this.#db.transaction((providerName: string, item: AuthCredential) => {
+ 			const serialized = serializeCredential(providerName, item);
+@@ -1313,7 +1549,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 				if (!matchesReplacementCredential(providerName, row.credential, row.identityKey, item)) continue;
+ 				if (targetId === null) {
+ 					targetId = row.id;
+-					this.#updateStmt.run(serialized.credentialType, serialized.data, serialized.identityKey, row.id);
++					this.#relinkStmt.run(serialized.credentialType, serialized.data, serialized.identityKey, row.id);
+ 					continue;
+ 				}
+ 				this.#deleteStmt.run("replaced by newer credential", row.id);
+@@ -1334,7 +1570,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 			for (const row of activeRows) {
+ 				const activeCredential = deserializeCredential(row);
+ 				if (!activeCredential) continue;
+-				result.push(toStoredAuthCredential(row, activeCredential));
++				result.push(toStoredAuthCredential(this.#authAuthority, row, activeCredential));
+ 			}
+ 			return result;
+ 		});
+@@ -1500,6 +1736,24 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 		}
+ 	}
+ 
++	/**
++	 * Current reset-account evidence for exactly one active OAuth row. The
++	 * lookup is keyed on `(provider, id)` with no provider fallback, excludes
++	 * disabled rows, and returns undefined for API keys, undecodable data, or
++	 * rows whose incarnation is not yet durable. Compare against evidence
++	 * pinned from an earlier snapshot with `sameResetAccountEvidence`.
++	 */
++	getResetAccountEvidence(provider: string, credentialId: number): ResetAccountEvidence | undefined {
++		if (this.#authAuthority === null || this.#closed) return undefined;
++		if (typeof provider !== "string" || provider.length === 0) return undefined;
++		if (!Number.isSafeInteger(credentialId) || credentialId <= 0) return undefined;
++		const row = this.#getActiveByIdStmt.get(credentialId, provider) as AuthRow | undefined | null;
++		if (!row) return undefined;
++		const credential = deserializeCredential(row);
++		if (!credential) return undefined;
++		return rowResetAccountEvidence(this.#authAuthority, row, credential);
++	}
++
+ 	getCache(key: string, options?: { includeExpired?: boolean }): string | null {
+ 		try {
+ 			const stmt = options?.includeExpired === true ? this.#getCacheIncludingExpiredStmt : this.#getCacheStmt;
+@@ -1992,6 +2246,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+ 		this.#listDisabledByProviderStmt.finalize();
+ 		this.#insertStmt.finalize();
+ 		this.#updateStmt.finalize();
++		this.#relinkStmt.finalize();
++		this.#getActiveByIdStmt.finalize();
+ 		this.#deleteStmt.finalize();
+ 		this.#deleteIfMatchesStmt.finalize();
+ 		this.#deleteByProviderStmt.finalize();
+diff --git a/src/auth-broker/client.ts b/src/auth-broker/client.ts
+index 0a73083..b1c9636 100644
+--- a/src/auth-broker/client.ts
++++ b/src/auth-broker/client.ts
+@@ -29,7 +29,7 @@ import type {
+ 	UsageResponse,
+ 	UsageStaleResponse,
+ } from "./types";
+-import { AUTH_BROKER_CAPABILITIES_HEADER, AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES } from "./types";
++import { AUTH_BROKER_CAPABILITIES_HEADER, AUTH_BROKER_CLIENT_CAPABILITIES } from "./types";
+ import {
+ 	clientUsageReportResponseSchema,
+ 	clientUsageSummaryResponseSchema,
+@@ -118,7 +118,7 @@ function parseGenerationTag(header: string | null): number | undefined {
+ 	if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+ 		value = value.slice(1, -1);
+ 	}
+-	const generation = Number(value);
++	const generation = Number(value.replace(/:[a-f0-9]{64}$/, ""));
+ 	if (!Number.isInteger(generation) || generation < 0) return undefined;
+ 	return generation;
+ }
+@@ -126,12 +126,21 @@ function parseGenerationTag(header: string | null): number | undefined {
+ const DEFAULT_TIMEOUT_MS = 10_000;
+ const DEFAULT_MAX_RETRIES = 1;
+ 
++/**
++ * Every bearer-authenticated request advertises {@link AUTH_BROKER_CLIENT_CAPABILITIES}
++ * so the broker can gate additive wire fields (`reset-account-evidence-v1`,
++ * meter-scoped Codex blocks) on the client build that will validate them. A
++ * broker predating a capability ignores the header and answers in its older
++ * shape; the response schemas keep every negotiated field optional so such
++ * brokers stay fully usable for ordinary credential traffic.
++ */
+ export class AuthBrokerClient {
+ 	readonly #baseUrl: string;
+ 	readonly #token: string;
+ 	readonly #timeoutMs: number;
+ 	readonly #maxRetries: number;
+ 	readonly #fetch: typeof fetch;
++	#snapshotTag: { generation: number; value: string } | undefined;
+ 
+ 	constructor(opts: AuthBrokerClientOptions) {
+ 		this.#baseUrl = opts.url.replace(/\/+$/, "");
+@@ -156,10 +165,11 @@ export class AuthBrokerClient {
+ 		const query = new URLSearchParams();
+ 		if (opts.waitMs !== undefined) query.set("wait", String(opts.waitMs));
+ 		const path = `/v1/snapshot${query.size > 0 ? `?${query.toString()}` : ""}`;
+-		const headers: Record<string, string> = {
+-			[AUTH_BROKER_CAPABILITIES_HEADER]: AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES,
+-		};
+-		if (opts.ifGenerationGt !== undefined) headers["If-None-Match"] = `"${opts.ifGenerationGt}"`;
++		const headers: Record<string, string> = {};
++		if (opts.ifGenerationGt !== undefined) {
++			headers["If-None-Match"] = this.#snapshotTag?.generation === opts.ifGenerationGt
++				? this.#snapshotTag.value : `"${opts.ifGenerationGt}"`;
++		}
+ 		const timeoutMs =
+ 			opts.waitMs !== undefined && opts.waitMs > 0 ? Math.max(this.#timeoutMs, opts.waitMs + 1000) : undefined;
+ 		const response = await this.#fetchRaw("GET", path, {
+@@ -182,6 +192,8 @@ export class AuthBrokerClient {
+ 			});
+ 		}
+ 		const snapshot = validated as SnapshotResponse;
++		const tag = response.headers.get("etag");
++		this.#snapshotTag = tag === null ? undefined : { generation: snapshot.generation, value: tag };
+ 		return { status: 200, snapshot, generation: etagGeneration ?? snapshot.generation };
+ 	}
+ 
+@@ -199,7 +211,7 @@ export class AuthBrokerClient {
+ 		const headers: Record<string, string> = {
+ 			Accept: "text/event-stream",
+ 			Authorization: `Bearer ${this.#token}`,
+-			[AUTH_BROKER_CAPABILITIES_HEADER]: AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES,
++			[AUTH_BROKER_CAPABILITIES_HEADER]: AUTH_BROKER_CLIENT_CAPABILITIES,
+ 		};
+ 		if (opts.signal?.aborted) {
+ 			throw new AuthBrokerError("Auth broker request aborted", { cause: opts.signal.reason });
+@@ -446,7 +458,10 @@ export class AuthBrokerClient {
+ 		const auth = opts.auth ?? true;
+ 		const url = `${this.#baseUrl}${path}`;
+ 		const headers: Record<string, string> = { Accept: "application/json", ...opts.headers };
+-		if (auth) headers.Authorization = `Bearer ${this.#token}`;
++		if (auth) {
++			headers.Authorization = `Bearer ${this.#token}`;
++			headers[AUTH_BROKER_CAPABILITIES_HEADER] = AUTH_BROKER_CLIENT_CAPABILITIES;
++		}
+ 		let payload: string | undefined;
+ 		if (opts.body !== undefined) {
+ 			payload = JSON.stringify(opts.body);
+diff --git a/src/auth-broker/remote-store.ts b/src/auth-broker/remote-store.ts
+index 2efb284..fd06084 100644
+--- a/src/auth-broker/remote-store.ts
++++ b/src/auth-broker/remote-store.ts
+@@ -6,9 +6,22 @@
+  * Cache (`getCache`/`setCache`/`cleanExpiredCache`) is in-memory and ephemeral —
+  * usage reports cache TTL is 5 minutes per credential, so durability across
+  * runs isn't required.
++ *
++ * Reset-account evidence: when the broker negotiated
++ * `reset-account-evidence-v1`, each mirrored row carries the broker host's own
++ * server-backed {@link ResetAccountEvidence} for that exact row, exactly as the
++ * broker last sent it (full snapshot, SSE `entry` frame, refresh or upload
++ * response). The store never mints, re-derives or re-attaches proof itself; a
++ * row the broker sent without proof — or a broker predating the capability —
++ * reads as `undefined` while remaining fully usable for ordinary auth. The
++ * proof is the broker's state as last observed by this client, not a
++ * cross-service atomic lease: a consumer must still check the current backend
++ * proof at its own final boundary.
+  */
+ import * as os from "node:os";
++import { type } from "@oh-my-pi/omptype";
+ import { getAppName, getInstallId, logger } from "@oh-my-pi/pi-utils";
++import { matchesResetAccountCredential, snapshotResetAccountEvidence } from "../auth/reset-account-evidence";
+ import {
+ 	type AuthCredential,
+ 	type AuthCredentialSnapshotEntry,
+@@ -16,6 +29,7 @@ import {
+ 	type DisabledCredentialSummary,
+ 	type OAuthCredential,
+ 	REMOTE_REFRESH_SENTINEL,
++	type ResetAccountEvidence,
+ 	type StoredAuthCredential,
+ 	type StoredCredentialBlock,
+ } from "../auth-storage";
+@@ -31,6 +45,7 @@ import type {
+ 	SnapshotResponse,
+ 	SnapshotStreamEvent,
+ } from "./types";
++import { resetAccountEvidenceSchema } from "./wire-schemas";
+ 
+ /**
+  * Per-provider OAuth identities visible to this trusted broker client.
+@@ -130,6 +145,33 @@ function credentialEntryWithBlocks(
+ 	return incoming;
+ }
+ 
++/**
++ * Keep a broker-supplied proof only when it is well-formed AND names this
++ * exact row (provider, id, scope metadata). Wire frames were already
++ * schema-checked; this also covers the constructor's cached `initialSnapshot`
++ * and guards against a broker attaching another row's proof. A kept proof is
++ * detached into a frozen whitelisted copy; a rejected proof is dropped, never
++ * repaired — the row then simply has no evidence.
++ */
++function withValidatedEvidence<T extends AuthCredentialSnapshotEntry>(entry: T): T {
++	const evidence = entry.resetAccountEvidence;
++	if (evidence === undefined) return entry;
++	if (
++		!(resetAccountEvidenceSchema(evidence) instanceof type.errors) &&
++		matchesResetAccountCredential(evidence, entry.provider, entry.id, entry.credential as AuthCredential)
++	) {
++		return { ...entry, resetAccountEvidence: snapshotResetAccountEvidence(evidence) };
++	}
++	const { resetAccountEvidence: _dropped, ...stripped } = entry;
++	return stripped as T;
++}
++
++function withoutEvidence<T extends AuthCredentialSnapshotEntry>(entry: T): T {
++	if (entry.resetAccountEvidence === undefined) return entry;
++	const { resetAccountEvidence: _dropped, ...stripped } = entry;
++	return stripped as T;
++}
++
+ function emptySnapshot(): SnapshotResponse {
+ 	return {
+ 		generation: 0,
+@@ -319,7 +361,7 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
+ 		const previousCredentials = this.#snapshot.credentials;
+ 		const credentials = snapshot.credentials
+ 			.filter(entry => isCredentialInAccountPool(entry, this.#accountPool))
+-			.map(entry => this.#normalizeSnapshotEntryBlocks(entry, nowMs));
++			.map(entry => withValidatedEvidence(this.#normalizeSnapshotEntryBlocks(entry, nowMs)));
+ 		if (snapshotBlocksChanged(previousCredentials, credentials)) this.#invalidateUsageCache();
+ 		if (protectNewBlocks) this.#protectNewSnapshotBlocks(previousCredentials, credentials, nowMs);
+ 		this.#snapshot = { ...snapshot, credentials };
+@@ -535,7 +577,7 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
+ 			this.#removeStreamCredential(entry.id, refresher, generation, serverNowMs, { retainBrokerUsageAccount: true });
+ 			return;
+ 		}
+-		const incoming = this.#normalizeSnapshotEntryBlocks(entry, Date.now());
++		const incoming = withValidatedEvidence(this.#normalizeSnapshotEntryBlocks(entry, Date.now()));
+ 		const index = this.#snapshot.credentials.findIndex(candidate => candidate.id === incoming.id);
+ 		const previousBlocks = index === -1 ? undefined : this.#snapshot.credentials[index]?.blocks;
+ 		const blocksChanged = !credentialBlockSnapshotsEqual(previousBlocks, incoming.blocks);
+@@ -579,16 +621,37 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
+ 		const out: StoredAuthCredential[] = [];
+ 		for (const entry of this.#snapshot.credentials) {
+ 			if (provider !== undefined && entry.provider !== provider) continue;
+-			out.push({
++			const row: StoredAuthCredential = {
+ 				id: entry.id,
+ 				provider: entry.provider,
+ 				credential: entry.credential as AuthCredential,
+ 				disabledCause: null,
+-			});
++			};
++			if (entry.resetAccountEvidence !== undefined) row.resetAccountEvidence = entry.resetAccountEvidence;
++			out.push(row);
+ 		}
+ 		return out;
+ 	}
+ 
++	/**
++	 * Broker-supplied reset-account proof for exactly `(provider, credentialId)`
++	 * as last observed from the broker, or `undefined` when the row is not
++	 * mirrored, the broker never sent proof for it (legacy broker, capability
++	 * not negotiated, non-OAuth row) or a local mirror update changed its bearer
++	 * or scope without fresh server evidence. Synchronous: no round-trip or minting.
++	 */
++	getResetAccountEvidence(provider: string, credentialId: number): ResetAccountEvidence | undefined {
++		if (this.#closed) return undefined;
++		this.#noteActivity();
++		const entry = this.#snapshot.credentials.find(candidate => candidate.id === credentialId);
++		if (!entry || entry.provider !== provider) return undefined;
++		const evidence = entry.resetAccountEvidence;
++		if (evidence === undefined) return undefined;
++		return matchesResetAccountCredential(evidence, provider, credentialId, entry.credential as AuthCredential)
++			? evidence
++			: undefined;
++	}
++
+ 	/** Broker-backed disabled tombstones; empty against brokers predating the endpoint. */
+ 	listDisabledCredentials(provider?: string, signal?: AbortSignal): Promise<DisabledCredentialSummary[]> {
+ 		this.#noteActivity();
+@@ -697,14 +760,27 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
+ 	 * In-memory update from a successful refresh through the broker. AuthStorage
+ 	 * calls this after `#replaceCredentialAt`; the broker already persisted the
+ 	 * authoritative row, so we just mirror it.
++	 *
++	 * Keep server proof only for the bearer already supplied by a server frame
++	 * (the refresh response is ingested before AuthStorage mirrors it here).
++	 * A local token change without that frame is not a server-proven refresh.
+ 	 */
+ 	updateAuthCredential(id: number, credential: AuthCredential): void {
+ 		this.#noteActivity();
+-		for (const entry of this.#snapshot.credentials) {
+-			if (entry.id !== id) continue;
+-			entry.credential = credential as typeof entry.credential;
+-			return;
+-		}
++		const index = this.#snapshot.credentials.findIndex(entry => entry.id === id);
++		if (index === -1) return;
++		const entry = this.#snapshot.credentials[index]!;
++		const updated: SnapshotEntry = { ...entry, credential: credential as typeof entry.credential };
++		const evidence = entry.resetAccountEvidence;
++		const next =
++			evidence !== undefined && matchesResetAccountCredential(evidence, entry.provider, id, credential) &&
++			entry.credential.type === "oauth" && credential.type === "oauth" &&
++			entry.credential.access === credential.access && entry.credential.refresh === credential.refresh
++				? updated
++				: withoutEvidence(updated);
++		const credentials = [...this.#snapshot.credentials];
++		credentials[index] = next;
++		this.#snapshot = { ...this.#snapshot, credentials };
+ 	}
+ 
+ 	deleteAuthCredential(id: number, disabledCause: string): void {
+@@ -868,7 +944,7 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
+ 		const others = this.#snapshot.credentials.filter(entry => entry.provider !== provider);
+ 		const incoming = entries
+ 			.filter(entry => isCredentialInAccountPool(entry, this.#accountPool))
+-			.map(entry => credentialEntryWithBlocks(entry, existingBlocks.get(entry.id)));
++			.map(entry => withValidatedEvidence(credentialEntryWithBlocks(entry, existingBlocks.get(entry.id))));
+ 		this.#snapshot = { ...this.#snapshot, credentials: [...others, ...incoming] };
+ 	}
+ 	#applyCredentialEntry(entry: AuthCredentialSnapshotEntry): boolean {
+@@ -878,7 +954,7 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
+ 		}
+ 		const index = this.#snapshot.credentials.findIndex(candidate => candidate.id === entry.id);
+ 		const existingBlocks = index === -1 ? undefined : this.#snapshot.credentials[index]?.blocks;
+-		const incoming = credentialEntryWithBlocks(entry, existingBlocks);
++		const incoming = withValidatedEvidence(credentialEntryWithBlocks(entry, existingBlocks));
+ 		if (index === -1) {
+ 			this.#snapshot = { ...this.#snapshot, credentials: [...this.#snapshot.credentials, incoming] };
+ 			return true;
+diff --git a/src/auth-broker/server.ts b/src/auth-broker/server.ts
+index 48bd0c9..7f8af45 100644
+--- a/src/auth-broker/server.ts
++++ b/src/auth-broker/server.ts
+@@ -10,9 +10,10 @@
+  * the server only checks a bearer token against an allow-list per request.
+  */
+ 
++import { createHash } from "node:crypto";
+ import { type Type, type } from "@oh-my-pi/omptype";
+ import { logger } from "@oh-my-pi/pi-utils";
+-import type { AuthStorage, StoredCredentialBlock } from "../auth-storage";
++import type { AuthCredentialSnapshotEntry, AuthStorage, StoredCredentialBlock } from "../auth-storage";
+ import { parseBind } from "../utils/parse-bind";
+ import { AuthBrokerRefresher, type AuthBrokerRefresherSchedule } from "./refresher";
+ import type {
+@@ -35,6 +36,7 @@ import type {
+ import {
+ 	AUTH_BROKER_CAPABILITIES_HEADER,
+ 	AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES,
++	AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1,
+ 	DEFAULT_AUTH_BROKER_BIND,
+ 	DEFAULT_REFRESH_INTERVAL_MS,
+ 	DEFAULT_REFRESH_SKEW_MS,
+@@ -106,13 +108,35 @@ function isAuthorized(req: Request, tokens: ReadonlySet<string>): boolean {
+ 	return tokens.has(match[1].trim());
+ }
+ 
+-function supportsCodexMeterBlockScopes(req: Request): boolean {
+-	const capabilities = req.headers.get(AUTH_BROKER_CAPABILITIES_HEADER);
+-	return (
+-		capabilities
+-			?.split(",")
+-			.some(capability => capability.trim() === AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES) ?? false
+-	);
++/** Optional protocol features one request's client advertised via {@link AUTH_BROKER_CAPABILITIES_HEADER}. */
++interface ClientCapabilities {
++	codexMeterBlockScopes: boolean;
++	resetAccountEvidence: boolean;
++}
++
++function parseClientCapabilities(req: Request): ClientCapabilities {
++	const capabilities: ClientCapabilities = { codexMeterBlockScopes: false, resetAccountEvidence: false };
++	const header = req.headers.get(AUTH_BROKER_CAPABILITIES_HEADER);
++	if (!header) return capabilities;
++	for (const raw of header.split(",")) {
++		const capability = raw.trim();
++		if (capability === AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES) capabilities.codexMeterBlockScopes = true;
++		else if (capability === AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1) capabilities.resetAccountEvidence = true;
++	}
++	return capabilities;
++}
++
++/**
++ * Capability-gated wire projection of one storage entry. The server-backed
++ * `resetAccountEvidence` the storage attached to this exact row is forwarded
++ * verbatim to clients that negotiated it and omitted for everyone else — the
++ * published strict client schemas reject unknown keys. Nothing is ever
++ * synthesized here: a row the storage left without proof stays without proof.
++ */
++function projectEntryForClient<T extends AuthCredentialSnapshotEntry>(entry: T, capabilities: ClientCapabilities): T {
++	if (capabilities.resetAccountEvidence || entry.resetAccountEvidence === undefined) return entry;
++	const { resetAccountEvidence: _omitted, ...projected } = entry;
++	return projected as T;
+ }
+ 
+ /**
+@@ -155,9 +179,11 @@ const BLOCKS_ROUTE = /^\/v1\/credential\/(\d+)\/blocks$/;
+ const MAX_SNAPSHOT_WAIT_MS = 30_000;
+ const DISABLED_NEXT_SWEEP_IN_MS = Number.MAX_SAFE_INTEGER;
+ 
+-function snapshotHeaders(generation: number): Record<string, string> {
++function snapshotHeaders(generation: number, credentials?: SnapshotResponse["credentials"]): Record<string, string> {
++	const binding = credentials === undefined ? "" : `:${createHash("sha256")
++		.update(JSON.stringify(credentials.map(entry => entry.resetAccountEvidence ?? null))).digest("hex")}`;
+ 	return {
+-		ETag: `"${generation}"`,
++		ETag: `"${generation}${binding}"`,
+ 		"Cache-Control": "no-store",
+ 		Vary: AUTH_BROKER_CAPABILITIES_HEADER,
+ 	};
+@@ -170,7 +196,7 @@ function parseGenerationTag(header: string | null): number | undefined {
+ 	if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+ 		value = value.slice(1, -1);
+ 	}
+-	const generation = Number(value);
++	const generation = Number(value.replace(/:[a-f0-9]{64}$/, ""));
+ 	if (!Number.isInteger(generation) || generation < 0) return undefined;
+ 	return generation;
+ }
+@@ -392,7 +418,7 @@ function buildCredentialBlockGroups(
+ function buildSnapshot(
+ 	storage: AuthStorage,
+ 	refresher: AuthBrokerRefresher | undefined,
+-	clientSupportsCodexMeterBlockScopes: boolean,
++	capabilities: ClientCapabilities,
+ ): SnapshotResponse {
+ 	const serverNowMs = Date.now();
+ 	const base = storage.exportSnapshot();
+@@ -401,9 +427,10 @@ function buildSnapshot(
+ 	const blocksByCredentialId = buildCredentialBlockGroups(
+ 		storage.listCredentialBlocks(credentialIds),
+ 		serverNowMs,
+-		clientSupportsCodexMeterBlockScopes,
++		capabilities.codexMeterBlockScopes,
+ 	);
+-	const credentials: SnapshotEntry[] = base.credentials.map(entry => {
++	const credentials: SnapshotEntry[] = base.credentials.map(stored => {
++		const entry = projectEntryForClient(stored, capabilities);
+ 		const blocks = blocksByCredentialId.get(entry.id);
+ 		const rotatesInMs = computeRotatesInMs(entry, wire, nextSweepAt, serverNowMs);
+ 		return blocks && blocks.length > 0 ? { ...entry, rotatesInMs, blocks } : { ...entry, rotatesInMs };
+@@ -426,43 +453,50 @@ async function serveSnapshot(
+ 	peer: string,
+ ): Promise<Response> {
+ 	await storage.reload();
+-	const clientSupportsCodexMeterBlockScopes = supportsCodexMeterBlockScopes(req);
++	const capabilities = parseClientCapabilities(req);
+ 	let currentGeneration = storage.getGeneration();
+-	const clientGeneration = parseGenerationTag(req.headers.get("if-none-match"));
++	const requestTag = req.headers.get("if-none-match")?.trim().replace(/^W\//, "").trim();
++	const clientGeneration = parseGenerationTag(requestTag ?? null);
+ 	const waitMs = parseWaitMs(url);
++	let body = capabilities.resetAccountEvidence ? buildSnapshot(storage, refresher, capabilities) : undefined;
++	let headers = snapshotHeaders(currentGeneration, body?.credentials);
++	const matches = () => capabilities.resetAccountEvidence
++		? requestTag === headers.ETag : clientGeneration === currentGeneration;
+ 
+-	if (clientGeneration === undefined || currentGeneration !== clientGeneration || waitMs <= 0) {
+-		const body = buildSnapshot(storage, refresher, clientSupportsCodexMeterBlockScopes);
++	if (!matches() || waitMs <= 0) {
++		body ??= buildSnapshot(storage, refresher, capabilities);
+ 		logger.info("auth-broker snapshot served", {
+ 			peer,
+ 			credentials: body.credentials.length,
+ 			generation: body.generation,
+ 		});
+-		return json(200, body, snapshotHeaders(body.generation));
++		return json(200, body, headers);
+ 	}
+ 
+ 	const delay = delayResult(waitMs);
+ 	const waitController = new AbortController();
+ 	const waitSignal = AbortSignal.any([req.signal, waitController.signal]);
+-	const result = await Promise.race([gate.waitForChange(clientGeneration, waitSignal), delay.promise]);
++	const result = await Promise.race([gate.waitForChange(currentGeneration, waitSignal), delay.promise]);
+ 	delay.cancel();
+ 	waitController.abort();
+-	if (result === "aborted" || req.signal.aborted) return empty(499, snapshotHeaders(currentGeneration));
++	if (result === "aborted" || req.signal.aborted) return empty(499, headers);
+ 
+ 	await storage.reload();
+ 	currentGeneration = storage.getGeneration();
+-	if (currentGeneration !== clientGeneration) {
+-		const body = buildSnapshot(storage, refresher, clientSupportsCodexMeterBlockScopes);
++	body = capabilities.resetAccountEvidence ? buildSnapshot(storage, refresher, capabilities) : undefined;
++	headers = snapshotHeaders(currentGeneration, body?.credentials);
++	if (!matches()) {
++		body ??= buildSnapshot(storage, refresher, capabilities);
+ 		logger.info("auth-broker snapshot long-poll changed", {
+ 			peer,
+ 			credentials: body.credentials.length,
+ 			generation: body.generation,
+ 		});
+-		return json(200, body, snapshotHeaders(body.generation));
++		return json(200, body, headers);
+ 	}
+ 
+ 	logger.info("auth-broker snapshot long-poll unchanged", { peer, generation: currentGeneration });
+-	return empty(304, snapshotHeaders(currentGeneration));
++	return empty(304, headers);
+ }
+ 
+ /**
+@@ -473,6 +507,11 @@ async function serveSnapshot(
+  * `rotatesInMs` is intentionally part of the fingerprint: when it shifts we
+  * want the client to recompute its `prepareForRequest` deadline rather than
+  * keep the stale projection.
++ *
++ * `resetAccountEvidence` is fingerprinted from the capability-projected entry:
++ * a negotiated client receives an `entry` frame when the row's server proof
++ * changes (new incarnation) even if the token bytes did not, while a legacy
++ * client — for whom the field is never present — sees no spurious frame.
+  */
+ function fingerprintEntry(entry: SnapshotEntry): string {
+ 	return JSON.stringify([
+@@ -482,6 +521,7 @@ function fingerprintEntry(entry: SnapshotEntry): string {
+ 		entry.rotatesInMs,
+ 		entry.credential,
+ 		entry.blocks ?? [],
++		entry.resetAccountEvidence ?? null,
+ 	]);
+ }
+ 
+@@ -498,7 +538,7 @@ function serveSnapshotStream(
+ ): Response {
+ 	const encoder = new TextEncoder();
+ 	const openedAt = Date.now();
+-	const clientSupportsCodexMeterBlockScopes = supportsCodexMeterBlockScopes(req);
++	const capabilities = parseClientCapabilities(req);
+ 	const lastByCredId = new Map<number, string>();
+ 	let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+ 	let unsubscribe: (() => void) | null = null;
+@@ -556,7 +596,7 @@ function serveSnapshotStream(
+ 				pendingBumps = 0;
+ 				await storage.reload();
+ 				if (closed) return;
+-				const snapshot = buildSnapshot(storage, refresher, clientSupportsCodexMeterBlockScopes);
++				const snapshot = buildSnapshot(storage, refresher, capabilities);
+ 				// Generation must move forward; a duplicate listener firing without a
+ 				// real bump is a no-op below (fingerprints unchanged).
+ 				if (snapshot.generation < lastGeneration) {
+@@ -611,7 +651,7 @@ function serveSnapshotStream(
+ 		async start(c) {
+ 			controller = c;
+ 			await storage.reload();
+-			const initial = buildSnapshot(storage, refresher, clientSupportsCodexMeterBlockScopes);
++			const initial = buildSnapshot(storage, refresher, capabilities);
+ 			lastGeneration = initial.generation;
+ 			for (const entry of initial.credentials) lastByCredId.set(entry.id, fingerprintEntry(entry));
+ 			const initialEvent: SnapshotStreamSnapshotEvent = { kind: "snapshot", ...initial };
+@@ -766,7 +806,9 @@ export function startAuthBroker(opts: AuthBrokerServerOptions): AuthBrokerServer
+ 					const id = Number.parseInt(refreshMatch[1], 10);
+ 					try {
+ 						const entry = await opts.storage.refreshCredentialById(id, req.signal);
+-						const body: CredentialRefreshResponse = { entry };
++						const body: CredentialRefreshResponse = {
++							entry: projectEntryForClient(entry, parseClientCapabilities(req)),
++						};
+ 						logger.info("auth-broker credential refreshed", {
+ 							id,
+ 							provider: entry.provider,
+@@ -856,7 +898,10 @@ export function startAuthBroker(opts: AuthBrokerServerOptions): AuthBrokerServer
+ 					if (!parsed.ok) return parsed.response;
+ 					const { provider, credential } = parsed.data;
+ 					try {
+-						const entries = opts.storage.upsertCredential(provider, credential);
++						const capabilities = parseClientCapabilities(req);
++						const entries = opts.storage
++							.upsertCredential(provider, credential)
++							.map(entry => projectEntryForClient(entry, capabilities));
+ 						const identity =
+ 							credential.type === "oauth"
+ 								? (credential.email ?? credential.accountId ?? credential.projectId ?? "(no identity)")
+diff --git a/src/auth-broker/types.ts b/src/auth-broker/types.ts
+index 2ad9a7d..e81fee6 100644
+--- a/src/auth-broker/types.ts
++++ b/src/auth-broker/types.ts
+@@ -30,6 +30,13 @@ export interface RefresherSchedule {
+ 
+ export type CredentialBlockSnapshot = Omit<StoredCredentialBlock, "credentialId">;
+ 
++/**
++ * One credential row as served on the wire. `resetAccountEvidence` (inherited
++ * from {@link AuthCredentialSnapshotEntry}) is the broker host's own
++ * server-backed proof for this exact row and is present ONLY when the client
++ * advertised {@link AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1}; older
++ * strict clients reject unknown keys, so the server omits it otherwise.
++ */
+ export type SnapshotEntry = AuthCredentialSnapshotEntry & {
+ 	rotatesInMs: number | null;
+ 	blocks?: CredentialBlockSnapshot[];
+@@ -72,7 +79,11 @@ export interface ClientUsageSummaryResponse {
+ 	clients: ClientUsageClientSummary[];
+ }
+ 
+-/** POST /v1/credential/:id/refresh response body. */
++/**
++ * POST /v1/credential/:id/refresh response body. `entry.resetAccountEvidence`
++ * is the post-refresh server proof for the row, only for clients that
++ * negotiated {@link AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1}.
++ */
+ export interface CredentialRefreshResponse {
+ 	entry: AuthCredentialSnapshotEntry;
+ }
+@@ -120,7 +131,11 @@ export interface CredentialUploadRequest {
+ 	credential: AuthCredential;
+ }
+ 
+-/** POST /v1/credential response body — redacted snapshot of the provider's rows after upsert. */
++/**
++ * POST /v1/credential response body — redacted snapshot of the provider's rows
++ * after upsert. Each entry carries `resetAccountEvidence` only for clients that
++ * negotiated {@link AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1}.
++ */
+ export interface CredentialUploadResponse {
+ 	entries: AuthCredentialSnapshotEntry[];
+ }
+@@ -165,12 +180,31 @@ export type SnapshotStreamEvent = SnapshotStreamSnapshotEvent | SnapshotStreamEn
+  */
+ export const AUTH_BROKER_API_PREFIX = "/v1";
+ 
+-/** Request header used by clients to advertise optional auth-broker protocol features. */
++/**
++ * Request header used by clients to advertise optional auth-broker protocol
++ * features as a comma-separated list. Every capability is additive: a server
++ * that does not recognise one ignores it, and a server never emits a
++ * capability-gated field to a client that did not advertise it.
++ */
+ export const AUTH_BROKER_CAPABILITIES_HEADER = "OMP-Auth-Broker-Capabilities";
+ 
+ /** Client understands independent Codex `chat` and `spark` credential-block scopes. */
+ export const AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES = "codex-meter-block-scopes";
+ 
++/**
++ * Client accepts the optional `resetAccountEvidence` field (version 1 shape)
++ * on snapshot entries, SSE `entry` frames, refresh responses and upload
++ * responses. The value is the broker host's server-backed proof for that
++ * exact row, sourced from its own credential store — never derived from the
++ * URL, bearer token, labels or the client's own view. Without this
++ * capability the field is omitted entirely, which keeps the published strict
++ * (`"+": "reject"`) client schemas valid.
++ */
++export const AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1 = "reset-account-evidence-v1";
++
++/** Every optional protocol feature this client build understands; the literal capabilities header value. */
++export const AUTH_BROKER_CLIENT_CAPABILITIES = `${AUTH_BROKER_CAPABILITY_CODEX_METER_BLOCK_SCOPES},${AUTH_BROKER_CAPABILITY_RESET_ACCOUNT_EVIDENCE_V1}`;
++
+ /** Default port when none is configured. Loopback-only, no external exposure. */
+ export const DEFAULT_AUTH_BROKER_BIND = "127.0.0.1:8765";
+ 
+diff --git a/src/auth-broker/wire-schemas.ts b/src/auth-broker/wire-schemas.ts
+index 5d9d0d8..c98689b 100644
+--- a/src/auth-broker/wire-schemas.ts
++++ b/src/auth-broker/wire-schemas.ts
+@@ -21,6 +21,7 @@ import {
+ 	type OAuthCredential,
+ 	REMOTE_REFRESH_SENTINEL,
+ 	type RemoteOAuthCredential,
++	type ResetAccountEvidence,
+ 	type SnapshotCredential,
+ } from "../auth-storage";
+ import type {
+@@ -104,12 +105,36 @@ export const snapshotCredentialSchema: FluentType<SnapshotCredential> =
+ 
+ // ─── Snapshot ────────────────────────────────────────────────────────────────
+ 
++/**
++ * Server-backed reset-account proof for one credential row (capability
++ * `reset-account-evidence-v1`). Secret-free by construction: it carries the
++ * broker host's store authority plus a SHA-256 binding over the row's
++ * persisted incarnation and scope metadata, never a token. Strict shape — a
++ * future version bumps `version` and its own capability rather than adding
++ * keys here.
++ */
++export const resetAccountEvidenceSchema: FluentType<ResetAccountEvidence> = type({
++	"+": "reject",
++	version: "1",
++	provider: type("string").atLeastLength(1),
++	credentialId: type("number.integer > 0").narrow(
++		(value, ctx) => Number.isSafeInteger(value) || ctx.mustBe("a safe integer"),
++	),
++	authAuthority: type("string").atLeastLength(1),
++	credentialFingerprint: type("string").atLeastLength(1),
++	"accountId?": "string",
++	"email?": "string",
++	"projectId?": "string",
++	"orgId?": "string",
++});
++
+ export const credentialSnapshotEntrySchema: FluentType<AuthCredentialSnapshotEntry> = type({
+ 	"+": "reject",
+ 	id: "number.integer",
+ 	provider: type("string").atLeastLength(1),
+ 	credential: snapshotCredentialSchema,
+ 	identityKey: "string | null",
++	"resetAccountEvidence?": resetAccountEvidenceSchema,
+ });
+ 
+ export const credentialBlockSnapshotSchema: FluentType<CredentialBlockSnapshot> = type({
+@@ -128,6 +153,7 @@ export const snapshotEntrySchema: FluentType<SnapshotEntry> = type({
+ 	identityKey: "string | null",
+ 	rotatesInMs: "number | null",
+ 	"blocks?": credentialBlockSnapshotSchema.array(),
++	"resetAccountEvidence?": resetAccountEvidenceSchema,
+ });
+ 
+ export const refresherScheduleSchema: FluentType<RefresherSchedule> = type({
+diff --git a/src/auth-storage.ts b/src/auth-storage.ts
+index 7f9e431..f115877 100644
+--- a/src/auth-storage.ts
++++ b/src/auth-storage.ts
+@@ -10,6 +10,7 @@
+ import { createHash } from "node:crypto";
+ import { planRequirementFor } from "@oh-my-pi/pi-catalog/compat/behavior";
+ import { $env, $envExact, extractRetryHint, getAgentDbPath, logger, untilAborted } from "@oh-my-pi/pi-utils";
++import { matchesResetAccountCredential, sameResetAccountEvidence, snapshotResetAccountEvidence } from "./auth/reset-account-evidence";
+ import {
+ 	isSqliteCorruptionError,
+ 	resolveCredentialIdentityKey,
+@@ -164,6 +165,8 @@ export interface StoredAuthCredential {
+ 	provider: string;
+ 	credential: AuthCredential;
+ 	disabledCause: string | null;
++	/** Proof attached to this exact stored row snapshot, never a later replacement. */
++	resetAccountEvidence?: ResetAccountEvidence;
+ }
+ 
+ /** One persisted rate-limit block: credential row id + provider-type key + optional scope. */
+@@ -350,6 +353,8 @@ export interface AuthCredentialSnapshotEntry {
+ 	provider: string;
+ 	credential: SnapshotCredential;
+ 	identityKey: string | null;
++	/** Optional negotiated backend proof; absent means unavailable, never client-invented. */
++	resetAccountEvidence?: ResetAccountEvidence;
+ }
+ 
+ /**
+@@ -392,6 +397,8 @@ export interface AuthCredentialStore {
+ 	/** Optional hook to notify the underlying store that usage report cache is stale. */
+ 	invalidateUsageCache?(signal?: AbortSignal): Promise<void>;
+ 	listAuthCredentials(provider?: string): StoredAuthCredential[];
++	/** Current exact-row backend proof; synchronous and secret-free. Unsupported stores omit this capability. */
++	getResetAccountEvidence?(provider: string, credentialId: number): ResetAccountEvidence | undefined;
+ 	/**
+ 	 * Optional store hook to re-hydrate the credential snapshot from its
+ 	 * backing source. Remote broker stores re-fetch `GET /v1/snapshot` so a
+@@ -852,6 +859,8 @@ export interface OAuthAccess {
+ 	/** Organization/workspace the credential is scoped to (Anthropic/ChatGPT multi-subscription). */
+ 	orgId?: string;
+ 	orgName?: string;
++	/** Original loaded-row proof retained across refresh; absent if that binding could not be revalidated. */
++	resetAccountEvidence?: ResetAccountEvidence;
+ }
+ 
+ /**
+@@ -895,6 +904,23 @@ export interface OAuthAccountIdentity {
+ 	orgName?: string;
+ }
+ 
++/**
++ * Secret-free identity of one backend-qualified OAuth credential incarnation.
++ * Token-only refresh preserves it; explicit relink/replacement or scope changes do not.
++ * Broker proof names observed server state, not a cross-service lease. Never log these values.
++ */
++export type ResetAccountEvidence = Readonly<{
++	version: 1;
++	provider: string;
++	credentialId: number;
++	authAuthority: string;
++	credentialFingerprint: string;
++	accountId?: string;
++	email?: string;
++	projectId?: string;
++	orgId?: string;
++}>;
++
+ export type OAuthAccessResolution = ({ ok: true } & OAuthAccess) | ({ ok: false } & OAuthAccessFailure);
+ 
+ /**
+@@ -950,6 +976,12 @@ export interface StoredOAuthRefreshResult<T extends OAuthCredential = OAuthCrede
+  * Identifies which stored account to redeem a saved rate-limit reset for.
+  * Any one field is enough; `credentialId` is the most precise.
+  */
++/** Resolved native identity at the synchronous saved-reset dispatch boundary. No token bytes. */
++export interface ResetCreditConsumeIdentity {
++  provider: string; credentialId?: number; accountId?: string; email?: string; projectId?: string; orgId?: string; creditId: string;
++	resetAccountEvidence?: ResetAccountEvidence;
 +}
 +
  export interface ResetCreditTarget {
  	credentialId?: number;
  	accountId?: string;
-@@ -6133,6 +6138,12 @@
+@@ -1200,6 +1232,8 @@ function storedCredentialArraysEqual(left: StoredCredential[], right: StoredCred
+ 		if (!leftEntry || !rightEntry) return false;
+ 		if (leftEntry.id !== rightEntry.id) return false;
+ 		if (!authCredentialEquals(leftEntry.credential, rightEntry.credential)) return false;
++		if ((leftEntry.resetAccountEvidence || rightEntry.resetAccountEvidence) &&
++			!sameResetAccountEvidence(leftEntry.resetAccountEvidence, rightEntry.resetAccountEvidence)) return false;
+ 	}
+ 	return true;
+ }
+@@ -1250,7 +1284,7 @@ class AuthStorageUsageCache implements UsageCache {
+ // In-memory representation
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+-type StoredCredential = { id: number; credential: AuthCredential };
++type StoredCredential = { id: number; credential: AuthCredential; resetAccountEvidence?: ResetAccountEvidence };
+ type CredentialSelection<T extends AuthCredential> = {
+ 	credential: T;
+ 	index: number;
+@@ -1261,6 +1295,7 @@ type StoredOAuthSelection = {
+ 	credentialId: number;
+ 	credential: OAuthCredential;
+ 	index: number;
++	resetAccountEvidence: ResetAccountEvidence | undefined;
+ };
+ 
+ type UsageCandidate<T extends AuthCredential> = {
+@@ -1599,7 +1634,7 @@ export class AuthStorage {
+ 		const grouped = new Map<string, StoredCredential[]>();
+ 		for (const record of records) {
+ 			const list = grouped.get(record.provider) ?? [];
+-			list.push({ id: record.id, credential: record.credential });
++			list.push({ id: record.id, credential: record.credential, resetAccountEvidence: record.resetAccountEvidence });
+ 			grouped.set(record.provider, list);
+ 		}
+ 
+@@ -2319,7 +2354,7 @@ export class AuthStorage {
+ 		const target = entries[index];
+ 		this.#store.updateAuthCredential(target.id, credential);
+ 		const updated = [...entries];
+-		updated[index] = { id: target.id, credential };
++		updated[index] = { ...target, credential };
+ 		this.#setStoredCredentials(provider, updated);
+ 	}
+ 
+@@ -2370,7 +2405,7 @@ export class AuthStorage {
+ 			const latest = this.#store.listAuthCredentials(provider);
+ 			this.#setStoredCredentials(
+ 				provider,
+-				latest.map(row => ({ id: row.id, credential: row.credential })),
++				latest.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 			);
+ 			return latest.findIndex(row => row.id === id);
+ 		}
+@@ -2378,7 +2413,7 @@ export class AuthStorage {
+ 			this.#store.updateAuthCredential(id, credential);
+ 		}
+ 		const updated = [...entries];
+-		updated[index] = { id, credential };
++		updated[index] = { ...entries[index]!, credential };
+ 		this.#setStoredCredentials(provider, updated);
+ 		return index;
+ 	}
+@@ -2461,6 +2496,7 @@ export class AuthStorage {
+ 			stored.map(record => ({
+ 				id: record.id,
+ 				credential: record.credential,
++				resetAccountEvidence: record.resetAccountEvidence,
+ 			})),
+ 		);
+ 		this.#resetProviderAssignments(provider);
+@@ -2476,6 +2512,7 @@ export class AuthStorage {
+ 				provider,
+ 				credential: entry.credential,
+ 				disabledCause: null,
++				resetAccountEvidence: entry.resetAccountEvidence,
+ 			}));
+ 		}
+ 		const rows: StoredAuthCredential[] = [];
+@@ -2486,6 +2523,7 @@ export class AuthStorage {
+ 					provider: storedProvider,
+ 					credential: entry.credential,
+ 					disabledCause: null,
++					resetAccountEvidence: entry.resetAccountEvidence,
+ 				});
+ 			}
+ 		}
+@@ -2513,7 +2551,7 @@ export class AuthStorage {
+ 			const rows = this.#store.listAuthCredentials(provider);
+ 			this.#setStoredCredentials(
+ 				provider,
+-				rows.map(row => ({ id: row.id, credential: row.credential })),
++				rows.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 			);
+ 			const row = rows.find(
+ 				entry =>
+@@ -2565,7 +2603,7 @@ export class AuthStorage {
+ 			const rows = this.#store.listAuthCredentials(provider);
+ 			this.#setStoredCredentials(
+ 				provider,
+-				rows.map(row => ({ id: row.id, credential: row.credential })),
++				rows.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 			);
+ 			const row = rows.find(
+ 				entry =>
+@@ -2648,10 +2686,7 @@ export class AuthStorage {
+ 								provider,
+ 								rows
+ 									.filter(entry => entry.id !== row.id)
+-									.map(entry => ({
+-										id: entry.id,
+-										credential: entry.credential,
+-									})),
++									.map(entry => ({ id: entry.id, credential: entry.credential, resetAccountEvidence: entry.resetAccountEvidence })),
+ 							);
+ 							this.#resetProviderAssignments(provider);
+ 							this.#emitCredentialDisabled({ provider, disabledCause });
+@@ -2723,6 +2758,7 @@ export class AuthStorage {
+ 				rows.map(entry => ({
+ 					id: entry.id,
+ 					credential: entry.id === row.id ? merged : entry.credential,
++					resetAccountEvidence: entry.resetAccountEvidence,
+ 				})),
+ 			);
+ 			return { credential: merged, refreshed: true, removed: false };
+@@ -2739,7 +2775,7 @@ export class AuthStorage {
+ 			: this.#store.upsertAuthCredentialForProvider(provider, credential);
+ 		this.#setStoredCredentials(
+ 			provider,
+-			stored.map(entry => ({ id: entry.id, credential: entry.credential })),
++			stored.map(entry => ({ id: entry.id, credential: entry.credential, resetAccountEvidence: entry.resetAccountEvidence })),
+ 		);
+ 		this.#resetProviderAssignments(provider);
+ 	}
+@@ -2992,6 +3028,26 @@ export class AuthStorage {
+ 		return identity;
+ 	}
+ 
++	/**
++	 * Synchronous exact-row evidence from this original storage, without refresh, selection or network.
++	 * Undefined means unsupported, unresolved, closed, or stale versus the backing store.
++	 * A remote store can substantiate only its latest observed server snapshot, not a global lease.
++	 */
++	getResetAccountEvidence(provider: string, credentialId: number): ResetAccountEvidence | undefined {
++		if (this.#closed || !Number.isSafeInteger(credentialId) || credentialId < 1) return undefined;
++		const entry = this.#getStoredCredentials(provider).find(entry => entry.id === credentialId);
++		if (!entry || !matchesResetAccountCredential(entry.resetAccountEvidence, provider, credentialId, entry.credential)) return undefined;
++		try {
++			const current = this.#store.getResetAccountEvidence?.(provider, credentialId);
++			return matchesResetAccountCredential(current, provider, credentialId, entry.credential) &&
++				sameResetAccountEvidence(entry.resetAccountEvidence, current)
++				? snapshotResetAccountEvidence(entry.resetAccountEvidence) : undefined;
++		} catch {
++			// Failure to substantiate proof is never permission to consume.
++			return undefined;
++		}
++	}
++
+ 	/**
+ 	 * Get all credentials.
+ 	 */
+@@ -3066,7 +3122,7 @@ export class AuthStorage {
+ 				: this.#store.upsertAuthCredentialForProvider(provider, newCredential);
+ 			this.#setStoredCredentials(
+ 				provider,
+-				stored.map(entry => ({ id: entry.id, credential: entry.credential })),
++				stored.map(entry => ({ id: entry.id, credential: entry.credential, resetAccountEvidence: entry.resetAccountEvidence })),
+ 			);
+ 			this.#resetProviderAssignments(provider);
+ 			return { type: "api_key" };
+@@ -4546,7 +4602,7 @@ export class AuthStorage {
+ 			const latestRows = this.#store.listAuthCredentials(provider);
+ 			this.#setStoredCredentials(
+ 				provider,
+-				latestRows.map(row => ({ id: row.id, credential: row.credential })),
++				latestRows.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 			);
+ 		}
+ 		if (options?.credentialId !== undefined) {
+@@ -5454,7 +5510,7 @@ export class AuthStorage {
+ 		const latestRows = this.#store.listAuthCredentials(provider);
+ 		this.#setStoredCredentials(
+ 			provider,
+-			latestRows.map(row => ({ id: row.id, credential: row.credential })),
++			latestRows.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 		);
+ 		const latestIndex = latestRows.findIndex(row => row.id === credentialId);
+ 		if (latestIndex === -1) return false;
+@@ -5864,6 +5920,7 @@ export class AuthStorage {
+ 				credentialId: entry.id,
+ 				credential: entry.credential,
+ 				index,
++				resetAccountEvidence: entry.resetAccountEvidence,
+ 			}))
+ 			.filter((entry): entry is StoredOAuthSelection => entry.credential.type === "oauth");
+ 	}
+@@ -5898,6 +5955,11 @@ export class AuthStorage {
+ 				};
+ 			}
+ 			const { credential } = resolved;
++			const resetAccountEvidence = resolved.credentialId === selection.credentialId &&
++				matchesResetAccountCredential(selection.resetAccountEvidence, provider, selection.credentialId, credential) &&
++				sameResetAccountEvidence(selection.resetAccountEvidence, this.getResetAccountEvidence(provider, selection.credentialId))
++				? snapshotResetAccountEvidence(selection.resetAccountEvidence)
++				: undefined;
+ 			return {
+ 				ok: true,
+ 				credentialId: selection.credentialId,
+@@ -5908,6 +5970,7 @@ export class AuthStorage {
+ 				enterpriseUrl: credential.enterpriseUrl,
+ 				orgId: credential.orgId,
+ 				orgName: credential.orgName,
++				resetAccountEvidence,
+ 			};
+ 		} catch (error) {
+ 			return {
+@@ -6133,12 +6196,27 @@ export class AuthStorage {
  		target: ResetCreditTarget;
  		provider?: string;
  		creditId?: string;
@@ -21,20 +1810,45 @@ diff --git a/src/auth-storage.ts b/src/auth-storage.ts
 +		redeemRequestId?: string;
 +		/** Opt in to unknown for absent/malformed provider outcome codes. */
 +		requireExplicitOutcome?: boolean;
++		/** Opt in to exact original backend/incarnation admission; unavailable or changed evidence sends no consume. */
++		expectedAccountEvidence?: ResetAccountEvidence;
 +		/** Synchronous final admission after credential refresh, immediately before consume. False or throw sends no request. */
 +		beforeConsume?: (identity: ResetCreditConsumeIdentity) => boolean;
  		baseUrlResolver?: (provider: string) => string | undefined;
  		signal?: AbortSignal;
  	}): Promise<ResetCreditRedeemOutcome> {
-@@ -6193,8 +6204,17 @@
+ 		const provider = options.provider ?? "openai-codex";
+ 		const baseUrl = options.baseUrlResolver?.(provider);
+ 		const { target } = options;
++		const expectedAccountEvidence = options.expectedAccountEvidence === undefined
++			? undefined : snapshotResetAccountEvidence(options.expectedAccountEvidence);
++		if (expectedAccountEvidence && (target.credentialId !== expectedAccountEvidence.credentialId ||
++			expectedAccountEvidence.provider !== provider ||
++			!sameResetAccountEvidence(expectedAccountEvidence, this.getResetAccountEvidence(provider, expectedAccountEvidence.credentialId)))) {
++			return { ok: false, code: "admission_rejected" };
++		}
+ 		const accesses = await this.getOAuthAccesses(provider);
+ 		const match = accesses.find(
+ 			access =>
+@@ -6193,8 +6271,27 @@ export class AuthStorage {
  			creditId = credit.id;
  		}
  
++		const resetAccountEvidence = match.credentialId !== undefined &&
++			sameResetAccountEvidence(match.resetAccountEvidence, this.getResetAccountEvidence(provider, match.credentialId))
++			? match.resetAccountEvidence : undefined;
++		if (expectedAccountEvidence && !sameResetAccountEvidence(expectedAccountEvidence, resetAccountEvidence)) {
++			return { ok: false, code: "admission_rejected", accountId: match.accountId, email: match.email, creditId };
++		}
 +		if (options.beforeConsume) {
 +			let admitted = false;
 +			try { admitted = options.beforeConsume({ provider, credentialId: match.credentialId, accountId: match.accountId,
-+				email: match.email, projectId: match.projectId, orgId: match.orgId, creditId }) === true; } catch { /* Fail closed before dispatch. */ }
++				email: match.email, projectId: match.projectId, orgId: match.orgId, creditId, resetAccountEvidence }) === true; } catch { /* Fail closed before dispatch. */ }
 +			if (!admitted) return { ok: false, code: "admission_rejected", accountId: match.accountId, email: match.email, creditId };
++		}
++		if (expectedAccountEvidence &&
++			!sameResetAccountEvidence(expectedAccountEvidence, this.getResetAccountEvidence(provider, expectedAccountEvidence.credentialId))) {
++			return { ok: false, code: "admission_rejected", accountId: match.accountId, email: match.email, creditId };
 +		}
 +
  		const result = await consumeCodexResetCredit({
@@ -44,38 +1858,78 @@ diff --git a/src/auth-storage.ts b/src/auth-storage.ts
  			accessToken: match.accessToken,
  			accountId: match.accountId,
  			baseUrl,
-diff --git a/dist/types/auth-storage.d.ts b/dist/types/auth-storage.d.ts
---- a/dist/types/auth-storage.d.ts
-+++ b/dist/types/auth-storage.d.ts
-@@ -652,6 +652,11 @@
-  * Identifies which stored account to redeem a saved rate-limit reset for.
-  * Any one field is enough; `credentialId` is the most precise.
-  */
-+/** Resolved native identity at the synchronous saved-reset dispatch boundary. No token bytes. */
-+export interface ResetCreditConsumeIdentity {
-+  provider: string; credentialId?: number; accountId?: string; email?: string; projectId?: string; orgId?: string; creditId: string;
-+}
-+
- export interface ResetCreditTarget {
-     credentialId?: number;
-     accountId?: string;
-@@ -1142,6 +1147,12 @@
-         target: ResetCreditTarget;
-         provider?: string;
-         creditId?: string;
-+        /** Stable identity for this one admitted native request; omitted preserves native generation. */
-+        redeemRequestId?: string;
-+        /** Opt in to unknown for absent/malformed provider outcome codes. */
-+        requireExplicitOutcome?: boolean;
-+        /** Synchronous final admission after credential refresh, immediately before consume. False or throw sends no request. */
-+        beforeConsume?: (identity: ResetCreditConsumeIdentity) => boolean;
-         baseUrlResolver?: (provider: string) => string | undefined;
-         signal?: AbortSignal;
-     }): Promise<ResetCreditRedeemOutcome>;
+@@ -6634,7 +6731,7 @@ export class AuthStorage {
+ 		const latestRows = this.#store.listAuthCredentials(provider);
+ 		this.#setStoredCredentials(
+ 			provider,
+-			latestRows.map(row => ({ id: row.id, credential: row.credential })),
++			latestRows.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 		);
+ 		return true;
+ 	}
+@@ -6762,7 +6859,7 @@ export class AuthStorage {
+ 				const latestRows = this.#store.listAuthCredentials(provider);
+ 				this.#setStoredCredentials(
+ 					provider,
+-					latestRows.map(row => ({ id: row.id, credential: row.credential })),
++					latestRows.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 				);
+ 			}
+ 			return deleted && hasSibling;
+@@ -6778,7 +6875,7 @@ export class AuthStorage {
+ 			const latestRows = this.#store.listAuthCredentials(provider);
+ 			this.#setStoredCredentials(
+ 				provider,
+-				latestRows.map(row => ({ id: row.id, credential: row.credential })),
++				latestRows.map(row => ({ id: row.id, credential: row.credential, resetAccountEvidence: row.resetAccountEvidence })),
+ 			);
+ 		}
+ 
+@@ -6858,6 +6955,7 @@ export class AuthStorage {
+ 					provider,
+ 					credential: redacted,
+ 					identityKey: resolveCredentialIdentityKey(provider, credential),
++					resetAccountEvidence: this.getResetAccountEvidence(provider, entry.id),
+ 				});
+ 			}
+ 		}
+@@ -6989,11 +7087,14 @@ export class AuthStorage {
+ 			if (this.#replaceCredentialById(provider, id, updated) === -1) {
+ 				throw new AIError.ValidationError(`No credential with id=${id}`);
+ 			}
++			const persisted = this.#getStoredCredentials(provider).find(entry => entry.id === id);
+ 			return {
+ 				id,
+ 				provider,
+ 				credential: { ...updated, refresh: REMOTE_REFRESH_SENTINEL },
+ 				identityKey: resolveCredentialIdentityKey(provider, updated),
++				resetAccountEvidence: persisted && authCredentialEquals(persisted.credential, updated)
++					? this.getResetAccountEvidence(provider, id) : undefined,
+ 			};
+ 		}
+ 		throw new AIError.ValidationError(`No credential with id=${id}`);
+@@ -7031,7 +7132,7 @@ export class AuthStorage {
+ 		const stored = this.#store.upsertAuthCredentialForProvider(provider, credential);
+ 		this.#setStoredCredentials(
+ 			provider,
+-			stored.map(entry => ({ id: entry.id, credential: entry.credential })),
++			stored.map(entry => ({ id: entry.id, credential: entry.credential, resetAccountEvidence: entry.resetAccountEvidence })),
+ 		);
+ 		this.#resetProviderAssignments(provider);
+ 		return stored.map(entry => {
+@@ -7043,6 +7144,7 @@ export class AuthStorage {
+ 				provider: entry.provider,
+ 				credential: redacted,
+ 				identityKey: resolveCredentialIdentityKey(provider, persisted),
++				resetAccountEvidence: entry.resetAccountEvidence,
+ 			};
+ 		});
+ 	}
 diff --git a/src/usage/openai-codex-reset.ts b/src/usage/openai-codex-reset.ts
+index 50ea91c..ddbc8a2 100644
 --- a/src/usage/openai-codex-reset.ts
 +++ b/src/usage/openai-codex-reset.ts
-@@ -180,7 +180,7 @@
+@@ -180,7 +180,7 @@ export function pickSoonestExpiringCredit(credits: readonly CodexResetCredit[]):
   * double-spend. The returned `code` is `"reset"` on success.
   */
  export async function consumeCodexResetCredit(
@@ -84,7 +1938,7 @@ diff --git a/src/usage/openai-codex-reset.ts b/src/usage/openai-codex-reset.ts
  ): Promise<CodexResetConsumeResult> {
  	const redeemRequestId = auth.redeemRequestId ?? crypto.randomUUID();
  	const url = buildUrl(auth.baseUrl, RESET_CREDITS_CONSUME_PATH);
-@@ -201,6 +201,7 @@
+@@ -201,6 +201,7 @@ export async function consumeCodexResetCredit(
  		body = undefined;
  	}
  	const code =
@@ -93,14 +1947,9 @@ diff --git a/src/usage/openai-codex-reset.ts b/src/usage/openai-codex-reset.ts
 +			? body.code : auth.requireExplicitOutcome ? "outcome_unknown" : response.ok ? "reset" : `http_${response.status}`;
  	return { ok: code === "reset", code, status: response.status, raw: body };
  }
-diff --git a/dist/types/usage/openai-codex-reset.d.ts b/dist/types/usage/openai-codex-reset.d.ts
---- a/dist/types/usage/openai-codex-reset.d.ts
-+++ b/dist/types/usage/openai-codex-reset.d.ts
-@@ -64,5 +64,7 @@
- export declare function consumeCodexResetCredit(auth: CodexResetAuth & {
-     creditId: string;
-     redeemRequestId?: string;
-+    /** Missing or malformed outcome is unknown when opted in. Defaults to native legacy interpretation. */
-+    requireExplicitOutcome?: boolean;
- }): Promise<CodexResetConsumeResult>;
- export {};
+diff --git a/dist/types/auth/reset-account-evidence.d.ts b/dist/types/auth/reset-account-evidence.d.ts
+old mode 100755
+new mode 100644
+diff --git a/src/auth/reset-account-evidence.ts b/src/auth/reset-account-evidence.ts
+old mode 100755
+new mode 100644
