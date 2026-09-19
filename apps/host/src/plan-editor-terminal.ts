@@ -1,9 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NativeTerminalInfo } from "../../../packages/shared/src/terminals";
-import type { PreparedPlanExternalEditor } from "./omp/plan-external-editor";
+import type { PlanEditorProcessOptions } from "./plan-editor-process";
+export interface PreparedEditorTerminal extends PlanEditorProcessOptions {
+  request: { requestId: string; sessionId: string }; cwd: string; environment: Record<string, string>;
+}
 import { cleanupPlanEditorProcessFiles, createPlanEditorProcessFiles, planEditorProcessCommand,
-  readPlanEditorProcessResult, type PlanEditorProcessFiles, type PlanEditorProcessResult } from "./plan-editor-process";
+  readPlanEditorProcessResult, readPlanEditorOriginalContent, type PlanEditorProcessFiles, type PlanEditorProcessResult } from "./plan-editor-process";
 import type { TmuxTerminalManager } from "./terminals/native-manager";
 import { atomicPrivateText, privateDirectory, privateFile } from "./terminals/native-store";
 
@@ -13,7 +16,7 @@ export interface PlanEditorTerminalRun {
   terminalId: string;
   completion: Promise<PlanEditorProcessResult>;
   cancel(): Promise<void>;
-  cleanup(options?: { preserveEditedResult?: boolean }): void;
+  cleanup(options?: { preserveEditedResult?: boolean; preserveOriginalContent?: boolean }): void;
 }
 interface PlanEditorTerminalManifest {
   version: 1;
@@ -29,11 +32,11 @@ interface PlanEditorTerminalManifest {
 export class PlanEditorTerminals {
   private readonly directory: string;
   constructor(dataDirectory: string, private readonly terminals: Pick<TmuxTerminalManager,
-    "createOwnedCommand" | "get" | "subscribe" | "close">) {
-    this.directory = privateDirectory(join(dataDirectory, "plan-editors-v1"));
+    "createOwnedCommand" | "get" | "subscribe" | "close">, private readonly namespace: "plan" | "todo" = "plan") {
+    this.directory = privateDirectory(join(dataDirectory, `${namespace}-editors-v1`));
   }
 
-  async start(terminalId: string, prepared: PreparedPlanExternalEditor, validateOwner: () => void): Promise<PlanEditorTerminalRun> {
+  async start(terminalId: string, prepared: PreparedEditorTerminal, validateOwner: () => void): Promise<PlanEditorTerminalRun> {
     const directory = this.requestDirectory(prepared.request.requestId);
     if (existsSync(directory)) throw new Error("The original Plan editor files already exist; this operation must be inspected, not replayed.");
     validateOwner();
@@ -87,7 +90,7 @@ export class PlanEditorTerminals {
     const closed = await this.terminals.close(terminalId);
     if (closed.id !== terminalId || closed.createdAt !== manifest.launched.createdAt || closed.serverGeneration !== manifest.launched.serverGeneration
       || closed.status !== "exited") throw new Error("The original Plan editor termination was not confirmed.");
-    cleanupPlanEditorProcessFiles(manifest.files, { preserveEditedResult: true });
+    cleanupPlanEditorProcessFiles(manifest.files, { preserveEditedResult: true, preserveOriginalContent: this.namespace === "todo" });
   }
 
   /** Inspect only saved output of the original request, never a new editor. */
@@ -95,6 +98,13 @@ export class PlanEditorTerminals {
     const directory = this.requestDirectory(requestId), path = join(directory, "files.json");
     if (!existsSync(path)) return;
     return readPlanEditorProcessResult(this.readManifest(requestId).files);
+  }
+
+  /** Only the original prepared Markdown; no command, environment or scratch buffer. */
+  original(requestId: string): string | undefined {
+    const directory = this.requestDirectory(requestId);
+    if (!existsSync(join(directory, "files.json"))) return;
+    return readPlanEditorOriginalContent(this.readManifest(requestId).files);
   }
 
   private readManifest(requestId: string): PlanEditorTerminalManifest {

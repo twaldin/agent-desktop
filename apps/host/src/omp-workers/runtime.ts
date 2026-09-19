@@ -1,3 +1,5 @@
+import { parseTodoExternalEditorRequest } from "../../../../packages/shared/src/todo-external-editor";
+import { parsePreparedTodoExternalEditor } from "../omp/todo-external-editor";
 import { parsePlanExternalEditorRequest } from "../../../../packages/shared/src/plan-external-editor";
 import { parsePreparedPlanExternalEditor } from "../omp/plan-external-editor";
 import type { OmpPlanExecutionRun } from "../omp/plan-execution-admission";
@@ -49,13 +51,14 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection" | "getPlanExternalEditorAvailable" | "getTodos"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection" | "getPlanExternalEditorAvailable" | "getTodos" | "getTodoExternalEditorAvailable"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
   getPlan(): Promise<SessionPlan>;
+  getTodoExternalEditorAvailable(): Promise<boolean>;
   getPlanExternalEditorAvailable(): Promise<boolean>;
   getPlanDocumentSection(request: PlanDocumentReadRequest): Promise<PlanDocumentSection>;
   getTodos(): Promise<SessionTodos>;
@@ -1080,6 +1083,25 @@ export class WorkerRuntime {
         const value = parseSessionPlan(await client.request({ operation: "getPlan" }));
         if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file
           || value.ticket.nativeSessionId !== origin.id) throw new Error("The original Plan worker changed during inspection.");
+        return value;
+      },
+      getTodoExternalEditorAvailable: async () => {
+        if (disposeCall || client.failure) throw new Error("The original Todos editor worker is unavailable.");
+        const origin = { id: state().id, file: state().sessionFile };
+        const value = await client.request({ operation: "getTodoExternalEditorAvailable" });
+        if (typeof value !== "boolean" || disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file)
+          throw new Error("The original Todos editor capability could not be confirmed.");
+        return value;
+      },
+      prepareTodoExternalEditor: async raw => {
+        if (disposeCall || client.failure) throw new Error("The original Todos editor worker is unavailable.");
+        const request = parseTodoExternalEditorRequest(raw);
+        const origin = { id: state().id, file: state().sessionFile, cwd: state().cwd };
+        if (request.sessionId !== origin.id) throw new Error("The Todos editor target changed before preparation.");
+        const value = parsePreparedTodoExternalEditor(await client.request({ operation: "prepareTodoExternalEditor", args: request }), request);
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file || state().cwd !== origin.cwd
+          || value.nativeSessionId !== origin.id || value.sessionFile !== origin.file || value.cwd !== origin.cwd)
+          throw new Error("The original Todos editor worker changed during preparation.");
         return value;
       },
       getPlanExternalEditorAvailable: async () => {

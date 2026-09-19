@@ -91,7 +91,51 @@ const native = await nativeSession();
 await native.manager.ensureOnDisk();
 const sessionFile = native.manager.getSessionFile()!;
 try {
-  if (scenario === "lifecycle") {
+  if (scenario === "external-editor") {
+    const { todos } = owner(native);
+    const { TodoCommandController } = await import("@oh-my-pi/pi-coding-agent/modes/controllers/todo-command-controller");
+    const { openInEditor } = await import("@oh-my-pi/pi-coding-agent/utils/external-editor");
+    const { chmod } = await import("node:fs/promises");
+    const editor = path.join(directory, "controlled-editor.sh");
+    const quote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
+    process.env.VISUAL = quote(editor);
+    const statuses: string[] = [], warnings: string[] = [], errors: string[] = [];
+    let stops = 0, starts = 0, projections = 0;
+    const controller = new TodoCommandController({ session: native.session, sessionManager: native.manager,
+      showStatus: (value: string) => statuses.push(value), showWarning: (value: string) => warnings.push(value),
+      showError: (value: string) => errors.push(value), setTodos: () => { projections++; },
+      ui: { stop: () => { stops++; }, start: () => { starts++; }, requestRender: () => {} },
+    } as unknown as ConstructorParameters<typeof TodoCommandController>[0]);
+    const setScript = async (body: string) => { await writeFile(editor, `#!/bin/sh\ncase "$1" in *.todo.md) ;; *) exit 9;; esac\n${body}\n`); await chmod(editor, 0o700); };
+    const empty = todos.prepareExternalEditor(todos.read().ticket);
+    assert.deepEqual(empty, { content: "# Todos\n- [ ] (replace this with your tasks)\n", extension: ".todo.md", trimTrailingNewline: true });
+    await setScript("exit 0");
+    await controller.handleTodoCommand("edit");
+    assert.equal(todoEntries(native).length, 1); assert.equal(projections, 1);
+    assert.equal(todos.read().phases[0].tasks[0].content, "(replace this with your tasks)");
+    const initial = todos.read(), prepared = todos.prepareExternalEditor(initial.ticket);
+    const unchanged = await openInEditor(process.env.VISUAL!, prepared.content, prepared);
+    assert.equal(unchanged, prepared.content.replace(/\n$/, ""));
+    await todos.mutate("external-unchanged", { sessionId: initial.ticket.nativeSessionId, ticket: initial.ticket,
+      mutation: { action: "edit", markdown: unchanged! } });
+    assert.equal(todoEntries(native).length, 2, "native unchanged successful saves still commit");
+    const beforeCancelled = todos.read().ticket;
+    await setScript("exit 3"); await controller.handleTodoCommand("edit");
+    assert.equal(todoEntries(native).length, 2); assert.equal(warnings.length, 1);
+    assert.deepEqual(todos.read().ticket, beforeCancelled);
+    await setScript("printf '# New phase\\n- [x] Saved externally\\n' > \"$1\"");
+    const original = todos.read();
+    const output = await openInEditor(process.env.VISUAL!, todos.prepareExternalEditor(original.ticket).content, { extension: ".todo.md" });
+    await todos.mutate("external-edit", { sessionId: original.ticket.nativeSessionId, ticket: original.ticket,
+      mutation: { action: "edit", markdown: output! } });
+    assert.deepEqual(todos.read().phases, [{ name: "New phase", tasks: [{ content: "Saved externally", status: "completed" }] }]);
+    assert.equal(todoEntries(native).length, 3); assert.equal(reminders(native).length, 3);
+    assert.ok(reminders(native).every(item => item.attribution === "user"));
+    await rejects(todos.mutate("external-stale", { sessionId: original.ticket.nativeSessionId, ticket: original.ticket,
+      mutation: { action: "edit", markdown: output! } }), "TODOS_REJECTED", /changed/);
+    assert.equal(stops, starts); assert.equal(errors.length, 0);
+    result.externalEditor = { nativeControllerCommits: 1, sharedCommits: 2, cancelled: 1, sameReminder: true, staleRefused: true };
+  } else if (scenario === "lifecycle") {
     const { todos, state } = owner(native);
     const entriesBefore = branchOf(native).length;
     const empty = todos.read();

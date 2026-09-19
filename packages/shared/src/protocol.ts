@@ -502,6 +502,12 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getPlanEditorStatus?(request: import("./plan-external-editor").PlanExternalEditorRequest, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorObservation>;
   cancelPlanEditor?(request: import("./plan-external-editor").PlanExternalEditorRequest, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorObservation>;
   recoverPlanEditor?(request: import("./plan-external-editor").PlanExternalEditorRequest, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorRecovery>;
+  listTodoEditors?(sessionId: string, hostId: string, cursor?: string): Promise<import("./todo-external-editor").TodoExternalEditorList>;
+  getTodoEditorCapabilities?(sessionId: string, hostId: string): Promise<import("./todo-external-editor").TodoExternalEditorCapabilities>;
+  startTodoEditor?(request: import("./todo-external-editor").TodoExternalEditorRequest, hostId: string): Promise<import("./todo-external-editor").TodoExternalEditorObservation>;
+  getTodoEditorStatus?(request: import("./todo-external-editor").TodoExternalEditorRequest, hostId: string): Promise<import("./todo-external-editor").TodoExternalEditorObservation>;
+  cancelTodoEditor?(request: import("./todo-external-editor").TodoExternalEditorRequest, hostId: string): Promise<import("./todo-external-editor").TodoExternalEditorObservation>;
+  recoverTodoEditor?(request: import("./todo-external-editor").TodoExternalEditorRequest, hostId: string): Promise<import("./todo-external-editor").TodoExternalEditorRecovery>;
   getPlanDocumentSection?(request: import("./session-plan").PlanDocumentReadRequest, hostId: string): Promise<import("./session-plan").PlanDocumentResponse>;
   getForceTool?(sessionId: string, hostId: string, commandId?: string): Promise<import("./force-tool").ForceToolResponse>;
   getSessionMcp?(sessionId: string, hostId?: string, commandId?: string): Promise<import("./session-mcp").NativeSessionMcpResponse>;

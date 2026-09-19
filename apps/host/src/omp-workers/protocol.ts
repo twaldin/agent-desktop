@@ -12,7 +12,7 @@ import type { NativeSessionForkInput } from "../omp/session-fork";
 import type { TodoMutationRequest } from "../../../../packages/shared/src/session-todos";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 63;
+export const WORKER_PROTOCOL_VERSION = 65;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -68,6 +68,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "prepareUsageReset"; args: import("../../../../packages/shared/src/session-usage").UsageResetPrepare }
   | { operation: "redeemUsageReset"; args: { ticket: string; redeemRequestId: string } }
   | { operation: "getPlan" }
+  | { operation: "getTodoExternalEditorAvailable" }
+  | { operation: "prepareTodoExternalEditor"; args: import("../../../../packages/shared/src/todo-external-editor").TodoExternalEditorRequest }
   | { operation: "getPlanExternalEditorAvailable" }
   | { operation: "preparePlanExternalEditor"; args: import("../../../../packages/shared/src/plan-external-editor").PlanExternalEditorRequest }
   | { operation: "getPlanDocumentSection"; args: import("../../../../packages/shared/src/session-plan").PlanDocumentReadRequest }

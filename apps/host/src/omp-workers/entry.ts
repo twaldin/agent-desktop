@@ -356,6 +356,13 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "prepareUsageReset": respond(true, await requireSession().prepareUsageReset(message.args)); break;
       case "redeemUsageReset": respond(true, await requireSession().redeemUsageReset(message.args.ticket, message.args.redeemRequestId)); break;
       case "getPlan": respond(true, parseSessionPlan(requireSession().getPlan())); break;
+      case "getTodoExternalEditorAvailable": respond(true, requireSession().getTodoExternalEditorAvailable()); break;
+      case "prepareTodoExternalEditor": {
+        const owner = requireSession();
+        const value = await owner.prepareTodoExternalEditor(message.args);
+        if (requireSession() !== owner) throw new Error("The original Plan editor worker changed during preparation.");
+        respond(true, value); break;
+      }
       case "getPlanExternalEditorAvailable": respond(true, requireSession().getPlanExternalEditorAvailable()); break;
       case "preparePlanExternalEditor": {
         const owner = requireSession();

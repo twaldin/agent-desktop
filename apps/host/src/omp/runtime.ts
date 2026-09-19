@@ -1,3 +1,5 @@
+import { parseTodoExternalEditorRequest, type TodoExternalEditorRequest } from "../../../../packages/shared/src/todo-external-editor";
+import { parsePreparedTodoExternalEditor, type PreparedTodoExternalEditor } from "./todo-external-editor";
 import { exportNativeSession, nativeExportIntent } from "./session-export";
 import { NativeSessionUsage, type NativeUsagePreparation, type NativeUsageResult } from "./session-usage";
 import type { SessionUsage, UsageRefresh, UsageResetPrepare } from "../../../../packages/shared/src/session-usage";
@@ -166,6 +168,8 @@ export interface OmpSession {
   subscribe(listener: OmpEventListener): () => void;
   getForceTool(): ForceToolState;
   getPlan(): SessionPlan;
+  getTodoExternalEditorAvailable(): boolean;
+  prepareTodoExternalEditor(request: TodoExternalEditorRequest): Promise<PreparedTodoExternalEditor>;
   getPlanExternalEditorAvailable(): boolean;
   preparePlanExternalEditor(request: PlanExternalEditorRequest): Promise<PreparedPlanExternalEditor>;
   getPlanDocumentSection(request: PlanDocumentReadRequest): PlanDocumentSection;
@@ -1115,6 +1119,19 @@ export class OmpRuntime {
           if (getEditorCommand() !== editorCommand || readPlan().ticket.revision !== original.ticket.revision)
             throw new Error("The Plan editor configuration changed during preparation.");
           return parsePreparedPlanExternalEditor({ request, nativeSessionId: session.sessionId, sessionFile: session.sessionFile,
+            cwd: manager.getCwd(), ...prepared, editorCommand,
+            environment: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+          }, request);
+        },
+        getTodoExternalEditorAvailable: () => { assertSessionActive(); return !!getEditorCommand(); },
+        prepareTodoExternalEditor: async raw => {
+          const request = parseTodoExternalEditorRequest(raw);
+          assertSessionActive();
+          if (request.sessionId !== session.sessionId) throw new Error("The original Todos editor target changed.");
+          const prepared = nativeTodos.prepareExternalEditor(request.ticket);
+          const editorCommand = getEditorCommand();
+          if (!editorCommand) throw new Error("No editor configured on the owning host. Set VISUAL or EDITOR.");
+          return parsePreparedTodoExternalEditor({ request, nativeSessionId: session.sessionId, sessionFile: session.sessionFile,
             cwd: manager.getCwd(), ...prepared, editorCommand,
             environment: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
           }, request);

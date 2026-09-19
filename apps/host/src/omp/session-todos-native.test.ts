@@ -42,3 +42,8 @@ test.each(["flush-failed", "retired-after-commit"])("%s latches an unknown outco
   const { unknown } = await run(scenario);
   expect(unknown).toEqual({ scenario, reconciliationRequired: true, entries: 2, recovered: ["Durable before failure", "Uncertain outcome"] });
 }, 35_000);
+
+ test("pinned native Todo editor controller and helper agree with prepared Markdown, cancellation and shared user commits", async () => {
+  const result = await run("external-editor");
+  expect(result.externalEditor).toEqual({ nativeControllerCommits: 1, sharedCommits: 2, cancelled: 1, sameReminder: true, staleRefused: true });
+ }, 35_000);

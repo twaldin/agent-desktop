@@ -59,6 +59,15 @@ export class NativeSessionTodos {
     this.#identity = { nativeSessionId: session.sessionId, sessionFile: session.sessionFile };
     this.#assert();
   }
+  prepareExternalEditor(ticket: TodoTicket): { content: string; extension: string; trimTrailingNewline: boolean } {
+    this.#assert();
+    const current = this.read(); this.#checkTicket(ticket, current);
+    if (current.reconciliationRequired || current.busyReason) throw rejected("The original Todos are unavailable for editing.");
+    // Exact pinned TodoCommandController #editInExternalEditor initial document.
+    const content = current.phases.length ? current.markdown : "# Todos\n- [ ] (replace this with your tasks)\n";
+    if (Buffer.byteLength(content) > MAX_TODO_BYTES) throw rejected("The native Todo editor content exceeds its bound.");
+    return { content, extension: ".todo.md", trimTrailingNewline: true };
+  }
   get busy(): boolean { return this.#busy; }
   /** Resolves once any in-flight mutation has settled; never throws. */
   async settle(): Promise<void> { while (this.#active) await this.#active.catch(() => {}); }

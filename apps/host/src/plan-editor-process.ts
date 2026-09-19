@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { activateBundledRuntime, assertBundledRuntime, getBundledRuntimeRoot } from "./runtime-ownership";
 import { atomicPrivateText, privateDirectory, privateFile } from "./terminals/native-store";
@@ -122,10 +122,21 @@ export function readPlanEditorProcessResult(files: PlanEditorProcessFiles): Plan
   return { version: 1, outcome: "completed", content: contentBytes.toString("utf8"), contentSha256 };
 }
 
-export function cleanupPlanEditorProcessFiles(files: PlanEditorProcessFiles, options: { preserveEditedResult?: boolean } = {}): void {
+/** Optional original-input recovery; never represents a completed editor result. */
+export function readPlanEditorOriginalContent(files: PlanEditorProcessFiles): string | undefined {
+  if (!existsSync(files.contentPath)) return;
+  const directory = privateDirectory(files.directory); ownedFile(files.contentPath, directory, true);
+  if (lstatSync(files.contentPath).size > MAX_CONTENT_BYTES) throw new Error("The original editor input exceeds its bound.");
+  const bytes = readFileSync(files.contentPath);
+  if (bytes.byteLength > MAX_CONTENT_BYTES) throw new Error("The original editor input exceeds its bound.");
+  return bytes.toString("utf8");
+}
+
+export function cleanupPlanEditorProcessFiles(files: PlanEditorProcessFiles, options: { preserveEditedResult?: boolean; preserveOriginalContent?: boolean } = {}): void {
   const directory = privateDirectory(files.directory);
   const paths = options.preserveEditedResult ? [files.inputPath, files.contentPath] : [files.inputPath, files.contentPath, files.editedPath, files.resultPath];
   for (const path of paths) {
+    if (path === files.contentPath && options.preserveOriginalContent) continue;
     if (!existsSync(path)) continue; ownedFile(path, directory, true); unlinkSync(path);
   }
   if (existsSync(files.scratchPath)) { ownedDirectory(files.scratchPath, directory); rmSync(files.scratchPath, { recursive: true }); }

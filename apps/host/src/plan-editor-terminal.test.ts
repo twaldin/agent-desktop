@@ -87,3 +87,20 @@ describe.skipIf(!bundle)("actual original private pane after adapter reconstruct
     run.cleanup();
   }, 20_000);
 });
+
+ test("Todo unknown recovery retains bounded original input in its own namespace while Plan defaults erase it", async () => {
+  const directory = root(), planFake = new FakeTerminals(), todoFake = new FakeTerminals();
+  const plan = new PlanEditorTerminals(directory, planFake), todo = new PlanEditorTerminals(directory, todoFake, "todo");
+  const input = prepared(directory);
+  const planRun = await plan.start(crypto.randomUUID(), input, () => {});
+  const todoRun = await todo.start(crypto.randomUUID(), { ...input, content: "original Todos\n", extension: ".todo.md", trimTrailingNewline: true }, () => {});
+  await planRun.cancel(); await planRun.completion; planRun.cleanup({ preserveEditedResult: true });
+  await todoRun.cancel(); await todoRun.completion; todoRun.cleanup({ preserveEditedResult: true, preserveOriginalContent: true });
+  expect(plan.original(input.request.requestId)).toBeUndefined();
+  expect(todo.recovery(input.request.requestId)).toBeUndefined();
+  expect(new PlanEditorTerminals(directory, todoFake, "todo").original(input.request.requestId)).toBe("original Todos\n");
+  const manifest = JSON.parse(readFileSync(join(directory, "todo-editors-v1", input.request.requestId, "files.json"), "utf8"));
+  expect(existsSync(manifest.files.inputPath)).toBe(false); expect(existsSync(manifest.files.scratchPath)).toBe(false);
+  expect(readFileSync(manifest.files.contentPath, "utf8")).not.toContain(input.editorCommand);
+  todoRun.cleanup(); expect(todo.original(input.request.requestId)).toBeUndefined();
+ });

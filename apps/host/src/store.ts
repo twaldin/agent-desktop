@@ -1,3 +1,4 @@
+import { TodoExternalEditorRecords } from "./todo-external-editor-records";
 import { PullRequestWriteRecords } from "./pull-request-write-records";
 import { parseDeviceAccessPolicy, parseDeviceAccessUpdate, DeviceAccessConflictError, type DeviceAccessPolicy } from "../../../packages/shared/src/device-access";
 import { PluginAcquisitionRecords } from "./integrations/acquisition-records";
@@ -123,6 +124,7 @@ export class HostStore {
   readonly pullRequestWrites: PullRequestWriteRecords;
   readonly browserAutocomplete: BrowserAutocompleteRecords;
   readonly planExternalEditors: PlanExternalEditorRecords;
+  readonly todoExternalEditors: TodoExternalEditorRecords;
   private readonly db: Database;
   private readonly environmentPreparationStore: LocalEnvironmentPreparations;
 
@@ -220,6 +222,11 @@ export class HostStore {
         value => this.writeMetadata("browser-autocomplete-history.v1", value),
       );
       this.planExternalEditors = new PlanExternalEditorRecords(this.db, this.host.id, () => {
+        const policy = this.getDeviceAccessPolicy();
+        if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
+        this.requireVersion(26);
+      });
+      this.todoExternalEditors = new TodoExternalEditorRecords(this.db, this.host.id, () => {
         const policy = this.getDeviceAccessPolicy();
         if (this.readMetadata("device-access.v1") === undefined) this.writeMetadata("device-access.v1", policy);
         this.requireVersion(26);

@@ -1,3 +1,5 @@
+import { TodoExternalEditorHttp, type TodoExternalEditorHttpAction } from "./todo-external-editor-http";
+import { TodoExternalEditors } from "./todo-external-editors";
 import { SessionExportService } from "./session-export";
 import { SessionExportHttp } from "./session-export-http";
 import { SESSION_EXPORT_CAPABILITY } from "@agent-desktop/shared";
@@ -161,6 +163,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let nativeTerminalsHttp: TmuxTerminalsHttp | undefined;
   let terminalCreationHttp: TerminalCreationHttp | undefined;
   let planExternalEditors: PlanExternalEditors | undefined;
+  let todoExternalEditors: TodoExternalEditors | undefined;
   let themeAssets: ThemeAssets | undefined;
   let goalContinuations: GoalContinuationController | undefined;
   let questionDeliveries: QuestionDeliveryController | undefined;
@@ -559,6 +562,28 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
   const planExternalEditorHttp = planExternalEditors ? new PlanExternalEditorHttp({ hostId: store.host.id,
     service: planExternalEditors, sessionExists: id => !stopping && Boolean(store.getSession(id)) }) : undefined;
+  if (nativeTerminals) todoExternalEditors = new TodoExternalEditors({
+    hostId: store.host.id, controlEpoch: crypto.randomUUID(), records: store.todoExternalEditors,
+    terminals: new PlanEditorTerminals(dataDirectory, nativeTerminals, "todo"),
+    capture: async id => {
+      const catalog = store.getSession(id), pending = handles.get(id);
+      if (stopping || !catalog || catalog.archived || !pending) return;
+      const handle = await pending.catch(() => undefined);
+      if (!handle) return;
+      const assertCurrent = () => {
+        const current = store.getSession(id), decision = store.getPlanDecisionForSession(id);
+        if (stopping || !current || current.archived || current.sessionFile !== catalog.sessionFile || current.cwd !== catalog.cwd
+          || handles.get(id) !== pending || handle.workerFailure || handle.id !== id
+          || handle.sessionFile !== catalog.sessionFile || handle.cwd !== catalog.cwd || executions.has(id)
+          || decision?.state === "pending" || decision?.state === "unknown")
+          throw new Error("The original Todos editor owner is unavailable or has an unresolved decision.");
+      };
+      assertCurrent();
+      return { handle, assertCurrent };
+    },
+  });
+  const todoExternalEditorHttp = todoExternalEditors ? new TodoExternalEditorHttp({ hostId: store.host.id,
+    service: todoExternalEditors, sessionExists: id => !stopping && Boolean(store.getSession(id)) }) : undefined;
   const todosOwners = {
     sessionExists: (id: string) => !stopping && Boolean(store.getSession(id)),
     existing: async (id: string) => stopping ? undefined : handles.get(id)?.catch(() => undefined),
@@ -1497,6 +1522,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
             { status: 503, headers: { "Cache-Control": "no-store" } });
           return planExternalEditorHttp.route(request, editorRoute[1]!, editorRoute[2] as PlanExternalEditorHttpAction);
         }
+        const todoEditorRoute = /^\/v1\/sessions\/([^/]+)\/todos\/editor\/(capabilities|list|start|status|cancel|recovery)$/.exec(url.pathname);
+        if (todoEditorRoute) {
+          if (!todoExternalEditorHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING",
+            message: "The owning host needs its pinned native terminal bundle to run the configured editor." } },
+            { status: 503, headers: { "Cache-Control": "no-store" } });
+          return todoExternalEditorHttp.route(request, todoEditorRoute[1]!, todoEditorRoute[2] as TodoExternalEditorHttpAction);
+        }
         const todosResponse = await sessionTodosHttp.route(request, url);
         if (todosResponse) return todosResponse;
         const usageResponse = await sessionUsageHttp.route(request, url);
@@ -1767,6 +1799,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
         const planEditorDrain = planExternalEditors?.dispose();
+        const todoEditorDrain = todoExternalEditors?.dispose();
+        void todoEditorDrain?.catch(() => {});
         void planEditorDrain?.catch(() => {});
         const pullRequestsDrain = pullRequests?.dispose();
         void pullRequestsDrain?.catch(() => {});
@@ -1792,7 +1826,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         // workers to settle. Discovery may be blocked on a native network read.
         const outcomes = await Promise.allSettled([pullRequestsDrain, automations?.dispose(), runtime.dispose({preserveReconnect:true}), mcpOwnerDrain, networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain, browserAutocompleteDrain,
           accounts!.dispose(), terminals!.shutdown(), (async () => {
-            const editorOutcome = await Promise.allSettled([planEditorDrain]);
+            const editorOutcome = await Promise.allSettled([planEditorDrain, todoEditorDrain]);
             const terminalOutcome = await Promise.allSettled([nativeTerminals?.shutdown()]);
             const errors = [...editorOutcome, ...terminalOutcome].flatMap(value => value.status === "rejected" ? [value.reason] : []);
             if (errors.length) throw new AggregateError(errors, "Plan editor and terminal cleanup failed.");
@@ -1821,7 +1855,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      await Promise.allSettled([todoExternalEditors?.dispose(), planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
       await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
     }
     finally {

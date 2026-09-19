@@ -1,9 +1,11 @@
+import { TodoExternalEditor } from "./TodoExternalEditor";
+import type { TodoEditorPorts } from "./todo-external-editor-state";
 import { useId, useLayoutEffect, useSyncExternalStore } from "react";
 import { Icon } from "./Icons";
 import { SessionTodosModel, todoStatusLabels, type SessionTodosPanelInput, type SessionTodosPanelPorts, type SessionTodosPanelView } from "./session-todos-model";
 import "./session-todos.css";
 
-export interface SessionTodosPanelProps extends SessionTodosPanelInput, SessionTodosPanelPorts { model: SessionTodosModel }
+export interface SessionTodosPanelProps extends SessionTodosPanelInput, SessionTodosPanelPorts { model: SessionTodosModel; externalEditor?: TodoEditorPorts }
 
 /** Root provides the actual owner bridge. Local selection and edit text never
  * constitute a native change; the owning host confirms every mutation. */
@@ -13,14 +15,14 @@ export function SessionTodosPanel(props: SessionTodosPanelProps) {
     props.fresh, props.loading, props.pending, props.uncertain, props.error, props.readError, props.unavailable, props.original, props.receipt,
     props.output, props.mutate, props.refresh, props.copy]);
   const view = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
-  return <SessionTodosPanelContent model={model} view={view} id={id}/>;
+  return <SessionTodosPanelContent model={model} view={view} id={id} externalEditor={props.externalEditor}/>;
 }
 
 const receiptLabels = { absent: "No host record", pending: "Pending on host", unknown: "Outcome unknown", failed: "Refused by host", succeeded: "Confirmed by host" } as const;
 const statusGlyphs = { pending: "○", in_progress: "◐", completed: "●", abandoned: "⊘", blocked: "■" } as const;
 
 /** Shared rendering path for component event/prop tests; not a simulated bridge. */
-export function SessionTodosPanelContent({ model, view, id }: { model: SessionTodosModel; view: SessionTodosPanelView; id: string }) {
+export function SessionTodosPanelContent({ model, view, id, externalEditor }: { model: SessionTodosModel; view: SessionTodosPanelView; id: string; externalEditor?: TodoEditorPorts }) {
   const { local, value, selected } = view, edit = local.edit, busy = !!local.pending || view.pending;
   const blocked = !!view.blockedReason, commandBlocked = !!view.commandReason;
   const error = local.error ?? view.error ?? view.readError;
@@ -34,6 +36,7 @@ export function SessionTodosPanelContent({ model, view, id }: { model: SessionTo
       <button type="button" className="icon-button" aria-label="Refresh todos" title="Refresh todos" aria-busy={local.refreshing || view.loading}
         disabled={!view.connected || local.refreshing || busy} onClick={() => void model.refresh()}><Icon name="refresh"/></button>
     </div>
+    {externalEditor && <TodoExternalEditor view={view} ports={externalEditor}/>}
     {view.loading && !value && <p className="environment-note" role="status">Loading todos…</p>}
     {view.unavailable && <p className="environment-note" role="status">{view.unavailable}</p>}
     {!view.unavailable && !view.original && view.blockedReason && value && <p className="environment-note" role="status">{view.blockedReason}</p>}
