@@ -60,6 +60,7 @@ type ContextControl = {
 function controlledContext(control: ContextControl, bridge: OmpInteractionBridge, suffix = "a"): NativeResetPassContext {
   return {
     source: { kind: "source", selectionRevision: control.selectionRevision, policyRevision: control.policyRevision },
+    dispose() {},
     assertCurrent() { if (!control.current) throw new Error("Controlled original owner retired"); },
     async plan() { return { kind: "plan", accounts: [account(suffix)] }; },
     async persistence(snapshot, mode) {

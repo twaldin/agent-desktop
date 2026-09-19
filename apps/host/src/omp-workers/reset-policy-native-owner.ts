@@ -14,6 +14,7 @@ type Evidence<K extends ResetPolicyWireEvidence["kind"]> = Extract<ResetPolicyWi
  * them again by ID. No production factory is supplied by this bridge. */
 export interface NativeResetPassContext {
   readonly source: Evidence<"source">;
+  dispose(): void;
   assertCurrent(): void;
   plan(snapshot: ResetPlanSnapshot): Promise<Evidence<"plan">>;
   persistence(snapshot: ResetPlanSnapshot, mode: "yes" | "no"): Promise<Evidence<"persistence">>;
@@ -26,6 +27,7 @@ export interface NativeResetPassContext {
 
 type Pass = { readonly native: ResetPass; readonly context: NativeResetPassContext };
 type IssuedPermit = { readonly pass: Pass; readonly wire: Omit<ResetPermit, "beforeConsume">; completing: boolean };
+type Attempt<T = undefined> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
 const MAX_PASSES = 128;
 
 /** Connects the native awaited callbacks to the original worker's private
@@ -35,7 +37,10 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
   readonly #passes = new Map<string, Pass>();
   readonly #capturing = new Set<string>();
   readonly #permits = new WeakMap<ResetPermit, IssuedPermit>();
+  readonly #errors: unknown[] = [];
+  #errorCount = 0;
   #closing = false;
+  #finished: Promise<void> | undefined;
 
   constructor(readonly channel: ResetPolicyChannel, private capture: (pass: ResetPass) => NativeResetPassContext) {}
 
@@ -46,6 +51,35 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
     return current;
   }
 
+  #remember(error: unknown): void {
+    this.#errorCount = Math.min(Number.MAX_SAFE_INTEGER, this.#errorCount + 1);
+    if (this.#errors.length < MAX_PASSES) this.#errors.push(error);
+  }
+
+  #dispose(context: NativeResetPassContext): Attempt {
+    try { context.dispose(); return { ok: true, value: undefined }; }
+    catch (error) { this.#remember(error); return { ok: false, error }; }
+  }
+
+  #capture(native: ResetPass): Pass {
+    let context: NativeResetPassContext | undefined;
+    try {
+      context = this.capture(native);
+      context.assertCurrent();
+      // Capture is synchronous but may re-enter close or another capture.
+      if (this.#closing || this.#passes.has(native.passId)
+        || this.#passes.size + this.#capturing.size > MAX_PASSES) throw new Error("Reset pass capture is unavailable");
+      const pass = { native: structuredClone(native), context };
+      this.#passes.set(native.passId, pass);
+      return pass;
+    } catch (error) {
+      this.#remember(error);
+      const cleanup = context && this.#dispose(context);
+      if (cleanup && !cleanup.ok) throw new AggregateError([error, cleanup.error], "Reset pass capture and cleanup both failed");
+      throw error;
+    }
+  }
+
   async checkpoint(event: ResetCheckpoint): Promise<void> {
     const native = "pass" in event ? event.pass : event.snapshot.pass;
     let pass: Pass;
@@ -54,13 +88,11 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
         || this.#passes.size + this.#capturing.size >= MAX_PASSES) throw new Error("Reset pass capture is unavailable");
       this.#capturing.add(native.passId);
       try {
-        const context = this.capture(native);
-        context.assertCurrent();
-        pass = { native: structuredClone(native), context };
-        this.#passes.set(native.passId, pass);
+        pass = this.#capture(native);
       } finally { this.#capturing.delete(native.passId); }
     } else pass = this.#original(native);
     let evidence: ResetPolicyWireEvidence | undefined;
+    let failure: Attempt = { ok: true, value: undefined };
     try {
       if (event.phase === "started" || event.phase === "joined") evidence = pass.context.source;
       else if (event.phase === "planned") {
@@ -81,9 +113,21 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
         }
       }
       await this.channel.request(native.nativeSessionId, native.passId, { kind: "checkpoint", event }, evidence);
+    } catch (error) {
+      failure = { ok: false, error };
+      this.#remember(error);
     } finally {
-      if (event.phase === "finished") this.#passes.delete(native.passId);
+      if (event.phase === "finished") {
+        this.#passes.delete(native.passId);
+        const cleanup = this.#dispose(pass.context);
+        if (!cleanup.ok) {
+          failure = failure.ok
+            ? cleanup
+            : { ok: false, error: new AggregateError([failure.error, cleanup.error], "Reset checkpoint and context cleanup both failed") };
+        }
+      }
     }
+    if (!failure.ok) throw failure.error;
   }
 
   async presentDecision(snapshot: ResetPlanSnapshot, selectNative: () => Promise<NativeResetAnswer>): Promise<void> {
@@ -161,5 +205,22 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
 
   beginClose(): void { this.#closing = true; this.channel.beginClose(); }
   /** Call only after native callbacks have drained, never before their final checkpoints. */
-  finish(): Promise<void> { this.#closing = true; return this.channel.finish(); }
+  finish(): Promise<void> {
+    this.#closing = true;
+    // Publish the terminal promise before a disposer can synchronously re-enter.
+    this.#finished ??= Promise.resolve().then(() => this.#finish());
+    return this.#finished;
+  }
+
+  async #finish(): Promise<void> {
+    for (const [passId, pass] of this.#passes) {
+      this.#passes.delete(passId);
+      this.#dispose(pass.context);
+    }
+    let channel: Attempt = { ok: true, value: undefined };
+    try { await this.channel.finish(); } catch (error) { channel = { ok: false, error }; }
+    const failures = [...this.#errors, ...(channel.ok ? [] : [channel.error])];
+    if (failures.length) throw new AggregateError(failures,
+      `Native reset pass contexts did not drain cleanly (${this.#errorCount} owner failures${channel.ok ? "" : " plus channel failure"})`);
+  }
 }

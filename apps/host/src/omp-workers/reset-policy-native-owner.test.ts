@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import type { ResetPass, ResetPlanSnapshot } from "@oh-my-pi/pi-coding-agent";
 import { OmpInteractionBridge } from "../omp/interactions";
 import { NativeResetChannelOwner, type NativeResetPassContext } from "./reset-policy-native-owner";
@@ -13,11 +14,13 @@ const snapshot: ResetPlanSnapshot = { reportRevision: digest, pass, plannedAtMs:
 const identity = { provider: "openai-codex", credentialId: 7, accountId: "account-a", creditId: "credit-a" };
 const execute: ResetPolicyWireResult = { kind: "admission.execute", permit: { attemptId: "attempt-a", target: { credentialId: 7 }, creditId: "credit-a", redeemRequestId: "request-a" }, consumeIdentity: identity };
 
-function setup(custom?: (request: ResetPolicyWireRequest) => Promise<ResetPolicyWireResult> | ResetPolicyWireResult) {
+function setup(custom?: (request: ResetPolicyWireRequest) => Promise<ResetPolicyWireResult> | ResetPolicyWireResult,
+  capture?: (pass: ResetPass, owner: NativeResetChannelOwner) => NativeResetPassContext) {
   const binding = { workerEpoch: "epoch-a", rootSessionId: "root-a" }, requests: ResetPolicyWireRequest[] = [];
   let current = true, captures = 0, guarded = 0;
   const context: NativeResetPassContext = {
     source: { kind: "source", selectionRevision: digest, policyRevision: digest },
+    dispose() {},
     assertCurrent() { if (!current) throw new Error("Original native owner changed"); },
     async plan() { return { kind: "plan", accounts: [{ provider: "openai-codex", accountId: "account-a", credentialId: 7, credentialFingerprint: digest, authAuthority: "original-auth" }] }; },
     async persistence() { return { kind: "persistence", status: "verified", globalMode: "yes", effectivePolicy: pass.policy, layersUnchanged: true }; },
@@ -39,8 +42,40 @@ function setup(custom?: (request: ResetPolicyWireRequest) => Promise<ResetPolicy
       default: throw new Error("Unexpected join");
     }
   }, response => channel.receive(response));
-  const owner = new NativeResetChannelOwner(channel, () => { captures++; return context; });
+  let owner!: NativeResetChannelOwner;
+  owner = new NativeResetChannelOwner(channel, native => { captures++; return capture?.(native, owner) ?? context; });
   return { owner, context, requests, captures: () => captures, guarded: () => guarded, invalidate: () => { current = false; } };
+}
+
+function subscribedContext(label: string, options: { assertError?: unknown; disposeError?: unknown; onDispose?(): void } = {}) {
+  const events = new EventEmitter();
+  const record = { disposed: 0, notifications: 0 };
+  const listener = () => { record.notifications++; };
+  events.on("change", listener);
+  const context: NativeResetPassContext = {
+    source: { kind: "source", selectionRevision: digest, policyRevision: digest },
+    dispose() {
+      record.disposed++;
+      events.off("change", listener);
+      options.onDispose?.();
+      if (Object.hasOwn(options, "disposeError")) throw options.disposeError;
+    },
+    assertCurrent() { if (Object.hasOwn(options, "assertError")) throw options.assertError; },
+    async plan() { return { kind: "plan", accounts: [] }; },
+    async persistence() { return { kind: "persistence", status: "failed" }; },
+    async admission() { throw new Error(`Unexpected admission for ${label}`); },
+    async runDecision() { throw new Error(`Unexpected decision for ${label}`); },
+  };
+  return { context, events, record };
+}
+
+function messages(error: unknown): string[] {
+  if (error instanceof AggregateError) return error.errors.flatMap(messages);
+  return [error instanceof Error ? error.message : String(error)];
+}
+
+async function outcome(promise: Promise<unknown>) {
+  return promise.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
 }
 
 async function start(f: ReturnType<typeof setup>) { await f.owner.checkpoint({ phase: "started", pass }); await f.owner.checkpoint({ phase: "planned", snapshot }); }
@@ -155,4 +190,140 @@ test("a foreign host-selected credit cannot pass the original admission guard", 
   if (admitted.kind !== "execute") throw new Error("Expected guarded permit");
   expect(admitted.permit.beforeConsume({ ...identity, creditId: "replacement-credit" })).toBe(false);
   expect(f.guarded()).toBe(0);
+});
+
+test("the settled finished checkpoint releases its original subscribed context exactly once", async () => {
+  const owned = subscribedContext("successful");
+  const f = setup(undefined, () => owned.context);
+  await start(f);
+  owned.events.emit("change");
+  expect(owned.record.notifications).toBe(1);
+  expect(owned.events.listenerCount("change")).toBe(1);
+  await f.owner.checkpoint({ phase: "finished", pass,
+    settlement: { state: "held", applied: 0, attemptIds: [], refresh: "not-needed" } });
+  expect(owned.record.disposed).toBe(1);
+  expect(owned.events.listenerCount("change")).toBe(0);
+  await f.owner.finish();
+  expect(owned.record.disposed).toBe(1);
+});
+
+test("a failed final checkpoint and throwing cleanup both reach the callback and retained finish failure", async () => {
+  const owned = subscribedContext("double-failure", { disposeError: new Error("subscription cleanup failed") });
+  const f = setup(request => {
+    if (request.operation.kind === "checkpoint" && request.operation.event.phase === "finished") throw new Error("final checkpoint failed");
+    return { kind: "checkpointed" };
+  }, () => owned.context);
+  await start(f);
+  const result = await f.owner.checkpoint({ phase: "finished", pass,
+    settlement: { state: "held", applied: 0, attemptIds: [], refresh: "not-needed" } }).then(
+      () => undefined, error => error);
+  expect(messages(result)).toContain("final checkpoint failed");
+  expect(messages(result)).toContain("subscription cleanup failed");
+  expect(owned.record.disposed).toBe(1);
+  const drained = await f.owner.finish().then(() => undefined, error => error);
+  expect(messages(drained)).toContain("final checkpoint failed");
+  expect(messages(drained)).toContain("subscription cleanup failed");
+});
+
+test("a rejected capture removes its subscription and retains both ownership and cleanup failures", async () => {
+  const owned = subscribedContext("rejected-capture", {
+    assertError: new Error("captured owner already changed"), disposeError: new Error("rejected capture cleanup failed"),
+  });
+  const f = setup(undefined, () => owned.context);
+  const capture = await f.owner.checkpoint({ phase: "started", pass }).then(() => undefined, error => error);
+  expect(messages(capture)).toContain("captured owner already changed");
+  expect(messages(capture)).toContain("rejected capture cleanup failed");
+  expect(owned.record.disposed).toBe(1);
+  expect(owned.events.listenerCount("change")).toBe(0);
+  const drained = await f.owner.finish().then(() => undefined, error => error);
+  expect(messages(drained)).toContain("captured owner already changed");
+  expect(messages(drained)).toContain("rejected capture cleanup failed");
+});
+
+test("two captured passes retain and release independent subscriptions", async () => {
+  const first = subscribedContext("first"), second = subscribedContext("second");
+  const secondPass: ResetPass = { ...pass, passId: "pass-b", nativeSessionId: "native-b", startedAtMs: 200 };
+  const f = setup(undefined, native => native.passId === pass.passId ? first.context : second.context);
+  await f.owner.checkpoint({ phase: "started", pass });
+  await f.owner.checkpoint({ phase: "started", pass: secondPass });
+  await f.owner.checkpoint({ phase: "finished", pass,
+    settlement: { state: "held", applied: 0, attemptIds: [], refresh: "not-needed" } });
+  expect(first.record.disposed).toBe(1);
+  expect(second.record.disposed).toBe(0);
+  second.events.emit("change");
+  expect(second.record.notifications).toBe(1);
+  await f.owner.checkpoint({ phase: "finished", pass: secondPass,
+    settlement: { state: "held", applied: 0, attemptIds: [], refresh: "not-needed" } });
+  expect(second.record.disposed).toBe(1);
+  await f.owner.finish();
+});
+
+test("finish releases a stranded pass once and repeated finish stays idempotent", async () => {
+  const owned = subscribedContext("stranded");
+  const f = setup(undefined, () => owned.context);
+  await f.owner.checkpoint({ phase: "started", pass });
+  await f.owner.finish();
+  expect(owned.record.disposed).toBe(1);
+  expect(owned.events.listenerCount("change")).toBe(0);
+  await f.owner.finish();
+  expect(owned.record.disposed).toBe(1);
+});
+
+test("a synchronous reentrant close refuses storage and disposes the newly captured context", async () => {
+  const owned = subscribedContext("reentrant-close");
+  let finishing: Promise<void> | undefined;
+  const f = setup(undefined, (_native, owner) => { finishing = owner.finish(); return owned.context; });
+  await expect(f.owner.checkpoint({ phase: "started", pass })).rejects.toThrow("capture is unavailable");
+  expect(owned.record.disposed).toBe(1);
+  expect(owned.events.listenerCount("change")).toBe(0);
+  await expect(f.owner.checkpoint({ phase: "started", pass })).rejects.toThrow("capture is unavailable");
+  const drained = await finishing!.then(() => undefined, error => error);
+  expect(messages(drained)).toContain("Reset pass capture is unavailable");
+  await expect(f.owner.finish()).rejects.toBeInstanceOf(AggregateError);
+});
+
+test("raw false checkpoint and undefined cleanup rejections are retained without truthiness sentinels", async () => {
+  const planned = subscribedContext("false-plan");
+  planned.context.plan = async () => { throw false; };
+  const first = setup(undefined, () => planned.context);
+  await first.owner.checkpoint({ phase: "started", pass });
+  const rejectedPlan = await outcome(first.owner.checkpoint({ phase: "planned", snapshot }));
+  expect(rejectedPlan).toEqual({ ok: false, error: false });
+  const firstDrain = await outcome(first.owner.finish());
+  expect(firstDrain.ok).toBe(false);
+  if (firstDrain.ok) throw new Error("Expected retained false checkpoint failure");
+  expect((firstDrain.error as AggregateError).errors).toContain(false);
+
+  const cleanup = subscribedContext("undefined-cleanup", { disposeError: undefined });
+  const second = setup(undefined, () => cleanup.context);
+  await start(second);
+  const rejectedFinish = await outcome(second.owner.checkpoint({ phase: "finished", pass,
+    settlement: { state: "held", applied: 0, attemptIds: [], refresh: "not-needed" } }));
+  expect(rejectedFinish).toEqual({ ok: false, error: undefined });
+  const secondDrain = await outcome(second.owner.finish());
+  expect(secondDrain.ok).toBe(false);
+  if (secondDrain.ok) throw new Error("Expected retained undefined cleanup failure");
+  expect((secondDrain.error as AggregateError).errors).toContain(undefined);
+});
+
+test("a disposer reentering finish observes the complete two-context cleanup failure", async () => {
+  let owner!: NativeResetChannelOwner, reentered: ReturnType<typeof outcome> | undefined;
+  const first = subscribedContext("reentrant-disposer", { onDispose() { reentered = outcome(owner.finish()); } });
+  const second = subscribedContext("later-failure", { disposeError: new Error("second stranded cleanup failed") });
+  const fixture = setup(undefined, native => native.passId === pass.passId ? first.context : second.context);
+  owner = fixture.owner;
+  const secondPass: ResetPass = { ...pass, passId: "pass-b", nativeSessionId: "native-b", startedAtMs: 200 };
+  await owner.checkpoint({ phase: "started", pass });
+  await owner.checkpoint({ phase: "started", pass: secondPass });
+  const original = outcome(owner.finish());
+  const originalResult = await original;
+  if (!reentered) throw new Error("Expected disposal to reenter finish");
+  const reenteredResult = await reentered;
+  expect(first.record.disposed).toBe(1);
+  expect(second.record.disposed).toBe(1);
+  expect(originalResult.ok).toBe(false);
+  expect(reenteredResult.ok).toBe(false);
+  if (originalResult.ok || reenteredResult.ok) throw new Error("Expected complete cleanup failure");
+  expect(messages(originalResult.error)).toContain("second stranded cleanup failed");
+  expect(messages(reenteredResult.error)).toContain("second stranded cleanup failed");
 });
