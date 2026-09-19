@@ -248,13 +248,40 @@ export class HostStore {
     this.db.close();
   }
 
-  readMetadata<T>(key: string): T | undefined {
+  readMetadata<T>(key: string, maxBytes?: number): T | undefined {
+    if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error("Invalid metadata record bound.");
     const row = this.db.query<JsonRow, [string]>("SELECT data FROM metadata WHERE key = ?").get(key);
+    if (row && maxBytes !== undefined && Buffer.byteLength(row.data) > maxBytes) throw new Error("Retained metadata record exceeds its bound.");
     return row ? JSON.parse(row.data) as T : undefined;
   }
   writeMetadata<T>(key: string, value: T): void {
     this.db.query("INSERT INTO metadata (key, data) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data")
       .run(key, JSON.stringify(value));
+  }
+
+  /** Compose synchronous metadata transitions with the same immediate transaction used by record stores. */
+  transactionMetadata<T>(run: () => T): T {
+    return this.db.transaction(() => {
+      const value = run();
+      if (value && typeof value === "object" && "then" in value && typeof value.then === "function")
+        throw new Error("Metadata transactions require a synchronous callback.");
+      return value;
+    }).immediate();
+  }
+
+  /** Exact-prefix enumeration; overflow is an error, never permission to forget a retained fence. */
+  metadataKeys(prefix: string, limit = 2048): string[] {
+    if (!prefix || prefix.length > 256 || !Number.isSafeInteger(limit) || limit < 1 || limit > 16_384)
+      throw new Error("Invalid metadata enumeration bound.");
+    const rows = this.db.query<{ key: string }, [string, string, number]>(
+      "SELECT key FROM metadata WHERE substr(key, 1, length(?)) = ? ORDER BY key LIMIT ?",
+    ).all(prefix, prefix, limit + 1);
+    if (rows.length > limit) throw new Error("Retained metadata exceeds its enumeration bound.");
+    return rows.map(row => row.key);
+  }
+
+  deleteMetadata(key: string): void {
+    this.db.query("DELETE FROM metadata WHERE key = ?").run(key);
   }
 
   getDeviceAccessPolicy(): DeviceAccessPolicy {

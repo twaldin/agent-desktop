@@ -34,6 +34,56 @@ afterEach(() => {
 
 const draft: DraftInput = { id: "new-chat", text: "first laptop's unsent work", projectId: null, model: null, thinkingLevel: "high" };
 
+test("metadata transactions roll back nested writes together and persist complete transitions", () => {
+  const root = directory(), store = open(root);
+  store.writeMetadata("reset-test:a", { value: 1 });
+  const db = new Database(join(root, "state.sqlite"));
+  try {
+    db.exec("CREATE TRIGGER fail_reset_metadata BEFORE INSERT ON metadata WHEN NEW.key = 'reset-test:b' BEGIN SELECT RAISE(ABORT, 'fixture metadata write failure'); END");
+    expect(() => store.transactionMetadata(() => {
+      store.writeMetadata("reset-test:a", { value: 2 });
+      store.transactionMetadata(() => store.writeMetadata("reset-test:b", { value: 2 }));
+    })).toThrow("fixture metadata write failure");
+    expect(store.readMetadata<unknown>("reset-test:a")).toEqual({ value: 1 });
+    expect(store.readMetadata("reset-test:b")).toBeUndefined();
+    db.exec("DROP TRIGGER fail_reset_metadata");
+    store.transactionMetadata(() => {
+      store.writeMetadata("reset-test:a", { value: 2 });
+      store.transactionMetadata(() => store.writeMetadata("reset-test:b", { value: 2 }));
+    });
+    close(store);
+    const reopened = open(root);
+    expect(reopened.readMetadata<unknown>("reset-test:a")).toEqual({ value: 2 });
+    expect(reopened.readMetadata<unknown>("reset-test:b")).toEqual({ value: 2 });
+  } finally { db.close(); }
+});
+
+test("metadata retention enumerates only its literal prefix and refuses hidden overflow", () => {
+  const store = open(directory());
+  store.writeMetadata("reset_test:a", 1);
+  store.writeMetadata("reset_test:b", 2);
+  store.writeMetadata("resetXtest:foreign", 3);
+  expect(store.metadataKeys("reset_test:", 2)).toEqual(["reset_test:a", "reset_test:b"]);
+  expect(() => store.metadataKeys("reset_test:", 1)).toThrow();
+  expect(() => store.transactionMetadata(() => {
+    store.deleteMetadata("reset_test:a");
+    throw new Error("cancel retention");
+  })).toThrow();
+  expect(store.readMetadata<unknown>("reset_test:a")).toBe(1);
+  store.transactionMetadata(() => store.deleteMetadata("reset_test:a"));
+  expect(store.metadataKeys("reset_test:", 1)).toEqual(["reset_test:b"]);
+  expect(store.readMetadata<unknown>("resetXtest:foreign")).toBe(3);
+});
+
+test("bounded metadata reads reject oversized retained records without changing ordinary reads", () => {
+  const store = open(directory()), value = { text: "x".repeat(128) };
+  store.writeMetadata("reset-test:large", value);
+  expect(() => store.readMetadata("reset-test:large", 64)).toThrow();
+  expect(store.readMetadata<unknown>("reset-test:large", 256)).toEqual(value);
+  expect(store.readMetadata<unknown>("reset-test:large")).toEqual(value);
+  expect(store.readMetadata("reset-test:absent", 64)).toBeUndefined();
+});
+
 describe("HostStore persistence and recovery", () => {
   test("permission-bearing state raises a durable rollback gate only when its write commits", () => {
     const path = directory(), store = open(path);

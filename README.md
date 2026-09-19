@@ -29,3 +29,13 @@ The development app uses `.data/dev` and a detached host process. Closing the wi
 Release builds target macOS ARM64 for the desktop and macOS ARM64/Linux x64 for host services. Desktop packages use ad-hoc signing and are not notarized. CI never updates an existing user installation. Native browser, first-Send, cross-device and visual acceptance remain separate requirements.
 
 Run `bun scripts/upstream-report.ts` for a read-only report against the pinned Codex/OMP references. It reports unknown coverage and observed changes separately; it does not adopt updates. See the [maintenance procedure](docs/upstream-maintenance.md) for candidate inventories and report files.
+
+## Saved-reset ownership
+
+The host's [native reset-policy owner](apps/host/src/native-reset-policy.ts) shares `SessionUsageService.admissions` with manual resets. SQLite retains original pass and attempt provenance, exact credential/credit/request binding, consent and settings-readback checkpoints. Compatible automatic work joins the original settlement; unresolved outcomes fence the account across restarts. Finishing a native pass or starting disposal does not imply that an admitted consume physically completed.
+
+`workerLost(epoch)` is nonterminal: a possibly-live original worker can still settle. Only the parent supervisor may call `workerExited(epoch)` after observing actual process exit or confirmed kill. That distinct terminal receipt releases host waiters with an unknown outcome and no native observation; disconnects, deadlines and merely sending a kill signal do not qualify. Failed exit journaling is reported separately and never permits replay.
+
+The owner accepts complete native plans of at most `NATIVE_RESET_MAX_ACTIONS` (128) actions. Larger plans are durably rejected before consent or admission, never truncated or retried as a smaller plan. Pass records have a 1 MiB byte limit; default history limits are 256 passes, 256 account identities and 1,024 attempts. Unresolved account authority and unverified Yes/settings evidence are not evicted to make room. Capacity refusal is explicit, not permission to forget a fence.
+
+This module is not yet wired to native worker callbacks. That adapter must use each original pass's actual AgentSession/Settings instance, verified settings flush/readback, and the synchronous native consume guard. Worker/protocol integration, child-session propagation, host-owned refresh cadence and full `/usage` acceptance remain separate work. Constructing or reopening the host owner never selects, persists settings, contacts a provider, or replays a consume.

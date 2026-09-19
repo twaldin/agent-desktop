@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { HostStore } from "./store";
 import { SessionUsageService } from "./session-usage";
-import { ResetAccountAdmissions } from "./session-reset-admission";
+import { ResetAccountAdmissions, type ResetAccountAdmission } from "./session-reset-admission";
 import { SessionUsageHttp } from "./session-usage-http";
 import type { WorkerSession } from "./omp-workers/runtime";
 import type { NativeUsageResult } from "./omp/session-usage";
@@ -18,12 +18,12 @@ async function fixture() {
   const dir = await mkdtemp(path.join(tmpdir(), "usage-journal-")); directories.push(dir);
   const store = new HostStore(dir); stores.push(store);
   let calls = 0, reads = 0, nativeResult: NativeUsageResult = { state: "settled", outcome: "reset" };
-  let redeem: () => Promise<NativeUsageResult> = async () => nativeResult;
+  let redeem: () => Promise<NativeUsageResult> = async () => nativeResult, onPrepare: () => void = () => {};
   const handle = { id: "session", cwd: dir, sessionFile: path.join(dir, "native.jsonl"),
     readUsage: async () => { reads++; return null; },
-    prepareUsageReset: async () => ({ ticket: "private-ticket", epoch: "epoch", accountKey: key, confirmation: {
+    prepareUsageReset: async () => { onPrepare(); return { ticket: "private-ticket", epoch: "epoch", accountKey: key, confirmation: {
       account: { accountRef: "account", accountId: "exact", active: true }, credit: { title: "Saved reset" }, expiresAt: Date.now() + 300_000,
-    } }), redeemUsageReset: async () => { calls++; return redeem(); },
+    } }; }, redeemUsageReset: async () => { calls++; return redeem(); },
   } as unknown as WorkerSession;
   let owner: WorkerSession | undefined = handle;
   const options = { store, existing: async () => owner, open: async () => { if (!owner) throw new Error(); return owner; }, ordered: <T>(_id: string, run: () => Promise<T>) => run(), assertActive() {} };
@@ -37,7 +37,7 @@ async function fixture() {
     catch { result = { ok: false, commandId: id, error: { code: "OUTCOME_UNKNOWN", message: "Unknown" } }; }
     try { return store.finishCommand(id, hash, result).result!; } catch { return { ok: false, commandId: id, error: { code: "OUTCOME_UNKNOWN", message: "Unsettled" } }; }
   };
-  return { service, options, store, handle, send, calls: () => calls, reads: () => reads, replace: () => { owner = undefined; }, setResult: (value: NativeUsageResult) => { nativeResult = value; }, setRedeem: (value: () => Promise<NativeUsageResult>) => { redeem = value; } };
+  return { service, options, store, handle, send, calls: () => calls, reads: () => reads, replace: () => { owner = undefined; }, restore: () => { owner = handle; }, setResult: (value: NativeUsageResult) => { nativeResult = value; }, setRedeem: (value: () => Promise<NativeUsageResult>) => { redeem = value; }, setOnPrepare: (value: () => void) => { onPrepare = value; } };
 }
 const prepare: SessionUsageCommand = { type: "session.usage.reset.prepare", sessionId: "session", epoch: "epoch", revision: "revision", accountRef: "account" };
 const answer = (confirm = true): SessionUsageCommand => ({ type: "session.usage.reset.respond", sessionId: "session", operationId: "prepare", confirm });
@@ -91,6 +91,79 @@ test("account generations invalidate stale preparation and unknown cannot be upg
   admissions.settle(key, "automatic", "settled"); expect(() => admissions.admit({ key, operationId: "stale" })).toThrow();
   admissions.admit({ key, expectedGeneration: first.generation, operationId: "fresh" }); admissions.settle(key, "fresh", "unknown");
   expect(() => admissions.settle(key, "fresh", "settled")).toThrow();
+});
+const otherKey = "b".repeat(64), thirdKey = "c".repeat(64);
+const respond = (operationId: string): SessionUsageCommand => ({ type: "session.usage.reset.respond", sessionId: "session", operationId, confirm: true });
+const receipt = (result: CommandResult) => result.ok && result.value && "type" in result.value && result.value.type === "session.usage.reset" ? result.value.receipt : undefined;
+test("a shared-authority admission during preparation discards the manual prepare; the untouched account stays usable", async () => {
+  const f = await fixture(), shared = new ResetAccountAdmissions(f.store);
+  let automatic!: ResetAccountAdmission;
+  f.setOnPrepare(() => { automatic = shared.admit({ key: otherKey, operationId: "automatic" }); f.setOnPrepare(() => {}); });
+  expect((await f.send("prepare", prepare)).ok).toBe(false);
+  expect((await f.service.read("session", "cached")).reset).toBeNull();
+  expect((await f.service.read("session", "cached", "prepare")).reset).toBeNull();
+  expect(f.calls()).toBe(0);
+  expect(receipt(await f.send("fresh", prepare))?.state).toBe("prepared");
+  expect(receipt(await f.send("fresh-answer", respond("fresh")))?.outcome).toBe("reset");
+  expect(f.calls()).toBe(1);
+  expect(shared.inspect(otherKey)).toMatchObject({ generation: automatic.generation, operationId: "automatic", state: "dispatching" });
+});
+test("an unknown fence on another account neither blocks nor is released by this account's manual reset", async () => {
+  const f = await fixture(), shared = new ResetAccountAdmissions(f.store);
+  const foreign = shared.admit({ key: otherKey, operationId: "automatic" }); shared.settle(otherKey, "automatic", "unknown");
+  await f.send("prepare", prepare);
+  expect(receipt(await f.send("answer", answer()))?.outcome).toBe("reset"); expect(f.calls()).toBe(1);
+  expect(shared.inspect(otherKey)).toMatchObject({ generation: foreign.generation, operationId: "automatic", state: "unknown" });
+  expect(f.service.admissions.inspect(key)?.state).toBe("settled");
+  f.setResult({ state: "unknown" }); await f.send("second", prepare); await f.send("second-answer", respond("second"));
+  expect(f.service.admissions.inspect(key)?.state).toBe("unknown");
+  expect(shared.admit({ key: thirdKey, operationId: "later" }).state).toBe("dispatching");
+});
+test("a prepared manual credit is rejected without dispatch once a shared authority has spent the account", async () => {
+  const f = await fixture(), shared = new ResetAccountAdmissions(f.store);
+  await f.send("prepare", prepare);
+  const spent = shared.admit({ key, operationId: "automatic" }); shared.settle(key, "automatic", "settled");
+  const rejected = await f.send("answer", answer());
+  expect(receipt(rejected)?.state).toBe("rejected"); expect(receipt(rejected)?.outcome).toBe("admission_rejected"); expect(f.calls()).toBe(0);
+  expect(shared.inspect(key)).toMatchObject({ generation: spent.generation, operationId: "automatic", state: "settled" });
+  const view = await f.service.read("session", "cached", "answer");
+  expect(view.command?.state).toBe("done"); expect(view.reset?.state).toBe("rejected");
+  await f.send("next", prepare);
+  expect(receipt(await f.send("next-answer", respond("next")))?.outcome).toBe("reset"); expect(f.calls()).toBe(1);
+});
+test("worker loss after admission sends nothing and releases the account for a fresh preparation", async () => {
+  const f = await fixture(); await f.send("prepare", prepare);
+  const assertActive = f.options.assertActive; f.options.assertActive = () => { f.replace(); };
+  const rejected = await f.send("answer", answer()); f.options.assertActive = assertActive; f.restore();
+  expect(receipt(rejected)?.state).toBe("rejected"); expect(f.calls()).toBe(0);
+  expect(f.service.admissions.inspect(key)?.state).toBe("settled");
+  expect(await f.send("answer", answer())).toEqual(rejected);
+  await f.send("next", prepare);
+  expect(receipt(await f.send("next-answer", respond("next")))?.outcome).toBe("reset"); expect(f.calls()).toBe(1);
+});
+test("failed admission persistence retains a rejected receipt, sends nothing and leaves the account usable", async () => {
+  const f = await fixture(); await f.send("prepare", prepare); const write = f.store.writeMetadata.bind(f.store);
+  f.store.writeMetadata = (k, value) => { if (k === `reset-admission.v1:account:${key}`) throw new Error("fixture write failure"); write(k, value); };
+  const rejected = await f.send("answer", answer()); f.store.writeMetadata = write;
+  expect(receipt(rejected)?.state).toBe("rejected"); expect(receipt(rejected)?.outcome).toBe("admission_rejected"); expect(f.calls()).toBe(0);
+  expect(await f.send("answer", answer())).toEqual(rejected);
+  expect((await f.service.read("session", "cached", "answer")).command?.state).toBe("done");
+  expect(f.service.admissions.inspect(key)).toBeUndefined();
+  await f.send("next", prepare);
+  expect(receipt(await f.send("next-answer", respond("next")))?.outcome).toBe("reset"); expect(f.calls()).toBe(1);
+});
+test("failed settlement persistence retains the answer receipt, keeps the account fenced and never replays the credit", async () => {
+  const f = await fixture(); await f.send("prepare", prepare); const write = f.store.writeMetadata.bind(f.store);
+  let armed = false; f.setRedeem(async () => { armed = true; return { state: "settled", outcome: "reset" }; });
+  f.store.writeMetadata = (k, value) => { if (armed && k === `reset-admission.v1:account:${key}`) throw new Error("fixture write failure"); write(k, value); };
+  const first = await f.send("answer", answer()); f.store.writeMetadata = write;
+  expect(receipt(first)?.state).toBe("unknown"); expect(receipt(first)?.outcome).toBeUndefined(); expect(f.calls()).toBe(1);
+  expect(await f.send("answer", answer())).toEqual(first); expect(f.calls()).toBe(1);
+  expect((await f.service.read("session", "cached", "answer")).command?.state).toBe("done");
+  expect(f.service.admissions.inspect(key)?.state).not.toBe("settled");
+  await expect(f.service.prepare("replacement", prepare)).rejects.toThrow();
+  const restarted = new SessionUsageService(f.options);
+  await expect(restarted.prepare("replacement", prepare)).rejects.toThrow(); expect(f.calls()).toBe(1);
 });
 test("authenticated usage adapter rejects foreign ownership and unbounded bodies before any read", async () => {
   let reads = 0; const http = new SessionUsageHttp({ hostId: "host", sessionExists: () => true, read: async sessionId => { reads++; return { version: 1, hostId: "host", sessionId, snapshot: null, reset: null }; } });
