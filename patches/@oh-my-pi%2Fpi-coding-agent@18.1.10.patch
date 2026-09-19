@@ -22,10 +22,10 @@ index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
 diff --git a/dist/types/config/settings.d.ts b/dist/types/config/settings.d.ts
-index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..d2b16611809d616750fec998342d481142c732e7 100644
+index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..b0761777f30088f222eea2d3d112d04592ef2f43 100644
 --- a/dist/types/config/settings.d.ts
 +++ b/dist/types/config/settings.d.ts
-@@ -36,6 +36,22 @@ export interface SettingsOptions {
+@@ -36,6 +36,36 @@ export interface SettingsOptions {
      /** Extra config.yml-style overlays loaded after global/project settings */
      configFiles?: string[];
  }
@@ -33,25 +33,57 @@ index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..d2b16611809d616750fec998342d4811
 +    readonly writable: boolean;
 +    readonly cwd: string;
 +    readonly agentDir: string;
++    readonly resetPolicyWriter: ResetPolicyWriterReadback;
 +    /** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
 +    readonly projectDiscoveryStatus: "warning-free" | "incomplete";
 +    readonly global: Partial<Record<SettingPath, unknown>>;
 +    readonly project: Partial<Record<SettingPath, unknown>>;
++    readonly overlay: Partial<Record<SettingPath, unknown>>;
++    readonly runtime: Partial<Record<SettingPath, unknown>>;
 +    readonly effective: Partial<Record<SettingPath, unknown>>;
 +}
 +export interface PersistedSettingsReadback {
 +    readonly writable: boolean;
 +    readonly cwd: string;
 +    readonly agentDir: string;
++    readonly resetPolicyWriter: ResetPolicyWriterReadback;
 +    read(): Promise<PersistedSettingsSnapshot>;
++}
++export type ResetPolicySettingPath = "codexResets.autoRedeem" | "codexResets.minBlockedMinutes" | "codexResets.keepCredits" | "codexResets.salvageHorizonHours";
++/** Opaque capability for the one global reset-policy config target selected by an original Settings instance. */
++export interface ResetPolicySettingsWriter {
++    readonly agentDir: string;
++    readonly targetId: string;
++}
++export interface ResetPolicyWriterReadback {
++    readonly available: boolean;
++    readonly targetId: string | null;
 +}
  /**
   * Drop entries from capability-provided project settings whose non-object
   * value would shadow an entire settings group. `.claude/settings.json` is
-@@ -139,6 +155,8 @@ export declare class Settings {
+@@ -94,6 +124,7 @@ export declare class Settings {
+      */
+     static isolated(overrides?: Partial<Record<SettingPath, unknown>>, options?: {
+         storage?: AgentStorage | null;
++        resetPolicyWriter?: ResetPolicySettingsWriter;
+     }): Settings;
+     /**
+      * Get the global singleton.
+@@ -139,6 +170,18 @@ export declare class Settings {
       */
      flush(): Promise<void>;
      cloneForCwd(cwd: string): Promise<Settings>;
++    /**
++     * Opt this non-persistent original Settings instance into writes for only the
++     * four `codexResets.*` settings. The writer is pinned to the config target
++     * selected by this instance and can be shared with isolated child Settings.
++     */
++    enableResetPolicyPersistence(): Promise<ResetPolicySettingsWriter>;
++    /** The exact writer token to propagate to an isolated child, if enabled. */
++    getResetPolicySettingsWriter(): ResetPolicySettingsWriter | null;
++    /** Dispose the writer created by this original Settings instance. */
++    disableResetPolicyPersistence(): void;
 +    /** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
 +    capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback;
      /**
@@ -1534,7 +1566,7 @@ index 9b6317446d66d7a95aeee1545139719227909bdb..23218089a6a4ef70fdd9cb3ebf254e11
  		if (!discoveryConfig) {
  			return model;
 diff --git a/src/config/settings.ts b/src/config/settings.ts
-index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe2851ef7a552 100644
+index 418b33a4373bd96e31a5807be8dac03e225792ee..65001729e9d2ee0c9e8f5014b4a1f8d6399a774c 100644
 --- a/src/config/settings.ts
 +++ b/src/config/settings.ts
 @@ -31,7 +31,7 @@ import {
@@ -1546,7 +1578,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  import { type Settings as SettingsCapabilityItem, settingsCapability } from "../capability/settings";
  import type { ModelRole } from "../config/model-roles";
  import { loadCapability } from "../discovery";
-@@ -133,8 +133,27 @@ type ProjectSettingsReadResult = {
+@@ -133,13 +133,114 @@ type ProjectSettingsReadResult = {
  	settings: RawSettings;
  	fileSettings: RawSettings;
  	shellPathSource: string | undefined;
@@ -1557,10 +1589,13 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
 +	readonly writable: boolean;
 +	readonly cwd: string;
 +	readonly agentDir: string;
++	readonly resetPolicyWriter: ResetPolicyWriterReadback;
 +	/** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
 +	readonly projectDiscoveryStatus: "warning-free" | "incomplete";
 +	readonly global: Partial<Record<SettingPath, unknown>>;
 +	readonly project: Partial<Record<SettingPath, unknown>>;
++	readonly overlay: Partial<Record<SettingPath, unknown>>;
++	readonly runtime: Partial<Record<SettingPath, unknown>>;
 +	readonly effective: Partial<Record<SettingPath, unknown>>;
 +}
 +
@@ -1568,13 +1603,106 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
 +	readonly writable: boolean;
 +	readonly cwd: string;
 +	readonly agentDir: string;
++	readonly resetPolicyWriter: ResetPolicyWriterReadback;
 +	read(): Promise<PersistedSettingsSnapshot>;
++}
++
++export type ResetPolicySettingPath =
++	| "codexResets.autoRedeem"
++	| "codexResets.minBlockedMinutes"
++	| "codexResets.keepCredits"
++	| "codexResets.salvageHorizonHours";
++
++/** Opaque capability for the one global reset-policy config target selected by an original Settings instance. */
++export interface ResetPolicySettingsWriter {
++	readonly agentDir: string;
++	readonly targetId: string;
++}
++
++export interface ResetPolicyWriterReadback {
++	readonly available: boolean;
++	readonly targetId: string | null;
 +}
 +
  type ConfigOverlayReadResult = {
  	settings: RawSettings;
  	shellPathSource: string | undefined;
-@@ -511,6 +530,7 @@ export class Settings {
+ };
+ 
++type ResetPolicyPendingMutation = PendingYamlMutation & {
++	value: unknown;
++	version: number;
++};
++
++type ResetPolicySettingsWriterState = {
++	token: ResetPolicySettingsWriter;
++	owner: Settings;
++	agentDir: string;
++	logicalPath: string;
++	physicalPath: string;
++	targetId: string;
++	disposed: boolean;
++	nextVersion: number;
++	pending: Map<ResetPolicySettingPath, ResetPolicyPendingMutation>;
++	flushPromise?: Promise<void>;
++};
++
++const RESET_POLICY_SETTING_PATHS = new Set<SettingPath>([
++	"codexResets.autoRedeem",
++	"codexResets.minBlockedMinutes",
++	"codexResets.keepCredits",
++	"codexResets.salvageHorizonHours",
++]);
++const resetPolicyWriterStates = new WeakMap<ResetPolicySettingsWriter, ResetPolicySettingsWriterState>();
++const resetPolicyWritersByTarget = new Map<string, WeakRef<ResetPolicySettingsWriter>>();
++
++function isResetPolicySettingPath(settingPath: SettingPath): settingPath is ResetPolicySettingPath {
++	return RESET_POLICY_SETTING_PATHS.has(settingPath);
++}
++
++function resetPolicyWriterReadback(writer: ResetPolicySettingsWriter | undefined): ResetPolicyWriterReadback {
++	const state = writer ? resetPolicyWriterStates.get(writer) : undefined;
++	return Object.freeze({
++		available: state !== undefined && !state.disposed,
++		targetId: state !== undefined && !state.disposed ? state.targetId : null,
++	});
++}
++
++function resetPolicyWriterTargetId(agentDir: string, logicalPath: string, physicalPath: string): string {
++	return new Bun.CryptoHasher("sha256")
++		.update(`reset-policy-settings-writer.v1\0${agentDir}\0${logicalPath}\0${physicalPath}`)
++		.digest("hex");
++}
++
++function rawSettingsFromGeneration(generation: YamlGeneration, filePath: string): RawSettings {
++	if (generation.kind === "missing") return {};
++	if (generation.kind === "unreadable") throw new Error(`Reset-policy settings target is unreadable: ${filePath}`);
++	let parsed: unknown;
++	try {
++		parsed = YAML.parse(generation.source);
++	} catch (error) {
++		throw new Error(`Reset-policy settings target is invalid: ${filePath}: ${String(error)}`);
++	}
++	if (parsed === null || parsed === undefined) return {};
++	if (typeof parsed !== "object" || Array.isArray(parsed)) {
++		throw new Error(`Reset-policy settings target must contain a mapping: ${filePath}`);
++	}
++	return parsed as RawSettings;
++}
++
+ export interface SettingsOptions {
+ 	/** Current working directory for project settings discovery */
+ 	cwd?: string;
+@@ -475,6 +576,8 @@ export class Settings {
+ 	#cwd: string;
+ 	#agentDir: string;
+ 	#storage: AgentStorage | null = null;
++	#resetPolicyWriter?: ResetPolicySettingsWriter;
++	#ownsResetPolicyWriter = false;
+ 
+ 	#configFiles: string[] = [];
+ 	/** Global settings from config.yml/config.yaml */
+@@ -511,6 +614,7 @@ export class Settings {
  	#modifiedGlobalModelRoleMutations = new Map<string, PendingYamlMutation>();
  	/** Changes whenever a live API mutates a persisted layer. */
  	#persistedMutationGeneration = 0;
@@ -1582,15 +1710,31 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  	/**
  	 * Original process-wide model-role overrides captured before a project edit
  	 * temporarily replaced them via `#updateRuntimeModelRoleOverride`. Restored
-@@ -660,6 +680,7 @@ export class Settings {
+@@ -607,10 +711,11 @@ export class Settings {
+ 	 */
+ 	static isolated(
+ 		overrides: Partial<Record<SettingPath, unknown>> = {},
+-		options: { storage?: AgentStorage | null } = {},
++		options: { storage?: AgentStorage | null; resetPolicyWriter?: ResetPolicySettingsWriter } = {},
+ 	): Settings {
+ 		const instance = new Settings({ inMemory: true, overrides });
+ 		instance.#storage = options.storage ?? null;
++		if (options.resetPolicyWriter) instance.#attachResetPolicyWriter(options.resetPolicyWriter);
+ 		instance.#rebuildMerged();
+ 		return instance;
+ 	}
+@@ -660,6 +765,10 @@ export class Settings {
  	 * Triggers hooks for settings that have side effects.
  	 */
  	set<P extends SettingPath>(path: P, value: SettingValue<P>): void {
++		if (this.#resetPolicyWriter && isResetPolicySettingPath(path)) {
++			this.#stageResetPolicyMutation(this.#resetPolicyWriter, path, value);
++		}
 +		this.#readbackScopeGeneration++;
  		const prev = this.get(path);
  		const segments = path.split(".");
  		this.#captureGlobalMutation(path, this.#modifiedPathMutations, getByPath(this.#global, segments));
-@@ -682,6 +703,7 @@ export class Settings {
+@@ -682,6 +791,7 @@ export class Settings {
  	 * Apply runtime overrides (not persisted).
  	 */
  	override<P extends SettingPath>(path: P, value: SettingValue<P>): void {
@@ -1598,7 +1742,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  		if (path === "modelRoles") {
  			this.#savedRuntimeModelRoleOverrides.clear();
  		}
-@@ -696,6 +718,7 @@ export class Settings {
+@@ -696,6 +806,7 @@ export class Settings {
  	 * Clear a runtime override.
  	 */
  	clearOverride(path: SettingPath): void {
@@ -1606,10 +1750,205 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  		if (path === "modelRoles") {
  			this.#savedRuntimeModelRoleOverrides.clear();
  		}
-@@ -815,6 +838,35 @@ export class Settings {
+@@ -793,6 +904,9 @@ export class Settings {
+ 		if (this.#modifiedProjectModelRoles.size > 0) {
+ 			await this.#saveProjectNow();
+ 		}
++		if (this.#resetPolicyWriter) {
++			await this.#flushResetPolicyWriter(this.#resetPolicyWriter);
++		}
+ 	}
+ 
+ 	async cloneForCwd(cwd: string): Promise<Settings> {
+@@ -810,11 +924,259 @@ export class Settings {
+ 		cloned.#configOverlay = structuredClone(this.#configOverlay);
+ 		cloned.#overlayShellPathSource = this.#overlayShellPathSource;
+ 		cloned.#overrides = this.#buildOriginalOverrides();
++		if (this.#resetPolicyWriter) cloned.#attachResetPolicyWriter(this.#resetPolicyWriter);
+ 		cloned.#rebuildMerged();
+ 		cloned.#fireAllHooks();
  		return cloned;
  	}
  
++	/**
++	 * Opt this non-persistent original Settings instance into writes for only the
++	 * four `codexResets.*` settings. The writer is pinned to the config target
++	 * selected by this instance and can be shared with isolated child Settings.
++	 */
++	async enableResetPolicyPersistence(): Promise<ResetPolicySettingsWriter> {
++		if (this.#persist) throw new Error("Reset-policy persistence is only available for non-persistent Settings");
++		if (!this.#configPath) throw new Error("Reset-policy persistence requires an original config target");
++		if (this.#resetPolicyWriter) {
++			const current = resetPolicyWriterStates.get(this.#resetPolicyWriter);
++			if (!current || current.disposed) throw new Error("Reset-policy settings writer is disposed");
++			return this.#resetPolicyWriter;
++		}
++
++		const bindingGeneration = this.#readbackScopeGeneration;
++		const bindingCwd = this.#cwd;
++		const bindingAgentDir = this.#agentDir;
++		const bindingConfigPath = this.#configPath;
++		const logicalPath = path.resolve(bindingConfigPath);
++		const physicalPath = path.resolve(await this.#resolveYamlWritePath(logicalPath));
++		if (
++			this.#readbackScopeGeneration !== bindingGeneration ||
++			this.#cwd !== bindingCwd ||
++			this.#agentDir !== bindingAgentDir ||
++			this.#configPath !== bindingConfigPath ||
++			this.#resetPolicyWriter !== undefined
++		) {
++			throw new Error("Settings scope changed while binding reset-policy persistence");
++		}
++		const targetId = resetPolicyWriterTargetId(this.#agentDir, logicalPath, physicalPath);
++		const existingToken = resetPolicyWritersByTarget.get(physicalPath)?.deref();
++		if (existingToken) {
++			const existing = resetPolicyWriterStates.get(existingToken);
++			if (existing && !existing.disposed) {
++				if (existing.logicalPath !== logicalPath || existing.agentDir !== this.#agentDir) {
++					throw new Error("Reset-policy settings target already has an incompatible writer binding");
++				}
++				this.#attachResetPolicyWriter(existingToken);
++				return existingToken;
++			}
++		}
++
++		const generation = this.#readYamlGeneration(physicalPath);
++		rawSettingsFromGeneration(generation, physicalPath);
++		const token = Object.freeze({ agentDir: this.#agentDir, targetId });
++		const state: ResetPolicySettingsWriterState = {
++			token,
++			owner: this,
++			agentDir: this.#agentDir,
++			logicalPath,
++			physicalPath,
++			targetId,
++			disposed: false,
++			nextVersion: 0,
++			pending: new Map(),
++		};
++		resetPolicyWriterStates.set(token, state);
++		resetPolicyWritersByTarget.set(physicalPath, new WeakRef(token));
++		this.#resetPolicyWriter = token;
++		this.#ownsResetPolicyWriter = true;
++		this.#readbackScopeGeneration++;
++		return token;
++	}
++
++	/** The exact writer token to propagate to an isolated child, if enabled. */
++	getResetPolicySettingsWriter(): ResetPolicySettingsWriter | null {
++		const writer = this.#resetPolicyWriter;
++		const state = writer ? resetPolicyWriterStates.get(writer) : undefined;
++		return state && !state.disposed ? writer : null;
++	}
++
++	/** Dispose the writer created by this original Settings instance. */
++	disableResetPolicyPersistence(): void {
++		if (!this.#resetPolicyWriter || !this.#ownsResetPolicyWriter) return;
++		const state = resetPolicyWriterStates.get(this.#resetPolicyWriter);
++		if (state) {
++			if (state.flushPromise) throw new Error("Cannot dispose reset-policy settings writer during an in-flight flush");
++			if (state.pending.size > 0) throw new Error("Cannot dispose reset-policy settings writer with pending changes");
++			state.disposed = true;
++			if (resetPolicyWritersByTarget.get(state.physicalPath)?.deref() === state.token) {
++				resetPolicyWritersByTarget.delete(state.physicalPath);
++			}
++		}
++		this.#resetPolicyWriter = undefined;
++		this.#ownsResetPolicyWriter = false;
++		this.#readbackScopeGeneration++;
++	}
++
++	#attachResetPolicyWriter(writer: ResetPolicySettingsWriter): void {
++		const state = resetPolicyWriterStates.get(writer);
++		if (!state || state.disposed) throw new Error("Invalid or disposed reset-policy settings writer");
++		if (this.#resetPolicyWriter && this.#resetPolicyWriter !== writer) {
++			throw new Error("Settings already has a different reset-policy settings writer");
++		}
++		if (this.#resetPolicyWriter !== writer) {
++			this.#resetPolicyWriter = writer;
++			this.#readbackScopeGeneration++;
++		}
++	}
++
++	#stageResetPolicyMutation(writer: ResetPolicySettingsWriter, settingPath: ResetPolicySettingPath, value: unknown): void {
++		const state = resetPolicyWriterStates.get(writer);
++		if (!state || state.disposed) throw new Error("Reset-policy settings writer is disposed");
++		const existing = state.pending.get(settingPath);
++		if (existing) {
++			state.pending.set(settingPath, {
++				...existing,
++				value: structuredClone(value),
++				version: ++state.nextVersion,
++			});
++			return;
++		}
++		const generation = this.#readYamlGeneration(state.physicalPath);
++		const current = rawSettingsFromGeneration(generation, state.physicalPath);
++		state.pending.set(settingPath, {
++			generation,
++			baseValue: structuredClone(getByPath(current, settingPath.split("."))),
++			value: structuredClone(value),
++			version: ++state.nextVersion,
++		});
++	}
++
++	async #flushResetPolicyWriter(writer: ResetPolicySettingsWriter): Promise<void> {
++		const state = resetPolicyWriterStates.get(writer);
++		if (!state || state.disposed) throw new Error("Reset-policy settings writer is disposed");
++		const previous = state.flushPromise?.catch(() => {});
++		const flush = (previous ?? Promise.resolve()).then(() => state.owner.#flushResetPolicyWriterNow(state));
++		state.flushPromise = flush;
++		try {
++			await flush;
++		} finally {
++			if (state.flushPromise === flush) state.flushPromise = undefined;
++		}
++	}
++
++	async #flushResetPolicyWriterNow(state: ResetPolicySettingsWriterState): Promise<void> {
++		if (state.disposed) throw new Error("Reset-policy settings writer is disposed");
++		if (state.pending.size === 0) return;
++		const snapshot = new Map(state.pending);
++		await withFileLock(state.physicalPath, async () => {
++			if (state.disposed) throw new Error("Reset-policy settings writer is disposed");
++			const resolved = path.resolve(await state.owner.#resolveYamlWritePath(state.logicalPath));
++			if (resolved !== state.physicalPath) {
++				throw new Error("Reset-policy settings target changed after writer binding");
++			}
++			const generation = state.owner.#readYamlGeneration(state.physicalPath);
++			const current = rawSettingsFromGeneration(generation, state.physicalPath);
++			const conflicts: ResetPolicySettingPath[] = [];
++			for (const [settingPath, mutation] of snapshot) {
++				const segments = settingPath.split(".");
++				if (
++					mutation.generation.kind === "unreadable" ||
++					(!yamlGenerationsMatch(mutation.generation, generation) &&
++						!Bun.deepEquals(getByPath(current, segments), mutation.baseValue))
++				) {
++					conflicts.push(settingPath);
++				}
++			}
++			if (conflicts.length > 0) {
++				throw new Error(`Reset-policy settings conflict: ${conflicts.join(", ")}`);
++			}
++			for (const [settingPath, mutation] of snapshot) {
++				setByPath(current, settingPath.split("."), structuredClone(mutation.value));
++			}
++			await state.owner.#writeYamlAtomically(state.physicalPath, current);
++			const writtenGeneration = state.owner.#readYamlGeneration(state.physicalPath);
++			for (const [settingPath, mutation] of snapshot) {
++				const pending = state.pending.get(settingPath);
++				if (!pending) continue;
++				if (pending.version === mutation.version) {
++					state.pending.delete(settingPath);
++				} else {
++					pending.generation = writtenGeneration;
++					pending.baseValue = structuredClone(mutation.value);
++				}
++			}
++		});
++	}
++
 +	/** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
 +	capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback {
 +		const selected = [...new Set(paths)];
@@ -1619,30 +1958,69 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
 +		const configFiles = [...this.#configFiles];
 +		const overrides = structuredClone(this.#overrides);
 +		const writable = this.#persist;
-+		const read = async (): Promise<PersistedSettingsSnapshot> => {
-+			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
++		const writer = this.#resetPolicyWriter;
++		const writerReadback = resetPolicyWriterReadback(writer);
++		const assertCapturedScope = (): ResetPolicySettingsWriterState | undefined => {
++			const writerState = writer ? resetPolicyWriterStates.get(writer) : undefined;
++			if (
++				this.#readbackScopeGeneration !== generation ||
++				this.#cwd !== cwd ||
++				this.#agentDir !== agentDir ||
++				this.#resetPolicyWriter !== writer ||
++				(writer !== undefined && (!writerState || writerState.disposed))
++			) {
 +				throw new Error("Settings readback scope changed");
++			}
++			return writerState;
++		};
++		const assertWriterTarget = async (writerState: ResetPolicySettingsWriterState): Promise<void> => {
++			const resolved = path.resolve(await writerState.owner.#resolveYamlWritePath(writerState.logicalPath));
++			if (resolved !== writerState.physicalPath) {
++				throw new Error("Reset-policy settings target changed after writer binding");
++			}
++		};
++		const read = async (): Promise<PersistedSettingsSnapshot> => {
++			const writerState = assertCapturedScope();
++			if (writerState) {
++				await assertWriterTarget(writerState);
++				assertCapturedScope();
 +			}
 +			clearCapabilityFsCache();
 +			const detached = new Settings({ cwd, agentDir, readOnly: true });
 +			detached.#configFiles = configFiles;
 +			detached.#overrides = structuredClone(overrides);
 +			const discoveryWarningFree = await detached.#loadPersistedReadback();
-+			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
-+				throw new Error("Settings readback scope changed");
++			assertCapturedScope();
++			if (writerState) {
++				await assertWriterTarget(writerState);
++				assertCapturedScope();
++				const writerGlobal = rawSettingsFromGeneration(
++					writerState.owner.#readYamlGeneration(writerState.physicalPath),
++					writerState.physicalPath,
++				);
++				for (const settingPath of RESET_POLICY_SETTING_PATHS) {
++					setByPath(
++						detached.#global,
++						settingPath.split("."),
++						structuredClone(getByPath(writerGlobal, settingPath.split("."))),
++					);
++				}
++				detached.#rebuildMerged();
 +			}
 +			const pick = (layer: RawSettings): Partial<Record<SettingPath, unknown>> => Object.fromEntries(selected.map(path => [path, structuredClone(getByPath(layer, path.split(".")))]));
-+			return Object.freeze({ writable, cwd, agentDir, projectDiscoveryStatus: discoveryWarningFree ? "warning-free" as const : "incomplete" as const,
++			return Object.freeze({ writable, cwd, agentDir, resetPolicyWriter: writerReadback,
++				projectDiscoveryStatus: discoveryWarningFree ? "warning-free" as const : "incomplete" as const,
 +				global: Object.freeze(pick(detached.#global)), project: Object.freeze(pick(detached.#project)),
++				overlay: Object.freeze(pick(detached.#configOverlay)), runtime: Object.freeze(pick(detached.#overrides)),
 +				effective: Object.freeze(Object.fromEntries(selected.map(path => [path, structuredClone(detached.get(path))]))) });
 +		};
-+		return Object.freeze({ writable, cwd, agentDir, read });
++		return Object.freeze({ writable, cwd, agentDir, resetPolicyWriter: writerReadback, read });
 +	}
 +
  	/**
  	 * Re-read the current global, project, and explicit overlay layers from disk
  	 * without replacing this instance or discarding runtime overrides.
-@@ -909,6 +961,7 @@ export class Settings {
+@@ -909,6 +1271,7 @@ export class Settings {
  	async reloadForCwd(cwd: string): Promise<void> {
  		const normalized = path.normalize(cwd);
  		if (normalized === this.#cwd) return;
@@ -1650,7 +2028,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  		await this.flush();
  		this.#restoreRuntimeModelRoleOverrides();
  		const prevModelRoles = this.get("modelRoles");
-@@ -1412,6 +1465,25 @@ export class Settings {
+@@ -1412,6 +1775,25 @@ export class Settings {
  		return this;
  	}
  
@@ -1676,7 +2054,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  	#readYamlGeneration(filePath: string): YamlGeneration {
  		try {
  			const source = fs.readFileSync(filePath, "utf8");
-@@ -1811,8 +1883,10 @@ export class Settings {
+@@ -1811,8 +2193,10 @@ export class Settings {
  	async #readProjectSettings(quarantineInvalid: boolean): Promise<ProjectSettingsReadResult> {
  		let shellPathSource: string | undefined;
  		let merged: RawSettings = {};
@@ -1687,7 +2065,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  			for (const item of result.items as SettingsCapabilityItem[]) {
  				if (item.level === "project") {
  					merged = this.#deepMerge(merged, dropSettingsGroupShadows(item.data as RawSettings, item.path));
-@@ -1820,6 +1894,7 @@ export class Settings {
+@@ -1820,6 +2204,7 @@ export class Settings {
  				}
  			}
  		} catch {
@@ -1695,7 +2073,7 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe285
  			shellPathSource = undefined;
  			// Capability discovery is best-effort; the native project config below
  			// remains authoritative for its model-role layer and must not be hidden.
-@@ -1837,6 +1912,7 @@ export class Settings {
+@@ -1837,6 +2222,7 @@ export class Settings {
  			settings: this.#migrateRawSettings(merged, quarantineInvalid),
  			fileSettings: structuredClone(nativeProject),
  			shellPathSource,
@@ -6686,7 +7064,7 @@ index 28f2a69080275d4b421ac8e7f15a46a347350fc1..002c4b8dbce14b91e0deeedf2eb60b12
  			return usage(
  				"/todo edit requires the TUI editor; use /todo export then /todo import for non-interactive edits.",
 diff --git a/src/task/executor.ts b/src/task/executor.ts
-index 405197a3c4a879686c6e899041355f1482f582ab..4218ed0b0d44b0181340a4573e10442dcb508f70 100644
+index 405197a3c4a879686c6e899041355f1482f582ab..07c916c9f42dc6e5156c00f4fbe47344f89bbcd9 100644
 --- a/src/task/executor.ts
 +++ b/src/task/executor.ts
 @@ -392,6 +392,10 @@ export interface ExecutorOptions {
@@ -6700,7 +7078,19 @@ index 405197a3c4a879686c6e899041355f1482f582ab..4218ed0b0d44b0181340a4573e10442d
  	worktree?: string;
  	agent: AgentDefinition;
  	task: string;
-@@ -3333,6 +3337,8 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
+@@ -981,7 +985,10 @@ export function createSubagentSettings(
+ 			"advisor.enabled": false,
+ 			...overrides,
+ 		},
+-		{ storage: baseSettings.getStorage() },
++		{
++			storage: baseSettings.getStorage(),
++			resetPolicyWriter: baseSettings.getResetPolicySettingsWriter() ?? undefined,
++		},
+ 	);
+ }
+ 
+@@ -3333,6 +3340,8 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
  				authStorage,
  				modelRegistry,
  				getApiKey: options.getApiKey,

@@ -1,0 +1,7 @@
+# Native reset-policy Settings writer
+
+This fixture exercises the opt-in writer used by native reset policy. A root `Settings.loadReadOnly` instance explicitly enables one writer for its already-selected global config target. The same opaque token can be attached to isolated child Settings, so `set()` plus `flush()` persists only the four `codexResets.*` keys without opening AgentStorage, running startup migrations, loading provider settings, or changing ordinary read-only/in-memory behavior.
+
+The writer freezes the logical and resolved physical target, serializes through the existing file lock and atomic replacement, merges disjoint external edits, and rejects same-key conflicts or target retargeting. A same-key edit that arrives while an earlier flush is writing remains pending for the next flush. Persisted readback continues to report general `writable` separately and exposes the selected global, project, explicit-overlay, runtime, and effective layers plus the writer target identity. For an isolated child, only the four global reset paths come from that pinned writer target; the child's cwd, agent directory, project, overlay, and runtime layers remain its own, and target changes or read failures reject the readback.
+
+This seam does not clear child overrides or turn a persisted global `yes` into standing consent when project, overlay, or runtime layers shadow it. It also does not claim complete provider discovery or filesystem ABA protection. Root creation and child/revive propagation call sites belong to the later session-factory integration.
