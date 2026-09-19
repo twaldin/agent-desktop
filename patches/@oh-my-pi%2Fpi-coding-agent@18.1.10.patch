@@ -754,6 +754,19 @@ index c619619..ae8b050 100644
 +export declare const TODO_HELP_TEXT: string;
  /** ACP/text-mode `/todo` handler. Shared by both dispatchers via the spec. */
  export declare function handleTodoAcp(command: ParsedSlashCommand, runtime: SlashCommandRuntime): Promise<SlashCommandResult>;
+diff --git a/dist/types/task/executor.d.ts b/dist/types/task/executor.d.ts
+index aec2ce1..66e74e2 100644
+--- a/dist/types/task/executor.d.ts
++++ b/dist/types/task/executor.d.ts
+@@ -79,6 +79,8 @@ export interface ExecutorOptions {
+     additionalDirectories?: string[];
+     /** Exact provider credential resolver inherited from the parent session. */
+     getApiKey?: CreateAgentSessionOptions["getApiKey"];
++    /** Original native reset-policy owner inherited from the parent session. */
++    codexResetPolicyOwner?: CreateAgentSessionOptions["codexResetPolicyOwner"];
+     worktree?: string;
+     agent: AgentDefinition;
+     task: string;
 diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
 index 67ab2e0..28b1ef2 100644
 --- a/dist/types/tools/browser.d.ts
@@ -1089,6 +1102,27 @@ index 0000000..0328314
 +}
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
+diff --git a/dist/types/tools/index.d.ts b/dist/types/tools/index.d.ts
+index 55de315..4529e66 100644
+--- a/dist/types/tools/index.d.ts
++++ b/dist/types/tools/index.d.ts
+@@ -21,6 +21,7 @@ import type { AgentLifecycleManager } from "../registry/agent-lifecycle.js";
+ import type { AgentRegistry } from "../registry/agent-registry.js";
+ import type { ArtifactManager } from "../session/artifacts.js";
+ import type { ClientBridge } from "../session/client-bridge.js";
++import type { CodexResetPolicyOwner } from "../session/agent-session-types.js";
+ import type { CustomMessage } from "../session/messages.js";
+ import type { UsageStatistics } from "../session/session-entries.js";
+ import type { SessionManager } from "../session/session-manager.js";
+@@ -137,6 +138,8 @@ export interface ToolSession {
+     fetch?: FetchImpl;
+     /** Provider credential resolver forwarded unchanged to restricted child sessions. */
+     getApiKey?: AgentOptions["getApiKey"];
++    /** Original native reset-policy owner inherited by every child session. */
++    codexResetPolicyOwner?: CodexResetPolicyOwner;
+     /** Skip subprocess-kernel availability checks and warmup */
+     skipPythonPreflight?: boolean;
+     /** Pre-loaded context files (AGENTS.md, etc) */
 diff --git a/dist/types/tools/todo.d.ts b/dist/types/tools/todo.d.ts
 index cc45c4c..19dc56c 100644
 --- a/dist/types/tools/todo.d.ts
@@ -3996,7 +4030,7 @@ index 0000000..fae1433
 +	);
 +}
 diff --git a/src/sdk.ts b/src/sdk.ts
-index d647c79..569bcd3 100644
+index d647c79..f38f066 100644
 --- a/src/sdk.ts
 +++ b/src/sdk.ts
 @@ -156,7 +156,13 @@ import {
@@ -4041,7 +4075,15 @@ index d647c79..569bcd3 100644
  	/** Extensions result (loaded extensions + runtime) */
  	extensionsResult: LoadExtensionsResult;
  	/** Update tool UI context (interactive mode) */
-@@ -2005,6 +2017,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -1794,6 +1806,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 			hasUI: options.hasUI ?? false,
+ 			canPromptUser: options.interactivePrompts ?? options.hasUI ?? false,
+ 			getApiKey: options.getApiKey,
++			codexResetPolicyOwner: options.codexResetPolicyOwner,
+ 			get additionalDirectories() {
+ 				return sessionManager.getAdditionalDirectories();
+ 			},
+@@ -2005,6 +2018,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  				configuredLevel: settings.extensionsSourceLevel(),
  			}));
  		const mcpDiscoverOptions = {
@@ -4049,7 +4091,7 @@ index d647c79..569bcd3 100644
  			onStatus: onMCPStatus,
  			enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
  			// Always filter Exa - we have native integration
-@@ -3528,6 +3541,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -3528,6 +3542,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  		};
  		const kimiApiFormatSetting = settings.get("providers.kimiApiFormat");
  		const kimiApiFormat = kimiApiFormatSetting === "auto" ? undefined : kimiApiFormatSetting;
@@ -4057,7 +4099,7 @@ index d647c79..569bcd3 100644
  		agent = new Agent({
  			initialState: {
  				systemPrompt,
-@@ -3610,7 +3624,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -3610,7 +3625,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  			resolveFallbackTool: resolveDeviceTool,
  			intentTracing: !!intentField,
  			pruneToolDescriptions: inlineToolDescriptors,
@@ -4066,7 +4108,7 @@ index d647c79..569bcd3 100644
  			abortOnFabricatedToolResult: settings.get("tools.abortOnFabricatedResult"),
  			getToolChoice: () => session?.nextToolChoiceDirective(),
  			onToolChoiceUnavailable: () => session?.toolChoiceQueue.reject("unavailable"),
-@@ -3787,6 +3801,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -3787,6 +3802,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  			sideStreamFn: settingsAwareStreamFn,
  			advisorStreamFn: settingsAwareStreamFn,
  			preferWebsockets: preferOpenAICodexWebsockets,
@@ -4074,7 +4116,7 @@ index d647c79..569bcd3 100644
  			convertToLlm: convertToLlmFinal,
  			rebuildSystemPrompt,
  			getXdevToolEntries: () => (toolSession.xdev ? xdevEntries(toolSession.xdev) : []),
-@@ -4288,6 +4303,20 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -4288,6 +4304,20 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  			);
  		}
  
@@ -4095,7 +4137,7 @@ index d647c79..569bcd3 100644
  		startDeferredMCPDiscovery?.(session);
  
  		// Route the initial tool surface through the Code Mode-aware path when the
-@@ -4305,6 +4334,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+@@ -4305,6 +4335,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  
  		return {
  			session,
@@ -6041,6 +6083,39 @@ index 28f2a69..002c4b8 100644
  		case "edit":
  			return usage(
  				"/todo edit requires the TUI editor; use /todo export then /todo import for non-interactive edits.",
+diff --git a/src/task/executor.ts b/src/task/executor.ts
+index 405197a..07a75e9 100644
+--- a/src/task/executor.ts
++++ b/src/task/executor.ts
+@@ -392,6 +392,8 @@ export interface ExecutorOptions {
+ 	additionalDirectories?: string[];
+ 	/** Exact provider credential resolver inherited from the parent session. */
+ 	getApiKey?: CreateAgentSessionOptions["getApiKey"];
++	/** Original native reset-policy owner inherited from the parent session. */
++	codexResetPolicyOwner?: CreateAgentSessionOptions["codexResetPolicyOwner"];
+ 	worktree?: string;
+ 	agent: AgentDefinition;
+ 	task: string;
+@@ -3333,6 +3335,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
+ 				authStorage,
+ 				modelRegistry,
+ 				getApiKey: options.getApiKey,
++				codexResetPolicyOwner: options.codexResetPolicyOwner,
+ 				settings: subagentSettings,
+ 				model,
+ 				modelPattern: model || modelOverride === undefined ? undefined : modelPatterns,
+diff --git a/src/task/structured-subagent.ts b/src/task/structured-subagent.ts
+index f5ae969..727a1cf 100644
+--- a/src/task/structured-subagent.ts
++++ b/src/task/structured-subagent.ts
+@@ -406,6 +406,7 @@ function buildExecutorOptions(
+ 		cwd: session.cwd,
+ 		additionalDirectories: session.additionalDirectories,
+ 		getApiKey: session.getApiKey,
++		codexResetPolicyOwner: session.codexResetPolicyOwner,
+ 		agent: policy.effectiveAgent,
+ 		task: renderSubagentPrompt(request.assignment),
+ 		assignment: request.assignment.trim(),
 diff --git a/src/tools/browser.ts b/src/tools/browser.ts
 index b191f31..50c0be1 100644
 --- a/src/tools/browser.ts
@@ -13085,6 +13160,27 @@ index 14a0b4e..619e0a0 100644
  		},
  		onMessage(handler) {
  			if (inbox) return inbox.bind(message => handler(message as ComputerWorkerInbound));
+diff --git a/src/tools/index.ts b/src/tools/index.ts
+index 798961f..e54a66f 100644
+--- a/src/tools/index.ts
++++ b/src/tools/index.ts
+@@ -26,6 +26,7 @@ import type { AgentLifecycleManager } from "../registry/agent-lifecycle";
+ import type { AgentRegistry } from "../registry/agent-registry";
+ import type { ArtifactManager } from "../session/artifacts";
+ import type { ClientBridge } from "../session/client-bridge";
++import type { CodexResetPolicyOwner } from "../session/agent-session-types";
+ import type { CustomMessage } from "../session/messages";
+ import type { UsageStatistics } from "../session/session-entries";
+ import type { SessionManager } from "../session/session-manager";
+@@ -173,6 +174,8 @@ export interface ToolSession {
+ 	fetch?: FetchImpl;
+ 	/** Provider credential resolver forwarded unchanged to restricted child sessions. */
+ 	getApiKey?: AgentOptions["getApiKey"];
++	/** Original native reset-policy owner inherited by every child session. */
++	codexResetPolicyOwner?: CodexResetPolicyOwner;
+ 	/** Skip subprocess-kernel availability checks and warmup */
+ 	skipPythonPreflight?: boolean;
+ 	/** Pre-loaded context files (AGENTS.md, etc) */
 diff --git a/src/tools/todo.ts b/src/tools/todo.ts
 index e3dfab8..4771b33 100644
 --- a/src/tools/todo.ts
@@ -13198,6 +13294,18 @@ index e3dfab8..4771b33 100644
  }
  
  /** Minimum overlap (after normalization) required for a substring match.
+diff --git a/src/vibe/runtime.ts b/src/vibe/runtime.ts
+index af4655c..a907f0c 100644
+--- a/src/vibe/runtime.ts
++++ b/src/vibe/runtime.ts
+@@ -1326,6 +1326,7 @@ export class VibeSessionRegistry {
+ 		};
+ 		return {
+ 			cwd: session.cwd,
++			codexResetPolicyOwner: session.codexResetPolicyOwner,
+ 			agent: record.agent,
+ 			task: message,
+ 			assignment: message,
 diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
 old mode 100755
 new mode 100644
