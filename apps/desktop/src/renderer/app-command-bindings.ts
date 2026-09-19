@@ -46,6 +46,8 @@ export const APP_COMMAND_BINDING_OWNERS = {
   navigateBrowserForward: "navigate-browser-forward",
   "approval.approve": "approval-approve", "approval.decline": "approval-decline",
   goToLine: "go-to-line", closeTab: "close-tab",
+  "file.goToDefinition": "file-go-to-definition",
+  "file.navigateBack": "file-navigate-back", "file.navigateForward": "file-navigate-forward",
   toggleFileTreePanel: "toggle-file-tree-panel", toggleReviewTab: "toggle-review-tab",
   "git.createBranch": "git-create-branch",
   environmentAction1: "environment-action-1", environmentAction2: "environment-action-2",

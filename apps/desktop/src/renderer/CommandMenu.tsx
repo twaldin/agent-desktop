@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { flushSync } from "react-dom";
 import { Command } from "cmdk";
 import * as Dialog from "@radix-ui/react-dialog";
 import { parseSessionSearchResult, rankSessionSearchHits, type DesktopBridge, type SessionSearchHit } from "@agent-desktop/shared";
@@ -46,6 +47,8 @@ export interface CommandMenuProps {
   onModeChange(mode: "commands" | "chats"): void;
   onSelectSession(hostId: string, sessionId: string): void;
   onClose(): void;
+  /** Restore a captured native owner on cancellation; never fall back if that owner expired. */
+  onRestoreFocus?(): void;
 }
 
 type ChatEntry = SessionSearchHit & { hostId: string; hostName: string };
@@ -88,11 +91,12 @@ function groupLabel(value: string): string {
   return groupLabels[value] ?? value;
 }
 
-export function CommandMenu({ actions, hosts, recentChats = [], browserTabs = [], onSelectBrowserTab, bridge, mode, onModeChange, onSelectSession, onClose }: CommandMenuProps) {
+export function CommandMenu({ actions, hosts, recentChats = [], browserTabs = [], onSelectBrowserTab, bridge, mode, onModeChange, onSelectSession, onClose, onRestoreFocus }: CommandMenuProps) {
   const returnFocus = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const input = useRef<HTMLInputElement>(null);
   const composing = useRef(false), dispatched = useRef(false);
   const deferredAction = useRef<(() => void) | null>(null);
+  const cancelledToOriginalOwner = useRef(false);
   const sectionCycle = useRef(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(""), [retry, setRetry] = useState(0);
@@ -168,6 +172,16 @@ export function CommandMenu({ actions, hosts, recentChats = [], browserTabs = []
   const showChatSwitcher = mode === "commands" && canSearchChats && (!term || fuzzy(`${chatAction?.title ?? ""} ${chatAction?.description ?? ""} search chats past conversations`, term));
   const hasNavigationGroup = actionGroups.some(([group]) => group === "navigation");
 
+  const cancel = () => {
+    if (dispatched.current || cancelledToOriginalOwner.current) return;
+    if (!onRestoreFocus) { onClose(); return; }
+    // Native input must not fall into the timer gap between modal disposal and
+    // Radix's deferred unmount autofocus. Remove the modal/trap, then hand input
+    // back to its captured original owner before the next native event.
+    cancelledToOriginalOwner.current = true;
+    flushSync(onClose);
+    onRestoreFocus();
+  };
   const closeForAction = (action: () => void, deferUntilClose = false) => {
     if (dispatched.current) return;
     dispatched.current = true;
@@ -190,7 +204,7 @@ export function CommandMenu({ actions, hosts, recentChats = [], browserTabs = []
     return undefined;
   })();
 
-  return <Dialog.Root open onOpenChange={open => { if (!open && !composing.current) onClose(); }}>
+  return <Dialog.Root open onOpenChange={open => { if (!open && !composing.current) cancel(); }}>
     <Dialog.Portal>
       <Dialog.Overlay className="command-menu-overlay"/>
       <Dialog.Content className="command-menu" onOpenAutoFocus={event => { event.preventDefault(); input.current?.focus({ preventScroll: true }); }}
@@ -199,7 +213,10 @@ export function CommandMenu({ actions, hosts, recentChats = [], browserTabs = []
           event.preventDefault();
           const action = deferredAction.current; deferredAction.current = null;
           if (action) action();
-          else if (!dispatched.current && returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
+          else if (!dispatched.current && !cancelledToOriginalOwner.current) {
+            if (onRestoreFocus) onRestoreFocus();
+            else if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
+          }
         }}>
         <Dialog.Title className="sr-only">Command menu</Dialog.Title>
         <Dialog.Description className="sr-only">Search commands and past chats.</Dialog.Description>

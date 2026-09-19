@@ -1,12 +1,8 @@
-.pierre-source-editor-frame[data-symbol-owner] { display: flex; flex-direction: column; }
-.pierre-source-editor-frame[data-symbol-owner][hidden] { display: none; }
-.pierre-source-editor-frame[data-symbol-owner] > .pierre-source-editor { flex: 1; height: auto; }
-.symbol-navigation { flex: none; color: var(--text-secondary,var(--muted)); background: var(--editor-surface,var(--app-surface)); border-bottom: 1px solid var(--border); font-size: 12px; padding: 4px 8px; }
-.symbol-navigation-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-.symbol-navigation button { border: 0; border-radius: var(--radius-sm,4px); padding: 4px 7px; background: transparent; color: var(--text); text-align: left; }
-.symbol-navigation button:hover:not(:disabled) { background: color-mix(in srgb,var(--text) 8%,transparent); }
-.symbol-navigation button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.symbol-navigation button:disabled { opacity: .5; cursor: default; }
-.symbol-navigation p { margin: 4px 7px; }
-.symbol-definition-choices { display: flex; flex-direction: column; max-height: 240px; overflow: auto; }
-.symbol-definition-choices button { display: flex; justify-content: space-between; gap: 12px; overflow-wrap: anywhere; }
+.symbol-navigation { position:absolute; top:12px; right:16px; z-index:58; width:min(380px,calc(100% - 32px)); max-height:calc(100% - 24px); overflow:auto; color:var(--text); background:var(--menu-surface,var(--editor-surface)); border:1px solid var(--border); border-radius:var(--menu-radius,12px); box-shadow:0 8px 24px #0003; font-size:var(--font-size,14px); padding:4px; }
+.symbol-navigation button { border:0; border-radius:var(--radius-small,6px); padding:6px 8px; background:transparent; color:var(--text); text-align:left; }
+.symbol-navigation button:hover:not(:disabled) { background:var(--hover); }
+.symbol-navigation button:focus-visible { outline:2px solid var(--focus-ring,var(--accent)); outline-offset:0; }
+.symbol-navigation button:disabled { opacity:.5; cursor:default; }
+.symbol-navigation p { margin:4px 8px; overflow-wrap:anywhere; }
+.symbol-definition-choices { display:flex; flex-direction:column; max-height:240px; overflow:auto; }
+.symbol-definition-choices button { display:flex; justify-content:space-between; gap:12px; overflow-wrap:anywhere; }

@@ -49,6 +49,7 @@ import { readTaskLayoutActivation, type TaskLayoutActivation, mainTaskLayoutChan
 import { workspaceLayoutStepAvailable } from "./workspace-layout-step";
 import { commandMenuRecents } from "./command-menu-recents";
 import { CommandMenu } from "./CommandMenu";
+import { CommandMenuSearchButton } from "./CommandMenuSearchButton";
 import { activateBrowserSearchTab } from "./command-browser-tabs";
 import { BrowserSearchRegistry } from "./browser-search-registry";
 import { browserSearchPresentationKey } from "./command-browser-tabs";
@@ -72,6 +73,7 @@ import { PendingMcpAuthorization } from "./SessionMcpAuthorization";
 import { EnvironmentActions, environmentActionCommands } from "./EnvironmentActions";
 import { branchCreationCommand } from "./BranchSelector";
 import { goToLineCommand } from "./GoToLine";
+import { captureFileEditorCommands, focusedFileEditorCommands, type CapturedFileEditorCommands, type FileEditorCommandActions, type FileEditorShortcut } from "./SymbolNavigationControls";
 import { workspaceGitBlameCommand } from "./WorkspaceGitFilePanel";
 import { GoalStrip } from "./GoalStrip";
 import { GoalPanel } from "./GoalPanel";
@@ -201,9 +203,13 @@ export function App() {
   const [commandMenuMode, setCommandMenuMode] = useState<"commands" | "chats">();
   const commandMenuOrigin = useRef<Element | null>(null);
   const commandMenuGitBlame = useRef<(() => void) | undefined>(undefined);
-  const openCommandMenu = (mode: "commands" | "chats") => {
+  const commandMenuFileEditor = useRef<CapturedFileEditorCommands | undefined>(undefined);
+  const openCommandMenu = (mode: "commands" | "chats", capturedFileEditor?: CapturedFileEditorCommands | null) => {
     commandMenuOrigin.current = document.activeElement;
     commandMenuGitBlame.current = workbenchElement.current ? workspaceGitBlameCommand(workbenchElement.current, commandMenuOrigin.current) : undefined;
+    commandMenuFileEditor.current = capturedFileEditor === undefined
+      ? (workbenchElement.current ? captureFileEditorCommands(workbenchElement.current, document.activeElement) : undefined)
+      : capturedFileEditor ?? undefined;
     setCommandMenuMode(mode);
   };
   const [fileSearchOwner, setFileSearchOwner] = useState<string>();
@@ -1153,7 +1159,7 @@ export function App() {
     ? dockSession ? browserAddressFocusOwner(hostId, "session", dockSession.sessionId)
       : draftDockOwner.enabled ? browserAddressFocusOwner(hostId, "draft", draftId) : undefined
     : undefined;
-  function withLocalControlShortcuts(options: AppShortcutOptions, origin: Element | null = document.activeElement): AppShortcutOptions {
+  function withLocalControlShortcuts(options: AppShortcutOptions, origin: Element | null = document.activeElement, retainedFileEditor?: FileEditorCommandActions): AppShortcutOptions {
     const root = workbenchElement.current;
     if (!root || !chatRoute) return withBrowserAddressShortcut(options, root, browserAddressOwner, origin);
     const actions = { ...options.actions };
@@ -1190,6 +1196,14 @@ export function App() {
       actions["go-to-line"] = line;
       inputActions.push("go-to-line"); ownedSurfaceActions.push("go-to-line");
     }
+    const fileEditor = retainedFileEditor ?? focusedFileEditorCommands(root, origin);
+    if (fileEditor) {
+      for (const [command, run] of Object.entries(fileEditor) as [FileEditorShortcut, () => void][]) {
+        actions[command] = () => { try { run(); } catch (cause) { setActionError(errorMessage(cause)); } };
+        inputActions.push(command); ownedSurfaceActions.push(command);
+      }
+      ownedSurfaceActions.push("search");
+    }
     const focusDestination = origin?.closest("[data-dock-destination]")?.getAttribute("data-dock-destination");
     const chatFocused = Boolean(origin?.closest("[data-main-task-chat], [data-main-task-chat-tab]"));
     const destination = chatFocused ? undefined : focusDestination === "bottom" ? "bottom" : focusDestination === "right" || mainTaskArea.current === "content" ? "right" : undefined;
@@ -1219,11 +1233,13 @@ export function App() {
     }
     return withBrowserAddressShortcut({ ...options, actions, inputActions, ownedSurfaceActions }, root, browserAddressOwner, origin);
   }
-  const commandMenuShortcutOptions = withLocalControlShortcuts(currentShortcutOptions, commandMenuMode ? commandMenuOrigin.current : document.activeElement);
+  const commandMenuShortcutOptions = withLocalControlShortcuts(currentShortcutOptions, commandMenuMode ? commandMenuOrigin.current : document.activeElement, commandMenuMode ? commandMenuFileEditor.current?.actions : undefined);
   const commandMenuActions = APPLICATION_COMMANDS.flatMap(definition => {
     const owner = APP_COMMAND_BINDING_OWNERS[definition.id as keyof typeof APP_COMMAND_BINDING_OWNERS];
     const onSelect = owner && commandMenuShortcutOptions.actions[owner];
     const retainedBlame = owner === "git-toggle-blame" ? commandMenuGitBlame.current : undefined;
+    const retainedFileEditor = owner ? commandMenuFileEditor.current?.actions[owner as FileEditorShortcut] : undefined;
+    if (owner?.startsWith("file-") && ["file-go-to-definition", "file-navigate-back", "file-navigate-forward"].includes(owner) && !retainedFileEditor) return [];
     if (owner === "git-toggle-blame" && !retainedBlame) return [];
     // These webview commands have actual owners above. Electron-only searchFiles
     // remains the dedicated file dialog, not an invented root command-menu row.
@@ -1232,8 +1248,9 @@ export function App() {
     return [{ id: definition.id, title: definition.title, description: definition.description.replace(/\bCodex\b/g, "Agent Desktop"),
       group: definition.group, shortcut: appCommandShortcutLabel(appCommandBindings.bindings, owner), deferUntilClose: true,
       onSelect: () => {
-        if (selectedRef.current !== routeKey) return;
+        if (selectedRef.current !== routeKey) { if (retainedFileEditor) setActionError("The original file editor route changed. Open the command menu again from that source."); return; }
         if (retainedBlame) { retainedBlame(); return; }
+        if (retainedFileEditor) { try { retainedFileEditor(); } catch (cause) { setActionError(errorMessage(cause)); } return; }
         const current = shortcutOptions.current;
         current.withControls(current.options, commandMenuOrigin.current).actions[owner]?.();
       } }];
@@ -1868,7 +1885,7 @@ export function App() {
   return <><div ref={shell} className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
     {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={profileMenu("settings-host")}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
-      <div className="sidebar-brand"><strong>Agent Desktop</strong><div className="sidebar-brand-actions"><button className="icon-button small" aria-label="Search" title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} aria-expanded={commandMenuMode === "chats"} onClick={() => openCommandMenu("chats")}><SidebarNavigationIcon name="search"/></button><button className={`icon-button small ${sidebarActivityOpen ? "active" : ""}`} aria-label={sidebarActivityOpen ? "Close activity view" : "View activity"} title={sidebarActivityItems.length ? "Chats are unread, active, or awaiting a response" : "View activity"} aria-pressed={sidebarActivityOpen} onClick={() => { setSidebarActivityOpen(value => !value); setShowArchived(false); }}><SidebarActivityIcon/></button></div></div>
+      <div className="sidebar-brand"><strong>Agent Desktop</strong><div className="sidebar-brand-actions"><CommandMenuSearchButton title={`Search${appCommandShortcutLabel(appCommandBindings.bindings, "search") ? ` (${appCommandShortcutLabel(appCommandBindings.bindings, "search")})` : ""}`} expanded={commandMenuMode === "chats"} captureFileEditor={() => workbenchElement.current ? captureFileEditorCommands(workbenchElement.current, document.activeElement) : undefined} onOpen={captured => openCommandMenu("chats", captured)}><SidebarNavigationIcon name="search"/></CommandMenuSearchButton><button className={`icon-button small ${sidebarActivityOpen ? "active" : ""}`} aria-label={sidebarActivityOpen ? "Close activity view" : "View activity"} title={sidebarActivityItems.length ? "Chats are unread, active, or awaiting a response" : "View activity"} aria-pressed={sidebarActivityOpen} onClick={() => { setSidebarActivityOpen(value => !value); setShowArchived(false); }}><SidebarActivityIcon/></button></div></div>
       <SidebarNavigation data={sidebarNavigation} onNew={() => newConversation()} newShortcut={appCommandShortcutLabel(appCommandBindings.bindings, "new-chat")} destinations={[
         ...(state?.pullRequests?.version === 1 && bridge.pullRequests ? [{ id: "pull-requests" as const, label: "Pull requests", icon: <PullRequestIcon/>, current: pullRequestsOpen, onSelect: () => { setAutomationsOpen(false); setPluginDirectoryOpen(false); setSettingsOpen(false); setPullRequestsOpen(true); } }] : []),
         ...(state?.automations?.capability === AUTOMATIONS_CAPABILITY && bridge.automations ? [{ id: "scheduled" as const, label: "Scheduled", icon: <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.33"><circle cx="10" cy="10" r="7"/><path d="M10 5.5V10l-2.5 2" strokeLinecap="round" strokeLinejoin="round"/></svg>, current: automationsOpen, onSelect: openAutomations }] : []),
@@ -2100,7 +2117,8 @@ export function App() {
         const id = dock.activateBrowserSearch(tab, () => committedDraftSearchPages.current);
         browserSearchSelection.begin(id, tab, { route, settingsOpen, pluginDirectoryOpen: pluginDirectoryOpen || automationsOpen || pullRequestsOpen });
       }}
-      onClose={() => setCommandMenuMode(undefined)} onSelectSession={(owner, sessionId) => navigate(sessionId, owner)}/>}
+      onRestoreFocus={commandMenuFileEditor.current?.restoreFocus}
+      onClose={() => { commandMenuFileEditor.current = undefined; setCommandMenuMode(undefined); }} onSelectSession={(owner, sessionId) => navigate(sessionId, owner)}/>}
     {fileSearchOwner && fileSearchOwner === workspaceOwner && workspace && workspaceTarget && <WorkspaceFileSearch key={workspaceOwner} data={workspace} connected={connected}
       onClose={() => setFileSearchOwner(undefined)} onOpenFile={path => {
         setWorkspaceFileRequest({ owner: fileSearchOwner, request: { id: crypto.randomUUID(), path } });

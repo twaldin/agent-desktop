@@ -53,10 +53,17 @@ export class KeyboardAcceleratorMatcher<Command extends string> {
       return repeated ? {type:"command",command:repeated.command} : undefined;
     }
     const pending = now < this.expires ? this.pending.filter(item => candidates.some(candidate => candidate.command === item.command && candidate.key === item.key)) : [];
-    const advance = (items: typeof candidates) => items.filter(item => sameAccelerator(item.key.split(" ")[item.next]!, stroke, this.platform));
+    const advance = (items: typeof candidates, value = stroke) => items.filter(item => sameAccelerator(item.key.split(" ")[item.next]!, value, this.platform));
     // A mismatching stroke can be the first stroke of a different command.
     let matches = pending.length ? advance(pending) : [];
     if (!matches.length) matches = advance(candidates);
+    // Native Ctrl+Shift+Minus reports "_". Saved logical underscore bindings
+    // keep priority; only an unmatched physical chord tries its base spelling.
+    if (!matches.length && event.ctrlKey && !event.metaKey && !event.altKey && event.shiftKey && event.code === "Minus" && event.key === "_") {
+      const physicalStroke = stroke.slice(0, -1) + "-";
+      matches = pending.length ? advance(pending, physicalStroke) : [];
+      if (!matches.length) matches = advance(candidates, physicalStroke);
+    }
     this.reset();
     const completed = matches.find(item => item.next + 1 === item.key.split(" ").length);
     if (completed) return { type: "command", command: completed.command };

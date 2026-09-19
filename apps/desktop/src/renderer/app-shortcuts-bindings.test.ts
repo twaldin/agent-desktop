@@ -162,3 +162,50 @@ test("owned editors admit only their explicit scoped commands and capture revoke
     expect(local).toBe(1);
   } finally { dispose(); }
 });
+
+test("resolved file Forward owns the native shifted-Minus event", () => {
+  const input = inputOwner(), calls: string[] = [];
+  const editor = { nodeType: 1, isContentEditable: true,
+    closest: (selector: string) => selector.includes(".editor-content") ? editor : null } as unknown as HTMLElement;
+  const dispose = installAppShortcuts(input.window, {
+    bindings: readAppCommandBindings(undefined, true).bindings,
+    actions: { "file-navigate-back": () => calls.push("back"), "file-navigate-forward": () => calls.push("forward") },
+    inputActions: ["file-navigate-back", "file-navigate-forward"],
+    ownedSurfaceActions: ["file-navigate-back", "file-navigate-forward"],
+  });
+  try {
+    const consumed = input.key("_", { code: "Minus", metaKey: false, ctrlKey: true, shiftKey: true, composedPath: () => [editor] });
+    expect(calls).toEqual(["forward"]);
+    expect(consumed).toBe(true);
+  } finally { dispose(); }
+});
+
+test("file Forward physical spelling preserves saved logical underscore and live remaps", () => {
+  const input = inputOwner(), calls: string[] = [];
+  const editor = { nodeType: 1, isContentEditable: true,
+    closest: (selector: string) => selector.includes(".editor-content") ? editor : null } as unknown as HTMLElement;
+  const resolve = (overrides: { command: string; keys: string[] }[]) => readAppCommandBindings({
+    key: "general.commandKeymap", deleted: false, value: { version: 1, platform: "mac", overrides },
+    revision: { counter: 1, actor: "00000000-0000-4000-8000-000000000001", opId: "00000000-0000-4000-8000-000000000002" },
+  }, true).bindings;
+  let bindings = resolve([{ command: "file.navigateBack", keys: ["Ctrl+Shift+_"] }]);
+  const dispose = installAppShortcuts(input.window, () => ({
+    bindings,
+    actions: { "file-navigate-back": () => calls.push("back"), "file-navigate-forward": () => calls.push("forward") },
+    inputActions: ["file-navigate-back", "file-navigate-forward"],
+    ownedSurfaceActions: ["file-navigate-back", "file-navigate-forward"],
+  }));
+  const shiftedMinus = () => input.key("_", { code: "Minus", metaKey: false, ctrlKey: true, shiftKey: true, composedPath: () => [editor] });
+  try {
+    expect(shiftedMinus()).toBe(true);
+    expect(calls).toEqual(["back"]);
+    bindings = resolve([{ command: "file.navigateForward", keys: ["Command+J"] }]);
+    expect(shiftedMinus()).toBe(false);
+    expect(input.key("j", { composedPath: () => [editor] })).toBe(true);
+    expect(calls).toEqual(["back", "forward"]);
+    bindings = resolve([{ command: "file.navigateForward", keys: [] }]);
+    expect(shiftedMinus()).toBe(false);
+    expect(input.key("_", { code: "Minus", metaKey: false, shiftKey: true, composedPath: () => [editor] })).toBe(false);
+    expect(calls).toEqual(["back", "forward"]);
+  } finally { dispose(); }
+});
