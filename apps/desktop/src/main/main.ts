@@ -1,4 +1,5 @@
 import { sessionExportStatus, saveSessionExport } from "./session-export";
+import { requestSessionUsage, requestSessionUsageCommand } from "./session-usage-transport";
 import { registerPlanExternalEditorHandlers } from "./plan-external-editor-transport";
 import { requestForceToolState } from "./force-tool-transport";
 import { registerPlanReadHandler } from "./plan-transport";
@@ -487,8 +488,13 @@ ipcMain.handle("host:state", async (event, hostId?: string) => {
   connectEvents(await endpointFor(hostId));
   return state;
 });
-ipcMain.handle("host:command", (event, envelope: CommandEnvelope, hostId?: string) => {
-  assertTrustedSender(event); return requestVersionedCommand((path, body) => request(path, body, hostId), envelope);
+ipcMain.handle("host:command", async (event, envelope: CommandEnvelope, hostId?: string) => {
+  assertTrustedSender(event);
+  if (envelope.command.type === "session.usage.reset.prepare" || envelope.command.type === "session.usage.reset.respond") {
+    if (!hostId) throw new Error("Choose the provider usage owning host.");
+    return requestSessionUsageCommand(await endpointFor(hostId), envelope);
+  }
+  return requestVersionedCommand((path, body) => request(path, body, hostId), envelope);
 });
 function requireImageOwner(hostId: string): string {
   if (typeof hostId !== "string" || !hostId.length || hostId.length > 200 || hostId.includes("\0")) throw new Error("Choose the image's owning host.");
@@ -610,6 +616,9 @@ ipcMain.handle("desktop:session-export-save", async (event, receipt: import("@ag
     return value;
   } finally { workspaceCopies.delete(id); }
 }));
+ipcMain.handle("host:session-usage", async (event, sessionId: string, hostId: string, mode?: import("@agent-desktop/shared").UsageRefresh, commandId?: string) => {
+  assertTrustedSender(event); return requestSessionUsage(await endpointFor(hostId), sessionId, mode, commandId);
+});
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
 });

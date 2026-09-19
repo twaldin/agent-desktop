@@ -998,6 +998,9 @@ export class WorkerRuntime {
     let disposeCall: Promise<void> | undefined;
     let imageReads = 0;
     const handle: WorkerSession = {
+      readUsage: mode => client.request({ operation: "readUsage", args: { mode } }, 60_000),
+      prepareUsageReset: args => client.request({ operation: "prepareUsageReset", args }, 60_000),
+      redeemUsageReset: (ticket, redeemRequestId) => client.request({ operation: "redeemUsageReset", args: { ticket, redeemRequestId } }, 120_000),
       get id() { return state().id; }, get sessionFile() { return state().sessionFile; },
       get cwd() { return state().cwd; }, get model() { return state().model; },
       get thinkingLevel() { return state().thinkingLevel; }, get isStreaming() { return state().isStreaming; },

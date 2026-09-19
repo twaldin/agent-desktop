@@ -1,6 +1,8 @@
 import { SessionExportService } from "./session-export";
 import { SessionExportHttp } from "./session-export-http";
 import { SESSION_EXPORT_CAPABILITY } from "@agent-desktop/shared";
+import { SessionUsageService } from "./session-usage";
+import { SessionUsageHttp, usageCommandHeaders } from "./session-usage-http";
 import { PlanExternalEditorHttp, type PlanExternalEditorHttpAction } from "./plan-external-editor-http";
 import { PlanExternalEditors } from "./plan-external-editors";
 import { PlanEditorTerminals } from "./plan-editor-terminal";
@@ -564,6 +566,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const sessionTodosHttp = new SessionTodosHttp({ ...todosOwners, hostId: store.host.id,
     receipt: (sessionId, commandId) => projectTodoJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
   });
+  const sessionUsage = new SessionUsageService({ store, ordered, open: id => getHandle(id), commandActive: id => commands.has(id),
+    existing: async id => stopping ? undefined : handles.get(id)?.catch(() => undefined),
+    assertActive: () => { if (stopping) throw new Error("Host is stopping."); },
+  });
+  const sessionUsageHttp = new SessionUsageHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    read: (id, mode, commandId) => sessionUsage.read(id, mode, commandId),
+  });
   const sessionPlanHttp = new SessionPlanHttp({ hostId: store.host.id,
     receipt: (sessionId, commandId) => projectPlanDecisionJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
     continuation: sessionId => planDecisions.continuation(sessionId),
@@ -723,7 +732,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
 
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
-    return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
+    return { protocolVersion: 1, sessionUsage: { version: 1, commandVersion: 20, nativePolicy: false }, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
       sessionExports: SESSION_EXPORT_CAPABILITY,
       sessionForks: SESSION_FORK_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
@@ -1031,6 +1040,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const result = await planDecisions.retry(envelope.id, request);
         publish({ type: "runtime", sessionId: command.sessionId, event: { type: "plan_changed" } });
         return result;
+      }
+      case "session.usage.reset.prepare": {
+        try { return { ok: true, commandId: envelope.id, value: { type: "session.usage.reset", receipt: await sessionUsage.prepare(envelope.id, command) } }; }
+        catch { return fail(envelope.id, "USAGE_REJECTED", "Reset preparation could not be confirmed. Inspect the original saved-reset state before trying again."); }
+      }
+      case "session.usage.reset.respond": {
+        try { return { ok: true, commandId: envelope.id, value: { type: "session.usage.reset", receipt: await sessionUsage.answer(envelope.id, command) } }; }
+        catch { return fail(envelope.id, "OUTCOME_UNKNOWN", "The original reset answer could not be confirmed. Inspect it without sending another answer."); }
       }
       case "session.plan.control": {
         const owner = await handles.get(command.sessionId)?.catch(() => undefined);
@@ -1482,6 +1499,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }
         const todosResponse = await sessionTodosHttp.route(request, url);
         if (todosResponse) return todosResponse;
+        const usageResponse = await sessionUsageHttp.route(request, url);
+        if (usageResponse) return usageResponse;
         const planResponse = await sessionPlanHttp.route(request, url);
         if (planResponse) return planResponse;
         const exportResponse = await sessionExportHttp.route(request, url);
@@ -1595,6 +1614,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }
         if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands", "/v19/commands", "/v20/commands"].includes(url.pathname)) {
           const value = await request.json();
+          const usageHeaders = usageCommandHeaders(request, url.pathname, value, store.host.id);
+          if (usageHeaders instanceof Response) return usageHeaders;
           const documentMutation = value?.command?.type === "session.plan.mutate" && value?.command?.mutation?.action === "document";
           if (documentMutation && (value?.commandVersion !== 20 || url.pathname !== "/v20/commands"))
             return Response.json({ code: "PLAN_DOCUMENT_PROTOCOL_REQUIRED", error: "Native Plan document changes require command version 20 and /v20/commands. This request was not accepted." }, { status: 422 });
@@ -1625,7 +1646,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           }
           if (url.pathname === "/v1/commands" && hasApprovalIntent(value?.command)) return Response.json({ code: "PERMISSION_PROTOCOL_REQUIRED", error: "Native permission intent requires /v2/commands." }, { status: 422 });
           const commandVersion = url.pathname === "/v20/commands" ? 20 : url.pathname === "/v19/commands" ? 19 : url.pathname === "/v18/commands" ? 18 : url.pathname === "/v17/commands" ? 17 : url.pathname === "/v16/commands" ? 16 : url.pathname === "/v15/commands" ? 15 : url.pathname === "/v14/commands" ? 14 : url.pathname === "/v13/commands" ? 13 : url.pathname === "/v12/commands" ? 12 : url.pathname === "/v11/commands" ? 11 : url.pathname === "/v10/commands" ? 10 : url.pathname === "/v9/commands" ? 9 : url.pathname === "/v8/commands" ? 8 : url.pathname === "/v7/commands" ? 7 : url.pathname === "/v6/commands" ? 6 : url.pathname === "/v5/commands" ? 5 : url.pathname === "/v4/commands" ? 4 : url.pathname === "/v3/commands" ? 3 : url.pathname === "/v2/commands" ? 2 : 1;
-          return Response.json(await dispatch(parseCommandEnvelope(value, commandVersion), commandVersion));
+          return Response.json(await dispatch(parseCommandEnvelope(value, commandVersion), commandVersion), { headers: usageHeaders });
         }
         const messagePath = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
         if (request.method === "GET" && messagePath) return Response.json(await (await getHandle(decodeURIComponent(messagePath[1]!))).getMessages());

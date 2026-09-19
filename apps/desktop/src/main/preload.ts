@@ -186,6 +186,7 @@ const bridge: DesktopBridge = {
     return () => ipcRenderer.removeListener("host:queued-messages-changed", callback);
   },
   mutateGoal: (sessionId, request, hostId) => ipcRenderer.invoke("host:goal-control", sessionId, request, hostId),
+  getSessionUsage: (sessionId, hostId, mode, commandId) => ipcRenderer.invoke("host:session-usage", sessionId, hostId, mode, commandId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
   mcpOwner: { request: (hostId, request) => ipcRenderer.invoke("host:mcp-owner", hostId, request) },
   sessionMcpApp: (sessionId, request, hostId) => ipcRenderer.invoke("host:mcp-app", sessionId, request, hostId),

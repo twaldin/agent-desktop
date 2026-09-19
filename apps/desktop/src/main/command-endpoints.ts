@@ -7,7 +7,7 @@ import { HostRequestError } from "./host-transport";
 export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" | "/v14/commands" | "/v15/commands" | "/v16/commands" | "/v17/commands" | "/v18/commands" | "/v19/commands" | "/v20/commands" | "/v22/commands" {
   const command = envelope.command;
   if (envelope.commandVersion === 22 || command.type === "session.todos.mutate") return "/v22/commands";
-  if (envelope.commandVersion === 20 || command.type === "session.plan.mutate" && command.mutation.action === "document") return "/v20/commands";
+  if (envelope.commandVersion === 20 || command.type === "session.usage.reset.prepare" || command.type === "session.usage.reset.respond" || command.type === "session.plan.mutate" && command.mutation.action === "document") return "/v20/commands";
   if (envelope.commandVersion === 19 || command.type === "session.plan.control" || command.type === "session.plan.mutate" || command.type === "session.plan.execution.retry") return "/v19/commands";
   if (envelope.commandVersion === 18 || command.type === "session.force.cancel" || command.type === "session.prompt" && (command.forceTool !== undefined || command.forceRecovery !== undefined)) return "/v18/commands";
   if (envelope.commandVersion === 17 || command.type === "session.follow-up" && command.attachments !== undefined) return "/v17/commands";

@@ -1,0 +1,10 @@
+.session-usage-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
+.session-usage-dialog header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.session-usage-dialog h2, .session-usage-dialog h3, .session-usage-dialog h4 { margin: 0 0 8px; }
+.session-usage-dialog p { margin: 8px 0; overflow-wrap: anywhere; }
+.session-usage-dialog section { margin-top: 20px; }
+.session-usage-dialog article, .usage-reset-receipt { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-top: 12px; }
+.usage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.usage-limit { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.session-usage-dialog small { overflow-wrap: anywhere; }
+@media (max-width: 520px) { .usage-actions > button { width: 100%; } }

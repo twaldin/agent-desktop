@@ -1,0 +1,106 @@
+diff --git a/src/auth-storage.ts b/src/auth-storage.ts
+--- a/src/auth-storage.ts
++++ b/src/auth-storage.ts
+@@ -950,6 +950,11 @@
+  * Identifies which stored account to redeem a saved rate-limit reset for.
+  * Any one field is enough; `credentialId` is the most precise.
+  */
++/** Resolved native identity at the synchronous saved-reset dispatch boundary. No token bytes. */
++export interface ResetCreditConsumeIdentity {
++  provider: string; credentialId?: number; accountId?: string; email?: string; projectId?: string; orgId?: string; creditId: string;
++}
++
+ export interface ResetCreditTarget {
+ 	credentialId?: number;
+ 	accountId?: string;
+@@ -6133,6 +6138,12 @@
+ 		target: ResetCreditTarget;
+ 		provider?: string;
+ 		creditId?: string;
++		/** Stable identity for this one admitted native request; omitted preserves native generation. */
++		redeemRequestId?: string;
++		/** Opt in to unknown for absent/malformed provider outcome codes. */
++		requireExplicitOutcome?: boolean;
++		/** Synchronous final admission after credential refresh, immediately before consume. False or throw sends no request. */
++		beforeConsume?: (identity: ResetCreditConsumeIdentity) => boolean;
+ 		baseUrlResolver?: (provider: string) => string | undefined;
+ 		signal?: AbortSignal;
+ 	}): Promise<ResetCreditRedeemOutcome> {
+@@ -6193,8 +6204,17 @@
+ 			creditId = credit.id;
+ 		}
+ 
++		if (options.beforeConsume) {
++			let admitted = false;
++			try { admitted = options.beforeConsume({ provider, credentialId: match.credentialId, accountId: match.accountId,
++				email: match.email, projectId: match.projectId, orgId: match.orgId, creditId }) === true; } catch { /* Fail closed before dispatch. */ }
++			if (!admitted) return { ok: false, code: "admission_rejected", accountId: match.accountId, email: match.email, creditId };
++		}
++
+ 		const result = await consumeCodexResetCredit({
+ 			creditId,
++			redeemRequestId: options.redeemRequestId,
++			requireExplicitOutcome: options.requireExplicitOutcome,
+ 			accessToken: match.accessToken,
+ 			accountId: match.accountId,
+ 			baseUrl,
+diff --git a/dist/types/auth-storage.d.ts b/dist/types/auth-storage.d.ts
+--- a/dist/types/auth-storage.d.ts
++++ b/dist/types/auth-storage.d.ts
+@@ -652,6 +652,11 @@
+  * Identifies which stored account to redeem a saved rate-limit reset for.
+  * Any one field is enough; `credentialId` is the most precise.
+  */
++/** Resolved native identity at the synchronous saved-reset dispatch boundary. No token bytes. */
++export interface ResetCreditConsumeIdentity {
++  provider: string; credentialId?: number; accountId?: string; email?: string; projectId?: string; orgId?: string; creditId: string;
++}
++
+ export interface ResetCreditTarget {
+     credentialId?: number;
+     accountId?: string;
+@@ -1142,6 +1147,12 @@
+         target: ResetCreditTarget;
+         provider?: string;
+         creditId?: string;
++        /** Stable identity for this one admitted native request; omitted preserves native generation. */
++        redeemRequestId?: string;
++        /** Opt in to unknown for absent/malformed provider outcome codes. */
++        requireExplicitOutcome?: boolean;
++        /** Synchronous final admission after credential refresh, immediately before consume. False or throw sends no request. */
++        beforeConsume?: (identity: ResetCreditConsumeIdentity) => boolean;
+         baseUrlResolver?: (provider: string) => string | undefined;
+         signal?: AbortSignal;
+     }): Promise<ResetCreditRedeemOutcome>;
+diff --git a/src/usage/openai-codex-reset.ts b/src/usage/openai-codex-reset.ts
+--- a/src/usage/openai-codex-reset.ts
++++ b/src/usage/openai-codex-reset.ts
+@@ -180,7 +180,7 @@
+  * double-spend. The returned `code` is `"reset"` on success.
+  */
+ export async function consumeCodexResetCredit(
+-	auth: CodexResetAuth & { creditId: string; redeemRequestId?: string },
++	auth: CodexResetAuth & { creditId: string; redeemRequestId?: string; requireExplicitOutcome?: boolean },
+ ): Promise<CodexResetConsumeResult> {
+ 	const redeemRequestId = auth.redeemRequestId ?? crypto.randomUUID();
+ 	const url = buildUrl(auth.baseUrl, RESET_CREDITS_CONSUME_PATH);
+@@ -201,6 +201,7 @@
+ 		body = undefined;
+ 	}
+ 	const code =
+-		isRecord(body) && typeof body.code === "string" ? body.code : response.ok ? "reset" : `http_${response.status}`;
++		isRecord(body) && typeof body.code === "string" && (!auth.requireExplicitOutcome || body.code.length > 0)
++			? body.code : auth.requireExplicitOutcome ? "outcome_unknown" : response.ok ? "reset" : `http_${response.status}`;
+ 	return { ok: code === "reset", code, status: response.status, raw: body };
+ }
+diff --git a/dist/types/usage/openai-codex-reset.d.ts b/dist/types/usage/openai-codex-reset.d.ts
+--- a/dist/types/usage/openai-codex-reset.d.ts
++++ b/dist/types/usage/openai-codex-reset.d.ts
+@@ -64,5 +64,7 @@
+ export declare function consumeCodexResetCredit(auth: CodexResetAuth & {
+     creditId: string;
+     redeemRequestId?: string;
++    /** Missing or malformed outcome is unknown when opted in. Defaults to native legacy interpretation. */
++    requireExplicitOutcome?: boolean;
+ }): Promise<CodexResetConsumeResult>;
+ export {};

@@ -1,3 +1,4 @@
+export * from "./session-usage";
 export * from "./session-plan";
 export * from "./force-tool";
 export * from "./session-outputs";
@@ -237,6 +238,7 @@ export interface TranscriptMessage {
 }
 
 export interface HostState {
+  sessionUsage?: { version: 1; commandVersion: 20; nativePolicy: false };
   pullRequestWrites?: typeof import('./pull-request-write').PULL_REQUEST_WRITES_CAPABILITY;
   pullRequests?: typeof import('./pull-requests').PULL_REQUESTS_CAPABILITY;
   automations?: { capability: typeof import('./automations').AUTOMATIONS_CAPABILITY };
@@ -272,7 +274,7 @@ export interface HostState {
   diagnostics?: { models?: string; preferences?: string };
 }
 
-export type HostCommand =
+export type HostCommand = import("./session-usage").SessionUsageCommand
   | { type: "session.location.move"; sessionId: string; expectedRevision: string; target: import("./task-location").TaskLocationMoveTarget }
   | { type: "session.location.resume"; sessionId: string; operationId: string; expectedRevision: string }
   | { type: "session.export"; sessionId: string; theme: import("./session-export").SessionExportTheme }
@@ -330,7 +332,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; admission?: PromptAdmission; value?: import("./session-export").SessionExportReceipt | Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt | ({ type: "session.plan.control" } & import("./session-plan").PlanControlResult) | { type: "session.plan.mutate"; receipt: import("./session-plan").PlanDecisionReceipt; session?: SessionSummary } | import("./session-plan").PlanExecutionRetryResult | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancelResult) | { type: "session.todos.mutate"; result: import("./session-todos").TodoMutationResult } }
+  | { ok: true; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; admission?: PromptAdmission; value?: import("./session-usage").SessionUsageResult | import("./session-export").SessionExportReceipt | Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt | ({ type: "session.plan.control" } & import("./session-plan").PlanControlResult) | { type: "session.plan.mutate"; receipt: import("./session-plan").PlanDecisionReceipt; session?: SessionSummary } | import("./session-plan").PlanExecutionRetryResult | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancelResult) | { type: "session.todos.mutate"; result: import("./session-todos").TodoMutationResult } }
   | { ok: false; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -386,6 +388,7 @@ export type NativeModifier = "meta" | "control" | "alt";
 export type ModifierReleaseResult = "released" | "unavailable" | "cancelled";
 
 export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBridge>, Partial<TerminalCreationBridge> {
+  getSessionUsage?(sessionId: string, hostId: string, mode?: import("./session-usage").UsageRefresh, commandId?: string): Promise<import("./session-usage").SessionUsageResponse>;
   pullRequestWrites?: import('./pull-request-write').PullRequestWritesBridge;
   pullRequests?: import('./pull-requests').PullRequestsBridge;
   automations?: import('./automations').AutomationsBridge;

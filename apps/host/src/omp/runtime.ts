@@ -1,4 +1,6 @@
 import { exportNativeSession, nativeExportIntent } from "./session-export";
+import { NativeSessionUsage, type NativeUsagePreparation, type NativeUsageResult } from "./session-usage";
+import type { SessionUsage, UsageRefresh, UsageResetPrepare } from "../../../../packages/shared/src/session-usage";
 import { NativePlanExecutionAdmission, NativePlanMessageAdmissionError, type OmpPlanExecutionRun } from "./plan-execution-admission";
 import { NativePlanController, NativePlanError, resolveNativePlanInvocation } from "./plan-controller";
 import { getEditorCommand } from "@oh-my-pi/pi-coding-agent/utils/external-editor";
@@ -114,6 +116,9 @@ export interface OmpBrowserTabCreateResult {
 export interface OmpSession {
   getExportIntent(text: string): Promise<import("./session-export").NativeExportIntent>;
   exportSession(input: import("./session-export").NativeSessionExportInput): Promise<void>;
+  readUsage(mode: UsageRefresh): Promise<SessionUsage | null>;
+  prepareUsageReset(request: UsageResetPrepare): Promise<NativeUsagePreparation>;
+  redeemUsageReset(ticket: string, redeemRequestId: string): Promise<NativeUsageResult>;
   readonly id: string;
   readonly sessionFile: string;
   readonly cwd: string;
@@ -609,12 +614,13 @@ export class OmpRuntime {
       }), async () => { await session.setActiveToolsByName(goalPreviousTools); });
       const assertIdle = () => {
         assertSessionActive();
-        if (promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || todosController?.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
+        if (usage.busy || promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || todosController?.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
       const assertSnapshotReady = (operation = "moving this task") => {
         assertIdle();
         if (session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || interruptsInFlight || mcpReads.size || outputRead || htmlPreviews.active || mcpApps.pending) throw new Error(`Resolve queued messages, questions, side answers, MCP reads, HTML previews, and interrupts before ${operation}.`);
       };
+      const usage = new NativeSessionUsage(session, () => assertSnapshotReady("inspecting provider usage"), assertSessionActive);
       const taskLocationOutcomeUnknown = (message: string) => Object.assign(new Error(message), { name: "TaskLocationOutcomeUnknown", code: "OUTCOME_UNKNOWN" });
       const trackMcpMutation = <T>(run: Promise<T>) => {
         mcpMutation = run;
@@ -737,7 +743,7 @@ export class OmpRuntime {
       let todoDispatchDepth = 0;
       const nativeTodos = todosController = new NativeSessionTodos(session, manager, {
         assertOwner: assertSessionActive,
-        getBusyReason: () => (todoDispatchDepth === 0 && (promptInFlight || admissionPending))
+        getBusyReason: () => usage.busy || (todoDispatchDepth === 0 && (promptInFlight || admissionPending))
           || accountMutation || goalMutation || planMutation || planController?.busy || mcpMutation || interruptsInFlight
           || session.isStreaming || session.isCompacting || session.isAborting || session.hasPostPromptWork
           || session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running"
@@ -745,13 +751,16 @@ export class OmpRuntime {
         onChanged: () => { if (!disposed && promotionState === "idle") for (const listener of listeners) listener({ type: "todos_changed" }); },
       });
       const handle: OmpSession = {
+        readUsage: mode => usage.read(mode),
+        prepareUsageReset: request => usage.prepare(request),
+        redeemUsageReset: (ticket, requestId) => usage.redeem(ticket, requestId),
         get id() { return session.sessionId; },
         get sessionFile() { return session.sessionFile ?? sessionFile; },
         get cwd() { return manager.getCwd(); },
         get model() { return session.model ? { provider: session.model.provider, id: session.model.id } : null; },
         get thinkingLevel() { return session.configuredThinkingLevel(); },
         get isStreaming() { return session.isStreaming; },
-        get hasPostPromptWork() { return session.hasPostPromptWork || Boolean(mcp.getAuthorization()?.pending) || nativePlan.busy || Boolean(planMutation) || nativeTodos.busy; },
+        get hasPostPromptWork() { return usage.busy || session.hasPostPromptWork || Boolean(mcp.getAuthorization()?.pending) || nativePlan.busy || Boolean(planMutation) || nativeTodos.busy; },
         get title() { return session.sessionName ?? manager.getHeader()?.title; },
         get createdAt() { return Date.parse(manager.getHeader()!.timestamp); },
         modelFallbackMessage: result.modelFallbackMessage,
@@ -1302,7 +1311,7 @@ export class OmpRuntime {
         cancelForceTool: input => { assertSessionActive(); return forceTool.cancel(input); },
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
-          if (promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || nativeTodos.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          if (usage.busy || promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || nativeTodos.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
           const forceFields = parseForceToolPromptFields(promptOptions);
           if (forceFields.forceRecovery && ((promptOptions.commandVersion ?? 0) < 18 || !promptOptions.commandId))
             throw new Error("Force prompt recovery requires command protocol 18 and its original operation identity.");
@@ -1569,6 +1578,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
+          usage.dispose();
           const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose(), htmlPreviews.dispose(), planExecution.dispose()]);
           btw.dispose();
           detachedQuestions.dispose();

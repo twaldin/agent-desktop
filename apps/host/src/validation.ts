@@ -1,5 +1,6 @@
 import { exportId, exportTheme } from "../../../packages/shared/src/session-export";
 import { parseTodoCommandId, parseTodoMutationRequest } from "../../../packages/shared/src/session-todos";
+import { parseUsageCommand } from "../../../packages/shared/src/session-usage";
 import { parsePlanControlRequest, parsePlanExecutionRetryRequest, parsePlanMutationRequest } from "../../../packages/shared/src/session-plan";
 import { parseForceToolPromptFields, parseForceToolCancel } from "../../../packages/shared/src/force-tool";
 import { parseDraftBrowserContinuation, parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativeSkillFileRef } from "@agent-desktop/shared";
@@ -169,6 +170,10 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
       const { type: _type, ...request } = input;
       return { id: parseTodoCommandId(id), command: { type, ...parseTodoMutationRequest(request) } };
     }
+    case "session.usage.reset.prepare":
+    case "session.usage.reset.respond":
+      if ((commandVersion ?? 0) < 20) throw new Error("Saved resets require command version 20.");
+      return { id, command: parseUsageCommand(input) };
     case "session.plan.control":
     case "session.plan.mutate":
     case "session.plan.execution.retry": {

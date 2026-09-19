@@ -210,9 +210,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
   try {
     if (stopping && message.operation !== "dispose" && message.operation !== "disposeBrowserEvaluation") throw new Error("OMP worker is stopping");
     const interactive = ["listInteractions", "respondInteraction", "cancelInteractions", "dispose"].includes(message.operation);
-    if ((promotionInFlight || promotedOwnerRetired) && !interactive) throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
+    if ((promotionInFlight || promotedOwnerRetired) && !interactive) {
+      // This gate precedes native dispatch. Preserve a known Todos refusal so
+      // its durable receipt can release the UI without replaying the command.
+      const error = new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
+      if (message.operation === "mutateTodos") Object.assign(error, { code: "TODOS_REJECTED" });
+      throw error;
+    }
     if (message.operation === "flushSession" && activeRequests) throw new Error("Wait for the current native operation before flushing for Fork.");
-    if (message.operation === "exportSession" || message.operation === "promoteBtw" || message.operation === "preparePlanDecision") {
+    if (message.operation === "exportSession" || message.operation === "promoteBtw" || message.operation === "preparePlanDecision" || message.operation === "readUsage" || message.operation === "prepareUsageReset" || message.operation === "redeemUsageReset") {
       if (activeRequests) throw new Error("Wait for the current native operation before promoting a side answer.");
       promotionInFlight = ownsPromotion = true;
     }
@@ -346,6 +352,9 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getComposerCompletions": if (!runtime) throw new Error("OMP worker is not initialized"); respond(true, message.args.cwd ? await runtime.getComposerCompletions(message.args.cwd, message.args.query) : await requireSession().getComposerCompletions(message.args.query)); break;
       case "getMessages": respond(true, requireSession().getMessages()); break;
       case "controlPlan": respond(true, parsePlanControlResult(await requireSession().controlPlan(parsePlanControlRequest(message.args)))); break;
+      case "readUsage": respond(true, await requireSession().readUsage(message.args.mode)); break;
+      case "prepareUsageReset": respond(true, await requireSession().prepareUsageReset(message.args)); break;
+      case "redeemUsageReset": respond(true, await requireSession().redeemUsageReset(message.args.ticket, message.args.redeemRequestId)); break;
       case "getPlan": respond(true, parseSessionPlan(requireSession().getPlan())); break;
       case "getPlanExternalEditorAvailable": respond(true, requireSession().getPlanExternalEditorAvailable()); break;
       case "preparePlanExternalEditor": {
