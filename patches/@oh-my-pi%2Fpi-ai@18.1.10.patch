@@ -180,7 +180,7 @@ index 00c99e2..732e4de 100644
  export declare const credentialBlockSnapshotSchema: FluentType<CredentialBlockSnapshot>;
  export declare const snapshotEntrySchema: FluentType<SnapshotEntry>;
 diff --git a/dist/types/auth-storage.d.ts b/dist/types/auth-storage.d.ts
-index bdbe686..6d50ca7 100644
+index bdbe686..6707e49 100644
 --- a/dist/types/auth-storage.d.ts
 +++ b/dist/types/auth-storage.d.ts
 @@ -52,6 +52,8 @@ export interface StoredAuthCredential {
@@ -219,7 +219,7 @@ index bdbe686..6d50ca7 100644
  }
  /**
   * Identity slice of the credential a successful {@link AuthStorage.login}
-@@ -597,6 +605,22 @@ export interface OAuthAccountIdentity {
+@@ -597,6 +605,39 @@ export interface OAuthAccountIdentity {
      orgId?: string;
      orgName?: string;
  }
@@ -239,10 +239,27 @@ index bdbe686..6d50ca7 100644
 +    projectId?: string;
 +    orgId?: string;
 +}>;
++/**
++ * Secret-free proof of which credential origin one session was routed to when
++ * {@link AuthStorage.captureSessionCredentialSelection} ran. `revision` is an
++ * opaque per-issue nonce (never derived from bearer or account data); a later
++ * capture after any routing change for the scope yields a new revision, so a
++ * selection that moved away and back is still detected as stale. Detached JSON
++ * copies stay checkable against the issuing AuthStorage only.
++ */
++export type SessionCredentialSelectionObservation = Readonly<{
++    version: 1;
++    provider: string;
++    sessionId: string;
++    revision: string;
++    origin: "oauth" | "runtime" | "config";
++    /** Durable stored-row id of the materialized OAuth sticky; absent for runtime/config origins. */
++    credentialId?: number;
++}>;
  export type OAuthAccessResolution = ({
      ok: true;
  } & OAuthAccess) | ({
-@@ -652,6 +676,12 @@ export interface StoredOAuthRefreshResult<T extends OAuthCredential = OAuthCrede
+@@ -652,6 +693,12 @@ export interface StoredOAuthRefreshResult<T extends OAuthCredential = OAuthCrede
   * Identifies which stored account to redeem a saved rate-limit reset for.
   * Any one field is enough; `credentialId` is the most precise.
   */
@@ -255,7 +272,7 @@ index bdbe686..6d50ca7 100644
  export interface ResetCreditTarget {
      credentialId?: number;
      accountId?: string;
-@@ -884,6 +914,12 @@ export declare class AuthStorage {
+@@ -884,6 +931,12 @@ export declare class AuthStorage {
       * metadata paths; it does not refresh tokens, rank usage, or advance selection.
       */
      getOAuthAccountIdentity(provider: string, sessionId?: string): OAuthAccountIdentity | undefined;
@@ -268,7 +285,34 @@ index bdbe686..6d50ca7 100644
      /**
       * Get all credentials.
       */
-@@ -1142,6 +1178,14 @@ export declare class AuthStorage {
+@@ -1080,6 +1133,26 @@ export declare class AuthStorage {
+     pinSessionOAuthAccount(provider: string, sessionId: string, credentialId: number, options?: {
+         lastUsedAtMs?: number;
+     }): boolean;
++    /**
++     * Capture which credential origin `sessionId` is currently routed to for `provider` as a
++     * frozen, secret-free observation for {@link AuthStorage.isSessionCredentialSelectionCurrent}.
++     * Reads only materialized native state — the effective nonempty runtime/config override in
++     * {@link AuthStorage.getApiKey} precedence, else the in-memory OAuth sticky — and never selects,
++     * refreshes, hydrates the sticky cache, or touches the store. Unsupported scopes (no sticky
++     * materialized in this process, env/fallback/stored-api_key routing, closed storage) return
++     * undefined. Repeated captures of an unchanged scope return the same observation; a capture
++     * after any routing change for the scope issues a fresh revision, and the earlier one stays
++     * stale forever.
++     */
++    captureSessionCredentialSelection(provider: string, sessionId: string): SessionCredentialSelectionObservation | undefined;
++    /**
++     * Whether `observation` still names the credential origin its session is routed to on THIS
++     * AuthStorage. Detached (JSON round-tripped) copies work; an observation from another storage,
++     * scope, or revision, a malformed value, or any routing change since capture — including a
++     * selection that moved away and back — is false. After close(), always false. Reads only
++     * materialized state; never selects, refreshes, or performs I/O.
++     */
++    isSessionCredentialSelectionCurrent(observation: SessionCredentialSelectionObservation): boolean;
+     /**
+      * Resolve every stored OAuth credential for `provider` independently.
+      *
+@@ -1142,6 +1215,14 @@ export declare class AuthStorage {
          target: ResetCreditTarget;
          provider?: string;
          creditId?: string;
@@ -1503,11 +1547,15 @@ index 5d9d0d8..c98689b 100644
  
  export const refresherScheduleSchema: FluentType<RefresherSchedule> = type({
 diff --git a/src/auth-storage.ts b/src/auth-storage.ts
-index 7f9e431..f115877 100644
+index 7f9e431..a98517a 100644
 --- a/src/auth-storage.ts
 +++ b/src/auth-storage.ts
-@@ -10,6 +10,7 @@
- import { createHash } from "node:crypto";
+@@ -7,9 +7,10 @@
+  * - `AuthStorage` class: credential management with round-robin, usage limits, OAuth refresh
+  * - re-exported `SqliteAuthCredentialStore`: concrete SQLite-backed implementation
+  */
+-import { createHash } from "node:crypto";
++import { createHash, randomUUID } from "node:crypto";
  import { planRequirementFor } from "@oh-my-pi/pi-catalog/compat/behavior";
  import { $env, $envExact, extractRetryHint, getAgentDbPath, logger, untilAborted } from "@oh-my-pi/pi-utils";
 +import { matchesResetAccountCredential, sameResetAccountEvidence, snapshotResetAccountEvidence } from "./auth/reset-account-evidence";
@@ -1550,7 +1598,7 @@ index 7f9e431..f115877 100644
  }
  
  /**
-@@ -895,6 +904,23 @@ export interface OAuthAccountIdentity {
+@@ -895,6 +904,41 @@ export interface OAuthAccountIdentity {
  	orgName?: string;
  }
  
@@ -1571,10 +1619,28 @@ index 7f9e431..f115877 100644
 +	orgId?: string;
 +}>;
 +
++/**
++ * Secret-free proof of which credential origin one session was routed to when
++ * {@link AuthStorage.captureSessionCredentialSelection} ran. `revision` is an
++ * opaque per-issue nonce (never derived from bearer or account data); a later
++ * capture after any routing change for the scope yields a new revision, so a
++ * selection that moved away and back is still detected as stale. Detached JSON
++ * copies stay checkable against the issuing AuthStorage only.
++ */
++export type SessionCredentialSelectionObservation = Readonly<{
++	version: 1;
++	provider: string;
++	sessionId: string;
++	revision: string;
++	origin: "oauth" | "runtime" | "config";
++	/** Durable stored-row id of the materialized OAuth sticky; absent for runtime/config origins. */
++	credentialId?: number;
++}>;
++
  export type OAuthAccessResolution = ({ ok: true } & OAuthAccess) | ({ ok: false } & OAuthAccessFailure);
  
  /**
-@@ -950,6 +976,12 @@ export interface StoredOAuthRefreshResult<T extends OAuthCredential = OAuthCrede
+@@ -950,6 +994,12 @@ export interface StoredOAuthRefreshResult<T extends OAuthCredential = OAuthCrede
   * Identifies which stored account to redeem a saved rate-limit reset for.
   * Any one field is enough; `credentialId` is the most precise.
   */
@@ -1587,7 +1653,7 @@ index 7f9e431..f115877 100644
  export interface ResetCreditTarget {
  	credentialId?: number;
  	accountId?: string;
-@@ -1200,6 +1232,8 @@ function storedCredentialArraysEqual(left: StoredCredential[], right: StoredCred
+@@ -1200,6 +1250,8 @@ function storedCredentialArraysEqual(left: StoredCredential[], right: StoredCred
  		if (!leftEntry || !rightEntry) return false;
  		if (leftEntry.id !== rightEntry.id) return false;
  		if (!authCredentialEquals(leftEntry.credential, rightEntry.credential)) return false;
@@ -1596,7 +1662,7 @@ index 7f9e431..f115877 100644
  	}
  	return true;
  }
-@@ -1250,7 +1284,7 @@ class AuthStorageUsageCache implements UsageCache {
+@@ -1250,7 +1302,7 @@ class AuthStorageUsageCache implements UsageCache {
  // In-memory representation
  // ─────────────────────────────────────────────────────────────────────────────
  
@@ -1605,7 +1671,7 @@ index 7f9e431..f115877 100644
  type CredentialSelection<T extends AuthCredential> = {
  	credential: T;
  	index: number;
-@@ -1261,6 +1295,7 @@ type StoredOAuthSelection = {
+@@ -1261,6 +1313,7 @@ type StoredOAuthSelection = {
  	credentialId: number;
  	credential: OAuthCredential;
  	index: number;
@@ -1613,7 +1679,114 @@ index 7f9e431..f115877 100644
  };
  
  type UsageCandidate<T extends AuthCredential> = {
-@@ -1599,7 +1634,7 @@ export class AuthStorage {
+@@ -1321,6 +1374,12 @@ export class AuthStorage {
+ 		string,
+ 		Map<string, { type: AuthCredential["type"]; index: number; lastUsedAtMs?: number }>
+ 	> = new Map();
++	/**
++	 * provider -> sessionId -> the observation currently issued for that scope. Only scopes a
++	 * caller has captured are tracked; any routing change for a scope deletes its entry, and the
++	 * next capture issues a fresh revision. Nothing here is persisted.
++	 */
++	#sessionSelectionObservations: Map<string, Map<string, SessionCredentialSelectionObservation>> = new Map();
+ 	/** Recent bearer fingerprints resolved for each durable OAuth row; used only for delayed usage-limit attribution. */
+ 	#oauthBearerFingerprints: Map<string, Map<number, string[]>> = new Map();
+ 	/** Maps provider:type -> credentialIndex -> blockedUntilMs for temporary backoff. */
+@@ -1428,6 +1487,7 @@ export class AuthStorage {
+ 	close(): void {
+ 		if (this.#closed) return;
+ 		this.#closed = true;
++		this.#sessionSelectionObservations.clear();
+ 		this.#store.close();
+ 	}
+ 
+@@ -1512,14 +1572,20 @@ export class AuthStorage {
+ 	 * Used for CLI --api-key flag.
+ 	 */
+ 	setRuntimeApiKey(provider: string, apiKey: string): void {
++		const beforeOrigin = this.#effectiveOverrideOrigin(provider);
++		const beforeKey = this.#effectiveOverrideKey(provider);
+ 		this.#runtimeOverrides.set(provider, apiKey);
++		this.#reconcileSessionSelectionsOnOverride(provider, beforeOrigin, beforeKey);
+ 	}
+ 
+ 	/**
+ 	 * Remove a runtime API key override.
+ 	 */
+ 	removeRuntimeApiKey(provider: string): void {
++		const beforeOrigin = this.#effectiveOverrideOrigin(provider);
++		const beforeKey = this.#effectiveOverrideKey(provider);
+ 		this.#runtimeOverrides.delete(provider);
++		this.#reconcileSessionSelectionsOnOverride(provider, beforeOrigin, beforeKey);
+ 	}
+ 
+ 	/**
+@@ -1556,14 +1622,20 @@ export class AuthStorage {
+ 	 * still wins for the duration of a single invocation.
+ 	 */
+ 	setConfigApiKey(provider: string, apiKey: string): void {
++		const beforeOrigin = this.#effectiveOverrideOrigin(provider);
++		const beforeKey = this.#effectiveOverrideKey(provider);
+ 		this.#configOverrides.set(provider, apiKey);
++		this.#reconcileSessionSelectionsOnOverride(provider, beforeOrigin, beforeKey);
+ 	}
+ 
+ 	/**
+ 	 * Remove a single config-sourced API key override.
+ 	 */
+ 	removeConfigApiKey(provider: string): void {
++		const beforeOrigin = this.#effectiveOverrideOrigin(provider);
++		const beforeKey = this.#effectiveOverrideKey(provider);
+ 		this.#configOverrides.delete(provider);
++		this.#reconcileSessionSelectionsOnOverride(provider, beforeOrigin, beforeKey);
+ 	}
+ 
+ 	/**
+@@ -1571,9 +1643,43 @@ export class AuthStorage {
+ 	 * re-parsing `models.yml` so removed entries actually disappear.
+ 	 */
+ 	clearConfigApiKeys(): void {
++		for (const provider of this.#sessionSelectionObservations.keys()) {
++			// A config key shadowed by a runtime override never routed requests; only an
++			// effective config key disappearing changes what observed sessions authenticate with.
++			if (this.#effectiveOverrideOrigin(provider) === "config") this.#sessionSelectionObservations.delete(provider);
++		}
+ 		this.#configOverrides.clear();
+ 	}
+ 
++	/** Effective API-key override origin in {@link AuthStorage.getApiKey} precedence: nonempty runtime, then nonempty config. */
++	#effectiveOverrideOrigin(provider: string): "runtime" | "config" | undefined {
++		if (this.#runtimeOverrides.get(provider)) return "runtime";
++		if (this.#configOverrides.get(provider)) return "config";
++		return undefined;
++	}
++
++	#effectiveOverrideKey(provider: string): string | undefined {
++		return this.#runtimeOverrides.get(provider) || this.#configOverrides.get(provider) || undefined;
++	}
++
++	/**
++	 * After a runtime/config override mutation: every observed session of `provider` routes
++	 * differently iff the effective override origin or value changed (an OAuth-origin observation
++	 * predates any override, so a new effective override changes its routing too). Shadowed
++	 * writes keep observations intact.
++	 */
++	#reconcileSessionSelectionsOnOverride(
++		provider: string,
++		beforeOrigin: "runtime" | "config" | undefined,
++		beforeKey: string | undefined,
++	): void {
++		if (!this.#sessionSelectionObservations.has(provider)) return;
++		if (this.#effectiveOverrideOrigin(provider) === beforeOrigin && this.#effectiveOverrideKey(provider) === beforeKey) {
++			return;
++		}
++		this.#sessionSelectionObservations.delete(provider);
++	}
++
+ 	/**
+ 	 * Set a fallback resolver for API keys not found in storage or env vars.
+ 	 * Used for custom provider keys from models.json.
+@@ -1599,7 +1705,7 @@ export class AuthStorage {
  		const grouped = new Map<string, StoredCredential[]>();
  		for (const record of records) {
  			const list = grouped.get(record.provider) ?? [];
@@ -1622,7 +1795,101 @@ index 7f9e431..f115877 100644
  			grouped.set(record.provider, list);
  		}
  
-@@ -2319,7 +2354,7 @@ export class AuthStorage {
+@@ -1649,6 +1755,7 @@ export class AuthStorage {
+ 			}
+ 			if (trackedBearerFingerprints.size === 0) this.#oauthBearerFingerprints.delete(provider);
+ 		}
++		this.#reconcileSessionSelectionsOnCredentials(provider, credentials);
+ 		if (credentials.length === 0) {
+ 			this.#data.delete(provider);
+ 		} else {
+@@ -1657,6 +1764,28 @@ export class AuthStorage {
+ 		this.#bumpGeneration("credentials");
+ 	}
+ 
++	/**
++	 * Observed OAuth scopes route by their in-memory sticky index, so a cache reload that
++	 * removes, retypes, or swaps the row at that index changes routing even though the sticky
++	 * itself is untouched — and is detected here on the way out, not on a later check, so an
++	 * away-and-back swap still leaves the original observation stale. A same-row token refresh
++	 * (same durable id, still OAuth) preserves the observation. Runtime/config observations
++	 * are unaffected by stored rows.
++	 */
++	#reconcileSessionSelectionsOnCredentials(provider: string, credentials: readonly StoredCredential[]): void {
++		const issuedBySession = this.#sessionSelectionObservations.get(provider);
++		if (!issuedBySession) return;
++		const stickies = this.#sessionLastCredential.get(provider);
++		for (const [sessionId, issued] of issuedBySession) {
++			if (issued.origin !== "oauth") continue;
++			const sticky = stickies?.get(sessionId);
++			const row = sticky?.type === "oauth" ? credentials[sticky.index] : undefined;
++			if (row?.credential.type === "oauth" && row.id === issued.credentialId) continue;
++			issuedBySession.delete(sessionId);
++		}
++		if (issuedBySession.size === 0) this.#sessionSelectionObservations.delete(provider);
++	}
++
+ 	#recordOAuthBearerCredentialId(provider: string, bearer: string, credentialId: number | undefined): void {
+ 		if (credentialId === undefined) return;
+ 		const fingerprint = fingerprintOAuthBearer(bearer);
+@@ -1992,6 +2121,16 @@ export class AuthStorage {
+ 		lastUsedAtMs?: number,
+ 	): void {
+ 		if (!sessionId) return;
++		const issued = this.#sessionSelectionObservations.get(provider)?.get(sessionId);
++		// A re-record onto the same durable OAuth row (token refresh, lastUsedAtMs backdate) keeps
++		// the observation; any other row or type is a real routing change. Runtime/config
++		// observations ignore sticky writes: overrides win before the sticky is consulted.
++		if (
++			issued?.origin === "oauth" &&
++			(type !== "oauth" || this.#getStoredCredentials(provider)[index]?.id !== issued.credentialId)
++		) {
++			this.#invalidateSessionSelection(provider, sessionId);
++		}
+ 		const nowMs = lastUsedAtMs ?? Date.now();
+ 		const sessionMap = this.#sessionLastCredential.get(provider) ?? new Map();
+ 		sessionMap.set(sessionId, { type, index, lastUsedAtMs: nowMs });
+@@ -2072,6 +2211,9 @@ export class AuthStorage {
+ 	/** Clears the last credential used by a session for a provider. */
+ 	#clearSessionCredential(provider: string, sessionId: string | undefined): void {
+ 		if (!sessionId) return;
++		if (this.#sessionSelectionObservations.get(provider)?.get(sessionId)?.origin === "oauth") {
++			this.#invalidateSessionSelection(provider, sessionId);
++		}
+ 		const sessionMap = this.#sessionLastCredential.get(provider);
+ 		if (sessionMap) {
+ 			sessionMap.delete(sessionId);
+@@ -2087,6 +2229,13 @@ export class AuthStorage {
+ 		}
+ 	}
+ 
++	/** Forget the observation issued for one scope; the next capture mints a new revision. */
++	#invalidateSessionSelection(provider: string, sessionId: string): void {
++		const issuedBySession = this.#sessionSelectionObservations.get(provider);
++		if (!issuedBySession?.delete(sessionId)) return;
++		if (issuedBySession.size === 0) this.#sessionSelectionObservations.delete(provider);
++	}
++
+ 	/**
+ 	 * Selects a credential of the specified type for a provider.
+ 	 * Returns both the credential and its index in the original array (for updates/removal).
+@@ -2303,6 +2452,15 @@ export class AuthStorage {
+ 				this.#providerRoundRobinIndex.delete(key);
+ 			}
+ 		}
++		// Every OAuth sticky for the provider is dropped, so every OAuth-origin observation is stale.
++		// Runtime/config observations survive: the override still routes those sessions.
++		const issuedBySession = this.#sessionSelectionObservations.get(provider);
++		if (issuedBySession) {
++			for (const [sessionId, issued] of issuedBySession) {
++				if (issued.origin === "oauth") issuedBySession.delete(sessionId);
++			}
++			if (issuedBySession.size === 0) this.#sessionSelectionObservations.delete(provider);
++		}
+ 		this.#sessionLastCredential.delete(provider);
+ 		this.#clearProviderSessionCredentialCache(provider);
+ 		for (const key of this.#credentialBackoff.keys()) {
+@@ -2319,7 +2477,7 @@ export class AuthStorage {
  		const target = entries[index];
  		this.#store.updateAuthCredential(target.id, credential);
  		const updated = [...entries];
@@ -1631,7 +1898,7 @@ index 7f9e431..f115877 100644
  		this.#setStoredCredentials(provider, updated);
  	}
  
-@@ -2370,7 +2405,7 @@ export class AuthStorage {
+@@ -2370,7 +2528,7 @@ export class AuthStorage {
  			const latest = this.#store.listAuthCredentials(provider);
  			this.#setStoredCredentials(
  				provider,
@@ -1640,7 +1907,7 @@ index 7f9e431..f115877 100644
  			);
  			return latest.findIndex(row => row.id === id);
  		}
-@@ -2378,7 +2413,7 @@ export class AuthStorage {
+@@ -2378,7 +2536,7 @@ export class AuthStorage {
  			this.#store.updateAuthCredential(id, credential);
  		}
  		const updated = [...entries];
@@ -1649,7 +1916,7 @@ index 7f9e431..f115877 100644
  		this.#setStoredCredentials(provider, updated);
  		return index;
  	}
-@@ -2461,6 +2496,7 @@ export class AuthStorage {
+@@ -2461,6 +2619,7 @@ export class AuthStorage {
  			stored.map(record => ({
  				id: record.id,
  				credential: record.credential,
@@ -1657,7 +1924,7 @@ index 7f9e431..f115877 100644
  			})),
  		);
  		this.#resetProviderAssignments(provider);
-@@ -2476,6 +2512,7 @@ export class AuthStorage {
+@@ -2476,6 +2635,7 @@ export class AuthStorage {
  				provider,
  				credential: entry.credential,
  				disabledCause: null,
@@ -1665,7 +1932,7 @@ index 7f9e431..f115877 100644
  			}));
  		}
  		const rows: StoredAuthCredential[] = [];
-@@ -2486,6 +2523,7 @@ export class AuthStorage {
+@@ -2486,6 +2646,7 @@ export class AuthStorage {
  					provider: storedProvider,
  					credential: entry.credential,
  					disabledCause: null,
@@ -1673,7 +1940,7 @@ index 7f9e431..f115877 100644
  				});
  			}
  		}
-@@ -2513,7 +2551,7 @@ export class AuthStorage {
+@@ -2513,7 +2674,7 @@ export class AuthStorage {
  			const rows = this.#store.listAuthCredentials(provider);
  			this.#setStoredCredentials(
  				provider,
@@ -1682,7 +1949,7 @@ index 7f9e431..f115877 100644
  			);
  			const row = rows.find(
  				entry =>
-@@ -2565,7 +2603,7 @@ export class AuthStorage {
+@@ -2565,7 +2726,7 @@ export class AuthStorage {
  			const rows = this.#store.listAuthCredentials(provider);
  			this.#setStoredCredentials(
  				provider,
@@ -1691,7 +1958,7 @@ index 7f9e431..f115877 100644
  			);
  			const row = rows.find(
  				entry =>
-@@ -2648,10 +2686,7 @@ export class AuthStorage {
+@@ -2648,10 +2809,7 @@ export class AuthStorage {
  								provider,
  								rows
  									.filter(entry => entry.id !== row.id)
@@ -1703,7 +1970,7 @@ index 7f9e431..f115877 100644
  							);
  							this.#resetProviderAssignments(provider);
  							this.#emitCredentialDisabled({ provider, disabledCause });
-@@ -2723,6 +2758,7 @@ export class AuthStorage {
+@@ -2723,6 +2881,7 @@ export class AuthStorage {
  				rows.map(entry => ({
  					id: entry.id,
  					credential: entry.id === row.id ? merged : entry.credential,
@@ -1711,7 +1978,7 @@ index 7f9e431..f115877 100644
  				})),
  			);
  			return { credential: merged, refreshed: true, removed: false };
-@@ -2739,7 +2775,7 @@ export class AuthStorage {
+@@ -2739,7 +2898,7 @@ export class AuthStorage {
  			: this.#store.upsertAuthCredentialForProvider(provider, credential);
  		this.#setStoredCredentials(
  			provider,
@@ -1720,7 +1987,7 @@ index 7f9e431..f115877 100644
  		);
  		this.#resetProviderAssignments(provider);
  	}
-@@ -2992,6 +3028,26 @@ export class AuthStorage {
+@@ -2992,6 +3151,26 @@ export class AuthStorage {
  		return identity;
  	}
  
@@ -1747,7 +2014,7 @@ index 7f9e431..f115877 100644
  	/**
  	 * Get all credentials.
  	 */
-@@ -3066,7 +3122,7 @@ export class AuthStorage {
+@@ -3066,7 +3245,7 @@ export class AuthStorage {
  				: this.#store.upsertAuthCredentialForProvider(provider, newCredential);
  			this.#setStoredCredentials(
  				provider,
@@ -1756,7 +2023,7 @@ index 7f9e431..f115877 100644
  			);
  			this.#resetProviderAssignments(provider);
  			return { type: "api_key" };
-@@ -4546,7 +4602,7 @@ export class AuthStorage {
+@@ -4546,7 +4725,7 @@ export class AuthStorage {
  			const latestRows = this.#store.listAuthCredentials(provider);
  			this.#setStoredCredentials(
  				provider,
@@ -1765,7 +2032,7 @@ index 7f9e431..f115877 100644
  			);
  		}
  		if (options?.credentialId !== undefined) {
-@@ -5454,7 +5510,7 @@ export class AuthStorage {
+@@ -5454,7 +5633,7 @@ export class AuthStorage {
  		const latestRows = this.#store.listAuthCredentials(provider);
  		this.#setStoredCredentials(
  			provider,
@@ -1774,7 +2041,56 @@ index 7f9e431..f115877 100644
  		);
  		const latestIndex = latestRows.findIndex(row => row.id === credentialId);
  		if (latestIndex === -1) return false;
-@@ -5864,6 +5920,7 @@ export class AuthStorage {
+@@ -5782,6 +5961,14 @@ export class AuthStorage {
+ 		if (oauthResolved) {
+ 			return oauthResolved.apiKey;
+ 		}
++		// Past OAuth: an OAuth sticky is stale — this request authenticates via login/env/api_key/
++		// fallback — so drop it (memory and persisted row) before falling through; that also keeps
++		// getOAuthAccountId() from injecting account_uuid for this session. A static api_key sticky
++		// stays: it remains the selection whenever the api_key legs below pick that row again.
++		// #resolveOAuthSelection already hydrated any valid persisted sticky, so memory is authoritative.
++		if (sessionId && this.#sessionLastCredential.get(provider)?.get(sessionId)?.type === "oauth") {
++			this.#clearSessionCredential(provider, sessionId);
++		}
+ 		const loginApiKeySelection = await this.#selectApiKeyCredential(
+ 			provider,
+ 			sessionId,
+@@ -5793,13 +5980,14 @@ export class AuthStorage {
+ 			return this.#configValueResolver(loginApiKeySelection.credential.key);
+ 		}
+ 
+-		// Past OAuth: the session sticky (if any) is stale — the request authenticates via
+-		// env/api_key/fallback, not OAuth, so clear it now so getOAuthAccountId() correctly
+-		// suppresses account_uuid for this session.
+-		if (sessionId) this.#sessionLastCredential.get(provider)?.delete(sessionId);
+-
+ 		const envKey = getEnvApiKey(provider);
+-		if (envKey) return envKey;
++		if (envKey) {
++			// The env var beat every stored row: whatever sticky remains no longer routes this session.
++			if (sessionId && this.#sessionLastCredential.get(provider)?.has(sessionId)) {
++				this.#clearSessionCredential(provider, sessionId);
++			}
++			return envKey;
++		}
+ 		const apiKeySelection = await this.#selectApiKeyCredential(
+ 			provider,
+ 			sessionId,
+@@ -5812,7 +6000,11 @@ export class AuthStorage {
+ 		}
+ 
+ 		// Fall back to custom resolver (e.g., models.json custom providers)
+-		return this.#fallbackResolver?.(provider) ?? undefined;
++		const fallbackKey = this.#fallbackResolver?.(provider);
++		if (fallbackKey && sessionId && this.#sessionLastCredential.get(provider)?.has(sessionId)) {
++			this.#clearSessionCredential(provider, sessionId);
++		}
++		return fallbackKey ?? undefined;
+ 	}
+ 
+ 	/**
+@@ -5864,6 +6056,7 @@ export class AuthStorage {
  				credentialId: entry.id,
  				credential: entry.credential,
  				index,
@@ -1782,7 +2098,7 @@ index 7f9e431..f115877 100644
  			}))
  			.filter((entry): entry is StoredOAuthSelection => entry.credential.type === "oauth");
  	}
-@@ -5898,6 +5955,11 @@ export class AuthStorage {
+@@ -5898,6 +6091,11 @@ export class AuthStorage {
  				};
  			}
  			const { credential } = resolved;
@@ -1794,7 +2110,7 @@ index 7f9e431..f115877 100644
  			return {
  				ok: true,
  				credentialId: selection.credentialId,
-@@ -5908,6 +5970,7 @@ export class AuthStorage {
+@@ -5908,6 +6106,7 @@ export class AuthStorage {
  				enterpriseUrl: credential.enterpriseUrl,
  				orgId: credential.orgId,
  				orgName: credential.orgName,
@@ -1802,7 +2118,97 @@ index 7f9e431..f115877 100644
  			};
  		} catch (error) {
  			return {
-@@ -6133,12 +6196,27 @@ export class AuthStorage {
+@@ -5985,6 +6184,89 @@ export class AuthStorage {
+ 		return true;
+ 	}
+ 
++	/**
++	 * Capture which credential origin `sessionId` is currently routed to for `provider` as a
++	 * frozen, secret-free observation for {@link AuthStorage.isSessionCredentialSelectionCurrent}.
++	 * Reads only materialized native state — the effective nonempty runtime/config override in
++	 * {@link AuthStorage.getApiKey} precedence, else the in-memory OAuth sticky — and never selects,
++	 * refreshes, hydrates the sticky cache, or touches the store. Unsupported scopes (no sticky
++	 * materialized in this process, env/fallback/stored-api_key routing, closed storage) return
++	 * undefined. Repeated captures of an unchanged scope return the same observation; a capture
++	 * after any routing change for the scope issues a fresh revision, and the earlier one stays
++	 * stale forever.
++	 */
++	captureSessionCredentialSelection(
++		provider: string,
++		sessionId: string,
++	): SessionCredentialSelectionObservation | undefined {
++		if (this.#closed || !provider || !sessionId) return undefined;
++		let origin: SessionCredentialSelectionObservation["origin"] | undefined = this.#effectiveOverrideOrigin(provider);
++		let credentialId: number | undefined;
++		if (origin === undefined) {
++			credentialId = this.#liveSessionOAuthCredentialId(provider, sessionId);
++			if (credentialId !== undefined) origin = "oauth";
++		}
++		if (origin === undefined) {
++			this.#invalidateSessionSelection(provider, sessionId);
++			return undefined;
++		}
++		let issuedBySession = this.#sessionSelectionObservations.get(provider);
++		const issued = issuedBySession?.get(sessionId);
++		if (issued && issued.origin === origin && issued.credentialId === credentialId) return issued;
++		const observation = Object.freeze<SessionCredentialSelectionObservation>(
++			credentialId === undefined
++				? { version: 1, provider, sessionId, revision: randomUUID(), origin }
++				: { version: 1, provider, sessionId, revision: randomUUID(), origin, credentialId },
++		);
++		if (!issuedBySession) {
++			issuedBySession = new Map();
++			this.#sessionSelectionObservations.set(provider, issuedBySession);
++		}
++		issuedBySession.set(sessionId, observation);
++		return observation;
++	}
++
++	/**
++	 * Whether `observation` still names the credential origin its session is routed to on THIS
++	 * AuthStorage. Detached (JSON round-tripped) copies work; an observation from another storage,
++	 * scope, or revision, a malformed value, or any routing change since capture — including a
++	 * selection that moved away and back — is false. After close(), always false. Reads only
++	 * materialized state; never selects, refreshes, or performs I/O.
++	 */
++	isSessionCredentialSelectionCurrent(observation: SessionCredentialSelectionObservation): boolean {
++		if (this.#closed || typeof observation !== "object" || observation === null) return false;
++		const { version, provider, sessionId, revision, origin, credentialId } = observation;
++		if (version !== 1 || typeof provider !== "string" || typeof sessionId !== "string" || typeof revision !== "string") {
++			return false;
++		}
++		const issued = this.#sessionSelectionObservations.get(provider)?.get(sessionId);
++		if (!issued) return false;
++		// The mutation hooks keep the registry honest; still confirm the issued observation
++		// describes live routing so no missed mutation path can vouch for a stale selection.
++		const liveOverride = this.#effectiveOverrideOrigin(provider);
++		const live =
++			liveOverride !== undefined
++				? liveOverride === issued.origin
++				: issued.origin === "oauth" && this.#liveSessionOAuthCredentialId(provider, sessionId) === issued.credentialId;
++		if (!live) {
++			this.#invalidateSessionSelection(provider, sessionId);
++			return false;
++		}
++		return issued.revision === revision && issued.origin === origin && issued.credentialId === credentialId;
++	}
++
++	/**
++	 * Durable row id the scope's materialized OAuth sticky routes to; undefined when no in-memory
++	 * sticky exists, it is not OAuth, or the row at its index is missing or not OAuth. Never
++	 * hydrates from the persisted sticky cache.
++	 */
++	#liveSessionOAuthCredentialId(provider: string, sessionId: string): number | undefined {
++		const sticky = this.#sessionLastCredential.get(provider)?.get(sessionId);
++		if (sticky?.type !== "oauth") return undefined;
++		const row = this.#getStoredCredentials(provider)[sticky.index];
++		return row?.credential.type === "oauth" ? row.id : undefined;
++	}
++
+ 	/**
+ 	 * Resolve every stored OAuth credential for `provider` independently.
+ 	 *
+@@ -6133,12 +6415,27 @@ export class AuthStorage {
  		target: ResetCreditTarget;
  		provider?: string;
  		creditId?: string;
@@ -1830,7 +2236,7 @@ index 7f9e431..f115877 100644
  		const accesses = await this.getOAuthAccesses(provider);
  		const match = accesses.find(
  			access =>
-@@ -6193,8 +6271,27 @@ export class AuthStorage {
+@@ -6193,8 +6490,27 @@ export class AuthStorage {
  			creditId = credit.id;
  		}
  
@@ -1858,7 +2264,7 @@ index 7f9e431..f115877 100644
  			accessToken: match.accessToken,
  			accountId: match.accountId,
  			baseUrl,
-@@ -6634,7 +6731,7 @@ export class AuthStorage {
+@@ -6634,7 +6950,7 @@ export class AuthStorage {
  		const latestRows = this.#store.listAuthCredentials(provider);
  		this.#setStoredCredentials(
  			provider,
@@ -1867,7 +2273,7 @@ index 7f9e431..f115877 100644
  		);
  		return true;
  	}
-@@ -6762,7 +6859,7 @@ export class AuthStorage {
+@@ -6762,7 +7078,7 @@ export class AuthStorage {
  				const latestRows = this.#store.listAuthCredentials(provider);
  				this.#setStoredCredentials(
  					provider,
@@ -1876,7 +2282,7 @@ index 7f9e431..f115877 100644
  				);
  			}
  			return deleted && hasSibling;
-@@ -6778,7 +6875,7 @@ export class AuthStorage {
+@@ -6778,7 +7094,7 @@ export class AuthStorage {
  			const latestRows = this.#store.listAuthCredentials(provider);
  			this.#setStoredCredentials(
  				provider,
@@ -1885,7 +2291,7 @@ index 7f9e431..f115877 100644
  			);
  		}
  
-@@ -6858,6 +6955,7 @@ export class AuthStorage {
+@@ -6858,6 +7174,7 @@ export class AuthStorage {
  					provider,
  					credential: redacted,
  					identityKey: resolveCredentialIdentityKey(provider, credential),
@@ -1893,7 +2299,7 @@ index 7f9e431..f115877 100644
  				});
  			}
  		}
-@@ -6989,11 +7087,14 @@ export class AuthStorage {
+@@ -6989,11 +7306,14 @@ export class AuthStorage {
  			if (this.#replaceCredentialById(provider, id, updated) === -1) {
  				throw new AIError.ValidationError(`No credential with id=${id}`);
  			}
@@ -1908,7 +2314,7 @@ index 7f9e431..f115877 100644
  			};
  		}
  		throw new AIError.ValidationError(`No credential with id=${id}`);
-@@ -7031,7 +7132,7 @@ export class AuthStorage {
+@@ -7031,7 +7351,7 @@ export class AuthStorage {
  		const stored = this.#store.upsertAuthCredentialForProvider(provider, credential);
  		this.#setStoredCredentials(
  			provider,
@@ -1917,7 +2323,7 @@ index 7f9e431..f115877 100644
  		);
  		this.#resetProviderAssignments(provider);
  		return stored.map(entry => {
-@@ -7043,6 +7144,7 @@ export class AuthStorage {
+@@ -7043,6 +7363,7 @@ export class AuthStorage {
  				provider: entry.provider,
  				credential: redacted,
  				identityKey: resolveCredentialIdentityKey(provider, persisted),
