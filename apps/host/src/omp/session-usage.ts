@@ -1,7 +1,8 @@
 import { normalizeCodexBaseUrl } from "@oh-my-pi/pi-ai/usage/openai-codex-base-url";
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
-import type { ResetCreditAccountStatus } from "@oh-my-pi/pi-ai/auth-storage";
+import type { AuthStorage, ResetAccountEvidence, ResetCreditAccountStatus } from "@oh-my-pi/pi-ai/auth-storage";
+import { sameResetAccountEvidence } from "@oh-my-pi/pi-ai/auth/reset-account-evidence";
 import type { UsageReport } from "@oh-my-pi/pi-ai/usage";
 import { pickSoonestExpiringCredit, type CodexResetCredit } from "@oh-my-pi/pi-ai/usage/openai-codex-reset";
 import { limitMatchesActiveAccount, reportMatchesActiveAccount } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/active-oauth-account";
@@ -49,14 +50,15 @@ export function nativeResetAccountKey(identity: { provider: string; accountId?: 
 }
 export interface NativeUsagePreparation { ticket: string; epoch: string; accountKey: string; confirmation: UsageResetConfirmation }
 export interface NativeUsageResult { state: "settled" | "rejected" | "unknown"; outcome?: UsageResetOutcome }
-interface Ticket { fingerprint: string; credentialId: number; identity: string; creditId: string; credit: string; confirmation: UsageResetConfirmation; used: boolean }
+interface AccountAdmission { row: ResetCreditAccountStatus; auth: AuthStorage; evidence?: ResetAccountEvidence }
+interface Ticket { fingerprint: string; auth: AuthStorage; evidence: ResetAccountEvidence; credentialId: number; identity: string; creditId: string; credit: string; confirmation: UsageResetConfirmation; used: boolean }
 
 /** Uses the owning session's native auth and provider registry, never a second auth store. */
 export class NativeSessionUsage {
   readonly epoch = randomUUID();
   #revision = randomUUID();
   #snapshot: SessionUsage | null = null;
-  #rows = new Map<string, ResetCreditAccountStatus>();
+  #rows = new Map<string, AccountAdmission>();
   #tickets = new Map<string, Ticket>();
   #busy = false;
   #sessionId: string;
@@ -76,7 +78,26 @@ export class NativeSessionUsage {
       selected: this.session.model && this.session.modelRegistry.authStorage.listOAuthAccounts(this.session.model.provider, this.#sessionId) });
   }
   #current(fingerprint: string) { if (fingerprint !== this.#fingerprint()) throw new Error("Usage account, selection or policy changed. Refresh and prepare a new confirmation."); }
-  async #revalidate(fingerprint: string) { this.#current(fingerprint); await this.session.modelRegistry.authStorage.revalidateCredentials(); this.#current(fingerprint); }
+  #assertAuth(auth: AuthStorage) {
+    if (this.session.modelRegistry.authStorage !== auth) throw new Error("Original native authentication storage changed.");
+  }
+  #captureAccountEvidence(auth: AuthStorage) {
+    this.#assertAuth(auth);
+    return new Map(auth.listOAuthAccounts("openai-codex", this.#sessionId).map(account => [account.credentialId,
+      auth.getResetAccountEvidence("openai-codex", account.credentialId)]));
+  }
+  #evidenceCurrent(auth: AuthStorage, credentialId: number, evidence: ResetAccountEvidence | undefined): evidence is ResetAccountEvidence {
+    this.#assertAuth(auth);
+    return evidence !== undefined && sameResetAccountEvidence(evidence, auth.getResetAccountEvidence("openai-codex", credentialId));
+  }
+  #assertAdmission(admission: Pick<AccountAdmission, "auth" | "evidence"> & { row: Pick<ResetCreditAccountStatus, "credentialId"> }) {
+    if (!Number.isSafeInteger(admission.row.credentialId) || !this.#evidenceCurrent(admission.auth, admission.row.credentialId!, admission.evidence)) {
+      throw new Error("Saved-credit account proof is missing or changed.");
+    }
+  }
+  async #revalidate(fingerprint: string, auth: AuthStorage) {
+    this.#assertAuth(auth); this.#current(fingerprint); await auth.revalidateCredentials(); this.#assertAuth(auth); this.#current(fingerprint);
+  }
   #baseUrl = (provider: string) => {
     if (provider === "google-antigravity") {
       const mode = this.session.settings.get("providers.antigravityEndpoint");
@@ -89,11 +110,11 @@ export class NativeSessionUsage {
   #rowIdentity(row: Pick<ResetCreditAccountStatus, "accountId" | "email"> & { orgId?: string; projectId?: string }) {
     return hash({ accountId: row.accountId, email: row.email, orgId: row.orgId, projectId: row.projectId });
   }
-  #projectAccount(ref: string, row: ResetCreditAccountStatus): UsageCreditAccount {
+  #projectAccount(ref: string, row: ResetCreditAccountStatus, evidence?: ResetAccountEvidence): UsageCreditAccount {
     const stored = this.session.modelRegistry.authStorage.listOAuthAccounts("openai-codex", this.#sessionId).find(item => item.credentialId === row.credentialId);
     return { accountRef: ref, ...strings(row, ["accountId", "email"]), ...strings(stored ?? {}, ["orgId", "projectId"]), active: stored?.active ?? false,
       ...(row.error ? { unavailable: "Native saved-credit inspection failed for this account." } : { availableCount: row.availableCount }),
-      credits: row.credits.map(projectUsageCredit), canPrepare: !!stored && Number.isSafeInteger(row.credentialId) && !!candidate(row) };
+      credits: row.credits.map(projectUsageCredit), canPrepare: !!stored && Number.isSafeInteger(row.credentialId) && !!candidate(row) && !!evidence };
   }
   async #run<T>(run: () => Promise<T>): Promise<T> {
     if (this.#busy) throw new Error("A provider usage operation is already running.");
@@ -104,7 +125,8 @@ export class NativeSessionUsage {
     if (mode === "cached") { this.assertActive(); return Promise.resolve(this.#snapshot); }
     return this.#run(async () => {
       const auth = this.session.modelRegistry.authStorage, before = this.#fingerprint();
-      await auth.revalidateCredentials(); this.#current(before);
+      const admittedEvidence = mode === "credits" ? this.#captureAccountEvidence(auth) : undefined;
+      await auth.revalidateCredentials(); this.#assertAuth(auth); this.#current(before);
       const value: SessionUsage = this.#snapshot && this.#snapshot.revision === before ? structuredClone(this.#snapshot) : {
         version: 1, sessionId: this.#sessionId, epoch: this.epoch, revision: before,
         ...(this.session.model ? { model: { id: this.session.model.id, provider: this.session.model.provider } } : {}),
@@ -112,15 +134,19 @@ export class NativeSessionUsage {
       };
       if (mode === "reports") {
         // AgentSession.fetchUsageReports also starts a potentially spending sweep. U2 owns that lifecycle.
-        const reports = await auth.fetchUsageReports({ baseUrlResolver: this.#baseUrl, signal: AbortSignal.timeout(45_000) }); await this.#revalidate(before);
+        const reports = await auth.fetchUsageReports({ baseUrlResolver: this.#baseUrl, signal: AbortSignal.timeout(45_000) }); await this.#revalidate(before, auth);
         value.reports = projectUsageReports(reports ?? [], this.session);
         value.modelSelectors = this.session.getUsageReportingModelSelectors(reports ?? []);
         if (value.modelSelectors.length > 2048) throw new Error("Native usage model selectors exceed the display limit.");
         value.reportStatus = reports === null ? "unsupported" : "available"; value.reportsCheckedAt = Date.now();
       } else {
-        const rows = await this.session.listResetCredits(AbortSignal.timeout(45_000)); await this.#revalidate(before);
+        const rows = await this.session.listResetCredits(AbortSignal.timeout(45_000)); await this.#revalidate(before, auth);
         if (rows.length > 128 || rows.some(row => row.credits.length > 128)) throw new Error("Native saved-credit list exceeds the display limit.");
-        this.#rows.clear(); value.credits = rows.map(row => { const ref = randomUUID(); this.#rows.set(ref, row); return this.#projectAccount(ref, row); });
+        this.#rows.clear(); value.credits = rows.map(row => {
+          const ref = randomUUID(), captured = Number.isSafeInteger(row.credentialId) ? admittedEvidence?.get(row.credentialId!) : undefined;
+          const evidence = Number.isSafeInteger(row.credentialId) && this.#evidenceCurrent(auth, row.credentialId!, captured) ? captured : undefined;
+          this.#rows.set(ref, { row, auth, evidence }); return this.#projectAccount(ref, row, evidence);
+        });
         value.creditsCheckedAt = Date.now();
       }
       if (Buffer.byteLength(JSON.stringify(value)) > SESSION_USAGE_MAX_BYTES - 16_384) throw new Error("Native usage report exceeds the display limit.");
@@ -131,17 +157,18 @@ export class NativeSessionUsage {
     return this.#run(async () => {
       if (request.sessionId !== this.#sessionId || request.epoch !== this.epoch || request.revision !== this.#fingerprint()) throw new Error("Refresh this original session's saved credits before preparing a reset.");
       const original = this.#rows.get(request.accountRef), fingerprint = this.#fingerprint();
-      if (!original || !Number.isSafeInteger(original.credentialId)) throw new Error("Unknown saved-credit account.");
-      await this.session.modelRegistry.authStorage.revalidateCredentials(); this.#current(fingerprint);
-      const rows = await this.session.listResetCredits(AbortSignal.timeout(45_000)); await this.#revalidate(fingerprint);
-      const row = rows.find(row => row.credentialId === original.credentialId);
-      if (!row || !row.accountId && (!row.email || rows.filter(other => other.email?.trim().toLowerCase() === row.email?.trim().toLowerCase()).length !== 1) || this.#rowIdentity(row) !== this.#rowIdentity(original)) throw new Error("Saved-credit account changed.");
+      if (!original || !Number.isSafeInteger(original.row.credentialId)) throw new Error("Unknown saved-credit account.");
+      this.#assertAdmission(original);
+      await original.auth.revalidateCredentials(); this.#assertAdmission(original); this.#current(fingerprint);
+      const rows = await this.session.listResetCredits(AbortSignal.timeout(45_000)); this.#assertAdmission(original); await this.#revalidate(fingerprint, original.auth); this.#assertAdmission(original);
+      const row = rows.find(row => row.credentialId === original.row.credentialId);
+      if (!row || !row.accountId && (!row.email || rows.filter(other => other.email?.trim().toLowerCase() === row.email?.trim().toLowerCase()).length !== 1) || this.#rowIdentity(row) !== this.#rowIdentity(original.row)) throw new Error("Saved-credit account changed.");
       const credit = candidate(row); if (!credit) throw new Error("No identified available credit can be confirmed for this account.");
       for (const [id, ticket] of this.#tickets) if (ticket.confirmation.expiresAt < Date.now() || ticket.used) this.#tickets.delete(id);
       if (this.#tickets.size >= 32) throw new Error("Too many pending saved-reset confirmations.");
-      const account = this.#projectAccount(request.accountRef, row);
+      const account = this.#projectAccount(request.accountRef, row, original.evidence);
       const confirmation: UsageResetConfirmation = { account: { accountRef: account.accountRef, accountId: account.accountId, email: account.email, orgId: account.orgId, projectId: account.projectId, active: account.active }, credit: projectUsageCredit(credit), creditReference: hash(credit.id).slice(0, 16), expiresAt: Date.now() + 300_000 };
-      const ticket = randomUUID(); this.#tickets.set(ticket, { fingerprint, credentialId: row.credentialId!, identity: this.#rowIdentity(account), creditId: credit.id, credit: hash(credit), confirmation, used: false });
+      const ticket = randomUUID(); this.#tickets.set(ticket, { fingerprint, auth: original.auth, evidence: original.evidence!, credentialId: row.credentialId!, identity: this.#rowIdentity(account), creditId: credit.id, credit: hash(credit), confirmation, used: false });
       return { ticket, epoch: this.epoch, accountKey: nativeResetAccountKey({ provider: "openai-codex", ...account }, this.#resetBaseUrl("openai-codex")), confirmation };
     });
   }
@@ -150,20 +177,22 @@ export class NativeSessionUsage {
       const ticket = this.#tickets.get(ticketId);
       if (!ticket || ticket.used) return { state: "rejected", outcome: "admission_rejected" };
       ticket.used = true;
-      const current = () => { this.#current(ticket.fingerprint); if (ticket.confirmation.expiresAt <= Date.now()) throw new Error("Reset confirmation expired."); };
-      const auth = this.session.modelRegistry.authStorage;
+      const admission = { auth: ticket.auth, evidence: ticket.evidence, row: { credentialId: ticket.credentialId } };
+      const current = () => { this.#current(ticket.fingerprint); this.#assertAdmission(admission); if (ticket.confirmation.expiresAt <= Date.now()) throw new Error("Reset confirmation expired."); };
+      const auth = ticket.auth;
       try {
         current(); await auth.revalidateCredentials(); current();
-        const rows = await this.session.listResetCredits(AbortSignal.timeout(45_000)); await this.#revalidate(ticket.fingerprint); current();
+        const rows = await this.session.listResetCredits(AbortSignal.timeout(45_000)); current(); await this.#revalidate(ticket.fingerprint, auth); current();
         const row = rows.find(row => row.credentialId === ticket.credentialId), credit = row?.credits.find(credit => credit.id === ticket.creditId);
         if (!row || row.error || !credit || !available(credit) || hash(credit) !== ticket.credit) return { state: "rejected", outcome: "admission_rejected" };
       } catch { return { state: "rejected", outcome: "admission_rejected" }; }
       try {
         const result = await auth.redeemResetCredit({ target: { credentialId: ticket.credentialId }, creditId: ticket.creditId,
-          redeemRequestId, requireExplicitOutcome: true, baseUrlResolver: this.#resetBaseUrl, signal: AbortSignal.timeout(45_000),
+          redeemRequestId, requireExplicitOutcome: true, expectedAccountEvidence: ticket.evidence, baseUrlResolver: this.#resetBaseUrl, signal: AbortSignal.timeout(45_000),
           beforeConsume: identity => {
             try { current(); return identity.provider === "openai-codex" && identity.credentialId === ticket.credentialId
-              && identity.creditId === ticket.creditId && this.#rowIdentity(identity) === ticket.identity; } catch { return false; }
+              && identity.creditId === ticket.creditId && this.#rowIdentity(identity) === ticket.identity
+              && sameResetAccountEvidence(identity.resetAccountEvidence, ticket.evidence); } catch { return false; }
           },
         });
         const known: UsageResetOutcome[] = ["reset", "already_redeemed", "no_credit", "nothing_to_reset", "no_account", "account_unavailable", "credit_list_failed", "admission_rejected"];
