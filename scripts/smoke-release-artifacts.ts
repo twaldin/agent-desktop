@@ -137,9 +137,15 @@ async function unusedPort(): Promise<number> {
 class Cdp {
   #id = 0; #pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void;
     timeout: ReturnType<typeof setTimeout> }>();
+  rendererException: Error | undefined;
   constructor(readonly socket: WebSocket) {
     socket.addEventListener("message", event => { const message = JSON.parse(String(event.data)); const pending = this.#pending.get(message.id);
-      if (!pending) return; this.#pending.delete(message.id); clearTimeout(pending.timeout);
+      if (!pending) {
+        if (message.method === "Runtime.exceptionThrown") this.rendererException = new Error(
+          message.params?.exceptionDetails?.exception?.description ?? message.params?.exceptionDetails?.text ?? "The packaged renderer threw an exception.");
+        return;
+      }
+      this.#pending.delete(message.id); clearTimeout(pending.timeout);
       message.error ? pending.reject(new Error(message.error.message)) : pending.resolve(message.result); });
   }
   send(method: string, params: object = {}): Promise<any> {
@@ -155,6 +161,15 @@ class Cdp {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
     return result.result.value;
   }
+}
+async function waitForRendererCloseReadiness(cdp: Cdp): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (cdp.rendererException) throw cdp.rendererException;
+    if (await cdp.evaluate("document.querySelector('.app-shell')?.dataset.windowCloseReady === 'true'")) return;
+    await Bun.sleep(100);
+  }
+  throw new Error("The packaged desktop renderer did not register its window-close handler within 30000ms.");
 }
 async function desktopSmoke(): Promise<SmokeResult> {
   const root = await mkdtemp(join(tmpdir(), "agent-desktop-desktop-smoke-"));
@@ -175,7 +190,8 @@ async function desktopSmoke(): Promise<SmokeResult> {
     const data = join(root, "data"), agent = join(root, "agent"), workspace = join(root, "workspace");
     await Promise.all([mkdir(join(root, "home")), mkdir(data), mkdir(agent), mkdir(workspace), mkdir(join(root, "profile"))]);
     const port = await unusedPort();
-    appProcess = Bun.spawn([executable, `--remote-debugging-port=${port}`], { cwd: root, env: isolatedEnvironment(root, data, agent),
+    appProcess = Bun.spawn([executable, `--remote-debugging-port=${port}`], { cwd: root,
+      env: isolatedEnvironment(root, data, agent),
       stdout: "inherit", stderr: "inherit" });
     const target = await waitUntil(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1_000) });
@@ -189,6 +205,10 @@ async function desktopSmoke(): Promise<SmokeResult> {
       socket.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("CDP connection failed.")); }, { once: true });
     });
     cdp = new Cdp(socket);
+    await cdp.send("Runtime.enable");
+    const rendererImportError = await cdp.evaluate("import(document.querySelector('script[type=module]').src).then(() => null, error => String(error?.stack ?? error))");
+    assert.equal(rendererImportError, null, `The packaged renderer failed to load: ${rendererImportError}`);
+    await waitForRendererCloseReadiness(cdp);
     const bridge = await cdp.evaluate("typeof window.agentDesktop === 'object' && typeof window.agentDesktop.command === 'function' && typeof window.agentDesktop.getMessages === 'function'");
     assert.equal(bridge, true, "The production preload bridge is unavailable.");
     const state = await cdp.evaluate("window.agentDesktop.getState()"); assert.deepEqual(state.sessions, []);
@@ -204,9 +224,8 @@ async function desktopSmoke(): Promise<SmokeResult> {
     // Browser.close normally tears down the transport before its response can be
     // observed. Send it without waiting on a reply, then bound the owned PID.
     cdp.notify("Browser.close");
-    const appPid = appProcess.pid; await waitForExit(appPid, "packaged desktop shutdown").catch(async () => {
-      if (alive(appPid)) appProcess?.kill("SIGTERM"); await waitForExit(appPid, "packaged desktop forced cleanup");
-    });
+    await waitForExit(appProcess.pid, "packaged desktop shutdown");
+    assert.equal(await appProcess.exited, 0, "The packaged desktop did not complete a graceful shutdown.");
     const stopped = await stopOwnedHost(connection, join(data, "connection.json"), workerPids); connection = undefined;
     return { kind: "desktop", version: embeddedManifest.version, platform: expectedPlatform!, sessionId: result.value.id,
       messages: transcript.length, workerPids, ...stopped, bridge: "production-main-preload" };

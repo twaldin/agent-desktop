@@ -21,6 +21,8 @@ export function useWindowClose(bridge: CloseBridge, root: RefObject<HTMLElement 
     void bridge.answerWindowClose?.(current.id, false).catch(cause => setError(String(cause)));
   };
   useEffect(() => {
+    const owner = root.current;
+    if (owner) delete owner.dataset.windowCloseReady;
     if (!bridge.subscribeWindowClose || !bridge.answerWindowClose) return;
     let mounted = true;
     const off = bridge.subscribeWindowClose(request => {
@@ -43,7 +45,9 @@ export function useWindowClose(bridge: CloseBridge, root: RefObject<HTMLElement 
         void bridge.answerWindowClose!(request.id, false).catch(() => {});
       });
     });
-    return () => { mounted = false; off(); active.current?.abort.abort(); active.current = undefined; if (root.current) root.current.inert = false; };
+    if (owner) owner.dataset.windowCloseReady = "true";
+    return () => { mounted = false; off(); active.current?.abort.abort(); active.current = undefined;
+      if (owner) { owner.inert = false; delete owner.dataset.windowCloseReady; } };
   }, [bridge, root]);
   return closing || error ? <div className="window-close-status" role={error ? "alert" : "status"}>
     <span>{error ?? "Saving before closing…"}</span>

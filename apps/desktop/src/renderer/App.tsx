@@ -994,12 +994,12 @@ export function App() {
   recentOwners.forEach((owner, index) => { const target = recentChats[index]; if (target) recentActions[owner] = () => navigate(target.sessionId, target.hostId); });
   const ordinalEfforts = selection.levels.filter(level => level !== "auto" && level !== "off");
   const effortIndex = ordinalEfforts.indexOf(selection.thinking ?? "");
-  const copyText = async (value: string) => {
+  async function copyText(value: string) {
     if (clipboardWritePending.current) throw new Error("Wait for the current clipboard write to finish before copying again.");
     clipboardWritePending.current = true;
     try { await navigator.clipboard.writeText(value); }
     finally { clipboardWritePending.current = false; }
-  };
+  }
   const copyPath = (value: string) => { void copyText(value).catch(cause => { if (selectedRef.current === routeKey) setActionError(errorMessage(cause)); }); };
   const markdownOwner = selected && selected.id === selectedId && selected.hostId === hostId ? { hostId, sessionId: selected.id } : null;
   const markdownIssue = !chatRoute || !markdownOwner ? "Select the conversation to copy."
