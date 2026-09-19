@@ -353,7 +353,7 @@ export class TmuxTerminalManager {
         await this.cli(["set-option", "-p", "-t", row.pane, "@agent-terminal", id]);
         await this.cli(["set-window-option", "-t", entry.record.sessionName, "window-size", "manual"]);
         entry.record.prepared = false; entry.record.info.status = row.dead ? "exited" : "running";
-        if (row.dead) { entry.record.info.exitedAt = Date.now(); entry.record.info.exitCode = row.code; this.cleanupEnvironmentLaunch(id); } else this.controller(entry);
+        if (row.dead) { entry.record.info.exitedAt = Date.now(); entry.record.info.exitCode = row.code; if (launch.payload) this.cleanupEnvironmentLaunch(id); } else this.controller(entry);
         this.save(); this.state(entry); return this.publicInfo(entry);
       } catch (error) { entry.record.info.error = error instanceof Error ? error.message : "Native terminal creation outcome is uncertain."; this.save(); this.state(entry); throw error; }
       finally { entry.mutating = false; }
