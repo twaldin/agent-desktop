@@ -172,6 +172,11 @@ const bridge: DesktopBridge = {
   cancelSessionSearch: (requestId, hostId) => ipcRenderer.invoke("host:session-search-cancel", requestId, hostId),
   getMessages: (sessionId, hostId) => ipcRenderer.invoke("host:messages", sessionId, hostId),
   getTaskLocation: (sessionId, hostId) => ipcRenderer.invoke("host:task-location", sessionId, hostId),
+  getSessionExport: (sessionId, commandId, hostId) => ipcRenderer.invoke("host:session-export", sessionId, commandId, hostId),
+  saveSessionExport: async (receipt, openAfter) => {
+    const result = await ipcRenderer.invoke("desktop:session-export-save", receipt, openAfter);
+    if (!result.ok) throw new Error(result.error); return result.value;
+  },
   getSessionFork: (sessionId, hostId) => ipcRenderer.invoke("host:session-fork", sessionId, hostId),
   getQueuedMessages: (sessionId, hostId) => ipcRenderer.invoke("host:queued-messages", sessionId, hostId),
   mutateQueuedMessages: (sessionId, mutation, hostId) => ipcRenderer.invoke("host:queued-messages-mutate", sessionId, mutation, hostId),

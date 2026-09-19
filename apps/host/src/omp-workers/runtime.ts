@@ -1016,6 +1016,8 @@ export class WorkerRuntime {
       cancelSessionMcpAuthorization: authorizationId => client.request({ operation: "cancelSessionMcpAuthorization", args: { authorizationId } }, 15_000, "mcp-authorization"),
       reloadSessionMcp: request => client.request({ operation: "reloadSessionMcp", args: { request } }, 120_000),
       reconnectSessionMcp: request => client.request({ operation: "reconnectSessionMcp", args: { request } }, 120_000),
+      getExportIntent: text => client.request({ operation: "getExportIntent", args: { text } }),
+      exportSession: args => client.request({ operation: "exportSession", args }),
       flushSession: () => client.request({ operation: "flushSession" }),
       getBtw: () => client.request({ operation: "getBtw" }, 15_000),
       startBtw: input => client.request({ operation: "startBtw", args: input }, 15_000),

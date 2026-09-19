@@ -1,3 +1,6 @@
+import { SessionExportService } from "./session-export";
+import { SessionExportHttp } from "./session-export-http";
+import { SESSION_EXPORT_CAPABILITY } from "@agent-desktop/shared";
 import { PlanExternalEditorHttp, type PlanExternalEditorHttpAction } from "./plan-external-editor-http";
 import { PlanExternalEditors } from "./plan-external-editors";
 import { PlanEditorTerminals } from "./plan-editor-terminal";
@@ -261,6 +264,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let modelsError: string | undefined;
   let stopping = false;
   const taskLocations = new TaskLocations({ store, dataDirectory, getHandle: id => getHandle(id,true), publish, publishState, reserve: reserveWorkspaceMutation });
+  const sessionExports = new SessionExportService({ store, dataDirectory,
+    current: async (id, handle) => { const owner = handles.get(id); return await owner === handle && !stopping && handles.get(id) === owner; },
+    busy: id => executions.has(id) || sessionForks.isActive(id),
+  });
+  const sessionExportHttp = new SessionExportHttp(store.host.id, sessionExports);
   const sessionForks = new SessionForkService({ store, workspaces, runtime, dataDirectory, runs: environmentRuns,
     signal: environmentAbort.signal, reserve: reserveWorkspaceMutation,
     existing: async id => handles.get(id)?.catch(() => undefined),
@@ -707,6 +715,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function snapshot(): HostState {
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
+      sessionExports: SESSION_EXPORT_CAPABILITY,
       sessionForks: SESSION_FORK_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
       drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, forceTool: { version: 1, commandVersion: 18 }, plan: { version: 1, commandVersion: 19, document: { version: 1, commandVersion: 20 } }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
@@ -922,6 +931,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const ok = (value?: Extract<CommandResult, { ok: true }>["value"], admission?: Extract<CommandResult, { ok: true }>["admission"]): CommandResult =>
       ({ ok: true, commandId: envelope.id, value, ...(admission ? { admission } : {}) });
     switch (command.type) {
+      case "session.export": return sessionExports.export(envelope.id, command.sessionId, command.theme, await getHandle(command.sessionId));
       case "session.fork": return sessionForks.fork(envelope.id, command.sessionId, command.expectedRevision, command.execution);
       case "session.fork.resume": return sessionForks.resume(envelope.id, command.sessionId, command.operationId);
       case "session.location.move": try { return ok(await taskLocations.move(envelope.id,command.sessionId,command.expectedRevision,command.target)); } catch(error) { if(error instanceof TaskLocationError) return fail(envelope.id,error.code,error.message); throw error; }
@@ -1173,6 +1183,15 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (command.approvalMode !== undefined) await applySessionApproval(command.sessionId, command.approvalMode);
         const handle = recoveryHandle ?? await getHandle(command.sessionId);
         if (recoveryOwner && (handles.get(command.sessionId) !== recoveryOwner || stopping)) throw new Error("The original force worker changed during recovery setup.");
+        if (command.text.startsWith("/")) {
+          const intent = await handle.getExportIntent(command.text);
+          if (intent) {
+            if (command.forceTool || command.forceRecovery) throw new Error("The prepared command changed before export.");
+            if (intent.guidance) return fail(envelope.id, "EXPORT_GUIDANCE", intent.guidance);
+            const result = await sessionExports.export(envelope.id, command.sessionId, intent.theme, handle, command.text);
+            return result.ok ? { ...result, admission: { kind: "native-command" as const, command: "export" } } : result;
+          }
+        }
         runtimeErrors.delete(command.sessionId);
         assertWorkspaceAvailable(handle.cwd);
         goalContinuations?.cancel(command.sessionId);
@@ -1440,6 +1459,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         }
         const planResponse = await sessionPlanHttp.route(request, url);
         if (planResponse) return planResponse;
+        const exportResponse = await sessionExportHttp.route(request, url);
+        if (exportResponse) return exportResponse;
         const forceToolResponse = await forceToolHttp.route(request, url);
         if (forceToolResponse) return forceToolResponse;
         const mcpStateResponse = await sessionMcpHttp.route(request, url);

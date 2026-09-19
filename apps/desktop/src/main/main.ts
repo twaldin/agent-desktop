@@ -1,3 +1,4 @@
+import { sessionExportStatus, saveSessionExport } from "./session-export";
 import { registerPlanExternalEditorHandlers } from "./plan-external-editor-transport";
 import { requestForceToolState } from "./force-tool-transport";
 import { registerPlanReadHandler } from "./plan-transport";
@@ -588,6 +589,26 @@ ipcMain.handle('host:automation-mutate', async (event, hostId: string, value: un
   if (endpoint.hostId !== hostId) throw new Error('The scheduled task host changed.');
   return mutateAutomation(endpoint, input);
 });
+ipcMain.handle("host:session-export", async (event, sessionId: string, commandId: string, hostId: string) => {
+  assertTrustedSender(event); return sessionExportStatus(await endpointFor(hostId), sessionId, commandId);
+});
+ipcMain.handle("desktop:session-export-save", async (event, receipt: import("@agent-desktop/shared").SessionExportReceipt, openAfter: boolean) => workspaceCopyOutcome(async () => {
+  assertTrustedSender(event);
+  if (typeof openAfter !== "boolean") throw new Error("Invalid export action.");
+  const sender = event.sender, frame = event.senderFrame, id = sender.id;
+  if (workspaceCopies.has(id)) throw new Error("A Save as operation is already open in this window.");
+  workspaceCopies.add(id);
+  const current = () => { assertTrustedSender(event); if (shuttingDown || sender.isDestroyed() || sender.mainFrame !== frame) throw new Error("The export window changed."); };
+  try {
+    const value = await saveSessionExport(receipt, { current, endpoint: () => endpointFor(receipt.hostId), choose: async defaultPath => {
+      current(); const result = await dialog.showSaveDialog({ defaultPath, filters: [{ name: "HTML", extensions: ["html"] }] });
+      current(); return result.canceled ? null : result.filePath ?? null;
+    } });
+    current();
+    if (value.path && openAfter) { if (!/\.html?$/i.test(value.path)) throw new Error("The export was saved. Choose an HTML filename to open it as a web page."); const error = await shell.openPath(value.path); if (error) throw new Error(error); }
+    return value;
+  } finally { workspaceCopies.delete(id); }
+}));
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
 });

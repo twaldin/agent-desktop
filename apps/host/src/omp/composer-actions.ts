@@ -29,6 +29,7 @@ const bounded = (value: unknown, limit = 4096) => typeof value === "string" ? va
 const supportedBuiltins = new Set(["force", "model", "switch", "fast", "skillful", "computer", "prewalk", "rename", "jobs", "tools", "context", "changelog", "dump"]);
 const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
+  if (name === "export") return { availability: "executable" };
   if (supportedBuiltins.has(name)) return { availability: "executable" };
   // These commands use the owning Plan controller and its durable decisions.
   if (name === "plan" || name === "plan-review") return { availability: "executable" };

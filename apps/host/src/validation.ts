@@ -1,3 +1,4 @@
+import { exportId, exportTheme } from "../../../packages/shared/src/session-export";
 import { parsePlanControlRequest, parsePlanExecutionRetryRequest, parsePlanMutationRequest } from "../../../packages/shared/src/session-plan";
 import { parseForceToolPromptFields, parseForceToolCancel } from "../../../packages/shared/src/force-tool";
 import { parseDraftBrowserContinuation, parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativeSkillFileRef } from "@agent-desktop/shared";
@@ -74,6 +75,10 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
   const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
   const promptText = () => hasContext && input.text === "" ? "" : text(input.text, "prompt", hasContext ? 500_000 : 4_000_000);
   switch (type) {
+    case "session.export": {
+      if (commandVersion !== 20 || Object.keys(input).some(key => !["type", "sessionId", "theme"].includes(key))) throw new Error("HTML export requires version 20 and an owned theme selection.");
+      return { id, command: { type, sessionId: exportId(input.sessionId), theme: exportTheme(input.theme) } };
+    }
     case "session.fork": {
       if ((commandVersion ?? 0) < 16 || Object.keys(input).some(key => !["type", "sessionId", "expectedRevision", "execution"].includes(key)))
         throw new Error("Fork requires command version 16 and an owned destination.");

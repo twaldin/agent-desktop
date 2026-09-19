@@ -211,7 +211,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
     const interactive = ["listInteractions", "respondInteraction", "cancelInteractions", "dispose"].includes(message.operation);
     if ((promotionInFlight || promotedOwnerRetired) && !interactive) throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
     if (message.operation === "flushSession" && activeRequests) throw new Error("Wait for the current native operation before flushing for Fork.");
-    if (message.operation === "promoteBtw" || message.operation === "preparePlanDecision") {
+    if (message.operation === "exportSession" || message.operation === "promoteBtw" || message.operation === "preparePlanDecision") {
       if (activeRequests) throw new Error("Wait for the current native operation before promoting a side answer.");
       promotionInFlight = ownsPromotion = true;
     }
@@ -278,6 +278,8 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         respond(true, await nativeFork);
         break;
       }
+      case "getExportIntent": { respond(true, await requireSession().getExportIntent(message.args.text)); break; }
+      case "exportSession": { await requireSession().exportSession(message.args); respond(true); break; }
       case "flushSession": {
         respond(true, await requireSession().flushSession());
         break;

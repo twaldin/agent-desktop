@@ -77,6 +77,7 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
     const parsed = parseSlashCommand(text);
     const builtin = parsed && lookupBuiltinSlashCommand(parsed.name);
     if (parsed && builtin) {
+      if (builtin.name === "export") throw new Error("Use the owning host HTML export service; direct worker export dispatch is unavailable.");
       if (builtin.name === "plan" || builtin.name === "plan-review") {
         if (!bridges?.plan) throw new Error("The native Plan owner is unavailable; this command was not executed.");
         return bridges.plan(text);

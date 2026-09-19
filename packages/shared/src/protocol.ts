@@ -31,6 +31,7 @@ export * from "./queued-messages";
 export * from "./queued-submissions";
 export * from "./task-location";
 export * from "./session-fork";
+export * from "./session-export";
 import type { NativePluginCatalog, NativePluginMutation, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation } from './integrations';
 import type { NativeMarketplaceCatalog, NativePluginAcquisition, NativePluginAcquisitionReceipt, NativePluginAcquisitionRequest } from './plugin-acquisition';
 export type { NativePluginCatalog, NativePluginMutation, NativePlugin, PluginSetting, NativeMcpCatalog, NativeMcpDetail, NativeMcpDetailRequest, NativeMcpMutation, NativeMcpServer } from './integrations';
@@ -258,6 +259,7 @@ export interface HostState {
   plan?: { version: 1; commandVersion: 19; document?: { version: 1; commandVersion: 20 } };
   taskLocations?: { version: 1; commandVersion: 14 };
   browserContinuations?: { version: 1; commandVersion: 15 };
+  sessionExports?: typeof import("./session-export").SESSION_EXPORT_CAPABILITY;
   sessionForks?: typeof import("./session-fork").SESSION_FORK_CAPABILITY;
   repositoryWatches?: { version: 1 };
   branchQueries?: { version: 1 };
@@ -271,6 +273,7 @@ export interface HostState {
 export type HostCommand =
   | { type: "session.location.move"; sessionId: string; expectedRevision: string; target: import("./task-location").TaskLocationMoveTarget }
   | { type: "session.location.resume"; sessionId: string; operationId: string; expectedRevision: string }
+  | { type: "session.export"; sessionId: string; theme: import("./session-export").SessionExportTheme }
   | ({ type: "session.fork" } & import("./session-fork").SessionForkRequest)
   | { type: "session.fork.resume"; sessionId: string; operationId: string }
   | { type: "preferences.put"; change: PreferenceChange }
@@ -324,7 +327,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; admission?: PromptAdmission; value?: Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt | ({ type: "session.plan.control" } & import("./session-plan").PlanControlResult) | { type: "session.plan.mutate"; receipt: import("./session-plan").PlanDecisionReceipt; session?: SessionSummary } | import("./session-plan").PlanExecutionRetryResult | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancelResult) }
+  | { ok: true; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; admission?: PromptAdmission; value?: import("./session-export").SessionExportReceipt | Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt | ({ type: "session.plan.control" } & import("./session-plan").PlanControlResult) | { type: "session.plan.mutate"; receipt: import("./session-plan").PlanDecisionReceipt; session?: SessionSummary } | import("./session-plan").PlanExecutionRetryResult | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancelResult) }
   | { ok: false; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -475,6 +478,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   getQueuedMessages?(sessionId: string, hostId: string): Promise<import("./queued-messages").NativeQueuedMessagesResponse>;
   getTaskLocation?(sessionId: string, hostId?: string): Promise<import("./task-location").TaskLocationSnapshot>;
+  getSessionExport?(sessionId: string, commandId: string, hostId: string): Promise<import("./session-export").SessionExportStatus>;
+  saveSessionExport?(receipt: import("./session-export").SessionExportReceipt, openAfter: boolean): Promise<{ path: string | null }>;
   getSessionFork?(sessionId: string, hostId?: string): Promise<import("./session-fork").SessionForkSnapshot>;
   mutateQueuedMessages?(sessionId: string, mutation: import("./queued-messages").NativeQueuedMessageMutation, hostId: string): Promise<import("./queued-messages").NativeQueuedMessageMutationReceipt>;
   subscribeQueuedMessages?(listener: (event: { hostId: string; sessionId: string }) => void): () => void;

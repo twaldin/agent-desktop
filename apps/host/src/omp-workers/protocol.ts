@@ -41,6 +41,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "enableReconnect"; args: { socketPath: string; token: string; instanceId: string } }
   | { operation: "generateCommit"; args: CommitGenerationInput }
   | { operation: "forkSession"; args: NativeSessionForkInput }
+  | { operation: "getExportIntent"; args: { text: string } }
+  | { operation: "exportSession"; args: import("../omp/session-export").NativeSessionExportInput }
   | { operation: "flushSession" }
   | { operation: "listModels"; args: { cwd: string; refresh?: boolean } }
   | { operation: "listModelCapabilities"; args: { cwd: string; refresh?: boolean } }

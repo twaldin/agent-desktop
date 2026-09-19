@@ -1,3 +1,4 @@
+import { exportNativeSession, nativeExportIntent } from "./session-export";
 import { NativePlanExecutionAdmission, NativePlanMessageAdmissionError, type OmpPlanExecutionRun } from "./plan-execution-admission";
 import { NativePlanController, NativePlanError, resolveNativePlanInvocation } from "./plan-controller";
 import { getEditorCommand } from "@oh-my-pi/pi-coding-agent/utils/external-editor";
@@ -109,6 +110,8 @@ export interface OmpBrowserTabCreateResult {
   targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
 }
 export interface OmpSession {
+  getExportIntent(text: string): Promise<import("./session-export").NativeExportIntent>;
+  exportSession(input: import("./session-export").NativeSessionExportInput): Promise<void>;
   readonly id: string;
   readonly sessionFile: string;
   readonly cwd: string;
@@ -737,6 +740,8 @@ export class OmpRuntime {
           assertSessionActive();
           return transcript();
         },
+        getExportIntent: async text => { assertSessionActive(); return nativeExportIntent(session, text); },
+        exportSession: input => exportNativeSession(session, input, () => assertSnapshotReady("exporting this conversation")),
         flushSession: async () => {
           assertSnapshotReady("forking this conversation");
           const source = { sessionId: manager.getSessionId(), sessionFile: session.sessionFile ?? sessionFile, cwd: manager.getCwd() };
