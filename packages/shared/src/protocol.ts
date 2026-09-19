@@ -72,6 +72,7 @@ export * from "./draft-browser";
 export * from "./goal-control";
 export * from "./detached-questions";
 export * from "./btw";
+export * from "./session-todos";
 export type * from "./preferences";
 export * from "./workspace-protocol";
 export { parseStandaloneFilePath } from "./workspace";
@@ -257,6 +258,7 @@ export interface HostState {
   queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13; images?: { commandVersion: 17 } } };
   forceTool?: { version: 1; commandVersion: 18 };
   plan?: { version: 1; commandVersion: 19; document?: { version: 1; commandVersion: 20 } };
+  todos?: typeof import("./session-todos").SESSION_TODOS_CAPABILITY;
   taskLocations?: { version: 1; commandVersion: 14 };
   browserContinuations?: { version: 1; commandVersion: 15 };
   sessionExports?: typeof import("./session-export").SESSION_EXPORT_CAPABILITY;
@@ -290,6 +292,7 @@ export type HostCommand =
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
   | { type: "session.prompt"; sessionId: string; text: string; forceTool?: import("./force-tool").ForceToolGuard; forceRecovery?: import("./force-tool").ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
+  | ({ type: "session.todos.mutate" } & import("./session-todos").TodoMutationRequest)
   | ({ type: "session.plan.control" } & import("./session-plan").PlanControlRequest)
   | ({ type: "session.plan.mutate" } & import("./session-plan").PlanMutationRequest)
   | ({ type: "session.plan.execution.retry" } & import("./session-plan").PlanExecutionRetryRequest)
@@ -311,7 +314,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22;
 }
 
 export interface ImageAdmission {
@@ -327,7 +330,7 @@ export type PromptAdmission =
   | { kind: "skill-message"; entryId: string; name: string }
   | { kind: "native-command"; command: string; entryId?: string; output?: string };
 export type CommandResult =
-  | { ok: true; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; admission?: PromptAdmission; value?: import("./session-export").SessionExportReceipt | Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt | ({ type: "session.plan.control" } & import("./session-plan").PlanControlResult) | { type: "session.plan.mutate"; receipt: import("./session-plan").PlanDecisionReceipt; session?: SessionSummary } | import("./session-plan").PlanExecutionRetryResult | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancelResult) }
+  | { ok: true; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; admission?: PromptAdmission; value?: import("./session-export").SessionExportReceipt | Project | SessionSummary | Draft | WorkspaceMutationResult | LocalEnvironmentPreparationReceipt | NativeSkillFileWriteResult | NativeSkillFileRevealResult | {type:"skill.file.open";targetId:string} | { type: "preferences.put"; preference: PreferenceRecord } | { type: "preferences.keymap.mutate"; preference: CommandKeymapPreferenceRecord } | { type: 'session.question.answer'; receipt: import('./detached-questions').ResolveDetachedQuestionReceipt } | { type: "session.mcp.authorization"; authorizationId: string } | { type: "session.mcp"; snapshot: import("./session-mcp").NativeSessionMcpSnapshot } | { type: 'session.btw'; snapshot: import('./btw').NativeBtwSnapshot | null } | { type: 'session.btw.promote'; cancelled: boolean; session: SessionSummary } | import("./queued-submissions").QueuedSubmissionResult | import("./task-location").TaskLocationMoveReceipt | import("./session-fork").SessionForkReceipt | ({ type: "session.plan.control" } & import("./session-plan").PlanControlResult) | { type: "session.plan.mutate"; receipt: import("./session-plan").PlanDecisionReceipt; session?: SessionSummary } | import("./session-plan").PlanExecutionRetryResult | ({ type: "session.force.cancel" } & import("./force-tool").ForceToolCancelResult) | { type: "session.todos.mutate"; result: import("./session-todos").TodoMutationResult } }
   | { ok: false; commandId: string; forceToolReceipt?: import("./force-tool").ForceToolReceipt; error: { code: string; message: string; checkoutConflict?: GitCheckoutRefusalError["checkoutConflict"] }; currentDraft?: Draft };
 
 export type HostEvent =
@@ -488,6 +491,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   mcpOwner?: import("./mcp-owner").McpOwnerBridge;
   sessionMcpApp?(sessionId: string, request: import("./session-mcp-app").NativeMcpAppRequest, hostId: string): Promise<import("./session-mcp-app").NativeMcpAppResponse>;
   readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;
+  getSessionTodos?(sessionId: string, hostId: string, commandId?: string): Promise<import("./session-todos").SessionTodosResponse>;
   getPlan?(sessionId: string, hostId: string, commandId?: string): Promise<import("./session-plan").SessionPlanResponse>;
   listPlanEditors?(sessionId: string, hostId: string, cursor?: string): Promise<import("./plan-external-editor").PlanExternalEditorList>;
   getPlanEditorCapabilities?(sessionId: string, hostId: string): Promise<import("./plan-external-editor").PlanExternalEditorCapabilities>;

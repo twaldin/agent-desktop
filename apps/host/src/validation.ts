@@ -1,4 +1,5 @@
 import { exportId, exportTheme } from "../../../packages/shared/src/session-export";
+import { parseTodoCommandId, parseTodoMutationRequest } from "../../../packages/shared/src/session-todos";
 import { parsePlanControlRequest, parsePlanExecutionRetryRequest, parsePlanMutationRequest } from "../../../packages/shared/src/session-plan";
 import { parseForceToolPromptFields, parseForceToolCancel } from "../../../packages/shared/src/force-tool";
 import { parseDraftBrowserContinuation, parseNativeSessionMcpReload, parseNativeSessionMcpReconnect, parseNativeSkillFileRef } from "@agent-desktop/shared";
@@ -38,11 +39,15 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
-  const version = envelope.commandVersion as 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | undefined;
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  const version = envelope.commandVersion as CommandEnvelope["commandVersion"];
   const command = object(envelope.command);
+  if (command.type === "session.todos.mutate" && (version !== 22 || transportVersion !== undefined && transportVersion !== 22))
+    throw new Error("Native Todos require command version 22 and the version 22 endpoint.");
+  if ((version === 22 || transportVersion === 22) && (command.type !== "session.todos.mutate" || version !== 22 || transportVersion !== undefined && transportVersion !== 22))
+    throw new Error("The version 22 endpoint accepts only revision-bound native Todos commands.");
   const documentMutation = command.type === "session.plan.mutate" && object(command.mutation).action === "document";
   if (documentMutation && (version !== 20 || transportVersion !== undefined && transportVersion !== 20))
     throw new Error("Native Plan document changes require command version 20 and the version 20 endpoint.");
@@ -53,7 +58,7 @@ export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 
     throw new Error("Native Plan decisions require the version 19 or 20 endpoint.");
   return { ...parseCommandBody(value, version ?? (transportVersion === 20 ? 20 : transportVersion === 19 ? 19 : transportVersion === 18 ? 18 : transportVersion === 17 ? 17 : transportVersion === 16 ? 16 : transportVersion === 15 ? 15 : transportVersion === 14 ? 14 : transportVersion === 13 ? 13 : transportVersion === 12 ? 12 : transportVersion === 11 ? 11 : transportVersion === 10 ? 10 : transportVersion === 9 ? 9 : undefined)), ...(version === undefined ? {} : { commandVersion: version }) };
 }
-function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20): CommandEnvelope {
+function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["commandVersion"]): CommandEnvelope {
   const envelope = object(value);
   const id = text(envelope.id, "command ID");
   const input = object(envelope.command);
@@ -159,6 +164,11 @@ function parseCommandBody(value: unknown, commandVersion?: 4 | 5 | 6 | 7 | 8 | 9
       })() }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
+    case "session.todos.mutate": {
+      if (commandVersion !== 22) throw new Error("Native Todos require command version 22.");
+      const { type: _type, ...request } = input;
+      return { id: parseTodoCommandId(id), command: { type, ...parseTodoMutationRequest(request) } };
+    }
     case "session.plan.control":
     case "session.plan.mutate":
     case "session.plan.execution.retry": {

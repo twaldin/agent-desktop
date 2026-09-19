@@ -11,6 +11,7 @@ import type { NativeSkillPrompt } from "./skills";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type { NativeMcpAuthorizationSnapshot, NativeSessionMcpSnapshot } from "@agent-desktop/shared";
 import { formatMcpInspection, type McpInspection } from "./mcp-output";
+import type { TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 
 /** Pinned 18.1.10 public native handlers/contexts. AgentSession.prompt catches
  * command exceptions and returns false for both handled commands and abandoned
@@ -23,6 +24,9 @@ export interface NativeCommandBridges {
   withNativeForceInvocation?: NativeForceInvocationScope;
   /** Invoked only after exact native extension/custom precedence. */
   plan?: (text: string) => Promise<NativePromptDispatchResult>;
+  /** Invoked only after exact native extension/custom precedence. Rejections
+   * (TODOS_REJECTED) executed nothing; OUTCOME_UNKNOWN follows admission. */
+  todo?: (text: string) => Promise<TodoMutationResult>;
   reloadMcp(): Promise<void>;
   inspectMcp(): NativeSessionMcpSnapshot;
   reconnectMcp(serverName: string): Promise<NativeSessionMcpSnapshot>;
@@ -81,6 +85,21 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
       if (builtin.name === "plan" || builtin.name === "plan-review") {
         if (!bridges?.plan) throw new Error("The native Plan owner is unavailable; this command was not executed.");
         return bridges.plan(text);
+      }
+      if (builtin.name === "todo") {
+        if (!bridges?.todo) throw new Error("The native Todos owner is unavailable; this command was not executed.");
+        let result: TodoMutationResult;
+        try { result = await bridges.todo(text); }
+        catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "OUTCOME_UNKNOWN") throw new OmpPromptAdmissionError(error);
+          throw error;
+        }
+        // The TUI-only verbs return the pinned native usage text; the desktop
+        // panel action is a separate durable route, never a claimed TUI run.
+        try {
+          const commandEntryId = result.output ? session.sessionManager.appendCustomEntry("agent-desktop.command-output", { command: "todo", output: result.output }) : undefined;
+          return { agentInvoked: false, handledCommand: "todo", ...(commandEntryId ? { commandEntryId, output: result.output } : {}) };
+        } catch (error) { throw new OmpPromptAdmissionError(error); }
       }
       const availability = builtinAvailability(builtin.name, parsed.args);
       const verb = parsed.args.trim().split(/\s+/, 1)[0]?.toLowerCase();

@@ -20,7 +20,7 @@ export type SettingsPage = "keyboard-shortcuts" | "general" | "accounts" | "omp"
 export type WorkspaceTab = "files" | "changes" | "worktrees";
 export interface FileTreeView { open: boolean; width: number }
 export const defaultFileTreeView = (): FileTreeView => ({ open: false, width: 250 });
-export const environmentSectionKeys = ["environment", "side-chats", "subagents", "jobs", "sources"] as const;
+export const environmentSectionKeys = ["environment", "side-chats", "todos", "subagents", "jobs", "sources"] as const;
 export type EnvironmentSectionKey = typeof environmentSectionKeys[number];
 export type SidebarSectionKey = "pinned" | "projects" | "recents" | `custom:${string}`;
 export const defaultCollapsedSidebarSections = (): SidebarSectionKey[] => ["recents"];

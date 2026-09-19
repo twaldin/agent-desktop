@@ -1,0 +1,35 @@
+.session-todos{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px;line-height:18px}
+.session-todos-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.session-todos-toolbar>button,.session-todos-actions>button,.session-todos-form button,.session-todos-editor button,.session-todos-recovery button{display:inline-flex;align-items:center;gap:4px;min-height:24px;padding:2px 8px;border:.5px solid var(--border);border-radius:8px;background:transparent;color:var(--text);font:inherit;font-size:12px;cursor:pointer}
+.session-todos-toolbar>button .icon{width:12px;height:12px}
+.session-todos-toolbar>button[aria-pressed=true],.session-todos-actions>button:hover:not(:disabled),.session-todos-toolbar>button:hover:not(:disabled){background:var(--hover)}
+.session-todos-toolbar>button:disabled,.session-todos-actions>button:disabled,.session-todos-form button:disabled,.session-todos-editor button:disabled,.session-todos-recovery button:disabled{opacity:.5;cursor:default}
+.session-todos-toolbar>.icon-button{width:24px;height:24px;margin-left:auto;padding:4px;border:0;color:var(--secondary)}
+.session-todos-error{margin:0;color:var(--danger);overflow-wrap:anywhere}
+.session-todos-output{margin:0;padding:6px 8px;border-radius:8px;background:var(--hover);color:var(--secondary);font:11px/16px var(--code-font,monospace);white-space:pre-wrap;overflow-wrap:anywhere;max-height:120px;overflow:auto}
+.session-todos-recovery{display:grid;gap:4px;padding:6px 8px;border:.5px solid var(--border);border-radius:8px}
+.session-todos-recovery p{margin:0;color:var(--secondary);overflow-wrap:anywhere}
+.session-todos-recovery code{font:11px var(--code-font,monospace)}
+.session-todos-form,.session-todos-editor{display:grid;gap:4px;padding:6px 8px;border:.5px solid var(--border);border-radius:8px}
+.session-todos-form label,.session-todos-editor label{color:var(--secondary)}
+.session-todos-form label small{display:block;color:var(--tertiary);font-size:11px}
+.session-todos-form input,.session-todos-editor textarea{width:100%;min-width:0;padding:4px 6px;border:.5px solid var(--border);border-radius:6px;background:var(--app-surface,transparent);color:var(--text);font:inherit}
+.session-todos-editor textarea{min-height:140px;resize:vertical;font:12px/18px var(--code-font,monospace);white-space:pre;overflow:auto}
+.session-todos-form>div,.session-todos-editor>div{display:flex;flex-wrap:wrap;gap:4px}
+.session-todos-conflict p{margin:0;color:var(--danger)}
+.session-todos-phases{display:flex;flex-direction:column;gap:6px}
+.session-todos-phase h4{display:flex;align-items:baseline;gap:6px;margin:0;font-size:12px;font-weight:600}
+.session-todos-phase h4>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-todos-phase h4>small{color:var(--tertiary);font-weight:400}
+.session-todos-phase ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+.session-todos-phase li>button{display:flex;align-items:flex-start;gap:6px;width:100%;padding:3px 4px;border:0;border-radius:6px;background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.session-todos-phase li>button:hover{background:var(--hover)}
+.session-todos-phase li>button[aria-pressed=true]{background:var(--hover);box-shadow:inset 0 0 0 1px var(--accent)}
+.session-todos-glyph{flex:none;width:12px;color:var(--secondary)}
+.session-todos-content{flex:1;min-width:0;overflow-wrap:anywhere}
+.session-todos-status{flex:none;color:var(--tertiary);font-size:11px}
+li[data-status=completed] .session-todos-content,li[data-status=abandoned] .session-todos-content{color:var(--secondary);text-decoration:line-through}
+li[data-status=in_progress] .session-todos-glyph{color:var(--accent)}
+li[data-status=blocked] .session-todos-glyph{color:var(--danger)}
+.session-todos-blocker{margin:0 4px 2px 22px;color:var(--danger);font-size:11px;overflow-wrap:anywhere}
+.session-todos-actions{display:flex;flex-wrap:wrap;gap:4px;padding-top:2px}

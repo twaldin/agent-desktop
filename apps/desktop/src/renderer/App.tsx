@@ -4,6 +4,10 @@ import { PlanExecutionContinuationControl, PlanReviewPanel } from "./PlanReviewP
 import { useSessionPlan, type SessionPlanPorts } from "./use-session-plan";
 import type { PlanReviewPorts } from "./plan-review-model";
 import type { SessionPlan } from "../../../../packages/shared/src/session-plan";
+import { SessionTodosPanel } from "./SessionTodos";
+import { SessionTodosModel, type SessionTodosPanelPorts } from "./session-todos-model";
+import { useSessionTodos, type SessionTodosPorts } from "./use-session-todos";
+import type { TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 import { ForceToolControl } from "./ForceToolControl";
 import { forceCommandSpelling, nativeForceWinner, type NativeForceSubmission } from "./force-tool-submissions";
 import type { ForceToolPorts, ForceToolSnapshot } from "./force-tool-state";
@@ -1001,6 +1005,39 @@ export function App() {
     finally { clipboardWritePending.current = false; }
   }
   const copyPath = (value: string) => { void copyText(value).catch(cause => { if (selectedRef.current === routeKey) setActionError(errorMessage(cause)); }); };
+  const todosPorts = useMemo<SessionTodosPorts>(() => ({ bridge,
+    storage: { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value), remove: key => localStorage.removeItem(key) } }), [bridge]);
+  const nativeTodos = useSessionTodos({ hostId, sessionId: selected?.id ?? "" }, todosPorts, {
+    connected: connected && !selected?.archived, active: !contentOverlayOpen,
+    supported: state?.todos?.version === 1 && state.todos.commandVersion === 22, localHostId: desktop.localHostId,
+  });
+  const todosPanelPorts = useMemo<SessionTodosPanelPorts>(() => ({
+    mutate: (owner, request) => nativeTodos.state.mutate(owner, request),
+    refresh: async owner => {
+      if (owner.hostId !== nativeTodos.state.owner.hostId || owner.sessionId !== nativeTodos.state.owner.sessionId) throw new Error("Open the owning conversation before refreshing its Todos.");
+      await nativeTodos.state.refresh();
+    },
+  }), [nativeTodos.state]);
+  const todosConnected = connected && !selected?.archived;
+  const [todosModel] = useState(() => new SessionTodosModel({ ...nativeTodos.view, connected: todosConnected }, todosPanelPorts));
+  const todosOpenCount = nativeTodos.view.value?.phases.reduce((sum, phase) => sum + phase.tasks.filter(task => task.status !== "completed" && task.status !== "abandoned").length, 0) ?? 0;
+  const showTodosSection = () => { setEnvironmentOpen(true); setEnvironmentCollapsed(previous => previous.filter(value => value !== "todos")); };
+  /** The owning host advertises structured actions for the TUI-only /todo verbs; the desktop performs them. */
+  const applyTodoDesktopAction = (result: TodoMutationResult) => {
+    if (result.desktopAction === "show" || result.desktopAction === "expand") showTodosSection();
+    // The mounted panel configures the model with the confirmed state before the editor opens on it.
+    else if (result.desktopAction === "edit") {
+      const origin = routeKey;
+      showTodosSection();
+      requestAnimationFrame(() => {
+        const current = todosModel.getSnapshot();
+        if (selectedRef.current === origin && current.owner.sessionId === result.state.ticket.nativeSessionId
+          && current.value?.ticket.epoch === result.state.ticket.epoch) todosModel.setEditing(true);
+      });
+    }
+    else if (result.desktopAction === "collapse") setEnvironmentCollapsed(previous => previous.includes("todos") ? previous : [...previous, "todos"]);
+    else if (result.desktopAction === "copy") copyPath(result.state.markdown);
+  };
   const markdownOwner = selected && selected.id === selectedId && selected.hostId === hostId ? { hostId, sessionId: selected.id } : null;
   const markdownIssue = !chatRoute || !markdownOwner ? "Select the conversation to copy."
     : !connected ? "Reconnect to load this conversation from its owning host before copying it."
@@ -1372,6 +1409,31 @@ export function App() {
           await side.start(snapshot);
           if (side.error) throw new Error(side.error);
           await refresh();
+          return;
+        }
+      }
+      if (!pending?.uncertain && /^\s*\/todo(?:[\s:]|$)/.test(snapshot.text)) {
+        if (!selectedId) throw new Error("Open a conversation before using native /todo. The draft was retained.");
+        if (!bridge.getComposerActions) throw new Error("Update this desktop to resolve native /todo. The draft was retained.");
+        const target = { sessionId: selectedId }, catalog = await bridge.getComposerActions(target, false, hostId);
+        assertComposerOwner(catalog, hostId, target);
+        if (selectedRef.current !== originalRoute) throw new Error("The conversation changed while resolving /todo. Nothing was sent.");
+        const text = snapshot.text.trim(), space = text.indexOf(" "), token = space < 0 ? text.slice(1) : text.slice(1, space);
+        const literal = catalog.commands.find(value => value.name === token && value.availability !== "shadowed");
+        // Native extension/custom dispatch uses the literal space-delimited token
+        // before builtins parse ':' or other whitespace as argument separators.
+        const native = literal?.source.kind === "extension" || literal?.source.kind === "custom" ? literal
+          : catalog.commands.find(value => value.id === "builtin:todo");
+        // Native extensions/custom commands retain their dispatch precedence.
+        if (native?.source.kind === "builtin") {
+          if (native.desktopAction !== "todos") throw new Error("Update the owning host to use native /todo through the Todos panel. The draft was retained.");
+          if (snapshot.attachments?.length || snapshot.selectedTextAttachments?.length || snapshot.wholeFileAttachments?.length) throw new Error("Native /todo does not accept attachments. The draft was retained.");
+          const current = nativeTodos.state.getSnapshot();
+          if (!current.value) throw new Error(current.readError ?? current.error ?? "Refresh the native Todos before using /todo. The draft was retained.");
+          const result = await nativeTodos.state.mutate({ hostId, sessionId: selectedId }, { sessionId: selectedId, ticket: current.value.ticket, mutation: { action: "command", text: snapshot.text.trim() } });
+          drafts.finishSubmission(sendingDraftId, snapshot, false);
+          if (drafts.get(sendingDraftId).draft.text === snapshot.text) drafts.update(sendingDraftId, { text: "" });
+          if (selectedRef.current === originalRoute) applyTodoDesktopAction(result);
           return;
         }
       }
@@ -2084,7 +2146,7 @@ export function App() {
       </>}
 
     </main>
-      {environmentOpen && workspace && !contentOverlayOpen && <div className="environment-overlay"><EnvironmentCard onCheckoutBlocked={openBranchSwitch} taskLocation={selected ? taskLocation : undefined} compoundGit={state?.gitSubmissions?.commandVersion === 10} branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }} collapsedSections={environmentCollapsed} onToggleSection={key => setEnvironmentCollapsed(previous => previous.includes(key) ? previous.filter(value => value !== key) : [...previous, key])} showEmptySources={!project} sideChats={dock.snapshot.tabs.filter(tab => tab.kind === "side-chat" && tab.hostId === hostId && tab.target === `session:${selectedId}`).map(tab => ({ id:tab.id,title:tab.title,unread:Boolean(tab.unread),onOpen:() => dock.open("side-chat") }))} actions={state?.localEnvironments?.actions ? <EnvironmentActions workspace={workspace} connected={connected} onTerminal={(terminal,title) => dock.bindTerminal(terminal.id,hostId,workspace.target,defaultTerminalLocation,title)} onSettings={() => { if(project?.id) setEnvironmentProject({hostId,projectId:project.id}); setSettingsPage("environments"); openSettings(); }}/> : undefined} key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd,true); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { if (state?.gitSubmissions?.commandVersion === 10) openGitSubmission(workspace!); else { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); } }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal(defaultTerminalLocation)} onHost={() => { setSidebarOpen(true); requestAnimationFrame(() => { const trigger = document.getElementById("active-host"); trigger?.focus(); trigger?.click(); }); }}/></div>}
+      {environmentOpen && workspace && !contentOverlayOpen && <div className="environment-overlay"><EnvironmentCard onCheckoutBlocked={openBranchSwitch} taskLocation={selected ? taskLocation : undefined} compoundGit={state?.gitSubmissions?.commandVersion === 10} branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }} collapsedSections={environmentCollapsed} onToggleSection={key => setEnvironmentCollapsed(previous => previous.includes(key) ? previous.filter(value => value !== key) : [...previous, key])} showEmptySources={!project} todos={selected ? { count: todosOpenCount, content: <SessionTodosPanel model={todosModel} {...nativeTodos.view} connected={todosConnected} {...todosPanelPorts} copy={typeof navigator.clipboard?.writeText === "function" ? copyText : undefined}/> } : undefined} sideChats={dock.snapshot.tabs.filter(tab => tab.kind === "side-chat" && tab.hostId === hostId && tab.target === `session:${selectedId}`).map(tab => ({ id:tab.id,title:tab.title,unread:Boolean(tab.unread),onOpen:() => dock.open("side-chat") }))} actions={state?.localEnvironments?.actions ? <EnvironmentActions workspace={workspace} connected={connected} onTerminal={(terminal,title) => dock.bindTerminal(terminal.id,hostId,workspace.target,defaultTerminalLocation,title)} onSettings={() => { if(project?.id) setEnvironmentProject({hostId,projectId:project.id}); setSettingsPage("environments"); openSettings(); }}/> : undefined} key={workspaceOwner} hostName={state?.host.name ?? hostId} cwd={selected?.cwd ?? project?.path ?? ""} local={hostId === desktop.localHostId} connected={connected} workspace={workspace} activity={activity?.value} activityError={!connected ? "Reconnect to refresh native activity." : activity?.error} sources={selected ? transcriptSources(transcript.messages,selected.id).map(source => ({id:source.id,label:source.label,kind:source.kind,onOpen:() => {if(source.kind === "image") setSourcePreview({hostId,source});else {try {const link = resolveTranscriptLink(encodeURIComponent(source.path).replaceAll("%2F","/"),selected.cwd,true); if(link.kind !== "file") throw new Error(link.kind === "unavailable" ? link.reason : "This source is not a workspace file."); void transcriptLinkActions.openFile?.(link.file);} catch(cause){setActionError(errorMessage(cause));}}}})) : []} onReview={() => dock.open("review")} onCommit={() => { if (state?.gitSubmissions?.commandVersion === 10) openGitSubmission(workspace!); else { dock.open("review"); setCommitRequest({owner:workspaceOwner!,id:crypto.randomUUID()}); } }} onFiles={() => dock.open("files")} onTerminal={() => void dock.terminal(defaultTerminalLocation)} onHost={() => { setSidebarOpen(true); requestAnimationFrame(() => { const trigger = document.getElementById("active-host"); trigger?.focus(); trigger?.click(); }); }}/></div>}
     {!contentOverlayOpen && <div className="header-panel-actions no-drag" onContextMenu={headerContextMenu}>
       {taskLayoutAction && <button className="icon-button" aria-label={taskLayoutAction.label} title={taskLayoutAction.label === "Fullscreen" ? `Fullscreen content · ${navigator.platform.toLowerCase().includes("mac") ? "Option" : "Alt"}-click for Chat` : taskLayoutAction.label} onClick={event => taskLayoutAction.onSelect(readTaskLayoutActivation(event))}><Icon name={taskLayoutAction.label === "Restore split" ? "restoreSplit" : "fullWidth"}/></button>}
       {bottomPanelVisible && <button role="checkbox" aria-checked={terminalOpen} className={`icon-button ${terminalOpen ? "active" : ""}`} aria-label="Toggle bottom panel" title={terminalOpen ? "Hide bottom panel" : "Show bottom panel"} onClick={() => dock.toggle("bottom")}><Icon name="panelBottom"/></button>}

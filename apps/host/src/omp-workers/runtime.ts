@@ -4,6 +4,7 @@ import type { OmpPlanExecutionRun } from "../omp/plan-execution-admission";
 import { parsePlanDecisionPreparation } from "../omp/plan-decision";
 import { parsePlanMutationRequest, parsePlanControlRequest, parsePlanControlResult, parseSessionPlan, parsePlanDocumentReadRequest, type SessionPlan, type PlanDocumentReadRequest } from "../../../../packages/shared/src/session-plan";
 import { parsePlanDocumentSection, type PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
+import { parseSessionTodos, parseTodoCommandId, parseTodoMutationRequest, parseTodoMutationResult, type SessionTodos, type TodoMutationRequest, type TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 import { requestWorkerBrowserObservation, type WorkerBrowserObservation } from "../omp-browser/observation";
 import { openWorkerBrowserEvaluation, recoverWorkerBrowserEvaluation, type WorkerBrowserEvaluation } from "../omp-browser/evaluation-client";
 import { copyEvaluationBinding, copyEvaluationFrame, copyEvaluationValue, evaluationKey, type BrowserEvaluationBinding, type BrowserEvaluationFrame } from "../omp-browser/evaluation-wire";
@@ -48,7 +49,7 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection" | "getPlanExternalEditorAvailable"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection" | "getPlanExternalEditorAvailable" | "getTodos"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
@@ -57,6 +58,8 @@ export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSess
   getPlan(): Promise<SessionPlan>;
   getPlanExternalEditorAvailable(): Promise<boolean>;
   getPlanDocumentSection(request: PlanDocumentReadRequest): Promise<PlanDocumentSection>;
+  getTodos(): Promise<SessionTodos>;
+  mutateTodos(commandId: string, request: TodoMutationRequest): Promise<TodoMutationResult>;
   getForceTool(): Promise<ForceToolState>;
   cancelForceTool(input: { ticket: ForceToolTicket; directiveId: string }): Promise<ForceToolCancelResult>;
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
@@ -129,7 +132,7 @@ interface Pending {
   reject(error: unknown): void;
   timeout?: ReturnType<typeof setTimeout>;
   onProgress?: (message: string) => void;
-  uncertainTransport?: "prompt-admission" | "queued-submission" | "question-resolution" | "mcp-authorization" | "force-cancel";
+  uncertainTransport?: "prompt-admission" | "queued-submission" | "question-resolution" | "mcp-authorization" | "force-cancel" | "todos-mutation";
   evaluationDisposal?: boolean;
   evaluation?: { binding: BrowserEvaluationBinding; sequence: number };
   forceTool?: { commandId: string; capture(receipt: ForceToolReceipt): void };
@@ -259,6 +262,7 @@ export class WorkerClient {
     if (pending?.uncertainTransport === "queued-submission") return Object.assign(new Error("Queued submission delivery is unknown. Inspect its durable receipt before retrying.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
     if (pending?.uncertainTransport === "question-resolution") return new DetachedQuestionOutcomeUnknown(error);
     if (pending?.uncertainTransport === "force-cancel") return Object.assign(new Error("Native force cancellation delivery is unknown. Inspect the live queue before retrying.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
+    if (pending?.uncertainTransport === "todos-mutation") return Object.assign(new Error("Native Todos mutation delivery is unknown. Inspect its journal receipt before retrying.", { cause: error }), { code: "OUTCOME_UNKNOWN" as const });
     return error;
   }
 
@@ -401,7 +405,11 @@ export class WorkerClient {
       else {
         const error = new Error(message.error?.message ?? "OMP worker operation failed");
         error.name = message.error?.name ?? "Error";
-        if (message.error?.code === "OUTCOME_UNKNOWN" || message.error?.code === "PLAN_REJECTED") Object.assign(error, { code: message.error.code });
+        if (message.error?.code === "OUTCOME_UNKNOWN" || message.error?.code === "PLAN_REJECTED" || message.error?.code === "TODOS_REJECTED") Object.assign(error, { code: message.error.code });
+        // A remote unclassified failure can occur while constructing the reply
+        // after native persistence. Only an explicit refusal proves no effect.
+        if (pending.uncertainTransport === "todos-mutation" && message.error?.code !== "TODOS_REJECTED")
+          Object.assign(error, { code: "OUTCOME_UNKNOWN" });
         if (forceToolReceipt) Object.assign(error, { forceToolReceipt: { ...forceToolReceipt } });
         pending.reject(error);
       }
@@ -1098,6 +1106,37 @@ export class WorkerRuntime {
         if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file)
           throw new Error("The original Plan document worker changed during inspection.");
         return value;
+      },
+      getTodos: async () => {
+        const origin = { id: state().id, file: state().sessionFile };
+        const value = parseSessionTodos(await client.request({ operation: "getTodos" }, 15_000));
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file
+          || value.ticket.nativeSessionId !== origin.id) throw new Error("The original Todos worker changed during inspection.");
+        return value;
+      },
+      mutateTodos: async (commandId, raw) => {
+        // Errors without an outcome code precede native admission: nothing was
+        // dispatched. Only the live IPC round trip and its receipt are uncertain.
+        const rejected = (message: string) => Object.assign(new Error(message), { code: "TODOS_REJECTED" as const });
+        let request: TodoMutationRequest;
+        try { parseTodoCommandId(commandId); request = parseTodoMutationRequest(raw); }
+        catch (error) { throw rejected(error instanceof Error ? error.message : String(error)); }
+        const origin = { id: state().id, file: state().sessionFile };
+        if (request.sessionId !== origin.id || request.ticket.nativeSessionId !== origin.id) throw rejected("The native Todos target changed before dispatch.");
+        if (disposeCall || client.failure) throw rejected("The original native Todos worker is unavailable; nothing was changed.");
+        let response: unknown;
+        try { response = await client.request({ operation: "mutateTodos", args: { commandId, request } }, 30_000, "todos-mutation"); }
+        catch (error) {
+          if (error instanceof Error && "code" in error) throw error;
+          throw rejected(error instanceof Error ? error.message : String(error));
+        }
+        let result: TodoMutationResult;
+        try { result = parseTodoMutationResult(response, commandId); }
+        catch (cause) { throw Object.assign(new Error("The native Todos mutation returned an invalid receipt. Inspect its journal receipt before retrying.", { cause }), { code: "OUTCOME_UNKNOWN" as const }); }
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file
+          || result.state.ticket.nativeSessionId !== request.ticket.nativeSessionId || result.state.ticket.epoch !== request.ticket.epoch)
+          throw Object.assign(new Error("The original Todos mutation result could not be confirmed."), { code: "OUTCOME_UNKNOWN" as const });
+        return result;
       },
       getForceTool: async () => parseForceToolState(await client.request({ operation: "getForceTool" })),
       cancelForceTool: async input => {

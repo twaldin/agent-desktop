@@ -25,7 +25,7 @@ test("old window profiles remain valid and disclosure input is bounded and proje
   const old = defaultWindowView();
   expect(parseWindowView(old)).toEqual(old);
   expect(parseWindowView({ ...old, environmentCollapsed: ["jobs", "jobs"] })?.environmentCollapsed).toEqual(["jobs"]);
-  for (const invalid of [null, "jobs", {}, ["unknown"], [false], Array(6).fill("jobs")]) {
+  for (const invalid of [null, "jobs", {}, ["unknown"], [false], Array(environmentSectionKeys.length + 1).fill("jobs")]) {
     expect(parseWindowView({ ...old, environmentCollapsed: invalid })).toBeUndefined();
   }
 });

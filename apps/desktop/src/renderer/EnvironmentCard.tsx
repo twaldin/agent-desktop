@@ -19,11 +19,13 @@ export interface EnvironmentCardProps {
   collapsedSections: readonly EnvironmentSectionKey[]; onToggleSection(key: EnvironmentSectionKey): void;
   showEmptySources?: boolean; actions?: ReactNode; compoundGit?: boolean;
   sideChats?: readonly { id: string; title: string; unread: boolean; onOpen(): void }[];
+  /** Native Todos panel for the selected conversation; omitted when no conversation is open. */
+  todos?: { count: number; content: ReactNode };
   /** Existing sessions never fall back to the global host picker while their host location is loading or unavailable. */
   taskLocation?: { snapshot: TaskLocationSnapshot; actions: TaskLocationActions } | { state: "loading" | "unavailable"; reason?: string };
 }
 
-export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [], taskLocation }: EnvironmentCardProps) {
+export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [], todos, taskLocation }: EnvironmentCardProps) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [expandedSources, setExpandedSources] = useState(false);
   useEffect(() => workspace.subscribe(redraw), [workspace]);
@@ -48,6 +50,7 @@ export function EnvironmentCard({ hostName, cwd, local, connected, workspace, ac
       {compoundGit ? <GitSubmissionButton data={workspace} className="environment-row" onOpen={onCommit}/> : <button className="environment-row" disabled={commitDisabled} onClick={onCommit} title={commitDisabled ? commitReason : `Commit ${staged.length} staged ${staged.length === 1 ? "file" : "files"}`}><Icon name="check"/><span>Commit</span></button>}
     </SummarySection>
     {sideChats.length > 0 && <SummarySection {...section("side-chats")} title="Side chats" count={sideChats.length}>{sideChats.map(chat => <button className="environment-row" key={chat.id} onClick={chat.onOpen}><Icon name="sideChat"/><span>{chat.title}</span>{chat.unread && <i className="dock-unread" aria-label="Unread answer"/>}</button>)}</SummarySection>}
+    {todos && <SummarySection {...section("todos")} title="Todos" count={todos.count}>{todos.content}</SummarySection>}
     <NativeActivity activity={activity} error={activityError} collapsedSections={collapsedSections} onToggleSection={onToggleSection}/>
     {(sources.length > 0 || showEmptySources) && <SummarySection {...section("sources")} title="Sources" count={sources.length} actions={<button type="button" className="icon-button" aria-label="Browse source files" title="Browse files" onClick={onFiles}><Icon name="plus"/></button>}>
       {shownSources.length ? <ul className="environment-sources">{shownSources.map(source => <li key={source.id}><button onClick={source.onOpen} title={source.label}><Icon name={source.kind === "image" ? "compose" : "folder"}/><span>{source.label}</span></button></li>)}</ul> : <p className="environment-note">No consumed sources are available.</p>}

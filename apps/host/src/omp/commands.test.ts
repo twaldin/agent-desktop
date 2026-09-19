@@ -3,6 +3,8 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import type { NativeMcpAuthorizationSnapshot, NativeSessionMcpSnapshot } from "@agent-desktop/shared";
 import { builtinAvailability } from "./composer-actions";
 import { dispatchNativePrompt, type NativeCommandBridges } from "./commands";
+import { OmpPromptAdmissionError } from "./prompt";
+import type { SessionTodos, TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 
 function mcp(status: NativeMcpAuthorizationSnapshot["status"], options: Partial<NativeMcpAuthorizationSnapshot> = {}): NativeMcpAuthorizationSnapshot {
   return {
@@ -177,4 +179,50 @@ test("Plan dispatch preserves the exact winning native token and does not reinte
   expect(received).toEqual(["/plan:inspect original text"]);
   await expect(dispatchNativePrompt(value.session, "/plan-review")).rejects.toThrow("Plan owner is unavailable");
   expect(received).toHaveLength(1);
+});
+
+const todosState: SessionTodos = { ticket: { nativeSessionId: "session", epoch: "epoch", revision: "3" }, phases: [], markdown: "", nativeCommandAvailable: true, reconciliationRequired: false };
+const todoResult = (output: string, desktopAction?: TodoMutationResult["desktopAction"]): TodoMutationResult => ({ commandId: "cmd", state: todosState, output, ...(desktopAction ? { desktopAction } : {}) });
+
+test("/todo keeps extension precedence and routes only the native winner through the owning controller", async () => {
+  const value = fixture(mcp("succeeded"));
+  const received: string[] = []; let shadows = 0;
+  Object.assign(value.session, { extensionRunner: {
+    getCommand: (name: string) => name === "todo" ? { handler: async () => { shadows++; } } : undefined,
+    createCommandContext: () => ({}), runScoped: async (run: () => Promise<void>) => run(), emitError() {},
+  } });
+  const bridges: NativeCommandBridges = { ...value.bridges, todo: async text => { received.push(text); return todoResult("- [ ] fixture"); } };
+  await dispatchNativePrompt(value.session, "/todo append fixture", undefined, undefined, bridges);
+  expect(shadows).toBe(1); expect(received).toEqual([]); expect(value.entries).toEqual([]);
+  Object.assign(value.session, { extensionRunner: undefined });
+  const result = await dispatchNativePrompt(value.session, "/todo append fixture", undefined, undefined, bridges);
+  expect(received).toEqual(["/todo append fixture"]);
+  expect(result).toEqual({ agentInvoked: false, handledCommand: "todo", commandEntryId: "entry-1", output: "- [ ] fixture" });
+  expect(value.entries).toEqual([{ type: "agent-desktop.command-output", value: { command: "todo", output: "- [ ] fixture" } }]);
+  await expect(dispatchNativePrompt(value.session, "/todo", undefined, undefined, value.bridges)).rejects.toThrow("Todos owner is unavailable");
+  expect(received).toHaveLength(1);
+});
+
+test("/todo TUI-only verbs surface the native usage text and desktop applicability without claiming the controller ran", async () => {
+  const value = fixture(mcp("succeeded"));
+  const usage = "/todo edit requires the TUI editor; use /todo export then /todo import for non-interactive edits.";
+  const bridges: NativeCommandBridges = { ...value.bridges, todo: async () => todoResult(usage, "edit") };
+  const result = await dispatchNativePrompt(value.session, "/todo edit", undefined, undefined, bridges);
+  expect(result).toMatchObject({ agentInvoked: false, handledCommand: "todo", output: usage });
+  expect(builtinAvailability("todo", "edit").availability).toBe("partial");
+  expect(builtinAvailability("todo", "collapse").availability).toBe("partial");
+  expect(builtinAvailability("todo", "append").availability).toBe("executable");
+  expect(builtinAvailability("todo").availability).toBe("executable");
+});
+
+test("/todo rejection executes nothing while a post-admission failure retains the unknown outcome", async () => {
+  const value = fixture(mcp("succeeded"));
+  const rejected = Object.assign(new Error("The native Todos changed. Refresh before trying again."), { code: "TODOS_REJECTED" });
+  await expect(dispatchNativePrompt(value.session, "/todo done fixture", undefined, undefined, { ...value.bridges, todo: async () => { throw rejected; } })).rejects.toBe(rejected);
+  const unknown = Object.assign(new Error("flush failed"), { code: "OUTCOME_UNKNOWN" });
+  const failure = await dispatchNativePrompt(value.session, "/todo done fixture", undefined, undefined, { ...value.bridges, todo: async () => { throw unknown; } }).catch(error => error);
+  expect(failure).toBeInstanceOf(OmpPromptAdmissionError);
+  expect(failure.code).toBe("OUTCOME_UNKNOWN");
+  expect(failure.message).toContain("flush failed");
+  expect(value.entries).toEqual([]);
 });

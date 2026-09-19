@@ -4,6 +4,8 @@ import { SESSION_EXPORT_CAPABILITY } from "@agent-desktop/shared";
 import { PlanExternalEditorHttp, type PlanExternalEditorHttpAction } from "./plan-external-editor-http";
 import { PlanExternalEditors } from "./plan-external-editors";
 import { PlanEditorTerminals } from "./plan-editor-terminal";
+import { SESSION_TODOS_CAPABILITY } from "../../../packages/shared/src/session-todos";
+import { SessionTodosHttp, projectTodoJournalReceipt, mutateSessionTodos } from "./session-todos-http";
 import { PlanDecisionService } from "./plan-decisions";
 import { projectPlanDecisionJournalReceipt, SessionPlanHttp } from "./session-plan-http";
 import { SessionForceToolHttp, projectForceToolJournalReceipt } from "./session-force-tool-http";
@@ -555,6 +557,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
   const planExternalEditorHttp = planExternalEditors ? new PlanExternalEditorHttp({ hostId: store.host.id,
     service: planExternalEditors, sessionExists: id => !stopping && Boolean(store.getSession(id)) }) : undefined;
+  const todosOwners = {
+    sessionExists: (id: string) => !stopping && Boolean(store.getSession(id)),
+    existing: async (id: string) => stopping ? undefined : handles.get(id)?.catch(() => undefined),
+  };
+  const sessionTodosHttp = new SessionTodosHttp({ ...todosOwners, hostId: store.host.id,
+    receipt: (sessionId, commandId) => projectTodoJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
+  });
   const sessionPlanHttp = new SessionPlanHttp({ hostId: store.host.id,
     receipt: (sessionId, commandId) => projectPlanDecisionJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
     continuation: sessionId => planDecisions.continuation(sessionId),
@@ -719,6 +728,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       sessionForks: SESSION_FORK_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
       drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, forceTool: { version: 1, commandVersion: 18 }, plan: { version: 1, commandVersion: 19, document: { version: 1, commandVersion: 20 } }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
+      todos: SESSION_TODOS_CAPABILITY,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput, sessionActivity = false): void {
@@ -895,8 +905,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22): Promise<CommandResult> {
     const command = envelope.command;
+    if (command.type === "session.todos.mutate" && commandVersion !== 22)
+      return fail(envelope.id, "TODOS_REJECTED", "Native Todos require the revision-bound version 22 protocol.");
     if (commandVersion < 20 && command.type === "session.plan.mutate" && command.mutation.action === "document")
       return fail(envelope.id, "PLAN_DOCUMENT_PROTOCOL_REQUIRED", "Native Plan document changes require the current client protocol.");
     const remoteError = remoteWorktreeProtocolError(command, commandVersion, id => store.getDraft(id), id => store.environmentPreparations.get(id));
@@ -996,6 +1008,17 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           ? await handle.reconnectSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision,serverName:command.serverName})
           : await handle.reloadSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision});
         return ok({type:"session.mcp",snapshot});
+      }
+      case "session.todos.mutate": {
+        const { type: _type, ...request } = command;
+        try {
+          const result = await mutateSessionTodos(todosOwners, envelope.id, request);
+          publish({ type: "runtime", sessionId: command.sessionId, event: { type: "todos_changed" } });
+          return ok({ type: "session.todos.mutate", result });
+        } catch (error) {
+          const rejected = error instanceof Error && "code" in error && error.code === "TODOS_REJECTED";
+          return fail(envelope.id, rejected ? "TODOS_REJECTED" : "OUTCOME_UNKNOWN", errorMessage(error));
+        }
       }
       case "session.plan.mutate": {
         const { type: _type, ...request } = command;
@@ -1292,7 +1315,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return operation;
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -1457,6 +1480,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
             { status: 503, headers: { "Cache-Control": "no-store" } });
           return planExternalEditorHttp.route(request, editorRoute[1]!, editorRoute[2] as PlanExternalEditorHttpAction);
         }
+        const todosResponse = await sessionTodosHttp.route(request, url);
+        if (todosResponse) return todosResponse;
         const planResponse = await sessionPlanHttp.route(request, url);
         if (planResponse) return planResponse;
         const exportResponse = await sessionExportHttp.route(request, url);
@@ -1563,6 +1588,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           const record = store.environmentPreparations.get(decodeURIComponent(preparationPath[1]!));
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
+        }
+        if (request.method === "POST" && url.pathname === "/v22/commands") {
+          const value = await request.json();
+          return Response.json(await dispatch(parseCommandEnvelope(value, 22), 22));
         }
         if (request.method === "POST" && ["/v1/commands", "/v2/commands", "/v3/commands", "/v4/commands", "/v5/commands", "/v6/commands", "/v7/commands", "/v8/commands", "/v9/commands", "/v10/commands", "/v11/commands", "/v12/commands", "/v13/commands", "/v14/commands", "/v15/commands", "/v16/commands", "/v17/commands", "/v18/commands", "/v19/commands", "/v20/commands"].includes(url.pathname)) {
           const value = await request.json();

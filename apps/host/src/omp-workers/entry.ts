@@ -2,6 +2,7 @@ import { parsePlanMutationRequest, parsePlanDocumentReadRequest } from "../../..
 import { parsePlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { parsePlanDecisionPreparation } from "../omp/plan-decision";
 import { parsePlanControlRequest, parsePlanControlResult, parseSessionPlan } from "../../../../packages/shared/src/session-plan";
+import { parseSessionTodos, parseTodoCommandId, parseTodoMutationRequest, parseTodoMutationResult, type TodoMutationRequest } from "../../../../packages/shared/src/session-todos";
 import { WorkerBrowserEvaluationChannels } from "../omp-browser/evaluation";
 import { WorkerBrowserObservations } from "../omp-browser/observation";
 import { WorkerBrowserReservations } from "../omp-browser/reservation";
@@ -359,6 +360,18 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         const value = parsePlanDocumentSection(await owner.getPlanDocumentSection(input), input.selection);
         if (requireSession() !== owner) throw new Error("The original Plan document worker changed during inspection.");
         respond(true, value); break;
+      }
+      case "getTodos": respond(true, parseSessionTodos(requireSession().getTodos())); break;
+      case "mutateTodos": {
+        // Argument parsing precedes native admission; a malformed result after
+        // the owner returned is a post-admission uncertainty, never a rejection.
+        let commandId: string, input: TodoMutationRequest;
+        try { commandId = parseTodoCommandId(message.args.commandId); input = parseTodoMutationRequest(message.args.request); }
+        catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: "TODOS_REJECTED" as const }); }
+        const value = await requireSession().mutateTodos(commandId, input);
+        try { respond(true, parseTodoMutationResult(value, commandId)); }
+        catch (cause) { throw Object.assign(new Error("The native Todos mutation produced an invalid result.", { cause }), { code: "OUTCOME_UNKNOWN" as const }); }
+        break;
       }
       case "getForceTool": respond(true, parseForceToolState(requireSession().getForceTool())); break;
       case "cancelForceTool": {

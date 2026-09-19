@@ -33,6 +33,14 @@ export function builtinAvailability(name: string, args?: string): { availability
   if (supportedBuiltins.has(name)) return { availability: "executable" };
   // These commands use the owning Plan controller and its durable decisions.
   if (name === "plan" || name === "plan-review") return { availability: "executable" };
+  if (name === "todo") {
+    // The owning native Todos controller runs the pinned headless grammar. The
+    // TUI-only editor/HUD verbs are structured desktop panel actions instead.
+    const verb = args?.trim().split(/\s+/, 1)[0]?.toLowerCase();
+    if (verb === "edit" || verb === "expand" || verb === "collapse")
+      return { availability: "partial", reason: `Native /todo ${verb} needs the TUI controller; the desktop Todos panel owns this action instead.` };
+    return { availability: "executable" };
+  }
   if (name === "mcp") {
     if (args === undefined) return {availability:"partial",reason:"Native help, live resource/prompt/notification lists, runtime reload, server reconnect and OAuth reauthorization are connected. Other subcommands retain their native integration requirements."};
     const verb=args.trim().split(/\s+/,1)[0]?.toLowerCase();
@@ -63,7 +71,7 @@ function nativeBuiltinRows(): ComposerAction[] {
     argumentHint: command.acpInputHint ?? command.inlineHint,
     subcommands: command.subcommands?.map(sub => ({ ...sub, ...builtinAvailability(command.name, sub.name) })),
     argumentCompletions: Boolean(command.subcommands?.length),
-    ...(command.name === "btw" ? { desktopAction: "side-chat" as const } : {}),
+    ...(command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : {}),
   }));
 }
 
@@ -74,6 +82,14 @@ export function hasNativeBtwComposerWinner(catalog: NativeComposerCatalog): bool
   const builtin = catalog.commands.find(row => row.id === "builtin:btw");
   return builtin?.name === "btw" && builtin.source.kind === "builtin"
     && builtin.desktopAction === "side-chat" && builtin.availability === "partial";
+}
+
+/** A desktop Todos route is valid only while native dispatch still resolves the
+ * exact command name to the pinned builtin; a shadowing row keeps its own owner. */
+export function hasNativeTodoComposerWinner(catalog: NativeComposerCatalog): boolean {
+  const builtin = catalog.commands.find(row => row.id === "builtin:todo");
+  return builtin?.name === "todo" && builtin.source.kind === "builtin"
+    && builtin.desktopAction === "todos" && builtin.availability === "executable";
 }
 
 /** Turn the exact native @ completion value into an owner-host path only after

@@ -202,6 +202,7 @@ const bridge: DesktopBridge = {
   cancelPlanEditor: (request, hostId) => ipcRenderer.invoke("host:plan-editor-cancel", request, hostId),
   recoverPlanEditor: (request, hostId) => ipcRenderer.invoke("host:plan-editor-recovery", request, hostId),
   getPlanDocumentSection: (request, hostId) => ipcRenderer.invoke("host:plan-document-section", request, hostId),
+  getSessionTodos: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-todos-read", sessionId, hostId, commandId),
   getSessionMcp: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-mcp", sessionId, hostId, commandId),
   getSessionMcpAuthorization: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-mcp-authorization", sessionId, hostId, commandId),
   respondSessionMcpAuthorization: (sessionId, reply, hostId) => ipcRenderer.invoke("host:session-mcp-authorization-respond", sessionId, reply, hostId),

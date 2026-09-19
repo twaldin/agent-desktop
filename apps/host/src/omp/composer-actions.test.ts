@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { composerCompletions, type NativeComposerCatalog } from "./composer-actions";
+import type { AgentSession, Extension } from "@oh-my-pi/pi-coding-agent";
+import { composerCompletions, hasNativeTodoComposerWinner, sessionComposerActions, type NativeComposerCatalog } from "./composer-actions";
 
 test("native file completions expose owner absolute paths only for regular files", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "agent-desktop-composer-path-"));
@@ -24,4 +25,18 @@ test("native file completions expose owner absolute paths only for regular files
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+test("the native /todo row advertises the desktop Todos route only while it is the exact dispatch winner", () => {
+  const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
+    sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;
+  const native = sessionComposerActions(session, []);
+  const row = native.commands.find(row => row.id === "builtin:todo");
+  expect(row).toMatchObject({ availability: "executable", desktopAction: "todos" });
+  expect(row?.subcommands?.map(sub => [sub.name, sub.availability])).toEqual(expect.arrayContaining([["edit", "partial"], ["expand", "partial"], ["collapse", "partial"], ["copy", "executable"], ["append", "executable"], ["rm", "executable"]]));
+  expect(hasNativeTodoComposerWinner(native)).toBe(true);
+  const shadow = { resolvedPath: "/fixture/todo.ts", label: "shadow", commands: new Map([["todo", { name: "todo", description: "replacement", handler: async () => {} }]]) } as unknown as Extension;
+  const shadowed = sessionComposerActions(session, [shadow]);
+  expect(shadowed.commands.find(row => row.id === "builtin:todo")?.availability).toBe("shadowed");
+  expect(hasNativeTodoComposerWinner(shadowed)).toBe(false);
 });

@@ -526,6 +526,40 @@ index 1c9f2ba7cb0cad11c065653e22694759c4775044..48c1b4951f2381341e88ac4dbe8ec0d2
      /**
       * Advance the head directive and return its next yield. Records the value
       * as in-flight until resolve() or reject() is called.
+diff --git a/dist/types/slash-commands/helpers/todo.d.ts b/dist/types/slash-commands/helpers/todo.d.ts
+index c619619197a2ac41b648c611dbea5c8c441f6e5a..ae8b05001632d848360251f5241650ee9e8cebf6 100644
+--- a/dist/types/slash-commands/helpers/todo.d.ts
++++ b/dist/types/slash-commands/helpers/todo.d.ts
+@@ -1,3 +1,29 @@
++import type { TodoPhase, UserTodoEdit } from "../../tools/todo.js";
+ import type { ParsedSlashCommand, SlashCommandResult, SlashCommandRuntime } from "../types.js";
++/**
++ * Resolution of one non-interactive `/todo` verb. `message` is the operator
++ * text; `edit` is present when the verb resolved to a user change that must be
++ * committed through {@link commitUserTodoEdit}; `failed` marks usage/no-match
++ * diagnostics. Pure apart from the file access export/import perform.
++ */
++export interface TodoCommandPlan {
++    message: string;
++    edit?: UserTodoEdit;
++    failed?: true;
++}
++export type TodoPlanVerb = "append" | "start" | "done" | "drop" | "rm";
++/** Resolve append/start/done/drop/rm against `current` using the native grammar and fuzzy matching. */
++export declare function planTodoMutation(verb: TodoPlanVerb, restArgs: string, current: TodoPhase[]): TodoCommandPlan;
++export interface TodoFileOptions {
++    /** Operator-facing rendering of the resolved file path; defaults to the path itself. */
++    display?: (target: string) => string;
++}
++/** Write `phases` to the native todo Markdown path resolved from `restArgs`. */
++export declare function planTodoExport(restArgs: string, phases: TodoPhase[], cwd: string, options?: TodoFileOptions): Promise<TodoCommandPlan>;
++/** Parse the native todo Markdown path resolved from `restArgs` into a replacing edit. */
++export declare function planTodoImport(restArgs: string, cwd: string, options?: TodoFileOptions & {
++    read?: (target: string) => Promise<string>;
++}): Promise<TodoCommandPlan>;
++export declare const TODO_HELP_TEXT: string;
+ /** ACP/text-mode `/todo` handler. Shared by both dispatchers via the spec. */
+ export declare function handleTodoAcp(command: ParsedSlashCommand, runtime: SlashCommandRuntime): Promise<SlashCommandResult>;
 diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
 index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
 --- a/dist/types/tools/browser.d.ts
@@ -861,6 +895,69 @@ index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb
 +}
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
+diff --git a/dist/types/tools/todo.d.ts b/dist/types/tools/todo.d.ts
+index cc45c4c5b419c81432a7f94562508de51fd61379..19dc56c0adb44273bb10ca7c05025df70d7e457b 100644
+--- a/dist/types/tools/todo.d.ts
++++ b/dist/types/tools/todo.d.ts
+@@ -1,10 +1,11 @@
+-import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
++import type { Agent, AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
+ import type { ToolExample } from "@oh-my-pi/pi-ai";
+ import type { Component } from "@oh-my-pi/pi-tui";
+ import type { RenderResultOptions } from "../extensibility/custom-tools/types.js";
+ import type { Theme } from "../modes/theme/theme.js";
+ import type { ToolSession } from "../sdk.js";
+ import type { SessionEntry } from "../session/session-entries.js";
++import type { SessionManager } from "../session/session-manager.js";
+ export type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
+ /** Operation names accepted by the todo tool and echoed in successful result details. */
+ export type TodoOperation = "init" | "start" | "done" | "rm" | "drop" | "block" | "unblock" | "append" | "view";
+@@ -59,7 +60,45 @@ type TodoOpEntryValue = TodoParams;
+ /** Return the active todo task, preferring an in-progress item over the first pending item. */
+ export declare function nextActionableTask(phases: readonly TodoPhase[]): TodoItem | undefined;
+ export declare const USER_TODO_EDIT_CUSTOM_TYPE = "user_todo_edit";
++/**
++ * The branch entry that currently defines the todo list: the newest user edit
++ * or successful `todo` tool result carrying a phases array. Older entries are
++ * never consulted once one matches, so its raw phases are the persisted truth.
++ * `includeMalformed` exposes the newest matching entry even when its phases
++ * field is invalid, so bounded inspection can refuse it instead of falling back.
++ */
++export declare function findLatestTodoStateEntry(entries: SessionEntry[], includeMalformed?: boolean): {
++    entry: SessionEntry;
++    phases: unknown;
++} | undefined;
+ export declare function getLatestTodoPhasesFromEntries(entries: SessionEntry[]): TodoPhase[];
++/** A user-driven todo change: the next phases plus the `/todo` action that produced them. */
++export interface UserTodoEdit {
++    phases: TodoPhase[];
++    /** Action label surfaced in the agent reminder, e.g. `/todo append → Auth`. */
++    action: string;
++    /** Removals carry explicit intent so the agent does not rebuild the removed items (#5258). */
++    removed?: boolean;
++}
++/** Session surfaces a user todo edit writes through: live agent state, journal, and the agent's context. */
++export interface UserTodoEditHost {
++    session: {
++        agent: Pick<Agent, "appendMessage">;
++        setTodoPhases(phases: TodoPhase[]): void;
++    };
++    sessionManager: Pick<SessionManager, "appendCustomEntry" | "appendMessage">;
++}
++/**
++ * Commit a user todo edit the way every `/todo` surface must: replace the live
++ * session state, persist a `user_todo_edit` entry for reload survival, then
++ * append the user-attributed developer reminder to both the live agent and the
++ * journal so the agent learns about the change next turn. Synchronous; callers
++ * flush the journal themselves.
++ */
++export declare function commitUserTodoEdit(host: UserTodoEditHost, edit: UserTodoEdit): {
++    entryId: string;
++    reminderEntryId: string;
++};
+ /**
+  * Report whether `content` likely names the same work as any entry in
+  * `descriptions`. Used by the sticky todo panel to light up a pending todo
 diff --git a/src/blob-broker/uploaders-object-storage.ts b/src/blob-broker/uploaders-object-storage.ts
 index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906beeee2f0e 100644
 --- a/src/blob-broker/uploaders-object-storage.ts
@@ -2908,6 +3005,79 @@ index 9799cc1357df9c62fa64b16fe6cee8d50f523989..c600c9073599b60751233b4e90b7c3a2
  	#appendAnnotationCallout(
  		lines: string[],
  		anchors: BodyRowAnchor[],
+diff --git a/src/modes/controllers/todo-command-controller.ts b/src/modes/controllers/todo-command-controller.ts
+index 2213681fc67053b30251ae06dd1f024af015afd0..c56ef3e2b746ede301f283394080b2d8c37a8f80 100644
+--- a/src/modes/controllers/todo-command-controller.ts
++++ b/src/modes/controllers/todo-command-controller.ts
+@@ -1,13 +1,13 @@
+ import * as fs from "node:fs/promises";
+ import {
+ 	applyOpsToPhases,
++	commitUserTodoEdit,
+ 	getLatestTodoPhasesFromEntries,
+ 	markdownToPhases,
+ 	phasesToMarkdown,
+ 	resolveTodoMarkdownPath,
+ 	type TodoItem,
+ 	type TodoPhase,
+-	USER_TODO_EDIT_CUSTOM_TYPE,
+ } from "../../tools/todo";
+ import { copyToClipboard } from "../../utils/clipboard";
+ import { getEditorCommand, openInEditor } from "../../utils/external-editor";
+@@ -114,24 +114,6 @@ function findTaskFuzzy(phases: TodoPhase[], query: string): { task: TodoItem; ph
+ 	return undefined;
+ }
+ 
+-// =============================================================================
+-// Build system reminder
+-// =============================================================================
+-
+-function buildSystemReminder(action: string, phases: TodoPhase[], removed = false): string {
+-	const md = phases.length === 0 ? "(empty)" : phasesToMarkdown(phases).trimEnd();
+-	const lines = ["<system-reminder>", `The user manually modified the todo list (${action}).`];
+-	if (removed) {
+-		lines.push(
+-			phases.length === 0
+-				? "The user intentionally cleared the todo list. Do NOT recreate or re-populate it unless the user explicitly asks; continue the current request without a todo list."
+-				: "The user intentionally removed the entries no longer shown below. Do NOT re-add them unless the user explicitly asks.",
+-		);
+-	}
+-	lines.push("Current todo list:", "", md, "</system-reminder>");
+-	return lines.join("\n");
+-}
+-
+ export class TodoCommandController {
+ 	constructor(private readonly ctx: InteractiveModeContext) {}
+ 
+@@ -444,25 +426,10 @@ export class TodoCommandController {
+ 	}
+ 
+ 	#commit(nextPhases: TodoPhase[], action: string, opts?: { removed?: boolean }): void {
+-		// 1. In-memory + UI state
+-		this.ctx.session.setTodoPhases(nextPhases);
++		// Live state, persisted user edit, and the user-attributed reminder are
++		// one native commit shared with the headless /todo path.
++		commitUserTodoEdit(this.ctx, { phases: nextPhases, action, removed: opts?.removed });
+ 		this.ctx.setTodos(nextPhases);
+-
+-		// 2. Persist for reload survival via custom session entry.
+-		this.ctx.sessionManager.appendCustomEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: nextPhases });
+-
+-		// 3. Inject system reminder so the agent learns about the change next turn.
+-		//    Removals carry explicit intent so the agent does not rebuild the
+-		//    cleared/removed items on its next turn (issue #5258).
+-		const reminderText = buildSystemReminder(action, nextPhases, opts?.removed ?? false);
+-		const message = {
+-			role: "developer" as const,
+-			content: [{ type: "text" as const, text: reminderText }],
+-			attribution: "user" as const,
+-			timestamp: Date.now(),
+-		};
+-		this.ctx.agent.appendMessage(message);
+-		this.ctx.sessionManager.appendMessage(message);
+ 	}
+ }
+ 
 diff --git a/src/modes/interactive-mode.ts b/src/modes/interactive-mode.ts
 index 536c6c816b3cad8bf75be98e036463ed09aa4ad7..51cd2b960acb87fca78a1b8f8e3cbc4b756f82b1 100644
 --- a/src/modes/interactive-mode.ts
@@ -4007,6 +4177,329 @@ index cacbb5a7975edb95253e3806cc77a25fce66b088..1938cbe928e39f592347578d085c5407
  	}
  
  	// ── Observation ───────────────────────────────────────────────────────
+diff --git a/src/slash-commands/helpers/todo.ts b/src/slash-commands/helpers/todo.ts
+index 28f2a69080275d4b421ac8e7f15a46a347350fc1..002c4b8dbce14b91e0deeedf2eb60b127970a179 100644
+--- a/src/slash-commands/helpers/todo.ts
++++ b/src/slash-commands/helpers/todo.ts
+@@ -1,11 +1,11 @@
+-import type { TodoPhase } from "../../tools/todo";
++import type { TodoPhase, UserTodoEdit } from "../../tools/todo";
+ import {
+ 	applyOpsToPhases,
++	commitUserTodoEdit,
+ 	getLatestTodoPhasesFromEntries,
+ 	markdownToPhases,
+ 	phasesToMarkdown,
+ 	resolveTodoMarkdownPath,
+-	USER_TODO_EDIT_CUSTOM_TYPE,
+ } from "../../tools/todo";
+ import type { ParsedSlashCommand, SlashCommandResult, SlashCommandRuntime } from "../types";
+ import { commandConsumed, errorMessage, parseSubcommand, usage } from "./parse";
+@@ -95,151 +95,169 @@ function currentPhases(runtime: SlashCommandRuntime): TodoPhase[] {
+ 	return fromEntries.length > 0 ? fromEntries : runtime.session.getTodoPhases();
+ }
+ 
+-function commitTodos(runtime: SlashCommandRuntime, phases: TodoPhase[]): void {
+-	runtime.session.setTodoPhases(phases);
+-	runtime.sessionManager.appendCustomEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases });
++/**
++ * Resolution of one non-interactive `/todo` verb. `message` is the operator
++ * text; `edit` is present when the verb resolved to a user change that must be
++ * committed through {@link commitUserTodoEdit}; `failed` marks usage/no-match
++ * diagnostics. Pure apart from the file access export/import perform.
++ */
++export interface TodoCommandPlan {
++	message: string;
++	edit?: UserTodoEdit;
++	failed?: true;
+ }
+ 
+-const TODO_HELP_TEXT = [
+-	"Usage: /todo <verb> [args]",
+-	"  /todo                              Show current todos",
+-	"  /todo edit                         (TUI only) open in $EDITOR",
+-	"  /todo copy                         Print todos as Markdown",
+-	"  /todo expand                       (TUI only) expand the sticky HUD",
+-	"  /todo collapse                     (TUI only) collapse the sticky HUD",
+-	"  /todo export [<path>]              Write todos to file (default: TODO.md)",
+-	"  /todo import [<path>]              Replace todos from file (default: TODO.md)",
+-	"  /todo append [<phase>] <task...>   Append a task",
+-	"  /todo start  <task>                Mark task in_progress (fuzzy match)",
+-	"  /todo done   [<task|phase>]        Mark task/phase/all completed",
+-	"  /todo drop   [<task|phase>]        Mark task/phase/all abandoned",
+-	"  /todo rm     [<task|phase>]        Remove task/phase/all",
+-].join("\n");
++export type TodoPlanVerb = "append" | "start" | "done" | "drop" | "rm";
+ 
+-async function handleTodoCopyCommand(runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+-	const phases = currentPhases(runtime);
+-	const markdown = phases.length === 0 ? "" : phasesToMarkdown(phases).trimEnd();
+-	await runtime.output(`Copy not available in ACP mode; printing instead:\n\n${markdown || "No todos."}`);
+-	return commandConsumed();
+-}
++/** Resolve append/start/done/drop/rm against `current` using the native grammar and fuzzy matching. */
++export function planTodoMutation(verb: TodoPlanVerb, restArgs: string, current: TodoPhase[]): TodoCommandPlan {
++	if (verb === "append") {
++		const tokens = tokenize(restArgs);
++		if (tokens.length === 0) return { message: "Usage: /todo append [<phase>] <task...>", failed: true };
++		const phaseName = tokens.length === 1 ? undefined : tokens[0];
++		const content = tokens.length === 1 ? tokens[0]! : tokens.slice(1).join(" ");
++		const next = current.map(phase => ({ ...phase, tasks: phase.tasks.slice() }));
++		let targetPhase: TodoPhase;
+ 
+-async function handleTodoExportCommand(restArgs: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+-	const phases = currentPhases(runtime);
+-	if (phases.length === 0) {
+-		await runtime.output("No todos to export.");
+-		return commandConsumed();
+-	}
+-	let target: string;
+-	try {
+-		target = resolveTodoMarkdownPath(restArgs, runtime.sessionManager.getCwd());
+-		await Bun.write(target, phasesToMarkdown(phases));
+-	} catch (err) {
+-		return usage(`Failed to write todos: ${errorMessage(err)}`, runtime);
+-	}
+-	await runtime.output(`Wrote todos to ${target}`);
+-	return commandConsumed();
+-}
++		if (phaseName) {
++			const existing = findPhaseFuzzy(next, phaseName);
++			targetPhase = existing ?? { name: titleCaseWords(phaseName), tasks: [] };
++			if (!existing) next.push(targetPhase);
++		} else if (next.length > 0) {
++			targetPhase = next[next.length - 1]!;
++		} else {
++			targetPhase = { name: "Todos", tasks: [] };
++			next.push(targetPhase);
++		}
+ 
+-async function handleTodoImportCommand(restArgs: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+-	let target: string;
+-	let content: string;
+-	try {
+-		target = resolveTodoMarkdownPath(restArgs, runtime.sessionManager.getCwd());
+-		content = await Bun.file(target).text();
+-	} catch (err) {
+-		return usage(`Failed to read todos: ${errorMessage(err)}`, runtime);
++		const finalContent = titleCaseSentence(content);
++		targetPhase.tasks.push({ content: finalContent, status: "pending" });
++		return {
++			message: `Appended to ${targetPhase.name}: ${finalContent}`,
++			edit: { phases: next, action: `/todo append → ${targetPhase.name}` },
++		};
+ 	}
+-	const { phases, errors } = markdownToPhases(content);
+-	if (errors.length > 0) return usage(`Could not parse ${target}:\n  ${errors.join("\n  ")}`, runtime);
+-	commitTodos(runtime, phases);
+-	const taskCount = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
+-	await runtime.output(`Imported ${phases.length} phase(s), ${taskCount} task(s) from ${target}.`);
+-	return commandConsumed();
+-}
+-
+-async function handleTodoAppendCommand(restArgs: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+-	const tokens = tokenize(restArgs);
+-	if (tokens.length === 0) return usage("Usage: /todo append [<phase>] <task...>", runtime);
+-
+-	const current = currentPhases(runtime);
+-	const phaseName = tokens.length === 1 ? undefined : tokens[0];
+-	const content = tokens.length === 1 ? tokens[0]! : tokens.slice(1).join(" ");
+-	const next = current.map(phase => ({ ...phase, tasks: phase.tasks.slice() }));
+-	let targetPhase: TodoPhase;
+ 
+-	if (phaseName) {
+-		const existing = findPhaseFuzzy(next, phaseName);
+-		targetPhase = existing ?? { name: titleCaseWords(phaseName), tasks: [] };
+-		if (!existing) next.push(targetPhase);
+-	} else if (next.length > 0) {
+-		targetPhase = next[next.length - 1]!;
+-	} else {
+-		targetPhase = { name: "Todos", tasks: [] };
+-		next.push(targetPhase);
++	if (verb === "start") {
++		if (!restArgs) return { message: "Usage: /todo start <task>", failed: true };
++		const query = tokenize(restArgs).join(" ") || restArgs;
++		const hit = findTaskFuzzy(current, query);
++		if (!hit) return { message: `No task matched "${restArgs}". Use /todo to list current tasks.`, failed: true };
++		const { phases } = applyOpsToPhases(current, [{ op: "start", task: hit.task.content }]);
++		return { message: `Started: ${hit.task.content}`, edit: { phases, action: `/todo start ${hit.task.content}` } };
+ 	}
+ 
+-	const finalContent = titleCaseSentence(content);
+-	targetPhase.tasks.push({ content: finalContent, status: "pending" });
+-	commitTodos(runtime, next);
+-	await runtime.output(`Appended to ${targetPhase.name}: ${finalContent}`);
+-	return commandConsumed();
+-}
+-
+-async function handleTodoStartCommand(restArgs: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+-	if (!restArgs) return usage("Usage: /todo start <task>", runtime);
+-	const current = currentPhases(runtime);
+-	const query = tokenize(restArgs).join(" ") || restArgs;
+-	const hit = findTaskFuzzy(current, query);
+-	if (!hit) return usage(`No task matched "${restArgs}". Use /todo to list current tasks.`, runtime);
+-	const { phases } = applyOpsToPhases(current, [{ op: "start", task: hit.task.content }]);
+-	commitTodos(runtime, phases);
+-	await runtime.output(`Started: ${hit.task.content}`);
+-	return commandConsumed();
+-}
+-
+-async function handleTodoMutationCommand(
+-	verb: TodoMutationVerb,
+-	restArgs: string,
+-	runtime: SlashCommandRuntime,
+-): Promise<SlashCommandResult> {
+-	const current = currentPhases(runtime);
++	const removed = verb === "rm";
+ 	const trimmedArg = restArgs.trim();
+ 	if (!trimmedArg) {
+-		if (verb === "rm") {
+-			commitTodos(runtime, []);
+-			await runtime.output("Cleared all todos.");
+-			return commandConsumed();
+-		}
++		if (removed) return { message: "Cleared all todos.", edit: { phases: [], action: "/todo rm (all)", removed } };
+ 		const { phases } = applyOpsToPhases(current, [{ op: verb }]);
+-		commitTodos(runtime, phases);
+-		await runtime.output(verb === "done" ? "Marked all tasks completed." : "Marked all tasks abandoned.");
+-		return commandConsumed();
++		return {
++			message: verb === "done" ? "Marked all tasks completed." : "Marked all tasks abandoned.",
++			edit: { phases, action: `/todo ${verb} (all)` },
++		};
+ 	}
+ 
+ 	const taskHit = findTaskFuzzy(current, trimmedArg);
+ 	if (taskHit) {
+ 		const { phases } = applyOpsToPhases(current, [{ op: verb, task: taskHit.task.content }]);
+-		commitTodos(runtime, phases);
+ 		const label = verb === "done" ? "Marked completed" : verb === "drop" ? "Marked abandoned" : "Removed";
+-		await runtime.output(`${label}: ${taskHit.task.content}`);
+-		return commandConsumed();
++		return {
++			message: `${label}: ${taskHit.task.content}`,
++			edit: { phases, action: `/todo ${verb} ${taskHit.task.content}`, removed },
++		};
+ 	}
+ 
+ 	const phaseHit = findPhaseFuzzy(current, trimmedArg);
+ 	if (phaseHit) {
+ 		const { phases } = applyOpsToPhases(current, [{ op: verb, phase: phaseHit.name }]);
+-		commitTodos(runtime, phases);
+ 		const message =
+ 			verb === "done"
+ 				? `Marked phase ${phaseHit.name} completed.`
+ 				: verb === "drop"
+ 					? `Marked phase ${phaseHit.name} abandoned.`
+ 					: `Removed phase: ${phaseHit.name}`;
+-		await runtime.output(message);
+-		return commandConsumed();
++		return { message, edit: { phases, action: `/todo ${verb} ${phaseHit.name}`, removed } };
+ 	}
+ 
+-	return usage(`No task or phase matched "${trimmedArg}".`, runtime);
++	return { message: `No task or phase matched "${trimmedArg}".`, failed: true };
++}
++
++export interface TodoFileOptions {
++	/** Operator-facing rendering of the resolved file path; defaults to the path itself. */
++	display?: (target: string) => string;
++}
++
++/** Write `phases` to the native todo Markdown path resolved from `restArgs`. */
++export async function planTodoExport(
++	restArgs: string,
++	phases: TodoPhase[],
++	cwd: string,
++	options?: TodoFileOptions,
++): Promise<TodoCommandPlan> {
++	if (phases.length === 0) return { message: "No todos to export." };
++	let target: string;
++	try {
++		target = resolveTodoMarkdownPath(restArgs, cwd);
++		await Bun.write(target, phasesToMarkdown(phases));
++	} catch (err) {
++		return { message: `Failed to write todos: ${errorMessage(err)}`, failed: true };
++	}
++	return { message: `Wrote todos to ${options?.display?.(target) ?? target}` };
++}
++
++/** Parse the native todo Markdown path resolved from `restArgs` into a replacing edit. */
++export async function planTodoImport(
++	restArgs: string,
++	cwd: string,
++	options?: TodoFileOptions & { read?: (target: string) => Promise<string> },
++): Promise<TodoCommandPlan> {
++	let target: string;
++	let content: string;
++	try {
++		target = resolveTodoMarkdownPath(restArgs, cwd);
++		content = await (options?.read ?? (path => Bun.file(path).text()))(target);
++	} catch (err) {
++		return { message: `Failed to read todos: ${errorMessage(err)}`, failed: true };
++	}
++	const source = options?.display?.(target) ?? target;
++	const { phases, errors } = markdownToPhases(content);
++	if (errors.length > 0) return { message: `Could not parse ${source}:\n  ${errors.join("\n  ")}`, failed: true };
++	const taskCount = phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
++	return {
++		message: `Imported ${phases.length} phase(s), ${taskCount} task(s) from ${source}.`,
++		edit: { phases, action: `/todo import ${target}` },
++	};
++}
++
++export const TODO_HELP_TEXT = [
++	"Usage: /todo <verb> [args]",
++	"  /todo                              Show current todos",
++	"  /todo edit                         (TUI only) open in $EDITOR",
++	"  /todo copy                         Print todos as Markdown",
++	"  /todo expand                       (TUI only) expand the sticky HUD",
++	"  /todo collapse                     (TUI only) collapse the sticky HUD",
++	"  /todo export [<path>]              Write todos to file (default: TODO.md)",
++	"  /todo import [<path>]              Replace todos from file (default: TODO.md)",
++	"  /todo append [<phase>] <task...>   Append a task",
++	"  /todo start  <task>                Mark task in_progress (fuzzy match)",
++	"  /todo done   [<task|phase>]        Mark task/phase/all completed",
++	"  /todo drop   [<task|phase>]        Mark task/phase/all abandoned",
++	"  /todo rm     [<task|phase>]        Remove task/phase/all",
++].join("\n");
++
++async function handleTodoCopyCommand(runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
++	const phases = currentPhases(runtime);
++	const markdown = phases.length === 0 ? "" : phasesToMarkdown(phases).trimEnd();
++	await runtime.output(`Copy not available in ACP mode; printing instead:\n\n${markdown || "No todos."}`);
++	return commandConsumed();
++}
++
++async function applyTodoPlan(plan: TodoCommandPlan, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
++	if (plan.failed) return usage(plan.message, runtime);
++	if (plan.edit) commitUserTodoEdit(runtime, plan.edit);
++	await runtime.output(plan.message);
++	return commandConsumed();
+ }
+ 
+ /** ACP/text-mode `/todo` handler. Shared by both dispatchers via the spec. */
+@@ -261,17 +279,15 @@ export async function handleTodoAcp(
+ 		case "copy":
+ 			return await handleTodoCopyCommand(runtime);
+ 		case "export":
+-			return await handleTodoExportCommand(rest, runtime);
++			return await applyTodoPlan(await planTodoExport(rest, currentPhases(runtime), runtime.sessionManager.getCwd()), runtime);
+ 		case "import":
+-			return await handleTodoImportCommand(rest, runtime);
++			return await applyTodoPlan(await planTodoImport(rest, runtime.sessionManager.getCwd()), runtime);
+ 		case "append":
+-			return await handleTodoAppendCommand(rest, runtime);
+ 		case "start":
+-			return await handleTodoStartCommand(rest, runtime);
+ 		case "done":
+ 		case "drop":
+ 		case "rm":
+-			return await handleTodoMutationCommand(verb, rest, runtime);
++			return await applyTodoPlan(planTodoMutation(verb, rest, currentPhases(runtime)), runtime);
+ 		case "edit":
+ 			return usage(
+ 				"/todo edit requires the TUI editor; use /todo export then /todo import for non-interactive edits.",
 diff --git a/src/tools/browser.ts b/src/tools/browser.ts
 index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
 --- a/src/tools/browser.ts
@@ -11051,6 +11544,119 @@ index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d5
  		},
  		onMessage(handler) {
  			if (inbox) return inbox.bind(message => handler(message as ComputerWorkerInbound));
+diff --git a/src/tools/todo.ts b/src/tools/todo.ts
+index e3dfab8776a86e26170e9b19ff6d0808922619a8..4771b33fab8a5268f1df6ea3b3e31af60c50ed3a 100644
+--- a/src/tools/todo.ts
++++ b/src/tools/todo.ts
+@@ -1,5 +1,5 @@
+ import { type } from "@oh-my-pi/omptype";
+-import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
++import type { Agent, AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
+ import type { ToolExample } from "@oh-my-pi/pi-ai";
+ import type { Component } from "@oh-my-pi/pi-tui";
+ import { Text } from "@oh-my-pi/pi-tui";
+@@ -10,6 +10,7 @@ import type { Theme } from "../modes/theme/theme";
+ import todoDescription from "../prompts/tools/todo.md" with { type: "text" };
+ import type { ToolSession } from "../sdk";
+ import type { SessionEntry } from "../session/session-entries";
++import type { SessionManager } from "../session/session-manager";
+ import { framedBlock, renderStatusLine, renderTreeList } from "../tui";
+ import { normalizePathLikeInput, resolveToCwd } from "./path-utils";
+ import { formatErrorDetail, formatMoreItems, PREVIEW_LIMITS, pluralize, replaceTabs } from "./render-utils";
+@@ -174,14 +175,19 @@ export function nextActionableTask(phases: readonly TodoPhase[]): TodoItem | und
+ 
+ export const USER_TODO_EDIT_CUSTOM_TYPE = "user_todo_edit";
+ 
+-export function getLatestTodoPhasesFromEntries(entries: SessionEntry[]): TodoPhase[] {
++/**
++ * The branch entry that currently defines the todo list: the newest user edit
++ * or successful `todo` tool result carrying a phases array. Older entries are
++ * never consulted once one matches, so its raw phases are the persisted truth.
++ * `includeMalformed` exposes the newest matching entry even when its phases
++ * field is invalid, so bounded inspection can refuse it instead of falling back.
++ */
++export function findLatestTodoStateEntry(entries: SessionEntry[], includeMalformed = false): { entry: SessionEntry; phases: unknown } | undefined {
+ 	for (let i = entries.length - 1; i >= 0; i--) {
+ 		const entry = entries[i];
+ 		if (entry.type === "custom" && entry.customType === USER_TODO_EDIT_CUSTOM_TYPE) {
+ 			const data = entry.data as { phases?: unknown } | undefined;
+-			if (data && Array.isArray(data.phases)) {
+-				return clonePhases(data.phases as TodoPhase[]);
+-			}
++			if (includeMalformed || data && Array.isArray(data.phases)) return { entry, phases: data?.phases };
+ 			continue;
+ 		}
+ 		if (entry.type !== "message") continue;
+@@ -189,12 +195,66 @@ export function getLatestTodoPhasesFromEntries(entries: SessionEntry[]): TodoPha
+ 		if (message.role !== "toolResult" || message.toolName !== "todo" || message.isError) continue;
+ 
+ 		const details = message.details as { phases?: unknown } | undefined;
+-		if (!details || !Array.isArray(details.phases)) continue;
++		if (!includeMalformed && (!details || !Array.isArray(details.phases))) continue;
++
++		return { entry, phases: details?.phases };
++	}
++
++	return undefined;
++}
++
++export function getLatestTodoPhasesFromEntries(entries: SessionEntry[]): TodoPhase[] {
++	const latest = findLatestTodoStateEntry(entries);
++	return latest ? clonePhases(latest.phases as TodoPhase[]) : [];
++}
++
++/** A user-driven todo change: the next phases plus the `/todo` action that produced them. */
++export interface UserTodoEdit {
++	phases: TodoPhase[];
++	/** Action label surfaced in the agent reminder, e.g. `/todo append → Auth`. */
++	action: string;
++	/** Removals carry explicit intent so the agent does not rebuild the removed items (#5258). */
++	removed?: boolean;
++}
++
++/** Session surfaces a user todo edit writes through: live agent state, journal, and the agent's context. */
++export interface UserTodoEditHost {
++	session: { agent: Pick<Agent, "appendMessage">; setTodoPhases(phases: TodoPhase[]): void };
++	sessionManager: Pick<SessionManager, "appendCustomEntry" | "appendMessage">;
++}
+ 
+-		return clonePhases(details.phases as TodoPhase[]);
++function buildUserTodoReminder(edit: UserTodoEdit): string {
++	const md = edit.phases.length === 0 ? "(empty)" : phasesToMarkdown(edit.phases).trimEnd();
++	const lines = ["<system-reminder>", `The user manually modified the todo list (${edit.action}).`];
++	if (edit.removed) {
++		lines.push(
++			edit.phases.length === 0
++				? "The user intentionally cleared the todo list. Do NOT recreate or re-populate it unless the user explicitly asks; continue the current request without a todo list."
++				: "The user intentionally removed the entries no longer shown below. Do NOT re-add them unless the user explicitly asks.",
++		);
+ 	}
++	lines.push("Current todo list:", "", md, "</system-reminder>");
++	return lines.join("\n");
++}
+ 
+-	return [];
++/**
++ * Commit a user todo edit the way every `/todo` surface must: replace the live
++ * session state, persist a `user_todo_edit` entry for reload survival, then
++ * append the user-attributed developer reminder to both the live agent and the
++ * journal so the agent learns about the change next turn. Synchronous; callers
++ * flush the journal themselves.
++ */
++export function commitUserTodoEdit(host: UserTodoEditHost, edit: UserTodoEdit): { entryId: string; reminderEntryId: string } {
++	host.session.setTodoPhases(edit.phases);
++	const entryId = host.sessionManager.appendCustomEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: edit.phases });
++	const message = {
++		role: "developer" as const,
++		content: [{ type: "text" as const, text: buildUserTodoReminder(edit) }],
++		attribution: "user" as const,
++		timestamp: Date.now(),
++	};
++	host.session.agent.appendMessage(message);
++	return { entryId, reminderEntryId: host.sessionManager.appendMessage(message) };
+ }
+ 
+ /** Minimum overlap (after normalization) required for a substring match.
 diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
 old mode 100755
 new mode 100644
