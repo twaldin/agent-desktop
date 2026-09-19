@@ -13363,3 +13363,123 @@ new mode 100644
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 old mode 100755
 new mode 100644
+diff --git a/dist/types/config/settings.d.ts b/dist/types/config/settings.d.ts
+index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..d2b16611809d616750fec998342d481142c732e7 100644
+--- a/dist/types/config/settings.d.ts
++++ b/dist/types/config/settings.d.ts
+@@ -38,0 +39,16 @@ export interface SettingsOptions {
++export interface PersistedSettingsSnapshot {
++    readonly writable: boolean;
++    readonly cwd: string;
++    readonly agentDir: string;
++    /** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
++    readonly projectDiscoveryStatus: "warning-free" | "incomplete";
++    readonly global: Partial<Record<SettingPath, unknown>>;
++    readonly project: Partial<Record<SettingPath, unknown>>;
++    readonly effective: Partial<Record<SettingPath, unknown>>;
++}
++export interface PersistedSettingsReadback {
++    readonly writable: boolean;
++    readonly cwd: string;
++    readonly agentDir: string;
++    read(): Promise<PersistedSettingsSnapshot>;
++}
+@@ -141,0 +158,2 @@ export declare class Settings {
++    /** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
++    capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback;
+diff --git a/src/config/settings.ts b/src/config/settings.ts
+index 418b33a4373bd96e31a5807be8dac03e225792ee..381325b2497e869c3ea8250598cbe2851ef7a552 100644
+--- a/src/config/settings.ts
++++ b/src/config/settings.ts
+@@ -34 +34 @@ import { JSONC, YAML } from "bun";
+-import { invalidate as invalidateCapabilityFsCache } from "../capability/fs";
++import { clearCache as clearCapabilityFsCache, invalidate as invalidateCapabilityFsCache } from "../capability/fs";
+@@ -135,0 +136 @@ type ProjectSettingsReadResult = {
++	discoveryWarningFree: boolean;
+@@ -137,0 +139,18 @@ type ProjectSettingsReadResult = {
++export interface PersistedSettingsSnapshot {
++	readonly writable: boolean;
++	readonly cwd: string;
++	readonly agentDir: string;
++	/** `warning-free` means native providers surfaced no warning; it is not a completeness guarantee. */
++	readonly projectDiscoveryStatus: "warning-free" | "incomplete";
++	readonly global: Partial<Record<SettingPath, unknown>>;
++	readonly project: Partial<Record<SettingPath, unknown>>;
++	readonly effective: Partial<Record<SettingPath, unknown>>;
++}
++
++export interface PersistedSettingsReadback {
++	readonly writable: boolean;
++	readonly cwd: string;
++	readonly agentDir: string;
++	read(): Promise<PersistedSettingsSnapshot>;
++}
++
+@@ -513,0 +533 @@ export class Settings {
++	#readbackScopeGeneration = 0;
+@@ -662,0 +683 @@ export class Settings {
++		this.#readbackScopeGeneration++;
+@@ -684,0 +706 @@ export class Settings {
++		this.#readbackScopeGeneration++;
+@@ -698,0 +721 @@ export class Settings {
++		this.#readbackScopeGeneration++;
+@@ -817,0 +841,29 @@ export class Settings {
++	/** Capture a side-effect-free, detached persisted-layer reader for selected settings. */
++	capturePersistedReadback(paths: readonly SettingPath[]): PersistedSettingsReadback {
++		const selected = [...new Set(paths)];
++		const generation = this.#readbackScopeGeneration;
++		const cwd = this.#cwd;
++		const agentDir = this.#agentDir;
++		const configFiles = [...this.#configFiles];
++		const overrides = structuredClone(this.#overrides);
++		const writable = this.#persist;
++		const read = async (): Promise<PersistedSettingsSnapshot> => {
++			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
++				throw new Error("Settings readback scope changed");
++			}
++			clearCapabilityFsCache();
++			const detached = new Settings({ cwd, agentDir, readOnly: true });
++			detached.#configFiles = configFiles;
++			detached.#overrides = structuredClone(overrides);
++			const discoveryWarningFree = await detached.#loadPersistedReadback();
++			if (this.#readbackScopeGeneration !== generation || this.#cwd !== cwd || this.#agentDir !== agentDir) {
++				throw new Error("Settings readback scope changed");
++			}
++			const pick = (layer: RawSettings): Partial<Record<SettingPath, unknown>> => Object.fromEntries(selected.map(path => [path, structuredClone(getByPath(layer, path.split(".")))]));
++			return Object.freeze({ writable, cwd, agentDir, projectDiscoveryStatus: discoveryWarningFree ? "warning-free" as const : "incomplete" as const,
++				global: Object.freeze(pick(detached.#global)), project: Object.freeze(pick(detached.#project)),
++				effective: Object.freeze(Object.fromEntries(selected.map(path => [path, structuredClone(detached.get(path))]))) });
++		};
++		return Object.freeze({ writable, cwd, agentDir, read });
++	}
++
+@@ -911,0 +964 @@ export class Settings {
++		this.#readbackScopeGeneration++;
+@@ -1414,0 +1468,19 @@ export class Settings {
++	async #loadPersistedReadback(): Promise<boolean> {
++		const [globalResult, projectResult] = await Promise.allSettled([
++			this.#readExistingMainYaml(false),
++			this.#readProjectSettings(false),
++		]);
++		if (globalResult.status === "rejected") throw globalResult.reason;
++		if (projectResult.status === "rejected") throw projectResult.reason;
++		this.#configPath = globalResult.value.configPath;
++		this.#global = globalResult.value.settings ?? {};
++		this.#project = projectResult.value.settings;
++		this.#projectFileSettings = projectResult.value.fileSettings;
++		this.#projectShellPathSource = projectResult.value.shellPathSource;
++		const overlay = await this.#readConfigOverlays(false);
++		this.#configOverlay = overlay.settings;
++		this.#overlayShellPathSource = overlay.shellPathSource;
++		this.#rebuildMerged();
++		return projectResult.value.discoveryWarningFree;
++	}
++
+@@ -1813,0 +1886 @@ export class Settings {
++		let discoveryWarningFree = true;
+@@ -1815,0 +1889 @@ export class Settings {
++			discoveryWarningFree = result.warnings.length === 0;
+@@ -1822,0 +1897 @@ export class Settings {
++			discoveryWarningFree = false;
+@@ -1839,0 +1915 @@ export class Settings {
++			discoveryWarningFree,
