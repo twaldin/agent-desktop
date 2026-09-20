@@ -13,12 +13,24 @@ const agentDir = path.join(root, "agent"), cwd = path.join(root, "project");
 assert.equal(process.env.PI_CODING_AGENT_DIR, agentDir);
 await mkdir(agentDir, { recursive: true }); await mkdir(cwd, { recursive: true });
 
-const requests: Array<{ stream: boolean; body: Record<string, unknown> }> = [];
+type ProviderRequest = { stream: boolean; body: Record<string, unknown>; parseFailure?: { name: string; message: string } };
+const requests: ProviderRequest[] = [];
 const provider = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   assert.equal(new URL(request.url).pathname, "/v1/chat/completions");
   assert.equal(request.method, "POST");
-  const body = await request.json() as Record<string, unknown>, stream = body.stream === true;
-  requests.push({ stream, body });
+  // Reserve the slot before parsing because concurrent request bodies can
+  // finish parsing in a different order from their arrival at the server.
+  const recorded: ProviderRequest = { stream: false, body: {} };
+  requests.push(recorded);
+  let body: Record<string, unknown>;
+  try { body = await request.json() as Record<string, unknown>; }
+  catch (error) {
+    recorded.parseFailure = error instanceof Error ? { name: error.name, message: error.message }
+      : { name: "UnknownThrownValue", message: String(error) };
+    throw error;
+  }
+  const stream = body.stream === true;
+  recorded.stream = stream; recorded.body = body;
   if (scenario === "compact-error" || scenario === "compact-remote-fallback" && !stream)
     return Response.json({ error: { message: "controlled compact provider failure" } }, { status: 400 });
   if (!stream) return Response.json({ choices: [{ message: { content: "Controlled remote compact summary." } }] });
@@ -130,9 +142,10 @@ const projection = (branch: unknown[], messages: unknown[], entries: any[]) => {
   artifactLinks: (serialized.match(/artifact:\/\//g) ?? []).length,
   contextHasControlledSummary: context.includes("Controlled soft compact summary") || context.includes("Controlled remote compact summary") };
 };
-const requestProjection = (request: { stream: boolean; body: Record<string, unknown> }) => ({
+const requestProjection = (request: ProviderRequest) => ({
   stream: request.stream,
   body: JSON.stringify(request.body),
+  ...(request.parseFailure ? { parseFailure: request.parseFailure } : {}),
 });
 const emit = async (result: unknown) => {
   await writeFile(path.join(root, "result.json"), JSON.stringify(result));
@@ -241,7 +254,8 @@ try {
       await handle.dispose();
     }
     await emit({ scenario, command, result, requests: requests.slice(0, commandRequestCount).map(value => { const body = JSON.stringify(value.body); return { stream: value.stream,
-      focus: ["exact owned focus", "exact legacy focus", "fallback focus"].find(focus => body.includes(focus)) }; }),
+      focus: ["exact owned focus", "exact legacy focus", "fallback focus"].find(focus => body.includes(focus)),
+      ...(value.parseFailure ? { parseFailure: value.parseFailure } : {}) }; }),
       followup, followupAccepted, originalIdentity, runtimeIdentity,
       followupRequests: requests.slice(commandRequestCount).map(requestProjection), artifact, blockedFetches, before,
       live, reopened: reopenedProjection,
