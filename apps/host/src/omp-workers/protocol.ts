@@ -14,7 +14,7 @@ import type { ResetPolicyWireRequest, ResetPolicyWireResponse } from "./reset-po
 import type { WorkerResetPolicyReconnect } from "./reconnect-wire";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 66;
+export const WORKER_PROTOCOL_VERSION = 67;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -61,6 +61,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "getPlugins"; args: { cwd: string } }
   | { operation: "mutatePlugin"; args: { cwd: string; mutation: NativePluginMutation } }
   | { operation: "refreshSshConfiguration" }
+  | { operation: "getLspConfiguration"; args: { cwd: string } }
+  | { operation: "mutateLspConfiguration"; args: { cwd: string; mutation: import("@agent-desktop/shared").NativeLspMutation } }
   | { operation: "getSshHosts"; args: { cwd: string } }
   | { operation: "getSshHostDetail"; args: { cwd: string; request: import("@agent-desktop/shared").NativeSshDetailRequest } }
   | { operation: "mutateSshHost"; args: { cwd: string; mutation: import("@agent-desktop/shared").NativeSshMutation } }

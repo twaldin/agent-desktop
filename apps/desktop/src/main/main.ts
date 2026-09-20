@@ -870,6 +870,8 @@ ipcMain.handle("host:plugin-acquisition-review", async (event, target: Workspace
 ipcMain.handle("host:plugin-acquisition-close", async (event, target: WorkspaceTarget | undefined, close: { id: string; operation: NativePluginAcquisition["operation"] }, hostId?: string) => {
   assertTrustedSender(event); return closePluginAcquisitionRequest(await endpointFor(hostId), target, close);
 });
+ipcMain.handle("host:lsp-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/lsp/read", { target }, hostId); });
+ipcMain.handle("host:lsp-mutate", (event, target: WorkspaceTarget | undefined, mutation: import("@agent-desktop/shared").NativeLspMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/lsp/mutate", { target, mutation }, hostId); });
 ipcMain.handle("host:ssh-read", (event, target?: WorkspaceTarget, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/ssh/read", { target }, hostId); });
 ipcMain.handle("host:ssh-detail", (event, target: WorkspaceTarget | undefined, detail: import("@agent-desktop/shared").NativeSshDetailRequest, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/ssh/detail", { target, request: detail }, hostId); });
 ipcMain.handle("host:ssh-mutate", (event, target: WorkspaceTarget | undefined, mutation: import("@agent-desktop/shared").NativeSshMutation, hostId?: string) => { assertTrustedSender(event); return request("/v1/integrations/ssh/mutate", { target, mutation }, hostId); });

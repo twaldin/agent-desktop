@@ -1545,6 +1545,12 @@ export class WorkerRuntime {
   async mutatePlugin(cwd: string, mutation: NativePluginMutation): Promise<NativePluginCatalog> {
     return (await this.#discoveryClient()).request({ operation: "mutatePlugin", args: { cwd, mutation } }, 30_000);
   }
+  async getLspConfiguration(cwd: string): Promise<import("@agent-desktop/shared").NativeLspCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "getLspConfiguration", args: { cwd } }, 30_000);
+  }
+  async mutateLspConfiguration(cwd: string, mutation: import("@agent-desktop/shared").NativeLspMutation): Promise<import("@agent-desktop/shared").NativeLspCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "mutateLspConfiguration", args: { cwd, mutation } }, 30_000);
+  }
   async getSshHosts(cwd: string): Promise<import("@agent-desktop/shared").NativeSshCatalog> {
     return (await this.#discoveryClient()).request({ operation: "getSshHosts", args: { cwd } }, 30_000);
   }

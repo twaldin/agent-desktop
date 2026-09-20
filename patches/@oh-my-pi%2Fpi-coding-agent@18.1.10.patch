@@ -1,5 +1,5 @@
 diff --git a/dist/types/commit/conventional/service.d.ts b/dist/types/commit/conventional/service.d.ts
-index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e1882c5df 100644
+index bd6991c..e5fb07a 100644
 --- a/dist/types/commit/conventional/service.d.ts
 +++ b/dist/types/commit/conventional/service.d.ts
 @@ -8,6 +8,12 @@ export interface GenerateGitCommitOptions {
@@ -22,7 +22,7 @@ index bd6991cf96902b6f96aad001d5d29890c530b710..e5fb07ab43c14eb32b97897b9bc4fb4e
 +/** Use the native generation lifecycle with an immutable diff supplied by the host. */
 +export declare function generateGitCommitFromDiff(options: GenerateGitCommitFromDiffOptions): Promise<GeneratedGitCommit>;
 diff --git a/dist/types/config/settings.d.ts b/dist/types/config/settings.d.ts
-index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..16bf8eae033e6b9ba976739d9df7dc00764bfa1e 100644
+index 75ba58a..16bf8ea 100644
 --- a/dist/types/config/settings.d.ts
 +++ b/dist/types/config/settings.d.ts
 @@ -36,6 +36,42 @@ export interface SettingsOptions {
@@ -97,8 +97,21 @@ index 75ba58a517514e3cdb53b944c42a0eab7d54b7c2..16bf8eae033e6b9ba976739d9df7dc00
      /**
       * Re-read the current global, project, and explicit overlay layers from disk
       * without replacing this instance or discarding runtime overrides.
+diff --git a/dist/types/discovery/helpers.d.ts b/dist/types/discovery/helpers.d.ts
+index 82340ed..202c659 100644
+--- a/dist/types/discovery/helpers.d.ts
++++ b/dist/types/discovery/helpers.d.ts
+@@ -296,7 +296,7 @@ export declare function registerPluginCacheInvalidator(invalidator: () => void):
+  *
+  * Results are cached per Claude and OMP config directories, project registry, and canonical active project.
+  */
+-export declare function listClaudePluginRoots(home: string, cwd?: string): Promise<{
++export declare function listClaudePluginRoots(home: string, cwd?: string, options?: { cache?: boolean }): Promise<{
+     roots: ClaudePluginRoot[];
+     warnings: string[];
+ }>;
 diff --git a/dist/types/extensibility/plugins/marketplace/cache.d.ts b/dist/types/extensibility/plugins/marketplace/cache.d.ts
-index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b4da5d976 100644
+index 244fb84..c268062 100644
 --- a/dist/types/extensibility/plugins/marketplace/cache.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/cache.d.ts
 @@ -22,7 +22,7 @@ export declare function getCachedPluginPath(cacheDir: string, marketplace: strin
@@ -111,7 +124,7 @@ index 244fb840aa10f32405e4688c451a170c5226a2cb..c268062a45a33c1edb9826767304e34b
   * Synchronous check — true when the cache directory exists on disk.
   * Uses `existsSync` because callers may need to run this check inline without async.
 diff --git a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
-index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f5363c3a0c52 100644
+index 54f6204..a1c142d 100644
 --- a/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/fetcher.d.ts
 @@ -3,7 +3,7 @@
@@ -141,7 +154,7 @@ index 54f620456c0a92d82a6674a792171e5e1881065c..a1c142db84502968d6e10d30b530f536
   * Promote a temporary clone directory to its final cache location.
   *
 diff --git a/dist/types/extensibility/plugins/marketplace/manager.d.ts b/dist/types/extensibility/plugins/marketplace/manager.d.ts
-index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013cf45b464 100644
+index 85d413a..21dbcd8 100644
 --- a/dist/types/extensibility/plugins/marketplace/manager.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/manager.d.ts
 @@ -5,7 +5,7 @@
@@ -179,7 +192,7 @@ index 85d413ad0970a0422f31f5969a2dfe3deaeccf90..21dbcd8a1d91c59c9c8bf79abfa32013
      listInstalledPlugins(): Promise<InstalledPluginSummary[]>;
      setPluginEnabled(pluginId: string, enabled: boolean, scope?: "user" | "project"): Promise<void>;
 diff --git a/dist/types/extensibility/plugins/marketplace/types.d.ts b/dist/types/extensibility/plugins/marketplace/types.d.ts
-index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67738aec06 100644
+index 6d66e30..d8a6893 100644
 --- a/dist/types/extensibility/plugins/marketplace/types.d.ts
 +++ b/dist/types/extensibility/plugins/marketplace/types.d.ts
 @@ -88,10 +88,15 @@ export interface MarketplacesRegistry {
@@ -198,8 +211,34 @@ index 6d66e30f8a97318e401c5e656a3b5420a366541a..d8a6893a2a934aa0ef4218651eca5c67
      catalogPath: string;
      addedAt: string;
      updatedAt: string;
+diff --git a/dist/types/lsp/config.d.ts b/dist/types/lsp/config.d.ts
+index 0b2dcd7..6c6e8ce 100644
+--- a/dist/types/lsp/config.d.ts
++++ b/dist/types/lsp/config.d.ts
+@@ -1,3 +1,4 @@
++import type { ClaudePluginRoot } from "../discovery/helpers.js";
+ import { type WhichOptions } from "@oh-my-pi/pi-utils";
+ import type { ServerConfig } from "./types.js";
+ export interface LspConfig {
+@@ -74,3 +75,16 @@ export declare function getServerForFile(config: LspConfig, filePath: string): [
+  * Check if a server has a specific capability
+  */
+ export declare function hasCapability(config: ServerConfig, capability: keyof NonNullable<ServerConfig["capabilities"]>): boolean;
++
++export interface LspConfigInspection {
++  /** Highest priority first. Missing files remain listed as potential local override targets. */
++  sources: Array<{ path: string; kind: "file" | "marketplace"; scope: "project" | "user" | "plugin";
++    content?: string; document?: unknown; servers?: Record<string, unknown>; idleTimeoutMs?: number; error?: string }>;
++  defaults: Record<string, ServerConfig>;
++  merged: Record<string, ServerConfig>;
++  fieldSources: Record<string, Record<string, number | "builtin">>;
++  effective: LspConfig;
++  status: Record<string, { rootMarkersMatch: boolean; resolvedCommand: string | null;
++    applicability: "ready" | "disabled" | "missing-root" | "missing-binary" | "typescript-alternative" }>;
++}
++export declare function inspectConfig(cwd: string, roots?: readonly ClaudePluginRoot[], replacement?: { path: string; content: string }): LspConfigInspection;
 diff --git a/dist/types/mcp/client.d.ts b/dist/types/mcp/client.d.ts
-index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d396253e88b 100644
+index fb43dfe..9401964 100644
 --- a/dist/types/mcp/client.d.ts
 +++ b/dist/types/mcp/client.d.ts
 @@ -1,3 +1,4 @@
@@ -216,7 +255,7 @@ index fb43dfef95ecc33373e766adb93ddc2bd9cb0ae9..94019640f1424dd61eb92577d11c6d39
      onNotification?: (method: string, params: unknown) => void;
      onRequest?: (method: string, params: unknown) => Promise<unknown>;
 diff --git a/dist/types/mcp/errors.d.ts b/dist/types/mcp/errors.d.ts
-index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6af7beb0ed 100644
+index 35c2750..31df5e7 100644
 --- a/dist/types/mcp/errors.d.ts
 +++ b/dist/types/mcp/errors.d.ts
 @@ -15,6 +15,11 @@ interface MCPTransportErrorOptions {
@@ -241,7 +280,7 @@ index 35c2750503b66c0141ad770955720d95a37cd39d..31df5e7831921c0f8f34faedcbbc8d6a
  export declare function mcpTraceIdFromHeaders(headers: Headers): string | undefined;
  /** Preserve a server-provided JSON-RPC error without exposing credential-shaped data. */
 diff --git a/dist/types/mcp/loader.d.ts b/dist/types/mcp/loader.d.ts
-index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf0316ccd78bd 100644
+index 88cb17b..083b2f7 100644
 --- a/dist/types/mcp/loader.d.ts
 +++ b/dist/types/mcp/loader.d.ts
 @@ -21,6 +21,7 @@ export interface MCPToolsLoadResult {
@@ -253,7 +292,7 @@ index 88cb17b3f860d90cffe81d31d47bac132174498f..083b2f72508ac06db7eb52f347dcf031
      onStatus?: (event: McpConnectionStatusEvent) => void;
      /** Whether to load project-level config (default: true) */
 diff --git a/dist/types/mcp/manager.d.ts b/dist/types/mcp/manager.d.ts
-index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e9f515cdf 100644
+index 9933dc7..3df0403 100644
 --- a/dist/types/mcp/manager.d.ts
 +++ b/dist/types/mcp/manager.d.ts
 @@ -39,6 +39,9 @@ export interface MCPLoadResult {
@@ -292,7 +331,7 @@ index 9933dc7374a3560fb62f234463a714a332863a78..3df040326398325d459bc9b238e17b3e
       * Refresh tools from a specific server.
 diff --git a/dist/types/mcp/resource-subscriptions.d.ts b/dist/types/mcp/resource-subscriptions.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e04e8a9c45
+index 0000000..5f5ec41
 --- /dev/null
 +++ b/dist/types/mcp/resource-subscriptions.d.ts
 @@ -0,0 +1,4 @@
@@ -301,7 +340,7 @@ index 0000000000000000000000000000000000000000..5f5ec41d8dce887ba3c6c199d36123e0
 +export declare function setManagedResourceSubscription(connection: MCPServerConnection, uri: string, enabled: boolean, options?: MCPRequestOptions): Promise<void>;
 +export declare function retainResourceSubscription(connection: MCPServerConnection, uri: string, options?: MCPRequestOptions): Promise<MCPResourceSubscription>;
 diff --git a/dist/types/mcp/tool-bridge.d.ts b/dist/types/mcp/tool-bridge.d.ts
-index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d46cc55212 100644
+index 7a53726..9ad0821 100644
 --- a/dist/types/mcp/tool-bridge.d.ts
 +++ b/dist/types/mcp/tool-bridge.d.ts
 @@ -13,6 +13,7 @@ import type { MCPAuthChallenge, MCPContent, MCPServerConnection, MCPToolDefiniti
@@ -326,7 +365,7 @@ index 7a53726f6d1b0c309fadb168ea698b68135b7e42..9ad0821533f31419ab044845a5ea13d4
      provider?: string;
      /** Provider display name (e.g., "Claude Code", "MCP Config") */
 diff --git a/dist/types/mcp/transports/sse.d.ts b/dist/types/mcp/transports/sse.d.ts
-index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110b6be85eb 100644
+index e448695..61c7a8a 100644
 --- a/dist/types/mcp/transports/sse.d.ts
 +++ b/dist/types/mcp/transports/sse.d.ts
 @@ -15,10 +15,10 @@ export declare class LegacySseTransport implements MCPTransport {
@@ -343,7 +382,7 @@ index e4486950a409847117163c1d4d76d9a093c4593b..61c7a8a525478cd7fbc101602b16d110
 -export declare function createSseTransport(config: MCPSseServerConfig): Promise<LegacySseTransport>;
 +export declare function createSseTransport(config: MCPSseServerConfig, signal?: AbortSignal): Promise<LegacySseTransport>;
 diff --git a/dist/types/mcp/types.d.ts b/dist/types/mcp/types.d.ts
-index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bbe734d2ec 100644
+index 8b623f5..90dfda5 100644
 --- a/dist/types/mcp/types.d.ts
 +++ b/dist/types/mcp/types.d.ts
 @@ -155,6 +155,7 @@ export interface MCPImplementation {
@@ -355,7 +394,7 @@ index 8b623f5a31a99c90f1e903d55e5bf863b3595b13..90dfda538dd6949171493dcb00ea15bb
          listChanged?: boolean;
      };
 diff --git a/dist/types/modes/components/plan-review-overlay.d.ts b/dist/types/modes/components/plan-review-overlay.d.ts
-index 5dad6c38d23106b9a4254454e1286827e39e904c..4184a146709a623da89eebc0e9a251a2247bced1 100644
+index 5dad6c3..4184a14 100644
 --- a/dist/types/modes/components/plan-review-overlay.d.ts
 +++ b/dist/types/modes/components/plan-review-overlay.d.ts
 @@ -18,28 +18,8 @@
@@ -390,7 +429,7 @@ index 5dad6c38d23106b9a4254454e1286827e39e904c..4184a146709a623da89eebc0e9a251a2
      /** Invoked with the chosen option label (never a disabled one). */
      onPick: (label: string) => void;
 diff --git a/dist/types/modes/interactive-mode.d.ts b/dist/types/modes/interactive-mode.d.ts
-index 4965e2bd73dd47532ac9b08c5a9625d7c1093ef1..170b339567661af0804128e2d24e38b48886d6d3 100644
+index 4965e2b..170b339 100644
 --- a/dist/types/modes/interactive-mode.d.ts
 +++ b/dist/types/modes/interactive-mode.d.ts
 @@ -58,7 +58,7 @@ export declare function computeEditorMaxHeight(terminalRows: number): number;
@@ -404,7 +443,7 @@ index 4965e2bd73dd47532ac9b08c5a9625d7c1093ef1..170b339567661af0804128e2d24e38b4
      /** Providers that were migrated during startup */
 diff --git a/dist/types/plan-mode/plan-review-document.d.ts b/dist/types/plan-mode/plan-review-document.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..d1fcab9826b04deb4c1937ea2e3707d7381b74a3
+index 0000000..d1fcab9
 --- /dev/null
 +++ b/dist/types/plan-mode/plan-review-document.d.ts
 @@ -0,0 +1,89 @@
@@ -499,7 +538,7 @@ index 0000000000000000000000000000000000000000..d1fcab9826b04deb4c1937ea2e3707d7
 +export declare function combinePlanReviewFeedback(documentFeedback: string, additionalFeedback: string): string;
 diff --git a/dist/types/plan-mode/startup.d.ts b/dist/types/plan-mode/startup.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..baaa5c1bb346acd306704b6dfca58974846b00cb
+index 0000000..baaa5c1
 --- /dev/null
 +++ b/dist/types/plan-mode/startup.d.ts
 @@ -0,0 +1,3 @@
@@ -507,7 +546,7 @@ index 0000000000000000000000000000000000000000..baaa5c1bb346acd306704b6dfca58974
 +import type { SessionManager } from "../session/session-manager.js";
 +export declare function shouldEnterPlanModeOnStartup(sessionManager: Pick<SessionManager, "buildSessionContext" | "getEntries">, sessionSettings: Pick<Settings, "get">): boolean;
 diff --git a/dist/types/sdk.d.ts b/dist/types/sdk.d.ts
-index e3b75c288b6c8ded7d709832d65a2cf993461374..4a7f1d6d3aeab63c0d9c6e449a600412c6b101d0 100644
+index e3b75c2..4a7f1d6 100644
 --- a/dist/types/sdk.d.ts
 +++ b/dist/types/sdk.d.ts
 @@ -18,7 +18,7 @@ import { type LocalProtocolOptions } from "./internal-urls/index.js";
@@ -548,7 +587,7 @@ index e3b75c288b6c8ded7d709832d65a2cf993461374..4a7f1d6d3aeab63c0d9c6e449a600412
      extensionsResult: LoadExtensionsResult;
      /** Update tool UI context (interactive mode) */
 diff --git a/dist/types/session/agent-session-types.d.ts b/dist/types/session/agent-session-types.d.ts
-index 7fd568422586a3d168add481f988ce0727d902cf..0f28b29dc3a0e749ec29835634687d52f7da0f1f 100644
+index 7fd5684..0f28b29 100644
 --- a/dist/types/session/agent-session-types.d.ts
 +++ b/dist/types/session/agent-session-types.d.ts
 @@ -1,5 +1,5 @@
@@ -702,7 +741,7 @@ index 7fd568422586a3d168add481f988ce0727d902cf..0f28b29dc3a0e749ec29835634687d52
      onPayload?: SimpleStreamOptions["onPayload"];
      /** Provider response hook used by the active session request path. */
 diff --git a/dist/types/session/agent-session.d.ts b/dist/types/session/agent-session.d.ts
-index c55844cb2f282616605e385234ee3888f0d84ce3..cc27ad040550a7a7e1dfd5cc240d721899207d3e 100644
+index c55844c..cc27ad0 100644
 --- a/dist/types/session/agent-session.d.ts
 +++ b/dist/types/session/agent-session.d.ts
 @@ -53,7 +53,7 @@ import type { TodoPhase } from "../tools/todo.js";
@@ -798,7 +837,7 @@ index c55844cb2f282616605e385234ee3888f0d84ce3..cc27ad040550a7a7e1dfd5cc240d7218
      getUsageReportingModelSelectors(reports: readonly UsageReport[]): string[];
      /** List stored OAuth accounts for the current model provider and mark this session's active account. */
 diff --git a/dist/types/session/codex-auto-reset.d.ts b/dist/types/session/codex-auto-reset.d.ts
-index 5ebc7029753ca34b46caeb019689d53ee4a309b8..bead2c5e41153f881a348b2145a354feda494627 100644
+index 5ebc702..bead2c5 100644
 --- a/dist/types/session/codex-auto-reset.d.ts
 +++ b/dist/types/session/codex-auto-reset.d.ts
 @@ -154,12 +154,19 @@ export interface CodexResetPlan {
@@ -822,7 +861,7 @@ index 5ebc7029753ca34b46caeb019689d53ee4a309b8..bead2c5e41153f881a348b2145a354fe
  export declare function blockedAttemptKey(accountKey: string, weeklyResetsAtMs: number): string;
  /** One attempt per (account, credit-expiry-minute) salvage episode. */
 diff --git a/dist/types/session/tool-choice-queue.d.ts b/dist/types/session/tool-choice-queue.d.ts
-index 1c9f2ba7cb0cad11c065653e22694759c4775044..48c1b4951f2381341e88ac4dbe8ec0d2a186a0e0 100644
+index 1c9f2ba..48c1b49 100644
 --- a/dist/types/session/tool-choice-queue.d.ts
 +++ b/dist/types/session/tool-choice-queue.d.ts
 @@ -26,6 +26,11 @@ export interface DirectiveCallbacks {
@@ -875,7 +914,7 @@ index 1c9f2ba7cb0cad11c065653e22694759c4775044..48c1b4951f2381341e88ac4dbe8ec0d2
       * Advance the head directive and return its next yield. Records the value
       * as in-flight until resolve() or reject() is called.
 diff --git a/dist/types/slash-commands/helpers/todo.d.ts b/dist/types/slash-commands/helpers/todo.d.ts
-index c619619197a2ac41b648c611dbea5c8c441f6e5a..ae8b05001632d848360251f5241650ee9e8cebf6 100644
+index c619619..ae8b050 100644
 --- a/dist/types/slash-commands/helpers/todo.d.ts
 +++ b/dist/types/slash-commands/helpers/todo.d.ts
 @@ -1,3 +1,29 @@
@@ -909,7 +948,7 @@ index c619619197a2ac41b648c611dbea5c8c441f6e5a..ae8b05001632d848360251f5241650ee
  /** ACP/text-mode `/todo` handler. Shared by both dispatchers via the spec. */
  export declare function handleTodoAcp(command: ParsedSlashCommand, runtime: SlashCommandRuntime): Promise<SlashCommandResult>;
 diff --git a/dist/types/task/executor.d.ts b/dist/types/task/executor.d.ts
-index aec2ce132254e1ba7eb03f59e8fefe494bf40a52..8a905149268f412307c5b8a5c557fc0399cb5a1e 100644
+index aec2ce1..8a90514 100644
 --- a/dist/types/task/executor.d.ts
 +++ b/dist/types/task/executor.d.ts
 @@ -79,6 +79,10 @@ export interface ExecutorOptions {
@@ -924,7 +963,7 @@ index aec2ce132254e1ba7eb03f59e8fefe494bf40a52..8a905149268f412307c5b8a5c557fc03
      agent: AgentDefinition;
      task: string;
 diff --git a/dist/types/task/persisted-revive.d.ts b/dist/types/task/persisted-revive.d.ts
-index debcd8b1818ac3101106d670df90e248bde34113..f33cdced69995c1e9ffdb4830b83c14f070f6daf 100644
+index debcd8b..f33cdce 100644
 --- a/dist/types/task/persisted-revive.d.ts
 +++ b/dist/types/task/persisted-revive.d.ts
 @@ -1,7 +1,7 @@
@@ -944,55 +983,9 @@ index debcd8b1818ac3101106d670df90e248bde34113..f33cdced69995c1e9ffdb4830b83c14f
      /** LSP policy of the top-level session; revived subagents inherit it rather than defaulting on. */
      enableLsp: boolean;
      /**
-diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
-index 67ab2e00624389070b5ab2bc9c0060d7d985b281..28b1ef2716d7c6a5a39b4c09af78969ea7e123ff 100644
---- a/dist/types/tools/browser.d.ts
-+++ b/dist/types/tools/browser.d.ts
-@@ -1,3 +1,5 @@
-+import type { AgentSession } from "../session/agent-session.js";
-+import type { BrowserKindTag } from "./browser/registry.js";
- import type { EvalPreludeDefinition } from "../eval/preludes.js";
- import type { ToolSession } from "../sdk.js";
- export { type AriaSnapshotOptions, buildAriaSnapshotScript, parseAriaRefSelector } from "./browser/aria/aria-snapshot.js";
-@@ -10,3 +12,35 @@ export type { Observation, ObservationEntry } from "./browser/tab-protocol.js";
- export declare function createBrowserPrelude(session: ToolSession): EvalPreludeDefinition;
- /** Drop headless tabs so a browser mode change applies to the next open. */
- export declare function restartBrowserForModeChange(): Promise<void>;
-+
-+/** Supports an initial URL within the existing acquisition deadline. */
-+export declare const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
-+
-+/** Explicit browser resource owner; no AgentSession is constructed by acquisition. */
-+export interface BrowserTabCreationOwner {
-+    readonly id: string;
-+    readonly cwd: string;
-+    readonly settings: ToolSession["settings"];
-+    readonly signal: AbortSignal;
-+}
-+export declare const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
-+export interface SessionBrowserTabCreateRequest {
-+    readonly name: string;
-+    readonly initialUrl?: string;
-+}
-+export interface SessionBrowserTabCreateResult {
-+    readonly created: true;
-+    readonly name: string;
-+    readonly ownerSessionId: string;
-+    readonly targetId: string;
-+    readonly backend: "worker" | "cmux";
-+    readonly kindTag: BrowserKindTag;
-+    readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
-+    readonly url: string;
-+    readonly title: string;
-+    readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-+}
-+export declare function createBrowserTabForOwner(owner: BrowserTabCreationOwner, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
-+export declare function createBrowserTabForSession(session: AgentSession, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
-+
-+export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ace39556d1
+index 0000000..caed131
 --- /dev/null
 +++ b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 @@ -0,0 +1,37 @@
@@ -1034,7 +1027,7 @@ index 0000000000000000000000000000000000000000..caed131294aef8fd2a18c2a8e725a1ac
 +    assertCurrent(): void;
 +}): Readonly<CdpEvaluationOpening>;
 diff --git a/dist/types/tools/browser/cmux/cmux-tab.d.ts b/dist/types/tools/browser/cmux/cmux-tab.d.ts
-index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45e1a08493 100644
+index f5d460b..75aae00 100644
 --- a/dist/types/tools/browser/cmux/cmux-tab.d.ts
 +++ b/dist/types/tools/browser/cmux/cmux-tab.d.ts
 @@ -56,7 +56,7 @@ export interface RunCmuxCodeOptions {
@@ -1073,7 +1066,7 @@ index f5d460b98a1845c8824ca6ba36792fda03a767fb..75aae00bb97323ceeced117a0bde3e45
 +export declare function createRetainedCmuxTab(state: CmuxRetainedState, client: Pick<CmuxSocketClient, "request">): CmuxTab;
 diff --git a/dist/types/tools/browser/cmux/evaluation-channel.d.ts b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f123e704b5
+index 0000000..e6d2440
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/evaluation-channel.d.ts
 @@ -0,0 +1,8 @@
@@ -1086,7 +1079,7 @@ index 0000000000000000000000000000000000000000..e6d24402529b64605002db19b79043f1
 +}
 +export declare function createCmuxEvaluationChannel(tab: CmuxTab, source: Pick<CmuxSocketClient, "request"> & { assertCurrent(): void }): Readonly<CmuxEvaluationChannel>;
 diff --git a/dist/types/tools/browser/cmux/socket-client.d.ts b/dist/types/tools/browser/cmux/socket-client.d.ts
-index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9b15ebca6 100644
+index e94d47c..e8f5c5c 100644
 --- a/dist/types/tools/browser/cmux/socket-client.d.ts
 +++ b/dist/types/tools/browser/cmux/socket-client.d.ts
 @@ -1,9 +1,17 @@
@@ -1123,7 +1116,7 @@ index e94d47c087c75c11497fe2b3509a25b618bdd13f..e8f5c5c03f1f6119d50925d39bc63fe9
  }
 diff --git a/dist/types/tools/browser/cmux/surface-observation.d.ts b/dist/types/tools/browser/cmux/surface-observation.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b17305183
+index 0000000..6ebb03b
 --- /dev/null
 +++ b/dist/types/tools/browser/cmux/surface-observation.d.ts
 @@ -0,0 +1,14 @@
@@ -1142,7 +1135,7 @@ index 0000000000000000000000000000000000000000..6ebb03b4db660cf373ca14051504e81b
 +/** Capture before creation/adoption. Does not connect, lease, or establish server incarnation. */
 +export declare function captureCmuxSurfaceObservation(client: CmuxSocketClient, timeoutMs: number): CmuxSurfaceObservation;
 diff --git a/dist/types/tools/browser/relay/protocol.d.ts b/dist/types/tools/browser/relay/protocol.d.ts
-index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491ffac07771 100644
+index 6fd1252..58a7c0b 100644
 --- a/dist/types/tools/browser/relay/protocol.d.ts
 +++ b/dist/types/tools/browser/relay/protocol.d.ts
 @@ -19,6 +19,9 @@ export interface TabSnapshot {
@@ -1166,7 +1159,7 @@ index 6fd1252bcab4fd9f081eeb75dbfca8ea20491f79..58a7c0bf77087f244d20ed072e9c491f
      tabs: TabSnapshot[];
 diff --git a/dist/types/tools/browser/run-context.d.ts b/dist/types/tools/browser/run-context.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc09ce3bcb
+index 0000000..8e4fc00
 --- /dev/null
 +++ b/dist/types/tools/browser/run-context.d.ts
 @@ -0,0 +1,9 @@
@@ -1180,7 +1173,7 @@ index 0000000000000000000000000000000000000000..8e4fc005581b0975d745394b081619bc
 +}
 +export declare function createBrowserRunContext(session: ToolSession, snapshot?: SessionSnapshot): BrowserRunContext;
 diff --git a/dist/types/tools/browser/tab-protocol.d.ts b/dist/types/tools/browser/tab-protocol.d.ts
-index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f5350b08b95 100644
+index 4411a20..0d51ece 100644
 --- a/dist/types/tools/browser/tab-protocol.d.ts
 +++ b/dist/types/tools/browser/tab-protocol.d.ts
 @@ -40,7 +40,20 @@ export interface SessionSnapshot {
@@ -1206,7 +1199,7 @@ index 4411a20c8df23165e0fe7f6e96023794f560a208..0d51eceadfb1d2cf168bfacca9120f53
      browserWSEndpoint: string;
      safeDir: string;
 diff --git a/dist/types/tools/browser/tab-supervisor.d.ts b/dist/types/tools/browser/tab-supervisor.d.ts
-index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba2266bde73f7 100644
+index a822a71..d613600 100644
 --- a/dist/types/tools/browser/tab-supervisor.d.ts
 +++ b/dist/types/tools/browser/tab-supervisor.d.ts
 @@ -1,4 +1,5 @@
@@ -1267,7 +1260,7 @@ index a822a71e910869fae13234d9ac6b4b97b7faa100..d613600c0d799be468a5a4beeb1ba226
 +export declare function openReservedCdpEvaluation(ownerSessionId: string, target: OwnerTabViewportTarget, operationId: string, timeoutMs: number): Promise<Readonly<import("./cdp-evaluation-channel.js").CdpEvaluationChannel>>;
 diff --git a/dist/types/tools/browser/target-observation.d.ts b/dist/types/tools/browser/target-observation.d.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb421abd75
+index 0000000..0328314
 --- /dev/null
 +++ b/dist/types/tools/browser/target-observation.d.ts
 @@ -0,0 +1,8 @@
@@ -1279,8 +1272,54 @@ index 0000000000000000000000000000000000000000..03283144a9a0579725d90c5cd0f76ecb
 +}
 +/** Capture before target creation/adoption and retain with the original owner. */
 +export declare function captureBrowserTargetObservation(browser: Browser, backend: "headless" | "spawned" | "connected" | "relay", timeoutMs: number): Promise<BrowserTargetObservation>;
+diff --git a/dist/types/tools/browser.d.ts b/dist/types/tools/browser.d.ts
+index 67ab2e0..28b1ef2 100644
+--- a/dist/types/tools/browser.d.ts
++++ b/dist/types/tools/browser.d.ts
+@@ -1,3 +1,5 @@
++import type { AgentSession } from "../session/agent-session.js";
++import type { BrowserKindTag } from "./browser/registry.js";
+ import type { EvalPreludeDefinition } from "../eval/preludes.js";
+ import type { ToolSession } from "../sdk.js";
+ export { type AriaSnapshotOptions, buildAriaSnapshotScript, parseAriaRefSelector } from "./browser/aria/aria-snapshot.js";
+@@ -10,3 +12,35 @@ export type { Observation, ObservationEntry } from "./browser/tab-protocol.js";
+ export declare function createBrowserPrelude(session: ToolSession): EvalPreludeDefinition;
+ /** Drop headless tabs so a browser mode change applies to the next open. */
+ export declare function restartBrowserForModeChange(): Promise<void>;
++
++/** Supports an initial URL within the existing acquisition deadline. */
++export declare const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
++
++/** Explicit browser resource owner; no AgentSession is constructed by acquisition. */
++export interface BrowserTabCreationOwner {
++    readonly id: string;
++    readonly cwd: string;
++    readonly settings: ToolSession["settings"];
++    readonly signal: AbortSignal;
++}
++export declare const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
++export interface SessionBrowserTabCreateRequest {
++    readonly name: string;
++    readonly initialUrl?: string;
++}
++export interface SessionBrowserTabCreateResult {
++    readonly created: true;
++    readonly name: string;
++    readonly ownerSessionId: string;
++    readonly targetId: string;
++    readonly backend: "worker" | "cmux";
++    readonly kindTag: BrowserKindTag;
++    readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++    readonly url: string;
++    readonly title: string;
++    readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++export declare function createBrowserTabForOwner(owner: BrowserTabCreationOwner, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
++export declare function createBrowserTabForSession(session: AgentSession, request: SessionBrowserTabCreateRequest): Promise<Readonly<SessionBrowserTabCreateResult>>;
++
++export { BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor.js";
 diff --git a/dist/types/tools/index.d.ts b/dist/types/tools/index.d.ts
-index 55de3155dd069795b658b131a993371bd28d8155..c2e6a7f5f770c8bfb2826c67290182bb8f33df60 100644
+index 55de315..c2e6a7f 100644
 --- a/dist/types/tools/index.d.ts
 +++ b/dist/types/tools/index.d.ts
 @@ -21,6 +21,7 @@ import type { AgentLifecycleManager } from "../registry/agent-lifecycle.js";
@@ -1303,7 +1342,7 @@ index 55de3155dd069795b658b131a993371bd28d8155..c2e6a7f5f770c8bfb2826c67290182bb
      skipPythonPreflight?: boolean;
      /** Pre-loaded context files (AGENTS.md, etc) */
 diff --git a/dist/types/tools/todo.d.ts b/dist/types/tools/todo.d.ts
-index cc45c4c5b419c81432a7f94562508de51fd61379..19dc56c0adb44273bb10ca7c05025df70d7e457b 100644
+index cc45c4c..19dc56c 100644
 --- a/dist/types/tools/todo.d.ts
 +++ b/dist/types/tools/todo.d.ts
 @@ -1,10 +1,11 @@
@@ -1366,7 +1405,7 @@ index cc45c4c5b419c81432a7f94562508de51fd61379..19dc56c0adb44273bb10ca7c05025df7
   * Report whether `content` likely names the same work as any entry in
   * `descriptions`. Used by the sticky todo panel to light up a pending todo
 diff --git a/src/blob-broker/uploaders-object-storage.ts b/src/blob-broker/uploaders-object-storage.ts
-index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906beeee2f0e 100644
+index 3ff2d47..8865e1b 100644
 --- a/src/blob-broker/uploaders-object-storage.ts
 +++ b/src/blob-broker/uploaders-object-storage.ts
 @@ -254,7 +254,7 @@ function createS3Uploader(destination: BlobDestinationId, config: DestinationRun
@@ -1379,7 +1418,7 @@ index 3ff2d474ac0426efa19cd7cb7e735965239f4cd9..8865e1b42e07d3fcfbbedae57188906b
  	for (const part of parts) length += part.byteLength;
  	const result = new Uint8Array(length);
 diff --git a/src/collab/protocol.ts b/src/collab/protocol.ts
-index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959dd061c94 100644
+index 92e904f..4d14b74 100644
 --- a/src/collab/protocol.ts
 +++ b/src/collab/protocol.ts
 @@ -111,7 +111,7 @@ export type CollabFrame =
@@ -1392,7 +1431,7 @@ index 92e904fc032802acb76a642b5c47f3909653ae44..4d14b7432473761b483a8bdbb067b959
  	new DataView(out.buffer).setUint32(0, peerId, false);
  	out.set(sealed, ENVELOPE_HEADER_LENGTH);
 diff --git a/src/collab/relay-client.ts b/src/collab/relay-client.ts
-index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11c80bb580 100644
+index 8f2ea5c..3270855 100644
 --- a/src/collab/relay-client.ts
 +++ b/src/collab/relay-client.ts
 @@ -52,7 +52,7 @@ export class CollabSocket {
@@ -1414,7 +1453,7 @@ index 8f2ea5c8836c433a0b49fcf19a0c99e0ddc35417..3270855d3162f91a37a36c8399483f11
  			logger.debug("collab: dropping frame, reconnect buffer full", { t: frameType });
  			return;
 diff --git a/src/commit/conventional/service.ts b/src/commit/conventional/service.ts
-index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f16816c4faa67 100644
+index de01f53..6e98843 100644
 --- a/src/commit/conventional/service.ts
 +++ b/src/commit/conventional/service.ts
 @@ -29,6 +29,13 @@ export interface GenerateGitCommitOptions {
@@ -1468,7 +1507,7 @@ index de01f537db3098b2a90cc05ebb35a22f26717a29..6e988439d09db8da4b844bcc151f1681
  	} finally {
  		await inference.dispose();
 diff --git a/src/config/model-registry.ts b/src/config/model-registry.ts
-index 9b6317446d66d7a95aeee1545139719227909bdb..23218089a6a4ef70fdd9cb3ebf254e1154460d92 100644
+index 9b63174..2321808 100644
 --- a/src/config/model-registry.ts
 +++ b/src/config/model-registry.ts
 @@ -29,6 +29,7 @@ import { getBundledModels, getBundledProviders } from "@oh-my-pi/pi-catalog/mode
@@ -1593,7 +1632,7 @@ index 9b6317446d66d7a95aeee1545139719227909bdb..23218089a6a4ef70fdd9cb3ebf254e11
  		if (!discoveryConfig) {
  			return model;
 diff --git a/src/config/settings.ts b/src/config/settings.ts
-index 418b33a4373bd96e31a5807be8dac03e225792ee..d3c1d335cff88c4217f728f1b665dffe0c0f1f41 100644
+index 418b33a..d3c1d33 100644
 --- a/src/config/settings.ts
 +++ b/src/config/settings.ts
 @@ -31,7 +31,7 @@ import {
@@ -2295,8 +2334,38 @@ index 418b33a4373bd96e31a5807be8dac03e225792ee..d3c1d335cff88c4217f728f1b665dffe
  				}
  				this.#quarantinedYamlTargets.delete(configPath);
  				// These pending roles were included in this write. Remove each
+diff --git a/src/discovery/helpers.ts b/src/discovery/helpers.ts
+index 453829c..0242be7 100644
+--- a/src/discovery/helpers.ts
++++ b/src/discovery/helpers.ts
+@@ -1136,6 +1136,7 @@ export function registerPluginCacheInvalidator(invalidator: () => void): void {
+ export async function listClaudePluginRoots(
+ 	home: string,
+ 	cwd?: string,
++	options?: { cache?: boolean },
+ ): Promise<{ roots: ClaudePluginRoot[]; warnings: string[] }> {
+ 	const claudeConfigDir = resolveClaudePaths(home).configDir;
+ 	const ompRegistryPath = path.join(getPluginsDir(home), "installed_plugins.json");
+@@ -1146,7 +1147,7 @@ export async function listClaudePluginRoots(
+ 	const settingsDirs = [...new Set([activeClaudeProjectPath, canonicalCwd].filter((d): d is string => !!d))];
+ 	const enabledOverrides = await readClaudeEnabledPlugins(claudeConfigDir, settingsDirs);
+ 	const cacheKey = `${claudeConfigDir}:${ompRegistryPath}:${resolvedProjectPath ?? ""}:${activeClaudeProjectPath ?? ""}:${canonicalCwd ?? ""}:${enabledOverrides.sources.join("|")}`;
+-	const cached = pluginRootsCache.get(cacheKey);
++	const cached = options?.cache === false ? undefined : pluginRootsCache.get(cacheKey);
+ 	if (cached) return cached;
+ 
+ 	const roots: ClaudePluginRoot[] = [];
+@@ -1322,7 +1323,7 @@ export async function listClaudePluginRoots(
+ 	}
+ 
+ 	const result = { roots, warnings };
+-	pluginRootsCache.set(cacheKey, result);
++	if (options?.cache !== false) pluginRootsCache.set(cacheKey, result);
+ 	return result;
+ }
+ 
 diff --git a/src/export/share.ts b/src/export/share.ts
-index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2c980a559 100644
+index 1d1ed9e..6f9fbb8 100644
 --- a/src/export/share.ts
 +++ b/src/export/share.ts
 @@ -663,7 +663,7 @@ async function shareViaServer(
@@ -2309,7 +2378,7 @@ index 1d1ed9e9453a6f8ba51f25119ac2023fec51b6bd..6f9fbb870ef2ad7f39dc0744d89446d2
  	try {
  		res = await fetch(base, {
 diff --git a/src/extensibility/plugins/marketplace/cache.ts b/src/extensibility/plugins/marketplace/cache.ts
-index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d172813bc57 100644
+index 6745cc7..c919217 100644
 --- a/src/extensibility/plugins/marketplace/cache.ts
 +++ b/src/extensibility/plugins/marketplace/cache.ts
 @@ -54,11 +54,56 @@ export function getCachedPluginPath(
@@ -2406,7 +2475,7 @@ index 6745cc73039e706f45bab2cc06cec765e8a0a864..c919217f2a24dd0b9522c022cfa68d17
  	} catch (err) {
  		// Clean up staging dir on any failure; leave existing targetPath intact
 diff --git a/src/extensibility/plugins/marketplace/fetcher.ts b/src/extensibility/plugins/marketplace/fetcher.ts
-index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb922d4f009 100644
+index 389da79..75a3c78 100644
 --- a/src/extensibility/plugins/marketplace/fetcher.ts
 +++ b/src/extensibility/plugins/marketplace/fetcher.ts
 @@ -5,14 +5,80 @@
@@ -2539,7 +2608,7 @@ index 389da79b38319d53a60bb81488ad7febb0422075..75a3c78054bdb0a98e60b73de5927fb9
  		const catalog = parseMarketplaceCatalog(content, displayPath);
  		return { catalog, clonePath: tmpDir };
 diff --git a/src/extensibility/plugins/marketplace/manager.ts b/src/extensibility/plugins/marketplace/manager.ts
-index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757a4a6f1f0 100644
+index 72733e9..4e51c57 100644
 --- a/src/extensibility/plugins/marketplace/manager.ts
 +++ b/src/extensibility/plugins/marketplace/manager.ts
 @@ -16,7 +16,7 @@ import { normalizePluginRuntimeConfig } from "../runtime-config";
@@ -2646,7 +2715,7 @@ index 72733e9f380d7b394bfb795ba709993b82020223..4e51c5770c2b5b0f10e41b58e361c757
  			}
  		}
 diff --git a/src/extensibility/plugins/marketplace/types.ts b/src/extensibility/plugins/marketplace/types.ts
-index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d554741226d8fa67 100644
+index fd101ff..109e85f 100644
 --- a/src/extensibility/plugins/marketplace/types.ts
 +++ b/src/extensibility/plugins/marketplace/types.ts
 @@ -142,10 +142,16 @@ export interface MarketplacesRegistry {
@@ -2666,8 +2735,203 @@ index fd101ffd77b2d22653264953af9806fce6d14705..109e85f683366fc225014865d5547412
  	catalogPath: string;
  	addedAt: string;
  	updatedAt: string;
+diff --git a/src/lsp/config.ts b/src/lsp/config.ts
+index 79763ce..113f970 100644
+--- a/src/lsp/config.ts
++++ b/src/lsp/config.ts
+@@ -365,11 +365,15 @@ function selectTypescriptServer(servers: Record<string, ServerConfig>): void {
+ }
+ 
+ interface ConfigSource {
++	path: string;
++	kind: "file" | "marketplace";
++	scope: "project" | "user" | "plugin";
+ 	read(): NormalizedConfig | null;
+ }
+ 
+-function fileConfigSource(filePath: string): ConfigSource {
++function fileConfigSource(filePath: string, scope: ConfigSource["scope"]): ConfigSource {
+ 	return {
++		path: filePath, kind: "file", scope,
+ 		read: () => readConfigFile(filePath),
+ 	};
+ }
+@@ -407,6 +411,7 @@ function readMarketplaceLspConfig(root: ClaudePluginRoot): NormalizedConfig | nu
+ 
+ function marketplaceConfigSource(root: ClaudePluginRoot): ConfigSource {
+ 	return {
++		path: root.path, kind: "marketplace", scope: "plugin",
+ 		read: () => readMarketplaceLspConfig(root),
+ 	};
+ }
+@@ -415,20 +420,20 @@ function marketplaceConfigSource(root: ClaudePluginRoot): ConfigSource {
+  * Configuration sources in priority order.
+  * Supports both visible and hidden variants at each config location.
+  */
+-function getConfigSources(cwd: string): ConfigSource[] {
++function getConfigSources(cwd: string, roots?: readonly ClaudePluginRoot[]): ConfigSource[] {
+ 	const filenames = ["lsp.json", ".lsp.json", "lsp.yaml", ".lsp.yaml", "lsp.yml", ".lsp.yml"];
+ 	const sources: ConfigSource[] = [];
+ 
+ 	// Project root files (highest priority)
+ 	for (const filename of filenames) {
+-		sources.push(fileConfigSource(path.join(cwd, filename)));
++		sources.push(fileConfigSource(path.join(cwd, filename), "project"));
+ 	}
+ 
+ 	// Project config directories (.omp/, .pi/, .claude/)
+ 	const projectDirs = getConfigDirPaths("", { user: false, project: true, cwd });
+ 	for (const dir of projectDirs) {
+ 		for (const filename of filenames) {
+-			sources.push(fileConfigSource(path.join(dir, filename)));
++			sources.push(fileConfigSource(path.join(dir, filename), "project"));
+ 		}
+ 	}
+ 
+@@ -436,22 +441,22 @@ function getConfigSources(cwd: string): ConfigSource[] {
+ 	const userDirs = getConfigDirPaths("", { user: true, project: false });
+ 	for (const dir of userDirs) {
+ 		for (const filename of filenames) {
+-			sources.push(fileConfigSource(path.join(dir, filename)));
++			sources.push(fileConfigSource(path.join(dir, filename), "user"));
+ 		}
+ 	}
+ 
+ 	// Plugin LSP configs (from marketplace/--plugin-dir roots)
+-	const pluginRoots = getPreloadedPluginRoots();
++	const pluginRoots = roots ?? getPreloadedPluginRoots();
+ 	for (const root of pluginRoots) {
+ 		for (const filename of filenames) {
+-			sources.push(fileConfigSource(path.join(root.path, filename)));
++			sources.push(fileConfigSource(path.join(root.path, filename), "plugin"));
+ 		}
+ 		sources.push(marketplaceConfigSource(root));
+ 	}
+ 
+ 	// User home root files (lowest priority fallback)
+ 	for (const filename of filenames) {
+-		sources.push(fileConfigSource(path.join(os.homedir(), filename)));
++		sources.push(fileConfigSource(path.join(os.homedir(), filename), "user"));
+ 	}
+ 
+ 	return sources;
+@@ -504,18 +509,7 @@ export function loadConfig(cwd: string): LspConfig {
+ 		}
+ 	}
+ 
+-	// Filter to servers whose project markers exist and whose binary resolves (local or $PATH)
+-	const servers: Record<string, ServerConfig> = {};
+-	const candidates = applyRuntimeDefaults(mergedServers);
+-	for (const name in candidates) {
+-		const config = candidates[name];
+-		if (config.disabled) continue;
+-		if (!hasRootMarkers(cwd, config.rootMarkers)) continue;
+-		const resolved = resolveCommand(config.command, cwd);
+-		if (!resolved) continue;
+-		servers[name] = { ...config, resolvedCommand: resolved };
+-	}
+-	selectTypescriptServer(servers);
++	const servers = applicableServers(cwd, mergedServers);
+ 
+ 	return { servers, idleTimeoutMs };
+ }
+@@ -580,3 +574,94 @@ export function hasCapability(
+ ): boolean {
+ 	return config.capabilities?.[capability] === true;
+ }
++
++/** Shared with loadConfig: inspection never starts a server or creates a client. */
++function applicableServers(cwd: string, mergedServers: Record<string, ServerConfig>): Record<string, ServerConfig> {
++	// Filter to servers whose project markers exist and whose binary resolves (local or $PATH)
++	const servers: Record<string, ServerConfig> = {};
++	const candidates = applyRuntimeDefaults(mergedServers);
++	for (const name in candidates) {
++		const config = candidates[name];
++		if (config.disabled) continue;
++		if (!hasRootMarkers(cwd, config.rootMarkers)) continue;
++		const resolved = resolveCommand(config.command, cwd);
++		if (!resolved) continue;
++		servers[name] = { ...config, resolvedCommand: resolved };
++	}
++	selectTypescriptServer(servers);
++
++	return servers;
++}
++
++export interface LspConfigInspection {
++  /** Highest priority first. Missing files remain listed as potential local override targets. */
++  sources: Array<{ path: string; kind: "file" | "marketplace"; scope: "project" | "user" | "plugin";
++    content?: string; document?: unknown; servers?: Record<string, unknown>; idleTimeoutMs?: number; error?: string }>;
++  defaults: Record<string, ServerConfig>;
++  merged: Record<string, ServerConfig>;
++  fieldSources: Record<string, Record<string, number | "builtin">>;
++  effective: LspConfig;
++  status: Record<string, { rootMarkersMatch: boolean; resolvedCommand: string | null;
++    applicability: "ready" | "disabled" | "missing-root" | "missing-binary" | "typescript-alternative" }>;
++}
++/** Inspect native source order, merge, aliases and applicability without starting LSP.
++ * Explicit roots isolate a desktop discovery read from process-global preloaded roots.
++ * Runtime client factories/PID substitutions remain in effective, as in loadConfig.
++ */
++export function inspectConfig(cwd: string, roots?: readonly ClaudePluginRoot[], replacement?: { path: string; content: string }): LspConfigInspection {
++  const sources: LspConfigInspection["sources"] = getConfigSources(cwd, roots).map(source => {
++    const item: LspConfigInspection["sources"][number] = { path: source.path, kind: source.kind, scope: source.scope };
++    try {
++      let parsed: NormalizedConfig | null;
++      if (source.kind === "file") {
++        try { item.content = replacement?.path === source.path ? replacement.content : readInspectionFile(source.path); }
++        catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return item; throw error; }
++        item.document = parseConfigContent(item.content, source.path);
++        parsed = normalizeConfig(item.document);
++        if (!parsed) throw new Error("Expected a configuration object.");
++      } else parsed = source.read();
++      if (parsed) { item.servers = parsed.servers; item.idleTimeoutMs = parsed.idleTimeoutMs; }
++    } catch (error) { item.error = error instanceof Error ? error.message : String(error); }
++    return item;
++  });
++  let merged = coerceServerConfigs(DEFAULTS), idleTimeoutMs: number | undefined;
++  const fieldSources: LspConfigInspection["fieldSources"] = Object.fromEntries(Object.entries(merged).map(([name, config]) =>
++    [name, Object.fromEntries(Object.keys(config).map(key => [key, "builtin"]))]));
++  for (const source of [...sources].reverse()) {
++    if (!source.servers || source.error) continue;
++    const before = merged;
++    merged = mergeServers(merged, source.servers as Record<string, RawServerConfig>);
++    for (const [name, config] of Object.entries(merged)) {
++      if (config === before[name]) continue;
++      const raw = source.servers[name];
++      if (!isRecord(raw)) continue;
++      const fields = fieldSources[name] ??= {};
++      for (const [key, value] of Object.entries(config)) {
++        if (Object.hasOwn(raw, key) || JSON.stringify(value) !== JSON.stringify((before[name] as unknown as Record<string, unknown> | undefined)?.[key])) fields[key] = sources.indexOf(source);
++      }
++    }
++    if (source.idleTimeoutMs !== undefined) idleTimeoutMs = source.idleTimeoutMs;
++  }
++  const servers = applicableServers(cwd, merged);
++  const status: LspConfigInspection["status"] = {};
++  for (const [name, config] of Object.entries(merged)) {
++    const rootMarkersMatch = hasRootMarkers(cwd, config.rootMarkers);
++    const resolvedCommand = resolveCommand(config.command, cwd);
++    status[name] = { rootMarkersMatch, resolvedCommand, applicability: config.disabled ? "disabled" :
++      !rootMarkersMatch ? "missing-root" : !resolvedCommand ? "missing-binary" : servers[name] ? "ready" : "typescript-alternative" };
++  }
++  return { sources, defaults: coerceServerConfigs(DEFAULTS), merged, fieldSources, effective: { servers, idleTimeoutMs }, status };
++}
++
++function readInspectionFile(file: string): string {
++  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
++  try {
++    const stat = fs.fstatSync(fd);
++    if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error("LSP configuration must be a regular file at most 1 MiB.");
++    const bytes = Buffer.alloc(1024 * 1024 + 1);
++    let size = 0;
++    while (size < bytes.length) { const count = fs.readSync(fd, bytes, size, bytes.length - size, null); if (!count) break; size += count; }
++    if (size > 1024 * 1024) throw new Error("LSP configuration exceeds 1 MiB.");
++    return bytes.subarray(0, size).toString("utf8");
++  } finally { fs.closeSync(fd); }
++}
 diff --git a/src/main.ts b/src/main.ts
-index 71db367f9b997d92fa3b1d7e7a0f563a3d6a470d..e9e8ac044fc23b291eedc4bfd41a4bb965e04a21 100644
+index 71db367..e9e8ac0 100644
 --- a/src/main.ts
 +++ b/src/main.ts
 @@ -1995,6 +1995,7 @@ export async function runRootCommand(
@@ -2679,7 +2943,7 @@ index 71db367f9b997d92fa3b1d7e7a0f563a3d6a470d..e9e8ac044fc23b291eedc4bfd41a4bb9
  					eventBus,
  					subagentEventBus,
 diff --git a/src/mcp/client.ts b/src/mcp/client.ts
-index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2fba12efc0 100644
+index fc71d73..3ac109c 100644
 --- a/src/mcp/client.ts
 +++ b/src/mcp/client.ts
 @@ -1,3 +1,5 @@
@@ -2782,7 +3046,7 @@ index fc71d7325a08a239e3f7d796bdff80c26dce8d1d..3ac109ca77cf84e4ba54942e1cc9dc2f
  	for (const result of results) {
  		if (result.status === "rejected") {
 diff --git a/src/mcp/errors.ts b/src/mcp/errors.ts
-index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6dab5207bb 100644
+index b779975..6d26911 100644
 --- a/src/mcp/errors.ts
 +++ b/src/mcp/errors.ts
 @@ -29,6 +29,12 @@ interface MCPTransportErrorOptions {
@@ -2840,7 +3104,7 @@ index b7799758ba07014398300cfcb4242e25452b412d..6d2691176ecb720dee8ec643a1e70d6d
  
  function errorCode(error: unknown): string | number | undefined {
 diff --git a/src/mcp/loader.ts b/src/mcp/loader.ts
-index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e316020f6dd 100644
+index 135a0c5..81aa537 100644
 --- a/src/mcp/loader.ts
 +++ b/src/mcp/loader.ts
 @@ -27,6 +27,7 @@ export interface MCPToolsLoadResult {
@@ -2860,7 +3124,7 @@ index 135a0c5dda889be04742636c4fbb6460780caa7e..81aa53700b84187377de00fcb04a5e31
  			enableProjectConfig: options?.enableProjectConfig,
  			filterExa: options?.filterExa,
 diff --git a/src/mcp/manager.ts b/src/mcp/manager.ts
-index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fdd25740bb 100644
+index ffccf8e..2943118 100644
 --- a/src/mcp/manager.ts
 +++ b/src/mcp/manager.ts
 @@ -7,7 +7,7 @@
@@ -3235,7 +3499,7 @@ index ffccf8ef833cee87ba5cb16de60dca83ede74ce3..29431187242c23af070ea250da6018fd
  		// Replace tools from this server
 diff --git a/src/mcp/resource-subscriptions.ts b/src/mcp/resource-subscriptions.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba0687268aea9
+index 0000000..f3f9a54
 --- /dev/null
 +++ b/src/mcp/resource-subscriptions.ts
 @@ -0,0 +1,81 @@
@@ -3321,7 +3585,7 @@ index 0000000000000000000000000000000000000000..f3f9a54ccc9283780a4e0aee617ba068
 +  });
 +}
 diff --git a/src/mcp/tool-bridge.ts b/src/mcp/tool-bridge.ts
-index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b464568a987 100644
+index 955b724..2b20d89 100644
 --- a/src/mcp/tool-bridge.ts
 +++ b/src/mcp/tool-bridge.ts
 @@ -33,7 +33,7 @@ import type {
@@ -3440,7 +3704,7 @@ index 955b72489bcae7bb44723fd42a7075141311f40c..2b20d899349f7383283bb1d845b38b46
  					} catch (retryError) {
  						rethrowIfAborted(retryError, signal);
 diff --git a/src/mcp/transports/http.ts b/src/mcp/transports/http.ts
-index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd14ad42e4 100644
+index 9d12523..9f399a6 100644
 --- a/src/mcp/transports/http.ts
 +++ b/src/mcp/transports/http.ts
 @@ -486,6 +486,10 @@ export class HttpTransport implements MCPTransport {
@@ -3466,7 +3730,7 @@ index 9d12523fc5c33b640231b9a2e9d13154ad785efd..9f399a6af536da04fefb7cc1268f64fd
  			}
  
 diff --git a/src/mcp/transports/sse.ts b/src/mcp/transports/sse.ts
-index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73e71a1c4f 100644
+index a4d71ea..29d1697 100644
 --- a/src/mcp/transports/sse.ts
 +++ b/src/mcp/transports/sse.ts
 @@ -10,6 +10,7 @@ import type {
@@ -3557,7 +3821,7 @@ index a4d71ead80c29b5567f97e90b95bd94204e250b6..29d1697beb6887f5eb93dd2a7a640d73
  	return transport;
  }
 diff --git a/src/mcp/types.ts b/src/mcp/types.ts
-index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8e7ea9a41 100644
+index 7a600a6..19e6282 100644
 --- a/src/mcp/types.ts
 +++ b/src/mcp/types.ts
 @@ -187,6 +187,7 @@ export interface MCPImplementation {
@@ -3569,7 +3833,7 @@ index 7a600a602e248cf63d117ab5f08c4f42a5b548ea..19e6282af05db5dd9cc4e0cc7c2185f8
  	sampling?: Record<string, never>;
  	experimental?: Record<string, unknown>;
 diff --git a/src/modes/components/plan-review-overlay.ts b/src/modes/components/plan-review-overlay.ts
-index 9799cc1357df9c62fa64b16fe6cee8d50f523989..c600c9073599b60751233b4e90b7c3a25d510018 100644
+index 9799cc1..c600c90 100644
 --- a/src/modes/components/plan-review-overlay.ts
 +++ b/src/modes/components/plan-review-overlay.ts
 @@ -50,7 +50,16 @@ import {
@@ -4128,7 +4392,7 @@ index 9799cc1357df9c62fa64b16fe6cee8d50f523989..c600c9073599b60751233b4e90b7c3a2
  		lines: string[],
  		anchors: BodyRowAnchor[],
 diff --git a/src/modes/controllers/todo-command-controller.ts b/src/modes/controllers/todo-command-controller.ts
-index 2213681fc67053b30251ae06dd1f024af015afd0..c56ef3e2b746ede301f283394080b2d8c37a8f80 100644
+index 2213681..c56ef3e 100644
 --- a/src/modes/controllers/todo-command-controller.ts
 +++ b/src/modes/controllers/todo-command-controller.ts
 @@ -1,13 +1,13 @@
@@ -4201,7 +4465,7 @@ index 2213681fc67053b30251ae06dd1f024af015afd0..c56ef3e2b746ede301f283394080b2d8
  }
  
 diff --git a/src/modes/interactive-mode.ts b/src/modes/interactive-mode.ts
-index 536c6c816b3cad8bf75be98e036463ed09aa4ad7..51cd2b960acb87fca78a1b8f8e3cbc4b756f82b1 100644
+index 536c6c8..51cd2b9 100644
 --- a/src/modes/interactive-mode.ts
 +++ b/src/modes/interactive-mode.ts
 @@ -1,3 +1,5 @@
@@ -4232,7 +4496,7 @@ index 536c6c816b3cad8bf75be98e036463ed09aa4ad7..51cd2b960acb87fca78a1b8f8e3cbc4b
  export interface InteractiveModeOptions {
 diff --git a/src/plan-mode/plan-review-document.ts b/src/plan-mode/plan-review-document.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..09da944d6756e72da02bc751a4a6175758c0d1ae
+index 0000000..09da944
 --- /dev/null
 +++ b/src/plan-mode/plan-review-document.ts
 @@ -0,0 +1,665 @@
@@ -4903,7 +5167,7 @@ index 0000000000000000000000000000000000000000..09da944d6756e72da02bc751a4a61757
 +}
 diff --git a/src/plan-mode/startup.ts b/src/plan-mode/startup.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..fae1433db4856caae18ccc5b9fd80500bb493072
+index 0000000..fae1433
 --- /dev/null
 +++ b/src/plan-mode/startup.ts
 @@ -0,0 +1,16 @@
@@ -4924,7 +5188,7 @@ index 0000000000000000000000000000000000000000..fae1433db4856caae18ccc5b9fd80500
 +	);
 +}
 diff --git a/src/sdk.ts b/src/sdk.ts
-index d647c7908f246ebd2edefe00f427d20378b22d30..d4e1e2b4fede08a8e1ef4df1998567486d40ea6f 100644
+index d647c79..d4e1e2b 100644
 --- a/src/sdk.ts
 +++ b/src/sdk.ts
 @@ -156,7 +156,14 @@ import {
@@ -5085,7 +5349,7 @@ index d647c7908f246ebd2edefe00f427d20378b22d30..d4e1e2b4fede08a8e1ef4df199856748
  			setToolUIContext,
  			mcpManager,
 diff --git a/src/session/agent-session-types.ts b/src/session/agent-session-types.ts
-index bead7e308fb46181840b74e1660267493231c593..85c3bae21c0b5ec8f592cae6a35da34381f40eae 100644
+index bead7e3..85c3bae 100644
 --- a/src/session/agent-session-types.ts
 +++ b/src/session/agent-session-types.ts
 @@ -14,6 +14,9 @@ import type {
@@ -5240,7 +5504,7 @@ index bead7e308fb46181840b74e1660267493231c593..85c3bae21c0b5ec8f592cae6a35da343
  	onPayload?: SimpleStreamOptions["onPayload"];
  	/** Provider response hook used by the active session request path. */
 diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
-index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..9a1c62fbbefc17a81f39e9890d196738cd754126 100644
+index ea17642..9a1c62f 100644
 --- a/src/session/agent-session.ts
 +++ b/src/session/agent-session.ts
 @@ -61,6 +61,7 @@ import type {
@@ -6732,7 +6996,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..9a1c62fbbefc17a81f39e9890d196738
  
  	/**
 diff --git a/src/session/codex-auto-reset.ts b/src/session/codex-auto-reset.ts
-index c7005fd9cf6344436df43d2cec2e4c469278826b..3585c5f2adb5f76a653c9fcbe6738bba83677ed1 100644
+index c7005fd..3585c5f 100644
 --- a/src/session/codex-auto-reset.ts
 +++ b/src/session/codex-auto-reset.ts
 @@ -225,15 +225,89 @@ interface AccountSnapshot {
@@ -6855,7 +7119,7 @@ index c7005fd9cf6344436df43d2cec2e4c469278826b..3585c5f2adb5f76a653c9fcbe6738bba
  
  /** One attempt per (account, weekly-reset-minute) block episode. */
 diff --git a/src/session/tool-choice-queue.ts b/src/session/tool-choice-queue.ts
-index cacbb5a7975edb95253e3806cc77a25fce66b088..1938cbe928e39f592347578d085c540794e54984 100644
+index cacbb5a..1938cbe 100644
 --- a/src/session/tool-choice-queue.ts
 +++ b/src/session/tool-choice-queue.ts
 @@ -1,4 +1,5 @@
@@ -7110,7 +7374,7 @@ index cacbb5a7975edb95253e3806cc77a25fce66b088..1938cbe928e39f592347578d085c5407
  
  	// ── Observation ───────────────────────────────────────────────────────
 diff --git a/src/slash-commands/helpers/todo.ts b/src/slash-commands/helpers/todo.ts
-index 28f2a69080275d4b421ac8e7f15a46a347350fc1..002c4b8dbce14b91e0deeedf2eb60b127970a179 100644
+index 28f2a69..002c4b8 100644
 --- a/src/slash-commands/helpers/todo.ts
 +++ b/src/slash-commands/helpers/todo.ts
 @@ -1,11 +1,11 @@
@@ -7433,7 +7697,7 @@ index 28f2a69080275d4b421ac8e7f15a46a347350fc1..002c4b8dbce14b91e0deeedf2eb60b12
  			return usage(
  				"/todo edit requires the TUI editor; use /todo export then /todo import for non-interactive edits.",
 diff --git a/src/task/executor.ts b/src/task/executor.ts
-index 405197a3c4a879686c6e899041355f1482f582ab..07c916c9f42dc6e5156c00f4fbe47344f89bbcd9 100644
+index 405197a..07c916c 100644
 --- a/src/task/executor.ts
 +++ b/src/task/executor.ts
 @@ -392,6 +392,10 @@ export interface ExecutorOptions {
@@ -7469,7 +7733,7 @@ index 405197a3c4a879686c6e899041355f1482f582ab..07c916c9f42dc6e5156c00f4fbe47344
  				model,
  				modelPattern: model || modelOverride === undefined ? undefined : modelPatterns,
 diff --git a/src/task/persisted-revive.ts b/src/task/persisted-revive.ts
-index 5a56eb7024472518d641f0a6ebc1493161db0f89..aae0d1bcc4eaad9fc79e419c2d85447786fb80c6 100644
+index 5a56eb7..aae0d1b 100644
 --- a/src/task/persisted-revive.ts
 +++ b/src/task/persisted-revive.ts
 @@ -9,7 +9,7 @@ import { initializeExtensions } from "../modes/runtime-init";
@@ -7498,7 +7762,7 @@ index 5a56eb7024472518d641f0a6ebc1493161db0f89..aae0d1bcc4eaad9fc79e419c2d854477
  				modelPatternAuthFallback: init.resolvedModel,
  				settings: subagentSettings,
 diff --git a/src/task/structured-subagent.ts b/src/task/structured-subagent.ts
-index f5ae96904baff7d8a15b8604e327d67953f32471..cc33bc5aba1cb8046be930c963877a18359bb871 100644
+index f5ae969..cc33bc5 100644
 --- a/src/task/structured-subagent.ts
 +++ b/src/task/structured-subagent.ts
 @@ -406,6 +406,8 @@ function buildExecutorOptions(
@@ -7510,254 +7774,9 @@ index f5ae96904baff7d8a15b8604e327d67953f32471..cc33bc5aba1cb8046be930c963877a18
  		agent: policy.effectiveAgent,
  		task: renderSubagentPrompt(request.assignment),
  		assignment: request.assignment.trim(),
-diff --git a/src/tools/browser.ts b/src/tools/browser.ts
-index b191f319f56d3963c1e8df4cc373ea131da3bb7e..50c0be1626f4c637737a5deac23470e9e68654c1 100644
---- a/src/tools/browser.ts
-+++ b/src/tools/browser.ts
-@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
- import { untilAborted } from "@oh-my-pi/pi-utils";
- import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
- import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
-+import type { AgentSession } from "../session/agent-session";
- import type { ToolSession } from "../sdk";
- import { enforceInlineByteCap } from "../session/streaming-output";
- // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
-@@ -25,11 +26,13 @@ import type { OutputMeta } from "./output-meta";
- import {
- 	type AcquireTabResult,
- 	acquireTab,
-+	BrowserTabCreateRejected,
- 	dropHeadlessTabs,
- 	getTab,
- 	releaseAllTabs,
- 	releaseTab,
- 	runInTab,
-+	type TabSession,
- } from "./browser/tab-supervisor";
- import { renderTabCall } from "./browser/tab-call";
- import { resolveToCwd } from "./path-utils";
-@@ -44,6 +47,7 @@ export { CmuxSocketClient } from "./browser/cmux/socket-client";
- export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
- export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
- export type { Observation, ObservationEntry } from "./browser/tab-protocol";
-+export { BrowserTabCreateRejected, BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor";
- 
- const DEFAULT_TAB_NAME = "main";
- const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
-@@ -97,7 +101,43 @@ interface BrowserPreludeDetails {
- 	value?: unknown;
- }
- 
--function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
-+type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
-+
-+/** Supports an initial URL within the existing acquisition deadline. */
-+export const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
-+
-+/** Explicit native browser resource ownership, independent of AgentSession.
-+ * The owning host retires this lifetime by aborting signal. */
-+export interface BrowserTabCreationOwner {
-+	readonly id: string;
-+	readonly cwd: string;
-+	readonly settings: ToolSession["settings"];
-+	readonly signal: AbortSignal;
-+}
-+
-+export const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
-+
-+export interface SessionBrowserTabCreateRequest {
-+	/** New managed OMP tab name. Existing names are rejected atomically. */
-+	readonly name: string;
-+	readonly initialUrl?: string;
-+}
-+
-+export interface SessionBrowserTabCreateResult {
-+	readonly created: true;
-+	readonly name: string;
-+	readonly ownerSessionId: string;
-+	readonly targetId: string;
-+	readonly backend: TabSession["backend"];
-+	readonly kindTag: BrowserKindTag;
-+	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
-+	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
-+	readonly url: string;
-+	readonly title: string;
-+	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
-+}
-+
-+function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
- 	const app = params.app;
- 	if (app?.cdp_url) {
- 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
-@@ -201,11 +241,35 @@ async function openBrowser(
- 	timeoutMs: number,
- 	signal?: AbortSignal,
- ): Promise<AgentToolResult<unknown>> {
-+	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
-+	details.browser = browser.kind.kind;
-+	const tab = result.tab;
-+	const url = tab.info.url;
-+	const title = tab.info.title ?? "";
-+	details.url = url;
-+	details.viewport = tab.info.viewport;
-+	const verb = result.created ? "Opened" : "Reused";
-+	const lines = [
-+		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
-+		`URL: ${url}`,
-+		title ? `Title: ${title}` : null,
-+	].filter((line): line is string => typeof line === "string");
-+	return toolResult(details).text(lines.join("\n")).done();
-+}
-+
-+async function acquireBrowserTab(
-+	session: BrowserOpenSession,
-+	name: string,
-+	params: BrowserParams,
-+	timeoutMs: number,
-+	signal?: AbortSignal,
-+	createOnly = false,
-+): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
- 	const kind = resolveBrowserKind(params, session);
--	details.browser = kind.kind;
- 
- 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
- 	const existing = getTab(name);
-+	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
- 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
- 		throw new ToolError(
- 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
-@@ -267,6 +331,7 @@ async function openBrowser(
- 					dialogs: params.dialogs,
- 					signal: openSignal,
- 					ownerSessionId: session.getSessionId?.() ?? undefined,
-+					createOnly,
- 				}),
- 			);
- 		} catch (error) {
-@@ -277,18 +342,7 @@ async function openBrowser(
- 		}
- 		await releaseBrowser(browser, { kill: false });
- 
--		const tab = result.tab;
--		const url = tab.info.url;
--		const title = tab.info.title ?? "";
--		details.url = url;
--		details.viewport = tab.info.viewport;
--		const verb = result.created ? "Opened" : "Reused";
--		const lines = [
--			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
--			`URL: ${url}`,
--			title ? `Title: ${title}` : null,
--		].filter((line): line is string => typeof line === "string");
--		return toolResult(details).text(lines.join("\n")).done();
-+		return { browser, result };
- 	} catch (error) {
- 		// Caller cancellation stays a ToolAbortError; the requested timeout
- 		// becomes a timeout ToolError; anything else passes through unchanged.
-@@ -298,6 +352,100 @@ async function openBrowser(
- 	}
- }
- 
-+/**
-+ * Create one managed browser tab directly for an actual AgentSession. This is
-+ * an explicit human resource action: it reads the live native browser settings
-+ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
-+ * conversation transcript.
-+ */
-+export async function createBrowserTabForSession(
-+	session: AgentSession,
-+	request: SessionBrowserTabCreateRequest,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	validateBrowserTabCreateRequest(request);
-+	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
-+	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
-+	const ownerSessionId = session.sessionManager.getSessionId();
-+	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
-+	return createOwnedBrowserTab({
-+		cwd: session.sessionManager.getCwd(), settings: session.settings, getSessionId: () => ownerSessionId,
-+	}, ownerSessionId, request, () => !session.isDisposed && session.sessionManager.getSessionId() === ownerSessionId,
-+		"The native session changed while creating its browser tab");
-+}
-+
-+/** Acquire through the configured native backend without constructing a session.
-+ * This does not allocate, transfer or persist an owner; the host owns that lifecycle. */
-+export async function createBrowserTabForOwner(
-+	owner: BrowserTabCreationOwner,
-+	request: SessionBrowserTabCreateRequest,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	validateBrowserTabCreateRequest(request);
-+	if (!owner || typeof owner.id !== "string" || !owner.id || owner.id.length > 200
-+		|| /[\u0000-\u001f\u007f]/.test(owner.id) || typeof owner.cwd !== "string" || !owner.cwd
-+		|| !(owner.signal instanceof AbortSignal)) {
-+		throw new BrowserTabCreateRejected("Native browser creation requires an explicit owner and lifetime");
-+	}
-+	const { id, cwd, settings, signal } = owner;
-+	if (signal.aborted) throw new BrowserTabCreateRejected("The native browser owner is retired");
-+	if (!settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled for this owner");
-+	return createOwnedBrowserTab({ cwd, settings, getSessionId: () => id }, id, request, () => !signal.aborted,
-+		"The native browser owner retired while creating its browser tab", signal);
-+}
-+
-+function validateBrowserTabCreateRequest(request: SessionBrowserTabCreateRequest): void {
-+	if (
-+		!request ||
-+		typeof request.name !== "string" ||
-+		request.name.length === 0 ||
-+		request.name.length > 200 ||
-+		/[\u0000-\u001f\u007f]/.test(request.name)
-+	) {
-+		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
-+	}
-+	if (request.initialUrl !== undefined) {
-+		try {
-+			if (typeof request.initialUrl !== "string" || request.initialUrl.length > 8192 || /[\u0000-\u0020]/.test(request.initialUrl)) throw new Error();
-+			const url = new URL(request.initialUrl);
-+			if (!["http:", "https:"].includes(url.protocol) && request.initialUrl !== "about:blank") throw new Error();
-+		} catch { throw new BrowserTabCreateRejected("Invalid initial browser address"); }
-+	}
-+}
-+
-+async function createOwnedBrowserTab(
-+	nativeSession: BrowserOpenSession,
-+	ownerSessionId: string,
-+	request: SessionBrowserTabCreateRequest,
-+	isCurrent: () => boolean,
-+	changedMessage: string,
-+	signal?: AbortSignal,
-+): Promise<Readonly<SessionBrowserTabCreateResult>> {
-+	const timeoutMs = clampTimeout("browser", undefined, nativeSession.settings.get("tools.maxTimeout")) * 1_000;
-+	const params = { action: "open", name: request.name, ...(request.initialUrl === undefined ? {} : { url: request.initialUrl }) } as BrowserParams;
-+	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, signal, true);
-+	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
-+	if (!isCurrent()) {
-+		// Only the exact tab returned by this acquisition may be cleaned up. A
-+		// same-name replacement belongs to its own caller, even after retirement.
-+		if (getTab(result.tab.name) === result.tab) await releaseTab(result.tab.name, { kill: true, timeoutMs });
-+		throw new ToolError(changedMessage);
-+	}
-+	const tab = result.tab;
-+	const targetDisposition = tab.kindTag === "headless" ? "created-page"
-+		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
-+	return Object.freeze({
-+		created: true,
-+		name: tab.name,
-+		ownerSessionId,
-+		targetId: tab.targetId,
-+		backend: tab.backend,
-+		kindTag: tab.kindTag,
-+		targetDisposition,
-+		url: tab.info.url,
-+		title: tab.info.title ?? "",
-+		viewport: Object.freeze({ ...tab.info.viewport }),
-+	});
-+}
-+
- async function closeBrowser(
- 	name: string,
- 	params: BrowserParams,
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd781508d8205f5
+index 0000000..1fc2ad5
 --- /dev/null
 +++ b/src/tools/browser/cdp-evaluation-channel.ts
 @@ -0,0 +1,117 @@
@@ -7879,7 +7898,7 @@ index 0000000000000000000000000000000000000000..1fc2ad5ccbb7752fb24eba0d4cd78150
 +	return Object.freeze({ ready, dispose });
 +}
 diff --git a/src/tools/browser/cmux/cmux-tab.ts b/src/tools/browser/cmux/cmux-tab.ts
-index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..0028ae2535d2236767a7c2ddcac2d9d31e8e36b2 100644
+index eabba18..0028ae2 100644
 --- a/src/tools/browser/cmux/cmux-tab.ts
 +++ b/src/tools/browser/cmux/cmux-tab.ts
 @@ -2,8 +2,8 @@ import * as fs from "node:fs";
@@ -8373,7 +8392,7 @@ index eabba187674ce69aa54eb08a0dda7bce5dc99f1e..0028ae2535d2236767a7c2ddcac2d9d3
  
 diff --git a/src/tools/browser/cmux/evaluation-channel.ts b/src/tools/browser/cmux/evaluation-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcafb236cb08
+index 0000000..34d7f21
 --- /dev/null
 +++ b/src/tools/browser/cmux/evaluation-channel.ts
 @@ -0,0 +1,130 @@
@@ -8508,7 +8527,7 @@ index 0000000000000000000000000000000000000000..34d7f2149985c92ad93961354a98bcaf
 +	});
 +}
 diff --git a/src/tools/browser/cmux/socket-client.ts b/src/tools/browser/cmux/socket-client.ts
-index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c078f1299 100644
+index 1741739..71e79d2 100644
 --- a/src/tools/browser/cmux/socket-client.ts
 +++ b/src/tools/browser/cmux/socket-client.ts
 @@ -12,6 +12,8 @@ type RequestJob = {
@@ -8825,7 +8844,7 @@ index 1741739e9ec3803dd7a67bc6d7926f54edc3e4a4..71e79d230ef05bfdc07657563189487c
  	#rejectAll(err: ToolError): void {
 diff --git a/src/tools/browser/cmux/surface-observation.ts b/src/tools/browser/cmux/surface-observation.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da08d9aeefa
+index 0000000..b6b4128
 --- /dev/null
 +++ b/src/tools/browser/cmux/surface-observation.ts
 @@ -0,0 +1,83 @@
@@ -8914,7 +8933,7 @@ index 0000000000000000000000000000000000000000..b6b4128aeaf94688f2d81dbde0af2da0
 +}
 diff --git a/src/tools/browser/owned-cdp-transport.ts b/src/tools/browser/owned-cdp-transport.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d338494fe8
+index 0000000..6367c08
 --- /dev/null
 +++ b/src/tools/browser/owned-cdp-transport.ts
 @@ -0,0 +1,300 @@
@@ -9219,7 +9238,7 @@ index 0000000000000000000000000000000000000000..6367c08a6ae19b9fa553a0110b7608d3
 +	return { message: typeof value.message === "string" ? value.message : "Browser protocol request failed", code: typeof value.code === "number" ? value.code : -32000, data: value.data ?? value.originalMessage };
 +}
 diff --git a/src/tools/browser/registry.ts b/src/tools/browser/registry.ts
-index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993c48e980a 100644
+index 1b1bf38..69c255e 100644
 --- a/src/tools/browser/registry.ts
 +++ b/src/tools/browser/registry.ts
 @@ -77,6 +77,21 @@ export interface ReleaseBrowserOptions {
@@ -9314,7 +9333,7 @@ index 1b1bf387d89e4507555b3012904e2d51661ad602..69c255edae4a39a73da6b7e025858993
  		handle.client.close();
  		return;
 diff --git a/src/tools/browser/relay/bridge.ts b/src/tools/browser/relay/bridge.ts
-index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d436e1d9de 100644
+index dededcc..486d572 100644
 --- a/src/tools/browser/relay/bridge.ts
 +++ b/src/tools/browser/relay/bridge.ts
 @@ -18,8 +18,8 @@
@@ -10376,7 +10395,7 @@ index dededccc5ea91ba4c63dda7c55c3e551b48129ef..486d57248ae4d5ac96e55019a14845d4
  	}
  }
 diff --git a/src/tools/browser/relay/extension-assets/background.js.txt b/src/tools/browser/relay/extension-assets/background.js.txt
-index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e841a8b1445 100644
+index 560da85..85e7d1a 100644
 --- a/src/tools/browser/relay/extension-assets/background.js.txt
 +++ b/src/tools/browser/relay/extension-assets/background.js.txt
 @@ -7,6 +7,7 @@ var ws = null;
@@ -10481,7 +10500,7 @@ index 560da854bb52137016f5a15dddea8e4f248cb434..85e7d1a2e77563452038368f02596e84
    socket.onclose = () => {
      if (ws !== socket)
 diff --git a/src/tools/browser/relay/protocol.ts b/src/tools/browser/relay/protocol.ts
-index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a2203ff24 100644
+index baef431..f573512 100644
 --- a/src/tools/browser/relay/protocol.ts
 +++ b/src/tools/browser/relay/protocol.ts
 @@ -21,6 +21,7 @@ export interface TabSnapshot {
@@ -10503,7 +10522,7 @@ index baef431aa4ecedb8f28876337fcd82fa6c57be4a..f573512283813ee60904e03f4ef43e2a
  			tabs: TabSnapshot[];
 diff --git a/src/tools/browser/run-context.ts b/src/tools/browser/run-context.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0bef346f0
+index 0000000..4b24343
 --- /dev/null
 +++ b/src/tools/browser/run-context.ts
 @@ -0,0 +1,33 @@
@@ -10541,7 +10560,7 @@ index 0000000000000000000000000000000000000000..4b243434908043b78bbb8c0135fc49e0
 +	};
 +}
 diff --git a/src/tools/browser/tab-protocol.ts b/src/tools/browser/tab-protocol.ts
-index 98cbe214ebfd047d98aaa566e539dcf285fbd684..80be7e60d1430e30e7d783a9352fa4f78788aa9d 100644
+index 98cbe21..80be7e6 100644
 --- a/src/tools/browser/tab-protocol.ts
 +++ b/src/tools/browser/tab-protocol.ts
 @@ -1,4 +1,5 @@
@@ -10630,7 +10649,7 @@ index 98cbe214ebfd047d98aaa566e539dcf285fbd684..80be7e60d1430e30e7d783a9352fa4f7
  export interface Transport {
  	send(msg: WorkerOutbound | WorkerInbound, transferList?: Transferable[]): void;
 diff --git a/src/tools/browser/tab-supervisor.ts b/src/tools/browser/tab-supervisor.ts
-index c6b8dd5f4d2217a615c0058f4129f9d3322456af..16cb150e8203a307653a6bcdad7909231fed9a35 100644
+index c6b8dd5..16cb150 100644
 --- a/src/tools/browser/tab-supervisor.ts
 +++ b/src/tools/browser/tab-supervisor.ts
 @@ -5,18 +5,24 @@ import {
@@ -13215,7 +13234,7 @@ index c6b8dd5f4d2217a615c0058f4129f9d3322456af..16cb150e8203a307653a6bcdad790923
  }
  /**
 diff --git a/src/tools/browser/tab-worker-entry.ts b/src/tools/browser/tab-worker-entry.ts
-index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267ffe33f470 100644
+index 9c572c8..fbc9340 100644
 --- a/src/tools/browser/tab-worker-entry.ts
 +++ b/src/tools/browser/tab-worker-entry.ts
 @@ -6,6 +6,15 @@ import { WorkerCore } from "./tab-worker";
@@ -13264,7 +13283,7 @@ index 9c572c8746cedf5108b96b07ad91760746f56d56..fbc9340c5d37ee61d6aa63d4a808267f
 +}
 diff --git a/src/tools/browser/tab-worker-host.ts b/src/tools/browser/tab-worker-host.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cca94d5352
+index 0000000..c3045c8
 --- /dev/null
 +++ b/src/tools/browser/tab-worker-host.ts
 @@ -0,0 +1,296 @@
@@ -13565,7 +13584,7 @@ index 0000000000000000000000000000000000000000..c3045c894c57f4288fe036fd477226cc
 +	return attempt;
 +}
 diff --git a/src/tools/browser/tab-worker.ts b/src/tools/browser/tab-worker.ts
-index 6e8281a7b1a6d42d22775cef6fb786beda634897..a822c09e37414533ab18602d35bc4a8d9898ce0f 100644
+index 6e8281a..a822c09 100644
 --- a/src/tools/browser/tab-worker.ts
 +++ b/src/tools/browser/tab-worker.ts
 @@ -3,13 +3,13 @@ import * as os from "node:os";
@@ -14187,7 +14206,7 @@ index 6e8281a7b1a6d42d22775cef6fb786beda634897..a822c09e37414533ab18602d35bc4a8d
  }
 diff --git a/src/tools/browser/target-observation.ts b/src/tools/browser/target-observation.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902d24582f4
+index 0000000..d0148a7
 --- /dev/null
 +++ b/src/tools/browser/target-observation.ts
 @@ -0,0 +1,91 @@
@@ -14284,7 +14303,7 @@ index 0000000000000000000000000000000000000000..d0148a70f3d5bbb7bcec020bf227d902
 +}
 diff --git a/src/tools/browser/worker-cdp-channel.ts b/src/tools/browser/worker-cdp-channel.ts
 new file mode 100755
-index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8be412636
+index 0000000..870b940
 --- /dev/null
 +++ b/src/tools/browser/worker-cdp-channel.ts
 @@ -0,0 +1,249 @@
@@ -14537,8 +14556,253 @@ index 0000000000000000000000000000000000000000..870b9401293bc7c8c573cdc60d8d1fa8
 +	}
 +	dispose(): Promise<void> { this.close(); return this.#done.promise; }
 +}
+diff --git a/src/tools/browser.ts b/src/tools/browser.ts
+index b191f31..50c0be1 100644
+--- a/src/tools/browser.ts
++++ b/src/tools/browser.ts
+@@ -3,6 +3,7 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
+ import { untilAborted } from "@oh-my-pi/pi-utils";
+ import type { EvalPreludeContext, EvalPreludeDefinition } from "../eval/preludes";
+ import browserDescription from "../prompts/tools/browser.md" with { type: "text" };
++import type { AgentSession } from "../session/agent-session";
+ import type { ToolSession } from "../sdk";
+ import { enforceInlineByteCap } from "../session/streaming-output";
+ // @ts-expect-error Bun imports this declaration source as text instead of a TypeScript module.
+@@ -25,11 +26,13 @@ import type { OutputMeta } from "./output-meta";
+ import {
+ 	type AcquireTabResult,
+ 	acquireTab,
++	BrowserTabCreateRejected,
+ 	dropHeadlessTabs,
+ 	getTab,
+ 	releaseAllTabs,
+ 	releaseTab,
+ 	runInTab,
++	type TabSession,
+ } from "./browser/tab-supervisor";
+ import { renderTabCall } from "./browser/tab-call";
+ import { resolveToCwd } from "./path-utils";
+@@ -44,6 +47,7 @@ export { CmuxSocketClient } from "./browser/cmux/socket-client";
+ export { extractReadableFromHtml, type ReadableFormat, type ReadableResult } from "./browser/readable";
+ export { DEFAULT_RELAY_URL, type RelayKind, resolveRelayKind } from "./browser/relay/kind";
+ export type { Observation, ObservationEntry } from "./browser/tab-protocol";
++export { BrowserTabCreateRejected, BROWSER_TAB_OWNER_CLOSE_VERSION, releaseTabForOwner } from "./browser/tab-supervisor";
+ 
+ const DEFAULT_TAB_NAME = "main";
+ const BROWSER_RUN_SCOPE: readonly string[] = ["tab", "page", "browser", "wait", "assert"];
+@@ -97,7 +101,43 @@ interface BrowserPreludeDetails {
+ 	value?: unknown;
+ }
+ 
+-function resolveBrowserKind(params: BrowserParams, session: ToolSession): BrowserKind {
++type BrowserOpenSession = Pick<ToolSession, "cwd" | "settings" | "getSessionId">;
++
++/** Supports an initial URL within the existing acquisition deadline. */
++export const BROWSER_TAB_CREATE_INITIAL_URL_VERSION = 1;
++
++/** Explicit native browser resource ownership, independent of AgentSession.
++ * The owning host retires this lifetime by aborting signal. */
++export interface BrowserTabCreationOwner {
++	readonly id: string;
++	readonly cwd: string;
++	readonly settings: ToolSession["settings"];
++	readonly signal: AbortSignal;
++}
++
++export const BROWSER_TAB_OWNER_CREATE_VERSION = 1;
++
++export interface SessionBrowserTabCreateRequest {
++	/** New managed OMP tab name. Existing names are rejected atomically. */
++	readonly name: string;
++	readonly initialUrl?: string;
++}
++
++export interface SessionBrowserTabCreateResult {
++	readonly created: true;
++	readonly name: string;
++	readonly ownerSessionId: string;
++	readonly targetId: string;
++	readonly backend: TabSession["backend"];
++	readonly kindTag: BrowserKindTag;
++	/** Whether OMP created a page/surface or adopted an existing configured-browser target. */
++	readonly targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
++	readonly url: string;
++	readonly title: string;
++	readonly viewport: Readonly<{ width: number; height: number; deviceScaleFactor?: number }>;
++}
++
++function resolveBrowserKind(params: BrowserParams, session: BrowserOpenSession): BrowserKind {
+ 	const app = params.app;
+ 	if (app?.cdp_url) {
+ 		return { kind: "connected", cdpUrl: app.cdp_url.replace(/\/+$/, "") };
+@@ -201,11 +241,35 @@ async function openBrowser(
+ 	timeoutMs: number,
+ 	signal?: AbortSignal,
+ ): Promise<AgentToolResult<unknown>> {
++	const { browser, result } = await acquireBrowserTab(session, name, params, timeoutMs, signal);
++	details.browser = browser.kind.kind;
++	const tab = result.tab;
++	const url = tab.info.url;
++	const title = tab.info.title ?? "";
++	details.url = url;
++	details.viewport = tab.info.viewport;
++	const verb = result.created ? "Opened" : "Reused";
++	const lines = [
++		`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
++		`URL: ${url}`,
++		title ? `Title: ${title}` : null,
++	].filter((line): line is string => typeof line === "string");
++	return toolResult(details).text(lines.join("\n")).done();
++}
++
++async function acquireBrowserTab(
++	session: BrowserOpenSession,
++	name: string,
++	params: BrowserParams,
++	timeoutMs: number,
++	signal?: AbortSignal,
++	createOnly = false,
++): Promise<{ browser: BrowserHandle; result: AcquireTabResult }> {
+ 	const kind = resolveBrowserKind(params, session);
+-	details.browser = kind.kind;
+ 
+ 	// If a tab with this name already exists on a different browser kind, fail fast — caller must close first.
+ 	const existing = getTab(name);
++	if (existing && createOnly) throw new BrowserTabCreateRejected(`Browser tab ${JSON.stringify(name)} already exists`);
+ 	if (existing && !sameBrowserKind(existing.browser.kind, kind)) {
+ 		throw new ToolError(
+ 			`Tab ${JSON.stringify(name)} is bound to a different browser (${describeKind(existing.browser.kind)}). Close it first.`,
+@@ -267,6 +331,7 @@ async function openBrowser(
+ 					dialogs: params.dialogs,
+ 					signal: openSignal,
+ 					ownerSessionId: session.getSessionId?.() ?? undefined,
++					createOnly,
+ 				}),
+ 			);
+ 		} catch (error) {
+@@ -277,18 +342,7 @@ async function openBrowser(
+ 		}
+ 		await releaseBrowser(browser, { kill: false });
+ 
+-		const tab = result.tab;
+-		const url = tab.info.url;
+-		const title = tab.info.title ?? "";
+-		details.url = url;
+-		details.viewport = tab.info.viewport;
+-		const verb = result.created ? "Opened" : "Reused";
+-		const lines = [
+-			`${verb} tab ${JSON.stringify(name)} on ${describeBrowser(browser)}`,
+-			`URL: ${url}`,
+-			title ? `Title: ${title}` : null,
+-		].filter((line): line is string => typeof line === "string");
+-		return toolResult(details).text(lines.join("\n")).done();
++		return { browser, result };
+ 	} catch (error) {
+ 		// Caller cancellation stays a ToolAbortError; the requested timeout
+ 		// becomes a timeout ToolError; anything else passes through unchanged.
+@@ -298,6 +352,100 @@ async function openBrowser(
+ 	}
+ }
+ 
++/**
++ * Create one managed browser tab directly for an actual AgentSession. This is
++ * an explicit human resource action: it reads the live native browser settings
++ * but does not invoke Eval, tool approval, extension tool-call hooks, or the
++ * conversation transcript.
++ */
++export async function createBrowserTabForSession(
++	session: AgentSession,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	validateBrowserTabCreateRequest(request);
++	if (session.isDisposed) throw new BrowserTabCreateRejected("The native session is disposed");
++	if (!session.settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled in this session");
++	const ownerSessionId = session.sessionManager.getSessionId();
++	if (!ownerSessionId) throw new BrowserTabCreateRejected("The native session has no owner identity");
++	return createOwnedBrowserTab({
++		cwd: session.sessionManager.getCwd(), settings: session.settings, getSessionId: () => ownerSessionId,
++	}, ownerSessionId, request, () => !session.isDisposed && session.sessionManager.getSessionId() === ownerSessionId,
++		"The native session changed while creating its browser tab");
++}
++
++/** Acquire through the configured native backend without constructing a session.
++ * This does not allocate, transfer or persist an owner; the host owns that lifecycle. */
++export async function createBrowserTabForOwner(
++	owner: BrowserTabCreationOwner,
++	request: SessionBrowserTabCreateRequest,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	validateBrowserTabCreateRequest(request);
++	if (!owner || typeof owner.id !== "string" || !owner.id || owner.id.length > 200
++		|| /[\u0000-\u001f\u007f]/.test(owner.id) || typeof owner.cwd !== "string" || !owner.cwd
++		|| !(owner.signal instanceof AbortSignal)) {
++		throw new BrowserTabCreateRejected("Native browser creation requires an explicit owner and lifetime");
++	}
++	const { id, cwd, settings, signal } = owner;
++	if (signal.aborted) throw new BrowserTabCreateRejected("The native browser owner is retired");
++	if (!settings.get("browser.enabled")) throw new BrowserTabCreateRejected("The native browser capability is disabled for this owner");
++	return createOwnedBrowserTab({ cwd, settings, getSessionId: () => id }, id, request, () => !signal.aborted,
++		"The native browser owner retired while creating its browser tab", signal);
++}
++
++function validateBrowserTabCreateRequest(request: SessionBrowserTabCreateRequest): void {
++	if (
++		!request ||
++		typeof request.name !== "string" ||
++		request.name.length === 0 ||
++		request.name.length > 200 ||
++		/[\u0000-\u001f\u007f]/.test(request.name)
++	) {
++		throw new BrowserTabCreateRejected("Native browser tab creation requires a bounded name");
++	}
++	if (request.initialUrl !== undefined) {
++		try {
++			if (typeof request.initialUrl !== "string" || request.initialUrl.length > 8192 || /[\u0000-\u0020]/.test(request.initialUrl)) throw new Error();
++			const url = new URL(request.initialUrl);
++			if (!["http:", "https:"].includes(url.protocol) && request.initialUrl !== "about:blank") throw new Error();
++		} catch { throw new BrowserTabCreateRejected("Invalid initial browser address"); }
++	}
++}
++
++async function createOwnedBrowserTab(
++	nativeSession: BrowserOpenSession,
++	ownerSessionId: string,
++	request: SessionBrowserTabCreateRequest,
++	isCurrent: () => boolean,
++	changedMessage: string,
++	signal?: AbortSignal,
++): Promise<Readonly<SessionBrowserTabCreateResult>> {
++	const timeoutMs = clampTimeout("browser", undefined, nativeSession.settings.get("tools.maxTimeout")) * 1_000;
++	const params = { action: "open", name: request.name, ...(request.initialUrl === undefined ? {} : { url: request.initialUrl }) } as BrowserParams;
++	const { result } = await acquireBrowserTab(nativeSession, request.name, params, timeoutMs, signal, true);
++	if (!result.created) throw new ToolError("Native browser tab creation unexpectedly reused an existing tab");
++	if (!isCurrent()) {
++		// Only the exact tab returned by this acquisition may be cleaned up. A
++		// same-name replacement belongs to its own caller, even after retirement.
++		if (getTab(result.tab.name) === result.tab) await releaseTab(result.tab.name, { kill: true, timeoutMs });
++		throw new ToolError(changedMessage);
++	}
++	const tab = result.tab;
++	const targetDisposition = tab.kindTag === "headless" ? "created-page"
++		: tab.kindTag === "cmux" ? "created-surface" : "adopted-existing-target";
++	return Object.freeze({
++		created: true,
++		name: tab.name,
++		ownerSessionId,
++		targetId: tab.targetId,
++		backend: tab.backend,
++		kindTag: tab.kindTag,
++		targetDisposition,
++		url: tab.info.url,
++		title: tab.info.title ?? "",
++		viewport: Object.freeze({ ...tab.info.viewport }),
++	});
++}
++
+ async function closeBrowser(
+ 	name: string,
+ 	params: BrowserParams,
 diff --git a/src/tools/computer/worker-entry.ts b/src/tools/computer/worker-entry.ts
-index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d589ce816a 100644
+index 14a0b4e..619e0a0 100644
 --- a/src/tools/computer/worker-entry.ts
 +++ b/src/tools/computer/worker-entry.ts
 @@ -10,10 +10,11 @@ export function startComputerWorker(): void {
@@ -14555,7 +14819,7 @@ index 14a0b4ea549534e0d63d3b9a1350168ee1dbbb37..619e0a0394c9089c379758b1d33233d5
  		onMessage(handler) {
  			if (inbox) return inbox.bind(message => handler(message as ComputerWorkerInbound));
 diff --git a/src/tools/index.ts b/src/tools/index.ts
-index 798961fe1aad10bc8c954ae05dda56de2f318411..c941cc3d7996154928d6584256431e540752189f 100644
+index 798961f..c941cc3 100644
 --- a/src/tools/index.ts
 +++ b/src/tools/index.ts
 @@ -26,6 +26,7 @@ import type { AgentLifecycleManager } from "../registry/agent-lifecycle";
@@ -14578,7 +14842,7 @@ index 798961fe1aad10bc8c954ae05dda56de2f318411..c941cc3d7996154928d6584256431e54
  	skipPythonPreflight?: boolean;
  	/** Pre-loaded context files (AGENTS.md, etc) */
 diff --git a/src/tools/todo.ts b/src/tools/todo.ts
-index e3dfab8776a86e26170e9b19ff6d0808922619a8..4771b33fab8a5268f1df6ea3b3e31af60c50ed3a 100644
+index e3dfab8..4771b33 100644
 --- a/src/tools/todo.ts
 +++ b/src/tools/todo.ts
 @@ -1,5 +1,5 @@
@@ -14691,7 +14955,7 @@ index e3dfab8776a86e26170e9b19ff6d0808922619a8..4771b33fab8a5268f1df6ea3b3e31af6
  
  /** Minimum overlap (after normalization) required for a substring match.
 diff --git a/src/vibe/runtime.ts b/src/vibe/runtime.ts
-index af4655ca75552ac5c4f015aa9f7e2bfde095a158..9fe619a62e6705f7e1d05386febd91a40d124373 100644
+index af4655c..9fe619a 100644
 --- a/src/vibe/runtime.ts
 +++ b/src/vibe/runtime.ts
 @@ -1326,6 +1326,8 @@ export class VibeSessionRegistry {
