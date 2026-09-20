@@ -49,7 +49,7 @@ async function fixture() {
       agents: { availability: "available", value: [] }, sources: { availability: "available", value: [] } } });
   const owner = (epoch: string, root = `root-${epoch}`) => new NativeResetPolicyWorkerOwner({ store, policy,
     context: { workerEpoch: epoch, workerPid: 100, snapshot: snapshot(root) } });
-  return { directory, store, admissions, policy, owner };
+  return { directory, store, admissions, policy, owner, snapshot };
 }
 
 function pass(passId: string, nativeSessionId = "native-1", over: Partial<ResetPassWire> = {}): ResetPassWire {
@@ -222,3 +222,33 @@ for (const phase of ["answer", "setting-written", "decision.prepare", "admit"] a
     expect(f.policy.inspectPass(p.passId)).toEqual(before);
   });
 }
+
+
+test("recovered original owner records late completion without clearing the durable unknown fence", async () => {
+  const f = await fixture(), oldOwner = f.owner("epoch-recovery"), binding = { workerEpoch: "epoch-recovery", rootSessionId: "root-epoch-recovery" };
+  const p = pass("pass-recovery"), snapshot = await startedAndPlanned(oldOwner, binding, p);
+  const admitted = await invoke(oldOwner, binding, 3, p, { kind: "admit", snapshot, actionIndex: 0 }, admission());
+  if (admitted.kind !== "admission.execute") throw new Error("expected original permit");
+  f.store.close(); stores.splice(stores.indexOf(f.store), 1);
+  const store = new HostStore(f.directory); stores.push(store);
+  const usage = new SessionUsageService({ store, existing: async () => undefined, open: async () => { throw new Error("unused"); },
+    ordered: async <T>(_id: string, run: () => Promise<T>) => run(), assertActive() {} });
+  const policy = new NativeResetPolicy({ store, admissions: usage.admissions });
+  const context = { workerEpoch: binding.workerEpoch, workerPid: 100, snapshot: f.snapshot(binding.rootSessionId) };
+  const operation: ResetPolicyWireOperation = { kind: "complete", permit: admitted.permit,
+    observation: { consumeBoundary: "passed", result: { kind: "outcome", outcome: { ok: true, code: "reset" } } } };
+  // A normal new owner cannot silently adopt an old worker's completion.
+  await expect(invoke(new NativeResetPolicyWorkerOwner({ store, policy, context }), binding, 4, p, operation)).rejects.toThrow("No live");
+  const recovered = new NativeResetPolicyWorkerOwner({ store, policy, context: { ...context, recovered: true } });
+  await expect(invoke(recovered, binding, 4, p, { ...operation, permit: { ...admitted.permit, redeemRequestId: "replacement" } })).rejects.toThrow("original permit");
+  expect(policy.inspectAttempt(admitted.permit.attemptId)).toMatchObject({ state: "unknown", observed: "unknown", live: false });
+  expect(await invoke(recovered, binding, 4, p, operation)).toEqual({ kind: "completed" });
+  expect(await invoke(recovered, binding, 5, p, operation)).toEqual({ kind: "completed" });
+  for (const changedSnapshot of [{ ...context.snapshot, cwd: "/replacement" }, { ...context.snapshot, sessionFile: "/replacement.jsonl" }]) {
+    const replacement = new NativeResetPolicyWorkerOwner({ store, policy, context: { ...context, snapshot: changedSnapshot, recovered: true } });
+    await expect(invoke(replacement, binding, 4, p, operation)).rejects.toThrow("original permit");
+  }
+  expect(policy.inspectAttempt(admitted.permit.attemptId)).toMatchObject({ state: "unknown", observed: "reset", live: false });
+  recovered.beginClose(); await recovered.drain();
+  expect(await policy.drain()).toEqual([]);
+});

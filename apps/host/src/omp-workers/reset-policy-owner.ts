@@ -23,7 +23,7 @@ import {
 export interface NativeResetPolicyWorkerOwnerOptions {
   store: HostStore;
   policy: NativeResetPolicy;
-  context: Readonly<{ workerEpoch: string; workerPid: number; snapshot: SessionSnapshot }>;
+  context: Readonly<{ workerEpoch: string; workerPid: number; snapshot: SessionSnapshot; recovered?: true }>;
 }
 
 type Decision = { passId: string; nativeSessionId: string };
@@ -69,6 +69,7 @@ export class NativeResetPolicyWorkerOwner implements WorkerResetPolicyOwner {
   readonly #policy: NativeResetPolicy;
   readonly #epoch: string;
   readonly #snapshot: SessionSnapshot;
+  readonly #recovered: boolean;
   readonly #decisions = new Map<string, Decision>();
   readonly #joins = new Map<string, Join>();
   readonly #settlements = new Set<Promise<NativeResetCompletion>>();
@@ -81,6 +82,7 @@ export class NativeResetPolicyWorkerOwner implements WorkerResetPolicyOwner {
     this.#policy = options.policy;
     this.#epoch = options.context.workerEpoch;
     this.#snapshot = structuredClone(options.context.snapshot);
+    this.#recovered = options.context.recovered === true;
     if (!this.#epoch || !this.#snapshot.id || !this.#snapshot.sessionFile || !this.#snapshot.cwd || !Number.isSafeInteger(options.context.workerPid) || options.context.workerPid <= 0)
       throw new Error("Invalid reset-policy worker owner context");
   }
@@ -170,6 +172,7 @@ export class NativeResetPolicyWorkerOwner implements WorkerResetPolicyOwner {
       if (!attempt || attempt.kind !== "automatic" || !inspected.provenance
         || inspected.provenance.workerEpoch !== this.#epoch || inspected.provenance.nativeSessionId !== request.nativeSessionId
         || inspected.provenance.passId !== request.passId || inspected.provenance.sessionId !== this.#snapshot.id
+        || inspected.provenance.sessionFile !== this.#snapshot.sessionFile || inspected.provenance.cwd !== this.#snapshot.cwd
         || attempt.evidence.account.credentialId !== operation.permit.target.credentialId
         || attempt.evidence.credit.id !== operation.permit.creditId || attempt.evidence.redeemRequestId !== operation.permit.redeemRequestId)
         throw new Error("Reset-policy completion does not match its original permit");
@@ -177,8 +180,10 @@ export class NativeResetPolicyWorkerOwner implements WorkerResetPolicyOwner {
         ? { consumeBoundary: operation.observation.consumeBoundary, result: { kind: "outcome" as const,
           ok: operation.observation.result.outcome.ok, code: operation.observation.result.outcome.code } }
         : { consumeBoundary: operation.observation.consumeBoundary, result: { kind: "error" as const } };
-      this.#policy.complete(operation.permit.attemptId, { workerEpoch: this.#epoch, nativeSessionId: request.nativeSessionId,
-        passId: request.passId, sessionId: this.#snapshot.id }, sanitizeResetObservation(raw));
+      const provenance = { workerEpoch: this.#epoch, nativeSessionId: request.nativeSessionId,
+        passId: request.passId, sessionId: this.#snapshot.id };
+      if (this.#recovered) this.#policy.reconcileCompletion(operation.permit.attemptId, provenance, sanitizeResetObservation(raw));
+      else this.#policy.complete(operation.permit.attemptId, provenance, sanitizeResetObservation(raw));
       return { kind: "completed" };
     }
     throw new Error("Unsupported reset-policy operation");

@@ -735,3 +735,68 @@ test("exact v1 rows remain raw legacy history, fence old dispatches, and consume
   expect(() => reopened.policy.start({ provenance: f.provenance(), policy: policy("yes") })).toThrow(/full/);
   expect(reopened.policy.admit(p.passId, 0, { current: current(p), account: account(), credit: credit() })).toEqual({ kind: "hold", reason: "unknown-pass" });
 });
+
+
+test("recovered original completion is durable evidence without reopening admission or reconstructing joins", async () => {
+  const f = await fixture(), original = f.planned(f.policy);
+  const admitted = f.execute(f.admit(f.policy, original));
+  const r = f.reopen(f.store);
+  const before = r.admissions.inspect(KEY_A);
+  const completion = r.policy.reconcileCompletion(admitted.attemptId, executor(original), RESET);
+  expect(completion).toMatchObject({ authority: "unknown", persistence: "durable", observed: "reset", reason: "restarted" });
+  expect(r.admissions.inspect(KEY_A)).toEqual(before);
+  expect(r.policy.inspectPass(original.passId)).toMatchObject({ status: "closed", attempts: [{ state: "unknown", live: false,
+    fence: { reason: "restarted" }, completion: { terminal: "native-completion", persistence: "durable", observation: RESET } }] });
+  expect(await r.policy.drain()).toEqual([]);
+  const r2 = f.reopen(r.store);
+  expect(r2.policy.reconcileCompletion(admitted.attemptId, executor(original), RESET)).toEqual(completion);
+  expect(r2.admissions.getAttempt(admitted.attemptId)).toMatchObject({ state: "unknown", unknownReason: "restarted", observation: RESET });
+  const fresh = f.planned(r2.policy);
+  expect(f.admit(r2.policy, fresh)).toEqual({ kind: "hold", reason: "fenced" });
+  expect(() => r2.policy.reconcileCompletion(admitted.attemptId, executor(original), NOT_REACHED)).toThrow(/contradicts|different/);
+});
+
+test("recovered completion rejects foreign original identity and damaged checkpoint before mutation", async () => {
+  const f = await fixture(), original = f.planned(f.policy);
+  const admitted = f.execute(f.admit(f.policy, original));
+  const r = f.reopen(f.store), originalRecord = r.store.readMetadata(passKey(original.passId));
+  for (const field of ["workerEpoch", "nativeSessionId", "passId", "sessionId"] as const) {
+    expect(() => r.policy.reconcileCompletion(admitted.attemptId, { ...executor(original), [field]: "replacement" }, RESET)).toThrow(/original/);
+    expect<unknown>(r.store.readMetadata(passKey(original.passId))).toEqual(originalRecord);
+    expect(r.admissions.getAttempt(admitted.attemptId)?.observation).toBeUndefined();
+  }
+  const view = r.policy.inspectPass(original.passId);
+  if (!view || !("record" in view)) throw new Error("expected retained pass");
+  const damaged = structuredClone(view.record);
+  damaged.plan!.actions[0]!.checkpoint!.redeemRequestId = "different-original-request";
+  r.store.writeMetadata(passKey(original.passId), damaged);
+  expect(() => r.policy.reconcileCompletion(admitted.attemptId, executor(original), RESET)).toThrow(/checkpoint/);
+  expect(r.admissions.getAttempt(admitted.attemptId)?.observation).toBeUndefined();
+});
+
+test("recovered completion rolls back observation on checkpoint write failure and permits exact retry", async () => {
+  const f = await fixture(), original = f.planned(f.policy);
+  const admitted = f.execute(f.admit(f.policy, original));
+  const r = f.reopen(f.store), before = r.admissions.getAttempt(admitted.attemptId);
+  const restore = f.failWrites(r.store, passKey(original.passId), 1);
+  expect(() => r.policy.reconcileCompletion(admitted.attemptId, executor(original), RESET)).toThrow("fixture write failure");
+  expect(r.admissions.getAttempt(admitted.attemptId)).toEqual(before);
+  expect(r.policy.inspectPass(original.passId)).toMatchObject({ attempts: [{ observed: "unknown", live: false }] });
+  restore();
+  expect(r.policy.reconcileCompletion(admitted.attemptId, executor(original), RESET)).toMatchObject({ authority: "unknown", observed: "reset" });
+});
+
+test("reconciliation preserves live settlement and refuses a completion after confirmed worker exit", async () => {
+  const f = await fixture(), original = f.planned(f.policy);
+  const admitted = f.execute(f.admit(f.policy, original));
+  f.policy.workerLost(original.workerEpoch);
+  const completed = f.policy.reconcileCompletion(admitted.attemptId, executor(original), RESET);
+  expect(await admitted.settlement).toBe(completed);
+  expect(completed).toMatchObject({ authority: "unknown", observed: "reset", reason: "worker-lost" });
+  const second = f.planned(f.policy, [{ native: nativeB, account: accountB }]);
+  const b = f.execute(f.admit(f.policy, second, 0, { account: accountB }));
+  f.policy.workerExited(second.workerEpoch);
+  const r = f.reopen(f.store);
+  expect(() => r.policy.reconcileCompletion(b.attemptId, executor(second), RESET)).toThrow(/exited/);
+  expect(r.admissions.getAttempt(b.attemptId)?.observation).toBeUndefined();
+});

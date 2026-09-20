@@ -671,6 +671,39 @@ export class NativeResetPolicy {
       throw error;
     }
   }
+  /** Retain a late observation from an authenticated original worker after host recovery.
+   * The caller binds the saved endpoint before dispatch. This never restores admission,
+   * clears an unknown fence, or reconstructs a promise lost with the prior host. */
+  reconcileCompletion(attemptId: string, provenance: NativeResetCompletionProvenance, observation: ResetAttemptObservation): NativeResetCompletion {
+    const cleanId = id(attemptId, "attempt id"), clean = sanitizeResetObservation(observation), origin = record(provenance, "completion provenance");
+    if (this.#live.has(cleanId)) return this.complete(cleanId, provenance, clean);
+    return this.#store.transactionMetadata(() => {
+      const { attempt } = this.#attempt(cleanId);
+      if (!attempt || attempt.kind !== "automatic" || !this.#sameExecutor(attempt.evidence.provenance, origin))
+        throw new Error("Only the original admitted native executor can reconcile this attempt.");
+      if (attempt.state === "settled") return this.complete(cleanId, provenance, clean);
+      if (attempt.state !== "unknown") throw new Error("Only an already-fenced attempt accepts recovered completion.");
+      const pass = this.#require(attempt.evidence.provenance.passId), action = pass.plan?.actions[attempt.evidence.action.index];
+      const checkpoint = action?.checkpoint;
+      if (!this.#sameExecutor(pass.provenance, origin) || pass.plan?.reportRevision !== attempt.evidence.provenance.reportRevision
+        || action?.key !== attempt.key || !same(action.account, attempt.evidence.account)
+        || checkpoint?.attemptId !== cleanId || checkpoint.role !== "origin" || checkpoint.originPassId !== pass.passId
+        || checkpoint.redeemRequestId !== attempt.evidence.redeemRequestId)
+        throw new Error("Recovered reset completion lost its original pass checkpoint.");
+      if (checkpoint.completion?.terminal === "worker-exit")
+        throw new Error("A confirmed exited worker cannot supply a later native completion.");
+      if (checkpoint.completion && !same(checkpoint.completion.observation, clean))
+        throw new Error("Recovered reset completion contradicts the retained observation.");
+      const retained = this.#admissions.completeAutomatic(cleanId, clean);
+      if (!checkpoint.completion || checkpoint.completion.persistence !== "durable") {
+        checkpoint.completion = { at: this.#now(), persistence: "durable", terminal: "native-completion", observation: clean };
+        this.#write(pass);
+      }
+      return { attemptId: cleanId, passId: pass.passId, key: attempt.key, persistence: "durable", authority: "unknown",
+        terminal: "native-completion", observed: classifyResetObservation(clean).effect, observation: clean,
+        reason: retained.unknownReason ?? "settlement-failed" };
+    });
+  }
   #sameExecutor(original: NativeResetProvenance, offered: Record<string, unknown>): boolean {
     return offered.workerEpoch === original.workerEpoch && offered.nativeSessionId === original.nativeSessionId && offered.passId === original.passId && offered.sessionId === original.sessionId;
   }

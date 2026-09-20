@@ -76,6 +76,7 @@ import type { NativeQueuedMessageMutation, NativeQueuedMessageMutationReceipt, N
 import { createNativeAccountSelectionBridge } from "../omp-accounts/session-selection";
 import type { SessionAccountList } from "../omp-accounts/types";
 import { nativeApprovalInteractionClassification, OmpInteractionBridge, type OmpBridgeEvent, type OmpInteraction, type OmpInteractionResponse } from "./interactions";
+import { NativeResetRuntimeOwners, type CreateNativeResetRuntimeOwner } from "./native-reset-runtime";
 import { initializeDesktopExtensions } from "./extensions";
 import { modelCapabilities, NativeSessionControls } from "../omp-settings/models";
 import { composerCatalog } from "../omp-settings/composer";
@@ -303,9 +304,11 @@ export class OmpRuntime {
   #reservedFiles = new Set<string>();
   #disposed = false;
   #disposeCall?: Promise<void>;
+  #createResetPolicyOwner?: CreateNativeResetRuntimeOwner;
 
-  constructor(options: { agentDir?: string } = {}) {
+  constructor(options: { agentDir?: string; createResetPolicyOwner?: CreateNativeResetRuntimeOwner } = {}) {
     this.#agentDir = options.agentDir ?? getAgentDir();
+    this.#createResetPolicyOwner = options.createResetPolicyOwner;
   }
 
   async #context(cwd: string, loadExtensions = true): Promise<NativeContext> {
@@ -458,6 +461,8 @@ export class OmpRuntime {
     let context: NativeContext | undefined;
     let native: AgentSession | undefined;
     let bridge: OmpInteractionBridge | undefined;
+    let resetOwners: NativeResetRuntimeOwners | undefined;
+    let resetWriterEnabled = false;
     const sessionFile = manager.getSessionFile();
     if (!sessionFile) throw new Error("OMP did not allocate a session file");
     const reservedFile = reservation ?? path.resolve(sessionFile);
@@ -483,6 +488,12 @@ export class OmpRuntime {
       const model = options.model ? this.#findModel(context.registry, options.model, context.settings) : undefined;
       const agentRegistry = new AgentRegistry();
       const detachedQuestions = new NativeDetachedQuestions(manager);
+      if (this.#createResetPolicyOwner) {
+        const writer = await context.settings.enableResetPolicyPersistence();
+        resetWriterEnabled = true;
+        resetOwners = new NativeResetRuntimeOwners({ settings: context.settings, modelRegistry: context.registry, authStorage: context.auth, writer },
+          () => bridge, this.#createResetPolicyOwner);
+      }
       // Pinned SDK ordering appends caller inline extensions after discovered
       // extensions and awaits approval handlers in order. This last relevant
       // handler therefore marks only after user hooks have finished asking.
@@ -497,6 +508,7 @@ export class OmpRuntime {
         hasUI: false, enableMcpApps: true, interactivePrompts: options.interactions === true,
         deferUsageReserveConfirmation: true,
         extensions: [detachedQuestions.extension, approvalClassification],
+        ...(resetOwners ? { codexResetPolicyOwnerFactory: resetOwners.factory } : {}),
       });
       native = result.session;
       this.#assertActive();
@@ -1595,6 +1607,8 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
+          const resetCleanupErrors: unknown[] = [];
+          try { resetOwners?.beginClose(); } catch (error) { resetCleanupErrors.push(error); }
           usage.dispose();
           const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose(), htmlPreviews.dispose(), planExecution.dispose()]);
           btw.dispose();
@@ -1611,13 +1625,17 @@ export class OmpRuntime {
             await mcpMutation?.catch(() => {});
             await planMutation?.catch(() => {});
             await Promise.allSettled([...mcpReads, ...(outputRead ? [outputRead] : [])]);
-            const cleanupErrors = mcpDrains.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+            const cleanupErrors = [...resetCleanupErrors, ...mcpDrains.flatMap(result => result.status === "rejected" ? [result.reason] : [])];
             const clean = async (work: () => unknown) => { try { await work(); } catch (error) { cleanupErrors.push(error); } };
             await clean(() => nativePlan.dispose());
             await clean(() => nativeTodos.settle());
             await clean(() => forceTool.dispose());
             await clean(() => session.beginDispose());
             await clean(() => session.dispose());
+            // The owner group independently tracks root/task/vibe/revived callbacks;
+            // finish waits for them even when native disposal rejects.
+            await clean(() => resetOwners?.finish());
+            if (resetWriterEnabled) await clean(() => { context!.settings.disableResetPolicyPersistence(); resetWriterEnabled = false; });
             await clean(() => steering.settleCancelled("Session stopped after native delivery; durable steer admission could not be verified"));
             await clean(() => detachedQuestions.settle());
             await clean(unsubscribeQueuedMessages); await clean(() => queuedMessages.close());
@@ -1632,9 +1650,16 @@ export class OmpRuntime {
       this.#sessions.add(handle);
       return handle;
     } catch (error) {
+      const cleanup: unknown[] = [];
+      const clean = async (work: () => unknown) => { try { await work(); } catch (failure) { cleanup.push(failure); } };
+      try { resetOwners?.beginClose(); } catch (failure) { cleanup.push(failure); }
       bridge?.dispose();
-      try { if (native) await native.dispose(); else await manager.close(); }
-      finally { context?.auth.close(); this.#reservedFiles.delete(reservedFile); }
+      await clean(() => native ? native.dispose() : manager.close());
+      await clean(() => resetOwners?.finish());
+      if (resetWriterEnabled) await clean(() => { context!.settings.disableResetPolicyPersistence(); resetWriterEnabled = false; });
+      await clean(() => context?.auth.close());
+      this.#reservedFiles.delete(reservedFile);
+      if (cleanup.length) throw new AggregateError([error, ...cleanup], "OMP session setup and native reset cleanup failed");
       throw error;
     }
   }
