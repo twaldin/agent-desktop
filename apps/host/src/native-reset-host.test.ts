@@ -270,23 +270,37 @@ test("startup failure preserves its listener error and releases the reset-policy
     }
     return originalDispose.call(this, options);
   };
-  let startupError: unknown;
+  let retry: Awaited<ReturnType<typeof startHost>> | undefined;
+  let failure: unknown;
   try {
-    await startHost({ ...second, tailscale: false, port });
+    let startupError: unknown;
+    try {
+      await startHost({ ...second, tailscale: false, port });
+    } catch (error) {
+      startupError = error;
+    }
+    expect(startupError).toBeInstanceOf(AggregateError);
+    const aggregate = startupError as AggregateError;
+    expect(aggregate.cause).toBe(aggregate.errors[0]);
+    expect(String(aggregate.errors[0])).toMatch(/address|listen|use/i);
+    expect(aggregate.errors.some(error => error instanceof AggregateError
+      && error.errors.some(nested => String(nested).includes("controlled startup worker cleanup failure")))).toBe(true);
+    retry = await startHost({ ...second, tailscale: false, port: 0 });
   } catch (error) {
-    startupError = error;
+    failure = error;
   } finally {
     WorkerRuntime.prototype.dispose = originalDispose;
+    const cleanup = await Promise.allSettled([
+      retry?.stop({ finalExit: true }),
+      owner.stop({ finalExit: true }),
+    ]);
+    const cleanupErrors = cleanup.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+    if (failure && cleanupErrors.length)
+      throw new AggregateError([failure, ...cleanupErrors], "Startup failure fixture assertions and cleanup failed.", { cause: failure });
+    if (failure) throw failure;
+    if (cleanupErrors.length)
+      throw new AggregateError(cleanupErrors, "Startup failure fixture cleanup failed.");
   }
-  expect(startupError).toBeInstanceOf(AggregateError);
-  const aggregate = startupError as AggregateError;
-  expect(aggregate.cause).toBe(aggregate.errors[0]);
-  expect(String(aggregate.errors[0])).toMatch(/address|listen|use/i);
-  expect(aggregate.errors.some(error => error instanceof AggregateError
-    && error.errors.some(nested => String(nested).includes("controlled startup worker cleanup failure")))).toBe(true);
-  const retry = await startHost({ ...second, tailscale: false, port: 0 });
-  await retry.stop();
-  await owner.stop();
 }, 20_000);
 
 test("failed preserved shutdown keeps its Store and lease until an explicit retry drains a late callback", async () => {
