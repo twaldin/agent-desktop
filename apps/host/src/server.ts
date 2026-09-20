@@ -1802,7 +1802,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   }> | undefined;
   let stopCleanup: Promise<unknown[]> | undefined;
   let stopCompleted = false;
-  function stop(): Promise<void> {
+  let finalExitRequested = false;
+  function stop(options: { finalExit?: boolean } = {}): Promise<void> {
+    if (options.finalExit) finalExitRequested = true;
     if (stopCall) return stopCall;
     if (stopCompleted) return Promise.resolve();
     const attempt = Promise.withResolvers<void>();
@@ -1850,7 +1852,18 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Start worker cancellation alongside drains that may themselves depend
       // on discovery or session workers. The configuration writes above have
       // already reached their terminal outcome.
-      const safeCall = runtime.dispose({preserveReconnect:true}).then(() => nativeResetPolicy!.drain());
+      const safeCall = (async () => {
+        const errors: unknown[] = [];
+        try { await runtime.dispose({preserveReconnect:true}); }
+        catch (error) { errors.push(error); }
+        // A refused worker handoff can still leave policy callbacks settling
+        // against the Store. Drain them before either retry or final release,
+        // and retain this failure independently from the handoff failure.
+        try { await nativeResetPolicy!.drain(); }
+        catch (error) { errors.push(error); }
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1) throw new AggregateError(errors, "Native worker handoff and reset-policy drain failed.");
+      })();
       stopCleanup ??= (async () => {
         const outcomes = await Promise.allSettled([prepared.pullRequestsDrain, automations?.dispose(), prepared.mcpOwnerDrain, networkCall, discovery, modelsRefresh, prepared.terminalCreationDrain, prepared.draftBrowserDrain, prepared.browserCloseDrain, prepared.browserObservationDrain, prepared.browserHistoryDrain, prepared.browserAutocompleteDrain,
           accounts!.dispose(), terminals!.shutdown(), (async () => {
@@ -1864,10 +1877,17 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       })();
       const [safe, cleanupErrors] = await Promise.all([Promise.allSettled([safeCall]), stopCleanup]);
       const safeErrors = safe.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
-      if (safeErrors.length) throw new AggregateError([...safeErrors, ...cleanupErrors], "Native worker handoff did not finish safely.");
+      // An ordinary failed handoff retains the Store and lease for an explicit
+      // retry. A process-exit cleanup has no retry opportunity, so it must
+      // remove the stale locator and release local ownership before reporting
+      // the same native failure to the postmortem runner.
+      if (safeErrors.length && !finalExitRequested)
+        throw new AggregateError([...safeErrors, ...cleanupErrors], "Native worker handoff did not finish safely.");
       // Remove our locator while still owning the lease, so a successor's locator survives.
       try { await rm(join(dataDirectory, "connection.json"), { force: true }); }
       finally { store.close(); lease.release(); stopCompleted = true; }
+      if (safeErrors.length)
+        throw new AggregateError([...safeErrors, ...cleanupErrors], "Native worker handoff did not finish safely.");
       if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Some host resources did not finish cleanup.");
     })().then(attempt.resolve, error => {
       if (!stopCompleted && stopCall === attempt.promise) stopCall = undefined;
@@ -1916,7 +1936,7 @@ export async function runHostMain(): Promise<void> {
   const host = await startHost({ tailscale: true });
   // OMP owns the process signal exit and waits for registered cleanup. A second
   // SIGTERM listener races its native hard exit and can leave our locator behind.
-  registerExitCleanup("agent-desktop-host", () => host.stop(), { exitOnly: true });
+  registerExitCleanup("agent-desktop-host", () => host.stop({ finalExit: true }), { exitOnly: true });
   process.stdout.write(`Agent Desktop host ready on ${host.connection.origin}\n`);
 }
 

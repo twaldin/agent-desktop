@@ -925,13 +925,17 @@ export class WorkerClient {
       const expired = Promise.withResolvers<never>();
       void expired.promise.catch(() => {});
       const deadline = setTimeout(() => {
-        this.#process?.kill("SIGKILL");
-        expired.reject(new Error("Original worker disposal did not confirm process exit."));
+        // An owned child can still provide authoritative exit status after the
+        // deadline kill. A recovered child has no process handle to reap, so a
+        // missing exit observation must remain an explicit disposal failure.
+        if (this.#process) this.#process.kill("SIGKILL");
+        else expired.reject(new Error("Original worker disposal did not confirm process exit."));
       }, shutdownTimeoutMs);
       try {
+        let disposeFailed = false;
         if (!this.failure && (!this.#process || this.#process.exitCode === null)) {
           try { await this.request({ operation: "dispose" }, shutdownTimeoutMs); }
-          catch (error) { errors.push(error); }
+          catch (error) { errors.push(error); disposeFailed = true; }
         }
         const closed = await Promise.race([
           this.#process ? this.#process.exited.then(exitCode => ({ exitCode, signalCode: this.#process?.signalCode })) : this.#closed.promise,
@@ -939,10 +943,13 @@ export class WorkerClient {
         ]);
         if (this.#process) this.#resetPolicyWorkerExited();
         const exitCode = closed.exitCode;
-        if (this.#requireDisposeAcknowledgement && !this.#disposeAcknowledged) {
+        // A rejected dispose request already carries the authoritative failure
+        // for this attempt. Reap the child, but do not obscure that error with
+        // a second derived acknowledgement or exit-status failure.
+        if (!disposeFailed && this.#requireDisposeAcknowledgement && !this.#disposeAcknowledged) {
           throw new Error(`OMP worker exited before required disposal acknowledgement (code ${exitCode ?? "unknown"}, signal ${closed.signalCode ?? "none"})`);
         }
-        if (this.#disposeAcknowledged && exitCode !== undefined && exitCode !== 0) {
+        if (!disposeFailed && this.#disposeAcknowledged && exitCode !== undefined && exitCode !== 0) {
           throw new Error(`OMP worker exited unsuccessfully after disposal acknowledgement (code ${exitCode}, signal ${closed.signalCode ?? "none"})`);
         }
       } catch (error) {
@@ -1578,7 +1585,12 @@ export class WorkerRuntime {
       this.#sessions.clear(); this.#clients.clear(); this.#openFiles.clear();
     })();
     const pending = this.#disposeCall;
-    void pending.catch(() => { if (this.#disposeCall === pending) this.#disposeCall = undefined; });
+    // Recovery handoff may be retried after a refused prepare/drain while the
+    // original transport remains owned. Ordinary disposal is terminal even on
+    // failure: its child has been reaped and callers must observe one stable
+    // result rather than manufacture a new wrapper on every call.
+    if (options.preserveReconnect)
+      void pending.catch(() => { if (this.#disposeCall === pending) this.#disposeCall = undefined; });
     return this.#disposeCall;
   }
 }

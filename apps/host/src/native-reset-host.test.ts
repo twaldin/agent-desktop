@@ -9,6 +9,7 @@ import { SessionUsageService } from "./session-usage";
 import { HostStore } from "./store";
 import { WorkerRuntime, type WorkerSession } from "./omp-workers/runtime";
 import { startHost } from "./server";
+import { acquireHostLease } from "./lease";
 
 const directories: string[] = [];
 const stores: HostStore[] = [];
@@ -418,5 +419,88 @@ process.send({type:"ready",version:WORKER_PROTOCOL_VERSION});
   } finally {
     WorkerRuntime.prototype.dispose = originalDispose;
     await host.stop().catch(() => {});
+  }
+}, 20_000);
+
+test("final exit joins an in-flight failed handoff, drains independent cleanup, then releases local ownership", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "native-reset-final-exit-"));
+  directories.push(root);
+  const dataDirectory = path.join(root, "data"),
+    agentDirectory = path.join(root, "agent"),
+    cwd = path.join(root, "project"),
+    workerPath = path.join(root, "worker.ts");
+  await Promise.all([dataDirectory, agentDirectory, cwd].map(directory => mkdir(directory, { recursive: true })));
+  await writeFile(workerPath, `import {WORKER_PROTOCOL_VERSION} from ${JSON.stringify(new URL("./omp-workers/protocol.ts", import.meta.url).href)};
+let disposeId;
+process.on("message",message=>{
+  if(message.type==="disposeAck"&&message.id===disposeId){process.exit(0);return;}
+  if(message.type!=="request")return;
+  if(message.operation==="init"){process.send({type:"response",id:message.id,ok:true});return;}
+  if(message.operation==="listModels"){process.send({type:"response",id:message.id,ok:true,value:[]});return;}
+  if(message.operation==="dispose"){disposeId=message.id;process.send({type:"response",id:message.id,ok:true});return;}
+  process.send({type:"response",id:message.id,ok:true,value:[]});
+});
+process.send({type:"ready",version:WORKER_PROTOCOL_VERSION});
+`);
+  const host = await startHost({ dataDirectory, agentDirectory, discoveryDirectory: cwd, workerPath, tailscale: false, port: 0 });
+  const originalDispose = WorkerRuntime.prototype.dispose,
+    originalDrain = NativeResetPolicy.prototype.drain,
+    disposeEntered = Promise.withResolvers<void>(),
+    releaseDispose = Promise.withResolvers<void>(),
+    drainEntered = Promise.withResolvers<void>(),
+    releaseDrain = Promise.withResolvers<void>();
+  const disposeFailure = new Error("controlled final-exit handoff failure"),
+    drainFailure = new Error("controlled independent reset drain failure");
+  WorkerRuntime.prototype.dispose = async function (options) {
+    disposeEntered.resolve();
+    await releaseDispose.promise;
+    await originalDispose.call(this, options);
+    throw disposeFailure;
+  };
+  NativeResetPolicy.prototype.drain = async function () {
+    drainEntered.resolve();
+    await releaseDrain.promise;
+    await originalDrain.call(this);
+    throw drainFailure;
+  };
+  try {
+    const ordinary = host.stop();
+    await disposeEntered.promise;
+    const final = host.stop({ finalExit: true });
+    expect(final).toBe(ordinary);
+    expect(host.store.listSessions()).toEqual([]);
+    expect(() => acquireHostLease(dataDirectory)).toThrow(/already owns/i);
+
+    releaseDispose.resolve();
+    const phase = await Promise.race([
+      drainEntered.promise.then(() => "draining" as const),
+      ordinary.then(() => "settled" as const, () => "settled" as const),
+    ]);
+    expect(phase).toBe("draining");
+    expect(host.store.listSessions()).toEqual([]);
+    expect(() => acquireHostLease(dataDirectory)).toThrow(/already owns/i);
+
+    releaseDrain.resolve();
+    const outcomes = await Promise.allSettled([ordinary, final]);
+    expect(outcomes.every(outcome => outcome.status === "rejected")).toBe(true);
+    const [failure, sharedFailure] = outcomes.map(outcome => outcome.status === "rejected" ? outcome.reason : undefined);
+    expect(sharedFailure).toBe(failure);
+    const messages: string[] = [];
+    const collect = (error: unknown): void => {
+      messages.push(String(error));
+      if (error instanceof AggregateError) for (const nested of error.errors) collect(nested);
+    };
+    collect(failure);
+    expect(messages).toContain(`Error: ${disposeFailure.message}`);
+    expect(messages).toContain(`Error: ${drainFailure.message}`);
+    expect(() => host.store.listSessions()).toThrow();
+    const released = acquireHostLease(dataDirectory);
+    expect(released.acquired).toBe(true);
+    released.release();
+  } finally {
+    releaseDispose.resolve(); releaseDrain.resolve();
+    WorkerRuntime.prototype.dispose = originalDispose;
+    NativeResetPolicy.prototype.drain = originalDrain;
+    await host.stop({ finalExit: true }).catch(() => {});
   }
 }, 20_000);
