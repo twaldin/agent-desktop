@@ -3,13 +3,10 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type {
-  AgentSession,
-  AuthStorage,
   CodexResetPolicyOwner,
   CodexResetPolicyOwnerFactory,
+  CodexResetPolicySessionBinding,
   CreateAgentSessionOptions,
-  ModelRegistry as ModelRegistryType,
-  Settings as SettingsType,
 } from "@oh-my-pi/pi-coding-agent";
 import {
   AgentRegistry,
@@ -22,7 +19,7 @@ import {
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Binding = Parameters<NonNullable<CreateAgentSessionOptions["codexResetPolicyOwnerFactory"]>>[0];
-const exactBinding: Equal<Binding, Readonly<{ session: AgentSession; settings: SettingsType; modelRegistry: ModelRegistryType; authStorage: AuthStorage }>> = true;
+const exactBinding: Equal<Binding, Readonly<CodexResetPolicySessionBinding>> = true;
 const factorySignature: CodexResetPolicyOwnerFactory = binding => { void binding.session; return owner(); };
 const exactBinder: Equal<AgentSession["bindCodexResetPolicyOwner"], (owner: CodexResetPolicyOwner, factory: CodexResetPolicyOwnerFactory) => void> = true;
 // @ts-expect-error A reset-policy owner factory is synchronous.
