@@ -8,6 +8,7 @@ import { EnvironmentPreparationPause, SubmissionController, type PendingSubmissi
 import { EnvironmentPreparationCard } from "./EnvironmentPreparationCard";
 import { forceCommandSpelling } from "./force-tool-submissions";
 import { remoteWorktreeIssue, remoteWorktreeResumeIssue } from "./worktree-starting-availability";
+import { usageResetArgument } from "./usage-reset-command";
 
 const capabilities: Pick<HostState, "newChatExecution" | "localEnvironments"> = {
   newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } },
@@ -70,13 +71,25 @@ test("actual App submit rechecks the owning host after the saved-draft await", a
     const saved = new Promise<Draft>(resolve => { release = resolve; });
     const owner = { connected: true, state: { ...capabilities, drafts: [] } };
     const records = new Map([["host-a", owner]]);
+    let observeOwner: (() => void) | undefined, released = 0;
+    const subscribeCatalog = (listener: () => void) => {
+      observeOwner = listener;
+      let active = true;
+      return () => { if (active) { active = false; released++; } };
+    };
+    const subscribeBridge = (_listener: (event: { type: string; hostId?: string }) => void) => {
+      let active = true;
+      return () => { if (active) { active = false; released++; } };
+    };
+    const usageRoute = { current: { key: "host-a:new" } };
     let dispatched = 0; const errors: unknown[] = []; const beforeSubmission = { owners: 0, pages: 0, docks: 0 };
     const reportSubmissionError = (cause: unknown) => { errors.push(cause); };
     const values = {
       canSend: true, submitting: { current: false }, setBusy() {}, setActionError(value: unknown) { if (value) errors.push(value); }, reportSubmissionError, draftId: remote.id, selectedRef: { current: "host-a:new" }, hostId: "host-a",
       submissions: { get() { return undefined; }, queuedEntries() { return []; }, async submit(snapshot: Draft) { dispatched++; return { submitted: snapshot, sessionId: "new-session", commandId: "send-id" }; } },
       drafts: { async prepareSubmission() { return saved; }, beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: remote }; }, ingest() {} },
-      hasDraftContent, hasRemoteExecution, remoteWorktreeIssue, forceCommandSpelling, desktop: { catalog: { records } }, selectedId: null, running: false, nativeBtwQuestion() { return undefined; },
+      hasDraftContent, hasRemoteExecution, remoteWorktreeIssue, forceCommandSpelling, usageResetArgument,
+      usageRoute, desktop: { localHostId: "local", catalog: { records, subscribe: subscribeCatalog } }, bridge: { subscribe: subscribeBridge }, selectedId: null, running: false, nativeBtwQuestion() { return undefined; },
       draftBrowserOwners: { beforeSubmission() { beforeSubmission.owners++; } }, draftBrowserPages: { captureContinuation() { return undefined; }, beforeSubmission() { beforeSubmission.pages++; } },
       draftBrowserDocks: new Map([["fixture", { beforeSubmission() { beforeSubmission.docks++; } }]]),
       async refresh() {}, transcript: { refresh() {} }, navigate() {}, textarea: { current: { focus() {} } }, EnvironmentPreparationPause, errorMessage: String,
@@ -84,12 +97,13 @@ test("actual App submit rechecks the owning host after the saved-draft await", a
     const run = appHandler("submit", values)();
     expect(dispatched).toBe(0);
     if (loss === "capability") owner.state = { drafts: [] };
-    if (loss === "connection") owner.connected = false;
+    if (loss === "connection") { owner.connected = false; observeOwner?.(); }
     release(remote); await run;
     expect(dispatched).toBe(loss === "unchanged" ? 1 : 0);
     expect(errors).toHaveLength(loss === "unchanged" ? 0 : 1);
     expect(beforeSubmission).toEqual({ owners: 1, pages: 1, docks: 1 });
     expect(values.submitting.current).toBe(false);
+    expect(released).toBe(2);
   }
 });
 

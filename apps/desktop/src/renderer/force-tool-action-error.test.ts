@@ -4,6 +4,7 @@ import type { Draft } from "../../../../packages/shared/src/protocol";
 import { DraftController } from "./drafts";
 import { errorMessage } from "./desktop-state";
 import { actionError, clearRecoveredForceError, type ActionError } from "./action-error";
+import { usageResetArgument } from "./usage-reset-command";
 
 const app = readFileSync(process.env.FORCE_ACTION_ERROR_APP ?? new URL("./App.tsx", import.meta.url), "utf8");
 function extractedReport(values: Record<string, unknown>): (cause: unknown, draftId: string, commandId?: string) => void {
@@ -19,6 +20,19 @@ function appSubmit(values: Record<string, unknown>): () => Promise<void> {
   if (start < 0 || end < 0) throw new Error("Missing App submit handler");
   const source = new Bun.Transpiler({ loader: "tsx" }).transformSync(`function build(values) { const {${Object.keys(values).join(",")}} = values; ${app.slice(start, end)} return submit; }`);
   return new Function(`${source}; return build;`)()(values);
+}
+function usageOwnerFixture(hostId: string) {
+  let releases = 0;
+  const subscribe = () => {
+    let active = true;
+    return () => { if (active) { active = false; releases++; } };
+  };
+  return {
+    usageRoute: { current: { key: `${hostId}:session` } },
+    desktop: { localHostId: "local", catalog: { records: new Map([[hostId, { connected: true }]]), subscribe } },
+    bridge: { subscribe },
+    releases: () => releases,
+  };
 }
 function extractedRecovery(values: Record<string, unknown>): (owner: {hostId:string;sessionId:string}, request: any) => Promise<void> {
   const marker = "      recoverPrompt: async (owner, request) => {";
@@ -107,16 +121,18 @@ test("actual App pre-submit btw failure cannot acquire an older partial force co
   const submissions = { get: () => pending, queuedEntries: () => [], submit: async () => { dispatches++; throw "unexpected dispatch"; } };
   const reportSubmissionError = extractedReport({ submissions, errorMessage, setActionErrorState, ownedActionError: actionError, hostId: owner.hostId, setActionError });
   const newer = pending.draft;
+  const usageOwner = usageOwnerFixture(owner.hostId);
   await appSubmit({
-    canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError,
+    canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError, usageResetArgument,
     draftId: original.id, selectedRef: { current: `${owner.hostId}:${owner.sessionId}` }, hostId: owner.hostId,
     submissions, drafts: { async prepareSubmission() { return newer; }, finishSubmission() {}, get() { return { draft: newer }; } },
     hasDraftContent: () => true, hasRemoteExecution: () => false, nativeBtwQuestion: () => "later question",
-    selectedId: owner.sessionId, bridge: {}, draftBrowserOwners: { beforeSubmission() {} },
+    selectedId: owner.sessionId, bridge: usageOwner.bridge, desktop: usageOwner.desktop, usageRoute: usageOwner.usageRoute, draftBrowserOwners: { beforeSubmission() {} },
     draftBrowserPages: { beforeSubmission() {}, captureContinuation() { return undefined; } }, draftBrowserDocks: new Map(),
     EnvironmentPreparationPause: class extends Error {}, errorMessage, textarea: { current: { focus() {} } },
   })();
   expect(dispatches).toBe(0);
+  expect(usageOwner.releases()).toBe(2);
   expect(shown()).toEqual(actionError("Update this desktop to resolve native /btw. The draft was retained."));
   const recovered = clearRecoveredForceError(shown(), { ...owner, commandId: receipt.commandId });
   expect(recovered).toEqual(shown());
@@ -143,19 +159,21 @@ test("actual App binds fresh force and uncertain retry only when the emitted com
       },
     };
     const reportSubmissionError = extractedReport({ submissions, errorMessage, setActionErrorState, ownedActionError: actionError, hostId: owner.hostId, setActionError });
+    const usageOwner = usageOwnerFixture(owner.hostId);
     await appSubmit({
-      canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError,
+      canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError, usageResetArgument,
       draftId: original.id, selectedRef: { current: `${owner.hostId}:${owner.sessionId}` }, hostId: owner.hostId,
       submissions, drafts: { async prepareSubmission() { return forceDraft; }, beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: forceDraft }; } },
       hasDraftContent: () => true, hasRemoteExecution: () => false, nativeBtwQuestion: () => undefined,
       forceCommandSpelling: () => true, nativeForceWinner: () => true, assertComposerOwner() {},
-      selectedId: owner.sessionId, bridge: { getComposerActions: async () => ({ commands: [] }) },
+      selectedId: owner.sessionId, bridge: { ...usageOwner.bridge, getComposerActions: async () => ({ commands: [] }) }, desktop: usageOwner.desktop, usageRoute: usageOwner.usageRoute,
       state: { forceTool: { version: 1, commandVersion: 18 } }, running: false,
       draftBrowserOwners: { beforeSubmission() {} }, draftBrowserPages: { beforeSubmission() {}, captureContinuation() { return undefined; } }, draftBrowserDocks: new Map(),
       EnvironmentPreparationPause: class extends Error {}, errorMessage, textarea: { current: { focus() {} } },
     })();
     expect(shown()).toEqual(mode === "mismatch" ? actionError("known partial force")
       : actionError("known partial force", { ...owner, commandId: receipt.commandId }));
+    expect(usageOwner.releases()).toBe(2);
   }
 });
 
