@@ -405,7 +405,7 @@ index 0000000..89404e4
 +		...(evidence.projectId ? { projectId: evidence.projectId } : {}), ...(evidence.orgId ? { orgId: evidence.orgId } : {}) });
 +}
 diff --git a/src/auth/sqlite-credential-store.ts b/src/auth/sqlite-credential-store.ts
-index 1f09c56..c77153c 100644
+index 1f09c56..3d5bc91 100644
 --- a/src/auth/sqlite-credential-store.ts
 +++ b/src/auth/sqlite-credential-store.ts
 @@ -5,6 +5,8 @@
@@ -599,15 +599,16 @@ index 1f09c56..c77153c 100644
  		this.#backfillCredentialIdentityKeys();
  		// Rewriting an already-current version row is a no-op write transaction
  		// on every boot; only persist when the recorded version actually changes.
-@@ -742,6 +814,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -742,6 +814,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  				data TEXT NOT NULL,
  				disabled_cause TEXT DEFAULT NULL,
  				identity_key TEXT DEFAULT NULL,
 +				reset_incarnation TEXT DEFAULT NULL,
++				reset_refresh_version INTEGER NOT NULL DEFAULT 0,
  				created_at INTEGER NOT NULL DEFAULT (${SQLITE_NOW_EPOCH}),
  				updated_at INTEGER NOT NULL DEFAULT (${SQLITE_NOW_EPOCH})
  			);
-@@ -770,13 +843,20 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -770,13 +844,20 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  		`);
  	}
  
@@ -630,7 +631,7 @@ index 1f09c56..c77153c 100644
  			CREATE TEMP TABLE IF NOT EXISTS auth_local_change_revision (
  				id INTEGER PRIMARY KEY CHECK (id = 1),
  				revision INTEGER NOT NULL
-@@ -995,6 +1075,9 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -995,6 +1076,9 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  		if (fromVersion < 7) {
  			this.#migrateAuthSchemaV6ToV7();
  		}
@@ -640,7 +641,7 @@ index 1f09c56..c77153c 100644
  	}
  
  	#migrateAuthSchemaV0ToV1(): void {
-@@ -1166,9 +1249,151 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1166,9 +1250,151 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  		migrate.immediate();
  	}
  
@@ -793,7 +794,7 @@ index 1f09c56..c77153c 100644
  		);
  		let rows: AuthRow[];
  		try {
-@@ -1205,7 +1430,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1205,7 +1431,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  		for (const row of rows) {
  			const credential = deserializeCredential(row);
  			if (!credential) continue;
@@ -802,7 +803,7 @@ index 1f09c56..c77153c 100644
  		}
  		return results;
  	}
-@@ -1260,8 +1485,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1260,8 +1486,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  				);
  				if (match) {
  					matchedExistingIds.add(match.id);
@@ -813,7 +814,7 @@ index 1f09c56..c77153c 100644
  				} else {
  					const row = this.#insertStmt.get(
  						providerName,
-@@ -1270,7 +1495,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1270,7 +1496,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  						serialized.identityKey,
  					) as { id?: number } | undefined;
  					if (row?.id) {
@@ -822,7 +823,7 @@ index 1f09c56..c77153c 100644
  					}
  				}
  			}
-@@ -1289,6 +1514,17 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1289,6 +1515,17 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  		return result;
  	}
  
@@ -840,7 +841,7 @@ index 1f09c56..c77153c 100644
  	upsertAuthCredentialForProvider(provider: string, credential: AuthCredential): StoredAuthCredential[] {
  		const upsert = this.#db.transaction((providerName: string, item: AuthCredential) => {
  			const serialized = serializeCredential(providerName, item);
-@@ -1313,7 +1549,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1313,7 +1550,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  				if (!matchesReplacementCredential(providerName, row.credential, row.identityKey, item)) continue;
  				if (targetId === null) {
  					targetId = row.id;
@@ -849,7 +850,7 @@ index 1f09c56..c77153c 100644
  					continue;
  				}
  				this.#deleteStmt.run("replaced by newer credential", row.id);
-@@ -1334,7 +1570,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1334,7 +1571,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  			for (const row of activeRows) {
  				const activeCredential = deserializeCredential(row);
  				if (!activeCredential) continue;
@@ -858,7 +859,7 @@ index 1f09c56..c77153c 100644
  			}
  			return result;
  		});
-@@ -1500,6 +1736,24 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1500,6 +1737,24 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  		}
  	}
  
@@ -883,7 +884,7 @@ index 1f09c56..c77153c 100644
  	getCache(key: string, options?: { includeExpired?: boolean }): string | null {
  		try {
  			const stmt = options?.includeExpired === true ? this.#getCacheIncludingExpiredStmt : this.#getCacheStmt;
-@@ -1992,6 +2246,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
+@@ -1992,6 +2247,8 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
  		this.#listDisabledByProviderStmt.finalize();
  		this.#insertStmt.finalize();
  		this.#updateStmt.finalize();

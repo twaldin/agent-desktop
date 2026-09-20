@@ -4,6 +4,8 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { unpackHostArtifact } from "./install-host";
+import { admitPackagedRendererDocument, rendererTargetSummary, selectPackagedRendererTarget,
+  type RendererDocumentEvidence, type RendererTarget } from "./smoke-release-renderer";
 
 type Connection = { origin: string; token: string; pid: number; hostId: string; protocolVersion: number };
 type SmokeResult = { kind: "host" | "desktop"; version: string; platform: string; sessionId: string; messages: number;
@@ -171,6 +173,19 @@ async function waitForRendererCloseReadiness(cdp: Cdp): Promise<void> {
   }
   throw new Error("The packaged desktop renderer did not register its window-close handler within 30000ms.");
 }
+async function waitForPackagedRendererDocument(cdp: Cdp, targetUrl: string): Promise<string> {
+  const deadline = Date.now() + 30_000;
+  let last: RendererDocumentEvidence | undefined;
+  while (Date.now() < deadline) {
+    if (cdp.rendererException) throw new Error(`The packaged renderer threw for CDP target ${targetUrl}: ${cdp.rendererException.message}`);
+    const evidence = await cdp.evaluate(`(() => ({href:location.href,readyState:document.readyState,rootPresent:document.querySelector('#root') !== null,moduleScripts:[...document.querySelectorAll('script[type=module][src]')].map(script => script.src)}))()`) as RendererDocumentEvidence;
+    last = evidence;
+    const moduleSource = admitPackagedRendererDocument(targetUrl, evidence);
+    if (moduleSource) return moduleSource;
+    await Bun.sleep(100);
+  }
+  throw new Error(`The packaged desktop app document did not become ready within 30000ms: ${JSON.stringify(last)}.`);
+}
 async function desktopSmoke(): Promise<SmokeResult> {
   const root = await mkdtemp(join(tmpdir(), "agent-desktop-desktop-smoke-"));
   let appProcess: ReturnType<typeof Bun.spawn> | undefined; let connection: Connection | undefined; let cdp: Cdp | undefined;
@@ -195,8 +210,10 @@ async function desktopSmoke(): Promise<SmokeResult> {
       stdout: "inherit", stderr: "inherit" });
     const target = await waitUntil(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1_000) });
-      const targets = await response.json() as Array<{ type: string; url: string; webSocketDebuggerUrl: string }>;
-      return targets.find(item => item.type === "page" && item.url.startsWith("file:"));
+      const targets = await response.json() as RendererTarget[];
+      const selected = selectPackagedRendererTarget(targets);
+      if (!selected) throw new Error(`Observed CDP targets: ${rendererTargetSummary(targets)}`);
+      return selected;
     }, "packaged desktop renderer startup", 30_000);
     const socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise<void>((resolve, reject) => {
@@ -206,7 +223,8 @@ async function desktopSmoke(): Promise<SmokeResult> {
     });
     cdp = new Cdp(socket);
     await cdp.send("Runtime.enable");
-    const rendererImportError = await cdp.evaluate("import(document.querySelector('script[type=module]').src).then(() => null, error => String(error?.stack ?? error))");
+    const moduleSource = await waitForPackagedRendererDocument(cdp, target.url);
+    const rendererImportError = await cdp.evaluate(`import(${JSON.stringify(moduleSource)}).then(() => null, error => String(error?.stack ?? error))`);
     assert.equal(rendererImportError, null, `The packaged renderer failed to load: ${rendererImportError}`);
     await waitForRendererCloseReadiness(cdp);
     const bridge = await cdp.evaluate("typeof window.agentDesktop === 'object' && typeof window.agentDesktop.command === 'function' && typeof window.agentDesktop.getMessages === 'function'");
