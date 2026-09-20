@@ -230,6 +230,7 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
       return { id, command: { type, hostId: text(input.hostId, "host ID", 200), sessionId: text(input.sessionId, "session ID", 200), ...parseNativeSessionMcpReconnect({epoch:input.epoch,expectedRevision:input.expectedRevision,serverName:input.serverName}) } };
     }
     case "session.mcp.reload": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), ...parseNativeSessionMcpReload({epoch:input.epoch,expectedRevision:input.expectedRevision}) } };
+    case "session.mcp.unauth":
     case "session.mcp.reconnect": return { id, command: { type, sessionId: text(input.sessionId, "session ID"), ...parseNativeSessionMcpReconnect({epoch:input.epoch,expectedRevision:input.expectedRevision,serverName:input.serverName}) } };
     case "session.btw.promote":
     case "session.btw.cancel": {

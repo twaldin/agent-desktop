@@ -307,6 +307,7 @@ export type HostCommand = import("./session-usage").SessionUsageCommand
   | { type: "session.mcp.authorize"; hostId: string; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
   | { type: "session.mcp.reload"; sessionId: string; epoch: string; expectedRevision: number }
   | { type: "session.mcp.reconnect"; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
+  | { type: "session.mcp.unauth"; sessionId: string; epoch: string; expectedRevision: number; serverName: string }
   | { type: "session.btw.cancel"; sessionId: string; runId: string }
   | { type: "session.btw.promote"; sessionId: string; runId: string }
   | { type: "session.interrupt"; sessionId: string }

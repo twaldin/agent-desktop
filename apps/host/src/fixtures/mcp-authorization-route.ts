@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { MCP_CONFIG_SCHEMA_URL } from "@oh-my-pi/pi-coding-agent/mcp/types";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Database } from "bun:sqlite";
-import { SESSION_MCP_OWNER_HEADER, type CommandEnvelope, type CommandResult, type SessionSummary, type NativeMcpAuthorizationResponse } from "@agent-desktop/shared";
+import { SESSION_MCP_OWNER_HEADER, type CommandEnvelope, type CommandResult, type SessionSummary, type NativeMcpAuthorizationResponse, type NativeSessionMcpResponse } from "@agent-desktop/shared";
 
 const root = process.argv[2]!;
 const agentDir = path.join(root, "agent"), cwd = path.join(root, "project");
@@ -77,6 +78,76 @@ try {
       assert.equal(toolCalls,2);assert.equal(nativeUserMessages,1);assert(nativeAssistantMessages>0);
     } else {assert.equal(nativeUserMessages,0);assert.equal(nativeAssistantMessages,0);}
     await writeFile(path.join(root,"ui-proof.json"),JSON.stringify({tokens,initializes,toolCalls,tool:toolMode,commands:rows.length,slash,nativeUserMessages,nativeAssistantMessages,status:final.value?.status,reconnected:final.value?.reconnected,privateJournal:true}));
+  } else if (process.argv[3] === "--unauth") {
+    const transcriptBefore = await readFile(session.sessionFile, "utf8");
+    async function mcpState(id: string, commandId?: string): Promise<NativeSessionMcpResponse> {
+      const response = await fetch(`${host.connection.origin}/v1/sessions/${id}/mcp${commandId ? `?commandId=${encodeURIComponent(commandId)}` : ""}`, { headers: headers() });
+      assert.equal(response.status, 200);
+      return await response.json() as NativeSessionMcpResponse;
+    }
+    async function authorize(id: string) {
+      const current = await ticket(session.id);
+      assert((await command({ id, command: { type: "session.mcp.authorize", hostId: host.connection.hostId, sessionId: session.id, serverName: "fixture", epoch: current.epoch, expectedRevision: current.revision } })).ok);
+      const pending = await wait(session.id, value => value.value?.commandId === id && Boolean(value.value.login.auth && value.value.login.prompts.length));
+      assert.equal((await fetch(`${host.connection.origin}/v1/sessions/${session.id}/mcp/authorization/respond`, { method: "POST", headers: headers(), body: JSON.stringify(responseBody(pending)) })).status, 200);
+      await wait(session.id, value => value.value?.commandId === id && value.value.status === "succeeded");
+    }
+    await authorize("before-forget");
+    const original = (await mcpState(session.id)).value!;
+    assert.equal(original.canForgetAuthorization, true);
+    assert.equal(original.servers.find(server => server.name === "fixture")?.status, "connected");
+    const clear: CommandEnvelope = { id: "forget-once", command: { type: "session.mcp.unauth", sessionId: session.id, epoch: original.epoch, expectedRevision: original.revision, serverName: "fixture" } };
+    const initializationsBefore = initializes;
+    assert.equal((await fetch(`${host.connection.origin}/v1/commands`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clear) })).status, 401);
+    assert.equal((await fetch(`${host.connection.origin}/v1/commands`, { method: "POST", headers: { ...headers(), Origin: "https://untrusted.invalid" }, body: JSON.stringify(clear) })).status, 401);
+    assert.equal(initializes, initializationsBefore);
+    const [first, duplicate] = await Promise.all([command(clear), command(clear)]);
+    assert(first.ok); assert.deepEqual(duplicate, first);
+    const settledInitializes = initializes;
+    assert(settledInitializes > initializationsBefore);
+    assert.equal(tokens, 1);
+    const cleared = await mcpState(session.id, clear.id);
+    assert.equal(cleared.receipt?.state, "succeeded");
+    assert.notEqual(cleared.value?.servers.find(server => server.name === "fixture")?.status, "connected");
+    assert.equal((await state(session.id)).value, null);
+    assert.deepEqual(await command(clear), first); assert.equal(initializes, settledInitializes);
+    const stale = await command({ ...clear, id: "forget-stale" });
+    assert(!stale.ok); assert.equal(initializes, settledInitializes);
+    assert.equal((await mcpState(session.id, "forget-stale")).receipt?.state, "failed");
+    assert.equal((await mcpState(session.id, "create")).receipt?.state, "absent");
+    const second = await command({ id: "create-other", command: { type: "session.create", projectId: null, cwd, model: { provider: "mcp-contract", id: "controlled" } } });
+    assert(second.ok);
+    assert.equal((await mcpState((second.value as SessionSummary).id, clear.id)).receipt?.state, "absent");
+    assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), { $schema: MCP_CONFIG_SCHEMA_URL, ...JSON.parse(originalConfig) });
+    assert.equal(await readFile(session.sessionFile, "utf8"), transcriptBefore);
+
+    await authorize("before-uncertain-forget");
+    assert.equal(tokens, 2);
+    const next = await ticket(session.id);
+    const lost: CommandEnvelope = { id: "forget-lost-receipt", command: { type: "session.mcp.unauth", sessionId: session.id, epoch: next.epoch, expectedRevision: next.revision, serverName: "fixture" } };
+    const db = new Database(path.join(root, "data", "state.sqlite"));
+    try {
+      db.exec("CREATE TRIGGER reject_forget_receipt BEFORE UPDATE ON commands WHEN OLD.id='forget-lost-receipt' BEGIN SELECT RAISE(ABORT,'fixture receipt failure'); END");
+      const uncertain = await command(lost);
+      assert(!uncertain.ok); assert.equal(uncertain.error.code, "OUTCOME_UNKNOWN");
+      assert.equal((await mcpState(session.id, lost.id)).receipt?.state, "unknown");
+      const afterClearing = initializes;
+      const duplicateUnknown = await command(lost);
+      assert(!duplicateUnknown.ok); assert.equal(duplicateUnknown.commandId, lost.id); assert.equal(duplicateUnknown.error.code, "OUTCOME_UNKNOWN"); assert.equal(initializes, afterClearing);
+      const journal = JSON.stringify(db.query("SELECT * FROM commands").all());
+      for (const secret of ["route-private-code", "route-private-access", "route-private-refresh", "/authorize?"]) assert(!journal.includes(secret));
+      await host.stop();
+      const afterStop = initializes;
+      host = await startHost(options);
+      const restored = await mcpState(session.id, lost.id);
+      assert.equal(restored.value, null); assert.equal(restored.receipt?.state, "unknown");
+      assert.equal((await mcpState(session.id, clear.id)).receipt?.state, "succeeded");
+      assert.deepEqual(await command(clear), first);
+      const restartedUnknown = await command(lost);
+      assert(!restartedUnknown.ok); assert.equal(restartedUnknown.commandId, lost.id); assert.equal(restartedUnknown.error.code, "OUTCOME_UNKNOWN");
+      assert.equal(initializes, afterStop); assert.equal(tokens, 2);
+    } finally { db.close(); }
+    await writeFile(path.join(root, "unauth-route.passed"), "native forget authorization authenticated receipts and no replay passed\n");
   } else if (process.argv[3] === "--tool") {
     const envelope:CommandEnvelope={id:"tool-auth",command:{type:"session.prompt",sessionId:session.id,text:"Read the protected MCP fixture once."}};
     assert((await command(envelope)).ok);

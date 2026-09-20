@@ -154,6 +154,7 @@ export interface OmpSession {
   cancelSessionMcpAuthorization(authorizationId: string): NativeMcpAuthorizationSnapshot;
   reloadSessionMcp(request: NativeSessionMcpReload): Promise<NativeSessionMcpSnapshot>;
   reconnectSessionMcp(request: NativeSessionMcpReconnect): Promise<NativeSessionMcpSnapshot>;
+  unauthorizeSessionMcp(request: NativeSessionMcpReconnect): Promise<NativeSessionMcpSnapshot>;
   getBtw(): NativeBtwSnapshot | null;
   startBtw(input: NativeBtwStart): NativeBtwSnapshot;
   cancelBtw(runId: string): NativeBtwSnapshot | null;
@@ -936,6 +937,13 @@ export class OmpRuntime {
             throw new Error("Resolve pending native work before reconnecting an MCP server.");
           return trackMcpMutation(mcp.reconnect(request));
         },
+        unauthorizeSessionMcp: request => {
+          assertIdle();
+          if (admissionPending || interruptsInFlight || session.queuedMessageCount > 0 || ui?.list().length || btw.get()?.status === "running")
+            throw new Error("Resolve pending native work before clearing MCP authorization.");
+          return trackMcpMutation(mcp.unauthorize(request, { cwd: session.sessionManager.getCwd(),
+            authStorage: session.modelRegistry.authStorage, assertOwner: assertSessionActive }).then(value => value.snapshot));
+        },
         getBtw: () => { assertSessionActive(); return btw.get(); },
         startBtw: input => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are reloading."); return btw.start(input); },
         cancelBtw: runId => { assertSessionActive(); return btw.cancel(runId); },
@@ -1498,6 +1506,20 @@ export class OmpRuntime {
                     controller.signal.addEventListener("abort",cancel,{once:true});
                     try { return await trackMcpMutation(operation.completion); }
                     finally { controller.signal.removeEventListener("abort",cancel); }
+                  },
+                  unauthorizeMcp: async serverName => {
+                    assertSessionActive();
+                    if (interruptsInFlight || controller.signal.aborted || session.isStreaming || session.hasPostPromptWork || session.queuedMessageCount > 0
+                      || ui?.list().length || btw.get()?.status === "running" || mcpMutation)
+                      throw new Error("Resolve pending native work before clearing MCP authorization.");
+                    const ticket = mcp.read();
+                    return trackMcpMutation(mcp.unauthorize({ epoch: ticket.epoch, expectedRevision: ticket.revision, serverName }, {
+                      cwd: session.sessionManager.getCwd(), authStorage: session.modelRegistry.authStorage,
+                      // Stop can retire this prompt while clearing waits behind
+                      // a resource read or config lock. Preserve that signal at
+                      // every owner check, including the final config write.
+                      assertOwner: () => { assertSessionActive(); controller.signal.throwIfAborted(); },
+                    }));
                   },
                   reconnectMcp: async serverName => {
                     assertSessionActive();

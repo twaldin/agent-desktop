@@ -43,9 +43,9 @@ export function builtinAvailability(name: string, args?: string): { availability
     return { availability: "executable" };
   }
   if (name === "mcp") {
-    if (args === undefined) return {availability:"partial",reason:"Native help, live resource/prompt/notification lists, runtime reload, server reconnect and OAuth reauthorization are connected. Other subcommands retain their native integration requirements."};
+    if (args === undefined) return {availability:"partial",reason:"Native help, live resource/prompt/notification lists, runtime reload, server reconnect, OAuth reauthorization and forgetting authorization are connected. Other subcommands retain their native integration requirements."};
     const verb=args.trim().split(/\s+/,1)[0]?.toLowerCase();
-    if (!verb || ["reload", "help", "resources", "prompts", "notifications", "reconnect", "reauth"].includes(verb)) return {availability:"executable"};
+    if (!verb || ["reload", "help", "resources", "prompts", "notifications", "reconnect", "reauth", "unauth"].includes(verb)) return {availability:"executable"};
     return {availability:"pending",reason:"This MCP operation requires its remaining native manager, configuration or interactive authorization bridge."};
   }
   if (name === "btw") return { availability: "partial", reason: "Ask a side question using this conversation’s context." };

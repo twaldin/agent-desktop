@@ -30,6 +30,7 @@ export interface NativeMcpOAuthConfigInput {
   cwd: string;
   serverName: string;
   manager: Pick<MCPManager, "getServerConfig" | "getSource">;
+  assertOwner?(): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -204,6 +205,9 @@ export async function captureNativeMcpOAuthConfig(input: NativeMcpOAuthConfigInp
         const next = structuredClone(target.config);
         next.mcpServers = { ...next.mcpServers, [input.serverName]: cloneServer(updated) };
         throwIfAborted(signal);
+        // Lock acquisition and the config reread can outlive the original
+        // session. Check again in the final native write continuation.
+        input.assertOwner?.();
         await writeMCPConfigFile(target.path, next);
         committed = true;
       });

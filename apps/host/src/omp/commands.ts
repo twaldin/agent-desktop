@@ -32,6 +32,7 @@ export interface NativeCommandBridges {
   inspectMcp(): NativeSessionMcpSnapshot;
   reconnectMcp(serverName: string): Promise<NativeSessionMcpSnapshot>;
   authorizeMcp(serverName: string): Promise<NativeMcpAuthorizationSnapshot>;
+  unauthorizeMcp?(serverName: string): Promise<{ changed: boolean }>;
 }
 
 function formatMcpAuthorization(serverName: string, snapshot: NativeMcpAuthorizationSnapshot): string {
@@ -107,7 +108,8 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
       const availability = builtinAvailability(builtin.name, parsed.args);
       const verb = parsed.args.trim().split(/\s+/, 1)[0]?.toLowerCase();
       const desktopMcpAuthorization = builtin.name === "mcp" && verb === "reauth";
-      if (availability.availability !== "executable" || !builtin.handle && !desktopMcpAuthorization) throw new Error(`Native /${builtin.name} is not connected to the desktop command dispatcher for this invocation. ${availability.reason ?? ""} This input was not executed or sent to a model.`);
+      const desktopMcpUnauthorization = builtin.name === "mcp" && verb === "unauth";
+      if (availability.availability !== "executable" || !builtin.handle && !desktopMcpAuthorization && !desktopMcpUnauthorization) throw new Error(`Native /${builtin.name} is not connected to the desktop command dispatcher for this invocation. ${availability.reason ?? ""} This input was not executed or sent to a model.`);
       if (builtin.name === "mcp" && verb === "reconnect") {
         if (!bridges) throw new Error("The native MCP reconnect bridge is unavailable; no command was executed.");
         const serverName = parsed.args.trim().split(/\s+/)[1];
@@ -127,6 +129,20 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
         if (!bridges) throw new Error("The native MCP inspection bridge is unavailable; no command was executed.");
         const output = formatMcpInspection(verb as McpInspection, bridges.inspectMcp());
         try {
+          const commandEntryId = session.sessionManager.appendCustomEntry("agent-desktop.command-output", { command: "mcp", output });
+          return { agentInvoked: false, handledCommand: "mcp", commandEntryId, output };
+        } catch (error) { throw new OmpPromptAdmissionError(error); }
+      }
+      if (desktopMcpUnauthorization) {
+        const serverName = parsed.args.trim().split(/\s+/)[1];
+        if (!serverName) throw new Error("Server name required. Usage: /mcp unauth <name>");
+        if (!bridges?.unauthorizeMcp) throw new Error("The native MCP authorization clearing bridge is unavailable; no command was executed.");
+        const before = bridges.inspectMcp();
+        if (!before.canForgetAuthorization || !before.servers.some(server => server.name === serverName))
+          throw new Error("The requested server is not available for authorization clearing in this native session.");
+        try {
+          const result = await bridges.unauthorizeMcp(serverName);
+          const output = result.changed ? `Cleared stored OAuth authorization for "${serverName}".` : `No stored OAuth authorization to remove for "${serverName}".`;
           const commandEntryId = session.sessionManager.appendCustomEntry("agent-desktop.command-output", { command: "mcp", output });
           return { agentInvoked: false, handledCommand: "mcp", commandEntryId, output };
         } catch (error) { throw new OmpPromptAdmissionError(error); }

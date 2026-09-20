@@ -24,14 +24,14 @@
 .integration-back { display:flex; align-items:center; gap:7px; padding:0; margin:0 0 18px; border:0; color:var(--secondary); background:transparent; cursor:pointer; font:inherit; }
 .integration-back:hover { color:var(--text); }
 .integration-back .icon { width:16px; height:16px; }
-.session-mcp { width:100%; min-width:0; }
+.session-mcp { width:100%; min-width:0; container-name:session-mcp; container-type:inline-size; }
 .session-mcp .integration-list-heading { align-items: flex-start; }
 .session-mcp-row { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:14px 0; border-top:1px solid var(--border); }
 .session-mcp-row > div:first-child { min-width:0; flex:1; }
 .session-mcp-row small { display:block; margin-top:4px; color:var(--secondary); }
 .session-mcp-row .inline-error { margin:6px 0 0; }
-.session-mcp-counts { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px 12px; color:var(--secondary); font-size:12px; text-align:right; }
-@media (max-width:680px) { .session-mcp-row { flex-direction:column; } .session-mcp-counts { justify-content:flex-start; text-align:left; } }
+.session-mcp-counts { display:flex; flex-wrap:wrap; justify-content:flex-end; max-width:60%; gap:6px 12px; color:var(--secondary); font-size:12px; text-align:right; }
+@container session-mcp (max-width:680px) { .session-mcp-row { flex-direction:column; } .session-mcp-counts { max-width:100%; justify-content:flex-start; text-align:left; } }
 /* Reference 10-integrations: one centered settings canvas with list/detail
    navigation. OMP-only controls retain these native groups and tokens. */
 .native-integrations { flex:1; min-width:0; overflow-y:auto; padding:64px 24px 48px; }

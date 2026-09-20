@@ -85,3 +85,10 @@ test("authorization capability is optional for old hosts and strictly boolean wh
 		servers: [{ ...legacy.servers[0], canAuthorize: "true" }],
 	})).toThrow("authorization capability");
 });
+
+
+test("forget-authorization capability remains optional and cannot be enabled by malformed data", () => {
+  expect(parseNativeSessionMcpSnapshot(legacy).canForgetAuthorization).toBeUndefined();
+  for (const value of [true, false]) expect(parseNativeSessionMcpSnapshot({ ...legacy, canForgetAuthorization: value }).canForgetAuthorization).toBe(value);
+  for (const value of ["true", 1, {}, null]) expect(() => parseNativeSessionMcpSnapshot({ ...legacy, canForgetAuthorization: value })).toThrow();
+});

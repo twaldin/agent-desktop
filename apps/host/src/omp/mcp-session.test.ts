@@ -1,11 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import type { SourceMeta } from "@oh-my-pi/pi-coding-agent/capability/types";
 import type { LoadMCPConfigsOptions, LoadMCPConfigsResult } from "@oh-my-pi/pi-coding-agent/mcp/config";
 import { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
+import { AuthStorage, SqliteAuthCredentialStore } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+import { getMCPConfigPath, refreshDirsFromEnv } from "@oh-my-pi/pi-utils";
 import { NativeSessionMcp } from "./mcp-session";
 
 const roots: string[] = [];
@@ -440,3 +443,123 @@ test("a real unanswered stdio resource read times out and releases queued reads 
 	expect(await controller.readResource({ epoch: current.epoch, expectedRevision: current.revision, serverName: "fixture", uri: "fixture://still-alive" }))
 		.toEqual({ contents: [{ uri: "fixture://still-alive", mimeType: "text/plain", text: "Fixture contents for fixture://still-alive" }] });
 }, 40_000);
+
+// Use the native manager, credential database and config writer together. Only
+// awaited boundaries are held so queue/disposal assertions are deterministic.
+async function withForgetFixture(run: (value: {
+	controller: NativeSessionMcp; manager: MCPManager; auth: AuthStorage;
+	root: string; file: string; credentialId: string; reloads(): number;
+}) => Promise<void>) {
+	const root = await mkdtemp(join(tmpdir(), "agent-desktop-mcp-forget-")); roots.push(root);
+	const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+	refreshDirsFromEnv();
+	let database: Database | undefined, auth: AuthStorage | undefined, manager: MCPManager | undefined;
+	let controller: NativeSessionMcp | undefined;
+	try {
+		await mkdir(process.env.PI_CODING_AGENT_DIR, { recursive: true });
+		const file = getMCPConfigPath("user", root), credentialId = "mcp_oauth:owned-session-fixture";
+		await writeFile(file, JSON.stringify({ marker: "preserved", mcpServers: { fixture: {
+			type: "stdio", command: process.execPath, args: [join(import.meta.dir, "fixtures", "mcp-server.ts")],
+			auth: { type: "oauth", credentialId },
+		} } }));
+		database = new Database(join(root, "auth.db"));
+		auth = new AuthStorage(new SqliteAuthCredentialStore(database));
+		await auth.set(credentialId, { type: "oauth", access: "queue-fixture-access", refresh: "queue-fixture-refresh", expires: Date.now() + 3_600_000 });
+		let reloads = 0;
+		manager = new MCPManager(root, null, async () => {
+			reloads++;
+			return { configs: JSON.parse(await readFile(file, "utf8")).mcpServers, sources: { fixture: source(file) }, exaApiKeys: [] };
+		});
+		controller = new NativeSessionMcp(session().value, manager);
+		const initial = controller.read();
+		await controller.reload({ epoch: initial.epoch, expectedRevision: initial.revision });
+		await waitForCatalog(controller);
+		await run({ controller, manager, auth, root, file, credentialId, reloads: () => reloads });
+	} finally {
+		await controller?.dispose();
+		await manager?.disconnectAll();
+		await auth?.close();
+		database?.close();
+		if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+		refreshDirsFromEnv();
+	}
+}
+
+test("forget authorization waits for a native resource read, rejects stale tickets and consumes a duplicate queued revision only once", async () => {
+	await withForgetFixture(async ({ controller, manager, auth, root, file, credentialId, reloads }) => {
+		const before = controller.read(), original = await readFile(file, "utf8");
+		const ticket = { epoch: before.epoch, expectedRevision: before.revision, serverName: "fixture" };
+		const options = { cwd: root, authStorage: auth, assertOwner() {} };
+		for (const stale of [{ ...ticket, epoch: "retired" }, { ...ticket, expectedRevision: ticket.expectedRevision - 1 }]) {
+			await expect(controller.unauthorize(stale, options)).rejects.toThrow("changed before clearing");
+		}
+		expect(auth.get(credentialId)?.type).toBe("oauth");
+		expect(await readFile(file, "utf8")).toBe(original);
+		expect(reloads()).toBe(1);
+		const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+		const nativeRead = manager.readServerResource.bind(manager);
+		manager.readServerResource = async (...args) => {
+			const result = await nativeRead(...args);
+			entered.resolve();
+			await release.promise;
+			return result;
+		};
+		const reading = controller.readResource({ ...ticket, uri: "fixture://resource" });
+		try {
+			await entered.promise;
+			const clearing = controller.unauthorize(ticket, options);
+			const duplicate = controller.unauthorize(ticket, options).then(() => null, error => error);
+			await Bun.sleep(0);
+			expect(auth.get(credentialId)?.type).toBe("oauth");
+			expect(await readFile(file, "utf8")).toBe(original);
+			expect(reloads()).toBe(1);
+			release.resolve();
+			expect((await reading).contents[0]).toMatchObject({ text: "Fixture contents for fixture://resource" });
+			const result = await clearing;
+			expect(result.changed).toBe(true);
+			expect(result.snapshot.revision).toBeGreaterThan(ticket.expectedRevision);
+			expect((await duplicate).message).toContain("changed before clearing");
+			expect(auth.get(credentialId)).toBeUndefined();
+			const persisted = JSON.parse(await readFile(file, "utf8"));
+			expect(persisted.marker).toBe("preserved");
+			expect(persisted.mcpServers.fixture.auth).toBeUndefined();
+			expect(reloads()).toBe(2);
+			const settled = await waitForCatalog(controller);
+			expect(settled.servers[0]?.status).toBe("connected");
+		} finally { release.resolve(); }
+	});
+});
+
+test("disposal joins native credential removal and rejects queued forget work without later config writes or reload", async () => {
+	await withForgetFixture(async ({ controller, auth, root, file, credentialId, reloads }) => {
+		const before = controller.read(), original = await readFile(file, "utf8");
+		const ticket = { epoch: before.epoch, expectedRevision: before.revision, serverName: "fixture" };
+		const options = { cwd: root, authStorage: auth, assertOwner() {} };
+		const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+		const nativeRemove = auth.remove.bind(auth);
+		let removals = 0;
+		auth.remove = async id => { await nativeRemove(id); removals++; entered.resolve(); await release.promise; };
+		const clearing = controller.unauthorize(ticket, options).then(() => null, error => error);
+		try {
+			await entered.promise;
+			const queued = controller.unauthorize(ticket, options).then(() => null, error => error);
+			let disposed = false;
+			const disposing = controller.dispose().then(() => { disposed = true; });
+			await Bun.sleep(0);
+			expect(disposed).toBe(false);
+			expect(auth.get(credentialId)).toBeUndefined();
+			expect(await readFile(file, "utf8")).toBe(original);
+			release.resolve();
+			expect((await clearing).message).toContain("may already have changed");
+			expect((await queued).message).toContain("disposed");
+			await disposing;
+			expect(disposed).toBe(true);
+			expect(removals).toBe(1);
+			expect(reloads()).toBe(1);
+			expect(await readFile(file, "utf8")).toBe(original);
+			expect(controller.read().revision).toBeGreaterThan(before.revision);
+			await expect(controller.unauthorize({ ...ticket, expectedRevision: controller.read().revision }, options)).rejects.toThrow("disposed");
+		} finally { release.resolve(); }
+	});
+});

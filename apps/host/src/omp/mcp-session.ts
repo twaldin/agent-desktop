@@ -1,4 +1,5 @@
 import { mcpAppDescriptors, mcpFileViewers } from "./mcp-apps";
+import { clearNativeMcpAuthorization } from "./mcp-unauth";
 import { randomUUID } from "node:crypto";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability/fs";
@@ -139,7 +140,7 @@ export class NativeSessionMcp {
 			}
 		}
 		const value = this.manager
-			? { available: true, canReconnect: true, canReadResources: true, ...(this.apps ? { canOpenApps: true } : {}), servers: collectMcpServers(this.manager, this.#failures, this.apps) }
+			? { available: true, canReconnect: true, canForgetAuthorization: true, canReadResources: true, ...(this.apps ? { canOpenApps: true } : {}), servers: collectMcpServers(this.manager, this.#failures, this.apps) }
 			: { available: false, reason: UNAVAILABLE, servers: [] };
 		if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES) throw new Error("Native MCP catalog exceeds its 2 MiB response limit.");
 		return value;
@@ -321,6 +322,32 @@ export class NativeSessionMcp {
 	}
 
 	getAuthorization(): NativeMcpAuthorization | undefined { return this.#authorization; }
+	unauthorize(request: NativeSessionMcpReconnect, options: {
+		cwd: string;
+		authStorage: AuthStorage;
+		assertOwner(): void;
+	}): Promise<{ snapshot: NativeSessionMcpSnapshot; changed: boolean }> {
+		const { epoch, expectedRevision, serverName } = request;
+		const assertOwner = () => {
+			if (this.#disposed) throw new Error("Native MCP session was disposed.");
+			options.assertOwner();
+		};
+		const operation = this.#mutationTail.then(async () => {
+			assertOwner();
+			const before = this.read();
+			if (epoch !== before.epoch || expectedRevision !== before.revision)
+				throw new Error("Native MCP state changed before clearing authorization.");
+			if (!this.manager || !before.servers.some(server => server.name === serverName))
+				throw new Error("Native MCP server is not part of this session.");
+			this.#authorization = undefined;
+			try {
+				return await clearNativeMcpAuthorization({ ...options, serverName,
+					manager: this.manager, assertOwner, reload: () => this.#reload() });
+			} finally { this.#consumeRevision(); }
+		});
+		this.#mutationTail = operation.then(() => undefined, () => undefined);
+		return operation.then(result => { assertOwner(); return { ...result, snapshot: this.read() }; });
+	}
 	cancelAuthorization(): void { this.#authorization?.cancel(); }
 	async dispose(): Promise<void> {
 		this.#disposed = true;

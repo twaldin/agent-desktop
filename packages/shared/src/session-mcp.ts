@@ -23,6 +23,8 @@ export interface NativeSessionMcpSnapshot {
   revision: number;
   available: boolean;
   canReconnect?: boolean;
+  /** The owning host can clear this profile's native MCP authorization. */
+  canForgetAuthorization?: boolean;
   canReadResources?: boolean;
   canOpenApps?: boolean;
   reason?: string;
@@ -80,9 +82,10 @@ export function parseNativeSessionMcpReconnect(value: unknown): NativeSessionMcp
 }
 export function parseNativeSessionMcpSnapshot(value: unknown): NativeSessionMcpSnapshot {
   const input = record(value);
-  exactKeys(input,['epoch','revision','available','canReconnect','canReadResources','canOpenApps','reason','servers'],'Unsupported native MCP catalog field.');
+  exactKeys(input,['epoch','revision','available','canReconnect','canForgetAuthorization','canReadResources','canOpenApps','reason','servers'],'Unsupported native MCP catalog field.');
   if (input.canOpenApps !== undefined && typeof input.canOpenApps !== 'boolean') throw new Error('Invalid native MCP app capability.');
   if (input.canReadResources !== undefined && typeof input.canReadResources !== 'boolean') throw new Error('Invalid native MCP resource capability.');
+  if (input.canForgetAuthorization !== undefined && typeof input.canForgetAuthorization !== 'boolean') throw new Error('Invalid native MCP authorization clearing capability.');
   if (input.canReconnect !== undefined && typeof input.canReconnect !== 'boolean') throw new Error('Invalid native MCP reconnect capability.');
   if (typeof input.available !== 'boolean' || !Array.isArray(input.servers) || input.servers.length > 4096) throw new Error('Invalid native MCP catalog.');
   const servers = input.servers.map(raw => {
@@ -113,7 +116,7 @@ export function parseNativeSessionMcpSnapshot(value: unknown): NativeSessionMcpS
     return {name:text(server.name),status:server.status as NativeSessionMcpServer['status'],source:text(server.source),...(server.canAuthorize === undefined ? {} : {canAuthorize:server.canAuthorize}),tools:server.tools.map(name=>text(name)),...(apps === undefined ? {} : {apps}),...(fileViewers === undefined ? {} : {fileViewers}),resourceCount:server.resourceCount === null ? null : integer(server.resourceCount),promptCount:server.promptCount === null ? null : integer(server.promptCount),...(resources===undefined?{}:{resources}),...(resourceTemplates===undefined?{}:{resourceTemplates}),...(prompts===undefined?{}:{prompts}),...(notifications===undefined?{}:{notifications}),...(server.error === undefined ? {} : {error:text(server.error,4096)})};
   });
   if (new Set(servers.map(server=>server.name)).size !== servers.length) throw new Error('Duplicate native MCP server.');
-  const parsed = {...(input.canReadResources === undefined ? {} : {canReadResources:input.canReadResources}),...(input.canOpenApps === undefined ? {} : {canOpenApps:input.canOpenApps}),epoch:text(input.epoch,200),revision:integer(input.revision),available:input.available,...(input.canReconnect === undefined ? {} : {canReconnect:input.canReconnect}),servers,...(input.reason === undefined ? {} : {reason:text(input.reason,4096)})};
+  const parsed = {...(input.canForgetAuthorization === undefined ? {} : {canForgetAuthorization:input.canForgetAuthorization}),...(input.canReadResources === undefined ? {} : {canReadResources:input.canReadResources}),...(input.canOpenApps === undefined ? {} : {canOpenApps:input.canOpenApps}),epoch:text(input.epoch,200),revision:integer(input.revision),available:input.available,...(input.canReconnect === undefined ? {} : {canReconnect:input.canReconnect}),servers,...(input.reason === undefined ? {} : {reason:text(input.reason,4096)})};
   if(new TextEncoder().encode(JSON.stringify(parsed)).byteLength>2*1024*1024)throw new Error('Native MCP catalog exceeds its 2 MiB response limit.');
   return parsed;
 }

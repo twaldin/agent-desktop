@@ -76,7 +76,7 @@ test('typed native MCP help and reload persist output without a model turn and r
     const catalog = await session.getComposerActions();
     const mcp = catalog.commands.find(row => row.id === 'builtin:mcp')!;
     expect(mcp.availability).toBe('partial');
-    expect(mcp.subcommands?.filter(row => row.availability === 'executable').map(row => row.name).sort()).toEqual(['help', 'notifications', 'prompts', 'reauth', 'reconnect', 'reload', 'resources']);
+    expect(mcp.subcommands?.filter(row => row.availability === 'executable').map(row => row.name).sort()).toEqual(['help', 'notifications', 'prompts', 'reauth', 'reconnect', 'reload', 'resources', 'unauth']);
     expect((await session.getComposerCompletions({ kind: 'command-argument', commandName: 'mcp', query: 'reconnect fi', catalogRevision: catalog.revision })).items).toMatchObject([{ label: 'fixture', insertText: 'reconnect fixture ' }]);
     const receipts: string[] = [];
     for (const text of ['/mcp', '/mcp help', '/mcp reload']) {

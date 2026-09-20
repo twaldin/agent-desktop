@@ -65,6 +65,16 @@ Tool cancellation reaches the consent controller. Stop and disposal retain the e
 
 Local tests exercise the real manager/tool registry with protected HTTP tools, successful OAuth, cancellation, failed reconnect, repeated challenge and shared concurrent calls. A separate isolated host/worker fixture uses a controlled model transport to invoke the actual tool and checks one retry plus Stop on a later challenge. Hidden Electron controls exercise that tool-triggered conversation card, one explicit callback, narrow layout and reopening without replay. These prove the named source/component contracts; the model and OAuth issuer are disposable local fixtures. Evidence: `.data/mcp-tool-authorization-checkpoint/` and `.data/mcp-tool-authorization-ui-2/`.
 
+## Forgetting stored authorization
+
+Live MCP settings exposes **Forget authorization** when the owning host supports it. Confirmation names the original server and explains the effect: remove native profile-owned OAuth grants, remove the native configuration auth block when applicable, then reload that idle session's manager. A credential shared by URL can affect other configured servers. Explicit headers, environment credentials, provider accounts, foreign-profile grants and credentials managed inside a separate server process remain outside this operation. It does not revoke a token remotely.
+
+`/mcp unauth <name>` uses the same native clearing operation and the pinned command's server-token parsing, after extension/custom command precedence. Its terminal output is native command history; no user prompt is sent to a model. Both paths serialize through the original session MCP queue and require its current epoch/revision. Disconnect, busy state, stale configuration or retired ownership prevent new admission. File commits recheck the original owner after asynchronous lock acquisition. Disposal joins admitted work.
+
+The adapter uses native credential IDs/removal and native configuration precedence/writing, including canonical schema insertion. Discovered non-OAuth servers are not copied into a user configuration just because no credential exists. Discovered OAuth overrides retain the native user-config behavior. Clearing credentials and configuration is not one transaction: a later write or reload failure can leave an earlier clearing complete, which is reported as a partial outcome. Neither the UI nor host retries that operation automatically.
+
+The renderer saves an opaque command identity before sending. On missing acknowledgement it reads the original durable receipt; after host restart an unknown outcome stays unknown and inspection does not create a worker. Token values and authorization answers are never part of this command, its receipt or saved UI state. This feature's disposable native/loopback and App checks do not establish remote-provider revocation, broker deployment, cross-device or installed-artifact acceptance.
+
 ## Remaining acceptance
 
 Provider/tool approvals remain interactive and separate from detached questions.

@@ -1,4 +1,5 @@
 import { SessionMcpAuthorization, useMcpAuthorization } from "./SessionMcpAuthorization";
+import { McpForgetAuthorizationDialog } from "./McpForgetAuthorizationDialog";
 import { SessionMcpResource } from "./SessionMcpResource";
 import { useEffect, useRef, useState } from "react";
 import type { DesktopBridge, NativeSessionMcpSnapshot, WorkspaceTarget } from "@agent-desktop/shared";
@@ -15,8 +16,10 @@ export function SessionMcp({ bridge, hostId, sessionId, connected, idle = false,
   const [loading, setLoading] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [reconnecting, setReconnecting] = useState<string | null>(null);
+  const [forgetting, setForgetting] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [forget, setForget] = useState<{serverName: string; epoch: string; revision: number} | null>(null);
   const generation = useRef(0), writing = useRef(false), readRevision = useRef(0);
   const storageKey = `mcp.reload.${hostId}.${sessionId}`;
   const targetKey = JSON.stringify(target);
@@ -25,8 +28,8 @@ export function SessionMcp({ bridge, hostId, sessionId, connected, idle = false,
     let alive = true, reading = false;
     let pendingId: string | null = null;
     try { pendingId = localStorage.getItem(storageKey); } catch { /* Reload refuses if its durable marker cannot be written. */ }
-    setResource(null);
-    setPending(pendingId); setSnapshot(null); setUnavailable(null); setCommandError(null); setReloading(false); setReconnecting(null); writing.current=false;
+    setResource(null); setForget(null);
+    setPending(pendingId); setSnapshot(null); setUnavailable(null); setCommandError(null); setReloading(false); setReconnecting(null); setForgetting(null); writing.current=false;
     const read = async () => {
       if (!alive || !connected || writing.current || mutationPending || reading) return;
       if (!bridge.getSessionMcp) { setUnavailable('This desktop cannot read live MCP state.'); setLoading(false); return; }
@@ -54,14 +57,19 @@ export function SessionMcp({ bridge, hostId, sessionId, connected, idle = false,
     const timer=window.setInterval(()=>void read(),2000);
     return ()=>{alive=false;generation.current++;readRevision.current++;window.clearInterval(timer);};
   },[bridge,hostId,sessionId,connected,targetKey,mutationPending,refresh]);
-  const mutate = async (serverName?: string) => {
+  useEffect(() => {
+    if (forget && (!connected || !idle || mutationPending || authorization.busy || snapshot?.epoch !== forget.epoch || snapshot.revision !== forget.revision)) setForget(null);
+  }, [connected, idle, mutationPending, authorization.busy, snapshot?.epoch, snapshot?.revision, forget]);
+  const mutate = async (serverName?: string, clearAuthorization = false) => {
     if (!connected || !idle || mutationPending || authorization.busy || unavailable || !snapshot?.available || writing.current || pending) return;
-    if (serverName !== undefined && (!snapshot.canReconnect || !snapshot.servers.some(server => server.name === serverName))) return;
+    if (serverName !== undefined && (!(clearAuthorization ? snapshot.canForgetAuthorization : snapshot.canReconnect) || !snapshot.servers.some(server => server.name === serverName))) return;
+    if (clearAuthorization && (!forget || forget.serverName !== serverName || forget.epoch !== snapshot.epoch || forget.revision !== snapshot.revision)) return;
+    setForget(null);
     const current=generation.current, id=crypto.randomUUID();
     try { localStorage.setItem(storageKey,id); } catch {setCommandError('Cannot preserve an MCP receipt on this device. No operation was sent.');return;}
-    writing.current=true;readRevision.current++;setReloading(serverName === undefined);setReconnecting(serverName ?? null);setPending(id);setCommandError(null);
+    writing.current=true;readRevision.current++;setReloading(serverName === undefined);setReconnecting(clearAuthorization ? null : serverName ?? null);setForgetting(clearAuthorization ? serverName ?? null : null);setPending(id);setCommandError(null);
     try {
-      const result=await bridge.command({id,command:serverName === undefined ? {type:'session.mcp.reload',sessionId,epoch:snapshot.epoch,expectedRevision:snapshot.revision} : {type:'session.mcp.reconnect',sessionId,epoch:snapshot.epoch,expectedRevision:snapshot.revision,serverName}},hostId);
+      const result=await bridge.command({id,command:serverName === undefined ? {type:'session.mcp.reload',sessionId,epoch:snapshot.epoch,expectedRevision:snapshot.revision} : {type:clearAuthorization ? 'session.mcp.unauth' : 'session.mcp.reconnect',sessionId,epoch:snapshot.epoch,expectedRevision:snapshot.revision,serverName}},hostId);
       if(current!==generation.current)return;
       if(result.commandId!==id)throw new Error('The host returned another command receipt.');
       if(!result.ok)throw new Error(result.error.message);
@@ -69,7 +77,7 @@ export function SessionMcp({ bridge, hostId, sessionId, connected, idle = false,
       setSnapshot(result.value.snapshot);
     } catch(error) {if(current===generation.current)setCommandError(errorMessage(error));}
     finally {
-      if(current===generation.current){writing.current=false;setReloading(false);setReconnecting(null);setRefresh(value=>value+1);}
+      if(current===generation.current){writing.current=false;setReloading(false);setReconnecting(null);setForgetting(null);setRefresh(value=>value+1);}
     }
   };
   return <section className="session-mcp" aria-label="Live MCP servers">
@@ -77,14 +85,15 @@ export function SessionMcp({ bridge, hostId, sessionId, connected, idle = false,
     <div className="integration-list-heading"><div><h2>Live MCP servers</h2><p className="integration-note">Native state for this session. Reload to apply saved configuration to this idle session.</p></div><button className="secondary-button" type="button" disabled={!connected || !idle || mutationPending || authorization.busy || Boolean(unavailable) || !snapshot?.available || reloading || Boolean(pending)} onClick={() => void mutate()}>{reloading ? "Reloading…" : "Reload servers"}</button></div>
     <SessionMcpAuthorization key={`${hostId}:${sessionId}:${authorization.value?.authorizationId ?? "none"}`} state={authorization} connected={connected}/>
     {commandError && <p className="inline-error" role="status">{commandError}</p>}
-    {pending && !reloading && !reconnecting && <button className="secondary-button" disabled={!connected} onClick={()=>setRefresh(value=>value+1)}>Check MCP result</button>}
+    {pending && !reloading && !reconnecting && !forgetting && <button className="secondary-button" disabled={!connected} onClick={()=>setRefresh(value=>value+1)}>Check MCP result</button>}
     {!connected && <p className="connection-banner" role="status">This machine is disconnected. Reconnect to read live MCP state.</p>}
     {loading && <p role="status">Reading native MCP state…</p>}
     {unavailable && <p className="inline-error" role="alert">{unavailable} Refresh session state before changing native connections.</p>}
     {!loading && !unavailable && !snapshot && <p className="integration-note" role="status">Live MCP state has not been measured for this session.</p>}
     {snapshot && !snapshot.available && <p className="integration-note" role="status">{snapshot.reason ?? "Live MCP state is unavailable for this session."}</p>}
     {snapshot?.available && !snapshot.servers.length && <p className="integration-note">No native MCP servers are registered for this session.</p>}
-    {snapshot?.available && snapshot.servers.filter(server=>matchesMcpServer(server,query)).map(server => <article className="session-mcp-row" key={server.name}><div className="session-mcp-body"><strong>{server.name}</strong><small>{server.source} · {server.status}</small>{server.error && <p className="inline-error">{server.error}</p>}{server.tools.length>0 && <details><summary><Icon name="chevron"/>Tools</summary><ul>{server.tools.map(name=><li key={name}>{name}</li>)}</ul></details>}<SessionMcpDetails server={server} onReadResource={snapshot.canReadResources && connected && !pending && !mutationPending && !authorization.busy && bridge.readSessionMcpResource ? uri=>setResource({serverName:server.name,uri}) : undefined}/></div><div className="session-mcp-counts"><span>{server.tools.length} {server.tools.length===1?"tool":"tools"}</span><span>{server.resourceCount === null ? "Resources unmeasured" : `${server.resourceCount} ${server.resourceCount===1?"resource":"resources"}`}</span><span>{server.promptCount === null ? "Prompts unmeasured" : `${server.promptCount} ${server.promptCount===1?"prompt":"prompts"}`}</span><button className="secondary-button" type="button" aria-label={`Reconnect ${server.name}`} title={snapshot.canReconnect ? undefined : "This host does not expose native reconnect yet."} disabled={!snapshot.canReconnect || !connected || !idle || mutationPending || authorization.busy || Boolean(unavailable) || Boolean(pending)} onClick={()=>void mutate(server.name)}>{reconnecting===server.name ? "Reconnecting…" : "Reconnect"}</button>{server.canAuthorize && authorization.supported && <button className="secondary-button" type="button" aria-label={`Authenticate ${server.name}`} disabled={!connected || !idle || mutationPending || authorization.busy || Boolean(unavailable) || Boolean(pending)} onClick={()=>{ if (connected && idle && !mutationPending && !pending) void authorization.start(snapshot, server.name); }}>Authenticate</button>}</div></article>)}
+    {snapshot?.available && snapshot.servers.filter(server=>matchesMcpServer(server,query)).map(server => <article className="session-mcp-row" key={server.name}><div className="session-mcp-body"><strong>{server.name}</strong><small>{server.source} · {server.status}</small>{server.error && <p className="inline-error">{server.error}</p>}{server.tools.length>0 && <details><summary><Icon name="chevron"/>Tools</summary><ul>{server.tools.map(name=><li key={name}>{name}</li>)}</ul></details>}<SessionMcpDetails server={server} onReadResource={snapshot.canReadResources && connected && !pending && !mutationPending && !authorization.busy && bridge.readSessionMcpResource ? uri=>setResource({serverName:server.name,uri}) : undefined}/></div><div className="session-mcp-counts"><span>{server.tools.length} {server.tools.length===1?"tool":"tools"}</span><span>{server.resourceCount === null ? "Resources unmeasured" : `${server.resourceCount} ${server.resourceCount===1?"resource":"resources"}`}</span><span>{server.promptCount === null ? "Prompts unmeasured" : `${server.promptCount} ${server.promptCount===1?"prompt":"prompts"}`}</span><button className="secondary-button" type="button" aria-label={`Reconnect ${server.name}`} title={snapshot.canReconnect ? undefined : "This host does not expose native reconnect yet."} disabled={!snapshot.canReconnect || !connected || !idle || mutationPending || authorization.busy || Boolean(unavailable) || Boolean(pending)} onClick={()=>void mutate(server.name)}>{reconnecting===server.name ? "Reconnecting…" : "Reconnect"}</button>{server.canAuthorize && authorization.supported && <button className="secondary-button" type="button" aria-label={`Authenticate ${server.name}`} disabled={!connected || !idle || mutationPending || authorization.busy || Boolean(unavailable) || Boolean(pending)} onClick={()=>{ if (connected && idle && !mutationPending && !pending) void authorization.start(snapshot, server.name); }}>Authenticate</button>}{snapshot.canForgetAuthorization && <button className="secondary-button" type="button" aria-label={`Forget authorization for ${server.name}`} disabled={!connected || !idle || mutationPending || authorization.busy || Boolean(unavailable) || Boolean(pending)} onClick={() => setForget({serverName:server.name,epoch:snapshot.epoch,revision:snapshot.revision})}>{forgetting===server.name ? "Forgetting…" : "Forget authorization"}</button>}</div></article>)}
+    {forget && <McpForgetAuthorizationDialog key={`${hostId}:${sessionId}:${forget.epoch}:${forget.revision}:${forget.serverName}`} serverName={forget.serverName} onCancel={() => setForget(null)} onConfirm={() => void mutate(forget.serverName, true)}/>}
     {resource && snapshot && <SessionMcpResource key={`${hostId}:${sessionId}:${resource.serverName}:${resource.uri}`} serverName={resource.serverName} initialUri={resource.uri} onClose={()=>setResource(null)} read={async uri=>{
       if (!snapshot.canReadResources || !connected || pending || mutationPending || authorization.busy || !bridge.readSessionMcpResource) throw new Error("Reconnect to the owning host before reading a resource.");
       return bridge.readSessionMcpResource(sessionId,{epoch:snapshot.epoch,expectedRevision:snapshot.revision,serverName:resource.serverName,uri},hostId);
