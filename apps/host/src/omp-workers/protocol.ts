@@ -11,6 +11,7 @@ import type { NativeBtwStart } from "../../../../packages/shared/src/btw";
 import type { NativeSessionForkInput } from "../omp/session-fork";
 import type { TodoMutationRequest } from "../../../../packages/shared/src/session-todos";
 import type { ResetPolicyWireRequest, ResetPolicyWireResponse } from "./reset-policy-wire";
+import type { WorkerResetPolicyReconnect } from "./reconnect-wire";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
 export const WORKER_PROTOCOL_VERSION = 66;
@@ -40,7 +41,10 @@ export type WorkerInit = { agentDir?: string; resetPolicy?: { workerEpoch: strin
 export type WorkerOperation = BrowserEvaluationOperation
 
   | { operation: "init"; args: WorkerInit }
-  | { operation: "enableReconnect"; args: { socketPath: string; token: string; instanceId: string } }
+  | { operation: "enableReconnect"; args: { socketPath: string; token: string; instanceId: string; resetPolicy?: WorkerResetPolicyReconnect } }
+  /** Pauses new reset admission; ACK follows native callback and channel quiescence.
+   * Retains native resources and original settlement obligations until host drain. */
+  | { operation: "prepareResetPolicyRecovery" }
   | { operation: "generateCommit"; args: CommitGenerationInput }
   | { operation: "forkSession"; args: NativeSessionForkInput }
   | { operation: "getExportIntent"; args: { text: string } }
@@ -141,6 +145,10 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "dispose" };
 export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | ResetPolicyWireResponse
+  /** A recovered host owner is installed against the original binding; the child
+   * retransmits retained settlement requests but admits nothing new until resumed. */
+  | { type: "resetPolicyReconnect"; binding: WorkerResetPolicyReconnect }
+  | { type: "resetPolicyResume"; binding: WorkerResetPolicyReconnect }
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserResponse"; binding: BrowserEvaluationBinding; id: string; ok: boolean; value?: Record<string, unknown>; error?: RemoteError }
@@ -155,11 +163,15 @@ export type ChildMessage =
   | { type: "retainedBrowserFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
   | { type: "retainedBrowserRequest"; binding: BrowserEvaluationBinding; id: string; method: string; params: Record<string, unknown>; options?: { timeoutMs?: number } }
   | { type: "ready"; version: number }
-  | { type: "recovered"; version: number; pid: number; instanceId: string; snapshot?: SessionSnapshot }
+  | { type: "recovered"; version: number; pid: number; instanceId: string; snapshot?: SessionSnapshot; resetPolicy?: WorkerResetPolicyReconnect }
   | { type: "commitProgress"; id: string; message: string }
   | { type: "response"; id: string; phase?: "accepted" | "completion"; ok: boolean; value?: unknown; error?: RemoteError; forceToolReceipt?: ForceToolReceipt; evaluation?: { binding: BrowserEvaluationBinding; sequence: number }; snapshot?: SessionSnapshot }
   | { type: "event"; sequence: number; event: WorkerEvent; snapshot?: SessionSnapshot }
-  | { type: "fatal"; error: RemoteError };
+  | { type: "fatal"; error: RemoteError }
+  /** Sent only after every original native callback drained and every retained
+   * settlement RPC settled; the child is still admission-paused. */
+  | { type: "resetPolicyQuiescent"; binding: WorkerResetPolicyReconnect; snapshot: SessionSnapshot }
+  | { type: "resetPolicyResumed"; binding: WorkerResetPolicyReconnect; snapshot: SessionSnapshot };
 
 const MAX_REMOTE_ERROR_DETAILS = 16;
 const MAX_REMOTE_ERROR_DEPTH = 4;

@@ -4,6 +4,9 @@ import { SessionExportService } from "./session-export";
 import { SessionExportHttp } from "./session-export-http";
 import { SESSION_EXPORT_CAPABILITY } from "@agent-desktop/shared";
 import { SessionUsageService } from "./session-usage";
+import { ResetAccountAdmissions } from "./session-reset-admission";
+import { NativeResetPolicy } from "./native-reset-policy";
+import { NativeResetPolicyWorkerOwner } from "./omp-workers/reset-policy-owner";
 import { SessionUsageHttp, usageCommandHeaders } from "./session-usage-http";
 import { PlanExternalEditorHttp, type PlanExternalEditorHttpAction } from "./plan-external-editor-http";
 import { PlanExternalEditors } from "./plan-external-editors";
@@ -129,6 +132,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const environmentAbort = new AbortController();
   let store!: HostStore;
   let runtime!: WorkerRuntime;
+  let nativeResetPolicy: NativeResetPolicy | undefined;
   let draftBrowsers: DraftBrowserHttp | undefined;
   let browserObservations: BrowserObservationHttp | undefined;
   let browserHistory: BrowserHistoryHttp | undefined;
@@ -179,6 +183,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const temporary = join(dataDirectory, `connection.${process.pid}.tmp`);
   try {
   store = new HostStore(dataDirectory);
+  const resetAdmissions = new ResetAccountAdmissions(store);
+  nativeResetPolicy = new NativeResetPolicy({ store, admissions: resetAdmissions });
   const mutatingWorkspaces = new Set<string>();
   const within = (parent: string, path: string) => path === parent || path.startsWith(parent + sep);
   const reserveWorkspaceMutation = (path: string) => {
@@ -224,7 +230,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   }
   // Native postmortem allows 10s for this process's cleanup. Leave time to
   // settle command receipts and remove our locator after a stuck child exits.
-  runtime = new WorkerRuntime({ agentDir: options.agentDirectory, workerPath: options.workerPath, shutdownTimeoutMs: 5000, onWorkerFailure(failure) {
+  runtime = new WorkerRuntime({ agentDir: options.agentDirectory, workerPath: options.workerPath, shutdownTimeoutMs: 5000,
+    createResetPolicyOwner: context => new NativeResetPolicyWorkerOwner({ store, policy: nativeResetPolicy!, context }), onWorkerFailure(failure) {
     if (stopping || failure.browserOwnerId) return; // The draft registry owns these failures; they are not model discovery.
     if (failure.sessionId && store.getSession(failure.sessionId)) {
       updateSession(failure.sessionId, { status: "error", error: failure.message });
@@ -591,7 +598,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   const sessionTodosHttp = new SessionTodosHttp({ ...todosOwners, hostId: store.host.id,
     receipt: (sessionId, commandId) => projectTodoJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
   });
-  const sessionUsage = new SessionUsageService({ store, ordered, open: id => getHandle(id), commandActive: id => commands.has(id),
+  const sessionUsage = new SessionUsageService({ store, admissions: resetAdmissions, ordered, open: id => getHandle(id), commandActive: id => commands.has(id),
     existing: async id => stopping ? undefined : handles.get(id)?.catch(() => undefined),
     assertActive: () => { if (stopping) throw new Error("Host is stopping."); },
   });
@@ -1786,16 +1793,29 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     .finally(() => { modelsLoading = false; if (!stopping) publishState(); });
 
   let stopCall: Promise<void> | undefined;
+  let stopPreparation: Promise<{
+    configurationErrors: unknown[];
+    pullRequestsDrain?: Promise<void>; terminalCreationDrain?: Promise<void>; mcpOwnerDrain: Promise<void>;
+    browserCloseDrain?: Promise<void>; browserObservationDrain?: Promise<void>; browserHistoryDrain?: Promise<void>;
+    browserAutocompleteDrain?: Promise<void>; draftBrowserDrain?: Promise<void>;
+    planEditorDrain?: Promise<void>; todoEditorDrain?: Promise<void>;
+  }> | undefined;
+  let stopCleanup: Promise<unknown[]> | undefined;
+  let stopCompleted = false;
   function stop(): Promise<void> {
     if (stopCall) return stopCall;
-    stopping = true;
-    environmentAbort.abort();
-    goalContinuations?.stop();
-    questionDeliveries?.stop();
-    clearInterval(networkTimer);
-    server!.stop(true); tailServer?.stop(true);
-    stopCall = (async () => {
-      try {
+    if (stopCompleted) return Promise.resolve();
+    const attempt = Promise.withResolvers<void>();
+    stopCall = attempt.promise;
+    void (async () => {
+      if (!stopPreparation) stopPreparation = (async () => {
+        stopping = true;
+        nativeResetPolicy!.beginDispose();
+        environmentAbort.abort();
+        goalContinuations?.stop();
+        questionDeliveries?.stop();
+        clearInterval(networkTimer);
+        server!.stop(true); tailServer?.stop(true);
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
         const planEditorDrain = planExternalEditors?.dispose();
@@ -1822,42 +1842,64 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         // a native registry write midway through serialization.
         // Native acquisition has no abort API; graceful shutdown drains it.
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
-        // Start cancellation before waiting for requests that need those
-        // workers to settle. Discovery may be blocked on a native network read.
-        const outcomes = await Promise.allSettled([pullRequestsDrain, automations?.dispose(), runtime.dispose({preserveReconnect:true}), mcpOwnerDrain, networkCall, discovery, modelsRefresh, terminalCreationDrain, draftBrowserDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain, browserAutocompleteDrain,
+        return { configurationErrors: configurationOutcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []),
+          pullRequestsDrain, terminalCreationDrain, mcpOwnerDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain,
+          browserAutocompleteDrain, draftBrowserDrain, planEditorDrain, todoEditorDrain };
+      })();
+      const prepared = await stopPreparation;
+      // Start worker cancellation alongside drains that may themselves depend
+      // on discovery or session workers. The configuration writes above have
+      // already reached their terminal outcome.
+      const safeCall = runtime.dispose({preserveReconnect:true}).then(() => nativeResetPolicy!.drain());
+      stopCleanup ??= (async () => {
+        const outcomes = await Promise.allSettled([prepared.pullRequestsDrain, automations?.dispose(), prepared.mcpOwnerDrain, networkCall, discovery, modelsRefresh, prepared.terminalCreationDrain, prepared.draftBrowserDrain, prepared.browserCloseDrain, prepared.browserObservationDrain, prepared.browserHistoryDrain, prepared.browserAutocompleteDrain,
           accounts!.dispose(), terminals!.shutdown(), (async () => {
-            const editorOutcome = await Promise.allSettled([planEditorDrain, todoEditorDrain]);
+            const editorOutcome = await Promise.allSettled([prepared.planEditorDrain, prepared.todoEditorDrain]);
             const terminalOutcome = await Promise.allSettled([nativeTerminals?.shutdown()]);
             const errors = [...editorOutcome, ...terminalOutcome].flatMap(value => value.status === "rejected" ? [value.reason] : []);
             if (errors.length) throw new AggregateError(errors, "Plan editor and terminal cleanup failed.");
-          })(), settings!.dispose(), themeAssets!.dispose(),
-          theme!.dispose().finally(() => preferences!.dispose())]);
+          })(), settings!.dispose(), themeAssets!.dispose(), theme!.dispose().finally(() => preferences!.dispose())]);
         await Promise.allSettled([...commands.values(), ...executions.values()]);
-        const errors = [...configurationOutcomes,...outcomes].flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
-        if (errors.length) throw new AggregateError(errors, "Some host resources did not finish cleanup.");
-      } finally {
-        // Remove our locator while still owning the lease, so a successor's locator survives.
-        try { await rm(join(dataDirectory, "connection.json"), { force: true }); }
-        finally { store.close(); lease.release(); }
-      }
-    })();
-    return stopCall;
+        return [...prepared.configurationErrors, ...outcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : [])];
+      })();
+      const [safe, cleanupErrors] = await Promise.all([Promise.allSettled([safeCall]), stopCleanup]);
+      const safeErrors = safe.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+      if (safeErrors.length) throw new AggregateError([...safeErrors, ...cleanupErrors], "Native worker handoff did not finish safely.");
+      // Remove our locator while still owning the lease, so a successor's locator survives.
+      try { await rm(join(dataDirectory, "connection.json"), { force: true }); }
+      finally { store.close(); lease.release(); stopCompleted = true; }
+      if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Some host resources did not finish cleanup.");
+    })().then(attempt.resolve, error => {
+      if (!stopCompleted && stopCall === attempt.promise) stopCall = undefined;
+      attempt.reject(error);
+    });
+    return attempt.promise;
   }
   return { connection, store, snapshot, dispatch, stop };
   } catch (error) {
+    nativeResetPolicy?.beginDispose();
     environmentAbort.abort();
     goalContinuations?.stop();
     questionDeliveries?.stop();
     clearInterval(networkTimer);
     server?.stop(true); tailServer?.stop(true);
+    const cleanupErrors: unknown[] = [];
     try {
       terminalsHttp?.dispose(); nativeTerminalsHttp?.dispose();
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      await Promise.allSettled([todoExternalEditors?.dispose(), planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), runtime?.dispose(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
-      await themeAssets?.dispose(); await theme?.dispose(); await accounts?.dispose(); await preferences?.dispose(); await settings?.dispose(); await acquisitions?.dispose(); await integrations?.dispose();
+      const first = await Promise.allSettled([todoExternalEditors?.dispose(), planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), (async () => {
+        const nativeErrors: unknown[] = [];
+        try { await runtime?.dispose(); } catch (failure) { nativeErrors.push(failure); }
+        try { await nativeResetPolicy?.drain(); } catch (failure) { nativeErrors.push(failure); }
+        if (nativeErrors.length) throw new AggregateError(nativeErrors, "Native reset startup rollback did not drain cleanly.");
+      })(), browserCloseRequests?.dispose(), draftBrowsers?.dispose(), terminalCreationHttp?.dispose(), terminals?.shutdown(), nativeTerminals?.shutdown(), drainRepositoryWatchPeers(), workspaces?.shutdownRepositoryWatches()]);
+      cleanupErrors.push(...first.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []));
+      const second = await Promise.allSettled([themeAssets?.dispose(), theme?.dispose(), accounts?.dispose(), preferences?.dispose(), settings?.dispose(), acquisitions?.dispose(), integrations?.dispose()]);
+      cleanupErrors.push(...second.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []));
     }
+    catch (failure) { cleanupErrors.push(failure); }
     finally {
       try {
         store?.close();
@@ -1865,6 +1907,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (publishedConnection) await rm(join(dataDirectory, "connection.json"), { force: true });
       } finally { lease.release(); }
     }
+    if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], "Host startup failed and cleanup did not finish cleanly.", { cause: error });
     throw error;
   }
 }

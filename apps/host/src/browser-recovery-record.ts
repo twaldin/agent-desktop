@@ -1,5 +1,5 @@
 import { copyEvaluationBinding, evaluationKey, type BrowserEvaluationBinding } from "./omp-browser/evaluation-wire";
-import type { WorkerReconnectEndpoint } from "./omp-workers/reconnect-wire";
+import { copyWorkerReconnectEndpoint, type WorkerReconnectEndpoint } from "./omp-workers/reconnect-wire";
 
 export interface BrowserRecoveryRecord {
   version: 2;
@@ -26,5 +26,5 @@ export function parseBrowserRecoveryRecord(value: unknown): BrowserRecoveryRecor
     || !Number.isFinite(record.recordedAt)) throw new Error("Invalid browser recovery record.");
   const bindings = record.bindings.map(copyEvaluationBinding);
   if (new Set(bindings.map(evaluationKey)).size !== bindings.length) throw new Error("Invalid browser recovery bindings.");
-  return Object.freeze({ ...record, source: Object.freeze({ ...record.source }), destination: Object.freeze({ ...record.destination }), bindings: Object.freeze(bindings) });
+  return Object.freeze({ ...record, source: copyWorkerReconnectEndpoint(record.source), destination: copyWorkerReconnectEndpoint(record.destination), bindings: Object.freeze(bindings) });
 }

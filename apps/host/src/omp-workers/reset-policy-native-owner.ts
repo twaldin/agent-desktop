@@ -22,23 +22,37 @@ export interface NativeResetPassContext {
     evidence: Evidence<"admission">;
     beforeConsume(identity: ResetCreditConsumeIdentity): boolean;
   }>;
-  runDecision(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<NativeResetAnswer>): Promise<unknown>;
+  /** `signal` aborts only this decision's native select when the owner pauses
+   * or closes; the implementation must cancel that select, never other UI, and
+   * never substitute an answer. */
+  runDecision(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<NativeResetAnswer>, signal: AbortSignal): Promise<unknown>;
 }
 
-type Pass = { readonly native: ResetPass; readonly context: NativeResetPassContext };
+// `fenced` is permanent: a pass captured before a pause never regains authority,
+// even after resume; only its complete/finished settlements still flow.
+type Pass = { readonly native: ResetPass; readonly context: NativeResetPassContext; readonly decisions: Set<AbortController>; fenced: boolean };
 type IssuedPermit = { readonly pass: Pass; readonly wire: Omit<ResetPermit, "beforeConsume">; completing: boolean };
 type Attempt<T = undefined> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
 const MAX_PASSES = 128;
+const FENCED = "Reset pass authority was fenced by pause";
 
 /** Connects the native awaited callbacks to the original worker's private
  * channel. Evidence capture and the synchronous native consume guard remain
- * child-local; no callback or credential object is serialized. */
+ * child-local; no callback or credential object is serialized.
+ *
+ * `pause` is reversible recovery fencing: no new capture, and every existing
+ * pass permanently loses further authority (planning, decisions, admission,
+ * consume guards), while its original complete/finished settlements still
+ * reach the original owner and its context is disposed only by `finished`.
+ * `resume` reopens capture once no original pass remains. `beginClose`/`finish`
+ * stay the terminal teardown. */
 export class NativeResetChannelOwner implements CodexResetPolicyOwner {
   readonly #passes = new Map<string, Pass>();
   readonly #capturing = new Set<string>();
   readonly #permits = new WeakMap<ResetPermit, IssuedPermit>();
   readonly #errors: unknown[] = [];
   #errorCount = 0;
+  #paused = false;
   #closing = false;
   #finished: Promise<void> | undefined;
 
@@ -51,6 +65,13 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
     return current;
   }
 
+  /** Re-checked after every await: a pause during the await revokes what the
+   * original pass may do next, whatever an in-flight reply says. */
+  #assertAuthority(pass: Pass): void {
+    if (pass.fenced) throw new Error(FENCED);
+    pass.context.assertCurrent();
+  }
+
   #remember(error: unknown): void {
     this.#errorCount = Math.min(Number.MAX_SAFE_INTEGER, this.#errorCount + 1);
     if (this.#errors.length < MAX_PASSES) this.#errors.push(error);
@@ -61,15 +82,20 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
     catch (error) { this.#remember(error); return { ok: false, error }; }
   }
 
+  /** Cancels only this pass's registered native selects; no other UI is touched. */
+  #cancelDecisions(pass: Pass): void {
+    for (const decision of pass.decisions) decision.abort(new Error("Reset decision was cancelled by the owner"));
+  }
+
   #capture(native: ResetPass): Pass {
     let context: NativeResetPassContext | undefined;
     try {
       context = this.capture(native);
       context.assertCurrent();
-      // Capture is synchronous but may re-enter close or another capture.
-      if (this.#closing || this.#passes.has(native.passId)
+      // Capture is synchronous but may re-enter close, pause or another capture.
+      if (this.#closing || this.#paused || this.#passes.has(native.passId)
         || this.#passes.size + this.#capturing.size > MAX_PASSES) throw new Error("Reset pass capture is unavailable");
-      const pass = { native: structuredClone(native), context };
+      const pass: Pass = { native: structuredClone(native), context, decisions: new Set(), fenced: false };
       this.#passes.set(native.passId, pass);
       return pass;
     } catch (error) {
@@ -84,21 +110,27 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
     const native = "pass" in event ? event.pass : event.snapshot.pass;
     let pass: Pass;
     if (event.phase === "started" || event.phase === "joined") {
-      if (this.#closing || this.#passes.has(native.passId) || this.#capturing.has(native.passId)
+      if (this.#closing || this.#paused || this.#passes.has(native.passId) || this.#capturing.has(native.passId)
         || this.#passes.size + this.#capturing.size >= MAX_PASSES) throw new Error("Reset pass capture is unavailable");
       this.#capturing.add(native.passId);
       try {
         pass = this.#capture(native);
       } finally { this.#capturing.delete(native.passId); }
     } else pass = this.#original(native);
+    // Phases whose success authorizes native's next step. A defined answer
+    // authorizes the Settings write; "no answer", persistence proof and the
+    // final settlement only record what already happened.
+    const authority = event.phase === "started" || event.phase === "joined" || event.phase === "planned"
+      || (event.phase === "answer" && event.answer !== undefined);
     let evidence: ResetPolicyWireEvidence | undefined;
     let failure: Attempt = { ok: true, value: undefined };
     try {
+      if (authority && pass.fenced) throw new Error(FENCED);
       if (event.phase === "started" || event.phase === "joined") evidence = pass.context.source;
       else if (event.phase === "planned") {
         pass.context.assertCurrent();
         evidence = await pass.context.plan(event.snapshot);
-        pass.context.assertCurrent();
+        this.#assertAuthority(pass);
       } else if (event.phase === "setting-written") {
         // The native Settings.set has already happened. A failed proof must be
         // recorded as failed, not replaced with another write or inferred Yes.
@@ -113,6 +145,9 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
         }
       }
       await this.channel.request(native.nativeSessionId, native.passId, { kind: "checkpoint", event }, evidence);
+      // A reply landing after a pause settles the journal but grants nothing:
+      // a pre-pause "Yes" must never turn into a fresh Settings write.
+      if (authority && pass.fenced) throw new Error(FENCED);
     } catch (error) {
       failure = { ok: false, error };
       this.#remember(error);
@@ -132,32 +167,43 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
 
   async presentDecision(snapshot: ResetPlanSnapshot, selectNative: () => Promise<NativeResetAnswer>): Promise<void> {
     const pass = this.#original(snapshot.pass);
-    pass.context.assertCurrent();
-    const prepared = await this.channel.request(pass.native.nativeSessionId, pass.native.passId, { kind: "decision.prepare", snapshot });
-    if (prepared.kind !== "decision.prepared") throw new Error("Reset decision was not prepared");
-    pass.context.assertCurrent();
-    await pass.context.runDecision(async interactionId => {
-      pass.context.assertCurrent();
-      await this.channel.request(pass.native.nativeSessionId, pass.native.passId,
-        { kind: "decision.bind", decisionId: prepared.decisionId, interactionId });
-      pass.context.assertCurrent();
-    }, selectNative);
+    this.#assertAuthority(pass);
+    // Registered before the asynchronous prepare so a pause or close during
+    // any await cancels exactly this native select and nothing else.
+    const decision = new AbortController();
+    pass.decisions.add(decision);
+    try {
+      const prepared = await this.channel.request(pass.native.nativeSessionId, pass.native.passId, { kind: "decision.prepare", snapshot });
+      if (prepared.kind !== "decision.prepared") throw new Error("Reset decision was not prepared");
+      this.#assertAuthority(pass);
+      await pass.context.runDecision(async interactionId => {
+        this.#assertAuthority(pass);
+        await this.channel.request(pass.native.nativeSessionId, pass.native.passId,
+          { kind: "decision.bind", decisionId: prepared.decisionId, interactionId });
+        this.#assertAuthority(pass);
+      }, selectNative, decision.signal);
+    } finally { pass.decisions.delete(decision); }
   }
 
   async admit(snapshot: ResetPlanSnapshot, actionIndex: number): Promise<ResetAdmission> {
     const pass = this.#original(snapshot.pass);
-    pass.context.assertCurrent();
+    this.#assertAuthority(pass);
     const captured = await pass.context.admission(snapshot, actionIndex);
-    pass.context.assertCurrent();
+    // No durable admission is requested for a pass fenced during evidence capture.
+    this.#assertAuthority(pass);
     const reply = await this.channel.request(pass.native.nativeSessionId, pass.native.passId,
       { kind: "admit", snapshot, actionIndex }, captured.evidence);
     if (reply.kind === "admission.hold") return { kind: "hold", reason: reply.reason };
     if (reply.kind === "admission.join") {
-      const settled = this.channel.request(pass.native.nativeSessionId, pass.native.passId, { kind: "join", joinId: reply.joinId })
-        .then(result => {
-          if (result.kind !== "joined") throw new Error("Reset join returned no native observation");
-          return result.observation;
-        });
+      // A join admitted for a since-fenced pass is not followed, even if the
+      // channel has been resumed for new passes by now.
+      const settled = pass.fenced
+        ? Promise.reject<ResetObservation>(new Error(FENCED))
+        : this.channel.request(pass.native.nativeSessionId, pass.native.passId, { kind: "join", joinId: reply.joinId })
+          .then(result => {
+            if (result.kind !== "joined") throw new Error("Reset join returned no native observation");
+            return result.observation;
+          });
       // Observe immediately; native may wait for another callback before joining.
       void settled.catch(() => {});
       return { kind: "join", attemptId: reply.attemptId, settled };
@@ -170,7 +216,7 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
       checked = true;
       try {
         pass.context.assertCurrent();
-        return !this.#closing && identity.provider === "openai-codex"
+        return !this.#closing && !pass.fenced && identity.provider === "openai-codex"
           && identity.credentialId === wire.target.credentialId && identity.creditId === wire.creditId
           && wire.target.credentialId === captured.evidence.account.credentialId
           && wire.creditId === captured.evidence.credit.id
@@ -182,9 +228,9 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
           && captured.beforeConsume(identity);
       } catch { return false; }
     } });
-    // Even if ownership changed during admission, return the original permit
-    // with a refusing guard. Native then reports the real no-consume outcome;
-    // throwing here would strand an already durable host admission.
+    // Even if ownership changed or a pause landed during admission, return the
+    // original permit with a refusing guard. Native then reports the real
+    // no-consume outcome; throwing here would strand an already durable host admission.
     this.#permits.set(permit, { pass, wire, completing: false });
     return { kind: "execute", permit };
   }
@@ -203,7 +249,31 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
       { kind: "complete", permit: issued.wire, observation: safe });
   }
 
-  beginClose(): void { this.#closing = true; this.channel.beginClose(); }
+  /** Reversible recovery fence: no new capture; every original pass permanently
+   * loses further authority and its pending native select is cancelled. Native
+   * sessions, contexts and the shared channel are left intact for settlement. */
+  pause(): void {
+    this.#paused = true;
+    for (const pass of this.#passes.values()) {
+      pass.fenced = true;
+      this.#cancelDecisions(pass);
+    }
+    this.channel.pause();
+  }
+
+  /** Reopens capture for genuinely new passes. The shared channel is resumed
+   * separately by its owner once every owner on it has quiesced. */
+  resume(): void {
+    if (this.#closing) throw new Error("Native reset owner is closing");
+    if (this.#passes.size || this.#capturing.size) throw new Error("Native reset owner still holds original passes");
+    this.#paused = false;
+  }
+
+  beginClose(): void {
+    this.#closing = true;
+    for (const pass of this.#passes.values()) this.#cancelDecisions(pass);
+    this.channel.beginClose();
+  }
   /** Call only after native callbacks have drained, never before their final checkpoints. */
   finish(): Promise<void> {
     this.#closing = true;

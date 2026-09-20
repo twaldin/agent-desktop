@@ -33,7 +33,7 @@ import { WORKER_PROTOCOL_VERSION, remoteError, type ChildMessage, type ParentMes
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
-import { connectWorkerEndpoint, type WorkerReconnectEndpoint } from "./reconnect-wire";
+import { connectWorkerEndpoint, copyWorkerReconnectEndpoint, parseWorkerResetPolicyReconnect, sameWorkerResetPolicyReconnect, type WorkerReconnectEndpoint, type WorkerResetPolicyReconnect } from "./reconnect-wire";
 import { ResetPolicyHostChannel } from "./reset-policy-channel";
 import { parseResetPolicyWireRequest, type ResetPolicyWireRequest, type ResetPolicyWireResult } from "./reset-policy-wire";
 
@@ -130,7 +130,7 @@ export interface WorkerRuntimeOptions {
    * Omitted inherits native CLI/provider/profile configuration unchanged. */
   environment?: Record<string, string | undefined>;
   onWorkerFailure?: (failure: WorkerFailure) => void;
-  createResetPolicyOwner?: (context: Readonly<{ workerEpoch: string; workerPid: number; snapshot: SessionSnapshot }>) => WorkerResetPolicyOwner;
+  createResetPolicyOwner?: (context: Readonly<{ workerEpoch: string; workerPid: number; snapshot: SessionSnapshot; recovered?: true }>) => WorkerResetPolicyOwner;
 }
 
 export interface WorkerResetPolicyOwner {
@@ -165,6 +165,7 @@ export class WorkerClient {
   #ready = Promise.withResolvers<void>();
   #pending = new Map<string, Pending>();
   #requestId = 0;
+  #requestPrefix = "";
   #disposeId?: string;
   #disposeAcknowledged = false;
   #requireDisposeAcknowledgement = false;
@@ -186,6 +187,11 @@ export class WorkerClient {
   #resetPolicyChannelDrain?: Promise<void>;
   #resetPolicyOwnerDrain?: Promise<void>;
   #resetPolicyErrors: unknown[] = [];
+  #recoveryState?: "authenticating" | "reconciling" | "resuming" | "active";
+  #exitWatch?: ReturnType<typeof setInterval>;
+  #detached = false;
+  #detachCall?: Promise<void>;
+  #handoffStarted = false;
   snapshot?: SessionSnapshot;
   failure?: WorkerFailure;
 
@@ -194,13 +200,22 @@ export class WorkerClient {
     this.#options = options;
     if (options.onWorkerFailure) this.#failures.add(options.onWorkerFailure);
     if (recover) {
-      this.#pid = recover.pid; this.#reconnectEndpoint = recover;
+      this.#pid = recover.pid; this.#reconnectEndpoint = copyWorkerReconnectEndpoint(recover);
+      // RPC correlation is connection-local; the reset worker epoch is not.
+      // Late original replies must never satisfy this host's new requests.
+      this.#requestPrefix = `${crypto.randomUUID()}:`;
+      this.#resetPolicyExpectedEpoch = this.#reconnectEndpoint.resetPolicy?.workerEpoch;
+      this.#recoveryState = "authenticating";
       this.#holdRetained = true;
       this.#readyDeadline = setTimeout(() => this.#fail("OMP worker reconnect timed out", recover.pid), options.startupTimeoutMs ?? 30_000);
-      void connectWorkerEndpoint(recover, value => this.#receive(value), error => {
-        this.#closed.resolve({});
-        if (!this.#closing) this.#fail("OMP worker reconnect transport closed", recover.pid);
+      void connectWorkerEndpoint(this.#reconnectEndpoint, value => this.#receive(value), () => {
+        // Socket loss proves nothing about the original process lifetime.
+        if (!this.#detached) {
+          this.#resetPolicyWorkerLost();
+          this.#fail("OMP worker reconnect transport closed", recover.pid);
+        }
       }).then(socket => {
+        if (this.#detached || this.failure) { socket.close(); return; }
         this.#socket = socket;
         for(const message of this.#socketOutbox.splice(0))socket.send(message);
       }, error => this.#fail(`OMP worker reconnect failed: ${error instanceof Error ? error.message : String(error)}`, recover.pid));
@@ -233,6 +248,7 @@ export class WorkerClient {
         serialization: "advanced",
         ipc: (message: unknown) => this.#receive(message),
         onExit: (child, exitCode, signalCode) => {
+          if (this.#detached) return;
           this.#resetPolicyWorkerExited();
           this.#closed.resolve({ exitCode, signalCode });
           clearTimeout(this.#readyDeadline);
@@ -242,9 +258,13 @@ export class WorkerClient {
             : `OMP worker exited before disposal acknowledgement (code ${exitCode ?? "unknown"}, signal ${signalCode ?? "none"})`));
         },
         onDisconnect: () => {
-          // Exit notification normally follows immediately. A process that
-          // disconnected without exiting must not keep owning its session.
-          if (!this.#closing) this.#resetPolicyWorkerLost();
+          if (this.#detached) return;
+          // The original process can survive IPC loss behind its endpoint.
+          // Fence admissions now; only onExit confirms its lifetime ended.
+          if (!this.#closing) {
+            this.#resetPolicyWorkerLost();
+            if (this.#reconnectEndpoint) this.#fail("OMP worker IPC disconnected");
+          }
           const check = setTimeout(() => {
             if (!this.#closing && !this.failure && !this.#reconnectEndpoint) {
               this.#fail("OMP worker IPC disconnected");
@@ -272,17 +292,41 @@ export class WorkerClient {
   }
 
   attachResetPolicyOwner(snapshot: SessionSnapshot,
-    factory: NonNullable<WorkerRuntimeOptions["createResetPolicyOwner"]>): void {
+    factory: NonNullable<WorkerRuntimeOptions["createResetPolicyOwner"]>, recovered = false): void {
     const workerEpoch = this.#resetPolicyExpectedEpoch;
     if (!workerEpoch || this.#resetPolicyOwner || this.#resetPolicyChannel)
       throw new Error("Reset-policy worker ownership is not awaiting activation");
-    const owner = factory(Object.freeze({ workerEpoch, workerPid: this.pid, snapshot }));
+    const owner = factory(Object.freeze({ workerEpoch, workerPid: this.pid, snapshot: structuredClone(snapshot),
+      ...(recovered ? { recovered: true as const } : {}) }));
     if (!owner || typeof owner.handle !== "function" || typeof owner.beginClose !== "function"
       || typeof owner.workerLost !== "function" || typeof owner.workerExited !== "function" || typeof owner.drain !== "function")
       throw new Error("Reset-policy owner factory returned an invalid owner");
     this.#resetPolicyOwner = owner;
     this.#resetPolicyChannel = new ResetPolicyHostChannel({ workerEpoch, rootSessionId: snapshot.id },
       request => owner.handle(request), response => this.#send(response));
+  }
+
+  #assertRecoveredSnapshot(binding: WorkerResetPolicyReconnect, snapshot: SessionSnapshot | undefined): asserts snapshot is SessionSnapshot {
+    if (!snapshot || snapshot.id !== binding.rootSessionId || snapshot.cwd !== binding.cwd
+      || snapshot.sessionFile !== binding.sessionFile || !Number.isSafeInteger(snapshot.revision))
+      throw new Error("Original reset-policy worker snapshot changed.");
+  }
+
+  #watchRecoveredExit(): void {
+    if (this.#exitWatch) return;
+    this.#exitWatch = setInterval(() => {
+      try { process.kill(this.pid, 0); }
+      catch (error) {
+        // EPERM and a live/reused PID are not proof of original-worker exit.
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") return;
+        clearInterval(this.#exitWatch);
+        this.#exitWatch = undefined;
+        this.#resetPolicyWorkerExited();
+        this.#closed.resolve({});
+        if (!this.#closing) this.#fail("Original recovered OMP worker exited", this.pid);
+      }
+    }, 100);
+    this.#exitWatch.unref();
   }
 
   #beginResetPolicyClose(): void {
@@ -319,7 +363,13 @@ export class WorkerClient {
   async #drainResetPolicy(): Promise<void> {
     if (!this.#resetPolicyOwner) return;
     this.#sealResetPolicyChannel();
-    this.#resetPolicyOwnerDrain ??= Promise.resolve().then(() => this.#resetPolicyOwner!.drain());
+    if (!this.#resetPolicyOwnerDrain) {
+      const pending = Promise.resolve().then(() => this.#resetPolicyOwner!.drain());
+      this.#resetPolicyOwnerDrain = pending;
+      // Retrying a drain rechecks the same durable owner; it does not clear the
+      // owner's or channel's retained accounting errors.
+      void pending.catch(() => { if (this.#resetPolicyOwnerDrain === pending) this.#resetPolicyOwnerDrain = undefined; });
+    }
     const results = await Promise.allSettled([
       this.#resetPolicyExited ?? Promise.resolve(),
       this.#resetPolicyChannelDrain ?? Promise.resolve(),
@@ -330,7 +380,7 @@ export class WorkerClient {
     if (errors.length) throw new AggregateError(errors, "OMP worker reset-policy ownership did not drain cleanly");
   }
 
-  #rejectPending(error: unknown): void {
+  #rejectPending(error: unknown, preserveResources = false): void {
     this.#ready.reject(error);
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
@@ -338,11 +388,13 @@ export class WorkerClient {
     }
     this.#pending.clear();
     // Terminal channel loss remains visible even during an intentional worker close.
-    for (const route of [...this.#evaluationRoutes.values()]) {
-      try { route.lost(error); } catch { /* The original process is already lost. */ }
+    if (!preserveResources) {
+      for (const route of [...this.#evaluationRoutes.values()]) {
+        try { route.lost(error); } catch { /* The original process is already lost. */ }
+      }
+      for (const record of this.#retainedEvaluations.values()) void record.evaluation.dispose().catch(() => {});
     }
     this.#evaluationRoutes.clear();
-    for (const record of this.#retainedEvaluations.values()) void record.evaluation.dispose().catch(() => {});
     this.#retainedEvaluations.clear();
   }
 
@@ -362,8 +414,8 @@ export class WorkerClient {
     if (!this.#resetPolicyExited) this.#resetPolicyWorkerLost();
     clearTimeout(this.#readyDeadline);
     this.failure = { type: "worker_failure", message, pid, sessionId: this.snapshot?.id, exitCode, signalCode };
-    if (this.snapshot) this.snapshot = { ...this.snapshot, isStreaming: false, hasPostPromptWork: false };
-    this.#rejectPending(new WorkerFailureError(this.failure));
+    if (this.snapshot && !this.#reconnectEndpoint) this.snapshot = { ...this.snapshot, isStreaming: false, hasPostPromptWork: false };
+    this.#rejectPending(new WorkerFailureError(this.failure), !!this.#reconnectEndpoint);
     for (const listener of this.#failures) {
       try { listener(this.failure); }
       catch { console.error("OMP worker failure observer threw an exception"); }
@@ -373,11 +425,17 @@ export class WorkerClient {
   #receive(value: unknown): void {
     if (!value || typeof value !== "object" || !("type" in value)) return;
     const message = value as ChildMessage;
+    if (this.#detached) return;
+    if (this.#recoveryState === "authenticating" && message.type !== "recovered") {
+      this.#fail("OMP worker sent traffic before its authenticated reconnect identity");
+      this.#socket?.close();
+      return;
+    }
     if (message.type === "resetPolicyRequest") {
       if (this.#resetPolicyChannel) {
         void this.#resetPolicyChannel.receive(message).catch(error => {
           this.#fail(`The host could not consume a reset-policy request: ${error instanceof Error ? error.message : String(error)}`);
-          this.#process?.kill("SIGKILL");
+          if (!this.#reconnectEndpoint) this.#process?.kill("SIGKILL");
         });
       } else {
         try {
@@ -386,7 +444,7 @@ export class WorkerClient {
             response: { ok: false, error: { name: "Error", message: "Reset-policy owner is unavailable" } } });
         } catch (error) {
           this.#fail(`The host could not refuse an unavailable reset-policy request: ${error instanceof Error ? error.message : String(error)}`);
-          this.#process?.kill("SIGKILL");
+          if (!this.#reconnectEndpoint) this.#process?.kill("SIGKILL");
         }
       }
       return;
@@ -403,9 +461,56 @@ export class WorkerClient {
       return;
     }
     if (message.type === "recovered") {
-      if (message.version !== WORKER_PROTOCOL_VERSION || message.pid !== this.pid
-        || message.instanceId !== this.#reconnectEndpoint?.instanceId) this.#fail("OMP worker reconnect identity changed", this.pid);
-      else { this.snapshot = message.snapshot; clearTimeout(this.#readyDeadline); this.#ready.resolve(); }
+      try {
+        if (this.#recoveryState !== "authenticating" || message.version !== WORKER_PROTOCOL_VERSION
+          || message.pid !== this.pid || message.instanceId !== this.#reconnectEndpoint?.instanceId)
+          throw new Error("OMP worker reconnect identity changed");
+        const binding = this.#reconnectEndpoint.resetPolicy;
+        if ((binding === undefined) !== (message.resetPolicy === undefined)
+          || (binding && !sameWorkerResetPolicyReconnect(binding, parseWorkerResetPolicyReconnect(message.resetPolicy))))
+          throw new Error("OMP worker reset-policy reconnect binding changed");
+        if (binding) {
+          this.#assertRecoveredSnapshot(binding, message.snapshot);
+          if (!this.#options.createResetPolicyOwner) throw new Error("Original reset-policy recovery owner is unavailable");
+          // Synchronous installation precedes every queued reset frame. Neither
+          // the packet nor a global registry chooses this client's authority.
+          this.attachResetPolicyOwner(message.snapshot, this.#options.createResetPolicyOwner, true);
+          this.#recoveryState = "reconciling";
+          this.#send({ type: "resetPolicyReconnect", binding });
+        } else {
+          this.#recoveryState = "active";
+          this.#ready.resolve();
+        }
+        this.snapshot = message.snapshot;
+        clearTimeout(this.#readyDeadline);
+        this.#watchRecoveredExit();
+      } catch (error) {
+        this.#fail(error instanceof Error ? error.message : String(error));
+        this.#socket?.close();
+      }
+      return;
+    }
+    if (message.type === "resetPolicyQuiescent" || message.type === "resetPolicyResumed") {
+      try {
+        const binding = this.#reconnectEndpoint?.resetPolicy;
+        if (!binding || !sameWorkerResetPolicyReconnect(binding, parseWorkerResetPolicyReconnect(message.binding)))
+          throw new Error("Reset-policy recovery acknowledgement changed its original binding");
+        this.#assertRecoveredSnapshot(binding, message.snapshot);
+        if (message.snapshot.isStreaming || message.snapshot.hasPostPromptWork)
+          throw Object.assign(new Error("The retained browser session still has native work in flight. Inspect its original outcome before reopening."), { code: "OUTCOME_UNKNOWN" });
+        this.snapshot = message.snapshot;
+        if (message.type === "resetPolicyQuiescent") {
+          if (this.#recoveryState !== "reconciling") throw new Error("Unsolicited reset-policy quiescence");
+          this.#recoveryState = "resuming";
+          void this.#resetPolicyOwner!.drain().then(() => {
+            this.#send({ type: "resetPolicyResume", binding });
+          }).catch(error => this.#fail(`Original reset-policy reconciliation failed: ${String(error)}`));
+        } else {
+          if (this.#recoveryState !== "resuming") throw new Error("Unsolicited reset-policy resume");
+          this.#recoveryState = "active";
+          this.#ready.resolve();
+        }
+      } catch (error) { this.#fail(error instanceof Error ? error.message : String(error)); }
       return;
     }
     if (message.type === "fatal") {
@@ -536,18 +641,28 @@ export class WorkerClient {
   }
 
   async enableReconnect(socketPath: string, token: string, instanceId: string): Promise<WorkerReconnectEndpoint> {
-    const endpoint = await this.request<WorkerReconnectEndpoint>({ operation: "enableReconnect", args: { socketPath, token, instanceId } }, 15_000);
+    const resetPolicy = this.#resetPolicyExpectedEpoch && this.snapshot
+      ? parseWorkerResetPolicyReconnect({ workerEpoch: this.#resetPolicyExpectedEpoch, rootSessionId: this.snapshot.id,
+        sessionFile: this.snapshot.sessionFile, cwd: this.snapshot.cwd }) : undefined;
+    const endpoint = await this.request<WorkerReconnectEndpoint>({ operation: "enableReconnect",
+      args: { socketPath, token, instanceId, ...(resetPolicy ? { resetPolicy } : {}) } }, 15_000);
     if (endpoint.version !== 1 || endpoint.pid !== this.pid || !endpoint.instanceId
       || endpoint.socketPath !== socketPath || endpoint.token !== token || endpoint.instanceId !== instanceId)
       throw new Error("OMP worker reconnect endpoint changed during admission.");
-    this.#reconnectEndpoint = Object.freeze({ ...endpoint });
+    if ((resetPolicy === undefined) !== (endpoint.resetPolicy === undefined)
+      || (resetPolicy && !sameWorkerResetPolicyReconnect(resetPolicy, parseWorkerResetPolicyReconnect(endpoint.resetPolicy))))
+      throw new Error("OMP worker reset-policy endpoint changed during admission.");
+    this.#reconnectEndpoint = copyWorkerReconnectEndpoint(endpoint);
     return this.#reconnectEndpoint;
   }
 
   static async recover(options: WorkerRuntimeOptions, endpoint: WorkerReconnectEndpoint): Promise<WorkerClient> {
     const client = new WorkerClient(options, undefined, undefined, endpoint);
-    await client.#ready.promise;
-    return client;
+    try { await client.#ready.promise; return client; }
+    catch (error) {
+      await client.abandonRecoveryAttempt();
+      throw error;
+    }
   }
 
   #promise<T>(key: string, timeoutMs?: number, uncertainTransport?: Pending["uncertainTransport"], evaluationDisposal = false): Promise<T> {
@@ -570,7 +685,8 @@ export class WorkerClient {
     await this.#ready.promise;
     if (this.failure) throw new WorkerFailureError(this.failure);
     const evaluationDisposal = operation.operation === "disposeBrowserEvaluation";
-    if (this.#closing && operation.operation !== "dispose" && !evaluationDisposal) throw new Error("OMP worker is closing");
+    if (this.#closing && operation.operation !== "dispose" && operation.operation !== "prepareResetPolicyRecovery" && !evaluationDisposal)
+      throw new Error("OMP worker is closing");
     let evaluationDisposalKey: string | undefined;
     if (evaluationDisposal) {
       if (operation.args.binding.workerPid !== this.pid) throw new Error("Browser evaluation disposal belongs to a different worker.");
@@ -582,7 +698,7 @@ export class WorkerClient {
     const evaluation = operation.operation === "requestBrowserEvaluation"
       ? { binding: copyEvaluationBinding(operation.args.binding), sequence: operation.args.sequence } : undefined;
     if (evaluation && (evaluation.binding.workerPid !== this.pid || !Number.isSafeInteger(evaluation.sequence) || evaluation.sequence < 1)) throw new Error("Invalid original cmux request identity.");
-    const id = String(++this.#requestId);
+    const id = `${this.#requestPrefix}${++this.#requestId}`;
     if (operation.operation === "dispose") {
       if (this.#disposeId) throw new Error("OMP worker disposal has already been requested");
       this.#disposeId = id;
@@ -677,7 +793,7 @@ export class WorkerClient {
     if (!phaseId || phaseId.length > 200 || phaseId.includes("\0")) throw new Error("Invalid native Plan execution phase.");
     if (this.failure) throw new WorkerFailureError(this.failure);
     if (this.#closing || this.#pending.size > 125) throw new Error("The original Plan worker cannot admit another request.");
-    const id = String(++this.#requestId);
+    const id = `${this.#requestPrefix}${++this.#requestId}`;
     const accepted = this.#promise<Awaited<OmpPlanExecutionRun["accepted"]>>(`${id}:accepted`, undefined, "prompt-admission").then(value => {
       if (value !== null && (!value || !(value.kind === "native-plan-message" || value.kind === "native-plan-command") || typeof value.entryId !== "string" || !value.entryId || value.entryId.length > 200))
         throw new OmpPromptAdmissionError(new Error("Invalid native Plan message receipt."));
@@ -709,7 +825,7 @@ export class WorkerClient {
     if (forceOperation && (commandId === undefined || options?.commandVersion !== 18))
       throw new Error("Force-tool prompt admission requires command version 18 and its original command identity.");
     const preparedOptions = options ? { ...options, ...forceFields, ...(commandId === undefined ? {} : { commandId }), images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles, text.length) } : undefined;
-    const id = String(++this.#requestId);
+    const id = `${this.#requestPrefix}${++this.#requestId}`;
     let forceToolReceipt: ForceToolReceipt | undefined;
     const acceptedKey = `${id}:accepted`;
     const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(acceptedKey, undefined, Boolean(preparedOptions?.forceTool || preparedOptions?.forceRecovery || preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length || preparedOptions?.wholeFiles?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
@@ -736,7 +852,7 @@ export class WorkerClient {
     if (this.#closing) throw new Error("OMP worker is closing");
     if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
     const prepared = copyPreparedImages(images);
-    const id = String(++this.#requestId);
+    const id = `${this.#requestPrefix}${++this.#requestId}`;
     const accepted = this.#promise<{ kind: "queued"; delivery: import("@agent-desktop/shared").FollowUpDelivery }>(`${id}:accepted`, undefined, "queued-submission");
     const completion = this.#promise<import("../omp/steer").OmpSteerReceipt>(`${id}:completion`);
     try { this.#send({ type: "request", id, operation: "startFollowUp", args: { text, delivery, expectedApprovalMode, ...(prepared === undefined ? {} : { images: prepared }) } }); }
@@ -753,7 +869,7 @@ export class WorkerClient {
     if (this.failure) throw new WorkerFailureError(this.failure);
     if (this.#closing) throw new Error("OMP worker is closing");
     if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
-    const id = String(++this.#requestId);
+    const id = `${this.#requestPrefix}${++this.#requestId}`;
     const accepted = this.#promise<Awaited<OmpGoalContinuationRun["accepted"]>>(`${id}:accepted`, undefined, "prompt-admission");
     const completion = this.#promise<Awaited<OmpGoalContinuationRun["completion"]>>(`${id}:completion`);
     try { this.#send({ type: "request", id, operation: "startGoalContinuation", args: { expectedGoalId } }); }
@@ -771,7 +887,7 @@ export class WorkerClient {
     if (this.failure) throw new WorkerFailureError(this.failure);
     if (this.#closing) throw new Error("OMP worker is closing");
     if (this.#pending.size > 125) throw new Error("OMP worker request limit reached");
-    const id = String(++this.#requestId);
+    const id = `${this.#requestPrefix}${++this.#requestId}`;
     const accepted = this.#promise<DetachedQuestionDeliveryReceipt>(`${id}:accepted`, undefined, "prompt-admission");
     const completion = this.#promise<boolean>(`${id}:completion`);
     try { this.#send({ type: "request", id, operation: "startQuestionDelivery", args: { questionId } }); }
@@ -806,12 +922,21 @@ export class WorkerClient {
       const shutdownTimeoutMs = this.#resetPolicyOwner
         ? Math.max(this.#options.shutdownTimeoutMs ?? 15_000, 30_000)
         : this.#options.shutdownTimeoutMs ?? 15_000;
-      const deadline = setTimeout(() => { if (this.#process) this.#process.kill("SIGKILL"); else { try { process.kill(this.pid, "SIGKILL"); } catch {} } }, shutdownTimeoutMs);
+      const expired = Promise.withResolvers<never>();
+      void expired.promise.catch(() => {});
+      const deadline = setTimeout(() => {
+        this.#process?.kill("SIGKILL");
+        expired.reject(new Error("Original worker disposal did not confirm process exit."));
+      }, shutdownTimeoutMs);
       try {
         if (!this.failure && (!this.#process || this.#process.exitCode === null)) {
-          await this.request({ operation: "dispose" }, shutdownTimeoutMs);
+          try { await this.request({ operation: "dispose" }, shutdownTimeoutMs); }
+          catch (error) { errors.push(error); }
         }
-        const closed = this.#process ? { exitCode: await this.#process.exited, signalCode: this.#process.signalCode } : await this.#closed.promise;
+        const closed = await Promise.race([
+          this.#process ? this.#process.exited.then(exitCode => ({ exitCode, signalCode: this.#process?.signalCode })) : this.#closed.promise,
+          expired.promise,
+        ]);
         if (this.#process) this.#resetPolicyWorkerExited();
         const exitCode = closed.exitCode;
         if (this.#requireDisposeAcknowledgement && !this.#disposeAcknowledged) {
@@ -824,6 +949,7 @@ export class WorkerClient {
         errors.push(error);
       } finally {
         clearTimeout(deadline);
+        clearInterval(this.#exitWatch);
         // Failed startup/disposal must not orphan a file-owning child.
         if (this.#process?.exitCode === null) {
           this.#process.kill("SIGKILL");
@@ -840,30 +966,44 @@ export class WorkerClient {
     return this.#closeCall;
   }
 
-  /** Drops only this host process's transport ownership. The promoted native
-   * worker and browser channels remain alive behind their exact endpoint. */
-  detachForRecovery():void{
-    if(!this.#reconnectEndpoint)throw new Error("OMP worker has no recovery endpoint");
-    if(this.#closing)return;
-    this.#closing=true;
-    this.#resetPolicyWorkerLost();
-    const error=Object.assign(new Error("Host detached from the retained browser worker; request outcome is unknown."),{code:"OUTCOME_UNKNOWN" as const});
-    this.#ready.reject(error);
-    for(const pending of this.#pending.values()){clearTimeout(pending.timeout);pending.reject(this.#transportFailure(pending,error));}
-    this.#pending.clear();this.#evaluationRoutes.clear();this.#retainedEvaluations.clear();
-    this.#events.clear();this.#failures.clear();
-    this.#socket?.close();this.#socket=undefined;
-    try{(this.#process as unknown as {disconnect?():void}|undefined)?.disconnect?.();}catch{/* Process exit also closes IPC. */}
-    this.#process=undefined;
+  /** Pause and drain while original callback replies can still reach the child.
+   * Only this host's transport is released; no native resource is disposed. */
+  detachForRecovery(): Promise<void> {
+    if (!this.#reconnectEndpoint) return Promise.reject(new Error("OMP worker has no recovery endpoint"));
+    if (this.#detachCall) return this.#detachCall;
+    if (this.#closing && !this.#handoffStarted) return Promise.reject(new Error("OMP worker is already closing"));
+    this.#closing = this.#handoffStarted = true;
+    this.#beginResetPolicyClose();
+    this.#detachCall = (async () => {
+      // No timer can turn an unsettled native callback into a clean handoff.
+      if (this.#resetPolicyOwner) await this.request({ operation: "prepareResetPolicyRecovery" });
+      await this.#drainResetPolicy();
+      this.#releaseRecoveryTransport();
+    })();
+    const pending = this.#detachCall;
+    void pending.catch(() => { if (this.#detachCall === pending) this.#detachCall = undefined; });
+    return this.#detachCall;
   }
 
-  abandonRecoveryAttempt():void{
-    if(!this.#reconnectEndpoint||this.#process)throw new Error("Only a recovered worker connection can be abandoned.");
-    if(this.#closing)return;
-    this.#closing=true;this.#socket?.close();this.#socket=undefined;
-    const error=Object.assign(new Error("Browser worker recovery did not complete; native ownership was preserved."),{code:"OUTCOME_UNKNOWN" as const});
-    this.#ready.reject(error);for(const pending of this.#pending.values()){clearTimeout(pending.timeout);pending.reject(this.#transportFailure(pending,error));}
-    this.#pending.clear();this.#evaluationRoutes.clear();this.#retainedEvaluations.clear();this.#events.clear();this.#failures.clear();
+  #releaseRecoveryTransport(): void {
+    this.#detached = true;
+    clearTimeout(this.#readyDeadline);
+    clearInterval(this.#exitWatch);
+    this.#rejectPending(Object.assign(new Error("Host detached from the original worker; outstanding operation outcomes are unknown."),
+      { code: "OUTCOME_UNKNOWN" as const }), true);
+    this.#events.clear(); this.#failures.clear();
+    this.#socket?.close(); this.#socket = undefined;
+    try { this.#process?.disconnect(); } catch { /* Confirmed exit has its own callback. */ }
+    this.#process = undefined;
+  }
+
+  async abandonRecoveryAttempt(): Promise<void> {
+    if (!this.#reconnectEndpoint || this.#process) throw new Error("Only a recovered worker connection can be abandoned.");
+    if (this.#detached) return;
+    this.#closing = true;
+    this.#resetPolicyWorkerLost();
+    try { await this.#drainResetPolicy(); }
+    finally { this.#releaseRecoveryTransport(); }
   }
 }
 
@@ -1020,7 +1160,9 @@ export class WorkerRuntime {
       const attempts=await Promise.allSettled([WorkerClient.recover(this.#options,input.source),WorkerClient.recover(this.#options,input.destination)]);
       for(const attempt of attempts)if(attempt.status==="fulfilled")this.#clients.add(attempt.value);
       if(attempts[0]!.status==="rejected"||attempts[1]!.status==="rejected"){
-        for(const attempt of attempts)if(attempt.status==="fulfilled"){attempt.value.abandonRecoveryAttempt();this.#clients.delete(attempt.value);}
+        await Promise.all(attempts.map(async attempt => {
+          if (attempt.status === "fulfilled") { await attempt.value.abandonRecoveryAttempt(); this.#clients.delete(attempt.value); }
+        }));
         throw new AggregateError(attempts.flatMap(attempt=>attempt.status==="rejected"?[attempt.reason]:[]),"Browser worker recovery did not acquire both original processes.");
       }
       const source=attempts[0].value,destination=attempts[1].value;
@@ -1040,7 +1182,8 @@ export class WorkerRuntime {
         let sourceClose: Promise<void> | undefined;
         return { session, closeSource: () => sourceClose ??= source.close().finally(() => this.#clients.delete(source)) };
       } catch (error) {
-        source.abandonRecoveryAttempt();destination.abandonRecoveryAttempt();this.#clients.delete(source);this.#clients.delete(destination);
+        await Promise.all([source.abandonRecoveryAttempt(), destination.abandonRecoveryAttempt()]);
+        this.#clients.delete(source); this.#clients.delete(destination);
         throw error;
       }
     })());
@@ -1424,14 +1567,18 @@ export class WorkerRuntime {
       // A child belongs to us before its init request completes. Begin bounded
       // shutdown now so a stuck native setup cannot defer cancellation forever.
       const clients=[...this.#clients];
-      if(options.preserveReconnect)for(const client of clients)if(client.reconnectEndpoint)client.detachForRecovery();
-      const closing = Promise.allSettled(clients.filter(client=>!options.preserveReconnect||!client.reconnectEndpoint).map(client => client.close()));
+      const closing = Promise.allSettled(clients.map(client =>
+        options.preserveReconnect && client.reconnectEndpoint ? client.detachForRecovery() : client.close()));
       await Promise.allSettled([...this.#setups]);
       const results = await closing;
-      this.#sessions.clear(); this.#clients.clear(); this.#openFiles.clear();
+      // A refused prepare/drain still owns its live transport and durable
+      // callbacks. Retain the registry so a retry cannot silently skip it.
       const errors = results.filter(result => result.status === "rejected");
       if (errors.length) throw new AggregateError(errors.map(result => result.reason), "OMP worker shutdown failed");
+      this.#sessions.clear(); this.#clients.clear(); this.#openFiles.clear();
     })();
+    const pending = this.#disposeCall;
+    void pending.catch(() => { if (this.#disposeCall === pending) this.#disposeCall = undefined; });
     return this.#disposeCall;
   }
 }

@@ -7,6 +7,7 @@ import { BrowserCreationRecords } from "./browser-creation-records";
 import { DraftBrowserOwnerRecords } from "./browser-draft-owner-records";
 import { DraftBrowserCreationRecords } from "./draft-browser-creation-records";
 import { parseBrowserRecoveryRecord, type BrowserRecoveryRecord } from "./browser-recovery-record";
+import { sameWorkerResetPolicyReconnect, type WorkerReconnectEndpoint } from "./omp-workers/reconnect-wire";
 import { TerminalCreationRecords } from "./terminals/creation-records";
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
@@ -1192,11 +1193,14 @@ export class HostStore {
       const existing=this.readMetadata<unknown>(`browser-continuation.v1:${record.sessionId}`);
       if(existing&&typeof existing==="object"&&(existing as {version?:unknown}).version===2){
         const current=parseBrowserRecoveryRecord(existing);
-        const endpoint=(value:BrowserRecoveryRecord["source"])=>({version:value.version,pid:value.pid,instanceId:value.instanceId,socketPath:value.socketPath,token:value.token});
+        const endpoint=(expected:WorkerReconnectEndpoint,actual:WorkerReconnectEndpoint)=>expected.version===actual.version&&expected.pid===actual.pid
+          &&expected.instanceId===actual.instanceId&&expected.socketPath===actual.socketPath&&expected.token===actual.token
+          &&(expected.resetPolicy===undefined?actual.resetPolicy===undefined:actual.resetPolicy!==undefined&&sameWorkerResetPolicyReconnect(expected.resetPolicy,actual.resetPolicy));
         const stable=(value:BrowserRecoveryRecord)=>JSON.stringify({hostId:value.hostId,commandId:value.commandId,sessionId:value.sessionId,ownerId:value.ownerId,
-          source:endpoint(value.source),destination:endpoint(value.destination),bindings:value.bindings.map(binding=>({workerPid:binding.workerPid,name:binding.name,
-            targetId:binding.targetId,ownerId:binding.ownerId,operationId:binding.operationId,backend:binding.backend}))});
-        if(stable(current)!==stable(record)||current.status==="ready"&&record.status!=="ready")throw new Error("Browser recovery changed its durable native owner.");
+          bindings:value.bindings.map(binding=>({workerPid:binding.workerPid,name:binding.name,targetId:binding.targetId,ownerId:binding.ownerId,
+            operationId:binding.operationId,backend:binding.backend}))});
+        if(stable(current)!==stable(record)||!endpoint(current.source,record.source)||!endpoint(current.destination,record.destination)
+          ||current.status==="ready"&&record.status!=="ready")throw new Error("Browser recovery changed its durable native owner.");
       }
       const policy=this.getDeviceAccessPolicy();
       if(this.readMetadata("device-access.v1")===undefined)this.writeMetadata("device-access.v1",policy);

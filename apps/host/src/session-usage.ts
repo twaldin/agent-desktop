@@ -22,12 +22,16 @@ export class SessionUsageService {
   #reads = new Map<string, Promise<SessionUsageResponse>>();
   constructor(private options: {
     store: HostStore;
+    admissions?: ResetAccountAdmissions;
     existing(id: string): Promise<WorkerSession | undefined>;
     open(id: string): Promise<WorkerSession>;
     ordered<T>(id: string, run: () => Promise<T>): Promise<T>;
     assertActive(): void;
     commandActive?(id: string): boolean;
-  }) { this.admissions = new ResetAccountAdmissions(options.store); }
+  }) {
+    options.admissions?.assertStore(options.store);
+    this.admissions = options.admissions ?? new ResetAccountAdmissions(options.store);
+  }
   #load(id: string) { return this.options.store.readMetadata<Intent>(intentKey(id)); }
   #save(intent: Intent) { this.options.store.writeMetadata(intentKey(intent.receipt.operationId), intent); }
   #latest(sessionId: string) {

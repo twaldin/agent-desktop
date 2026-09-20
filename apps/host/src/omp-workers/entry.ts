@@ -17,7 +17,11 @@ import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeB
 import { projectNativeBrowserFrame } from "../omp-browser/frame";
 import { remoteError, WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot } from "./protocol";
 import { projectWorkerEvent } from "./events";
-import { WorkerReconnectServer } from "./reconnect-wire";
+import { WorkerReconnectServer, parseWorkerResetPolicyReconnect, sameWorkerResetPolicyReconnect, type WorkerResetPolicyReconnect } from "./reconnect-wire";
+import { ResetPolicyChannel } from "./reset-policy-channel";
+import { NativeResetChannelOwner } from "./reset-policy-native-owner";
+import type { CodexResetPolicySessionBinding } from "@oh-my-pi/pi-coding-agent";
+import type { OmpInteractionBridge } from "../omp/interactions";
 
 // All SDK imports are deferred until the child has received its explicit native
 // directory. The daemon never imports/initializes OMP through this boundary.
@@ -48,6 +52,12 @@ let stopping = false;
 let shuttingDown: Promise<void> | undefined;
 let pendingDispose: { id: string; exitCode: number; deadline: ReturnType<typeof setTimeout> } | undefined;
 let reconnect: WorkerReconnectServer | undefined;
+let resetChannel: ResetPolicyChannel | undefined;
+let resetBinding: WorkerResetPolicyReconnect | undefined;
+const resetOwners: Array<{ binding: Readonly<CodexResetPolicySessionBinding>; owner: NativeResetChannelOwner }> = [];
+let resetPaused = false;
+let resetQuiescence: Promise<void> | undefined;
+let resetRecovery: "disconnected" | "reconciling" | "quiescent" | "active" = "active";
 let snapshotRevision = 0;
 let activeRequests = 0;
 let promotionInFlight = false;
@@ -95,6 +105,53 @@ function send(message: ChildMessage): void {
   if (process.connected && process.send) process.send(message);
   else if (reconnect) reconnect.send(message);
   else throw new Error("OMP worker lost its owning daemon");
+}
+
+function pauseResetPolicy(): void {
+  resetPaused = true;
+  resetChannel?.pause();
+  for (const { owner } of resetOwners) owner.pause();
+}
+
+function resetTransportLost(): void {
+  // A refused takeover must not disturb the still-connected original daemon.
+  if (process.connected) return;
+  pauseResetPolicy();
+  resetRecovery = "disconnected";
+  resetChannel?.transportLost(new Error("Original reset-policy transport was lost; operation outcome is unknown."));
+}
+
+function quiesceResetPolicy(): Promise<void> {
+  pauseResetPolicy();
+  if (resetQuiescence) return resetQuiescence;
+  const pending = (async () => {
+    let drained = 0;
+    while (drained < resetOwners.length) {
+      const owners = resetOwners.slice(drained);
+      drained += owners.length;
+      await Promise.all(owners.map(({ binding }) => binding.session.drainCodexResetPolicy()));
+    }
+    await resetChannel?.quiesce();
+  })();
+  resetQuiescence = pending;
+  void pending.catch(() => { if (resetQuiescence === pending) resetQuiescence = undefined; });
+  return pending;
+}
+
+function assertResetReconnect(binding: WorkerResetPolicyReconnect): void {
+  if (process.connected || !resetBinding || !reconnect?.connected
+    || !sameWorkerResetPolicyReconnect(resetBinding, parseWorkerResetPolicyReconnect(binding)))
+    throw new Error("Reset-policy reconnect does not belong to the original worker.");
+  const current = snapshot();
+  if (!current || current.id !== resetBinding.rootSessionId || current.sessionFile !== resetBinding.sessionFile
+    || current.cwd !== resetBinding.cwd) throw new Error("Original reset-policy session identity changed.");
+}
+
+function resetRecoveryFailed(error: unknown): void {
+  // Leave native resources and the original endpoint alive. Only the failed
+  // authenticated owner is refused; this is not process disposal.
+  pauseResetPolicy();
+  if (reconnect?.connected) send({ type: "fatal", error: remoteError(error) });
 }
 
 // Acknowledged event delivery bounds the child's native-event backlog. Exceeding
@@ -250,20 +307,64 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
           break;
         }
         const { OmpRuntime } = await import("../omp");
-        runtime = new OmpRuntime({ agentDir: init.agentDir });
+        let createResetPolicyOwner: ((binding: Readonly<CodexResetPolicySessionBinding>,
+          interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding" | "runWithSignal">) => NativeResetChannelOwner) | undefined;
+        if (init.resetPolicy) {
+          const workerEpoch = init.resetPolicy.workerEpoch;
+          const { createNativeResetPassContextFactory } = await import("../omp/native-reset-context");
+          createResetPolicyOwner = (binding, interactions) => {
+            resetChannel ??= new ResetPolicyChannel({ workerEpoch, rootSessionId: binding.session.sessionId }, request => {
+              // Reset settlements belong to the channel, never the generic
+              // reconnect backlog: replaying an admission would be unsafe.
+              try {
+                if (process.connected && process.send) process.send(request);
+                else if (reconnect?.connected && resetRecovery !== "disconnected") reconnect.send(request);
+                else resetTransportLost();
+              } catch (error) {
+                pauseResetPolicy();
+                resetRecovery = "disconnected";
+                resetChannel!.transportLost(error instanceof Error ? error : new Error(String(error)));
+              }
+            });
+            const owner = new NativeResetChannelOwner(resetChannel,
+              createNativeResetPassContextFactory({ binding, interactions }));
+            resetOwners.push({ binding, owner });
+            if (resetPaused) owner.pause();
+            return owner;
+          };
+        }
+        runtime = new OmpRuntime({ agentDir: init.agentDir, ...(createResetPolicyOwner ? { createResetPolicyOwner } : {}) });
         if (init.mode === "create") session = await runtime.create({ ...init.options, onEvent: emit });
         if (init.mode === "open") session = await runtime.open({ ...init.options, onEvent: emit });
+        if (init.resetPolicy) {
+          const current = snapshot();
+          if (!current || !resetChannel || resetOwners[0]?.binding.session.sessionId !== current.id)
+            throw new Error("Native runtime did not bind the original reset-policy session.");
+          resetBinding = parseWorkerResetPolicyReconnect({ workerEpoch: init.resetPolicy.workerEpoch,
+            rootSessionId: current.id, sessionFile: current.sessionFile, cwd: current.cwd });
+        }
         respond(true, snapshot());
         break;
       }
       case "enableReconnect": {
         if (reconnect) throw new Error("OMP worker reconnect endpoint is already enabled.");
-        reconnect = await WorkerReconnectServer.listen(message.args, receiveParent,
-          () => ({ type: "recovered", version: WORKER_PROTOCOL_VERSION, pid: process.pid,
-            instanceId: reconnect!.endpoint.instanceId, snapshot: snapshot() } satisfies ChildMessage));
+        if ((message.args.resetPolicy === undefined) !== (resetBinding === undefined)
+          || (resetBinding && !sameWorkerResetPolicyReconnect(resetBinding, parseWorkerResetPolicyReconnect(message.args.resetPolicy))))
+          throw new Error("Reset-policy reconnect admission changed the original binding.");
+        reconnect = await WorkerReconnectServer.listen({ ...message.args, resetPolicy: resetBinding }, receiveParent,
+          () => {
+            if (process.connected) throw new Error("Original worker still has its owning daemon.");
+            return { type: "recovered", version: WORKER_PROTOCOL_VERSION, pid: process.pid,
+              instanceId: reconnect!.endpoint.instanceId, snapshot: snapshot(),
+              ...(resetBinding ? { resetPolicy: resetBinding } : {}) } satisfies ChildMessage;
+          }, resetTransportLost);
         respond(true, reconnect.endpoint);
         break;
       }
+      case "prepareResetPolicyRecovery":
+        await quiesceResetPolicy();
+        respond(true);
+        break;
       case "generateCommit": {
         if (!runtime || session || commitAbort) throw new Error("Commit generation requires a fresh discovery worker.");
         commitAbort = new AbortController();
@@ -675,6 +776,33 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
 function receiveParent(value: unknown): void {
   if (!value || typeof value !== "object" || !("type" in value)) return;
   const message = value as ParentMessage;
+  if (message.type === "resetPolicyResponse") {
+    resetChannel?.receive(message);
+    return;
+  }
+  if (message.type === "resetPolicyReconnect") {
+    assertResetReconnect(message.binding);
+    if (resetRecovery !== "disconnected") throw new Error("Reset-policy reconnect is already active.");
+    resetRecovery = "reconciling";
+    resetChannel!.reconnect();
+    void quiesceResetPolicy().then(() => {
+      if (resetRecovery !== "reconciling" || !reconnect?.connected) return;
+      resetRecovery = "quiescent";
+      send({ type: "resetPolicyQuiescent", binding: resetBinding!, snapshot: snapshot()! });
+    }).catch(resetRecoveryFailed);
+    return;
+  }
+  if (message.type === "resetPolicyResume") {
+    assertResetReconnect(message.binding);
+    if (resetRecovery !== "quiescent") throw new Error("Original reset callbacks have not quiesced.");
+    for (const { owner } of resetOwners) owner.resume();
+    resetChannel!.resume();
+    resetPaused = false;
+    resetQuiescence = undefined;
+    resetRecovery = "active";
+    send({ type: "resetPolicyResumed", binding: resetBinding!, snapshot: snapshot()! });
+    return;
+  }
   if (message.type === "browserEvaluationFrame") {
     // Native channel sequencing owns ACKs. Terminal frames remain routed while
     // stopping; a bad channel frame does not recreate or kill its resource.
@@ -710,7 +838,7 @@ function receiveParent(value: unknown): void {
   }
 }
 process.on("message", receiveParent);
-process.on("disconnect", () => { if (!reconnect) void shutdown(1); });
+process.on("disconnect", () => { resetTransportLost(); if (!reconnect) void shutdown(1); });
 process.on("SIGTERM", () => { void shutdown(0); });
 process.on("SIGINT", () => { void shutdown(0); });
 process.on("uncaughtException", error => { void fatal(error); });
