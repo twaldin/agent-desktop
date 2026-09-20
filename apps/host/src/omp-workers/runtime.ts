@@ -1547,6 +1547,12 @@ export class WorkerRuntime {
   async mutatePlugin(cwd: string, mutation: NativePluginMutation): Promise<NativePluginCatalog> {
     return (await this.#discoveryClient()).request({ operation: "mutatePlugin", args: { cwd, mutation } }, 30_000);
   }
+  async getDapConfiguration(cwd: string): Promise<import("@agent-desktop/shared").NativeDapCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "getDapConfiguration", args: { cwd } }, 30_000);
+  }
+  async mutateDapConfiguration(cwd: string, mutation: import("@agent-desktop/shared").NativeDapMutation): Promise<import("@agent-desktop/shared").NativeDapCatalog> {
+    return (await this.#discoveryClient()).request({ operation: "mutateDapConfiguration", args: { cwd, mutation } }, 30_000);
+  }
   async getLspConfiguration(cwd: string): Promise<import("@agent-desktop/shared").NativeLspCatalog> {
     return (await this.#discoveryClient()).request({ operation: "getLspConfiguration", args: { cwd } }, 30_000);
   }

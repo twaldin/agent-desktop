@@ -1,3 +1,4 @@
+export * from "./native-dap";
 export * from "./native-lsp";
 export * from "./session-usage";
 export * from "./session-plan";
@@ -463,6 +464,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getPluginAcquisitionOperations(hostId?: string): Promise<NativePluginAcquisitionReceipt[]>;
   reviewPluginAcquisition(target: WorkspaceTarget | undefined, id: string, expectedRevision: string, hostId?: string): Promise<NativePluginAcquisitionReceipt>;
   closePluginAcquisitionRequest(target: WorkspaceTarget | undefined, request: { id: string; operation: NativePluginAcquisition['operation'] }, hostId?: string): Promise<NativePluginAcquisitionReceipt>;
+  getDapConfiguration(target?: WorkspaceTarget, hostId?: string): Promise<import("./native-dap").NativeDapCatalog>;
+  mutateDapConfiguration(target: WorkspaceTarget | undefined, mutation: import("./native-dap").NativeDapMutation, hostId?: string): Promise<import("./native-dap").NativeDapCatalog>;
   getLspConfiguration(target?: WorkspaceTarget, hostId?: string): Promise<import("./native-lsp").NativeLspCatalog>;
   mutateLspConfiguration(target: WorkspaceTarget | undefined, mutation: import("./native-lsp").NativeLspMutation, hostId?: string): Promise<import("./native-lsp").NativeLspCatalog>;
   getSshHosts(target?: WorkspaceTarget, hostId?: string): Promise<import("./ssh-settings").NativeSshCatalog>;

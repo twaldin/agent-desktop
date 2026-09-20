@@ -98,7 +98,7 @@ export async function readIntegrationBody(request: Request): Promise<Record<stri
   } finally { reader.releaseLock(); }
 }
 interface Options {
-  runtime: Pick<WorkerRuntime, 'getPlugins'|'mutatePlugin'|'getMcpServers'|'getMcpServerDetail'|'mutateMcpServer'> & Partial<Pick<WorkerRuntime, 'getSshHosts'|'getSshHostDetail'|'mutateSshHost'|'getLspConfiguration'|'mutateLspConfiguration'>>;
+  runtime: Pick<WorkerRuntime, 'getPlugins'|'mutatePlugin'|'getMcpServers'|'getMcpServerDetail'|'mutateMcpServer'> & Partial<Pick<WorkerRuntime, 'getSshHosts'|'getSshHostDetail'|'mutateSshHost'|'getLspConfiguration'|'mutateLspConfiguration'|'getDapConfiguration'|'mutateDapConfiguration'>>;
   resolveCwd(target?: WorkspaceTarget): string | Promise<string>;
   changed(target?: WorkspaceTarget): void;
 }
@@ -119,7 +119,7 @@ export class IntegrationsHttp {
     const respond = (value:unknown,status=200) => Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
     try {
       if (this.stopping) return respond({error:'The host is stopping.'},503);
-      const match = /^\/v1\/integrations\/(plugins|mcp|ssh|lsp)\/(read|detail|mutate)$/.exec(url.pathname);
+      const match = /^\/v1\/integrations\/(plugins|mcp|ssh|lsp|dap)\/(read|detail|mutate)$/.exec(url.pathname);
       if (!match || request.method !== 'POST') return respond({error:'Not found'},404);
       if(match[2]==='detail'&&match[1]==='plugins')return respond({error:'Not found'},404);
       const input = await readIntegrationBody(request); keys(input,match[2] === 'read' ? ['target'] : match[2]==='detail'?['target','request']:['target','mutation']);
@@ -129,6 +129,19 @@ export class IntegrationsHttp {
       const cwd = await this.options.resolveCwd(target);
       if (this.stopping) return respond({error:'The host is stopping.'},503);
       const {runtime} = this.options;
+      if (match[1] === 'dap') {
+        if (!runtime.getDapConfiguration || !runtime.mutateDapConfiguration) return respond({error:'Update this host service to configure DAP.'},501);
+        if (match[2] === 'detail') return respond({error:'Not found'},404);
+        if (match[2] === 'read') return respond(await runtime.getDapConfiguration(cwd));
+        const mutation = parseDapMutation(input.mutation);
+        // Resolve the original admitted source; no client-supplied filesystem paths.
+        if (!target) {
+          const catalog = await runtime.getDapConfiguration(cwd);
+          if (catalog.sources.find(source => source.id === mutation.sourceId)?.scope === 'project') throw new InvalidRequest('Select an existing project for a project override.');
+        }
+        const result = await runtime.mutateDapConfiguration(cwd, mutation);
+        this.options.changed(target); return respond(result);
+      }
       if (match[1] === 'lsp') {
         if (!runtime.getLspConfiguration || !runtime.mutateLspConfiguration) return respond({error:'Update this host service to configure LSP.'},501);
         if (match[2] === 'detail') return respond({error:'Not found'},404);
@@ -186,4 +199,15 @@ export function parseLspMutation(value: unknown): import('@agent-desktop/shared'
     return {...base,operation:'save',name:text(input.name),changes:object(safeJson(input.changes)) as import('@agent-desktop/shared').LspValues,removeFields:input.removeFields.map(field=>text(field))};
   }
   throw new InvalidRequest('Unknown LSP configuration operation.');
+}
+
+export function parseDapMutation(value: unknown): import('@agent-desktop/shared').NativeDapMutation {
+  const input=object(value),base={expectedRevision:text(input.expectedRevision),sourceId:text(input.sourceId),name:text(input.name)};
+  if(input.operation==='remove') {keys(input,['expectedRevision','sourceId','operation','name']);return {...base,operation:'remove'};}
+  if(input.operation==='save') {
+    keys(input,['expectedRevision','sourceId','operation','name','changes','removeFields']);
+    if(!Array.isArray(input.removeFields)||input.removeFields.length>20)throw new InvalidRequest('Invalid removed fields.');
+    return {...base,operation:'save',changes:object(safeJson(input.changes)) as import('@agent-desktop/shared').DapValues,removeFields:input.removeFields.map(field=>text(field))};
+  }
+  throw new InvalidRequest('Unknown DAP configuration operation.');
 }

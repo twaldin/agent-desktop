@@ -1,3 +1,4 @@
+let dapConfiguration: Promise<import("../integrations/dap").NativeDap> | undefined;
 let lspConfiguration: Promise<import("../integrations/lsp").NativeLsp> | undefined;
 import { parsePlanMutationRequest, parsePlanDocumentReadRequest } from "../../../../packages/shared/src/session-plan";
 import { parsePlanDocumentSection } from "../../../../packages/shared/src/plan-document";
@@ -429,6 +430,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         // Same native cache reset used by /ssh; existing remote tool work is not cancelled.
         const { reset } = await import("@oh-my-pi/pi-coding-agent/discovery");
         reset(); respond(true, null); break;
+      }
+      case "getDapConfiguration":
+      case "mutateDapConfiguration": {
+        if (!runtime || session) throw new Error("Native configuration requires an initialized discovery worker.");
+        dapConfiguration ??= import("../integrations/dap").then(module => new module.NativeDap());
+        const backend = await dapConfiguration;
+        respond(true, message.operation === "getDapConfiguration" ? await backend.read(message.args.cwd)
+          : await backend.mutate(message.args.cwd, message.args.mutation));
+        break;
       }
       case "getLspConfiguration":
       case "mutateLspConfiguration": {

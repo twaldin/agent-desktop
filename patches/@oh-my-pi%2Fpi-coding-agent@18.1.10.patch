@@ -97,6 +97,31 @@ index 75ba58a..16bf8ea 100644
      /**
       * Re-read the current global, project, and explicit overlay layers from disk
       * without replacing this instance or discarding runtime overrides.
+diff --git a/dist/types/dap/config.d.ts b/dist/types/dap/config.d.ts
+index 4bb1eee..1344ada 100644
+--- a/dist/types/dap/config.d.ts
++++ b/dist/types/dap/config.d.ts
+@@ -1,3 +1,4 @@
++import type { ClaudePluginRoot } from "../discovery/helpers.js";
+ import type { DapAdapterConfig, DapResolvedAdapter } from "./types.js";
+ export declare function getAdapterConfigs(cwd?: string): Record<string, DapAdapterConfig>;
+ export declare function resolveAdapter(adapterName: string, cwd: string): DapResolvedAdapter | null;
+@@ -29,3 +30,15 @@ export type LaunchProgramKind = "file" | "directory" | "missing";
+  *  (`mode=debug`), anything else is treated as a compiled binary (`mode=exec`).
+  */
+ export declare function resolveLaunchOverrides(adapter: DapResolvedAdapter, program: string, programKind: LaunchProgramKind): Record<string, unknown>;
++
++export interface DapConfigInspection {
++  /** Native priority, highest first. Inspection never starts an adapter. */
++  sources: Array<{ path: string; scope: "project" | "user" | "plugin"; content?: string; document?: unknown; adapters?: Record<string, unknown>; ignoredAdapters?: string[]; error?: string }>;
++  defaults: Record<string, DapAdapterConfig>;
++  merged: Record<string, DapAdapterConfig>;
++  fieldSources: Record<string, Record<string, number | "builtin">>;
++  /** Nested defaults merge one level; preserve provenance for each merged key. */
++  defaultSources: Record<string, { launchDefaults: Record<string, number | "builtin">; attachDefaults: Record<string, number | "builtin"> }>;
++  resolved: Record<string, DapResolvedAdapter | null>;
++}
++export declare function inspectAdapterConfigs(cwd: string, roots?: readonly ClaudePluginRoot[], replacement?: { path: string; content: string }): DapConfigInspection;
 diff --git a/dist/types/discovery/helpers.d.ts b/dist/types/discovery/helpers.d.ts
 index 82340ed..202c659 100644
 --- a/dist/types/discovery/helpers.d.ts
@@ -2334,6 +2359,152 @@ index 418b33a..d3c1d33 100644
  				}
  				this.#quarantinedYamlTargets.delete(configPath);
  				// These pending roles were included in this write. Remove each
+diff --git a/src/dap/config.ts b/src/dap/config.ts
+index b59ae70..7092491 100644
+--- a/src/dap/config.ts
++++ b/src/dap/config.ts
+@@ -4,7 +4,7 @@ import * as path from "node:path";
+ import { isRecord, logger, WhichCachePolicy } from "@oh-my-pi/pi-utils";
+ import { YAML } from "bun";
+ import { getConfigDirPaths } from "../config";
+-import { getPreloadedPluginRoots } from "../discovery/helpers";
++import { type ClaudePluginRoot, getPreloadedPluginRoots } from "../discovery/helpers";
+ import { hasRootMarkers, resolveCommand } from "../lsp/config";
+ import DEFAULTS from "./defaults.json" with { type: "json" };
+ import type { DapAdapterConfig, DapResolvedAdapter } from "./types";
+@@ -18,6 +18,8 @@ interface NormalizedConfig {
+ }
+ 
+ interface ConfigSource {
++	path: string;
++	scope: "project" | "user" | "plugin";
+ 	read(): NormalizedConfig | null;
+ }
+ 
+@@ -117,43 +119,44 @@ function mergeAdapters(
+ 	return merged;
+ }
+ 
+-function fileConfigSource(filePath: string): ConfigSource {
++function fileConfigSource(filePath: string, scope: ConfigSource["scope"]): ConfigSource {
+ 	return {
++		path: filePath, scope,
+ 		read: () => readConfigFile(filePath),
+ 	};
+ }
+ 
+-function getConfigSources(cwd: string): ConfigSource[] {
++function getConfigSources(cwd: string, roots?: readonly ClaudePluginRoot[]): ConfigSource[] {
+ 	const filenames = ["dap.json", ".dap.json", "dap.yaml", ".dap.yaml", "dap.yml", ".dap.yml"];
+ 	const sources: ConfigSource[] = [];
+ 
+ 	for (const filename of filenames) {
+-		sources.push(fileConfigSource(path.join(cwd, filename)));
++		sources.push(fileConfigSource(path.join(cwd, filename), "project"));
+ 	}
+ 
+ 	const projectDirs = getConfigDirPaths("", { user: false, project: true, cwd });
+ 	for (const dir of projectDirs) {
+ 		for (const filename of filenames) {
+-			sources.push(fileConfigSource(path.join(dir, filename)));
++			sources.push(fileConfigSource(path.join(dir, filename), "project"));
+ 		}
+ 	}
+ 
+ 	const userDirs = getConfigDirPaths("", { user: true, project: false });
+ 	for (const dir of userDirs) {
+ 		for (const filename of filenames) {
+-			sources.push(fileConfigSource(path.join(dir, filename)));
++			sources.push(fileConfigSource(path.join(dir, filename), "user"));
+ 		}
+ 	}
+ 
+-	const pluginRoots = getPreloadedPluginRoots();
++	const pluginRoots = roots ?? getPreloadedPluginRoots();
+ 	for (const root of pluginRoots) {
+ 		for (const filename of filenames) {
+-			sources.push(fileConfigSource(path.join(root.path, filename)));
++			sources.push(fileConfigSource(path.join(root.path, filename), "plugin"));
+ 		}
+ 	}
+ 
+ 	for (const filename of filenames) {
+-		sources.push(fileConfigSource(path.join(os.homedir(), filename)));
++		sources.push(fileConfigSource(path.join(os.homedir(), filename), "user"));
+ 	}
+ 
+ 	return sources;
+@@ -478,3 +481,70 @@ export function resolveLaunchOverrides(
+ 	}
+ 	return {};
+ }
++
++export interface DapConfigInspection {
++  /** Native priority, highest first. Inspection never starts an adapter. */
++  sources: Array<{ path: string; scope: "project" | "user" | "plugin"; content?: string; document?: unknown; adapters?: Record<string, unknown>; ignoredAdapters?: string[]; error?: string }>;
++  defaults: Record<string, DapAdapterConfig>;
++  merged: Record<string, DapAdapterConfig>;
++  fieldSources: Record<string, Record<string, number | "builtin">>;
++  /** Nested defaults merge one level; preserve provenance for each merged key. */
++  defaultSources: Record<string, { launchDefaults: Record<string, number | "builtin">; attachDefaults: Record<string, number | "builtin"> }>;
++  resolved: Record<string, DapResolvedAdapter | null>;
++}
++/** Reuses native source order, normalization, merging and binary resolution.
++ * Explicit roots avoid changing process-global plugin discovery state.
++ * Replacement is a read-only preflight for a source already in the native list.
++ */
++export function inspectAdapterConfigs(cwd: string, roots?: readonly ClaudePluginRoot[], replacement?: { path: string; content: string }): DapConfigInspection {
++  const sources: DapConfigInspection["sources"] = getConfigSources(cwd, roots).map(source => {
++    const item: DapConfigInspection["sources"][number] = { path: source.path, scope: source.scope };
++    try {
++      try { item.content = replacement?.path === source.path ? replacement.content : readDapInspectionFile(source.path); }
++      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return item; throw error; }
++      item.document = parseConfigContent(item.content, source.path);
++      const normalized = normalizeConfig(item.document);
++      if (!normalized) throw new Error("Expected a configuration object.");
++      item.adapters = normalized.adapters;
++    } catch (error) { item.error = error instanceof Error ? error.message : String(error); }
++    return item;
++  });
++  let merged = { ...DEFAULT_ADAPTERS };
++  const fieldSources: DapConfigInspection["fieldSources"] = Object.fromEntries(Object.entries(merged).map(([name, config]) => [name, Object.fromEntries(Object.keys(config).map(key => [key, "builtin"]))]));
++  const defaultSources: DapConfigInspection["defaultSources"] = Object.fromEntries(Object.entries(merged).map(([name, config]) => [name, {
++    launchDefaults: Object.fromEntries(Object.keys(config.launchDefaults ?? {}).map(key => [key, "builtin"])),
++    attachDefaults: Object.fromEntries(Object.keys(config.attachDefaults ?? {}).map(key => [key, "builtin"])),
++  }]));
++  for (const source of [...sources].reverse()) {
++    if (source.error || !source.adapters) continue;
++    const before = merged; merged = mergeAdapters(merged, source.adapters);
++    source.ignoredAdapters = Object.keys(source.adapters).filter(name => !Object.hasOwn(merged, name) || merged[name] === before[name]);
++    for (const [name, config] of Object.entries(merged)) {
++      const raw = source.adapters[name];
++      if (config === before[name] || !isRecord(raw)) continue;
++      const fields = fieldSources[name] ??= {};
++      const defaults = defaultSources[name] ??= { launchDefaults: {}, attachDefaults: {} };
++      for (const [key, value] of Object.entries(config)) {
++        if (Object.hasOwn(raw, key) || JSON.stringify(value) !== JSON.stringify((before[name] as unknown as Record<string, unknown> | undefined)?.[key])) fields[key] = sources.indexOf(source);
++      }
++      for (const field of ["launchDefaults", "attachDefaults"] as const) {
++        if (!isRecord(raw[field])) continue;
++        for (const key of Object.keys(raw[field])) defaults[field][key] = sources.indexOf(source);
++      }
++    }
++  }
++  const resolved = Object.fromEntries(Object.keys(merged).map(name => [name, resolveAdapterFromConfig(name, merged, cwd)]));
++  return { sources, defaults: { ...DEFAULT_ADAPTERS }, merged, fieldSources, defaultSources, resolved };
++}
++function readDapInspectionFile(file: string): string {
++  // Follow native-readable symlinks for accurate inspection; the host refuses writes to them.
++  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
++  try {
++    const metadata = fs.fstatSync(fd);
++    if (!metadata.isFile() || metadata.size > 1024 * 1024) throw new Error("DAP inspection requires a regular file at most 1 MiB; effective inspection is incomplete.");
++    const bytes = Buffer.alloc(1024 * 1024 + 1); let size = 0;
++    while (size < bytes.length) { const count = fs.readSync(fd, bytes, size, bytes.length - size, null); if (!count) break; size += count; }
++    if (size > 1024 * 1024) throw new Error("DAP inspection exceeds 1 MiB; effective inspection is incomplete.");
++    return bytes.subarray(0, size).toString("utf8");
++  } finally { fs.closeSync(fd); }
++}
 diff --git a/src/discovery/helpers.ts b/src/discovery/helpers.ts
 index 453829c..0242be7 100644
 --- a/src/discovery/helpers.ts
