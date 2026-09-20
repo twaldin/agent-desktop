@@ -11,6 +11,7 @@ import { withActiveSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { BUILTIN_SLASH_COMMANDS_INTERNAL, lookupBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { buildArgumentCompletions, buildMcpArgumentCompletions } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-completions";
 import type { TuiSlashCommandRuntime } from "@oh-my-pi/pi-coding-agent/slash-commands/types";
+import { parseSubcommand } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/parse";
 import type { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp/manager";
 import { getInternalUrlSuggestions } from "@oh-my-pi/pi-coding-agent/modes/internal-url-autocomplete";
 import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls";
@@ -49,9 +50,10 @@ export function builtinAvailability(name: string, args?: string): { availability
   }
   if (name === "btw") return { availability: "partial", reason: "Ask a side question using this conversation’s context." };
   if (name === "session") {
-    if (args === undefined) return { availability: "partial", reason: "Session info is connected. Deletion and account pin commands require the owning desktop lifecycle/account bridge." };
-    if (!args.trim() || args.trim() === "info") return { availability: "executable" };
-    return { availability: "pending", reason: "Use session/account controls until native deletion and pin command receipts are connected." };
+    if (args === undefined) return { availability: "partial", reason: "Session info and native account pin commands are connected. Deletion still requires the owning desktop lifecycle bridge." };
+    const { verb, rest } = parseSubcommand(args);
+    if (!verb || verb === "info" && !rest || verb === "pin") return { availability: "executable" };
+    return { availability: "pending", reason: "Only native session info and account pin commands are connected; deletion and other ownership transitions remain separate." };
   }
   if (identityCommands.has(name)) return { availability: "pending", reason: "This command can change native session/file ownership or the owning process. Its desktop ownership transition is not connected." };
   if (name === "usage") {

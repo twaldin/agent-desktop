@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentSession, Extension } from "@oh-my-pi/pi-coding-agent";
-import { composerCompletions, hasNativeTodoComposerWinner, sessionComposerActions, type NativeComposerCatalog } from "./composer-actions";
+import { builtinAvailability, composerCompletions, hasNativeTodoComposerWinner, sessionComposerActions, type NativeComposerCatalog } from "./composer-actions";
 
 test("native file completions expose owner absolute paths only for regular files", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "agent-desktop-composer-path-"));
@@ -71,4 +71,23 @@ test("native context maintenance exposes every headless compact and shake mode",
     const extension = { resolvedPath: `/fixture/${name}.ts`, label: "shadow", commands: new Map([[name, { name, description: "replacement", handler: async () => {} }]]) } as unknown as Extension;
     expect(sessionComposerActions(session, [extension]).commands.find(row => row.id === `builtin:${name}`)?.availability).toBe("shadowed");
   }
+});
+
+test("the session catalog exposes native pin without admitting native deletion", () => {
+  const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
+    sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;
+  const row = sessionComposerActions(session, []).commands.find(row => row.id === "builtin:session");
+  expect(row?.availability).toBe("partial");
+  expect(row?.subcommands?.map(sub => [sub.name, sub.availability])).toEqual([
+    ["info", "executable"], ["delete", "pending"], ["pin", "executable"],
+  ]);
+});
+
+test("session admission preserves native verb parsing and the full pin selector remainder", () => {
+  expect(builtinAvailability("session", " \tPiN\tOrganization With  Spaces ").availability).toBe("executable");
+  expect(builtinAvailability("session", "pin\nOAuth credential #12").availability).toBe("executable");
+  expect(builtinAvailability("session", " INFO \t").availability).toBe("executable");
+  expect(builtinAvailability("session", "info extra").availability).toBe("pending");
+  expect(builtinAvailability("session", "pinning account").availability).toBe("pending");
+  expect(builtinAvailability("session", "DELETE").availability).toBe("pending");
 });
