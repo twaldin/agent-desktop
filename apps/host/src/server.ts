@@ -86,6 +86,7 @@ import { SkillFiles, type SkillFileAuthorization } from "./skill-files";
 import { hasNativeBtwComposerWinner } from "./omp/composer-actions";
 import { nativeBtwQuestion } from "@agent-desktop/shared";
 import { SessionActivityHttp } from "./session-activity-http";
+import { SessionJobsHttp } from "./session-jobs-http";
 import { BtwService } from "./btw";
 import { BtwHttp } from "./btw-http";
 import { GoalControlHttp } from "./goal-control-http";
@@ -470,6 +471,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     } });
   const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getActivity: async id => (await getHandle(id)).getSessionActivity(), goalControlTicket: activity => goalControls.ticket(activity) });
+  const sessionJobs = new SessionJobsHttp({ hostId: store.host.id,
+    sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    getExistingHandle: async id => stopping ? undefined : handles.get(id)?.catch(() => undefined) });
   const planDecisions = new PlanDecisionService({ store,
     existing: async id => stopping ? undefined : handles.get(id)?.catch(() => undefined),
     forget: async (id, handle) => {
@@ -1504,6 +1508,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (composerResponse) return composerResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const jobsResponse = await sessionJobs.route(request, url);
+        if (jobsResponse) return jobsResponse;
         const queuedMessagesResponse = await queuedMessages.route(request, url);
         if (queuedMessagesResponse) return queuedMessagesResponse;
         const pullRequestsResponse = await pullRequestsHttp.route(request, url);

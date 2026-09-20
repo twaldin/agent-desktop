@@ -7,6 +7,7 @@ import { parsePlanDecisionPreparation } from "../omp/plan-decision";
 import { parsePlanMutationRequest, parsePlanControlRequest, parsePlanControlResult, parseSessionPlan, parsePlanDocumentReadRequest, type SessionPlan, type PlanDocumentReadRequest } from "../../../../packages/shared/src/session-plan";
 import { parsePlanDocumentSection, type PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { parseSessionTodos, parseTodoCommandId, parseTodoMutationRequest, parseTodoMutationResult, type SessionTodos, type TodoMutationRequest, type TodoMutationResult } from "../../../../packages/shared/src/session-todos";
+import { parseSessionJobsRequest, parseSessionJobsResult, type SessionJobsRequest, type SessionJobsResult } from "../../../../packages/shared/src/session-jobs";
 import { requestWorkerBrowserObservation, type WorkerBrowserObservation } from "../omp-browser/observation";
 import { openWorkerBrowserEvaluation, recoverWorkerBrowserEvaluation, type WorkerBrowserEvaluation } from "../omp-browser/evaluation-client";
 import { copyEvaluationBinding, copyEvaluationFrame, copyEvaluationValue, evaluationKey, type BrowserEvaluationBinding, type BrowserEvaluationFrame } from "../omp-browser/evaluation-wire";
@@ -53,12 +54,13 @@ export class WorkerFailureError extends Error {
     this.name = "WorkerFailureError";
   }
 }
-export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection" | "getPlanExternalEditorAvailable" | "getTodos" | "getTodoExternalEditorAvailable"> {
+export interface WorkerSession extends Omit<OmpSession, "getMessages" | "getSessionActivity" | "nativeJobs" | "refreshGoalUsage" | "mutateGoal" | "getGoalContinuationEligibility" | "listQuestions" | "getSessionMcp" | "startSessionMcpAuthorization" | "getSessionMcpAuthorization" | "respondSessionMcpAuthorization" | "cancelSessionMcpAuthorization" | "getBtw" | "startBtw" | "cancelBtw" | "subscribe" | "getQueuedMessages" | "mutateQueuedMessages" | "assertTaskLocationReady" | "moveSession" | "installRetainedBrowserEvaluation" | "getForceTool" | "cancelForceTool" | "getPlan" | "getPlanDocumentSection" | "getPlanExternalEditorAvailable" | "getTodos" | "getTodoExternalEditorAvailable"> {
   readonly workerPid: number;
   readonly workerFailure: WorkerFailure | undefined;
   readonly activity: NativeSessionActivity;
   getMessages(): Promise<TranscriptMessage[]>;
   getSessionActivity(): Promise<NativeSessionActivity>;
+  nativeJobs(request: SessionJobsRequest): Promise<SessionJobsResult>;
   getPlan(): Promise<SessionPlan>;
   getTodoExternalEditorAvailable(): Promise<boolean>;
   getPlanExternalEditorAvailable(): Promise<boolean>;
@@ -1293,6 +1295,15 @@ export class WorkerRuntime {
       getComposerCompletions: query => client.request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { query } }, 5_000),
       getMessages: () => client.request<TranscriptMessage[]>({ operation: "getMessages" }, 30_000),
       getSessionActivity: () => client.request<NativeSessionActivity>({ operation: "getSessionActivity" }, 15_000),
+      nativeJobs: async raw => {
+        const request = parseSessionJobsRequest(raw), origin = { id: state().id, file: state().sessionFile };
+        if (disposeCall || client.failure) throw new Error("The original native jobs worker is unavailable.");
+        const value = parseSessionJobsResult(await client.request({ operation: "nativeJobs", args: { request } }, 15_000));
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file
+          || value.snapshot.owner.nativeSessionId !== origin.id || value.action !== request.action)
+          throw new Error("The original native jobs worker changed during the request; no operation was replayed.");
+        return value;
+      },
       mutateGoal: request => client.request({ operation: "mutateGoal", args: { request } }, 30_000),
       getGoalContinuationEligibility: () => client.request({ operation: "getGoalContinuationEligibility" }, 15_000),
       startGoalContinuation: expectedGoalId => client.startGoalContinuation(expectedGoalId),

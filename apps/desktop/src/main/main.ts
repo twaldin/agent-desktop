@@ -48,6 +48,8 @@ import { listAutomations, mutateAutomation } from './automations-transport';
 import { parseAutomationMutation, parseAutomationsQuery } from '../../../../packages/shared/src/automations';
 import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillFileOpenOptions, requestSkillFileCopy, requestSkillImage } from "./composer-actions-transport";
 import { requestSessionActivity } from "./session-activity-transport";
+import { requestSessionJobs } from "./session-jobs-transport";
+import { parseSessionJobsRequest } from "../../../../packages/shared/src/session-jobs";
 import { requestBtw } from "./btw-transport";
 import { mutateQueuedMessages, requestQueuedMessages } from "./queued-messages-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
@@ -622,6 +624,16 @@ ipcMain.handle("host:session-usage", async (event, sessionId: string, hostId: st
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:session-jobs", async (event, sessionId: string, input: unknown, hostId: string) => {
+  assertTrustedSender(event);
+  if ([sessionId, hostId].some(value => typeof value !== "string" || !value || value.length > 200 || /[\0\r\n]/.test(value)))
+    throw new Error("An explicit original host and conversation are required for native jobs.");
+  const request = parseSessionJobsRequest(input), endpoint = await endpointFor(hostId);
+  assertTrustedSender(event);
+  const result = await requestSessionJobs(endpoint, sessionId, request);
+  assertTrustedSender(event);
+  return result;
 });
 ipcMain.handle("host:mcp-app", (event, sessionId: string, input: import("@agent-desktop/shared").NativeMcpAppRequest, hostId: string) => {
   assertTrustedSender(event);

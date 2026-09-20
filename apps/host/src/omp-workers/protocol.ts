@@ -69,6 +69,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "mutateMcpServer"; args: { cwd: string; mutation: NativeMcpMutation } }
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }
+  | { operation: "nativeJobs"; args: { request: import("../../../../packages/shared/src/session-jobs").SessionJobsRequest } }
   | { operation: "readUsage"; args: { mode: import("../../../../packages/shared/src/session-usage").UsageRefresh } }
   | { operation: "prepareUsageReset"; args: import("../../../../packages/shared/src/session-usage").UsageResetPrepare }
   | { operation: "redeemUsageReset"; args: { ticket: string; redeemRequestId: string } }

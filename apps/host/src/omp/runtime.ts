@@ -15,6 +15,8 @@ import { parsePlanControlRequest, parsePlanDocumentReadRequest, parsePlanMutatio
   type PlanControlRequest, type PlanControlResult, type SessionPlan } from "../../../../packages/shared/src/session-plan";
 import type { PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { NativeSessionTodos } from "./session-todos";
+import { NativeSessionJobs } from "./session-jobs";
+import type { SessionJobsRequest, SessionJobsResult } from "../../../../packages/shared/src/session-jobs";
 import { parseTodoCommandId, parseTodoMutationRequest, type SessionTodos, type TodoMutationRequest, type TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 import { shouldEnterPlanModeOnStartup } from "@oh-my-pi/pi-coding-agent/plan-mode/startup";
 import { resolveOwnedDialectFromEnv } from "@oh-my-pi/pi-agent-core/agent-loop";
@@ -135,6 +137,7 @@ export interface OmpSession {
   getMessages(): TranscriptMessage[];
   flushSession(): Promise<{ sessionId: string; sessionFile: string; cwd: string }>;
   getSessionActivity(): NativeSessionActivity;
+  nativeJobs(request: SessionJobsRequest): SessionJobsResult;
   refreshGoalUsage(): Promise<void>;
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
   getGoalContinuationEligibility(): GoalContinuationEligibility;
@@ -611,6 +614,7 @@ export class OmpRuntime {
       let pluginReload: Promise<void> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
+      const nativeJobs = new NativeSessionJobs(session, assertSessionActive);
       const mcpFiles = new McpFileResources(manager.getCwd());
       const mcpApps = new NativeMcpApps({ executeTool: async (connection, tool, args, signal, assertOwner, metadata) => {
         // Share the session's normal extension startup with prompt admission.
@@ -822,6 +826,7 @@ export class OmpRuntime {
           return { goal: { availability: "available", value: goal }, jobs, agents: { availability: "available", value: agents },
             sources: { availability: "unsupported", reason: "OMP 18.1.10 does not expose a stable consumed-source registry for this session." } };
         },
+        nativeJobs: request => nativeJobs.request(request),
         refreshGoalUsage: async () => { assertSessionActive(); await nativeGoalController.refreshUsage(); },
         getGoalContinuationEligibility: () => nativeGoalController.eligibility(),
         startGoalContinuation: expectedGoalId => {

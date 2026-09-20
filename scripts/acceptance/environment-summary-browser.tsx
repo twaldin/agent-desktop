@@ -1,7 +1,10 @@
 import { createRoot } from "react-dom/client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { SessionActivitySnapshot } from "../../packages/shared/src/session-activity";
 import { EnvironmentCard } from "../../apps/desktop/src/renderer/EnvironmentCard";
+import { SessionJobsPanel } from "../../apps/desktop/src/renderer/SessionJobsPanel";
+import type { SessionJobsBridge } from "../../apps/desktop/src/renderer/session-jobs-state";
+import type { SessionJobsSnapshot } from "../../packages/shared/src/session-jobs";
 import type { EnvironmentSectionKey } from "../../apps/desktop/src/window-state";
 import type { WorkspaceState } from "../../apps/desktop/src/renderer/workspace-state";
 import "../../apps/desktop/src/renderer/styles.css";
@@ -14,6 +17,7 @@ const workspace = {
   pending: undefined,
   loading: new Set(),
   branches: [], errors: {}, restored: true, connected: true,
+  repositoryQueryRevision() { return 0; },
   subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener); },
 } as unknown as WorkspaceState;
 const emptyActivity = (): SessionActivitySnapshot => ({
@@ -40,6 +44,17 @@ function Fixture() {
   const [mode, setMode] = useState<"empty" | "unavailable" | "active">("empty");
   const [collapsed, setCollapsed] = useState<readonly EnvironmentSectionKey[]>([]);
   const activity = mode === "active" ? activeActivity() : mode === "unavailable" ? unavailableActivity() : emptyActivity();
+  const jobsBridge = useMemo<SessionJobsBridge>(() => ({
+    subscribe: () => () => {},
+    async sessionJobs(sessionId, request, hostId) {
+      if (request.action !== "read") throw new Error("This renderer-only fixture supports reads only");
+      const owner = { nativeSessionId: "fixture-native-session", epoch: mode };
+      const snapshot: SessionJobsSnapshot = mode === "unavailable"
+        ? { owner, availability: "unavailable", reason: "Jobs are unavailable in this controlled fixture" }
+        : { owner, availability: "available", running: mode === "active" ? [{ target: { id: "job-1", startTime: 1, guard: "fixture-guard" }, type: "task", status: "running", label: "Index files", queued: false }] : [], recent: [], delivery: { queued: 0, delivering: false, pendingJobIds: [] } };
+      return { protocolVersion: 1, hostId, sessionId, result: { action: "read", snapshot } };
+    },
+  }), [mode]);
   const toggle = (key: EnvironmentSectionKey) => setCollapsed(current => current.includes(key) ? current.filter(value => value !== key) : [...current, key]);
   const unrelatedRedraw = () => listeners.forEach(listener => listener());
   return <main>
@@ -49,6 +64,7 @@ function Fixture() {
     <button id="mode-active" type="button" onClick={() => setMode("active")}>Active</button>
     <button id="unrelated-redraw" type="button" onClick={unrelatedRedraw}>Unrelated redraw</button>
     <EnvironmentCard branchPrefix="codex/" onOpenGitSettings={() => calls.push("git-settings")} hostName="Fixture" cwd="/fixture" local connected workspace={workspace} activity={activity} sources={mode === "active" ? sources : []} sideChats={mode === "active" ? chats : []} collapsedSections={collapsed} onToggleSection={toggle} showEmptySources={false}
+      jobs={{ content: <SessionJobsPanel key={mode} bridge={jobsBridge} hostId="fixture-host" sessionId="fixture-session" connected visible={!collapsed.includes("jobs")}/> }}
       onReview={() => calls.push("review")} onCommit={() => calls.push("commit")} onFiles={() => calls.push("files")} onTerminal={() => calls.push("terminal")} onHost={() => calls.push("host")}/>
   </main>;
 }

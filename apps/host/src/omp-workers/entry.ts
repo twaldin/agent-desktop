@@ -3,6 +3,7 @@ import { parsePlanDocumentSection } from "../../../../packages/shared/src/plan-d
 import { parsePlanDecisionPreparation } from "../omp/plan-decision";
 import { parsePlanControlRequest, parsePlanControlResult, parseSessionPlan } from "../../../../packages/shared/src/session-plan";
 import { parseSessionTodos, parseTodoCommandId, parseTodoMutationRequest, parseTodoMutationResult, type TodoMutationRequest } from "../../../../packages/shared/src/session-todos";
+import { parseSessionJobsRequest, parseSessionJobsResult } from "../../../../packages/shared/src/session-jobs";
 import { WorkerBrowserEvaluationChannels } from "../omp-browser/evaluation";
 import { WorkerBrowserObservations } from "../omp-browser/observation";
 import { WorkerBrowserReservations } from "../omp-browser/reservation";
@@ -515,6 +516,19 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         const active = requireSession();
         await active.refreshGoalUsage();
         respond(true, active.getSessionActivity());
+        break;
+      }
+      case "nativeJobs": {
+        const input = parseSessionJobsRequest(message.args.request);
+        const active = requireSession();
+        const value = active.nativeJobs(input);
+        try {
+          if (requireSession() !== active) throw new Error("The original native jobs worker changed during the request.");
+          respond(true, parseSessionJobsResult(value));
+        } catch (cause) {
+          if (input.action === "cancel") throw Object.assign(new Error("The native cancellation result could not be confirmed; inspect the original owner before acting again.", { cause }), { code: "OUTCOME_UNKNOWN" });
+          throw cause;
+        }
         break;
       }
       case "mutateGoal": {

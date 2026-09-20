@@ -65,6 +65,7 @@ import type { HostNotification } from "./notifications";
 export * from "./attachments";
 export * from "./composer-actions";
 export * from "./session-activity";
+export * from "./session-jobs";
 export * from "./browser";
 export * from "./browser-frame";
 export * from "./browser-control";
@@ -491,6 +492,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   subscribeQueuedMessages?(listener: (event: { hostId: string; sessionId: string }) => void): () => void;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
+  sessionJobs?(sessionId: string, request: import("./session-jobs").SessionJobsRequest, hostId: string): Promise<import("./session-jobs").SessionJobsEnvelope>;
   mcpOwner?: import("./mcp-owner").McpOwnerBridge;
   sessionMcpApp?(sessionId: string, request: import("./session-mcp-app").NativeMcpAppRequest, hostId: string): Promise<import("./session-mcp-app").NativeMcpAppResponse>;
   readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;
