@@ -6,6 +6,9 @@ import type { CodexResetPolicySessionBinding, ResetPass, ResetPlanSnapshot } fro
 import { AgentRegistry, createAgentSession, ModelRegistry, SessionManager, Settings } from "@oh-my-pi/pi-coding-agent";
 import { AuthStorage, type OAuthCredential } from "@oh-my-pi/pi-ai/auth-storage";
 import { createNativeResetPassContextFactory } from "./native-reset-context";
+import { OmpInteractionBridge } from "./interactions";
+import { NativeResetRuntimeOwners, type NativeResetRuntimeOwner } from "./native-reset-runtime";
+import { parseResetPolicyWireRequest, type ResetPolicyWireEvidence, type ResetPolicyWireOperation } from "../omp-workers/reset-policy-wire";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); AgentRegistry.resetGlobalForTests(); });
@@ -38,7 +41,10 @@ async function fixture(overrides?: Record<string, unknown>, holdCredits = false,
   const pass: ResetPass = Object.freeze({ passId: "pass-a", nativeSessionId: created.session.sessionId, trigger: "blocked", source: "blocked",
     startedAtMs: 1, provider: "openai-codex", modelId: model.id, codexBaseUrl: modelRegistry.getProviderBaseUrl("openai-codex") ?? model.baseUrl, policy: settings.getGroup("codexResets") });
   beforeContext?.(binding);
-  const interactions = { runWithDecisionBinding: async <T>(bind: (id: string) => Promise<void>, select: () => Promise<T>) => { await bind("interaction-a"); return select(); } };
+  const interactions = {
+    runWithSignal: <T>(_signal: AbortSignal, work: () => Promise<T>) => work(),
+    runWithDecisionBinding: async <T>(bind: (id: string) => Promise<void>, select: () => Promise<T>) => { await bind("interaction-a"); return select(); },
+  };
   const context = createNativeResetPassContextFactory({ binding, interactions })(pass);
   const credentialId = authStorage.listOAuthAccounts("openai-codex", created.session.sessionId)[0]!.credentialId!;
   const snapshot: ResetPlanSnapshot = Object.freeze({ pass, plannedAtMs: 2, reportRevision: "a".repeat(64), plan: { actions: [{ reason: "blocked-account" as const, target: { credentialId }, accountKey: "controlled", attemptKey: "attempt", label: "a", active: true }], skipped: [] } });
@@ -65,6 +71,68 @@ test("decision verifies continuity after the actual native selection promise set
     });
     await expect(pending).rejects.toThrow(); expect(bound).toBe(true);
   } finally { await f.cleanup(); }
+});
+
+test("actual decision bridge applies an already-aborted original signal without publishing", async () => {
+  const f = await fixture();
+  const events: string[] = [];
+  const bridge = new OmpInteractionBridge(f.session.sessionId, event => events.push(event.type));
+  const context = createNativeResetPassContextFactory({ binding: f.binding, interactions: bridge })(f.pass);
+  try {
+    const controller = new AbortController(); controller.abort(new Error("controlled cancellation"));
+    let selected = 0, bound = 0;
+    const result = await context.runDecision(async () => { bound++; }, async () => {
+      selected++; return await bridge.select("Reset saved usage?", ["Yes", "No"]) as "Yes" | "No" | undefined;
+    }, controller.signal);
+    expect(result).toBeUndefined(); expect(selected).toBe(1); expect(bound).toBe(0); expect(events).toEqual([]); expect(bridge.list()).toEqual([]);
+    controller.abort(); expect(events).toEqual([]);
+  } finally { context.dispose(); bridge.dispose(); await f.cleanup(); }
+});
+
+test("actual decision bridge cancels one held bound selection without publishing a late answer", async () => {
+  const f = await fixture();
+  const events: string[] = [];
+  const bridge = new OmpInteractionBridge(f.session.sessionId, event => events.push(event.type));
+  const context = createNativeResetPassContextFactory({ binding: f.binding, interactions: bridge })(f.pass);
+  try {
+    const controller = new AbortController(); let interactionId = "";
+    const pending = context.runDecision(async id => { interactionId = id; }, async () =>
+      await bridge.select("Reset saved usage?", ["Yes", "No"]) as "Yes" | "No" | undefined, controller.signal);
+    for (let turns = 0; turns < 8 && bridge.list().length === 0; turns++) await null;
+    expect(interactionId).not.toBe(""); expect(bridge.list()).toHaveLength(1);
+    controller.abort(); expect(await pending).toBeUndefined();
+    expect(bridge.list()).toEqual([]);
+    expect(events).toEqual(["extension_interaction_requested", "extension_interaction_resolved"]);
+    expect(() => bridge.respond(interactionId, { value: "Yes" })).toThrow(/no longer pending/);
+  } finally { context.dispose(); bridge.dispose(); await f.cleanup(); }
+});
+
+test("signal-free decision remains compatible with the existing binding path", async () => {
+  const f = await fixture();
+  try { expect(await answer(f, "No")).toBe("No"); }
+  finally { await f.cleanup(); }
+});
+
+test("runtime factory exposes the original bridge signal scope to its native pass context", async () => {
+  const f = await fixture();
+  const events: string[] = [], bridge = new OmpInteractionBridge(f.session.sessionId, event => events.push(event.type));
+  let factory!: ReturnType<typeof createNativeResetPassContextFactory>;
+  const lifecycle = { checkpoint: async () => {}, presentDecision: async () => {}, admit: async () => ({ kind: "hold" as const, reason: "owner-unavailable" as const }),
+    complete: async () => {}, beginClose() {}, async finish() {} } satisfies NativeResetRuntimeOwner;
+  const writer = f.settings.getResetPolicySettingsWriter(); if (!writer) throw new Error("Missing reset writer");
+  const owners = new NativeResetRuntimeOwners({ settings: f.settings, modelRegistry: f.modelRegistry, authStorage: f.authStorage, writer }, () => bridge,
+    (binding, interactions) => { factory = createNativeResetPassContextFactory({ binding, interactions }); return lifecycle; });
+  owners.factory(f.binding);
+  const context = factory(f.pass);
+  try {
+    const controller = new AbortController(); let id = "";
+    const pending = context.runDecision(async interactionId => { id = interactionId; }, async () =>
+      await bridge.select("Reset saved usage?", ["Yes", "No"]) as "Yes" | "No" | undefined, controller.signal);
+    for (let turns = 0; turns < 8 && bridge.list().length === 0; turns++) await null;
+    expect(id).not.toBe(""); expect(bridge.list()).toHaveLength(1); controller.abort();
+    expect(await pending).toBeUndefined(); expect(bridge.list()).toEqual([]);
+    expect(events).toEqual(["extension_interaction_requested", "extension_interaction_resolved"]);
+  } finally { context.dispose(); owners.beginClose(); await owners.finish(); bridge.dispose(); await f.cleanup(); }
 });
 
 test("actual Settings one-shot native write is adopted, flushed, and proven without standing consent", async () => {
@@ -248,3 +316,31 @@ test("model configuration change during the awaited credit read rejects admissio
     await expect(pending).rejects.toThrow(/model or endpoint/);
   } finally { await f.cleanup(); }
 });
+
+for (const phase of ["source", "persistence", "admission"] as const) {
+  test(`actual context ${phase} policy revision crosses the unchanged worker parser`, async () => {
+    const f = await fixture();
+    try {
+      let evidence: ResetPolicyWireEvidence = f.context.source;
+      let operation: ResetPolicyWireOperation = { kind: "checkpoint", event: { phase: "started", pass: f.pass } };
+      if (phase !== "source") {
+        await f.context.plan(f.snapshot); await answer(f, "Yes");
+        f.settings.set("codexResets.autoRedeem", "yes");
+        const persisted = await f.context.persistence(f.snapshot, "yes");
+        evidence = persisted;
+        operation = { kind: "checkpoint", event: { phase: "setting-written", snapshot: f.snapshot, mode: "yes" } };
+        if (phase === "admission") {
+          evidence = (await f.context.admission(f.snapshot, 0)).evidence;
+          operation = { kind: "admit", snapshot: f.snapshot, actionIndex: 0 };
+          expect(evidence.policyRevision).toBe(persisted.policyRevision!);
+        }
+      }
+      const binding = { workerEpoch: "original-worker", rootSessionId: f.session.sessionId };
+      const packet = { type: "resetPolicyRequest", requestId: 1, binding,
+        nativeSessionId: f.pass.nativeSessionId, passId: f.pass.passId, operation, evidence };
+      expect(parseResetPolicyWireRequest(JSON.parse(JSON.stringify(packet)), binding).evidence).toEqual(evidence);
+      if (phase !== "source") expect(evidence.policyRevision).not.toBe(f.context.source.policyRevision);
+      expect(() => parseResetPolicyWireRequest({ ...packet, evidence: { ...evidence, policyRevision: "invalid-uuid-revision" } }, binding)).toThrow(/policyRevision/);
+    } finally { await f.cleanup(); }
+  });
+}

@@ -4,7 +4,7 @@ import type { ResetPolicySettingsWriter } from "@oh-my-pi/pi-coding-agent/config
 import type { OmpInteractionBridge } from "./interactions";
 
 export interface NativeResetRuntimeOwner extends CodexResetPolicyOwner { beginClose(): void; finish(): Promise<void> }
-export type CreateNativeResetRuntimeOwner = (binding: Readonly<CodexResetPolicySessionBinding>, interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding">) => NativeResetRuntimeOwner;
+export type CreateNativeResetRuntimeOwner = (binding: Readonly<CodexResetPolicySessionBinding>, interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding" | "runWithSignal">) => NativeResetRuntimeOwner;
 type Entry = { owner: NativeResetRuntimeOwner; callbacks: Set<Promise<unknown>> };
 const MAX_OWNERS = 128;
 
@@ -13,17 +13,22 @@ export class NativeResetRuntimeOwners {
   readonly factory: CodexResetPolicyOwnerFactory;
   readonly #owners = new Set<Entry>();
   readonly #errors: unknown[] = [];
-  readonly #interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding">;
+  readonly #interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding" | "runWithSignal">;
   #creating = 0;
   #rootAttempted = false;
   #closing = false;
   #finished?: Promise<void>;
 
   constructor(root: Readonly<{ settings: Settings; modelRegistry: ModelRegistry; authStorage: AuthStorage; writer: ResetPolicySettingsWriter }>, getBridge: () => OmpInteractionBridge | undefined, create: CreateNativeResetRuntimeOwner) {
-    this.#interactions = Object.freeze({ runWithDecisionBinding: <T>(bind: (interactionId: string) => Promise<void>, select: () => Promise<T>) => {
-      const bridge = getBridge(); if (!bridge) throw new Error("OMP interaction bridge is unavailable for the native reset decision");
-      return bridge.runWithDecisionBinding(bind, select);
-    } });
+    const bridge = () => {
+      const current = getBridge(); if (!current) throw new Error("OMP interaction bridge is unavailable for the native reset decision");
+      return current;
+    };
+    this.#interactions = Object.freeze({
+      runWithDecisionBinding: <T>(bind: (interactionId: string) => Promise<void>, select: () => Promise<T>) =>
+        bridge().runWithDecisionBinding(bind, select),
+      runWithSignal: <T>(signal: AbortSignal, work: () => Promise<T>) => bridge().runWithSignal(signal, work),
+    });
     this.factory = binding => {
       if (this.#closing || this.#owners.size + this.#creating >= MAX_OWNERS) throw new Error("Native reset owner group is unavailable");
       if (binding.session.settings !== binding.settings || binding.session.modelRegistry !== binding.modelRegistry || binding.modelRegistry.authStorage !== binding.authStorage)

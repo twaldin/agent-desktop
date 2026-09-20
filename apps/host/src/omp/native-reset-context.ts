@@ -21,7 +21,11 @@ const clone = <T>(value: T): T => structuredClone(value);
 
 export interface NativeResetPassContextFactoryOptions {
   binding: Readonly<CodexResetPolicySessionBinding>;
-  interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding">;
+  interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding" | "runWithSignal">;
+}
+
+export interface NativeResetPassContextWithCancellation extends NativeResetPassContext {
+  runDecision(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<NativeResetAnswer>, signal?: AbortSignal): Promise<unknown>;
 }
 
 type CapturedAccount = Readonly<{ evidence: ResetAccountEvidence; projected: ResetPolicyWireAccount }>;
@@ -49,15 +53,15 @@ function sameHigherLayers(before: PersistedSnapshot, after: PersistedSnapshot): 
 
 /** Captures child-local native objects synchronously. The returned context owns
  * only its Settings observation and session subscription. */
-export function createNativeResetPassContextFactory(options: NativeResetPassContextFactoryOptions): (pass: ResetPass) => NativeResetPassContext {
+export function createNativeResetPassContextFactory(options: NativeResetPassContextFactoryOptions): (pass: ResetPass) => NativeResetPassContextWithCancellation {
   const { binding, interactions } = options;
   return pass => new BoundNativeResetPassContext(binding, interactions, pass);
 }
 
-class BoundNativeResetPassContext implements NativeResetPassContext {
+class BoundNativeResetPassContext implements NativeResetPassContextWithCancellation {
   readonly source;
   readonly #binding: Readonly<CodexResetPolicySessionBinding>;
-  readonly #interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding">;
+  readonly #interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding" | "runWithSignal">;
   readonly #pass: ResetPass;
   readonly #model: NonNullable<AgentSession["model"]>;
   readonly #modelDigest: string;
@@ -71,12 +75,12 @@ class BoundNativeResetPassContext implements NativeResetPassContext {
   readonly #unsubscribe: () => void;
   #modelChanged = false;
   #disposed = false;
-  #policyRevision = randomUUID();
+  #policyRevision = digest(randomUUID());
   #planned?: Readonly<{ snapshot: ResetPlanSnapshot; accounts: readonly CapturedAccount[]; persisted: PersistedSnapshot }>;
   #decision: Readonly<{ recorded: true; answer: NativeResetAnswer }> | undefined;
   #persistenceDone = false;
 
-  constructor(binding: Readonly<CodexResetPolicySessionBinding>, interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding">, pass: ResetPass) {
+  constructor(binding: Readonly<CodexResetPolicySessionBinding>, interactions: Pick<OmpInteractionBridge, "runWithDecisionBinding" | "runWithSignal">, pass: ResetPass) {
     this.#binding = binding; this.#interactions = interactions; this.#pass = clone(pass);
     if (binding.session.sessionId !== pass.nativeSessionId || binding.session.settings !== binding.settings
       || binding.session.modelRegistry !== binding.modelRegistry || binding.modelRegistry.authStorage !== binding.authStorage)
@@ -169,7 +173,7 @@ class BoundNativeResetPassContext implements NativeResetPassContext {
     const verified = current.resetPolicyWriter.available && current.global["codexResets.autoRedeem"] === mode && sameHigherLayers(initial, current)
       && RESET_PATHS.slice(1).every(path => isDeepStrictEqual(initial.global[path], current.global[path]));
     if (!verified) throw new Error("Native reset policy write was not durably verified");
-    this.#policyRevision = randomUUID();
+    this.#policyRevision = digest(randomUUID());
     return Object.freeze({ kind: "persistence" as const, status: "verified" as const, globalMode: mode,
       effectivePolicy: policy(this.#binding), layersUnchanged: true, policyRevision: this.#policyRevision });
   }
@@ -192,13 +196,14 @@ class BoundNativeResetPassContext implements NativeResetPassContext {
     } };
   }
 
-  runDecision(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<NativeResetAnswer>): Promise<unknown> {
+  runDecision(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<NativeResetAnswer>, signal?: AbortSignal): Promise<unknown> {
     this.assertCurrent();
-    return this.#interactions.runWithDecisionBinding(bind, async () => {
+    const select = () => this.#interactions.runWithDecisionBinding(bind, async () => {
       const answer = await selectNative(); this.assertCurrent();
       if (this.#decision) throw new Error("Native reset decision was already recorded");
       this.#decision = Object.freeze({ recorded: true, answer }); return answer;
     });
+    return signal ? this.#interactions.runWithSignal(signal, select) : select();
   }
 
   #assertSnapshot(snapshot: ResetPlanSnapshot): void {

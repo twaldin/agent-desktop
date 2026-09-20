@@ -24,15 +24,16 @@ async function dirs(name: string) {
 test("actual OmpRuntime installs the synchronous root factory after enabling its writer and finishes after native disposal", async () => {
   const f = await dirs("reset-runtime-");
   await writeFile(join(f.agentDir, "config.yml"), `extensions:\n  - ${JSON.stringify(fileURLToPath(new URL("../omp-workers/fixtures/ask-provider.ts", import.meta.url)))}\nretry:\n  enabled: false\n`);
-  const events: string[] = []; let binding!: Readonly<CodexResetPolicySessionBinding>, unavailable = false;
+  const events: string[] = []; let binding!: Readonly<CodexResetPolicySessionBinding>, unavailable = false, signalUnavailable = false;
   const runtime = new OmpRuntime({ agentDir: f.agentDir, createResetPolicyOwner: (value, interactions) => {
     binding = value; expect(value.settings.getResetPolicySettingsWriter()).not.toBeNull();
     try { void interactions.runWithDecisionBinding(async () => {}, async () => "Yes" as const); } catch (error) { unavailable = /unavailable/.test(String(error)); }
+    try { void interactions.runWithSignal(new AbortController().signal, async () => "Yes" as const); } catch (error) { signalUnavailable = /unavailable/.test(String(error)); }
     return owner(events, "root", () => expect(value.session.isDisposed).toBe(true));
   } });
   try {
     const session = await runtime.create({ cwd: f.cwd, model: { provider: "ask-contract", id: "controlled" }, interactions: true });
-    expect(binding.session.sessionId).toBe(session.id); expect(unavailable).toBe(true);
+    expect(binding.session.sessionId).toBe(session.id); expect(unavailable).toBe(true); expect(signalUnavailable).toBe(true);
     await session.dispose(); expect(events).toEqual(["begin:root", "finish:root"]); expect(binding.settings.getResetPolicySettingsWriter()).toBeNull();
   } finally { await runtime.dispose(); }
 }, 30_000);
