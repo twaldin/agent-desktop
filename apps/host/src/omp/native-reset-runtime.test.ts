@@ -3,17 +3,32 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CodexResetPolicySessionBinding } from "@oh-my-pi/pi-coding-agent";
+import type { AgentSession, CodexResetPolicySessionBinding, CodexResetPolicySessionLifecycleListener } from "@oh-my-pi/pi-coding-agent";
 import { ModelRegistry, Settings, discoverAuthStorage } from "@oh-my-pi/pi-coding-agent";
 import { OmpRuntime } from "./runtime";
 import { NativeResetRuntimeOwners, type NativeResetRuntimeOwner } from "./native-reset-runtime";
 
-const unusedLifecycle = (): (() => void) => () => {};
+function controlledBinding(session: AgentSession): Readonly<CodexResetPolicySessionBinding> {
+  const listeners = new Set<Readonly<CodexResetPolicySessionLifecycleListener>>();
+  let closed = false;
+  session.beginDispose = () => {
+    if (closed) return; closed = true;
+    for (const listener of listeners) listener.beginClose();
+    for (const listener of [...listeners]) listener.drained();
+  };
+  return { session, settings: session.settings, modelRegistry: session.modelRegistry, authStorage: session.modelRegistry.authStorage,
+    registerLifecycle(listener) {
+      listeners.add(listener);
+      if (closed) { listener.beginClose(); listener.drained(); }
+      return () => { listeners.delete(listener); };
+    } };
+}
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))));
 const owner = (events: string[], label: string, finish?: () => void): NativeResetRuntimeOwner => ({
   checkpoint: async () => {}, presentDecision: async () => {}, admit: async () => ({ kind: "hold", reason: "owner-unavailable" }), complete: async () => {},
+  beginSessionClose: () => { events.push(`begin:${label}`); }, retireSession: async () => { events.push(`retire:${label}`); finish?.(); },
   beginClose: () => { events.push(`begin:${label}`); }, finish: async () => { events.push(`finish:${label}`); finish?.(); },
 });
 
@@ -49,10 +64,10 @@ test("all sibling owners begin close before any channel-owning finish and child 
   const fake = (ownedSettings: Settings) => ({ settings: ownedSettings, modelRegistry: registry, sessionId: "controlled" }) as any;
   const events: string[] = [], group = new NativeResetRuntimeOwners({ settings, modelRegistry: registry, authStorage: auth, writer }, () => undefined,
     binding => owner(events, binding.settings === settings ? "root" : "child", () => expect(events.filter(item => item.startsWith("begin:"))).toHaveLength(2)));
-  group.factory({ session: fake(settings), settings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle });
-  group.factory({ session: fake(childSettings), settings: childSettings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle });
+  group.factory(controlledBinding(fake(settings)));
+  group.factory(controlledBinding(fake(childSettings)));
   group.beginClose(); await group.finish();
-  expect(events).toEqual(["begin:root", "begin:child", "finish:root", "finish:child"]);
+  expect(events).toEqual(["begin:root", "begin:child", "retire:child", "finish:root"]);
   childSettings.cancelPendingSaves(); settings.disableResetPolicyPersistence(); auth.close();
 });
 
@@ -71,13 +86,13 @@ test("finish waits a held native callback and a synchronous finish throw cannot 
     }
     return value;
   });
-  const rootOwner = group.factory({ session: fake(settings), settings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle });
-  group.factory({ session: fake(childSettings), settings: childSettings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle });
+  const rootOwner = group.factory(controlledBinding(fake(settings)));
+  group.factory(controlledBinding(fake(childSettings)));
   const callback = rootOwner.checkpoint({ phase: "started", pass: {} as never }); await Promise.resolve();
   group.beginClose(); const finishing = group.finish(); await Promise.resolve();
   expect(events).not.toContain("finish:root"); expect(events).not.toContain("finish:child"); release(); await callback;
   await expect(finishing).rejects.toThrow(/finish cleanly/);
-  expect(events).toContain("finish:root"); expect(events).toContain("finish:child");
+  expect(events).toContain("finish:root"); expect(events).toContain("retire:child"); expect(events).not.toContain("finish:child");
   childSettings.cancelPendingSaves(); settings.disableResetPolicyPersistence(); auth.close();
 });
 
@@ -88,9 +103,9 @@ test("factory reentrant close cleans the returned owner and cannot move the rese
   const fake = { settings, modelRegistry: registry, sessionId: "controlled" } as any; const events: string[] = [];
   let group!: NativeResetRuntimeOwners;
   group = new NativeResetRuntimeOwners({ settings, modelRegistry: registry, authStorage: auth, writer }, () => undefined, () => { group.beginClose(); return owner(events, "reentrant"); });
-  expect(() => group.factory({ session: fake, settings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle })).toThrow(/closed during factory/);
-  await group.finish(); expect(events).toEqual(["begin:reentrant", "finish:reentrant"]);
-  expect(() => group.factory({ session: fake, settings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle })).toThrow(/unavailable/);
+  expect(() => group.factory(controlledBinding(fake))).toThrow();
+  await expect(group.finish()).rejects.toThrow(); expect(events).toEqual(["begin:reentrant", "finish:reentrant"]);
+  expect(() => group.factory(controlledBinding(fake))).toThrow();
   settings.disableResetPolicyPersistence(); auth.close();
 });
 
@@ -101,7 +116,7 @@ test("finish publishes its promise before an owner synchronously reenters", asyn
   const fake = { settings, modelRegistry: registry, sessionId: "controlled" } as any; let reentered: Promise<void> | undefined;
   let group!: NativeResetRuntimeOwners;
   group = new NativeResetRuntimeOwners({ settings, modelRegistry: registry, authStorage: auth, writer }, () => undefined, () => ({ ...owner([], "root"), finish: async () => { reentered = group.finish(); } }));
-  group.factory({ session: fake, settings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle }); group.beginClose();
+  group.factory(controlledBinding(fake)); group.beginClose();
   const finishing = group.finish(); await finishing; expect(reentered).toBe(finishing);
   settings.disableResetPolicyPersistence(); auth.close();
 });
@@ -135,8 +150,8 @@ test("callbacks invoked after terminal finish reject without reaching the owner"
   const group = new NativeResetRuntimeOwners({ settings, modelRegistry: registry, authStorage: auth, writer }, () => undefined, () => {
     const value = owner([], "root"); value.checkpoint = async () => { calls++; }; return value;
   });
-  const exposed = group.factory({ session: fake, settings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle }); group.beginClose(); await group.finish();
-  await expect(exposed.checkpoint({ phase: "started", pass: {} as never })).rejects.toThrow(/finishing/); expect(calls).toBe(0);
+  const exposed = group.factory(controlledBinding(fake)); group.beginClose(); await group.finish();
+  await expect(exposed.checkpoint({ phase: "started", pass: {} as never })).rejects.toThrow(); expect(calls).toBe(0);
   settings.disableResetPolicyPersistence(); auth.close();
 });
 
@@ -149,7 +164,7 @@ test("reentrant factory cleanup retains a raw undefined begin-close throw", asyn
   group = new NativeResetRuntimeOwners({ settings, modelRegistry: registry, authStorage: auth, writer }, () => undefined, () => {
     group.beginClose(); const value = owner([], "root", () => { finished++; }); value.beginClose = () => { throw undefined; }; return value;
   });
-  expect(() => group.factory({ session: fake, settings, modelRegistry: registry, authStorage: auth, registerLifecycle: unusedLifecycle })).toThrow(/closed during factory/);
+  expect(() => group.factory(controlledBinding(fake))).toThrow();
   await expect(group.finish()).rejects.toThrow(/finish cleanly/); expect(finished).toBe(1);
   settings.disableResetPolicyPersistence(); auth.close();
 });

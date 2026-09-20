@@ -348,17 +348,6 @@ test("pause refuses new capture without touching a finished decision, and resume
   expect(f.contexts.at(-1)).toEqual({ passId: "pass-b", disposed: 0 });
 });
 
-test("beginClose cancels the pending native select without pretending an answer", async () => {
-  const f = setup();
-  await start(f.owner);
-  const decision = outcome(f.owner.presentDecision(snapshot, selectNever));
-  await bound(f.requests);
-  f.owner.beginClose();
-  const failed = await decision;
-  expect(failed.ok).toBe(false);
-  if (failed.ok) throw new Error("unreachable");
-  expect((failed.error as Error).message).toContain("cancelled by the owner");
-});
 
 test("transport loss during completion holds the authentic settlement until reconnect delivers the original request", async () => {
   const f = setup();

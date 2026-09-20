@@ -92,6 +92,29 @@ const server = createServer(socket => {
       }
       const session = originalRegistry?.get("Main")?.session;
       assert.ok(session, "Original production native session is not registered");
+      if (command.op === "churnChildren") {
+        const count = command.count!;
+        assert.ok(Number.isInteger(count) && count > 0 && count <= 260);
+        const factory = session.codexResetPolicyOwnerFactory;
+        const writer = session.settings.getResetPolicySettingsWriter();
+        assert.ok(factory && writer, "Original production reset factory and writer are required");
+        const identities = new Set<import("@oh-my-pi/pi-coding-agent").AgentSession>();
+        for (let index = 0; index < count; index++) {
+          const settings = native.Settings.isolated({}, { resetPolicyWriter: writer });
+          const child = await native.createAgentSession({
+            cwd: path.join(root, "project"), agentDir: path.join(root, "agent"), settings,
+            modelRegistry: session.modelRegistry, authStorage: session.modelRegistry.authStorage,
+            agentRegistry: new native.AgentRegistry(), sessionManager: native.SessionManager.inMemory(path.join(root, "project")),
+            disableExtensionDiscovery: true, enableMCP: false, enableIrc: false, enableLsp: false,
+            toolNames: [], hasUI: false, codexResetPolicyOwnerFactory: factory,
+          });
+          identities.add(child.session);
+          await child.session.dispose();
+          await child.session.drainCodexResetPolicy();
+          assert.ok(child.session.isDisposed);
+        }
+        return { created: identities.size, consume: counts.consume, escaped: counts.escaped };
+      }
       if (command.op === "failPrepare") {
         const drain = session.drainCodexResetPolicy;
         session.drainCodexResetPolicy = async () => {

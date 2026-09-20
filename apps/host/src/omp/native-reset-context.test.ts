@@ -118,7 +118,7 @@ test("runtime factory exposes the original bridge signal scope to its native pas
   const events: string[] = [], bridge = new OmpInteractionBridge(f.session.sessionId, event => events.push(event.type));
   let factory!: ReturnType<typeof createNativeResetPassContextFactory>;
   const lifecycle = { checkpoint: async () => {}, presentDecision: async () => {}, admit: async () => ({ kind: "hold" as const, reason: "owner-unavailable" as const }),
-    complete: async () => {}, beginClose() {}, async finish() {} } satisfies NativeResetRuntimeOwner;
+    complete: async () => {}, beginSessionClose() {}, async retireSession() {}, beginClose() {}, async finish() {} } satisfies NativeResetRuntimeOwner;
   const writer = f.settings.getResetPolicySettingsWriter(); if (!writer) throw new Error("Missing reset writer");
   const owners = new NativeResetRuntimeOwners({ settings: f.settings, modelRegistry: f.modelRegistry, authStorage: f.authStorage, writer }, () => bridge,
     (binding, interactions) => { factory = createNativeResetPassContextFactory({ binding, interactions }); return lifecycle; });

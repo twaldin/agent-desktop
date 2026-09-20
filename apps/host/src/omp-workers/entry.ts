@@ -54,7 +54,9 @@ let pendingDispose: { id: string; exitCode: number; deadline: ReturnType<typeof 
 let reconnect: WorkerReconnectServer | undefined;
 let resetChannel: ResetPolicyChannel | undefined;
 let resetBinding: WorkerResetPolicyReconnect | undefined;
-const resetOwners: Array<{ binding: Readonly<CodexResetPolicySessionBinding>; owner: NativeResetChannelOwner }> = [];
+type ResetOwner = { binding: Readonly<CodexResetPolicySessionBinding>; owner: NativeResetChannelOwner; retired: Promise<void> };
+const resetOwners = new Set<ResetOwner>();
+let resetRoot: ResetOwner | undefined;
 let resetPaused = false;
 let resetQuiescence: Promise<void> | undefined;
 let resetRecovery: "disconnected" | "reconciling" | "quiescent" | "active" = "active";
@@ -125,11 +127,16 @@ function quiesceResetPolicy(): Promise<void> {
   pauseResetPolicy();
   if (resetQuiescence) return resetQuiescence;
   const pending = (async () => {
-    let drained = 0;
-    while (drained < resetOwners.length) {
-      const owners = resetOwners.slice(drained);
-      drained += owners.length;
-      await Promise.all(owners.map(({ binding }) => binding.session.drainCodexResetPolicy()));
+    const drained = new Set<ResetOwner>();
+    while (true) {
+      const owners = [...resetOwners].filter(owner => !drained.has(owner));
+      if (!owners.length) break;
+      for (const owner of owners) drained.add(owner);
+      await Promise.all(owners.map(async owner => {
+        await owner.binding.session.drainCodexResetPolicy();
+        // Native drain starts local retirement, but does not itself complete it.
+        if (owner !== resetRoot && owner.binding.session.isDisposed) await owner.retired;
+      }));
     }
     await resetChannel?.quiesce();
   })();
@@ -326,9 +333,16 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
                 resetChannel!.transportLost(error instanceof Error ? error : new Error(String(error)));
               }
             });
+            const retired = Promise.withResolvers<void>();
+            let record!: ResetOwner;
             const owner = new NativeResetChannelOwner(resetChannel,
-              createNativeResetPassContextFactory({ binding, interactions }));
-            resetOwners.push({ binding, owner });
+              createNativeResetPassContextFactory({ binding, interactions }), () => {
+                if (record !== resetRoot) resetOwners.delete(record);
+                retired.resolve();
+              });
+            record = { binding, owner, retired: retired.promise };
+            resetRoot ??= record;
+            resetOwners.add(record);
             if (resetPaused) owner.pause();
             return owner;
           };
@@ -338,7 +352,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         if (init.mode === "open") session = await runtime.open({ ...init.options, onEvent: emit });
         if (init.resetPolicy) {
           const current = snapshot();
-          if (!current || !resetChannel || resetOwners[0]?.binding.session.sessionId !== current.id)
+          if (!current || !resetChannel || resetRoot?.binding.session.sessionId !== current.id)
             throw new Error("Native runtime did not bind the original reset-policy session.");
           resetBinding = parseWorkerResetPolicyReconnect({ workerEpoch: init.resetPolicy.workerEpoch,
             rootSessionId: current.id, sessionFile: current.sessionFile, cwd: current.cwd });
@@ -795,7 +809,11 @@ function receiveParent(value: unknown): void {
   if (message.type === "resetPolicyResume") {
     assertResetReconnect(message.binding);
     if (resetRecovery !== "quiescent") throw new Error("Original reset callbacks have not quiesced.");
-    for (const { owner } of resetOwners) owner.resume();
+    for (const current of resetOwners) {
+      // A child can begin native disposal after the quiescence ACK. It remains
+      // tracked through local cleanup, but can never regain admission authority.
+      if (current === resetRoot || !current.binding.session.isDisposed) current.owner.resume();
+    }
     resetChannel!.resume();
     resetPaused = false;
     resetQuiescence = undefined;

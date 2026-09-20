@@ -28,13 +28,15 @@ export interface NativeResetPassContext {
   runDecision(bind: (interactionId: string) => Promise<void>, selectNative: () => Promise<NativeResetAnswer>, signal: AbortSignal): Promise<unknown>;
 }
 
-// `fenced` is permanent: a pass captured before a pause never regains authority,
-// even after resume; only its complete/finished settlements still flow.
-type Pass = { readonly native: ResetPass; readonly context: NativeResetPassContext; readonly decisions: Set<AbortController>; fenced: boolean };
+// `fenced` is permanent and names its first cause: a pass captured before a
+// pause or a session close never regains authority; only its complete/finished
+// settlements still flow.
+type Fence = false | "pause" | "close";
+type Pass = { readonly native: ResetPass; readonly context: NativeResetPassContext; readonly decisions: Set<AbortController>; fenced: Fence };
 type IssuedPermit = { readonly pass: Pass; readonly wire: Omit<ResetPermit, "beforeConsume">; completing: boolean };
 type Attempt<T = undefined> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
 const MAX_PASSES = 128;
-const FENCED = "Reset pass authority was fenced by pause";
+function fenced(pass: Pass): Error { return new Error(`Reset pass authority was fenced by ${pass.fenced}`); }
 
 /** Connects the native awaited callbacks to the original worker's private
  * channel. Evidence capture and the synchronous native consume guard remain
@@ -44,8 +46,13 @@ const FENCED = "Reset pass authority was fenced by pause";
  * pass permanently loses further authority (planning, decisions, admission,
  * consume guards), while its original complete/finished settlements still
  * reach the original owner and its context is disposed only by `finished`.
- * `resume` reopens capture once no original pass remains. `beginClose`/`finish`
- * stay the terminal teardown. */
+ * `resume` reopens capture once no original pass remains.
+ *
+ * Teardown is split between this owner's local lifetime and the shared channel:
+ * `beginSessionClose`/`retireSession` retire only this owner's passes and
+ * contexts (a child session leaving a live worker), never touching the channel
+ * other owners still use. `beginClose`/`finish` are the whole-owner teardown
+ * that the root session composes with the channel's own close and drain. */
 export class NativeResetChannelOwner implements CodexResetPolicyOwner {
   readonly #passes = new Map<string, Pass>();
   readonly #capturing = new Set<string>();
@@ -54,9 +61,13 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
   #errorCount = 0;
   #paused = false;
   #closing = false;
+  #retired: Promise<void> | undefined;
   #finished: Promise<void> | undefined;
 
-  constructor(readonly channel: ResetPolicyChannel, private capture: (pass: ResetPass) => NativeResetPassContext) {}
+  /** `onRetired` runs exactly once after every local cleanup attempt settled,
+   * whether or not it failed; its own failure is retained like any other. */
+  constructor(readonly channel: ResetPolicyChannel, private capture: (pass: ResetPass) => NativeResetPassContext,
+    private readonly onRetired?: () => void) {}
 
   #original(pass: ResetPass): Pass {
     const current = this.#passes.get(pass.passId);
@@ -68,7 +79,7 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
   /** Re-checked after every await: a pause during the await revokes what the
    * original pass may do next, whatever an in-flight reply says. */
   #assertAuthority(pass: Pass): void {
-    if (pass.fenced) throw new Error(FENCED);
+    if (pass.fenced) throw fenced(pass);
     pass.context.assertCurrent();
   }
 
@@ -125,7 +136,7 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
     let evidence: ResetPolicyWireEvidence | undefined;
     let failure: Attempt = { ok: true, value: undefined };
     try {
-      if (authority && pass.fenced) throw new Error(FENCED);
+      if (authority && pass.fenced) throw fenced(pass);
       if (event.phase === "started" || event.phase === "joined") evidence = pass.context.source;
       else if (event.phase === "planned") {
         pass.context.assertCurrent();
@@ -147,13 +158,14 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
       await this.channel.request(native.nativeSessionId, native.passId, { kind: "checkpoint", event }, evidence);
       // A reply landing after a pause settles the journal but grants nothing:
       // a pre-pause "Yes" must never turn into a fresh Settings write.
-      if (authority && pass.fenced) throw new Error(FENCED);
+      if (authority && pass.fenced) throw fenced(pass);
     } catch (error) {
       failure = { ok: false, error };
       this.#remember(error);
     } finally {
-      if (event.phase === "finished") {
-        this.#passes.delete(native.passId);
+      // Retirement may already have disposed a pass whose final checkpoint
+      // was still in flight; whoever removed it from the map owns the cleanup.
+      if (event.phase === "finished" && this.#passes.delete(native.passId)) {
         const cleanup = this.#dispose(pass.context);
         if (!cleanup.ok) {
           failure = failure.ok
@@ -198,7 +210,7 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
       // A join admitted for a since-fenced pass is not followed, even if the
       // channel has been resumed for new passes by now.
       const settled = pass.fenced
-        ? Promise.reject<ResetObservation>(new Error(FENCED))
+        ? Promise.reject<ResetObservation>(fenced(pass))
         : this.channel.request(pass.native.nativeSessionId, pass.native.passId, { kind: "join", joinId: reply.joinId })
           .then(result => {
             if (result.kind !== "joined") throw new Error("Reset join returned no native observation");
@@ -216,7 +228,7 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
       checked = true;
       try {
         pass.context.assertCurrent();
-        return !this.#closing && !pass.fenced && identity.provider === "openai-codex"
+        return !pass.fenced && identity.provider === "openai-codex"
           && identity.credentialId === wire.target.credentialId && identity.creditId === wire.creditId
           && wire.target.credentialId === captured.evidence.account.credentialId
           && wire.creditId === captured.evidence.credit.id
@@ -238,6 +250,9 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
   async complete(permit: ResetPermit, observation: ResetObservation): Promise<void> {
     const issued = this.#permits.get(permit);
     if (!issued || issued.completing) throw new Error("Reset permit is foreign or already completing");
+    // Native drained before retirement; a completion arriving after it would
+    // settle a permit whose owner and context are gone.
+    if (this.#retired) throw new Error("Native reset owner is retired");
     issued.completing = true;
     const safe: ResetObservationWire = observation.result.kind === "error"
       ? { consumeBoundary: observation.consumeBoundary, result: { kind: "error", error: { name: "Error", message: "Native reset operation failed" } } }
@@ -254,11 +269,16 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
    * sessions, contexts and the shared channel are left intact for settlement. */
   pause(): void {
     this.#paused = true;
+    this.#fence("pause");
+    this.channel.pause();
+  }
+
+  /** Cancels only this owner's registered native selects; no other UI is touched. */
+  #fence(cause: Exclude<Fence, false>): void {
     for (const pass of this.#passes.values()) {
-      pass.fenced = true;
+      pass.fenced ||= cause;
       this.#cancelDecisions(pass);
     }
-    this.channel.pause();
   }
 
   /** Reopens capture for genuinely new passes. The shared channel is resumed
@@ -269,24 +289,58 @@ export class NativeResetChannelOwner implements CodexResetPolicyOwner {
     this.#paused = false;
   }
 
-  beginClose(): void {
+  /** Local, permanent fence for this owner's session only: no new capture, and
+   * every original pass loses further authority while its pending native select
+   * is cancelled. Factual complete/finished settlements still flow, and the
+   * shared channel is untouched because sibling sessions still use it. */
+  beginSessionClose(): void {
     this.#closing = true;
-    for (const pass of this.#passes.values()) this.#cancelDecisions(pass);
-    this.channel.beginClose();
-  }
-  /** Call only after native callbacks have drained, never before their final checkpoints. */
-  finish(): Promise<void> {
-    this.#closing = true;
-    // Publish the terminal promise before a disposer can synchronously re-enter.
-    this.#finished ??= Promise.resolve().then(() => this.#finish());
-    return this.#finished;
+    this.#fence("close");
   }
 
-  async #finish(): Promise<void> {
+  /** Call only after this session's native callbacks have drained, never before
+   * their final checkpoints. Disposes stranded contexts once, notifies
+   * `onRetired` once, and rejects with every retained local failure. Never
+   * closes or drains the shared channel. */
+  retireSession(): Promise<void> {
+    // Publish before the fence: a cancelled select's abort listener or a
+    // disposer reentering here must observe this one promise.
+    this.#retired ??= Promise.resolve().then(() => this.#retire());
+    this.beginSessionClose();
+    return this.#retired;
+  }
+
+  #retire(): void {
     for (const [passId, pass] of this.#passes) {
       this.#passes.delete(passId);
       this.#dispose(pass.context);
     }
+    try { this.onRetired?.(); } catch (error) { this.#remember(error); }
+    if (this.#errors.length) throw new AggregateError([...this.#errors],
+      `Native reset pass contexts did not drain cleanly (${this.#errorCount} owner failures)`);
+  }
+
+  /** Whole-owner close: the local fence plus the shared channel's admission
+   * close. Only the root session, which owns the channel, calls this. */
+  beginClose(): void {
+    this.beginSessionClose();
+    this.channel.beginClose();
+  }
+
+  /** Whole-owner drain: local retirement joined with the shared channel's
+   * drain, each awaited whatever the other reports. Root-only, like `beginClose`. */
+  finish(): Promise<void> {
+    this.#finished ??= Promise.resolve().then(() => this.#finish());
+    // The fence is synchronous even though retirement is deferred: a capture
+    // reentering from the factory must already be refused.
+    this.beginSessionClose();
+    return this.#finished;
+  }
+
+  async #finish(): Promise<void> {
+    // Local failures are read from the live retained set after both drains,
+    // so one remembered while the channel was still draining is not lost.
+    try { await this.retireSession(); } catch { /* retained in #errors */ }
     let channel: Attempt = { ok: true, value: undefined };
     try { await this.channel.finish(); } catch (error) { channel = { ok: false, error }; }
     const failures = [...this.#errors, ...(channel.ok ? [] : [channel.error])];

@@ -258,3 +258,17 @@ test("failed original owner drain retains its transport and Store until that sam
   const h = recoveredHost(f.root), client = await WorkerClient.recover(h.options, f.endpoint);
   await retire(client, h.policy);
 }, 30000);
+
+test("original worker recovery remains usable after more than 128 real child retirements", async () => {
+  const f = await startHost();
+  expect(await f.control({ op: "churnChildren", count: 132 })).toEqual({ created: 132, consume: 0, escaped: 0 });
+  await detach(f);
+  const h = recoveredHost(f.root), client = await WorkerClient.recover(h.options, f.endpoint);
+  expect(client.pid).toBe(f.endpoint.pid);
+  expect(h.contexts[0]!.workerEpoch).toBe(f.endpoint.resetPolicy!.workerEpoch);
+  expect(await f.control({ op: "churnChildren", count: 3 })).toEqual({ created: 3, consume: 0, escaped: 0 });
+  const sweep = await f.control({ op: "sweep" });
+  expect(sweep.policy).toMatchObject({ state: "settled", applied: 1 });
+  expect((await f.control({ op: "status" })).counts).toMatchObject({ consume: 1, escaped: 0 });
+  await retire(client, h.policy);
+}, 60000);
