@@ -70,7 +70,7 @@ export const isWorkspaceFilePath = (value: unknown): value is string =>
   value.length > 0 &&
   value.length <= MAX_WORKSPACE_FILE_PATH_LENGTH &&
   !value.startsWith("/") &&
-  !/[\\\x00-\x1f\x7f-\x9f]/.test(value) &&
+  !/[\x00-\x1f\x7f-\x9f]/.test(value) &&
   value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 /** Canonical owner-host absolute path encoded as one dock-target segment. */
 export function standaloneFileDockTarget(path: unknown): DockTarget {

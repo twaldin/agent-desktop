@@ -1,3 +1,5 @@
+import type { BranchReviewRequest, BranchReview } from "./branch-review";
+export * from "./branch-review";
 import type { GitFileOrigin, GitFileLocation, GitFileHistoryCursor, GitFileInspection, GitFileHistoryPage, GitFileRevision } from "./git-file-history";
 export * from "./git-file-history";
 import type { SymbolDefinitionRequest, SymbolDefinitionResult } from "./symbol-navigation";
@@ -79,6 +81,7 @@ export interface WorkspaceOpenTarget {
   kind: "editor" | "terminal" | "file-manager";
 }
 export type WorkspaceQuery =
+  | ({ type: "git.branch-review" } & BranchReviewRequest)
   | { type: "file.operations" }
   | { type: "environment.actions" }
   | { type: "environment.output"; preparationId: string }
@@ -114,6 +117,7 @@ export type WorkspaceQuery =
   | { type: "git.review-summary"; source: GitReviewSummary["source"] }
   | { type: "git.worktrees" };
 export type WorkspaceQueryResult =
+  | { type: "git.branch-review"; review: BranchReview }
   | { type: "file.operations"; version: 1 }
   | { type: "environment.actions"; state: LocalEnvironmentActionsState }
   | { type: "environment.output"; output: LocalEnvironmentExecutionOutput | null }

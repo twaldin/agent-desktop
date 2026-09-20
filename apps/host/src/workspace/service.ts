@@ -1,3 +1,6 @@
+import { canonicalReadPath } from "./literal-read-path";
+import { readBranchReview } from "./branch-review";
+import type { BranchReviewRequest, BranchReview } from "../../../../packages/shared/src/branch-review";
 import { GitFileReader } from "./git-file-history";
 import { parseGitFileOrigin, parseGitFilePath, type GitFileHistoryCursor, type GitFileOrigin, type GitFileLocation, type GitFileInspection } from "../../../../packages/shared/src/git-file-history";
 import type { ContentMetadata, WorkspaceEntry, WorkspacePathContext, TextDocument, FileContent, FileWriteInput, FileWriteResult, GitStatus, GitStatusEntry, GitBranch, GitDiff, GitDiffOptions, GitReviewSummary, GitCommitResult, GitWorktree, CreateWorktreeOptions, WorktreeStartingState } from "../../../../packages/shared/src/workspace";
@@ -181,8 +184,14 @@ export class WorkspaceService {
     if (!Number.isSafeInteger(this.gitTimeoutMs) || this.gitTimeoutMs < 1) throw new WorkspaceError("INVALID_LIMIT", "Git timeout must be a positive integer.");
   }
 
-  private async owned(path: string, root = this.cwd): Promise<string> {
-    const target = await realpath(resolve(root, relativePath(path)));
+  private async owned(path: string, root = this.cwd, literalRead = false): Promise<string> {
+    // Read-only viewers accept legal POSIX backslashes; mutations retain relativePath.
+    const input = literalRead && sep === "/" ? (() => {
+      if (typeof path !== "string" || path.includes("\0") || isAbsolute(path) || path.split("/").includes(".."))
+        throw new WorkspaceError("OUTSIDE_WORKSPACE", "A relative path within the owning workspace is required.");
+      return path || ".";
+    })() : relativePath(path);
+    const target = await (literalRead ? canonicalReadPath(resolve(root, input)) : realpath(resolve(root, input)));
     if (!within(root, target)) throw new WorkspaceError("OUTSIDE_WORKSPACE", "The path resolves outside its owning workspace.");
     return target;
   }
@@ -207,11 +216,11 @@ export class WorkspaceService {
   async externalFilePath(path: string): Promise<string> {
     const changed = "The selected workspace changed identity. Reopen it before opening a file externally.";
     await this.assertWorkspaceIdentity(changed);
-    const target = await this.owned(path);
+    const target = await this.owned(path, this.cwd, true);
     const initial = await stat(target);
     if (!initial.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Only a regular workspace file can be opened externally.");
     await this.assertWorkspaceIdentity(changed);
-    const currentPath = await realpath(target), current = await stat(currentPath);
+    const currentPath = await canonicalReadPath(target), current = await stat(currentPath);
     if (currentPath !== target || !current.isFile() || current.dev !== initial.dev || current.ino !== initial.ino) {
       throw new WorkspaceError("PATH_CHANGED", "The file changed identity while preparing its external application. Refresh before retrying.");
     }
@@ -226,7 +235,7 @@ export class WorkspaceService {
     const changed = "The source file changed while it was being copied. Choose Save as again.";
     await this.assertWorkspaceIdentity(changed);
     let currentPath: string, current;
-    try { currentPath = await this.owned(path); current = await stat(currentPath, { bigint: true }); }
+    try { currentPath = await this.owned(path, this.cwd, true); current = await stat(currentPath, { bigint: true }); }
     catch { throw new WorkspaceError("FILE_COPY_CHANGED", changed); }
     if (currentPath !== target || !current.isFile() || this.copyRevision(current) !== this.copyRevision(expected)) {
       throw new WorkspaceError("FILE_COPY_CHANGED", changed);
@@ -236,7 +245,7 @@ export class WorkspaceService {
   private async copyFile(path: string) {
     const changed = "The source file changed while it was being copied. Choose Save as again.";
     await this.assertWorkspaceIdentity(changed);
-    const target = await this.owned(path);
+    const target = await this.owned(path, this.cwd, true);
     const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const metadata = await file.stat({ bigint: true });
@@ -465,13 +474,13 @@ export class WorkspaceService {
 
 
   async readText(path: string): Promise<FileContent> {
-    const target = await this.owned(path);
+    const target = await this.owned(path, this.cwd, true);
     if (!(await stat(target)).isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Text reading supports regular files only.");
     const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const initial = await file.stat();
       if (!initial.isFile()) throw new WorkspaceError("NOT_REGULAR_FILE", "Text reading supports regular files only.");
-      const resolvedAgain = await realpath(target);
+      const resolvedAgain = await canonicalReadPath(target);
       const current = await stat(resolvedAgain);
       if (!within(this.cwd, resolvedAgain) || current.ino !== initial.ino || current.dev !== initial.dev) throw new WorkspaceError("PATH_CHANGED", "The file changed identity while opening it. Refresh before retrying.");
       const metadata: ContentMetadata = { path: relative(this.cwd, target), size: initial.size, modifiedAt: initial.mtimeMs, mode: initial.mode & 0o777 };
@@ -973,6 +982,16 @@ export class WorkspaceService {
     const input = parseGitBranchSearch(query, limit);
     await this.requireGitRoot();
     return searchGitBranches(this.cwd, input.query, input.limit, this.gitTimeoutMs, undefined, true);
+  }
+
+  async branchReview(request: BranchReviewRequest): Promise<BranchReview> {
+    return readBranchReview({
+      git: (args, options) => this.git(args, options),
+      requireGitRoot: () => this.requireGitRoot(),
+      baseBranch: () => this.baseBranch(),
+      cwd: this.cwd,
+      readFence: async () => JSON.stringify([(await this.repositoryReadContext()).identity, (await this.indexState()).revision]),
+    }, request);
   }
 
   async diff(options: GitDiffOptions = {}): Promise<GitDiff> {

@@ -1,3 +1,4 @@
+import { parseBranchReviewRequest } from "../../../packages/shared/src/branch-review";
 import { parseGitFileOrigin, parseGitFileLocation, parseGitFilePath, parseGitFileHistoryCursor } from "@agent-desktop/shared";
 import { parseSymbolDefinitionRequest } from "../../../packages/shared/src/symbol-navigation";
 import { createHash } from "node:crypto";
@@ -106,6 +107,10 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
       if (typeof query.contextRevision !== "string" || !/^[a-f0-9]{64}$/.test(query.contextRevision)
         || query.selectionMode !== "staged" && query.selectionMode !== "include-unstaged") throw new Error("An exact Git context revision and selection mode are required.");
       return { type: query.type, contextRevision: query.contextRevision, selectionMode: query.selectionMode };
+    }
+    case "git.branch-review": {
+      const { type, ...request } = query;
+      return { type: "git.branch-review", ...parseBranchReviewRequest(request) };
     }
     case "git.diff": {
       if (query.context !== undefined && (!Number.isSafeInteger(query.context) || (query.context as number) < 0 || (query.context as number) > 1000)) throw new Error("Invalid diff context.");
@@ -443,7 +448,7 @@ export class HostWorkspaces {
       return { type: query.type, receipt: this.store.getGitSubmission(target, query.commandId) ?? null };
     }
     const summaryOwner = query.type === "git.selection-summary" && !("filePath" in target) ? this.ownerStamp(target) : undefined;
-    const reviewOwner = query.type === "git.review-summary" && !("filePath" in target) ? this.ownerStamp(target) : undefined;
+    const reviewOwner = (query.type === "git.review-summary" || query.type === "git.branch-review") && !("filePath" in target) ? this.ownerStamp(target) : undefined;
     const branchSearchOwner = (query.type === "git.search-branches" || query.type === "git.search-starting-branches" || query.type === "git.resolve-revision" || query.type === "git.recent-branches" || query.type === "git.base-branch" || query.type === "git.default-branch" || query.type === "git.resolve-checkout") && !("filePath" in target) ? this.ownerStamp(target) : undefined;
     const isFileHistory = query.type === "git.file-inspect" || query.type === "git.file-history" || query.type === "git.file-revision";
     const fileHistoryOwner = isFileHistory && !("filePath" in target) ? this.ownerStamp(target) : undefined;
@@ -561,6 +566,13 @@ export class HostWorkspaces {
         if ("filePath" in target || branchSearchOwner !== this.ownerStamp(target))
           throw new WorkspaceError("WORKSPACE_CHANGED", "The workspace owner changed while searching branches.");
         return { type: query.type, ...result };
+      }
+      case "git.branch-review": {
+        const { type, ...request } = query;
+        const review = await workspace.branchReview(request);
+        if ("filePath" in target || reviewOwner !== this.ownerStamp(target))
+          throw new WorkspaceError("WORKSPACE_CHANGED", "The workspace owner changed while reading branch changes.");
+        return { type, review };
       }
       case "git.diff": return { type: query.type, diff: await workspace.diff(query) };
       case "git.review-summary": {

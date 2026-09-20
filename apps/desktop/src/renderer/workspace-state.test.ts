@@ -26,6 +26,7 @@ async function fixture(standalone = false) {
     workspaceQuery: async (_target: unknown, query: Parameters<ConstructorParameters<typeof WorkspaceState>[0]["workspaceQuery"]>[1], hostId?: string): Promise<WorkspaceQueryResult> => {
       owners.push(hostId!);
       switch (query.type) {
+        case "git.branch-review": throw new Error("Branch review uses its dedicated production-path fixture.");
         case "file.operations": return {type:query.type,version:1};
         case "git.submission": throw new Error("Compound submissions are exercised through the host journal fixture.");
         case "git.selection-summary": throw new Error("Selection summaries are exercised through the owner-fenced host query fixture.");

@@ -1,0 +1,13 @@
+.review-source-trigger { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:100%; min-height:28px; padding:0 6px; border:0; border-radius:var(--radius-small,6px); color:var(--text); background:transparent; font:inherit; cursor:pointer; }
+.review-source-trigger:hover { background:var(--hover); }
+.review-source-trigger>span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.review-source-trigger>.icon { width:12px; height:12px; flex:none; transform:rotate(90deg); color:var(--secondary); }
+.review-source-menu { font:13px var(--ui-font,system-ui); }
+.review-source-menu button { color:var(--text); cursor:pointer; }
+.review-source-menu [role=alert] { color:var(--danger); }
+.review-base-row { display:flex; align-items:center; gap:4px; flex-shrink:0; min-height:28px; padding:2px 8px; border-bottom:var(--divider-width,.5px) solid var(--border); color:var(--secondary); font-size:13px; overflow:hidden; }
+.review-current-branch { flex:0 2 auto; min-width:0; padding:0 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.review-base-row>.review-source-trigger { flex:0 1 auto; color:var(--secondary); }
+.review-branch-unavailable { padding:24px 16px; color:var(--secondary); text-align:center; font-size:13px; }
+.review-branch-unavailable p { margin:0 0 10px; }
+.review-branch-unavailable button { color:var(--text); padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-small,6px); background:transparent; cursor:pointer; }
