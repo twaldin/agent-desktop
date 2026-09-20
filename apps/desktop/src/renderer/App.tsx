@@ -1,6 +1,9 @@
 import type { TodoEditorPorts } from "./todo-external-editor-state";
 import { SessionExportDialog } from "./SessionExportDialog";
 import { SessionUsagePanel } from "./SessionUsagePanel";
+import { SessionUsageState } from "./session-usage-state";
+import { usageResetArgument, nativeUsageResetWinner } from "./usage-reset-command";
+import { sameDraftContent } from "./drafts";
 import type { PlanEditorPorts } from "./plan-external-editor-state";
 import { PlanExecutionContinuationControl, PlanReviewPanel } from "./PlanReviewPanel";
 import { useSessionPlan, type SessionPlanPorts } from "./use-session-plan";
@@ -205,6 +208,8 @@ export function App() {
   const { state, connected, loading, refresh, command } = desktop;
   const routeKey = `${route.hostId ?? desktop.localHostId ?? ""}:${selectedId ?? ""}`;
   const selectedRef = useRef(routeKey); selectedRef.current = routeKey;
+  const usageRoute = useRef({ key: routeKey });
+  if (usageRoute.current.key !== routeKey) usageRoute.current = { key: routeKey };
   const [sidebarOpen, setSidebarOpen] = useState(windowRestoration.state.sidebarOpen);
   const [sidebarActivityOpen, setSidebarActivityOpen] = useState(false);
   const [commandMenuMode, setCommandMenuMode] = useState<"commands" | "chats">();
@@ -237,7 +242,7 @@ export function App() {
   const [remotePath, setRemotePath] = useState("");
   const [renameTitle, setRenameTitle] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [usageOwner, setUsageOwner] = useState<{ hostId: string; sessionId: string; hostName: string }>();
+  const [usageOwner, setUsageOwner] = useState<{ hostId: string; sessionId: string; hostName: string; controller?: SessionUsageState }>();
   const [pluginDirectoryOpen,setPluginDirectoryOpen]=useState(windowRestoration.state.pluginDirectoryOpen??false);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(windowRestoration.state.pullRequestsOpen ?? false);
   const pullRequestCache = useRef(new PullRequestCache());
@@ -1394,8 +1399,26 @@ export function App() {
     setBusy(true); setActionError(null);
     const sendingDraftId = draftId; const originalRoute = selectedRef.current;
     let snapshot: Draft | undefined, submittedForceCommandId: string | undefined;
-    let sideHandled = false;
+    let sideHandled = false, usagePresented = false;
+    let releaseUsageOwner: (() => void) | undefined;
+    const usageSource = usageRoute.current;
+    let usageOwnerLost = false;
+    const observeUsageOwner = () => {
+      if (usageRoute.current !== usageSource || selectedRef.current !== originalRoute || !desktop.catalog.records.get(hostId)?.connected) usageOwnerLost = true;
+    };
+    const assertUsageOwner = () => {
+      observeUsageOwner();
+      if (usageOwnerLost) throw new Error("The original conversation or connection changed. The reset draft was retained.");
+    };
     try {
+      // Observe from submission admission, including draft/catalog awaits.
+      const offCatalog = desktop.catalog.subscribe(observeUsageOwner);
+      releaseUsageOwner = offCatalog;
+      const offConnection = bridge.subscribe(event => {
+        if (event.type === "connection" && (event.hostId ?? desktop.localHostId) === hostId) usageOwnerLost = true;
+      });
+      releaseUsageOwner = () => { offCatalog(); offConnection(); };
+      observeUsageOwner();
       const pending = submissions.get(sendingDraftId);
       snapshot = pending?.uncertain ? pending.draft : await drafts.prepareSubmission(sendingDraftId);
       if (!hasDraftContent(snapshot)) return;
@@ -1451,6 +1474,27 @@ export function App() {
           return;
         }
       }
+      const resetArgument = usageResetArgument(snapshot.text);
+      if (!pending?.uncertain && resetArgument !== undefined) {
+        if (!selectedId || !bridge.getComposerActions) throw new Error("Open a connected conversation before using /usage reset. The draft was retained.");
+        assertUsageOwner();
+        const target = { sessionId: selectedId }, catalog = await bridge.getComposerActions(target, false, hostId);
+        assertComposerOwner(catalog, hostId, target);
+        assertUsageOwner();
+        if (nativeUsageResetWinner(catalog, snapshot.text)) {
+          if (state?.sessionUsage?.version !== 1 || state.sessionUsage.commandVersion !== 20 || !bridge.getSessionUsage)
+            throw new Error("Update this desktop and its owning host before using /usage reset. The draft was retained.");
+          if (snapshot.attachments?.length || snapshot.selectedTextAttachments?.length || snapshot.wholeFileAttachments?.length)
+            throw new Error("Native /usage reset does not accept attachments. The draft was retained.");
+          const controller = new SessionUsageState(hostId, selectedId, bridge, localStorage);
+          usagePresented = true;
+          setUsageOwner({ hostId, sessionId: selectedId, hostName: state.host.name, controller });
+          await controller.prepareCommand(resetArgument, assertUsageOwner);
+          drafts.finishSubmission(sendingDraftId, snapshot, false);
+          if (sameDraftContent(drafts.get(sendingDraftId).draft, snapshot)) drafts.update(sendingDraftId, { text: "" });
+          return;
+        }
+      }
       let force: NativeForceSubmission | undefined;
       if (!pending?.uncertain && forceCommandSpelling(snapshot.text)) {
         if (!bridge.getComposerActions) throw new Error("Update this desktop to resolve native /force. The draft was retained.");
@@ -1496,7 +1540,7 @@ export function App() {
         drafts.finishSubmission(sendingDraftId, snapshot, false, queued?.uncertain ?? submissions.get(sendingDraftId)?.uncertain, queued?.send.id ?? submissions.get(sendingDraftId)?.send?.id);
       }
       if (!(cause instanceof EnvironmentPreparationPause)) reportSubmissionError(cause, sendingDraftId, submittedForceCommandId);
-    } finally { submitting.current = false; setBusy(false); if (!sideHandled) textarea.current?.focus(); }
+    } finally { releaseUsageOwner?.(); submitting.current = false; setBusy(false); if (!sideHandled && !usagePresented) textarea.current?.focus(); }
   }
   async function resumeEnvironment() {
     if (submitting.current || !connected || !pendingSubmission?.preparation) return;
@@ -2020,7 +2064,7 @@ export function App() {
           {!showUnifiedStrip && environmentAction}
         </div>
       </header>
-      {usageOwner && <SessionUsagePanel key={`${usageOwner.hostId}:${usageOwner.sessionId}`} {...usageOwner} connected={connected && hostId === usageOwner.hostId} onClose={() => setUsageOwner(undefined)} onSettings={() => { if (hostId === usageOwner.hostId) { setUsageOwner(undefined); setSettingsPage("omp"); openSettings(); } }}/>}
+      {usageOwner && <SessionUsagePanel key={`${usageOwner.hostId}:${usageOwner.sessionId}`} {...usageOwner} connected={connected && hostId === usageOwner.hostId} onClose={() => { usageOwner.controller?.close(); setUsageOwner(undefined); }} onSettings={() => { if (hostId === usageOwner.hostId) { usageOwner.controller?.close(); setUsageOwner(undefined); setSettingsPage("omp"); openSettings(); } }}/>}
       {imageHash && themeImage.sha256 === imageHash && (themeImage.status === "loading" || themeImage.error) && <div className="connection-banner theme-image-status" role="status"><span>{themeImage.error ?? "Loading this device’s background image…"}</span>{themeImage.error && <button onClick={() => void themeImage.refresh()}><Icon name="refresh"/>Retry image</button>}</div>}
       {(desktop.error || desktop.cacheWarning || drafts.cacheWarning || submissions.cacheWarning || submissions.forceTools.cacheWarning) && <div className="connection-banner" role="status"><span>{desktop.error ?? desktop.cacheWarning ?? drafts.cacheWarning ?? submissions.cacheWarning ?? submissions.forceTools.cacheWarning}</span><button onClick={() => void refresh()}><Icon name="refresh"/>Reconnect</button></div>}
       {loading && !state ? <div className="center-state"><span className="spinner"/><h1>Connecting to your host</h1><p>Loading projects, models, and saved conversations.</p></div> : missingSession ? <div className="center-state"><h1>Conversation unavailable</h1><p>{connected ? "This conversation is not in the owning host’s catalog." : "This conversation is not in this device’s cached catalog. Its owning host is unavailable; the selected conversation is preserved."}</p><button className="secondary-button" onClick={() => navigate(null)}>New conversation</button></div> : <>

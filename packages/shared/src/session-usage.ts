@@ -23,12 +23,18 @@ export interface UsageCreditAccount {
   accountRef: string; accountId?: string; email?: string; orgId?: string; projectId?: string;
   active: boolean; availableCount?: number; unavailable?: string; credits: UsageCredit[]; canPrepare: boolean;
 }
+export interface UsageResetCommandAccount {
+  accountRef: string; label: string; active: boolean; availableCount: number;
+  email?: string; accountId?: string; unavailable?: string;
+}
 export interface SessionUsage {
   version: 1; sessionId: string; epoch: string; revision: string;
   model?: { provider: string; id: string };
   reports: ProviderUsageReport[]; reportStatus: "not-loaded" | "available" | "unsupported";
   reportsCheckedAt?: number; creditsCheckedAt?: number;
   credits: UsageCreditAccount[]; modelSelectors: string[];
+  /** Exact native /usage reset ordering and matching labels from the latest credits read. */
+  resetCommandAccounts?: UsageResetCommandAccount[];
   policy: { autoRedeem: "unset" | "yes" | "no"; minBlockedMinutes: number; keepCredits: number; salvageHorizonHours: number };
 }
 export interface UsageResetPrepare { sessionId: string; epoch: string; revision: string; accountRef: string }

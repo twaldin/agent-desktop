@@ -226,3 +226,37 @@ test("/todo rejection executes nothing while a post-admission failure retains th
   expect(failure.message).toContain("flush failed");
   expect(value.entries).toEqual([]);
 });
+
+test("native /usage show uses the pinned report handler while every reset spelling is fenced before consume", async () => {
+  const value = fixture(mcp("succeeded")); let reportCalls = 0, resetCalls = 0;
+  Object.assign(value.session, {
+    fetchUsageReports: async () => { reportCalls++; return null; },
+    listResetCredits: async () => { resetCalls++; return []; },
+    redeemResetCredit: async () => { resetCalls++; return { code: "reset" }; },
+    sessionManager: { ...value.session.sessionManager, getUsageStatistics: () => ({ input: 1, output: 2, cacheRead: 3, cacheWrite: 4, totalTokens: 10, orchestrationInput: 0, orchestrationOutput: 0, orchestrationCacheRead: 0, premiumRequests: 0, cost: 0 }) },
+  });
+  for (const command of ["/usage", "/usage show"]) {
+    const result = await dispatchNativePrompt(value.session, command, undefined, undefined, value.bridges);
+    expect(result).toMatchObject({ agentInvoked: false, handledCommand: "usage", output: expect.stringContaining("Input tokens: 1") });
+  }
+  expect(reportCalls).toBe(2);
+  for (const command of ["/usage reset", "/usage:reset active", "/usage\tReSeT same@fixture.invalid"]) {
+    await expect(dispatchNativePrompt(value.session, command, undefined, undefined, value.bridges)).rejects.toThrow("explicitly confirm");
+  }
+  expect(resetCalls).toBe(0);
+});
+
+test("usage extension ownership precedes the reset fence and malformed native syntax retains exact handler output", async () => {
+  const shadow = fixture(mcp("succeeded")); let shadowCalls = 0;
+  Object.assign(shadow.session, { extensionRunner: {
+    getCommand: (name: string) => name === "usage" ? { handler: async () => { shadowCalls++; } } : undefined,
+    createCommandContext: () => ({}), runScoped: async (run: () => Promise<void>) => run(), emitError() {},
+  } });
+  await dispatchNativePrompt(shadow.session, "/usage reset active", undefined, undefined, shadow.bridges);
+  expect(shadowCalls).toBe(1);
+  const value = fixture(mcp("succeeded"));
+  Object.assign(value.session, { fetchUsageReports: async () => null,
+    sessionManager: { ...value.session.sessionManager, getUsageStatistics: () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, orchestrationInput: 0, orchestrationOutput: 0, orchestrationCacheRead: 0, premiumRequests: 0, cost: 0 }) } });
+  const invalid = await dispatchNativePrompt(value.session, "/usage show extra", undefined, undefined, value.bridges);
+  expect(invalid.output).toBe("Usage: /usage [show|reset [account|active]]");
+});

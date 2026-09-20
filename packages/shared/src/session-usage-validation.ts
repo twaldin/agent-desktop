@@ -11,6 +11,7 @@ import {
   type UsageCreditAccount,
   type UsageRefresh,
   type UsageResetConfirmation,
+  type UsageResetCommandAccount,
   type UsageResetReceipt,
 } from "./session-usage";
 const MAX_IDENTITY_LENGTH = 200;
@@ -163,6 +164,22 @@ function usageAccount(value: unknown): UsageCreditAccount {
   };
 }
 
+function resetCommandAccount(value: unknown): UsageResetCommandAccount {
+  const input = record(value);
+  if (!input) throw new Error("Invalid session usage reset command account.");
+  const availableCount = requiredNumber(input.availableCount, "reset command availableCount");
+  if (!Number.isSafeInteger(availableCount) || availableCount < 0) throw new Error("Invalid session usage reset command availableCount.");
+  return {
+    accountRef: requiredString(input.accountRef, "reset command accountRef", MAX_IDENTITY_LENGTH),
+    label: requiredString(input.label, "reset command label"),
+    active: requiredBoolean(input.active, "reset command active"),
+    availableCount,
+    ...(input.email === undefined ? {} : { email: requiredString(input.email, "reset command email") }),
+    ...(input.accountId === undefined ? {} : { accountId: requiredString(input.accountId, "reset command accountId") }),
+    ...(input.unavailable === undefined ? {} : { unavailable: requiredString(input.unavailable, "reset command unavailable") }),
+  };
+}
+
 function confirmation(value: unknown): UsageResetConfirmation {
   const input = record(value);
   const account = record(input?.account);
@@ -208,6 +225,7 @@ function snapshot(value: unknown, sessionId: string): SessionUsage | null {
     ...(input.reportsCheckedAt !== undefined ? { reportsCheckedAt: requiredNumber(input.reportsCheckedAt, "reportsCheckedAt") } : {}),
     ...(input.creditsCheckedAt !== undefined ? { creditsCheckedAt: requiredNumber(input.creditsCheckedAt, "creditsCheckedAt") } : {}),
     credits: array(input.credits, "snapshot credits").map(usageAccount), modelSelectors: stringList(input.modelSelectors, "modelSelectors"),
+    ...(input.resetCommandAccounts === undefined ? {} : { resetCommandAccounts: array(input.resetCommandAccounts, "resetCommandAccounts").map(resetCommandAccount) }),
     policy: { autoRedeem, minBlockedMinutes: requiredNumber(policy.minBlockedMinutes, "minBlockedMinutes"), keepCredits: requiredNumber(policy.keepCredits, "keepCredits"), salvageHorizonHours: requiredNumber(policy.salvageHorizonHours, "salvageHorizonHours") },
   };
 }
@@ -227,4 +245,3 @@ export function validateSessionUsageResponse(value: unknown, endpoint: { hostId:
   if (commandId !== undefined && command?.id !== commandId || commandId === undefined && command !== undefined) throw new Error("Session usage command identity mismatch.");
   return { ...(command ? { command } : {}), version: SESSION_USAGE_VERSION, hostId: endpoint.hostId, sessionId, snapshot: snapshot(input.snapshot, sessionId), reset };
 }
-

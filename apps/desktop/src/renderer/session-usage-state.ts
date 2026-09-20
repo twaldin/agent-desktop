@@ -1,6 +1,7 @@
 import type { CommandEnvelope, DesktopBridge } from "@agent-desktop/shared";
 import { parseUsageCommand, type SessionUsageResponse, type UsageRefresh, type UsageResetReceipt } from "../../../../packages/shared/src/session-usage";
 import { validateSessionUsageResponse } from "../../../../packages/shared/src/session-usage-validation";
+import { usageResetAccount, UsageResetSelectionNotice } from "./usage-reset-command";
 
 interface Pending { envelope: CommandEnvelope; state: "unknown" | "absent" }
 export interface UsageView { value: SessionUsageResponse | null; pending: Pending | null; busy: boolean; error?: string; cached: boolean }
@@ -71,7 +72,11 @@ export class SessionUsageState {
       if (this.#closed) return;
       if (result.commandId !== envelope.id) throw new Error("Wrong command receipt.");
       if (!result.ok) {
-        if (result.error.code === "USAGE_REJECTED") { this.#persist(null); this.#publish({ pending: null }); }
+        if (result.error.code === "USAGE_REJECTED" && envelope.command.type === "session.usage.reset.prepare") {
+          this.#persist(null);
+          this.#publish({ pending: null, error: "Reset preparation was rejected. Inspect the original saved-reset state before trying again." });
+          return;
+        }
         throw new Error("Reset answer could not be confirmed.");
       }
       const receipt = result.value && "type" in result.value && result.value.type === "session.usage.reset" ? result.value.receipt : undefined;
@@ -85,6 +90,34 @@ export class SessionUsageState {
     const snapshot = this.#view.value?.snapshot;
     if (!snapshot || this.#view.pending) return Promise.resolve();
     return this.#send({ id: crypto.randomUUID(), commandVersion: 20, command: { type: "session.usage.reset.prepare", sessionId: this.sessionId, epoch: snapshot.epoch, revision: snapshot.revision, accountRef } });
+  }
+  /** Resolve a native command against a fresh original-owner credit snapshot.
+   * Selection only prepares; it never supplies the later confirmation answer. */
+  async prepareCommand(argument: string, assertCurrent: () => void) {
+    const current = () => {
+      if (this.#closed) throw new Error("The provider usage dialog closed. The draft was retained.");
+      assertCurrent();
+    };
+    try {
+      current();
+      const reset = this.#view.value?.reset;
+      if (this.#view.busy || this.#view.pending || reset && ["prepared", "unknown", "dispatching"].includes(reset.state))
+        throw new Error("Inspect or cancel the original reset request before selecting another account. The draft was retained.");
+      await this.refresh("credits");
+      current();
+      if (this.#view.error || !this.#view.value?.snapshot) throw new Error(this.#view.error ?? "Saved credits could not be inspected. The draft was retained.");
+      const accountRef = usageResetAccount(this.#view.value.snapshot, argument);
+      if (accountRef === undefined) return;
+      await this.prepare(accountRef);
+      current();
+      const prepared = this.#view.value?.reset;
+      if (this.#view.error || this.#view.pending || prepared?.state !== "prepared" || prepared.confirmation.account.accountRef !== accountRef)
+        throw new Error(this.#view.error ?? "The original account could not be prepared. The draft was retained.");
+    } catch (error) {
+      this.#publish({ error: error instanceof Error ? error.message : "Saved resets could not be prepared. The draft was retained." });
+      if (error instanceof UsageResetSelectionNotice) return;
+      throw error;
+    }
   }
   answer(confirm: boolean) {
     const receipt = this.#view.value?.reset;

@@ -60,6 +60,23 @@ function usage(auth: AuthStorage) {
   return { service: new NativeSessionUsage(session, () => {}, () => {}), modelRegistry };
 }
 
+function projectedUsage(rows: Awaited<ReturnType<AgentSession["listResetCredits"]>>) {
+  const auth = {
+    revalidateCredentials: async () => {},
+    listOAuthAccounts: () => [],
+    getResetAccountEvidence: () => undefined,
+  };
+  const session = {
+    sessionId: "projection-session",
+    model: { provider: "fixture", id: "fixture" },
+    modelRegistry: { authStorage: auth, getProviderBaseUrl: () => baseUrl },
+    settings: { get: () => "production", getGroup: () => ({ autoRedeem: "unset", minBlockedMinutes: 60, keepCredits: 1, salvageHorizonHours: 12 }) },
+    subscribe: () => () => {},
+    listResetCredits: async () => rows,
+  } as unknown as AgentSession;
+  return new NativeSessionUsage(session, () => {}, () => {});
+}
+
 async function readAccount(service: NativeSessionUsage) {
   const snapshot = await service.read("credits");
   if (!snapshot) throw new Error("Expected native usage snapshot");
@@ -82,6 +99,61 @@ test("ticket keeps the original evidence through token-only refresh and native c
   expect(JSON.stringify(nativeRedeem.mock.calls[0]![0].expectedAccountEvidence)).not.toContain("controlled-");
   expect(wire.consumes).toEqual([{ credit_id: "credit-a", account_id: "account-a", redeem_request_id: "stable-request" }]);
   service.dispose();
+});
+
+test("credits expose exact native reset labels in native order while credential ids stay private", async () => {
+  const wire = controlledFetch(); const auth = await createAuth(wire.fetch);
+  await auth.set(provider, credential());
+  const { service } = usage(auth); const snapshot = await service.read("credits");
+  expect(snapshot?.resetCommandAccounts).toEqual([{ accountRef: snapshot!.credits[0]!.accountRef, label: "same@fixture.invalid", active: true,
+    availableCount: 1, email: "same@fixture.invalid", accountId: "account-a" }]);
+  expect(JSON.stringify(snapshot?.resetCommandAccounts)).not.toContain("credentialId");
+  service.dispose();
+});
+
+test("credits retain native multi-account ordering and bind every command row to its source occurrence", async () => {
+  const service = projectedUsage([
+    { credentialId: 1, email: "z@fixture.invalid", availableCount: 5, active: false, credits: [] },
+    { credentialId: 2, email: "b@fixture.invalid", availableCount: 1, active: true, credits: [] },
+    { credentialId: 3, email: "a@fixture.invalid", availableCount: 1, active: true, credits: [] },
+    { credentialId: 4, email: "c@fixture.invalid", availableCount: 9, active: false, credits: [] },
+  ]);
+  const snapshot = await service.read("credits");
+  expect(snapshot?.resetCommandAccounts?.map(row => row.label)).toEqual([
+    "a@fixture.invalid", "b@fixture.invalid", "c@fixture.invalid", "z@fixture.invalid",
+  ]);
+  for (const command of snapshot!.resetCommandAccounts!) {
+    expect(snapshot!.credits.find(row => row.accountRef === command.accountRef)?.email).toBe(command.email);
+    expect(snapshot!.credits.find(row => row.accountRef === command.accountRef)?.availableCount).toBe(command.availableCount);
+  }
+  service.dispose();
+});
+
+test("missing and duplicate credential ids remain visible with occurrence-exact opaque references", async () => {
+  const service = projectedUsage([
+    { email: "missing@fixture.invalid", availableCount: 3, active: false, credits: [] },
+    { credentialId: 7, email: "first@fixture.invalid", availableCount: 2, active: false, credits: [] },
+    { credentialId: 7, email: "second@fixture.invalid", availableCount: 1, active: true, credits: [] },
+  ]);
+  const snapshot = await service.read("credits");
+  expect(snapshot?.resetCommandAccounts?.map(row => row.label)).toEqual([
+    "second@fixture.invalid", "missing@fixture.invalid", "first@fixture.invalid",
+  ]);
+  expect(new Set(snapshot!.resetCommandAccounts!.map(row => row.accountRef)).size).toBe(3);
+  for (const command of snapshot!.resetCommandAccounts!) {
+    const source = snapshot!.credits.find(row => row.accountRef === command.accountRef);
+    expect(source?.email).toBe(command.email);
+    expect(source?.canPrepare).toBe(false);
+  }
+  service.dispose();
+});
+
+test("unsafe native matcher metadata rejects the whole command catalog without truncation", async () => {
+  for (const email of ["x".repeat(4097), "bad\nemail@fixture.invalid"]) {
+    const service = projectedUsage([{ credentialId: 1, email, availableCount: 1, active: false, credits: [] }]);
+    await expect(service.read("credits")).rejects.toThrow(/Native reset (label|email) is invalid/);
+    service.dispose();
+  }
 });
 
 test("a metadata-identical relink held inside credits read is displayed but cannot be prepared", async () => {

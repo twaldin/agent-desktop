@@ -40,3 +40,15 @@ test("the native /todo row advertises the desktop Todos route only while it is t
   expect(shadowed.commands.find(row => row.id === "builtin:todo")?.availability).toBe("shadowed");
   expect(hasNativeTodoComposerWinner(shadowed)).toBe(false);
 });
+
+test("the native /usage row keeps show executable and exposes only reset as a desktop confirmation route", () => {
+  const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
+    sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;
+  const native = sessionComposerActions(session, []);
+  const row = native.commands.find(row => row.id === "builtin:usage");
+  expect(row).toMatchObject({ availability: "executable", desktopAction: "usage-reset" });
+  expect(row?.subcommands?.map(sub => [sub.name, sub.availability])).toEqual(expect.arrayContaining([["show", "executable"], ["reset", "partial"]]));
+  const shadow = { resolvedPath: "/fixture/usage.ts", label: "shadow", commands: new Map([["usage", { name: "usage", description: "replacement", handler: async () => {} }]]) } as unknown as Extension;
+  const shadowed = sessionComposerActions(session, [shadow]);
+  expect(shadowed.commands.find(value => value.id === "builtin:usage")?.availability).toBe("shadowed");
+});

@@ -6,6 +6,7 @@ import { sameResetAccountEvidence } from "@oh-my-pi/pi-ai/auth/reset-account-evi
 import type { UsageReport } from "@oh-my-pi/pi-ai/usage";
 import { pickSoonestExpiringCredit, type CodexResetCredit } from "@oh-my-pi/pi-ai/usage/openai-codex-reset";
 import { limitMatchesActiveAccount, reportMatchesActiveAccount } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/active-oauth-account";
+import { toResetUsageAccounts } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/reset-usage";
 import { projectNativeErrorMessage } from "../omp-workers/events";
 import { SESSION_USAGE_MAX_BYTES, type SessionUsage, type UsageCredit, type UsageCreditAccount, type UsageRefresh, type UsageResetConfirmation, type UsageResetOutcome, type UsageResetPrepare } from "../../../../packages/shared/src/session-usage";
 
@@ -19,6 +20,13 @@ const strings = (value: object, keys: readonly string[]) => Object.fromEntries(k
 const numbers = (value: object, keys: readonly string[]) => Object.fromEntries(keys.flatMap(key => {
   const item = number((value as Record<string, unknown>)[key]); return item === undefined ? [] : [[key, item]];
 }));
+const commandText = (value: unknown, name: string): string | undefined => {
+  if (value === undefined) return;
+  if (typeof value !== "string" || value.length > 4096 || /[\u0000-\u001f]/.test(value)) throw new Error(`Native reset ${name} is invalid.`);
+  return value;
+};
+const resetRowKey = (row: Pick<ResetCreditAccountStatus, "credentialId" | "accountId" | "email" | "availableCount" | "active" | "error">) =>
+  JSON.stringify([row.credentialId, row.accountId, row.email, row.availableCount, row.active, row.error]);
 export const projectUsageCredit = (credit: UsageCredit): UsageCredit => strings(credit, ["title", "description", "status", "resetType", "grantedAt", "expiresAt"]);
 const available = (credit: CodexResetCredit) => !!credit.id && credit.id.length <= 200 && (credit.status ?? "available") === "available"
   && (!credit.expiresAt || !Number.isFinite(Date.parse(credit.expiresAt)) || Date.parse(credit.expiresAt) > Date.now());
@@ -133,6 +141,7 @@ export class NativeSessionUsage {
         reports: [], reportStatus: "not-loaded", credits: [], modelSelectors: [], policy: this.#policy(),
       };
       if (mode === "reports") {
+        delete value.resetCommandAccounts;
         // AgentSession.fetchUsageReports also starts a potentially spending sweep. U2 owns that lifecycle.
         const reports = await auth.fetchUsageReports({ baseUrlResolver: this.#baseUrl, signal: AbortSignal.timeout(45_000) }); await this.#revalidate(before, auth);
         value.reports = projectUsageReports(reports ?? [], this.session);
@@ -142,10 +151,27 @@ export class NativeSessionUsage {
       } else {
         const rows = await this.session.listResetCredits(AbortSignal.timeout(45_000)); await this.#revalidate(before, auth);
         if (rows.length > 128 || rows.some(row => row.credits.length > 128)) throw new Error("Native saved-credit list exceeds the display limit.");
-        this.#rows.clear(); value.credits = rows.map(row => {
+        this.#rows.clear();
+        const projected = new Map<string, Array<{ accountRef: string; account: UsageCreditAccount }>>();
+        value.credits = rows.map(row => {
           const ref = randomUUID(), captured = Number.isSafeInteger(row.credentialId) ? admittedEvidence?.get(row.credentialId!) : undefined;
           const evidence = Number.isSafeInteger(row.credentialId) && this.#evidenceCurrent(auth, row.credentialId!, captured) ? captured : undefined;
-          this.#rows.set(ref, { row, auth, evidence }); return this.#projectAccount(ref, row, evidence);
+          this.#rows.set(ref, { row, auth, evidence });
+          const account = this.#projectAccount(ref, row, evidence);
+          const key = resetRowKey(row), bucket = projected.get(key) ?? [];
+          bucket.push({ accountRef: ref, account }); projected.set(key, bucket);
+          return account;
+        });
+        value.resetCommandAccounts = toResetUsageAccounts(rows).map(row => {
+          const key = resetRowKey({ ...row.target, availableCount: row.availableCount, active: row.active, error: row.error });
+          const original = projected.get(key)?.shift();
+          if (!original || !Number.isSafeInteger(row.availableCount) || row.availableCount < 0) throw new Error("Native reset account metadata is invalid.");
+          const label = commandText(row.label, "label");
+          if (!label) throw new Error("Native reset account label is invalid.");
+          return { accountRef: original.accountRef, label, active: row.active, availableCount: row.availableCount,
+            ...(commandText(row.target.email, "email") === undefined ? {} : { email: row.target.email }),
+            ...(commandText(row.target.accountId, "account id") === undefined ? {} : { accountId: row.target.accountId }),
+            ...(row.error ? { unavailable: "Native saved-credit inspection failed for this account." } : {}) };
         });
         value.creditsCheckedAt = Date.now();
       }

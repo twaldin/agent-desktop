@@ -54,7 +54,11 @@ export function builtinAvailability(name: string, args?: string): { availability
     return { availability: "pending", reason: "Use session/account controls until native deletion and pin command receipts are connected." };
   }
   if (identityCommands.has(name)) return { availability: "pending", reason: "This command can change native session/file ownership or the owning process. Its desktop ownership transition is not connected." };
-  if (name === "usage") return { availability: "pending", reason: "Native usage/reset output and explicit reset-credit confirmation are not connected to this command. Account controls remain available." };
+  if (name === "usage") {
+    const verb = args?.trim().split(/\s+/, 1)[0]?.toLowerCase();
+    if (verb === "reset") return { availability: "partial", reason: "Saved-reset selection uses the desktop's explicit confirmation flow." };
+    return { availability: "executable" };
+  }
   if (["login", "logout", "security"].includes(name)) return { availability: "pending", reason: "Use the desktop account/permission controls; the native command's interactive policy and durable receipt are not connected." };
   if (["plugins", "marketplace", "reload-plugins", "ssh"].includes(name)) return { availability: "pending", reason: "Native configuration changes require coordinated registry reload and interaction handling before this command can execute." };
   const spec = lookupBuiltinSlashCommand(name);
@@ -71,7 +75,7 @@ function nativeBuiltinRows(): ComposerAction[] {
     argumentHint: command.acpInputHint ?? command.inlineHint,
     subcommands: command.subcommands?.map(sub => ({ ...sub, ...builtinAvailability(command.name, sub.name) })),
     argumentCompletions: Boolean(command.subcommands?.length),
-    ...(command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : {}),
+    ...(command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : command.name === "usage" ? { desktopAction: "usage-reset" as const } : {}),
   }));
 }
 

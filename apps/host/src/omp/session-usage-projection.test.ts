@@ -3,6 +3,7 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import type { UsageReport } from "@oh-my-pi/pi-ai/usage";
 import { nativeResetAccountKey, projectUsageReports } from "./session-usage";
 import { parseUsageCommand } from "../../../../packages/shared/src/session-usage";
+import { validateSessionUsageResponse } from "../../../../packages/shared/src/session-usage-validation";
 
 test("native report projection preserves quantitative scopes, windows, notes and org-gated active identity", () => {
   const session = { sessionId: "original", modelRegistry: { authStorage: { getOAuthAccountIdentity: (_provider: string, id: string) => {
@@ -33,4 +34,12 @@ test("usage commands accept only original opaque references and an explicit bool
   expect(parseUsageCommand(command)).toEqual(command);
   for (const extra of [{ credentialId: 2 }, { creditId: "credit" }, { cwd: "/elsewhere" }, { sessionFile: "/elsewhere/native.jsonl" }, { baseUrl: "https://other.invalid" }]) expect(() => parseUsageCommand({ ...command, ...extra })).toThrow();
   expect(() => parseUsageCommand({ type: "session.usage.reset.respond", sessionId: "session", operationId: "op", confirm: "yes" })).toThrow();
+});
+
+test("usage validation retains exact reset-command matching fields and rejects malformed metadata", () => {
+  const base = { version: 1, hostId: "host", sessionId: "session", reset: null, snapshot: { version: 1, sessionId: "session", epoch: "epoch", revision: "revision",
+    reports: [], reportStatus: "not-loaded", credits: [], modelSelectors: [], policy: { autoRedeem: "unset", minBlockedMinutes: 1, keepCredits: 1, salvageHorizonHours: 1 },
+    resetCommandAccounts: [{ accountRef: "opaque", label: "Exact Label", active: true, availableCount: 2, email: "Case@Example.invalid", accountId: "Account-A" }] } };
+  expect(validateSessionUsageResponse(base, { hostId: "host" }, "session").snapshot?.resetCommandAccounts).toEqual(base.snapshot.resetCommandAccounts);
+  expect(() => validateSessionUsageResponse({ ...base, snapshot: { ...base.snapshot, resetCommandAccounts: [{ ...base.snapshot.resetCommandAccounts[0], label: "bad\nlabel" }] } }, { hostId: "host" }, "session")).toThrow("reset command label");
 });

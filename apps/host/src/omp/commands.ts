@@ -4,7 +4,7 @@ import { expandPromptTemplate } from "@oh-my-pi/pi-coding-agent/config/prompt-te
 import { expandSlashCommand } from "@oh-my-pi/pi-coding-agent/extensibility/slash-commands";
 import { parseCommandArgs } from "@oh-my-pi/pi-coding-agent/utils/command-args";
 import { lookupBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
-import { parseSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/parse";
+import { parseSlashCommand, parseSubcommand } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/parse";
 import { OmpPromptAdmissionError, type NativePromptDispatchResult } from "./prompt";
 import { builtinAvailability } from "./composer-actions";
 import type { NativeSkillPrompt } from "./skills";
@@ -101,6 +101,8 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
           return { agentInvoked: false, handledCommand: "todo", ...(commandEntryId ? { commandEntryId, output: result.output } : {}) };
         } catch (error) { throw new OmpPromptAdmissionError(error); }
       }
+      if (builtin.name === "usage" && parseSubcommand(parsed.args).verb === "reset")
+        throw new Error("Use Provider usage to select and explicitly confirm a saved reset. This command was not executed.");
       const availability = builtinAvailability(builtin.name, parsed.args);
       const verb = parsed.args.trim().split(/\s+/, 1)[0]?.toLowerCase();
       const desktopMcpAuthorization = builtin.name === "mcp" && verb === "reauth";
