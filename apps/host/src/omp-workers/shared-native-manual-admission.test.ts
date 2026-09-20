@@ -21,7 +21,7 @@ async function run(scenario: string): Promise<Record<string, any>> {
   try {
     [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     if (code !== 0) throw new Error(`Shared admission ${scenario} exited ${code}:\n${stdout}\n${stderr}`);
-    const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    const result = JSON.parse(await readFile(path.join(root, "result.json"), "utf8"));
     expect(result.blockedHostNetwork).toEqual([]);
     if (scenario === "native-read-first") {
       // Revision refusal is durably invalidated and retained as a shutdown
