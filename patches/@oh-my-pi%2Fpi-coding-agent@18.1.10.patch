@@ -702,7 +702,7 @@ index 7fd568422586a3d168add481f988ce0727d902cf..0f28b29dc3a0e749ec29835634687d52
      onPayload?: SimpleStreamOptions["onPayload"];
      /** Provider response hook used by the active session request path. */
 diff --git a/dist/types/session/agent-session.d.ts b/dist/types/session/agent-session.d.ts
-index c55844cb2f282616605e385234ee3888f0d84ce3..055fb12cc8545f86c8014ff11f282970e5ae6631 100644
+index c55844cb2f282616605e385234ee3888f0d84ce3..cc27ad040550a7a7e1dfd5cc240d721899207d3e 100644
 --- a/dist/types/session/agent-session.d.ts
 +++ b/dist/types/session/agent-session.d.ts
 @@ -53,7 +53,7 @@ import type { TodoPhase } from "../tools/todo.js";
@@ -747,7 +747,16 @@ index c55844cb2f282616605e385234ee3888f0d84ce3..055fb12cc8545f86c8014ff11f282970
      /** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
      get toolChoiceQueue(): ToolChoiceQueue;
      /** Peek the in-flight directive's invocation handler for the preview-resolution dispatch. */
-@@ -1079,6 +1089,40 @@ export declare class AgentSession {
+@@ -364,6 +374,8 @@ export declare class AgentSession {
+     getSelectedMCPToolNames(): string[];
+     /** Rediscovers reloadable skills and refreshes prompt metadata. */
+     refreshSkills(): Promise<void>;
++    /** Refreshes plugin discovery without replacing live extension factories or MCP ownership. */
++    reloadPluginDiscovery(): Promise<void>;
+     /**
+      * Applies Code Mode at session startup: when the initial model activates
+      * it (`codeMode` `on`, or `auto` matching a `code_mode_only` catalog flag),
+@@ -1079,6 +1091,40 @@ export declare class AgentSession {
       */
      get contextUsageRevision(): number;
      fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null>;
@@ -5231,7 +5240,7 @@ index bead7e308fb46181840b74e1660267493231c593..85c3bae21c0b5ec8f592cae6a35da343
  	onPayload?: SimpleStreamOptions["onPayload"];
  	/** Provider response hook used by the active session request path. */
 diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
-index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aedd6da8260 100644
+index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..9a1c62fbbefc17a81f39e9890d196738cd754126 100644
 --- a/src/session/agent-session.ts
 +++ b/src/session/agent-session.ts
 @@ -61,6 +61,7 @@ import type {
@@ -5242,7 +5251,32 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	ResetCreditRedeemOutcome,
  	ResetCreditTarget,
  	ServiceTier,
-@@ -233,16 +234,28 @@ import type {
+@@ -100,6 +101,7 @@ import { type AdvisorConfig, loadAdvisorTranscriptCosts } from "../advisor";
+ import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, type AsyncJob, AsyncJobManager } from "../async";
+ import { reset as resetCapabilities } from "../capability";
+ import type { EffectiveExtensionRoots } from "../capability/types";
++import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../discovery/helpers";
+ import { shouldEnableAppendOnlyContext } from "../config/append-only-context-mode";
+ import type { ModelRegistry } from "../config/model-registry";
+ import type { ResolvedModelRoleValue } from "../config/model-resolver";
+@@ -118,6 +120,7 @@ import { releaseCompletionHandles } from "../eval/completion-bridge";
+ import type { EvalPreludeDefinition } from "../eval/preludes";
+ import type { PythonResult } from "../eval/py/executor";
+ import { WorkPoolRegistry } from "../task/workpool";
++import { refreshAgentDiscovery } from "../task";
+ import type { BashPtyOptions, BashResult } from "../exec/bash-executor";
+ import type { TtsrManager } from "../export/ttsr";
+ import type { LoadedCustomCommand } from "../extensibility/custom-commands";
+@@ -148,7 +151,7 @@ import { createExtensionModelQuery } from "../extensibility/extensions/model-api
+ import type { CompactOptions, ContextUsage } from "../extensibility/extensions/types";
+ import type { HookCommandContext } from "../extensibility/hooks/types";
+ import type { Skill, SkillWarning } from "../extensibility/skills";
+-import { expandSlashCommand, type FileSlashCommand } from "../extensibility/slash-commands";
++import { expandSlashCommand, type FileSlashCommand, loadSlashCommands } from "../extensibility/slash-commands";
+ import { normalizeToolEventInput, resolveToolEventInput } from "../extensibility/tool-event-input";
+ import { GoalRuntime } from "../goals/runtime";
+ import type { GoalModeState } from "../goals/state";
+@@ -233,16 +236,28 @@ import type {
  	AgentSessionConfig,
  	AgentSessionDisposeOptions,
  	AsyncJobSnapshot,
@@ -5271,7 +5305,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	ResolvedRoleModel,
  	RestoredQueuedMessage,
  	RoleModelCycle,
-@@ -277,6 +290,7 @@ import {
+@@ -277,6 +292,7 @@ import {
  	isTerminalRedeemOutcome,
  	overlayLiveResetCredits,
  	planCodexResetRedemptions,
@@ -5279,7 +5313,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	REDEEM_RETRY_DEFER_MS,
  	SWEEP_MIN_INTERVAL_MS,
  	shouldEvaluateCodexAutoRedeem,
-@@ -380,6 +394,92 @@ import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
+@@ -380,6 +396,92 @@ import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
  const PLAN_MODE_REMINDER_MAX = 3;
  const POST_PROMPT_DRAIN_TIMEOUT_MS = 5_000;
  
@@ -5372,7 +5406,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  /** Internal marker for hook messages queued through the agent loop */
  // ============================================================================
  // Constants
-@@ -679,6 +779,30 @@ export class AgentSession {
+@@ -679,6 +781,30 @@ export class AgentSession {
  	#modelDiscoveryAbortController = new AbortController();
  	/** Process-wide by default (double-spend safety across sessions); injectable for tests. */
  	#codexResetCoordinator: CodexAutoRedeemCoordinator;
@@ -5403,7 +5437,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	// Extension system
  	#extensionRunner: ExtensionRunner | undefined = undefined;
  	#getEvalPreludes: (() => readonly EvalPreludeDefinition[]) | undefined;
-@@ -1164,6 +1288,7 @@ export class AgentSession {
+@@ -1164,6 +1290,7 @@ export class AgentSession {
  		this.#preparedExtensions = config.preparedExtensions;
  		this.#extensionPaths = config.extensionPaths;
  		this.#codexResetCoordinator = config.codexResetCoordinator ?? defaultCodexAutoRedeemCoordinator;
@@ -5411,7 +5445,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  		const bashHost: BashRunnerHost = {
  			agent: this.agent,
  			sessionManager: this.sessionManager,
-@@ -1858,6 +1983,100 @@ export class AgentSession {
+@@ -1858,6 +1985,100 @@ export class AgentSession {
  		return this.#modelRegistry;
  	}
  
@@ -5512,7 +5546,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	get asyncJobManager(): AsyncJobManager | undefined {
  		return this.#asyncJobManager;
  	}
-@@ -1917,12 +2136,20 @@ export class AgentSession {
+@@ -1917,12 +2138,20 @@ export class AgentSession {
  		this.#toolChoiceQueue.clearPendingInvokers();
  	}
  
@@ -5537,7 +5571,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  		if (!this.getActiveToolNames().includes(toolName)) {
  			throw new Error(`Tool "${toolName}" is not currently active.`);
  		}
-@@ -1932,10 +2159,14 @@ export class AgentSession {
+@@ -1932,10 +2161,14 @@ export class AgentSession {
  			throw new Error("Current model does not support forcing a specific tool.");
  		}
  
@@ -5553,7 +5587,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	}
  
  	/** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
-@@ -4369,8 +4600,20 @@ export class AgentSession {
+@@ -4369,8 +4602,20 @@ export class AgentSession {
  	 * gap slips past the disposal guards.
  	 */
  	beginDispose(): void {
@@ -5574,7 +5608,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  		this.#queuedMessageDrainBlocked = false;
  		this.#usagePreflightReadyForNextModelCall = false;
  		this.#detachUsageBeforeQueueDequeue?.();
-@@ -4529,6 +4772,16 @@ export class AgentSession {
+@@ -4529,6 +4774,16 @@ export class AgentSession {
  		}
  		const advisorRecorderClosed = this.#advisors.recorderClosed();
  		const results = await Promise.allSettled([
@@ -5591,7 +5625,28 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			this.#disposeOwnedAsyncJobs(),
  			this.#eval.disposeKernels(),
  			this.#releaseOwnedBrowserTabs(this.sessionManager.getSessionId()),
-@@ -9794,9 +10047,104 @@ export class AgentSession {
+@@ -5130,6 +5385,20 @@ export class AgentSession {
+ 		return this.#tools.refreshSkills();
+ 	}
+ 
++	/** Refresh reloadable plugin discovery for this exact live session.
++	 * Existing extension factories, hooks, custom commands, and extension tools
++	 * remain bound for the session lifetime. MCP ownership is refreshed by the
++	 * embedding runtime. */
++	async reloadPluginDiscovery(): Promise<void> {
++		const cwd = this.sessionManager.getCwd();
++		const projectPath = await resolveActiveProjectRegistryPath(cwd);
++		clearPluginRootsAndCaches(projectPath ? [projectPath] : undefined);
++		await refreshAgentDiscovery(cwd, this.effectiveExtensionRoots);
++		await this.refreshSkills();
++		this.setSlashCommands(await loadSlashCommands({ cwd, extensionRoots: this.effectiveExtensionRoots }));
++		resetCapabilities();
++	}
++
+ 	/**
+ 	 * Applies Code Mode at session startup: when the initial model activates
+ 	 * it (`codeMode` `on`, or `auto` matching a `code_mode_only` catalog flag),
+@@ -9794,9 +10063,104 @@ export class AgentSession {
  	}
  
  	async fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null> {
@@ -5698,7 +5753,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			baseUrlResolver: provider => {
  				if (provider === "google-antigravity") {
  					const mode = this.settings.get("providers.antigravityEndpoint");
-@@ -9810,11 +10158,57 @@ export class AgentSession {
+@@ -9810,11 +10174,57 @@ export class AgentSession {
  			},
  			signal,
  		});
@@ -5758,7 +5813,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	}
  
  	/** Models whose live `/usage` reports map to a quantitative provider scope. */
-@@ -9888,11 +10282,14 @@ export class AgentSession {
+@@ -9888,11 +10298,14 @@ export class AgentSession {
  	/**
  	 * Ask before the first auto-spend (`codexResets.autoRedeem === "unset"`).
  	 * The answer is persisted, so this fires at most once per install. Headless
@@ -5774,7 +5829,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	): Promise<boolean> {
  		const first = actions[0];
  		if (!first) return false;
-@@ -9906,6 +10303,11 @@ export class AgentSession {
+@@ -9906,6 +10319,11 @@ export class AgentSession {
  					"codex-auto-reset",
  				);
  			}
@@ -5786,7 +5841,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			return false;
  		}
  
-@@ -9918,17 +10320,23 @@ export class AgentSession {
+@@ -9918,17 +10336,23 @@ export class AgentSession {
  			actions.length === 1
  				? `Spend a saved Codex rate-limit reset?\n${lines[0]}`
  				: `Spend ${actions.length} saved Codex rate-limit resets?\n${lines.join("\n")}`;
@@ -5820,7 +5875,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			if (choice === "Yes") {
  				this.settings.set("codexResets.autoRedeem", "yes");
  				return true;
-@@ -9942,21 +10350,125 @@ export class AgentSession {
+@@ -9942,21 +10366,125 @@ export class AgentSession {
  		return false;
  	}
  
@@ -5953,7 +6008,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			settings: {
  				enabled: shouldEvaluateCodexAutoRedeem(cfg.autoRedeem),
  				minBlockedMinutes: Math.max(0, cfg.minBlockedMinutes),
-@@ -9969,38 +10481,85 @@ export class AgentSession {
+@@ -9969,38 +10497,85 @@ export class AgentSession {
  			deferredUntilByKey: coordinator.deferredUntilByKey,
  			lastAttemptAtByAccount: coordinator.lastAttemptAtByAccount,
  			activeBlockUnblockAtMs,
@@ -6049,7 +6104,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			} catch (error) {
  				// Thrown transport failure (network error, 15s timeout): same policy
  				// as a non-terminal code — release the episode and retry after the
-@@ -10013,8 +10572,18 @@ export class AgentSession {
+@@ -10013,8 +10588,18 @@ export class AgentSession {
  					account: action.accountKey,
  					error: String(error),
  				});
@@ -6068,7 +6123,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			if (!isTerminalRedeemOutcome(outcome.code)) {
  				// `nothing_to_reset` (limits not constrained enough yet) or a
  				// transport failure: the credit is STILL BANKED. Release the episode
-@@ -10063,7 +10632,27 @@ export class AgentSession {
+@@ -10063,7 +10648,27 @@ export class AgentSession {
  					}
  					break;
  				default:
@@ -6097,7 +6152,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  						this.emitNotice(
  							"warning",
  							`Codex auto-redeem for ${action.label} failed (${outcome.code}); will retry later.`,
-@@ -10077,10 +10666,361 @@ export class AgentSession {
+@@ -10077,10 +10682,361 @@ export class AgentSession {
  					}
  					break;
  			}
@@ -6461,7 +6516,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	}
  
  	/**
-@@ -10098,7 +11038,9 @@ export class AgentSession {
+@@ -10098,7 +11054,9 @@ export class AgentSession {
  	 * active account has no credits. The "unset" mode asks before spending;
  	 * "yes" skips the prompt; "no" avoids the eligibility IO entirely.
  	 * Per-account in-flight dedup lets concurrent sessions adopt one pass
@@ -6472,7 +6527,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  	 */
  	async #maybeAutoRedeemCodexReset(activeBlockUnblockAtMs?: number): Promise<boolean> {
  		const coordinator = this.#codexResetCoordinator;
-@@ -10112,10 +11054,41 @@ export class AgentSession {
+@@ -10112,10 +11070,41 @@ export class AgentSession {
  		const identity = authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
  		const accountKey = (identity?.accountId ?? identity?.email)?.trim().toLowerCase();
  		if (!accountKey) return false;
@@ -6515,7 +6570,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  			// Live data: the cached report predates the block that got us here.
  			await authStorage.invalidateUsageCache("openai-codex");
  			const reports = await this.fetchUsageReports();
-@@ -10132,24 +11105,50 @@ export class AgentSession {
+@@ -10132,24 +11121,50 @@ export class AgentSession {
  					error: String(error),
  				});
  			}
@@ -6576,7 +6631,7 @@ index ea17642ee89d62a21a7d59f87bdfb00e0340f2ff..4ea014fe2b62fa46e504a27f3a7f7aed
  		return run;
  	}
  
-@@ -10159,35 +11158,83 @@ export class AgentSession {
+@@ -10159,35 +11174,83 @@ export class AgentSession {
  	 * rule in `./codex-auto-reset`) across ALL stored accounts, regardless of
  	 * the active model or blocked state. Fire-and-forget: never delays the
  	 * fetch, never runs concurrently with itself or a blocked pass, and the

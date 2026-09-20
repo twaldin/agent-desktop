@@ -76,6 +76,26 @@ test("reauth refuses unavailable servers and bridges while native extension prec
   expect(shadow.entries).toEqual([]);
 });
 
+test("plugin reload builtins require the reload owner while list and extension precedence stay local", async () => {
+  const value = fixture(mcp("succeeded"));
+  let reloads = 0;
+  const bridges = { ...value.bridges, reloadPlugins: async () => { reloads++; } };
+  const reloaded = await dispatchNativePrompt(value.session, "/reload-plugins", undefined, undefined, bridges);
+  expect(reloaded).toMatchObject({ agentInvoked: false, handledCommand: "reload-plugins", output: "Plugins reloaded." });
+  expect(reloads).toBe(1);
+  await expect(dispatchNativePrompt(value.session, "/reload-plugins", undefined, undefined, value.bridges)).rejects.toThrow("bridge is unavailable");
+
+  const listed = await dispatchNativePrompt(value.session, "/plugins list", undefined, undefined, value.bridges);
+  expect(listed).toMatchObject({ agentInvoked: false, handledCommand: "plugins" });
+  expect(listed.output).toBeTruthy();
+  expect(reloads).toBe(1);
+
+  const shadow = fixture(mcp("succeeded"), { extension: true });
+  Object.assign(shadow.session.extensionRunner!, { getCommand: (name: string) => name === "reload-plugins" ? { handler: async () => {} } : undefined });
+  await dispatchNativePrompt(shadow.session, "/reload-plugins", undefined, undefined, bridges);
+  expect(reloads).toBe(1);
+});
+
 // These controls exercise the actual native parser and app dispatch precedence;
 // the injected admission port does not count as native queue/provider proof.
 function forceRouting(shadow?: string, prepared = false) {

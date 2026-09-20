@@ -62,7 +62,13 @@ export function builtinAvailability(name: string, args?: string): { availability
     return { availability: "executable" };
   }
   if (["login", "logout", "security"].includes(name)) return { availability: "pending", reason: "Use the desktop account/permission controls; the native command's interactive policy and durable receipt are not connected." };
-  if (["plugins", "marketplace", "reload-plugins", "ssh"].includes(name)) return { availability: "pending", reason: "Native configuration changes require coordinated registry reload and interaction handling before this command can execute." };
+  if (name === "reload-plugins") return { availability: "executable" };
+  if (name === "plugins") {
+    const verb = args?.trim().split(/\s+/, 1)[0]?.toLowerCase();
+    if (!verb || ["list", "enable", "disable"].includes(verb)) return { availability: "executable" };
+    return { availability: "pending", reason: "This native plugin operation is not connected to the live session reload boundary." };
+  }
+  if (["marketplace", "ssh"].includes(name)) return { availability: "pending", reason: "Native configuration changes require coordinated registry reload and interaction handling before this command can execute." };
   const spec = lookupBuiltinSlashCommand(name);
   return { availability: "pending", reason: spec?.handle
     ? "This native text handler requires its remaining desktop lifecycle/output integration and acceptance before execution."

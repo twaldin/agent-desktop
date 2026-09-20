@@ -27,6 +27,7 @@ export interface NativeCommandBridges {
   /** Invoked only after exact native extension/custom precedence. Rejections
    * (TODOS_REJECTED) executed nothing; OUTCOME_UNKNOWN follows admission. */
   todo?: (text: string) => Promise<TodoMutationResult>;
+  reloadPlugins?(): Promise<void>;
   reloadMcp(): Promise<void>;
   inspectMcp(): NativeSessionMcpSnapshot;
   reconnectMcp(serverName: string): Promise<NativeSessionMcpSnapshot>;
@@ -150,11 +151,13 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
       if (!builtin.handle) throw new Error(`Native /${builtin.name} has no connected command handler; no command was executed.`);
       const reloadMcp = builtin.name === "mcp" && verb === "reload";
       if (reloadMcp && !bridges) throw new Error("The native MCP runtime reload bridge is unavailable; no command was executed.");
+      const reloadPlugins = builtin.name === "reload-plugins" || builtin.name === "plugins" && (verb === "enable" || verb === "disable");
+      if (reloadPlugins && !bridges?.reloadPlugins) throw new Error("The native plugin reload bridge is unavailable; no command was executed.");
       const chunks: string[] = []; let length = 0;
       const invokeNativeHandler = () => builtin.handle!(parsed, {
         session, sessionManager: session.sessionManager, settings: session.settings, cwd: session.sessionManager.getCwd(),
         output: value => { const remaining = 64 * 1024 - length; if (remaining > 0) { const part = value.slice(0, remaining); chunks.push(part); length += part.length + 1; } },
-        refreshCommands: reloadMcp ? () => bridges!.reloadMcp() : () => {}, reloadPlugins: async () => { throw new Error("Coordinated native plugin reload is not connected."); },
+        refreshCommands: reloadMcp ? () => bridges!.reloadMcp() : () => {}, reloadPlugins: reloadPlugins ? () => bridges!.reloadPlugins!() : async () => {},
       });
       if (builtin.name === "force") {
         if (!bridges?.forceTool) throw new Error("Native force admission is unavailable; no command was executed.");

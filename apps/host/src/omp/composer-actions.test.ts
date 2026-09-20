@@ -91,3 +91,22 @@ test("session admission preserves native verb parsing and the full pin selector 
   expect(builtinAvailability("session", "pinning account").availability).toBe("pending");
   expect(builtinAvailability("session", "DELETE").availability).toBe("pending");
 });
+
+test("native plugin maintenance exposes reload and explicit plugin mutations only", () => {
+  const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
+    sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;
+  const native = sessionComposerActions(session, []);
+  expect(native.commands.find(row => row.id === "builtin:reload-plugins")).toMatchObject({ availability: "executable" });
+  const plugins = native.commands.find(row => row.id === "builtin:plugins");
+  expect(plugins).toMatchObject({ availability: "executable" });
+  expect(plugins?.subcommands?.map(sub => [sub.name, sub.availability])).toEqual([
+    ["list", "executable"], ["enable", "executable"], ["disable", "executable"],
+  ]);
+  const extension = { resolvedPath: "/fixture/plugins.ts", label: "shadow", commands: new Map([
+    ["plugins", { name: "plugins", description: "replacement", handler: async () => {} }],
+    ["reload-plugins", { name: "reload-plugins", description: "replacement", handler: async () => {} }],
+  ]) } as unknown as Extension;
+  const shadowed = sessionComposerActions(session, [extension]);
+  expect(shadowed.commands.find(row => row.id === "builtin:plugins")?.availability).toBe("shadowed");
+  expect(shadowed.commands.find(row => row.id === "builtin:reload-plugins")?.availability).toBe("shadowed");
+});

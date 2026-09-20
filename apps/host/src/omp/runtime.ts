@@ -608,6 +608,7 @@ export class OmpRuntime {
       let outputRead: Promise<import("@agent-desktop/shared").SessionOutputs> | undefined;
       const mcpReads = new Set<Promise<NativeSessionMcpResourceResult>>();
       let mcpMutation: Promise<unknown> | undefined;
+      let pluginReload: Promise<void> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
       const mcpFiles = new McpFileResources(manager.getCwd());
@@ -643,6 +644,12 @@ export class OmpRuntime {
         const clear = () => { if (mcpMutation === run) mcpMutation = undefined; };
         void run.then(clear, clear);
         return run;
+      };
+      const trackPluginReload = (work: () => Promise<void>): Promise<void> => {
+        if (pluginReload) return Promise.reject(new Error("Native plugins are already reloading."));
+        const run = Promise.resolve().then(work); pluginReload = run;
+        const clear = () => { if (pluginReload === run) pluginReload = undefined; };
+        void run.then(clear, clear); return run;
       };
       result.mcpManager?.setAuthHandler(async (serverName, challenge, nativeContext) => {
         assertSessionActive();
@@ -1442,6 +1449,17 @@ export class OmpRuntime {
                     } finally { todoDispatchDepth--; }
                   },
                   forceTool: forceAdmission,
+                  reloadPlugins: () => trackPluginReload(async () => {
+                    assertSessionActive();
+                    if (interruptsInFlight || controller.signal.aborted || session.queuedMessageCount > 0
+                      || ui?.list().length || btw.get()?.status === "running" || mcpMutation)
+                      throw new Error("Resolve pending native work before reloading plugins.");
+                    await session.reloadPluginDiscovery();
+                    assertSessionActive(); controller.signal.throwIfAborted();
+                    const ticket = mcp.read();
+                    await trackMcpMutation(mcp.reload({ epoch: ticket.epoch, expectedRevision: ticket.revision }));
+                    assertSessionActive(); controller.signal.throwIfAborted();
+                  }),
                   withNativeForceInvocation: operation => {
                     // Synchronous, exact-token-checked sections only. Never hold
                     // this exception across output/history awaits or recovery.
@@ -1623,6 +1641,7 @@ export class OmpRuntime {
             const mcpDrains = await mcpDisposal;
             await extensionStartup?.catch(() => {});
             await mcpMutation?.catch(() => {});
+            await pluginReload?.catch(() => {});
             await planMutation?.catch(() => {});
             await Promise.allSettled([...mcpReads, ...(outputRead ? [outputRead] : [])]);
             const cleanupErrors = [...resetCleanupErrors, ...mcpDrains.flatMap(result => result.status === "rejected" ? [result.reason] : [])];
