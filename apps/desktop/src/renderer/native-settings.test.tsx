@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { DesktopBridge, OmpModelDefinitions, OmpModelDefinitionsSnapshot, OmpSessionControls, OmpSettingsSnapshot, SettingJson } from "@agent-desktop/shared";
 import { modelDefinitionsCatalog } from "../../../host/src/omp-settings/model-definitions";
 import { settingsCatalog } from "../../../host/src/omp-settings/schema";
-import { NativeDefinitionEditor, NativeModelDefinitionsState, NativeSettingRow, NativeSettingsState, NativeValueField, definitionFieldSchema, filterNativeSettings, nativeSettingMatches, nativeSettingSeed } from "./NativeSettings";
+import { NativeDefinitionEditor, NativeModelDefinitionsState, NativeSettingRow, NativeSettingsState, NativeValueField, definitionFieldSchema, filterNativeSettings, nativeSettingMatches, nativeSettingSeed, updateDefaultModelRole, DefaultModelSetting } from "./NativeSettings";
 const catalog = settingsCatalog();
 const descriptor = (path: string) => catalog.settings.find(item => item.path === path)!;
 const snapshot = (revision = "initial"): OmpSettingsSnapshot => ({ revision, cwd: "/contract/project", entries: [{ path: "compaction.enabled", effective: true, global: true, configured: true, globalConfigured: true, projectConfigured: false, credential: false, origin: "global" }], sources: { globalPath: "/contract/agent/config.yml", projectWritePath: "/contract/project/.omp/config.yml", projectRead: "native-capability-merged", overlays: "native-process-configuration" }, mutationEffects: "new-sessions-read-updated-config" });
@@ -204,5 +204,57 @@ describe("native model definition editor contracts", () => {
       expect(data.edit?.revision).toBe("initial"); expect(data.edit?.path).toEqual(originalPath); expect((data.edit?.value as any).name).toBe("Retained local edit");
       expect(await data.save()).toBe(false);
     }
+  });
+});
+
+
+describe("default model for new sessions", () => {
+  test("updates only the default role and preserves aliases and ordered fallbacks", () => {
+    const original = { default: ["old/primary", "old/fallback"], review: "review/model", plan: ["plan/one", "plan/two"] };
+    expect(updateDefaultModelRole(original, "new/default")).toEqual({ default: "new/default", review: "review/model", plan: ["plan/one", "plan/two"] });
+    expect(updateDefaultModelRole(original, undefined)).toEqual({ review: "review/model", plan: ["plan/one", "plan/two"] });
+    expect(original.default).toEqual(["old/primary", "old/fallback"]);
+  });
+  test("shows unavailable and advanced saved defaults without changing the current session", () => {
+    const data = new NativeSettingsState(bridge(), "host"); data.catalog = catalog;
+    data.snapshot = { ...snapshot(), entries: [{ path: "modelRoles", credential: false, configured: true, globalConfigured: true, projectConfigured: false,
+      global: { default: ["missing/first", "missing/second"], review: "review/model" }, effective: { default: ["missing/first", "missing/second"], review: "review/model" }, origin: "global" }] };
+    data.models = [{ provider: "known", id: "model", api: "openai-completions", name: "Known model", contextWindow: 100000, maxTokens: 4096, input: ["text"], reasoning: false, supportsTools: true,
+      thinkingSelectors: ["off"], serviceTierOptions: { openai: [], anthropic: [], google: [] }, capabilities: {}, compatibility: {}, settingsPaths: [], excludedSensitiveFields: [], unmappedCapabilityFields: [] }];
+    const html = renderToStaticMarkup(<DefaultModelSetting data={data} scope="global" writable/>);
+    expect(html).toContain("Advanced saved default"); expect(html).toContain("missing/first"); expect(html).toContain("Current sessions and account selection do not change");
+  });
+  test("preserves a pending complete role map and fences it when the host revision changes", () => {
+    const data = new NativeSettingsState(bridge(), "host"); data.catalog = catalog;
+    data.snapshot = { ...snapshot("before"), entries: [{ path: "modelRoles", credential: false, configured: true, globalConfigured: true, projectConfigured: false,
+      global: { default: "old/default", review: "review/model" }, effective: { default: "old/default", review: "review/model" }, origin: "global" }] };
+    data.edit("global", "modelRoles", { default: "new/default", review: "review/model", plan: ["plan/first", "plan/fallback"] });
+    data.snapshot = { ...data.snapshot, revision: "after" };
+    const html = renderToStaticMarkup(<DefaultModelSetting data={data} scope="global" writable/>);
+    expect(html).toContain("saved settings changed");
+    expect(html).toContain("Review current revision");
+    expect(html).toContain("Save default");
+    expect(data.edits.get("global:modelRoles")?.value).toEqual({ default: "new/default", review: "review/model", plan: ["plan/first", "plan/fallback"] });
+  });
+  test("rebases a default-only edit onto remote non-default role changes before retry", async () => {
+    const writes: any[] = [];
+    const entry = (revision: string, roles: SettingJson) => ({ ...snapshot(revision), entries: [{ path: "modelRoles", credential: false, configured: true, globalConfigured: true, projectConfigured: false, global: roles, effective: roles, origin: "global" as const }] });
+    let remote = entry("r1", { default: "old/default", review: "review/old", plan: ["plan/first", "plan/fallback"] });
+    const data = new NativeSettingsState(bridge({ getSettings: async () => remote, setSetting: async mutation => { writes.push(mutation); if (mutation.expectedRevision !== remote.revision) throw new Error("OMP settings changed"); remote = entry("r3", mutation.value!); return remote; } }), "host");
+    await data.refresh(); data.editDefaultModel("global", "new/default");
+    remote = entry("r2", { default: "old/default", review: "review/remote", plan: ["remote/first", "remote/fallback"] });
+    await data.save("global", descriptor("modelRoles"));
+    expect(data.edits.get("global:modelRoles")?.error).toContain("changed");
+    await data.refresh();
+    data.rebaseDefaultModel("global"); await data.save("global", descriptor("modelRoles"));
+    expect(writes).toHaveLength(2);
+    expect(writes[1]).toMatchObject({ expectedRevision: "r2", value: { default: "new/default", review: "review/remote", plan: ["remote/first", "remote/fallback"] } });
+  });
+  test("does not replace a separate advanced role-map edit from the dedicated selector", () => {
+    const data = new NativeSettingsState(bridge(), "host"); data.snapshot = snapshot("r1");
+    const advanced = { default: ["advanced/first", "advanced/fallback"], review: "advanced/review" };
+    data.edit("global", "modelRoles", advanced); data.editDefaultModel("global", "new/default");
+    expect(data.edits.get("global:modelRoles")?.value).toEqual(advanced);
+    expect(data.edits.get("global:modelRoles")?.error).toContain("existing advanced model role edit");
   });
 });

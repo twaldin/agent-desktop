@@ -42,6 +42,19 @@ try {
   assert.equal(snapshot.entries.find(entry => entry.path === "hindsight.apiToken")?.configured, false);
   snapshot = await service.mutate({ expectedRevision: snapshot.revision, scope: "global", path: "tools.approvalMode", operation: "reset" });
   assert.equal(snapshot.entries.find(entry => entry.path === "tools.approvalMode")?.global, "yolo");
+  // A dedicated default-model control writes the complete role map while preserving every unrelated role and ordered fallback.
+  const roles = { default: ["fixture/old", "fixture/fallback"], review: "fixture/review", plan: ["fixture/plan", "fixture/plan-fallback"] };
+  snapshot = await service.mutate({ expectedRevision: snapshot.revision, scope: "global", path: "modelRoles", operation: "set", value: roles });
+  const changedRoles = { ...roles, default: "fixture/new" };
+  snapshot = await service.mutate({ expectedRevision: snapshot.revision, scope: "global", path: "modelRoles", operation: "set", value: changedRoles });
+  assert.deepEqual((await Settings.loadReadOnly({ agentDir, cwd })).get("modelRoles"), changedRoles);
+  const inheritedRoles = { review: changedRoles.review, plan: changedRoles.plan };
+  snapshot = await service.mutate({ expectedRevision: snapshot.revision, scope: "project", path: "modelRoles", operation: "set", value: { default: "fixture/project" } });
+  assert.equal((await Settings.loadReadOnly({ agentDir, cwd })).get("modelRoles").default, "fixture/project");
+  snapshot = await service.mutate({ expectedRevision: snapshot.revision, scope: "project", path: "modelRoles", operation: "set", value: {} });
+  assert.deepEqual((await Settings.loadReadOnly({ agentDir, cwd })).get("modelRoles"), changedRoles);
+  snapshot = await service.mutate({ expectedRevision: snapshot.revision, scope: "global", path: "modelRoles", operation: "set", value: inheritedRoles });
+  assert.deepEqual((await Settings.loadReadOnly({ agentDir, cwd })).get("modelRoles"), inheritedRoles);
   // External changes invalidate an existing client revision without dumping config.
   const beforeExternal = snapshot.revision;
   await writeFile(configFile, (await readFile(configFile, "utf8")) + "\nsearxng:\n  token: contract-external-token\n");

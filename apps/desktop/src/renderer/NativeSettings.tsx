@@ -9,7 +9,7 @@ import "./native-settings.css";
 type Scope = "global" | "project" | "session";
 type ControlInput = OmpSessionControlMutation extends infer Mutation ? Mutation extends { expectedRevision: string } ? Omit<Mutation, "expectedRevision"> : never : never;
 type SettingsBridge = Pick<DesktopBridge, "getSettingsCatalog" | "getSettings" | "setSetting" | "getSettingOptions" | "getModelCapabilities" | "getSessionControls" | "setSessionControl" | "getModelDefinitions" | "setModelDefinitions" | "subscribe">;
-interface Edit { value: SettingJson; revision: string; error?: string }
+interface Edit { value: SettingJson; revision: string; error?: string; intent?: "default-model" }
 const editKey = (scope: Scope, path: string) => `${scope}:${path}`;
 const safeKey = (key: string) => !["__proto__", "prototype", "constructor"].includes(key);
 const record = (value: unknown): value is Record<string, SettingJson> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -73,6 +73,22 @@ export class NativeSettingsState {
   edit(scope: Scope, path: string, value: SettingJson): void {
     const key = editKey(scope, path), old = this.edits.get(key);
     this.edits.set(key, { value, revision: old?.revision ?? this.revision(scope) }); this.notify();
+  }
+  editDefaultModel(scope: Exclude<Scope, "session">, model: string | undefined): void {
+    const key = editKey(scope, "modelRoles"), old = this.edits.get(key);
+    if (old && old.intent !== "default-model") { old.error = "Discard or save the existing advanced model role edit before changing the default model."; this.notify(); return; }
+    const saved = this.snapshot?.entries.find(item => item.path === "modelRoles");
+    const local = scope === "global" ? saved?.global : saved?.project;
+    const basis = old?.intent === "default-model" ? old.value : local;
+    this.edits.set(key, { value: updateDefaultModelRole(basis, model), revision: old?.revision ?? this.revision(scope), intent: "default-model" }); this.notify();
+  }
+  rebaseDefaultModel(scope: Exclude<Scope, "session">): void {
+    const edit = this.edits.get(editKey(scope, "modelRoles"));
+    if (!edit || edit.intent !== "default-model" || !record(edit.value)) return;
+    const saved = this.snapshot?.entries.find(item => item.path === "modelRoles"), local = scope === "global" ? saved?.global : saved?.project;
+    const selected = Object.hasOwn(edit.value, "default") && typeof edit.value.default === "string" ? edit.value.default : undefined;
+    edit.value = updateDefaultModelRole(local, selected);
+    edit.revision = this.revision(scope); edit.error = undefined; this.notify();
   }
   discard(scope: Scope, path: string): void { this.edits.delete(editKey(scope, path)); this.notify(); }
   rebase(scope: Scope, path: string): void {
@@ -196,7 +212,7 @@ export function NativeSettings(props: NativeSettingsProps) {
     </div>
     {(tab !== "ssh" || searching) && <div className="native-scope-bar"><label>Scope<select aria-label="Native settings scope" value={scope} onChange={event => setScope(event.target.value as Scope)}><option value="global">Host defaults</option><option value="project" disabled={!target}>Project configuration</option><option value="session" disabled={!session}>This session</option></select></label><span>{scope === "session" ? `Session overrides for ${session?.title ?? "this session"}` : scope === "project" ? "Project values override host defaults" : "Applies to new sessions on this host"}</span><span className="native-count">{data.catalog?.settings.length ?? "…"} core settings{data.edits.size > 0 ? ` · ${data.edits.size} unsaved` : ""}</span></div>}
       <main className="native-content" aria-busy={data.loading || data.saving}>
-        {tab === "ssh" && !searching ? <SshToolSettings key={`${hostId}:${targetKey}`} bridge={bridge} localHostId={localHostId} hostId={hostId} hostName={props.hostName} target={target} connected={connected}/> : tab === "models" && !searching ? <NativeModels data={data} session={session} connected={connected}/> : <>
+        {tab === "ssh" && !searching ? <SshToolSettings key={`${hostId}:${targetKey}`} bridge={bridge} localHostId={localHostId} hostId={hostId} hostName={props.hostName} target={target} connected={connected}/> : tab === "models" && !searching ? <NativeModels data={data} session={session} connected={connected} scope={scope} writable={writable}/> : <>
           <div className="native-section-heading"><h2>{searching ? `Results for “${query}”` : tab === "all" ? "All native settings" : tabs.find(item => item.id === tab)?.label}</h2><p>{scope === "session" ? "Model, thinking and service tiers persist in native history. Permission-mode changes persist on the owning host and require a compatible host version; other supported settings apply until this worker closes." : "Saving writes the selected native scope. Existing sessions keep their current settings; use This session for supported live overrides."}</p></div>
           {!data.catalog && <p role="status">{data.loading ? "Loading the host’s native schema…" : "Reload to read the native settings schema."}</p>}
           {groups.map(group => {
@@ -215,6 +231,15 @@ export function NativeSettings(props: NativeSettingsProps) {
 export function filterNativeSettings(settings: OmpSettingDescriptor[], query: string, tab: string): OmpSettingDescriptor[] {
   const search = query.trim().toLowerCase();
   return settings.filter(setting => search ? `${setting.path} ${setting.label} ${setting.description ?? ""} ${setting.tab} ${setting.group}`.toLowerCase().includes(search) : tab === "all" || setting.tab === tab);
+}
+export function updateDefaultModelRole(value: SettingJson | undefined, model: string | undefined): Record<string, SettingJson> {
+  const roles = record(value) ? structuredClone(value) : {};
+  if (model === undefined) delete roles.default;
+  else roles.default = model;
+  return roles;
+}
+function savedDefaultRole(value: SettingJson | undefined): SettingJson | undefined {
+  return record(value) ? value.default : undefined;
 }
 function title(value: string): string { return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll(".", " / ").replace(/^./, char => char.toUpperCase()); }
 function display(value: SettingJson | undefined): string { return value === undefined ? "Not set" : typeof value === "string" ? value || "Empty string" : JSON.stringify(value); }
@@ -312,7 +337,33 @@ function NativeJsonField(props: FieldProps) {
   return <div className="native-json"><p className="native-note">Free-form native value · no narrower upstream schema</p><select aria-label={`${label} value type`} value={kind} disabled={disabled} onChange={event => onChange(event.target.value === "null" ? null : nativeSettingSeed(schemas[event.target.value]))}>{["null", "string", "number", "boolean", "array", "map"].map(item => <option key={item} value={item}>{title(item)}</option>)}</select>{kind !== "null" && <NativeValueField {...props} schema={schemas[kind]} secret={props.secret || props.schema.writeOnly} options={undefined}/>}</div>;
 }
 
-function NativeModels({ data, session, connected }: { data: NativeSettingsState; session?: SessionSummary | null; connected: boolean }) {
+export function DefaultModelSetting({ data, scope, writable }: { data: NativeSettingsState; scope: Scope; writable: boolean }) {
+  if (scope === "session") return null;
+  const descriptor = data.catalog?.settings.find(item => item.path === "modelRoles"), state = data.snapshot?.entries.find(item => item.path === "modelRoles");
+  if (!descriptor) return null;
+  const local = scope === "global" ? state?.global : state?.project;
+  const configured = savedDefaultRole(local), inherited = savedDefaultRole(state?.effective);
+  const edit = data.edits.get(editKey(scope, "modelRoles"));
+  const selected = typeof edit?.value === "object" ? savedDefaultRole(edit.value) : configured;
+  const stale = Boolean(edit && edit.revision !== data.revision(scope));
+  const simple = typeof selected === "string" ? selected : "";
+  const known = data.models.some(model => `${model.provider}/${model.id}` === simple);
+  const choose = (value: string) => data.editDefaultModel(scope, value || undefined);
+  const reset = () => data.editDefaultModel(scope, undefined);
+  return <section className="settings-card native-default-model" aria-label="Default model for new sessions"><h3>Default model for new sessions</h3><p>Sets the native default role at this scope. Current sessions and account selection do not change.</p>
+    <label className="native-labeled-control">Model<ModelPicker label="Default model for new sessions" value={simple} disabled={!writable} options={[
+      { value: "", label: scope === "project" ? "Inherit host default" : "Native fallback" },
+      ...(!known && simple ? [{ value: simple, label: `${simple} (saved, unavailable)` }] : []),
+      ...data.models.map(model => ({ value: `${model.provider}/${model.id}`, provider: model.provider, label: model.name, detail: model.id })),
+    ]} onChange={choose}/></label>
+    {configured !== undefined && typeof configured !== "string" && <p className="native-note">Advanced saved default: <code>{display(configured)}</code>. Choosing a model replaces only this default role.</p>}
+    {configured === undefined && inherited !== undefined && <p className="native-note">Effective inherited default: <code>{display(inherited)}</code></p>}
+    <div className="native-row-actions"><button className="secondary-button" disabled={!edit || data.saving} onClick={() => data.discard(scope, "modelRoles")}>Discard edit</button><button className="native-reset" disabled={!writable || selected === undefined} onClick={reset}>{scope === "project" ? "Inherit host default" : "Use native fallback"}</button>{stale && <button className="secondary-button" onClick={() => edit?.intent === "default-model" ? data.rebaseDefaultModel(scope) : data.rebase(scope, "modelRoles")}>Review current revision</button>}<button className="primary-button" disabled={!writable || !edit || stale} onClick={() => void data.save(scope, descriptor)}>Save default</button></div>
+    {stale && <p className="inline-error" role="alert">The saved settings changed while this default was being edited. Review the current revision before saving.</p>}
+    {edit?.error && <p className="inline-error" role="alert">{edit.error}</p>}
+  </section>;
+}
+function NativeModels({ data, session, connected, scope, writable: settingsWritable }: { data: NativeSettingsState; session?: SessionSummary | null; connected: boolean; scope: Scope; writable: boolean }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState("");
   const controls = data.controls;
@@ -320,7 +371,7 @@ function NativeModels({ data, session, connected }: { data: NativeSettingsState;
   const models = data.models.filter(item => !query || `${item.provider}/${item.id} ${item.name}`.toLowerCase().includes(query.toLowerCase()));
   const model = models.find(item => `${item.provider}/${item.id}` === (selected || currentKey)) ?? models[0];
   const writable = connected && !data.saving && !!controls;
-  return <section className="native-models"><NativeDefinitions data={data.definitions} connected={connected} onSaved={() => { void data.loadModels(true); void data.refresh(); }}/><h2>Session & models</h2><p>Model capabilities come from this host’s native registry. Configuration is not a provider health check.</p>{data.modelError && <p className="inline-error" role="alert">{data.modelError}</p>}{data.controlError && <p className="inline-error" role="alert">{data.controlError}</p>}
+  return <section className="native-models"><NativeDefinitions data={data.definitions} connected={connected} onSaved={() => { void data.loadModels(true); void data.refresh(); }}/><h2>Session & models</h2><DefaultModelSetting data={data} scope={scope} writable={settingsWritable}/><p>Model capabilities come from this host’s native registry. Configuration is not a provider health check.</p>{data.modelError && <p className="inline-error" role="alert">{data.modelError}</p>}{data.controlError && <p className="inline-error" role="alert">{data.controlError}</p>}
     {session ? <div className="settings-card"><h3>{session.title}</h3>{controls ? <><div className="native-labeled-control">Session model<ModelPicker label="Session model" value={currentKey} disabled={!writable || data.loadingModels} options={[
       ...(!currentKey ? [{value: "", label: "No model selected", disabled: true}] : []),
       ...(currentKey && !data.models.some(item => `${item.provider}/${item.id}` === currentKey) ? [{value: currentKey, label: `${currentKey} (saved selection)`}] : []),
