@@ -1486,6 +1486,7 @@ export class WorkerRuntime {
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),
       pinAccount: (credentialId, expectedSelection) => client.request({ operation: "pinAccount", args: { credentialId, expectedSelection } }),
       releaseAccountForReselection: expectedSelection => client.request({ operation: "releaseAccountForReselection", args: { expectedSelection } }),
+      getExtensionUi: () => client.request({ operation: "getExtensionUi" }),
       listInteractions: () => client.request({ operation: "listInteractions" }),
       respondInteraction: (id, response) => client.request({ operation: "respondInteraction", args: { id, response } }),
       cancelInteractions: reason => client.request({ operation: "cancelInteractions", args: { reason } }),

@@ -82,6 +82,7 @@ export { parseStandaloneFilePath } from "./workspace";
 export type * from "./workspace";
 export type * from "./accounts";
 export type * from "./interactions";
+export * from "./extension-ui";
 export type * from "./settings";
 export { OMP_TOP_K_VALUES } from "./settings";
 export type * from "./theme";
@@ -343,6 +344,7 @@ export type HostEvent =
   | { sequence: number; type: "runtime"; sessionId: string; event: unknown; sessionActivity?: true }
   | { sequence: number; type: "accounts" }
   | { sequence: number; type: "automations" }
+  | { sequence: number; type: "extension-ui"; sessionId: string; epoch: string; revision: number }
   | { sequence: number; type: "interactions"; sessionId: string; sessionActivity?: true }
   | { sequence: number; type: "notification"; notification: HostNotification }
   | { sequence: number; type: "workspace"; target: WorkspaceTarget; repositoryChange?: GitRepositoryChange }
@@ -495,6 +497,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   mutateQueuedMessages?(sessionId: string, mutation: import("./queued-messages").NativeQueuedMessageMutation, hostId: string): Promise<import("./queued-messages").NativeQueuedMessageMutationReceipt>;
   subscribeQueuedMessages?(listener: (event: { hostId: string; sessionId: string }) => void): () => void;
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
+  getExtensionUi?(sessionId: string, hostId?: string): Promise<import("./extension-ui").ExtensionUiResult | null>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
   sessionJobs?(sessionId: string, request: import("./session-jobs").SessionJobsRequest, hostId: string): Promise<import("./session-jobs").SessionJobsEnvelope>;
   mcpOwner?: import("./mcp-owner").McpOwnerBridge;

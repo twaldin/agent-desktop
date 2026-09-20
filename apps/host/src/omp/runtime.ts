@@ -197,6 +197,7 @@ export interface OmpSession {
   listAccountChoices(): Promise<SessionAccountList>;
   pinAccount(credentialId: number, expectedSelection?: SessionAccountSelection): Promise<SessionAccountList>;
   releaseAccountForReselection(expectedSelection?: SessionAccountSelection): Promise<SessionAccountList>;
+  getExtensionUi(): Promise<import("../../../../packages/shared/src/extension-ui").NativeExtensionUiSnapshot>;
   listInteractions(): Promise<OmpInteraction[]>;
   respondInteraction(id: string, response: OmpInteractionResponse): Promise<void>;
   cancelInteractions(reason?: "cancelled" | "disconnected"): Promise<void>;
@@ -1628,6 +1629,7 @@ export class OmpRuntime {
             return await accountBridge.release(session.sessionId, expectedSelection);
           } finally { accountMutation = false; }
         },
+        getExtensionUi: async () => { assertSessionActive(); if (!ui) throw new Error("The native extension UI is unavailable."); return ui.presentation.snapshot(); },
         listInteractions: async () => { assertInteractionActive(); return ui?.list() ?? []; },
         respondInteraction: async (id, response) => {
           assertInteractionActive();

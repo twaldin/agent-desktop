@@ -1,3 +1,4 @@
+import { ExtensionStatuses, ExtensionWidgets, useExtensionSessionUi } from "./ExtensionSessionUi";
 import type { TodoEditorPorts } from "./todo-external-editor-state";
 import { SessionExportDialog } from "./SessionExportDialog";
 import { SessionUsagePanel } from "./SessionUsagePanel";
@@ -601,6 +602,7 @@ export function App() {
   };
   const transcript = useTranscript(bridge, selectedId, hostId === "unconnected" ? undefined : hostId, connected, desktop.localHostId, selected?.activitySequence);
   const activity = useSessionActivity(bridge, hostId, selected?.id, connected, !settingsOpen, desktop.localHostId);
+  const extensionUi = useExtensionSessionUi(bridge, hostId, selected?.id, connected, !settingsOpen, desktop.localHostId);
   useEffect(() => {
     if (!environmentOpen || settingsOpen || !workspace) return;
     const release = retainWorkspace(workspace); workspace.setConnected(connected);
@@ -2125,6 +2127,7 @@ export function App() {
               : <button type="button" disabled={!connected} onClick={() => void submissions.reconcileQueuedSubmission(item.send.id).then(receipt => {
                   if (receipt.outcome === "unknown") setActionError(receipt.message ?? `Delivery of command ${item.send.id} remains unknown.`);
                 }).catch(cause => setActionError(errorMessage(cause)))}>Check receipt</button>}</div>)}
+          <ExtensionWidgets view={extensionUi} placement="aboveEditor" connected={connected}/>
           <form className={`composer ${selected?.archived ? "archived-composer" : ""}`} onSubmit={event => { event.preventDefault(); void submit(); }} onDragOver={event => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.dataTransfer.files], state?.imageAttachments); }} onPaste={event => { if (!event.clipboardData.files.length) return; event.preventDefault(); if (!selected?.archived) void imageComposer.add([...event.clipboardData.files], state?.imageAttachments); }}>
             {remoteExecutionIssue && <p className="attachment-notice" role="status">{remoteExecutionIssue}</p>}
             {wholeFileIssue && <p className="attachment-notice" role="status">{wholeFileIssue}</p>}
@@ -2199,6 +2202,8 @@ export function App() {
             {nativePlan.view.loading && <span role="status">Refreshing Plan…</span>}
             {(nativePlan.view.unavailable || nativePlan.view.error || nativePlan.view.value?.warning) && <span role="status">{nativePlan.view.unavailable ?? nativePlan.view.error ?? nativePlan.view.value?.warning}</span>}
           </div>
+          <ExtensionWidgets view={extensionUi} placement="belowEditor" connected={connected}/>
+          <ExtensionStatuses view={extensionUi} connected={connected}/>
           <AdvancedStreamControls bridge={bridge} hostId={hostId} localHostId={desktop.localHostId} sessionId={selected?.id} connected={connected} disabled={Boolean(selected?.archived) || running}/>
           <div className="composer-footnote" aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : null}</div>
         </div>

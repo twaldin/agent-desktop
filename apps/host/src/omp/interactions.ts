@@ -1,5 +1,6 @@
+import { NativeExtensionUi } from "./extension-ui";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ExtensionFactory, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionUISelectItem } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import type { ExtensionFactory, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionUISelectItem, ExtensionWidgetContent, ExtensionWidgetOptions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 
 import type { OmpInteraction, OmpInteractionResponse, InteractionEndReason, OmpBridgeEvent } from "@agent-desktop/shared";
 export type { InteractionMethod, InteractionAction, OmpInteraction, OmpInteractionResponse, InteractionEndReason, OmpBridgeEvent } from "@agent-desktop/shared";
@@ -74,7 +75,10 @@ export class OmpInteractionBridge implements ExtensionUIContext {
     }
   }
   #disposed = false;
-  constructor(readonly sessionId: string, private emit: (event: OmpBridgeEvent) => void) {}
+  readonly presentation: NativeExtensionUi;
+  constructor(readonly sessionId: string, private emit: (event: OmpBridgeEvent) => void) {
+    this.presentation = new NativeExtensionUi(sessionId, (epoch, revision) => emit({ type: "extension_ui_changed", sessionId, epoch, revision }));
+  }
 
   list(): OmpInteraction[] { return structuredClone([...this.#pending.values()].map(item => item.request)); }
 
@@ -237,7 +241,7 @@ export class OmpInteractionBridge implements ExtensionUIContext {
     this.#cancellationGeneration++;
     for (const item of [...this.#pending.values()]) item.finish(item.request.method === "confirm" ? false : undefined, reason);
   }
-  dispose(): void { this.#disposed = true; this.cancelAll("disposed"); }
+  dispose(): void { this.#disposed = true; this.presentation.dispose(); this.cancelAll("disposed"); }
   select(title: string, options: ExtensionUISelectItem[], dialogOptions?: ExtensionUIDialogOptions): Promise<string | undefined> {
     return this.#request({ method: "select", title, options: options.map(option => typeof option === "string" ? { label: option } : { label: option.label, ...(option.description === undefined ? {} : { description: option.description }) }) }, dialogOptions) as Promise<string | undefined>;
   }
@@ -261,9 +265,13 @@ export class OmpInteractionBridge implements ExtensionUIContext {
   }
   // No factories are called and no success is fabricated for absent TUI/composer surfaces.
   onTerminalInput(): never { return this.unsupported("onTerminalInput"); }
-  setStatus(): never { return this.unsupported("setStatus"); }
+  setStatus(key: string, text: string | undefined): void { this.presentation.setStatus(key, text); }
   setWorkingMessage(): never { return this.unsupported("setWorkingMessage"); }
-  setWidget(): never { return this.unsupported("setWidget"); }
+  setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void {
+    if (this.#disposed) throw new Error("The original extension UI owner is disposed.");
+    if (typeof content === "function") return this.unsupported("setWidget(component factory)");
+    this.presentation.setWidget(key, content, options);
+  }
   setFooter(): never { return this.unsupported("setFooter"); }
   setHeader(): never { return this.unsupported("setHeader"); }
   setTitle(): never { return this.unsupported("setTitle"); }

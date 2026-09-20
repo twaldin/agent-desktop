@@ -47,6 +47,7 @@ import { requestGoalMutation } from "./goal-control-transport";
 import { listAutomations, mutateAutomation } from './automations-transport';
 import { parseAutomationMutation, parseAutomationsQuery } from '../../../../packages/shared/src/automations';
 import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillFileOpenOptions, requestSkillFileCopy, requestSkillImage } from "./composer-actions-transport";
+import { requestExtensionUi } from "./extension-ui-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestSessionJobs } from "./session-jobs-transport";
 import { parseSessionJobsRequest } from "../../../../packages/shared/src/session-jobs";
@@ -621,6 +622,9 @@ ipcMain.handle("desktop:session-export-save", async (event, receipt: import("@ag
 }));
 ipcMain.handle("host:session-usage", async (event, sessionId: string, hostId: string, mode?: import("@agent-desktop/shared").UsageRefresh, commandId?: string) => {
   assertTrustedSender(event); return requestSessionUsage(await endpointFor(hostId), sessionId, mode, commandId);
+});
+ipcMain.handle("host:extension-ui", async (event, sessionId: string, hostId?: string) => {
+  assertTrustedSender(event); return requestExtensionUi(await endpointFor(hostId), sessionId);
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);

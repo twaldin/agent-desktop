@@ -14,7 +14,7 @@ import type { ResetPolicyWireRequest, ResetPolicyWireResponse } from "./reset-po
 import type { WorkerResetPolicyReconnect } from "./reconnect-wire";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 68;
+export const WORKER_PROTOCOL_VERSION = 69;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -140,6 +140,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "listAccountChoices" }
   | { operation: "pinAccount"; args: { credentialId: number; expectedSelection?: SessionAccountSelection } }
   | { operation: "releaseAccountForReselection"; args?: { expectedSelection?: SessionAccountSelection } }
+  | { operation: "getExtensionUi" }
   | { operation: "listInteractions" }
   | { operation: "respondInteraction"; args: { id: string; response: OmpInteractionResponse } }
   | { operation: "cancelInteractions"; args: { reason?: "cancelled" | "disconnected" } }

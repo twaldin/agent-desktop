@@ -85,6 +85,7 @@ import { ComposerActionsHttp } from "./composer-actions-http";
 import { SkillFiles, type SkillFileAuthorization } from "./skill-files";
 import { hasNativeBtwComposerWinner } from "./omp/composer-actions";
 import { nativeBtwQuestion } from "@agent-desktop/shared";
+import { ExtensionUiHttp } from "./extension-ui-http";
 import { SessionActivityHttp } from "./session-activity-http";
 import { SessionJobsHttp } from "./session-jobs-http";
 import { BtwService } from "./btw";
@@ -469,6 +470,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         goalContinuations!.request(id);
       } else updateSession(id, { goalContinuation: undefined });
     } });
+  const extensionUi = new ExtensionUiHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)),
+    existing: async id => stopping ? undefined : handles.get(id)?.catch(() => undefined) });
   const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getActivity: async id => (await getHandle(id)).getSessionActivity(), goalControlTicket: activity => goalControls.ticket(activity) });
   const sessionJobs = new SessionJobsHttp({ hostId: store.host.id,
@@ -800,6 +803,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   function onRuntimeEvent(sessionId: string, event: unknown): void {
     if (stopping) return;
     const value = event as { type?: string; message?: { errorMessage?: string } };
+    if (value.type === "extension_ui_changed") {
+      const changed = event as { epoch: string; revision: number };
+      publish({ type: "extension-ui", sessionId, epoch: changed.epoch, revision: changed.revision });
+      return;
+    }
     if (value.type === "queued_messages_changed") {
       const payload = JSON.stringify({ type: "queued-messages", sessionId });
       for (const peer of peers) {
@@ -1509,6 +1517,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (accountResponse) return accountResponse;
         const composerResponse = await composerActions.route(request, url);
         if (composerResponse) return composerResponse;
+        const extensionUiResponse = await extensionUi.route(request, url);
+        if (extensionUiResponse) return extensionUiResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
         const jobsResponse = await sessionJobs.route(request, url);

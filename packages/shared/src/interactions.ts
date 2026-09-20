@@ -25,6 +25,7 @@ export interface OmpInteraction {
 export type OmpInteractionResponse = { value: string | boolean } | { cancel: true } | { action: InteractionAction };
 export type InteractionEndReason = "answered" | "navigated" | "cancelled" | "timeout" | "aborted" | "disconnected" | "disposed";
 export type OmpBridgeEvent =
+  | { type: "extension_ui_changed"; sessionId: string; epoch: string; revision: number }
   | { type: "extension_interaction_requested"; interaction: OmpInteraction }
   | { type: "extension_interaction_resolved"; sessionId: string; id: string; reason: InteractionEndReason }
   | { type: "extension_notification"; sessionId: string; message: string; level: "info" | "warning" | "error" }

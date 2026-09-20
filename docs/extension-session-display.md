@@ -1,0 +1,15 @@
+# Native extension status and text widgets
+
+The session composer displays OMP extension `setStatus` text and `setWidget` string arrays from the session's existing native worker. The first admitted native command initializes extensions using the existing runtime lifecycle. Reading the display neither starts a worker nor initializes extensions. Before that first command, an existing bridge has an empty display.
+
+Status keys remain exact strings and sort with the pinned native `localeCompare` behavior. Replacing a key updates its text; `undefined` clears it. Status text uses OMP 18.1.10's `sanitizeStatusText`, including ANSI removal and whitespace normalization.
+
+Text widgets default to above the composer; `belowEditor` appears below it. Replacing a key removes its previous placement and appends the replacement to the new placement, including replacement within the same placement. The first ten array entries render, followed by the native truncation notice when additional entries exist. Embedded line breaks and tabs remain text. Each array entry starts with a fresh text style, as a native `Text` component does.
+
+Widget text uses React text spans. Supported semicolon SGR sequences include standard/bright/256/RGB colors, background colors, bold, faint, italic, underline, strike, inverse and concealed text, plus their resets. OSC links remain plain text; terminal cursor/control operations do not execute. Blink, alternate fonts, colon-form SGR and terminal-specific decorations are not implemented. Palette colors and font metrics are desktop presentation choices; this is not a claim of terminal styling or full visual parity.
+
+The worker retains this display only while its original bridge exists. Metadata events request a fresh snapshot; they do not carry display content. Host identity, session identity, epoch and revision prevent an older or different owner's snapshot replacing the current view. Disconnecting retains the last observed display with an offline label. Reconnecting or reopening the renderer reads the same live worker. An unavailable original owner clears the display. Failed reads show a refresh notice; no display is written to session transcripts or restored after worker replacement.
+
+Component-factory widgets throw an explicit unsupported error without invoking the factory. Custom TUI components, custom dialogs, header/footer replacements and custom editors remain separate required work. A string-array widget is not a substitute for those APIs.
+
+Controlled tests use a real disposable native extension and production workers without provider access. They cover startup timing, updates from commands and native extension events, replacement, clearing, placement, ordering, truncation, two owners, snapshots, late responses and disposal. Private App evidence uses the production renderer, authenticated disposable host and real worker with synthetic Electron input. This does not establish installed, physical-device or official-reference visual acceptance.

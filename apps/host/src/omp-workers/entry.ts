@@ -778,6 +778,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "listAccountChoices": respond(true, await requireSession().listAccountChoices()); break;
       case "pinAccount": respond(true, await requireSession().pinAccount(message.args.credentialId, message.args.expectedSelection)); break;
       case "releaseAccountForReselection": respond(true, await requireSession().releaseAccountForReselection(message.args?.expectedSelection)); break;
+      case "getExtensionUi": respond(true, await requireSession().getExtensionUi()); break;
       case "listInteractions": respond(true, await requireSession().listInteractions()); break;
       case "respondInteraction": await requireSession().respondInteraction(message.args.id, message.args.response); respond(true); break;
       case "cancelInteractions": await requireSession().cancelInteractions(message.args.reason); respond(true); break;

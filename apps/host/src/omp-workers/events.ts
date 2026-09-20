@@ -20,6 +20,7 @@ export const projectNativeErrorMessage = (value: string) => value.slice(0, 4096)
 export function projectWorkerEvent(event: OmpRuntimeEvent): WorkerEvent {
   if (event.type === "plan_changed" || event.type === "todos_changed") return { type: event.type };
   if (event.type === "queued_messages_changed") return { type: event.type, snapshot: structuredClone(event.snapshot) };
+  if (event.type === "extension_ui_changed") return { type: event.type, sessionId: event.sessionId, epoch: event.epoch, revision: event.revision };
   if (event.type === "extension_interaction_requested" || event.type === "extension_interaction_resolved"
     || event.type === "extension_notification" || event.type === "extension_ui_unsupported") return event;
   const result: NativeEventMetadata = { type: event.type };

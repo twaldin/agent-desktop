@@ -1,0 +1,6 @@
+.extension-text-widgets { display:flex; flex-direction:column; gap:8px; min-width:0; padding:8px 0; }
+.extension-text-widget { min-width:0; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius-md,8px); background:var(--surface-elevated,var(--app-bg)); color:var(--text); font-family:var(--font-mono,monospace); font-size:12px; line-height:1.5; }
+.extension-widget-line { min-height:1.5em; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:4; }
+.extension-text-widgets > small,.extension-widget-truncated,.extension-statuses small { color:var(--secondary); }
+.extension-statuses { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:4px 0; color:var(--secondary); font-size:12px; line-height:1.5; }
+.extension-statuses > span,.extension-statuses small { min-width:0; overflow-wrap:anywhere; }
