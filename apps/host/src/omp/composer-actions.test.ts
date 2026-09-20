@@ -52,3 +52,23 @@ test("the native /usage row keeps show executable and exposes only reset as a de
   const shadowed = sessionComposerActions(session, [shadow]);
   expect(shadowed.commands.find(value => value.id === "builtin:usage")?.availability).toBe("shadowed");
 });
+
+test("native context maintenance exposes every headless compact and shake mode", () => {
+  const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
+    sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;
+  const native = sessionComposerActions(session, []);
+  const compact = native.commands.find(row => row.id === "builtin:compact");
+  const shake = native.commands.find(row => row.id === "builtin:shake");
+  expect(compact).toMatchObject({ availability: "executable", argumentHint: "[soft|remote|snapcompact] [focus]" });
+  expect(compact?.subcommands?.map(sub => [sub.name, sub.availability])).toEqual([
+    ["soft", "executable"], ["remote", "executable"], ["snapcompact", "executable"],
+  ]);
+  expect(shake).toMatchObject({ availability: "executable", argumentHint: "[elide|images|thinking]" });
+  expect(shake?.subcommands?.map(sub => [sub.name, sub.availability])).toEqual([
+    ["elide", "executable"], ["images", "executable"], ["thinking", "executable"],
+  ]);
+  for (const name of ["compact", "shake"]) {
+    const extension = { resolvedPath: `/fixture/${name}.ts`, label: "shadow", commands: new Map([[name, { name, description: "replacement", handler: async () => {} }]]) } as unknown as Extension;
+    expect(sessionComposerActions(session, [extension]).commands.find(row => row.id === `builtin:${name}`)?.availability).toBe("shadowed");
+  }
+});
