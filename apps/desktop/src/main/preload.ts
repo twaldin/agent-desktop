@@ -200,6 +200,7 @@ const bridge: DesktopBridge = {
   openHtmlPreview: (sessionId, request, hostId) => ipcRenderer.invoke("host:html-preview", sessionId, request, hostId),
   releaseHtmlPreview: (sessionId, leaseId, hostId) => ipcRenderer.invoke("host:html-preview", sessionId, { leaseId }, hostId),
   getSessionOutputs: (sessionId, hostId) => ipcRenderer.invoke("host:session-outputs", sessionId, hostId),
+  getTurnReview: (sessionId, hostId) => ipcRenderer.invoke("host:turn-review", sessionId, hostId),
   getForceTool: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:force-tool-read", sessionId, hostId, commandId),
   getPlan: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:plan-read", sessionId, hostId, commandId),
   listPlanEditors: (sessionId, hostId, cursor) => ipcRenderer.invoke("host:plan-editor-list", sessionId, hostId, cursor),

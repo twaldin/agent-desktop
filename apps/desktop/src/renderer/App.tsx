@@ -121,6 +121,7 @@ import { actionError as ownedActionError, clearRecoveredForceError, type ActionE
 import { captureConversationMarkdown, conversationMarkdownIssue } from "./conversation-markdown";
 import { Icon } from "./Icons";
 import { TranscriptMessages } from "./Transcript";
+import type { TurnReviewOpenRequest } from "../../../../packages/shared/src/turn-review";
 import { useTranscriptScroll } from "./use-transcript-scroll";
 import "./transcript-scroll.css";
 import { AccountsSettings } from "./AccountsSettings";
@@ -292,6 +293,7 @@ export function App() {
   const [environmentCollapsed, setEnvironmentCollapsed] = useState<EnvironmentSectionKey[]>(windowRestoration.state.environmentCollapsed ?? []);
   const [sourcePreview, setSourcePreview] = useState<{hostId:string;source:Extract<RecordedSource,{kind:"image"}>;current?:()=>boolean}>();
   const [commitRequest, setCommitRequest] = useState<{owner:string;id:string}>();
+  const [turnReviewRequest, setTurnReviewRequest] = useState<{owner:string;request:TurnReviewOpenRequest & {id:string}}>();
   const [gitDialog, setGitDialog] = useState<{ data: WorkspaceState; navigationOwner?: string; id: string }>();
   const branchSwitchOwner = useRef<{ workspace?: WorkspaceState; enabled: boolean }>({ enabled: false });
   const [branchSwitch, setBranchSwitch] = useState<{ request: BranchSwitchRequest; owner: typeof branchSwitchOwner.current }>();
@@ -895,6 +897,8 @@ export function App() {
   useEffect(() => { setFileSearchOwner(undefined); }, [workspaceOwner]);
   const dockWorkspace = workspaceTarget && !("filePath" in workspaceTarget) ? workspaceTarget : undefined;
   const dockSession = dockWorkspace && "sessionId" in dockWorkspace && selected?.id === dockWorkspace.sessionId ? dockWorkspace : undefined;
+  // Historical Transcript rows only name the conversation and an optional path; the owning host selects the Last turn.
+  const openTurnReview = bridge.getTurnReview && workspaceOwner ? (request: TurnReviewOpenRequest) => { dock.open("review"); setTurnReviewRequest({ owner: workspaceOwner, request: { id: crypto.randomUUID(), ...request } }); } : undefined;
   const appCommandBindings = useMemo(() => readAppCommandBindings(commandKeymap?.record, commandKeymap?.loaded ?? false), [commandKeymap?.record, commandKeymap?.loaded]);
   const preparationTarget = dockWorkspace ? { hostId, target: workspaceKey(dockWorkspace) as DockTab["target"] } : undefined;
   const panelSingleton = (kind: "files" | "side-chat" | "review") => dockWorkspace ? dockTabId({ kind, hostId, target: workspaceKey(dockWorkspace) as DockTab["target"] }) : undefined;
@@ -2040,7 +2044,7 @@ export function App() {
         setWorkspaceFileRequest({ owner, request: { ...location, id: crypto.randomUUID(), path } });
         dock.openFile(path, tab.hostId, target, destination, options?.preview ?? true);
       }
-    }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} name={ownerProject?.name ?? ownerSession?.title ?? tab.title} path={fileRoot ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
+    }} tab={tab.kind === "review" ? "changes" : tab.kind === "file" ? "files" : tab.kind} onTabChange={next => dock.open(next === "changes" ? "review" : next,"right",tab.hostId,target)} fileRequest={(tab.kind === "file" && tab.filePath === workspaceFileRequest?.request.path) && workspaceFileRequest?.owner === owner ? workspaceFileRequest.request : undefined} commitRequest={commitRequest?.owner === owner && tab.kind === "review" ? commitRequest.id : undefined} turn={bridge.getTurnReview ? { bridge, hostId: tab.hostId, localHostId: desktop.localHostId, conversationId: "sessionId" in target ? target.sessionId : tab.hostId === hostId && selected && "projectId" in target && selected.projectId === target.projectId ? selected.id : undefined, request: turnReviewRequest?.owner === owner && tab.kind === "review" ? turnReviewRequest.request : undefined } : undefined} name={ownerProject?.name ?? ownerSession?.title ?? tab.title} path={fileRoot ?? ""} onClose={() => {}} onOpenProject={async path => { const result = await bridge.command({id:crypto.randomUUID(),command:{type:"project.add",path}},tab.hostId); if(!result.ok || !result.value || !("path" in result.value)) throw new Error("The host did not return the project.");await refresh();newConversation(result.value.id,tab.hostId); }}/>
   }
   const shell = useRef<HTMLDivElement>(null);
   const closeStatus = useWindowClose(bridge, shell, async signal => {
@@ -2138,7 +2142,7 @@ export function App() {
             {transcript.cacheWarning && <p className="subtle-notice">{transcript.cacheWarning}</p>}
             {selected?.error && <div className="inline-error" role="alert">{selected.error}</div>}
             {!transcript.messages.length && <div className="empty-transcript"><Icon name="compose"/><h2>{transcript.loading ? "Loading conversation…" : !selected ? "Conversation unavailable" : "Start the conversation"}</h2><p>{connected ? "Send a prompt to begin working in this session." : "No transcript is cached on this device."}</p></div>}
-            <TranscriptMessages onEdit={state?.tree?.version === 1 && nativeTree.view.fresh && !nativeTree.view.value?.busyReason && !nativeTree.view.pending && !nativeTree.view.uncertain ? editHistoryMessage : undefined} editing={treeEditContent && treeEdit ? { nativeId: treeEdit.targetId, content: treeEditContent } : undefined} messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }} onOpenArtifact={mcpCatalogue.snapshot?.canOpenApps ? openMcpArtifact : undefined}/>
+            <TranscriptMessages onEdit={state?.tree?.version === 1 && nativeTree.view.fresh && !nativeTree.view.value?.busyReason && !nativeTree.view.pending && !nativeTree.view.uncertain ? editHistoryMessage : undefined} editing={treeEditContent && treeEdit ? { nativeId: treeEdit.targetId, content: treeEditContent } : undefined} messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }} onOpenArtifact={mcpCatalogue.snapshot?.canOpenApps ? openMcpArtifact : undefined} turnReview={openTurnReview && dockSession ? { conversationId: dockSession.sessionId, onOpen: openTurnReview } : undefined}/>
             {running && <div className="working-state" role="status"><span className="working-dot"/>Working…</div>}
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={anchor => composerContext.current?.openProjects(anchor)}/>}

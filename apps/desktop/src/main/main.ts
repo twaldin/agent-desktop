@@ -40,6 +40,7 @@ import { parseNativeMcpAppRequest } from "@agent-desktop/shared";
 import { requestSessionMcpResource } from "./session-mcp-resource-transport";
 import { closePluginAcquisitionRequest, requestMarketplaceCatalog, requestPluginAcquisitionOperations, reviewPluginAcquisition, startPluginAcquisition } from "./plugin-acquisition-transport";
 import { requestSessionOutputs } from "./session-outputs-transport";
+import { requestTurnReview } from "./turn-review-transport";
 import { requestSessionMcp } from "./session-mcp-transport";
 import { cancelSessionMcpAuthorization, requestSessionMcpAuthorization, respondSessionMcpAuthorization } from "./session-mcp-authorization-transport";
 import type { NativePluginMutation, NativeMcpMutation, NativeMcpDetailRequest } from "@agent-desktop/shared";
@@ -677,6 +678,12 @@ ipcMain.handle("host:session-outputs", async (event, sessionId: string, hostId: 
   const endpoint = await endpointFor(requireImageOwner(hostId));
   assertTrustedSender(event);
   return requestSessionOutputs(endpoint, sessionId);
+});
+ipcMain.handle("host:turn-review", async (event, sessionId: string, hostId: string) => {
+  assertTrustedSender(event);
+  const endpoint = await endpointFor(requireImageOwner(hostId));
+  assertTrustedSender(event);
+  return requestTurnReview(endpoint, sessionId);
 });
 ipcMain.handle("host:force-tool-read", async (event, sessionId: string, hostId: string, commandId?: string) => {
   assertTrustedSender(event);

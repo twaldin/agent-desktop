@@ -36,6 +36,9 @@ describe("review patch model", () => {
     const result = parseReviewPatch(patch, "rename");
     expect(result.files[0]).toMatchObject({ additions: 1, deletions: 1, metadata: { name: "new name.ts", prevName: "old name.ts" } });
     expect(reviewPath("quoted\\040name.ts")).toBe("quoted name.ts");
+    // Git quotes rename metadata; the parser keeps that outer pair while a literal quote arrives escaped.
+    const quoted = parseReviewPatch(["diff --git \"a/f\\303\\266o \\\"q\\\".txt\" \"b/dir/f\\303\\266o \\\"q\\\".txt\"", "similarity index 90%", "rename from \"f\\303\\266o \\\"q\\\".txt\"", "rename to \"dir/f\\303\\266o \\\"q\\\".txt\"", "index 1111111..2222222 100644", "--- \"a/f\\303\\266o \\\"q\\\".txt\"", "+++ \"b/dir/f\\303\\266o \\\"q\\\".txt\"", "@@ -1 +1 @@", "-a", "+b"].join("\n"), "quoted-rename");
+    expect(quoted.files[0]?.metadata).toMatchObject({ name: "dir/föo \"q\".txt", prevName: "föo \"q\".txt" });
   });
 
   test("reports binary changes without inventing changed-line counts", () => {

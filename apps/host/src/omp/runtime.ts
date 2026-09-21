@@ -1,5 +1,7 @@
 import { NativeSessionTree } from "./session-tree";
 import type { SessionTree, TreeTicket, TreeMutationRequest, TreeMutationResult } from "../../../../packages/shared/src/session-tree";
+import { TurnCapture } from "../turn-review/capture";
+import type { TurnReview } from "../../../../packages/shared/src/turn-review";
 import { parseTodoExternalEditorRequest, type TodoExternalEditorRequest } from "../../../../packages/shared/src/todo-external-editor";
 import { parsePreparedTodoExternalEditor, type PreparedTodoExternalEditor } from "./todo-external-editor";
 import { exportNativeSession, nativeExportIntent } from "./session-export";
@@ -103,7 +105,7 @@ function detachedQuestionRejected(message: string): Error {
 }
 
 type NativeModel = NonNullable<AgentSession["model"]>;
-export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent | { type: "plan_changed" } | { type: "todos_changed" } | { type: "tree_changed" } | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
+export type OmpRuntimeEvent = { type: "turn_review_changed" } | AgentSessionEvent | OmpBridgeEvent | { type: "plan_changed" } | { type: "todos_changed" } | { type: "tree_changed" } | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
 export type OmpEventListener = (event: OmpRuntimeEvent) => void;
 export interface OmpSessionOptions {
   cwd: string;
@@ -167,6 +169,7 @@ export interface OmpSession {
   openHtmlPreview(request: HtmlPreviewRequest): Promise<HtmlPreviewLease>;
   releaseHtmlPreview(leaseId: string): Promise<void>;
   getSessionOutputs(): Promise<import("@agent-desktop/shared").SessionOutputs>;
+  getTurnReview(): Promise<TurnReview>;
   getImage(nativeEntryId: string, blockIndex: number, source?: "generated"): Promise<OmpRecordedImage>;
   createBrowserTab(name: string, initialUrl?: string): Promise<OmpBrowserTabCreateResult>;
   installRetainedBrowserEvaluation(input: {
@@ -622,6 +625,15 @@ export class OmpRuntime {
       let pluginReload: Promise<void> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
+      const captureSessionId = manager.getSessionId();
+      const turnCapture = new TurnCapture(manager, () => {
+        // Started native finalization must still join after public disposal fences new reads.
+        if (manager.getSessionId() !== captureSessionId) throw new Error("The original recorded capture session changed.");
+      });
+      session.setTurnReviewObserver(async event => {
+        await turnCapture.observe(event);
+        if (!disposed && promotionState === "idle") for (const listener of listeners) listener({ type: "turn_review_changed" });
+      });
       const nativeJobs = new NativeSessionJobs(session, assertSessionActive, manager.getSessionId());
       let applyFreshProviderIdentity = () => {};
       const nativeRecovery = new NativeSessionRecovery(session, manager, assertSessionActive, () => applyFreshProviderIdentity());
@@ -822,6 +834,7 @@ export class OmpRuntime {
           assertSessionActive();
           return transcript();
         },
+        getTurnReview: async () => { assertSessionActive(); const value = await turnCapture.read(); assertSessionActive(); return value; },
         getExportIntent: async text => { assertSessionActive(); return nativeExportIntent(session, text); },
         exportSession: input => exportNativeSession(session, input, () => assertSnapshotReady("exporting this conversation")),
         flushSession: async () => {
@@ -1725,6 +1738,7 @@ export class OmpRuntime {
             await clean(() => forceTool.dispose());
             await clean(() => session.beginDispose());
             await clean(() => session.dispose());
+            await clean(() => turnCapture.close());
             // The owner group independently tracks root/task/vibe/revived callbacks;
             // finish waits for them even when native disposal rejects.
             await clean(() => resetOwners?.finish());

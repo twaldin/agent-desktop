@@ -736,6 +736,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "openHtmlPreview": respond(true, await requireSession().openHtmlPreview(message.request)); break;
       case "releaseHtmlPreview": respond(true, await requireSession().releaseHtmlPreview(message.leaseId)); break;
       case "getSessionOutputs": respond(true, await requireSession().getSessionOutputs()); break;
+      case "getTurnReview": respond(true, await requireSession().getTurnReview()); break;
       case "getImage": respond(true, await requireSession().getImage(message.args.nativeEntryId, message.args.blockIndex, message.args.source)); break;
       case "startPlanExecution": {
         const run = requireSession().startPlanExecution(message.args.phaseId);

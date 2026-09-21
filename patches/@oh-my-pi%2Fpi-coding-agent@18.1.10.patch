@@ -766,9 +766,18 @@ index 7fd5684..0f28b29 100644
      onPayload?: SimpleStreamOptions["onPayload"];
      /** Provider response hook used by the active session request path. */
 diff --git a/dist/types/session/agent-session.d.ts b/dist/types/session/agent-session.d.ts
-index c55844c..e534b59 100644
+index c55844c..1e47c3c 100644
 --- a/dist/types/session/agent-session.d.ts
 +++ b/dist/types/session/agent-session.d.ts
+@@ -12,7 +12,7 @@
+  *
+  * Modes use this class and add their own I/O layer on top.
+  */
+-import { type Agent, type AgentMessage, type AgentState, type AgentTool, type AgentToolContext, type AgentToolResult, type ThinkingLevel, type ToolChoiceDirective } from "@oh-my-pi/pi-agent-core";
++import { type Agent, type AgentMessage, type AgentState, type AgentTool, type AgentToolContext, type AgentToolResult, type AgentTurnReviewOutcome, type ThinkingLevel, type ToolChoiceDirective } from "@oh-my-pi/pi-agent-core";
+ import { type CompactionResult, type ShakeConfig } from "@oh-my-pi/pi-agent-core/compaction";
+ import type { AssistantMessage, ImageContent, Message, Model, ProviderSessionState, ResetCreditAccountStatus, ResetCreditRedeemOutcome, ResetCreditTarget, ServiceTier, ServiceTierByFamily, ServiceTierFamily, SimpleStreamOptions, TextContent, UsageReport } from "@oh-my-pi/pi-ai";
+ import { type Effort } from "@oh-my-pi/pi-ai";
 @@ -53,7 +53,7 @@ import type { TodoPhase } from "../tools/todo.js";
  import type { WorkPoolYieldItem } from "../task/workpool-yield.js";
  import type { VibeModeState } from "../vibe/state.js";
@@ -778,7 +787,55 @@ index c55844c..e534b59 100644
  import type { ClientBridge } from "./client-bridge.js";
  import { type CustomMessage, type CustomMessagePayload } from "./messages.js";
  import type { ServingModel } from "./retry-fallback-chains.js";
-@@ -110,6 +110,14 @@ export declare class AgentSession {
+@@ -68,6 +68,47 @@ export * from "./agent-session-events.js";
+ export * from "./agent-session-types.js";
+ export type { AdvisorStats, AdvisorStatusOverviewEntry, PerAdvisorStat } from "./session-advisors.js";
+ type SessionNameTrigger = "replan";
++/** One durably persisted input entry of a turn, as seen by {@link NativeTurnReviewObserver}. */
++export interface NativeTurnReviewInput {
++    /** Session entry id the input was persisted under (original id, never re-minted). */
++    entryId: string;
++    /** Real user input or user-attributed skill/steer/follow-up; false for passive agent/developer asides. */
++    userInitiated: boolean;
++}
++/** One tool call as it actually settled inside an executed batch. */
++export interface NativeTurnReviewTool {
++    callId: string;
++    name: string;
++    args: unknown;
++    /** The settled `AgentToolResult`; a never-invoked call carries its synthetic placeholder details. */
++    result: unknown;
++    isError: boolean;
++}
++interface NativeTurnReviewEventBase {
++    /** Original native session id at capture. */
++    sessionId: string;
++    /** Native session cwd at capture. */
++    cwd: string;
++    /** Current native branch leaf at capture, once the reported entries are persisted. */
++    branchEntryId: string | null;
++}
++/**
++ * Awaited turn-review event delivered to {@link AgentSession.setTurnReviewObserver}.
++ * `input` fires once the turn's inputs are durably persisted and before any of
++ * the turn's tools can run; `settled` fires after every executed tool batch
++ * (`running`) and once with the run's terminal outcome before `agent_end`.
++ */
++export type NativeTurnReviewEvent = (NativeTurnReviewEventBase & {
++    phase: "input";
++    inputs: NativeTurnReviewInput[];
++}) | (NativeTurnReviewEventBase & {
++    phase: "settled";
++    outcome: AgentTurnReviewOutcome;
++    tools: NativeTurnReviewTool[];
++    /** Running async jobs owned by this session, or null when no job manager is configured. */
++    backgroundJobs: number | null;
++});
++export type NativeTurnReviewObserver = (event: NativeTurnReviewEvent) => Promise<void>;
+ /**
+  * Translate a `power.sleepPrevention` mode into `PowerAssertion.start` options,
+  * or `undefined` when the mode asks for no assertion at all.
+@@ -110,6 +151,14 @@ export declare class AgentSession {
      constructor(config: AgentSessionConfig);
      /** Model registry for API key resolution and model discovery */
      get modelRegistry(): ModelRegistry;
@@ -793,7 +850,7 @@ index c55844c..e534b59 100644
      get asyncJobManager(): AsyncJobManager | undefined;
      getAgentId(): string | undefined;
      /**
-@@ -129,11 +137,13 @@ export declare class AgentSession {
+@@ -129,11 +178,13 @@ export declare class AgentSession {
      /** Clear stale non-forcing pending preview invokers after a resolve dispatch proves none can run. */
      clearPendingInvokers(): void;
      /**
@@ -811,7 +868,25 @@ index c55844c..e534b59 100644
      /** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
      get toolChoiceQueue(): ToolChoiceQueue;
      /** Peek the in-flight directive's invocation handler for the preview-resolution dispatch. */
-@@ -364,6 +374,8 @@ export declare class AgentSession {
+@@ -205,6 +256,17 @@ export declare class AgentSession {
+      * provider-backed compaction and must not block switching sessions.
+      */
+     settleInFlightMessagePersistence(): Promise<void>;
++    /**
++     * Install or remove the awaited turn-review observer while the session is
++     * idle. Changing the observer during a run would change capture ownership.
++     *
++     * Both phases are joined by the agent loop: `input` is delivered once the
++     * turn's inputs are durably persisted under their original entry ids and
++     * before any tool of that turn can run; `settled` is delivered after each
++     * executed tool batch and once with the terminal outcome before the run
++     * resolves. An observer rejection fails the run.
++     */
++    setTurnReviewObserver(observer: NativeTurnReviewObserver | undefined): void;
+     /**
+      * Subscribe to agent events.
+      * Session persistence is handled internally (saves messages on message_end).
+@@ -364,6 +426,8 @@ export declare class AgentSession {
      getSelectedMCPToolNames(): string[];
      /** Rediscovers reloadable skills and refreshes prompt metadata. */
      refreshSkills(): Promise<void>;
@@ -820,7 +895,7 @@ index c55844c..e534b59 100644
      /**
       * Applies Code Mode at session startup: when the initial model activates
       * it (`codeMode` `on`, or `auto` matching a `code_mode_only` catalog flag),
-@@ -975,6 +987,8 @@ export declare class AgentSession {
+@@ -975,6 +1039,8 @@ export declare class AgentSession {
       */
      navigateTree(targetId: string, options?: {
          summarize?: boolean;
@@ -829,7 +904,7 @@ index c55844c..e534b59 100644
          customInstructions?: string;
          /**
           * Opts into the two-phase `ask` toolResult re-answer protocol
-@@ -1079,6 +1093,40 @@ export declare class AgentSession {
+@@ -1079,6 +1145,40 @@ export declare class AgentSession {
       */
      get contextUsageRevision(): number;
      fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null>;
@@ -5684,10 +5759,20 @@ index bead7e3..85c3bae 100644
  	onPayload?: SimpleStreamOptions["onPayload"];
  	/** Provider response hook used by the active session request path. */
 diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
-index ea17642..8e9c3a7 100644
+index ea17642..c24a240 100644
 --- a/src/session/agent-session.ts
 +++ b/src/session/agent-session.ts
-@@ -61,6 +61,7 @@ import type {
+@@ -32,6 +32,9 @@ import {
+ 	type AgentToolContext,
+ 	type AgentToolResult,
+ 	type AgentTurnEndContext,
++	type AgentTurnReviewHooks,
++	type AgentTurnReviewOutcome,
++	type AgentTurnReviewSettledContext,
+ 	AppendOnlyContextManager,
+ 	type AsideMessage,
+ 	type BeforeToolCallContext,
+@@ -61,6 +64,7 @@ import type {
  	ProviderResponseMetadata,
  	ProviderSessionState,
  	ResetCreditAccountStatus,
@@ -5695,7 +5780,7 @@ index ea17642..8e9c3a7 100644
  	ResetCreditRedeemOutcome,
  	ResetCreditTarget,
  	ServiceTier,
-@@ -100,6 +101,7 @@ import { type AdvisorConfig, loadAdvisorTranscriptCosts } from "../advisor";
+@@ -100,6 +104,7 @@ import { type AdvisorConfig, loadAdvisorTranscriptCosts } from "../advisor";
  import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, type AsyncJob, AsyncJobManager } from "../async";
  import { reset as resetCapabilities } from "../capability";
  import type { EffectiveExtensionRoots } from "../capability/types";
@@ -5703,7 +5788,7 @@ index ea17642..8e9c3a7 100644
  import { shouldEnableAppendOnlyContext } from "../config/append-only-context-mode";
  import type { ModelRegistry } from "../config/model-registry";
  import type { ResolvedModelRoleValue } from "../config/model-resolver";
-@@ -118,6 +120,7 @@ import { releaseCompletionHandles } from "../eval/completion-bridge";
+@@ -118,6 +123,7 @@ import { releaseCompletionHandles } from "../eval/completion-bridge";
  import type { EvalPreludeDefinition } from "../eval/preludes";
  import type { PythonResult } from "../eval/py/executor";
  import { WorkPoolRegistry } from "../task/workpool";
@@ -5711,7 +5796,7 @@ index ea17642..8e9c3a7 100644
  import type { BashPtyOptions, BashResult } from "../exec/bash-executor";
  import type { TtsrManager } from "../export/ttsr";
  import type { LoadedCustomCommand } from "../extensibility/custom-commands";
-@@ -148,7 +151,7 @@ import { createExtensionModelQuery } from "../extensibility/extensions/model-api
+@@ -148,7 +154,7 @@ import { createExtensionModelQuery } from "../extensibility/extensions/model-api
  import type { CompactOptions, ContextUsage } from "../extensibility/extensions/types";
  import type { HookCommandContext } from "../extensibility/hooks/types";
  import type { Skill, SkillWarning } from "../extensibility/skills";
@@ -5720,7 +5805,7 @@ index ea17642..8e9c3a7 100644
  import { normalizeToolEventInput, resolveToolEventInput } from "../extensibility/tool-event-input";
  import { GoalRuntime } from "../goals/runtime";
  import type { GoalModeState } from "../goals/state";
-@@ -233,16 +236,28 @@ import type {
+@@ -233,16 +239,28 @@ import type {
  	AgentSessionConfig,
  	AgentSessionDisposeOptions,
  	AsyncJobSnapshot,
@@ -5749,7 +5834,7 @@ index ea17642..8e9c3a7 100644
  	ResolvedRoleModel,
  	RestoredQueuedMessage,
  	RoleModelCycle,
-@@ -277,6 +292,7 @@ import {
+@@ -277,6 +295,7 @@ import {
  	isTerminalRedeemOutcome,
  	overlayLiveResetCredits,
  	planCodexResetRedemptions,
@@ -5757,7 +5842,7 @@ index ea17642..8e9c3a7 100644
  	REDEEM_RETRY_DEFER_MS,
  	SWEEP_MIN_INTERVAL_MS,
  	shouldEvaluateCodexAutoRedeem,
-@@ -380,6 +396,92 @@ import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
+@@ -380,6 +399,92 @@ import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
  const PLAN_MODE_REMINDER_MAX = 3;
  const POST_PROMPT_DRAIN_TIMEOUT_MS = 5_000;
  
@@ -5850,7 +5935,76 @@ index ea17642..8e9c3a7 100644
  /** Internal marker for hook messages queued through the agent loop */
  // ============================================================================
  // Constants
-@@ -679,6 +781,30 @@ export class AgentSession {
+@@ -467,8 +572,68 @@ type SetSessionNameWithTrigger = (
+ ) => Promise<boolean>;
+ 
+ const kPersistedSessionEntryId = Symbol("persistedSessionEntryId");
++type PersistedSessionMessage = AgentMessage & { [kPersistedSessionEntryId]?: string };
+ type PersistedAssistantMessage = AssistantMessage & { [kPersistedSessionEntryId]?: string };
+ 
++/** One durably persisted input entry of a turn, as seen by {@link NativeTurnReviewObserver}. */
++export interface NativeTurnReviewInput {
++	/** Session entry id the input was persisted under (original id, never re-minted). */
++	entryId: string;
++	/** Real user input or user-attributed skill/steer/follow-up; false for passive agent/developer asides. */
++	userInitiated: boolean;
++}
++
++/** One tool call as it actually settled inside an executed batch. */
++export interface NativeTurnReviewTool {
++	callId: string;
++	name: string;
++	args: unknown;
++	/** The settled `AgentToolResult`; a never-invoked call carries its synthetic placeholder details. */
++	result: unknown;
++	isError: boolean;
++}
++
++interface NativeTurnReviewEventBase {
++	/** Original native session id at capture. */
++	sessionId: string;
++	/** Native session cwd at capture. */
++	cwd: string;
++	/** Current native branch leaf at capture, once the reported entries are persisted. */
++	branchEntryId: string | null;
++}
++
++/**
++ * Awaited turn-review event delivered to {@link AgentSession.setTurnReviewObserver}.
++ * `input` fires once the turn's inputs are durably persisted and before any of
++ * the turn's tools can run; `settled` fires after every executed tool batch
++ * (`running`) and once with the run's terminal outcome before `agent_end`.
++ */
++export type NativeTurnReviewEvent =
++	| (NativeTurnReviewEventBase & { phase: "input"; inputs: NativeTurnReviewInput[] })
++	| (NativeTurnReviewEventBase & {
++			phase: "settled";
++			outcome: AgentTurnReviewOutcome;
++			tools: NativeTurnReviewTool[];
++			/** Running async jobs owned by this session, or null when no job manager is configured. */
++			backgroundJobs: number | null;
++	  });
++
++export type NativeTurnReviewObserver = (event: NativeTurnReviewEvent) => Promise<void>;
++
++/** `userInitiated` classification for {@link NativeTurnReviewInput}; mirrors the steering queue's user/agent split. */
++function isUserInitiatedTurnInput(message: AgentMessage): boolean {
++	switch (message.role) {
++		case "user":
++			return message.attribution !== "agent";
++		case "developer":
++			return message.attribution === "user" || message.userInitiated === true;
++		case "custom":
++			return message.attribution === "user";
++		default:
++			return false;
++	}
++}
++
+ /**
+  * Clone one top-level notification field without ever returning an object owned
+  * by the live session. Most values take the lossless structured-clone path. If
+@@ -679,6 +844,30 @@ export class AgentSession {
  	#modelDiscoveryAbortController = new AbortController();
  	/** Process-wide by default (double-spend safety across sessions); injectable for tests. */
  	#codexResetCoordinator: CodexAutoRedeemCoordinator;
@@ -5881,7 +6035,7 @@ index ea17642..8e9c3a7 100644
  	// Extension system
  	#extensionRunner: ExtensionRunner | undefined = undefined;
  	#getEvalPreludes: (() => readonly EvalPreludeDefinition[]) | undefined;
-@@ -1164,6 +1290,7 @@ export class AgentSession {
+@@ -1164,6 +1353,7 @@ export class AgentSession {
  		this.#preparedExtensions = config.preparedExtensions;
  		this.#extensionPaths = config.extensionPaths;
  		this.#codexResetCoordinator = config.codexResetCoordinator ?? defaultCodexAutoRedeemCoordinator;
@@ -5889,7 +6043,7 @@ index ea17642..8e9c3a7 100644
  		const bashHost: BashRunnerHost = {
  			agent: this.agent,
  			sessionManager: this.sessionManager,
-@@ -1858,6 +1985,100 @@ export class AgentSession {
+@@ -1858,6 +2048,100 @@ export class AgentSession {
  		return this.#modelRegistry;
  	}
  
@@ -5990,7 +6144,7 @@ index ea17642..8e9c3a7 100644
  	get asyncJobManager(): AsyncJobManager | undefined {
  		return this.#asyncJobManager;
  	}
-@@ -1917,12 +2138,20 @@ export class AgentSession {
+@@ -1917,12 +2201,20 @@ export class AgentSession {
  		this.#toolChoiceQueue.clearPendingInvokers();
  	}
  
@@ -6015,7 +6169,7 @@ index ea17642..8e9c3a7 100644
  		if (!this.getActiveToolNames().includes(toolName)) {
  			throw new Error(`Tool "${toolName}" is not currently active.`);
  		}
-@@ -1932,10 +2161,14 @@ export class AgentSession {
+@@ -1932,10 +2224,14 @@ export class AgentSession {
  			throw new Error("Current model does not support forcing a specific tool.");
  		}
  
@@ -6031,7 +6185,137 @@ index ea17642..8e9c3a7 100644
  	}
  
  	/** The tool-choice queue: forces forthcoming tool invocations and carries handlers. */
-@@ -4369,8 +4602,20 @@ export class AgentSession {
+@@ -2421,9 +2717,101 @@ export class AgentSession {
+ 		const processing = this.#dispatchAgentEvent(event);
+ 		this.#inFlightEventHandlers.add(processing);
+ 		void processing.finally(() => this.#inFlightEventHandlers.delete(processing)).catch(() => {});
++		if (event.type === "message_end" && this.#turnReviewObserver) {
++			this.#trackTurnReviewPersistence(event.message, processing);
++		}
+ 		return processing;
+ 	};
+ 
++	#turnReviewObserver: NativeTurnReviewObserver | undefined;
++	/**
++	 * `message_end` persistence joins for the turn-review hooks. A slot is
++	 * registered synchronously when the event is dispatched and resolved once
++	 * the message's session entry is appended (or the handler gave up), so a
++	 * hook the loop awaits right after emitting those events waits for exactly
++	 * the entries it reports. Populated only while an observer is installed.
++	 */
++	#turnReviewPersistence = new WeakMap<AgentMessage, PromiseWithResolvers<void>>();
++	#turnReviewPendingPersistence = new Set<Promise<void>>();
++	readonly #turnReviewHooks: AgentTurnReviewHooks = {
++		onInputsCommitted: messages => this.#reportTurnReviewInputs(messages),
++		onSettled: settled => this.#reportTurnReviewSettled(settled),
++	};
++
++	#trackTurnReviewPersistence(message: AgentMessage, processing: Promise<void>): void {
++		const slot = Promise.withResolvers<void>();
++		this.#turnReviewPersistence.set(message, slot);
++		this.#turnReviewPendingPersistence.add(slot.promise);
++		void slot.promise.then(() => this.#turnReviewPendingPersistence.delete(slot.promise));
++		// Backstop: a handler that throws before persisting must not strand the join.
++		void processing.finally(() => slot.resolve()).catch(() => {});
++	}
++
++	/**
++	 * Install or remove the awaited turn-review observer while the session is
++	 * idle. Changing the observer during a run would change capture ownership.
++	 *
++	 * Both phases are joined by the agent loop: `input` is delivered once the
++	 * turn's inputs are durably persisted under their original entry ids and
++	 * before any tool of that turn can run; `settled` is delivered after each
++	 * executed tool batch and once with the terminal outcome before the run
++	 * resolves. An observer rejection fails the run.
++	 */
++	setTurnReviewObserver(observer: NativeTurnReviewObserver | undefined): void {
++		if (this.#isDisposed || this.isStreaming) {
++			throw new Error("Turn-review observers can only change on an idle, active session");
++		}
++		this.#turnReviewObserver = observer;
++		this.agent.setTurnReviewHooks(observer ? this.#turnReviewHooks : undefined);
++	}
++
++	#turnReviewEventBase(): NativeTurnReviewEventBase {
++		return {
++			sessionId: this.sessionManager.getSessionId(),
++			cwd: this.sessionManager.getCwd(),
++			branchEntryId: this.sessionManager.getLeafId(),
++		};
++	}
++
++	async #reportTurnReviewInputs(messages: readonly AgentMessage[]): Promise<void> {
++		const observer = this.#turnReviewObserver;
++		if (!observer) return;
++		const inputs: NativeTurnReviewInput[] = [];
++		for (const message of messages) {
++			await this.#turnReviewPersistence.get(message)?.promise;
++			// No entry: a one-run instruction (prewalk nudge, Vibe context, hook
++			// message) or a persistence skipped by a session transition. Never
++			// invent an id for it.
++			const entryId = (message as PersistedSessionMessage)[kPersistedSessionEntryId];
++			if (entryId === undefined) continue;
++			inputs.push({ entryId, userInitiated: isUserInitiatedTurnInput(message) });
++		}
++		if (inputs.length === 0) return;
++		await this.sessionManager.ensureOnDisk();
++		await this.sessionManager.flush();
++		await observer({ ...this.#turnReviewEventBase(), phase: "input", inputs });
++	}
++
++	async #reportTurnReviewSettled(settled: AgentTurnReviewSettledContext): Promise<void> {
++		const observer = this.#turnReviewObserver;
++		if (!observer) return;
++		// Every message_end dispatched so far lands on the branch before the leaf is read.
++		while (this.#turnReviewPendingPersistence.size > 0) {
++			await Promise.all(this.#turnReviewPendingPersistence);
++		}
++		const manager = this.#asyncJobManager;
++		const backgroundJobs = manager
++			? manager.getRunningJobs(this.#agentId ? { ownerId: this.#agentId } : undefined).length
++			: null;
++		await observer({
++			...this.#turnReviewEventBase(),
++			phase: "settled",
++			outcome: settled.outcome,
++			tools: settled.tools,
++			backgroundJobs,
++		});
++	}
++
+ 	/**
+ 	 * Await only message persistence already in flight at call time.
+ 	 *
+@@ -2607,9 +2995,7 @@ export class AgentSession {
+ 		const cache = this.#persistedMessageKeys;
+ 		const wasFresh = cache !== undefined && cache.anchor === this.#persistedMessageKeysAnchor();
+ 		const entryId = this.sessionManager.appendMessage(message);
+-		if (message.role === "assistant") {
+-			(message as PersistedAssistantMessage)[kPersistedSessionEntryId] = entryId;
+-		}
++		(message as PersistedSessionMessage)[kPersistedSessionEntryId] = entryId;
+ 		const key = sessionMessagePersistenceKey(message);
+ 		if (wasFresh && cache && key) {
+ 			cache.keys.add(key);
+@@ -2689,7 +3075,7 @@ export class AgentSession {
+ 			// One-run instructions must not return from persisted history: prewalk
+ 			// nudges are consumed once, and Vibe context is rebuilt only while active.
+ 			if (!isPrewalkPlanNudge(message) && message.customType !== VIBE_MODE_CONTEXT_MESSAGE_TYPE) {
+-				this.sessionManager.appendCustomMessageEntry(
++				(message as PersistedSessionMessage)[kPersistedSessionEntryId] = this.sessionManager.appendCustomMessageEntry(
+ 					message.customType,
+ 					message.content,
+ 					message.display,
+@@ -3018,6 +3404,7 @@ export class AgentSession {
+ 			} else {
+ 				this.#persistMessageEnd(event.message, eventPromptGeneration);
+ 			}
++			this.#turnReviewPersistence.get(event.message)?.resolve();
+ 			if (this.#promptGeneration !== eventPromptGeneration) return;
+ 			if (interruptedThinkingMessage) {
+ 				this.sessionManager.appendCustomMessageEntry(
+@@ -4369,8 +4756,20 @@ export class AgentSession {
  	 * gap slips past the disposal guards.
  	 */
  	beginDispose(): void {
@@ -6052,7 +6336,7 @@ index ea17642..8e9c3a7 100644
  		this.#queuedMessageDrainBlocked = false;
  		this.#usagePreflightReadyForNextModelCall = false;
  		this.#detachUsageBeforeQueueDequeue?.();
-@@ -4529,6 +4774,16 @@ export class AgentSession {
+@@ -4529,6 +4928,16 @@ export class AgentSession {
  		}
  		const advisorRecorderClosed = this.#advisors.recorderClosed();
  		const results = await Promise.allSettled([
@@ -6069,7 +6353,22 @@ index ea17642..8e9c3a7 100644
  			this.#disposeOwnedAsyncJobs(),
  			this.#eval.disposeKernels(),
  			this.#releaseOwnedBrowserTabs(this.sessionManager.getSessionId()),
-@@ -5130,6 +5385,20 @@ export class AgentSession {
+@@ -4548,6 +4957,14 @@ export class AgentSession {
+ 			}
+ 		}
+ 
++		// An installed recorder owns started filesystem/journal work. Keep its
++		// event persistence subscriber attached and join the real run before
++		// sealing the journal; the general bounded teardown is not that join.
++		if (this.#turnReviewObserver) {
++			await this.agent.waitForIdle();
++			await this.#drainInFlightEventHandlers();
++		}
++
+ 		this.#releasePowerAssertion();
+ 		await cleanupEmptyMoveSession(this.sessionManager, this.#movedFromEmptySessionFile);
+ 		this.#movedFromEmptySessionFile = undefined;
+@@ -5130,6 +5547,20 @@ export class AgentSession {
  		return this.#tools.refreshSkills();
  	}
  
@@ -6090,7 +6389,7 @@ index ea17642..8e9c3a7 100644
  	/**
  	 * Applies Code Mode at session startup: when the initial model activates
  	 * it (`codeMode` `on`, or `auto` matching a `code_mode_only` catalog flag),
-@@ -9312,6 +9581,8 @@ export class AgentSession {
+@@ -9312,6 +9743,8 @@ export class AgentSession {
  		targetId: string,
  		options: {
  			summarize?: boolean;
@@ -6099,7 +6398,7 @@ index ea17642..8e9c3a7 100644
  			customInstructions?: string;
  			/**
  			 * Opts into the two-phase `ask` toolResult re-answer protocol
-@@ -9362,6 +9633,7 @@ export class AgentSession {
+@@ -9362,6 +9795,7 @@ export class AgentSession {
  		askReanswerCommitted?: boolean;
  	}> {
  		await this.#bash.flushPending();
@@ -6107,7 +6406,7 @@ index ea17642..8e9c3a7 100644
  		const oldLeafId = this.sessionManager.getLeafId();
  
  		const targetEntry = this.sessionManager.getEntry(targetId);
-@@ -9511,6 +9783,9 @@ export class AgentSession {
+@@ -9511,6 +9945,9 @@ export class AgentSession {
  			summaryDetails = hookSummary.details;
  		}
  
@@ -6117,7 +6416,7 @@ index ea17642..8e9c3a7 100644
  		// Determine the new leaf position based on target type
  		let newLeafId: string | null;
  		let editorText: string | undefined;
-@@ -9794,9 +10069,104 @@ export class AgentSession {
+@@ -9794,9 +10231,104 @@ export class AgentSession {
  	}
  
  	async fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null> {
@@ -6224,7 +6523,7 @@ index ea17642..8e9c3a7 100644
  			baseUrlResolver: provider => {
  				if (provider === "google-antigravity") {
  					const mode = this.settings.get("providers.antigravityEndpoint");
-@@ -9810,11 +10180,57 @@ export class AgentSession {
+@@ -9810,11 +10342,57 @@ export class AgentSession {
  			},
  			signal,
  		});
@@ -6284,7 +6583,7 @@ index ea17642..8e9c3a7 100644
  	}
  
  	/** Models whose live `/usage` reports map to a quantitative provider scope. */
-@@ -9888,11 +10304,14 @@ export class AgentSession {
+@@ -9888,11 +10466,14 @@ export class AgentSession {
  	/**
  	 * Ask before the first auto-spend (`codexResets.autoRedeem === "unset"`).
  	 * The answer is persisted, so this fires at most once per install. Headless
@@ -6300,7 +6599,7 @@ index ea17642..8e9c3a7 100644
  	): Promise<boolean> {
  		const first = actions[0];
  		if (!first) return false;
-@@ -9906,6 +10325,11 @@ export class AgentSession {
+@@ -9906,6 +10487,11 @@ export class AgentSession {
  					"codex-auto-reset",
  				);
  			}
@@ -6312,7 +6611,7 @@ index ea17642..8e9c3a7 100644
  			return false;
  		}
  
-@@ -9918,17 +10342,23 @@ export class AgentSession {
+@@ -9918,17 +10504,23 @@ export class AgentSession {
  			actions.length === 1
  				? `Spend a saved Codex rate-limit reset?\n${lines[0]}`
  				: `Spend ${actions.length} saved Codex rate-limit resets?\n${lines.join("\n")}`;
@@ -6346,7 +6645,7 @@ index ea17642..8e9c3a7 100644
  			if (choice === "Yes") {
  				this.settings.set("codexResets.autoRedeem", "yes");
  				return true;
-@@ -9942,21 +10372,125 @@ export class AgentSession {
+@@ -9942,21 +10534,125 @@ export class AgentSession {
  		return false;
  	}
  
@@ -6479,7 +6778,7 @@ index ea17642..8e9c3a7 100644
  			settings: {
  				enabled: shouldEvaluateCodexAutoRedeem(cfg.autoRedeem),
  				minBlockedMinutes: Math.max(0, cfg.minBlockedMinutes),
-@@ -9969,38 +10503,85 @@ export class AgentSession {
+@@ -9969,38 +10665,85 @@ export class AgentSession {
  			deferredUntilByKey: coordinator.deferredUntilByKey,
  			lastAttemptAtByAccount: coordinator.lastAttemptAtByAccount,
  			activeBlockUnblockAtMs,
@@ -6575,7 +6874,7 @@ index ea17642..8e9c3a7 100644
  			} catch (error) {
  				// Thrown transport failure (network error, 15s timeout): same policy
  				// as a non-terminal code — release the episode and retry after the
-@@ -10013,8 +10594,18 @@ export class AgentSession {
+@@ -10013,8 +10756,18 @@ export class AgentSession {
  					account: action.accountKey,
  					error: String(error),
  				});
@@ -6594,7 +6893,7 @@ index ea17642..8e9c3a7 100644
  			if (!isTerminalRedeemOutcome(outcome.code)) {
  				// `nothing_to_reset` (limits not constrained enough yet) or a
  				// transport failure: the credit is STILL BANKED. Release the episode
-@@ -10063,7 +10654,27 @@ export class AgentSession {
+@@ -10063,7 +10816,27 @@ export class AgentSession {
  					}
  					break;
  				default:
@@ -6623,7 +6922,7 @@ index ea17642..8e9c3a7 100644
  						this.emitNotice(
  							"warning",
  							`Codex auto-redeem for ${action.label} failed (${outcome.code}); will retry later.`,
-@@ -10077,10 +10688,361 @@ export class AgentSession {
+@@ -10077,10 +10850,361 @@ export class AgentSession {
  					}
  					break;
  			}
@@ -6987,7 +7286,7 @@ index ea17642..8e9c3a7 100644
  	}
  
  	/**
-@@ -10098,7 +11060,9 @@ export class AgentSession {
+@@ -10098,7 +11222,9 @@ export class AgentSession {
  	 * active account has no credits. The "unset" mode asks before spending;
  	 * "yes" skips the prompt; "no" avoids the eligibility IO entirely.
  	 * Per-account in-flight dedup lets concurrent sessions adopt one pass
@@ -6998,7 +7297,7 @@ index ea17642..8e9c3a7 100644
  	 */
  	async #maybeAutoRedeemCodexReset(activeBlockUnblockAtMs?: number): Promise<boolean> {
  		const coordinator = this.#codexResetCoordinator;
-@@ -10112,10 +11076,41 @@ export class AgentSession {
+@@ -10112,10 +11238,41 @@ export class AgentSession {
  		const identity = authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
  		const accountKey = (identity?.accountId ?? identity?.email)?.trim().toLowerCase();
  		if (!accountKey) return false;
@@ -7041,7 +7340,7 @@ index ea17642..8e9c3a7 100644
  			// Live data: the cached report predates the block that got us here.
  			await authStorage.invalidateUsageCache("openai-codex");
  			const reports = await this.fetchUsageReports();
-@@ -10132,24 +11127,50 @@ export class AgentSession {
+@@ -10132,24 +11289,50 @@ export class AgentSession {
  					error: String(error),
  				});
  			}
@@ -7102,7 +7401,7 @@ index ea17642..8e9c3a7 100644
  		return run;
  	}
  
-@@ -10159,35 +11180,83 @@ export class AgentSession {
+@@ -10159,35 +11342,83 @@ export class AgentSession {
  	 * rule in `./codex-auto-reset`) across ALL stored accounts, regardless of
  	 * the active model or blocked state. Fire-and-forget: never delays the
  	 * fetch, never runs concurrently with itself or a blocked pass, and the

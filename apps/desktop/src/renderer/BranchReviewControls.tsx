@@ -49,11 +49,11 @@ function ReviewMenu({ label, value, disabled, children, onClose }: { label: stri
   }
   return <><button ref={trigger} type="button" className="review-source-trigger" aria-label={label} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => setOpen(value => !value)}><span>{value}</span><Icon name="chevron"/></button>{open && createPortal(<div ref={menu} style={position} role="menu" aria-label={`${label} menu`} className="branch-selector-menu review-source-menu" onKeyDown={key}>{children(close)}</div>, document.body)}</>;
 }
-export function ReviewSourceControl({ source, disabled, onSelect, commitView, onCommitSelect, onCommitRetry, onCommitOpenChange }: {
-  source: ReviewSource; disabled: boolean; onSelect(source: ReviewSource): void; commitView: CommitReviewView;
+export function ReviewSourceControl({ source, disabled, lastTurn, onSelect, commitView, onCommitSelect, onCommitRetry, onCommitOpenChange }: {
+  source: ReviewSource; disabled: boolean; /** The owning host can read a recorded Last turn for this workspace. */ lastTurn: boolean; onSelect(source: ReviewSource): void; commitView: CommitReviewView;
   onCommitSelect(commit: GitReviewCommit): void; onCommitRetry(): void; onCommitOpenChange(open: boolean): void;
 }) {
-  const choices = [{ id: "branch", label: "Branch" }, { id: "unstaged", label: "Unstaged" }, { id: "staged", label: "Staged" }] as const;
+  const choices: readonly { id: ReviewSource; label: string }[] = [...(lastTurn ? [{ id: "last-turn" as const, label: "Last turn" }] : []), { id: "branch", label: "Branch" }, { id: "unstaged", label: "Unstaged" }, { id: "staged", label: "Staged" }];
   const [commitsOpen, setCommitsOpen] = useState(false);
   const commitTrigger = useRef<HTMLButtonElement>(null), submenu = useRef<HTMLDivElement>(null);
   const reset = useCallback(() => { setCommitsOpen(false); onCommitOpenChange(false); }, [onCommitOpenChange]);
@@ -62,7 +62,7 @@ export function ReviewSourceControl({ source, disabled, onSelect, commitView, on
   useLayoutEffect(() => {
     if (commitsOpen) submenu.current?.querySelector<HTMLButtonElement>("button")?.focus();
   }, [commitsOpen]);
-  return <ReviewMenu label="Review source" value={source === "commit" ? "Commit" : choices.find(item => item.id === source)!.label} disabled={disabled} onClose={reset}>{close => commitsOpen
+  return <ReviewMenu label="Review source" value={source === "commit" ? "Commit" : source === "last-turn" ? "Last turn" : choices.find(item => item.id === source)!.label} disabled={disabled} onClose={reset}>{close => commitsOpen
     ? <div ref={submenu} className="commit-review-menu" onKeyDown={event => { if (event.key === "ArrowLeft" && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); back(); } }}>
       <button type="button" role="menuitem" onClick={back}><span>Review sources</span></button>
       <CommitReviewItems view={commitView} onRetry={onCommitRetry} onSelect={commit => { onCommitSelect(commit); close(); }}/>

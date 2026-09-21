@@ -2,6 +2,7 @@ import { ComposerSelectedText } from "./ComposerSelectedText";
 import { TranscriptFileMentions } from "./TranscriptFileMentions";
 import { createContext, useContext, useId, useMemo, useState, type ReactNode } from "react";
 import type { McpArtifact, TranscriptBlock, TranscriptMessage } from "../../../../packages/shared/src/protocol";
+import type { TurnReviewOpenRequest } from "../../../../packages/shared/src/turn-review";
 import { Icon } from "./Icons";
 import { GoalIcon } from "./GoalIcons";
 import { goalDuration, goalCompletionTitle, messageBlocks, toolLinks, toolOutcome, TranscriptDisclosureState, type ToolLink } from "./transcript-state";
@@ -13,11 +14,14 @@ import { ImagePreview } from "./ImagePreview";
 import type { AttachmentMediaContext } from "./attachment-media";
 
 export interface TranscriptImages { media: AttachmentMediaContext; hostId: string; sessionId: string }
+/** Opens the host-selected Last turn of this conversation. Rows never name a turn or carry a patch; only the conversation and an optional path travel. */
+export interface TranscriptTurnReview { conversationId: string; onOpen(request: TurnReviewOpenRequest): void }
 const ImageContext = createContext<TranscriptImages | undefined>(undefined);
 const EditContext = createContext<((message: TranscriptMessage) => void) | undefined>(undefined);
 const ArtifactContext = createContext<((artifact: McpArtifact) => void) | undefined>(undefined);
+const TurnReviewContext = createContext<TranscriptTurnReview | undefined>(undefined);
 
-export function TranscriptMessages({ messages, contextKey, connected, linkActions, images, onOpenArtifact, onEdit, editing }: { messages: TranscriptMessage[]; contextKey: string; connected: boolean; linkActions?: TranscriptLinkActions; images?: TranscriptImages; onOpenArtifact?(artifact: McpArtifact): void; onEdit?(message: TranscriptMessage): void; editing?: { nativeId: string; content: ReactNode } }) {
+export function TranscriptMessages({ messages, contextKey, connected, linkActions, images, onOpenArtifact, onEdit, editing, turnReview }: { messages: TranscriptMessage[]; contextKey: string; connected: boolean; linkActions?: TranscriptLinkActions; images?: TranscriptImages; onOpenArtifact?(artifact: McpArtifact): void; onEdit?(message: TranscriptMessage): void; editing?: { nativeId: string; content: ReactNode }; turnReview?: TranscriptTurnReview }) {
   const disclosures = useMemo(() => new TranscriptDisclosureState(), [contextKey]);
   const markdownViews = useMemo(() => new MarkdownViewState(), [contextKey]);
   const links = useMemo(() => toolLinks(messages), [messages]);
@@ -28,13 +32,14 @@ export function TranscriptMessages({ messages, contextKey, connected, linkAction
   // user row. Moving between separate JSX child arrays would recreate its owner.
   if (editing && !messages.some(message => message.nativeId === editing.nativeId))
     rows.push(<div key={`edit:${editing.nativeId}`} className="transcript-detached-edit">{editing.content}</div>);
-  return <EditContext value={onEdit}><ArtifactContext value={onOpenArtifact}><ImageContext value={images}><TranscriptMarkdownContext value={{ actions: linkActions, views: markdownViews }}>{rows}</TranscriptMarkdownContext></ImageContext></ArtifactContext></EditContext>;
+  return <TurnReviewContext value={turnReview}><EditContext value={onEdit}><ArtifactContext value={onOpenArtifact}><ImageContext value={images}><TranscriptMarkdownContext value={{ actions: linkActions, views: markdownViews }}>{rows}</TranscriptMarkdownContext></ImageContext></ArtifactContext></EditContext></TurnReviewContext>;
 }
 export function TranscriptItem({ message, connected, disclosures, calls, linkedCall }: { message: TranscriptMessage; connected: boolean; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; linkedCall?: ToolLink }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const images = useContext(ImageContext);
   const openArtifact = useContext(ArtifactContext);
   const edit = useContext(EditContext);
+  const turnReview = useContext(TurnReviewContext);
   const blocks = messageBlocks(message);
   if (message.role === "fileMention" && message.fileReferences) return <TranscriptFileMentions message={message} images={images} connected={connected}/>;
   const renderBlock = (block: TranscriptBlock, index: number) => <Block key={index} block={block} blockKey={`${message.id}:block:${index}`} nativeEntryId={message.nativeId} disclosures={disclosures} calls={calls} connected={connected} streaming={message.lifecycle === "streaming" || message.tool?.status === "running"} allowWideBlocks={message.role === "assistant" || message.role === "user"} toolOutput={message.role === "toolResult" || message.role === "tool"}/>;
@@ -69,11 +74,11 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
       {complete && metadata?.stopReason === "length" && <p className="transcript-message-notice">The response reached its output limit.</p>}
     </div>}
     {user && message.nativeId && edit && <div className="transcript-user-edit-action"><button type="button" className="icon-button small" aria-label="Edit message" title="Edit message" disabled={!connected} onClick={() => edit(message)}><Icon name="pencil"/></button></div>}
-    {assistant && <div className="transcript-message-actions">{message.text && <button className="copy-message" onClick={async () => { try { await navigator.clipboard.writeText(message.text); setCopyState("copied"); } catch { setCopyState("failed"); } }}><span aria-live="polite">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed · retry" : "Copy"}</span></button>}{goalCompletion && <span className="transcript-goal-achievement" title={goalCompletionTitle(goalCompletion)}><GoalIcon name="achieved"/><span>Goal achieved in {goalDuration(goalCompletion.timeUsedSeconds)}</span></span>}{metadata && Object.keys(metadata).length > 0 && <details className="transcript-message-metadata"><summary>Response details</summary><dl>{metadata.provider && <><dt>Provider</dt><dd>{metadata.provider}</dd></>}{metadata.model && <><dt>Model</dt><dd>{metadata.model}</dd></>}{metadata.upstreamProvider && <><dt>Upstream provider</dt><dd>{metadata.upstreamProvider}</dd></>}{metadata.upstreamModel && <><dt>Upstream model</dt><dd>{metadata.upstreamModel}</dd></>}{complete && metadata.stopReason && <><dt>Native stop reason</dt><dd>{metadata.stopReason}</dd></>}{metadata.durationMs !== undefined && <><dt>Native duration</dt><dd>{metadata.durationMs} ms</dd></>}{metadata.usage && <><dt>Reported usage</dt><dd><pre>{JSON.stringify(metadata.usage, null, 2)}</pre></dd></>}</dl></details>}</div>}
+    {assistant && <div className="transcript-message-actions">{turnReview && complete && <button type="button" className="copy-message" title="Open the recorded last turn of this conversation in Changes" onClick={() => turnReview.onOpen({ conversationId: turnReview.conversationId })}>Review last turn</button>}{message.text && <button className="copy-message" onClick={async () => { try { await navigator.clipboard.writeText(message.text); setCopyState("copied"); } catch { setCopyState("failed"); } }}><span aria-live="polite">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed · retry" : "Copy"}</span></button>}{goalCompletion && <span className="transcript-goal-achievement" title={goalCompletionTitle(goalCompletion)}><GoalIcon name="achieved"/><span>Goal achieved in {goalDuration(goalCompletion.timeUsedSeconds)}</span></span>}{metadata && Object.keys(metadata).length > 0 && <details className="transcript-message-metadata"><summary>Response details</summary><dl>{metadata.provider && <><dt>Provider</dt><dd>{metadata.provider}</dd></>}{metadata.model && <><dt>Model</dt><dd>{metadata.model}</dd></>}{metadata.upstreamProvider && <><dt>Upstream provider</dt><dd>{metadata.upstreamProvider}</dd></>}{metadata.upstreamModel && <><dt>Upstream model</dt><dd>{metadata.upstreamModel}</dd></>}{complete && metadata.stopReason && <><dt>Native stop reason</dt><dd>{metadata.stopReason}</dd></>}{metadata.durationMs !== undefined && <><dt>Native duration</dt><dd>{metadata.durationMs} ms</dd></>}{metadata.usage && <><dt>Reported usage</dt><dd><pre>{JSON.stringify(metadata.usage, null, 2)}</pre></dd></>}</dl></details>}</div>}
   </article>;
 }
 function Block({ block, blockKey, nativeEntryId, disclosures, calls, connected, allowWideBlocks = false, streaming = false, toolOutput = false }: { block: TranscriptBlock; blockKey: string; nativeEntryId?: string; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; connected: boolean; allowWideBlocks?: boolean; streaming?: boolean; toolOutput?: boolean }) {
-  const images = useContext(ImageContext);
+  const images = useContext(ImageContext), turnReview = useContext(TurnReviewContext);
   if (block.type === "image") return images && nativeEntryId
     ? <ImagePreview media={images.media} source={{ kind: "transcript", sessionId: images.sessionId, nativeEntryId, blockIndex: block.blockIndex, mimeType: block.mimeType, bytes: block.bytes, sha256: block.sha256 }} hostId={images.hostId} connected={connected} label="Recorded image" className="transcript-image"/>
     : <p className="subtle-notice">{nativeEntryId ? "Image preview is unavailable in this view." : "This image does not yet have a saved native entry."}</p>;
@@ -81,7 +86,8 @@ function Block({ block, blockKey, nativeEntryId, disclosures, calls, connected, 
   if (block.type === "thinking") return <Disclosure state={disclosures} stateKey={blockKey} label="Thinking" variant="thinking"><MarkdownText text={block.thinking} blockKey={blockKey} streaming={streaming}/></Disclosure>;
   if (block.type === "toolCall") {
     const link = calls.get(blockKey), outcome = toolOutcome(link?.result, connected);
-    return <div id={callAnchor(blockKey)} className="transcript-tool-invocation"><Disclosure state={disclosures} stateKey={blockKey} label={block.intent || block.name} icon={toolIcon(block.name)} status={outcome.label} tone={outcome.tone} running={outcome.tone === "running"}><p className="transcript-tool-name">{block.name}</p><TranscriptCode code={JSON.stringify(block.arguments, null, 2)} language="json" blockKey={`${blockKey}:arguments`} output title="Arguments" copyAction="Copy arguments"/></Disclosure></div>;
+    const argumentPath = block.arguments.path, editPath = turnReview && (block.name === "edit" || block.name === "write") && typeof argumentPath === "string" && argumentPath ? argumentPath : undefined;
+    return <div id={callAnchor(blockKey)} className="transcript-tool-invocation"><Disclosure state={disclosures} stateKey={blockKey} label={block.intent || block.name} icon={toolIcon(block.name)} status={outcome.label} tone={outcome.tone} running={outcome.tone === "running"}><p className="transcript-tool-name">{block.name}</p><TranscriptCode code={JSON.stringify(block.arguments, null, 2)} language="json" blockKey={`${blockKey}:arguments`} output title="Arguments" copyAction="Copy arguments"/>{turnReview && editPath && <button type="button" className="transcript-artifact-open" title="Open this path in the recorded last turn of this conversation" onClick={() => turnReview.onOpen({ conversationId: turnReview.conversationId, path: editPath })}>Review path in last turn</button>}</Disclosure></div>;
   }
   return <p className="subtle-notice transcript-unsupported">{block.nativeType === "redactedThinking" ? "The provider withheld this reasoning content." : `This build cannot display native ${block.nativeType} content${block.mimeType ? ` (${block.mimeType})` : ""}.`}</p>;
 }

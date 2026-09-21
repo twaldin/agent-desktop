@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { BranchReviewState, branchReviewState } from "./branch-review-state";
+import { BranchReviewState, branchReviewState, TurnReviewState } from "./branch-review-state";
 import type { BranchReview } from "../../../../packages/shared/src/branch-review";
 import type { WorkspaceQuery, WorkspaceQueryResult } from "../../../../packages/shared/src/workspace-protocol";
+import type { TurnReview } from "../../../../packages/shared/src/turn-review";
 function fixture() {
   const listeners = new Set<() => void>();
   const requests: { query: WorkspaceQuery; resolve(value: WorkspaceQueryResult): void; reject(cause: unknown): void }[] = [];
@@ -52,4 +53,29 @@ test("selection remains local to its owning window workspace instance", () => {
   const first = fixture().workspace, second = fixture().workspace;
   const state = branchReviewState(first); state.selectBase("topic");
   expect(branchReviewState(first)).toBe(state); expect(branchReviewState(second).getSnapshot().baseBranch).toBeUndefined();
+});
+
+test("Last turn retires visible evidence immediately when its current conversation changes", async () => {
+  const requests: Array<{ sessionId: string; resolve(value: TurnReview): void }> = [];
+  const state = new TurnReviewState(sessionId => new Promise(resolve => requests.push({ sessionId, resolve })));
+  const options = { active: true, sourceActive: true, connected: true, current: { hostId: "host", conversationId: "first" } };
+  const reply = (index: number, patch: string) => requests[index]!.resolve({ sessionId: requests[index]!.sessionId, revision: patch, state: "pending", reason: "Running", selected: null, files: [], patch });
+  state.configure(options); reply(0, "first evidence"); await tick();
+  state.selectPath("first-only.txt");
+  state.configure({ ...options, current: { hostId: "host", conversationId: "second" } });
+  expect(state.getSnapshot().review).toBeUndefined();
+  expect(state.getSnapshot().path).toBeUndefined();
+  state.open({ conversationId: "historical", path: "recorded.txt" }, "other-host");
+  reply(1, "retired second evidence"); await tick();
+  expect(state.getSnapshot().review).toBeUndefined();
+  expect(state.getSnapshot().path).toBe("recorded.txt");
+  reply(2, "historical evidence"); await tick();
+  expect(state.getSnapshot().review?.patch).toBe("historical evidence");
+  state.configure({ ...options, current: { hostId: "host", conversationId: "third" } });
+  expect(state.getSnapshot().review?.patch).toBe("historical evidence");
+  state.useCurrent();
+  expect(state.getSnapshot().review).toBeUndefined();
+  expect(state.getSnapshot().path).toBeUndefined();
+  reply(3, "third evidence"); await tick();
+  expect(state.getSnapshot().review?.sessionId).toBe("third");
 });

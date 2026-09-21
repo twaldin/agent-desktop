@@ -1,4 +1,5 @@
 import { parseSessionTree, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult, type SessionTree, type TreeMutationRequest, type TreeMutationResult } from "../../../../packages/shared/src/session-tree";
+import { parseTurnReview } from "../../../../packages/shared/src/turn-review";
 import { parseTodoExternalEditorRequest } from "../../../../packages/shared/src/todo-external-editor";
 import { parsePreparedTodoExternalEditor } from "../omp/todo-external-editor";
 import { parsePlanExternalEditorRequest } from "../../../../packages/shared/src/plan-external-editor";
@@ -1340,6 +1341,12 @@ export class WorkerRuntime {
       openHtmlPreview: request => client.request({ operation: "openHtmlPreview", request }, 30_000),
       releaseHtmlPreview: leaseId => client.request({ operation: "releaseHtmlPreview", leaseId }, 30_000),
       getSessionOutputs: () => client.request({ operation: "getSessionOutputs" }, 30_000),
+      getTurnReview: async () => {
+        const original = state(), id = original.id, file = original.sessionFile;
+        const value = parseTurnReview(await client.request({ operation: "getTurnReview" }, 30_000));
+        if (state().id !== id || state().sessionFile !== file || value.sessionId !== id) throw new Error("The original recorded review worker changed.");
+        return value;
+      },
       getImage: async (nativeEntryId, blockIndex, source) => {
         if (imageReads >= 2) throw new Error("Native image retrieval limit reached; retry after an active image read finishes");
         imageReads++;

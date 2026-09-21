@@ -46,6 +46,7 @@ import { SessionMcpAuthorizationHttp } from "./session-mcp-authorization-http";
 import { SessionMcpAppHttp } from "./session-mcp-app-http";
 import { SessionMcpResourceHttp } from "./session-mcp-resource-http";
 import { SessionOutputsHttp } from "./session-outputs-http";
+import { SessionTurnReviewHttp } from "./session-turn-review-http";
 import { SessionMcpHttp } from "./session-mcp-http";
 import { BtwPromotionService } from "./btw-promotion";
 import { SessionForkError, SessionForkService } from "./session-fork";
@@ -556,6 +557,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
   const htmlPreviews = new HtmlPreviewHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
   const sessionOutputs = new SessionOutputsHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
+  const turnReview = new SessionTurnReviewHttp({ hostId: store.host.id, sessionExists: id => !stopping && Boolean(store.getSession(id)), existing: async id => handles.get(id)?.catch(() => undefined) });
   if (nativeTerminals) planExternalEditors = new PlanExternalEditors({
     hostId: store.host.id, controlEpoch: crypto.randomUUID(), records: store.planExternalEditors,
     terminals: new PlanEditorTerminals(dataDirectory, nativeTerminals),
@@ -1563,6 +1565,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (htmlResponse) return htmlResponse;
         const outputsResponse = await sessionOutputs.route(request, url);
         if (outputsResponse) return outputsResponse;
+        const turnReviewResponse = await turnReview.route(request, url);
+        if (turnReviewResponse) return turnReviewResponse;
         const editorRoute = /^\/v1\/sessions\/([^/]+)\/plan\/editor\/(capabilities|list|start|status|cancel|recovery)$/.exec(url.pathname);
         if (editorRoute) {
           if (!planExternalEditorHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING",

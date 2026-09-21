@@ -1,5 +1,6 @@
 import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import type { GitStatusEntry } from "../../../../packages/shared/src/workspace";
+import type { TurnReviewFile } from "../../../../packages/shared/src/turn-review";
 
 export interface ReviewFile {
   key: string;
@@ -20,8 +21,12 @@ export function readReviewOptions(value: string | null): ReviewOptions {
   return { split: options.split as boolean, wrap: options.wrap as boolean, wordDiffs: options.wordDiffs as boolean, lineNumbers: options.lineNumbers as boolean, indicators: options.indicators as "bars" | "classic" };
 }
 
-/** Git quotes non-ASCII filename bytes with octal escapes; decode names only, never patch content. */
+/** Git quotes non-ASCII filename bytes with octal escapes; decode names only, never patch content.
+ * The pinned parser strips the outer quotes from `diff --git` headers but keeps them on
+ * `rename from`/`rename to` metadata. Only that outer pair is removed: a literal quote character
+ * in a filename always arrives escaped inside the quoted form. */
 export function reviewPath(name: string): string {
+  if (name.length >= 2 && name.startsWith('"') && name.endsWith('"')) name = name.slice(1, -1);
   if (!name.includes("\\")) return name;
   const bytes: number[] = [];
   const encoder = new TextEncoder();
@@ -61,3 +66,27 @@ export function reviewEntries(entries: GitStatusEntry[], staged: boolean): GitSt
   return entries.filter(entry => staged ? ![".", " ", "?"].includes(entry.indexStatus) : ![".", " "].includes(entry.worktreeStatus) || entry.kind === "untracked");
 }
 export function reviewMutationPaths(entry: GitStatusEntry): string[] { return entry.originalPath ? [entry.originalPath, entry.path] : [entry.path]; }
+
+export interface TurnReviewFileSections { sections: ReviewFile[]; error?: string }
+/** Recorded sections for one turn-review file, rendered under the recorded identity.
+ * A file-type replacement records two sections for the same path; both keep that path. */
+export function parseTurnReviewFile(file: TurnReviewFile, identity: string): TurnReviewFileSections {
+  if (file.binary && !file.patch.trim()) return { sections: [] };
+  try {
+    const sections = parseReviewPatch(file.patch, identity).files.map((section, index) => {
+      section.metadata.name = file.path;
+      if (file.previousPath !== null) section.metadata.prevName = file.previousPath; else delete section.metadata.prevName;
+      return { ...section, key: `${identity}:${index}`, binary: section.binary || file.binary };
+    });
+    return { sections };
+  } catch (error) { return { sections: [], error: error instanceof Error ? error.message : String(error) }; }
+}
+/** Recorded paths are cwd-relative; a Transcript path may be absolute inside the recorded cwd. */
+export function turnReviewRelativePath(path: string, cwd: string | undefined): string {
+  if (!cwd || !path.startsWith("/")) return path;
+  const root = cwd.replace(/\/+$/, "");
+  return path === root ? "." : path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+}
+export function turnReviewMatches(file: TurnReviewFile, path: string | undefined): boolean {
+  return !path || path === "." || file.path === path || file.previousPath === path || file.path.startsWith(`${path}/`);
+}

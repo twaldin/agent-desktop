@@ -7,7 +7,7 @@ import { defaultFileTreeView, type FileTreeView, type WorkspaceTab } from "../wi
 import { WorkspaceState } from "./workspace-state";
 import { Icon } from "./Icons";
 import { type WorkspaceFileRequest, type WorkspaceFileLink } from "./transcript-links";
-import { ReviewPanel } from "./ReviewPanel";
+import { ReviewPanel, type ReviewTurnPorts } from "./ReviewPanel";
 import { retainWorkspace } from "./workspace-lease";
 import { markdownImagePath } from "./markdown-images";
 import { resolveMarkdownLink } from "./markdown-links";
@@ -18,7 +18,7 @@ import { WorkspaceFileBreadcrumbs } from "./WorkspaceFileBreadcrumbs";
 import { WorkspaceFileTreePane } from "./WorkspaceFileTreePane";
 import { WorkspaceFileOpen } from "./WorkspaceFileOpen";
 
-export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, onFileEdit, onAddToChat, onAddFile, openExternal, fileTree, onFileTreeChange, embedded = false, active = true, commitRequest, onCommit, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string, location?: Omit<WorkspaceFileLink, "path">, options?: {preview?:boolean}): void; onFileEdit?(path:string):void; onAddToChat?(path: string, selection: FileTextSelection): void; onAddFile?(path:string):void; openExternal?(url: string): Promise<void>; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; embedded?: boolean; active?: boolean; commitRequest?: string; onCommit?(): void; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
+export function WorkspacePanel({ data, connected, name, path, fileRequest, filePath, fileMode, onFileModeChange, onOpenFile, onFileEdit, onAddToChat, onAddFile, openExternal, fileTree, onFileTreeChange, embedded = false, active = true, commitRequest, onCommit, turn, tab: selectedTab, onTabChange, onClose, onOpenProject }: { data: WorkspaceState; connected: boolean; name: string; path: string; fileRequest?: WorkspaceFileRequest; filePath?: string; fileMode?: "markdown" | "source"; onFileModeChange?(mode: "markdown" | "source"): void; onOpenFile?(path: string, location?: Omit<WorkspaceFileLink, "path">, options?: {preview?:boolean}): void; onFileEdit?(path:string):void; onAddToChat?(path: string, selection: FileTextSelection): void; onAddFile?(path:string):void; openExternal?(url: string): Promise<void>; fileTree?: FileTreeView; onFileTreeChange?(view: FileTreeView): void; embedded?: boolean; active?: boolean; commitRequest?: string; onCommit?(): void; turn?: ReviewTurnPorts; tab?: WorkspaceTab; onTabChange?(tab: WorkspaceTab): void; onClose(): void; onOpenProject(path: string): Promise<void> }) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [localTab, setLocalTab] = useState<WorkspaceTab>("files");
   const tab = selectedTab ?? localTab;
@@ -52,7 +52,7 @@ export function WorkspacePanel({ data, connected, name, path, fileRequest, fileP
     {data.pending?.uncertain && <div className="workspace-pending"><strong>Check the pending change</strong><p>A new command is paused until this outcome is resolved.</p><code>{data.pending.envelope.command.action.type} · {data.pending.envelope.id}</code><div><button className="primary-button" disabled={!connected || data.busy} onClick={() => void data.retry()}>Check original command</button><details><summary>After inspecting the outcome</summary><p>Use the file or Git state to establish whether the change completed before starting a new change.</p><button className="secondary-button" disabled={data.busy} onClick={() => void data.acknowledgeUnknown()}>I checked the outcome</button></details></div></div>}
     <div id={embedded ? undefined : "workspace-view"} className="workspace-view" role={embedded ? undefined : "tabpanel"} aria-labelledby={embedded ? undefined : `workspace-tab-${tab}`}>
       {(filesVisited || tab === "files") && <Files key={data.cacheKey} data={data} disabled={disabled} fileRequest={fileRequest} filePath={filePath} fileMode={fileMode} onFileModeChange={onFileModeChange} onOpenFile={onOpenFile} onFileEdit={onFileEdit} onAddToChat={onAddToChat} onAddFile={onAddFile} openExternal={openExternal} workspacePath={path} fileTree={fileTree} onFileTreeChange={onFileTreeChange} workspaceName={path.split("/").filter(Boolean).at(-1) ?? name} active={active && tab === "files"}/>}
-      {tab === "changes" ? <ReviewPanel onCommit={onCommit} commitRequest={commitRequest} data={data} disabled={disabled} onEdit={path => { if (onOpenFile) onOpenFile(path); else { setTab("files"); void data.open(path); } }}/> : tab === "worktrees" ? <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/> : null}
+      {tab === "changes" ? <ReviewPanel onCommit={onCommit} commitRequest={commitRequest} turn={turn} data={data} disabled={disabled} onEdit={path => { if (onOpenFile) onOpenFile(path); else { setTab("files"); void data.open(path); } }}/> : tab === "worktrees" ? <Worktrees data={data} disabled={disabled} onOpenProject={onOpenProject}/> : null}
     </div>
   </aside>;
 }

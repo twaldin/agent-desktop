@@ -4,6 +4,8 @@ export * from "./session-usage";
 export * from "./session-plan";
 export * from "./force-tool";
 export * from "./session-outputs";
+export * from "./turn-review";
+import type { TurnReview } from "./turn-review";
 export * from "./branch-query-transport";
 export * from "./browser-observation";
 export * from "./browser-history";
@@ -426,6 +428,8 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   openHtmlPreview?(sessionId: string, request: import("./html-preview").HtmlPreviewRequest, hostId: string): Promise<import("./html-preview").HtmlPreviewLease>;
   releaseHtmlPreview?(sessionId: string, leaseId: string, hostId: string): Promise<void>;
   getSessionOutputs?(sessionId: string, hostId: string): Promise<import("./session-outputs").SessionOutputs>;
+  /** Recorded Last-turn review for one conversation; the owning host selects the turn. */
+  getTurnReview?(sessionId: string, hostId: string): Promise<TurnReview>;
   getState(hostId?: string): Promise<HostState>;
   getHosts(): Promise<NetworkState>;
   /** Local machine only; these calls intentionally accept no remote host selector. */

@@ -131,6 +131,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "openHtmlPreview"; request: import("../../../../packages/shared/src/html-preview").HtmlPreviewRequest }
   | { operation: "releaseHtmlPreview"; leaseId: string }
   | { operation: "getSessionOutputs" }
+  | { operation: "getTurnReview" }
   | { operation: "getImage"; args: { nativeEntryId: string; blockIndex: number; source?: "generated" } }
   | { operation: "startPrompt"; args: { text: string; options?: OmpPromptOptions } }
   | { operation: "steer"; args: { text: string; expectedApprovalMode?: OmpApprovalMode; options?: { images?: PreparedPromptImage[] } } }
