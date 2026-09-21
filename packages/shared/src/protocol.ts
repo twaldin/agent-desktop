@@ -1,3 +1,4 @@
+export * from "./goal-composer";
 export * from "./native-dap";
 export * from "./native-lsp";
 export * from "./session-usage";
@@ -166,6 +167,8 @@ export interface Draft {
   execution?: NewChatExecution;
   /** Sticky format: null clears selection; absence is an older writer. */
   environment?: LocalEnvironmentSelection;
+  /** Sticky unsent Goal intent. Objective remains in text; null clears only the intent. */
+  goal?: import("./goal-composer").GoalComposerDraft | null;
   /** Presence persists after clearing the last chip; older command writers must refuse. */
   attachments?: ImageAttachmentRef[];
   /** Sticky snapshot format, including after the last selection is removed. */
@@ -247,6 +250,7 @@ export interface TranscriptMessage {
 }
 
 export interface HostState {
+  goalComposer?: typeof import("./goal-composer").GOAL_COMPOSER_CAPABILITY;
   sessionUsage?: { version: 1; commandVersion: 20; nativePolicy: false };
   pullRequestWrites?: typeof import('./pull-request-write').PULL_REQUEST_WRITES_CAPABILITY;
   pullRequests?: typeof import('./pull-requests').PULL_REQUESTS_CAPABILITY;
@@ -302,7 +306,7 @@ export type HostCommand = import("./session-usage").SessionUsageCommand
   | { type: "session.create"; projectId: string | null; cwd?: string; model?: ModelChoice; approvalMode?: OmpApprovalMode; worktree?: WorktreeStartingState; environment?: LocalEnvironmentSelection; draft?: { id: string; revision: number }; browserContinuation?: import("./browser-continuation").DraftBrowserContinuation }
   | { type: "session.environment.cancel"; preparationId: string; projectId: string; runRevision: number }
   | { type: "session.environment.resume"; preparationId: string; expectedRevision: number }
-  | { type: "session.prompt"; sessionId: string; text: string; treeTicket?: import("./session-tree").TreeTicket; forceTool?: import("./force-tool").ForceToolGuard; forceRecovery?: import("./force-tool").ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
+  | { type: "session.prompt"; sessionId: string; text: string; goal?: import("./goal-composer").GoalPromptIntent; treeTicket?: import("./session-tree").TreeTicket; forceTool?: import("./force-tool").ForceToolGuard; forceRecovery?: import("./force-tool").ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
   | { type: "session.steer"; sessionId: string; text: string; approvalMode?: OmpApprovalMode; attachments?: ImageAttachmentRef[]; selectedTextAttachments?: SelectedTextAttachment[]; wholeFileAttachments?: WholeFileAttachment[]; draft?: { id: string; revision: number } }
   | ({ type: "session.tree.mutate" } & import("./session-tree").TreeMutationRequest)
   | ({ type: "session.todos.mutate" } & import("./session-todos").TodoMutationRequest)
@@ -328,7 +332,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24;
 }
 
 export interface ImageAdmission {

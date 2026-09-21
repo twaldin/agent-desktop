@@ -1,3 +1,5 @@
+import { NativeGoalPromptAdmission } from "./goal-prompt";
+import { goalPromptForAdmission, type GoalPromptIntent } from "../../../../packages/shared/src/goal-composer";
 import { NativeSessionTree } from "./session-tree";
 import type { SessionTree, TreeTicket, TreeMutationRequest, TreeMutationResult } from "../../../../packages/shared/src/session-tree";
 import { TurnCapture } from "../turn-review/capture";
@@ -118,7 +120,7 @@ export interface OmpSessionOptions {
   interactions?: boolean;
 }
 export interface OmpOpenOptions { expectedIdentity?: SessionStartupIdentity; sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
-export interface OmpPromptOptions { treeTicket?: TreeTicket; commandId?: string; commandVersion?: number; forceTool?: ForceToolGuard; forceRecovery?: ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
+export interface OmpPromptOptions { goal?: GoalPromptIntent; treeTicket?: TreeTicket; commandId?: string; commandVersion?: number; forceTool?: ForceToolGuard; forceRecovery?: ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
 export interface OmpBrowserTabCreateResult {
   tab: NativeBrowserTabMetadata;
   targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
@@ -1402,6 +1404,7 @@ export class OmpRuntime {
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
           if (usage.busy || promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || nativeTree.busy || nativeTodos.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          const goalIntent = goalPromptForAdmission(text, promptOptions);
           const treeTicket = promptOptions.treeTicket;
           if (treeTicket && (promptOptions.commandVersion !== 23 || promptOptions.images !== undefined || promptOptions.model || promptOptions.thinkingLevel !== undefined || promptOptions.selectedText || promptOptions.wholeFiles || promptOptions.forceTool || promptOptions.forceRecovery))
             throw new Error("History edit submission must preserve its original native branch and model.");
@@ -1437,6 +1440,15 @@ export class OmpRuntime {
               throw new Error("The original force prompt admission has retired.");
           };
           const forceAdmission = new NativeForceToolAdmission(forceAdmissionPort, session, promptOptions, assertForceAdmissionOwner);
+          const goalAdmission = goalIntent ? new NativeGoalPromptAdmission(session, manager, goalIntent, {
+            assertCurrent: assertForceAdmissionOwner,
+            activateTools: async previousTools => {
+              goalPreviousTools ??= [...previousTools];
+              await session.setActiveToolsByName([...previousTools, "goal"]);
+            },
+            resetSuppression: () => nativeGoalController.resetSuppression(),
+          }) : undefined;
+          goalAdmission?.prepare(text);
           let recoveryPromptEntered = false;
           promptInFlight = true;
           admissionPending = true;
@@ -1459,10 +1471,16 @@ export class OmpRuntime {
               skillPrompt = promptOptions.forceRecovery ? undefined : NativeSkillPrompt.fromText(session, text);
               if ((selectedText || wholeFiles) && skillPrompt) throw new Error("Selected text and whole-file attachments are not supported on native skill prompts; no input was executed.");
               if (skillPrompt && imagePrompt) throw new Error("Images on native skill invocations are not connected yet; the draft was retained.");
+              if (goalAdmission && skillPrompt) throw new Error("Clear Goal intent before sending a native skill. The draft was retained.");
               // Startup extension messages are not receipts for the submitted draft.
               const dispatchedRun = forceAdmission.wrapRun(beginNativePrompt(manager, async () => {
                 if (promptOptions.model) await session.setModel(this.#findModel(registry, promptOptions.model, session.settings));
                 if (controller.signal.aborted) throw new Error("OMP prompt aborted before native acceptance");
+                if (goalAdmission) {
+                  if (!session.model) throw new Error("Select a native model before starting a goal. The draft was retained.");
+                  if (!await session.modelRegistry.getApiKey(session.model, session.sessionId)) throw new Error("Connect the selected model's account before starting a goal. The draft was retained.");
+                  assertForceAdmissionOwner();
+                }
                 if (promptOptions.thinkingLevel !== undefined) {
                   const selection = parseCliThinkingLevel(promptOptions.thinkingLevel);
                   if (selection === undefined) throw new Error("Unknown OMP thinking level");
@@ -1491,6 +1509,8 @@ export class OmpRuntime {
                   agent.prompt = guarded;
                   restoreTreePrompt = () => { if (agent.prompt === guarded) agent.prompt = original; };
                 }
+                await goalAdmission?.initialize();
+                if (goalAdmission) assertForceAdmissionOwner();
                 return dispatchNativePrompt(session, nativeText, imagePrompt?.images, skillPrompt, {
                   recovery: (command, args) => nativeRecovery.dispatch(command, args, controller.signal),
                   plan: async raw => {
@@ -1590,14 +1610,23 @@ export class OmpRuntime {
               }, () => session.settleInFlightMessagePersistence(), imagePrompt, skillPrompt, selectedText, wholeFiles, forceAdmission));
               const nativeRun = promptOptions.forceRecovery
                 ? wrapForceToolRecoveryOutcome(dispatchedRun, () => recoveryPromptEntered) : dispatchedRun;
-              void nativeRun.accepted.then(value => { if (value) nativeGoalController.resetSuppression(); receipt.resolve(value); }, receipt.reject);
+              void nativeRun.accepted.then(value => {
+                if (goalAdmission && value?.kind !== "user-message") {
+                  receipt.reject(goalAdmission.failure(new Error("The Goal objective did not receive an ordinary native user-message receipt.")));
+                  return;
+                }
+                if (value) nativeGoalController.resetSuppression();
+                receipt.resolve(value);
+              }, error => receipt.reject(goalAdmission ? goalAdmission.failure(error) : error));
               const completed = await nativeRun.completion;
+              if (goalAdmission && (await nativeRun.accepted)?.kind !== "user-message")
+                throw goalAdmission.failure(new Error("The Goal objective was not admitted; inspect the original goal before continuing."));
               await nativeGoalController.settleFinalization();
               await planMutation;
               await nativePlan.settleAfterTurn();
               await nativeTodos.settle();
               return completed;
-          })().catch(error => { receipt.reject(error); throw error; }).finally(() => { restoreTreePrompt?.(); wholeFiles?.close(); selectedText?.close(); imagePrompt?.close(); skillPrompt?.close(); });
+          })().catch(error => { const failure = goalAdmission ? goalAdmission.failure(error) : error; receipt.reject(failure); throw failure; }).finally(() => { restoreTreePrompt?.(); wholeFiles?.close(); selectedText?.close(); imagePrompt?.close(); skillPrompt?.close(); });
           void receipt.promise.catch(() => {});
           void completion.catch(() => {});
           const run = { accepted: receipt.promise, completion, get forceToolReceipt() { return forceAdmission.forceToolReceipt; } };

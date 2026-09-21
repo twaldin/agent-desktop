@@ -10,6 +10,7 @@ import type { LocalEnvironmentPreparationPublic } from "../../../../packages/sha
 import { detachedAnswerDraft, parseDetachedQuestionAnswers, type DetachedQuestionAnswer } from "../../../../packages/shared/src/detached-questions";
 import { hasRepeatedWholeFileSources } from "../../../../packages/shared/src/whole-file";
 import { captureDraft, sameDraftContent, type DraftCache } from "./drafts";
+import { goalPromptFromDraft } from "../../../../packages/shared/src/goal-composer";
 
 export interface PendingSubmission {
   draft: Draft;
@@ -40,6 +41,8 @@ export class EnvironmentPreparationPause extends Error {
   }
 }
 const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | 8 | 9 | 12 | undefined => hasRemoteExecution(draft.execution) ? 12 : hasRepeatedWholeFileSources(draft.wholeFileAttachments ?? []) ? 9 : draft.wholeFileAttachments?.some(file=>file.textOffset!==undefined) ? 8 : draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
+/** Goal-format drafts prompt on command 24; steer, creation and environment envelopes keep their base versions. */
+const promptVersion = (draft: Draft, mode: PendingSubmission["mode"], force: boolean): 4 | 5 | 6 | 7 | 8 | 9 | 12 | 18 | 24 | undefined => force ? 18 : mode === "prompt" && draft.goal !== undefined ? 24 : commandVersion(draft);
 const sameDraftReference = (value: { id: string; revision: number } | undefined, draft: Draft, required: boolean) => required
   ? value?.id === draft.id && value.revision === draft.revision
   : value === undefined;
@@ -75,8 +78,9 @@ export class SubmissionController {
             if (!item.force || !item.send) throw new Error("Force receipt has no original command.");
             item.forceToolReceipt = parseForceToolReceipt(item.forceToolReceipt, item.send.id);
           }
-          const expectedVersion = item.force ? 18 : commandVersion(captured);
+          const expectedVersion = promptVersion(captured, item.mode, Boolean(item.force));
           if (item.mode !== "question" && item.send && item.send.commandVersion !== expectedVersion) throw new Error("Pending input requires its exact original command protocol.");
+          if (captured.goal && (item.mode !== "prompt" || item.force)) throw new Error("Pending Goal intent requires an ordinary prompt.");
           if (item.create?.command.type === "session.create") {
             const continuation=item.create.command.browserContinuation===undefined?undefined:parseDraftBrowserContinuation(item.create.command.browserContinuation);
             const createVersion=continuation?15:commandVersion(captured);
@@ -101,8 +105,9 @@ export class SubmissionController {
           }
           if (item.send && (item.send.command.type === "session.prompt" || item.send.command.type === "session.steer")) {
             const command = item.send.command;
-            if (command.type === "session.prompt" && (command.forceRecovery !== undefined
+            if (command.type === "session.prompt" && (command.forceRecovery !== undefined || command.treeTicket !== undefined
               || JSON.stringify(command.forceTool) !== JSON.stringify(item.force?.guard))) throw new Error("Pending force guard differs from its captured draft.");
+            if (command.type === "session.prompt" && JSON.stringify(command.goal) !== JSON.stringify(goalPromptFromDraft(captured))) throw new Error("Pending Goal intent differs from its captured draft.");
             if (!sameDraftContent(captured, captureDraft({ ...captured, attachments: command.attachments, selectedTextAttachments: command.selectedTextAttachments, wholeFileAttachments: command.wholeFileAttachments }, hostId))
               || command.text !== captured.text || command.draft?.id !== captured.id || command.draft.revision !== captured.revision) throw new Error("Pending attachment metadata differs from its exact command.");
           }
@@ -217,6 +222,7 @@ export class SubmissionController {
       throw new Error("Resolve the original force request before queuing another message.");
     if (captured.selectedTextAttachments?.length || captured.wholeFileAttachments?.length)
       throw new Error("File content cannot be sent during an active turn yet. The draft was retained.");
+    if (captured.goal) throw new Error("A Goal intent starts a new prompt after the current response finishes. The draft was retained.");
     const retained = Object.values(this.queued).find(item => item.sessionId === sessionId
       && item.draft.id === captured.id && item.draft.revision === captured.revision && item.draft.text === captured.text
       && item.draft.approvalMode === captured.approvalMode && sameImageAttachments(item.draft.attachments ?? [], captured.attachments ?? []));
@@ -304,9 +310,9 @@ export class SubmissionController {
         if (result.forceToolReceipt) item.forceToolReceipt = parseForceToolReceipt(result.forceToolReceipt, envelope.id);
         if (result.ok && !item.forceToolReceipt) throw new Error("The host did not return the native force receipt.");
       }
-      if (result.ok && phase === "send" && envelope.command.type === "session.prompt" && (envelope.command.selectedTextAttachments?.length || envelope.command.wholeFileAttachments?.length)
+      if (result.ok && phase === "send" && envelope.command.type === "session.prompt" && (envelope.command.selectedTextAttachments?.length || envelope.command.wholeFileAttachments?.length || envelope.command.goal)
         && (result.admission?.kind !== "user-message" || typeof result.admission.entryId !== "string" || !result.admission.entryId))
-        throw new Error("The host did not return the native user receipt for this file-context submission.");
+        throw new Error(envelope.command.goal ? "The host did not return the native user receipt for this Goal submission." : "The host did not return the native user receipt for this file-context submission.");
     }
     catch (cause) {
       item.uncertain = true; this.save();
@@ -373,6 +379,12 @@ export class SubmissionController {
     if (item?.uncertain ? item.mode === "steer" && item.draft.wholeFileAttachments?.length : mode === "steer" && snapshot.wholeFileAttachments?.length) throw new Error("Whole files can be sent after the current response finishes. Your draft is preserved.");
     if (item?.uncertain ? item.mode === "steer" && item.draft.selectedTextAttachments?.length : mode === "steer" && snapshot.selectedTextAttachments?.length) throw new Error("Selected text cannot be sent while the agent is running yet. Wait for the response to finish.");
     if ((item?.uncertain ? item.mode === "steer" && item.draft.attachments?.length : mode === "steer" && snapshot.attachments?.length)) throw new Error("Image attachments cannot be sent while the agent is running. Wait for the response to finish.");
+    if (!item?.uncertain && !item?.preparation && snapshot.goal) {
+      if (mode !== "prompt") throw new Error("A Goal intent starts a new prompt after the current response finishes. The draft was retained.");
+      if (force) throw new Error("Native /force cannot start a Goal. Clear the Goal intent or the /force spelling; the draft was retained.");
+      // Invalid budget or objective text never creates a session or a goal.
+      goalPromptFromDraft(snapshot);
+    }
     if (!item?.uncertain && !item?.preparation) {
       item = { draft: snapshot, sessionId: sessionId ?? item?.sessionId, mode, uncertain: false, ...(force ? { force: structuredClone(force) } : {}) };
       this.pending[snapshot.id] = item;
@@ -414,10 +426,11 @@ export class SubmissionController {
       if (item.force.guard) throw new Error("A custom command now owns the prepared force spelling. Rebuild the draft before sending.");
       item.force = undefined; this.save();
     }
-    const version = item.force ? 18 : commandVersion(saved);
+    const version = promptVersion(saved, item.mode, Boolean(item.force));
+    const goal = item.mode === "prompt" ? goalPromptFromDraft(saved) : undefined;
     item.send ??= { id: crypto.randomUUID(), ...(version ? { commandVersion: version } : {}), command: item.mode === "steer"
       ? { type: "session.steer", sessionId, text: saved.text, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } }
-      : { type: "session.prompt", sessionId, text: saved.text, ...(item.force?.guard ? { forceTool: structuredClone(item.force.guard) } : {}), model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } } };
+      : { type: "session.prompt", sessionId, text: saved.text, ...(goal ? { goal } : {}), ...(item.force?.guard ? { forceTool: structuredClone(item.force.guard) } : {}), model: saved.model ?? undefined, thinkingLevel: saved.thinkingLevel || undefined, approvalMode: saved.approvalMode, ...attachments, draft: { id: saved.id, revision: saved.revision } } };
     const send = item.send;
     this.save();
     onSendCommand?.(captureDraft(item.draft, this.hostId), send.id);
@@ -573,7 +586,7 @@ export class SubmissionController {
     let item = this.pending[snapshot.id];
     if (!item?.uncertain) {
       const parsed = parseDetachedQuestionAnswers(answers);
-      if (snapshot.text !== detachedAnswerDraft(parsed) || snapshot.attachments?.length || snapshot.selectedTextAttachments?.length || snapshot.wholeFileAttachments?.length) throw new Error("The saved question draft does not match these answers.");
+      if (snapshot.text !== detachedAnswerDraft(parsed) || snapshot.goal || snapshot.attachments?.length || snapshot.selectedTextAttachments?.length || snapshot.wholeFileAttachments?.length) throw new Error("The saved question draft does not match these answers.");
       item = { draft: snapshot, sessionId, mode: "question", question: { questionId, questionEntryId, answers: parsed }, uncertain: false };
       this.pending[snapshot.id] = item;
     }

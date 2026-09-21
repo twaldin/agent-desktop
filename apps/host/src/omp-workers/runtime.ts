@@ -1,3 +1,4 @@
+import { goalPromptForAdmission } from "../../../../packages/shared/src/goal-composer";
 import { parseSessionTree, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult, type SessionTree, type TreeMutationRequest, type TreeMutationResult } from "../../../../packages/shared/src/session-tree";
 import { parseTurnReview } from "../../../../packages/shared/src/turn-review";
 import { parseTodoExternalEditorRequest } from "../../../../packages/shared/src/todo-external-editor";
@@ -833,11 +834,12 @@ export class WorkerClient {
       : forceOperation ? parseForceToolCommandId(options.commandId) : options.commandId;
     if (forceOperation && (commandId === undefined || options?.commandVersion !== 18))
       throw new Error("Force-tool prompt admission requires command version 18 and its original command identity.");
-    const preparedOptions = options ? { ...options, ...forceFields, ...(commandId === undefined ? {} : { commandId }), images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles, text.length) } : undefined;
+    const goal = goalPromptForAdmission(text, options ?? {});
+    const preparedOptions = options ? { ...options, ...forceFields, ...(goal ? { goal } : {}), ...(commandId === undefined ? {} : { commandId }), images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles, text.length) } : undefined;
     const id = `${this.#requestPrefix}${++this.#requestId}`;
     let forceToolReceipt: ForceToolReceipt | undefined;
     const acceptedKey = `${id}:accepted`;
-    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(acceptedKey, undefined, Boolean(preparedOptions?.forceTool || preparedOptions?.forceRecovery || preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length || preparedOptions?.wholeFiles?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
+    const accepted = this.#promise<Awaited<OmpPromptRun["accepted"]>>(acceptedKey, undefined, Boolean(preparedOptions?.goal || preparedOptions?.forceTool || preparedOptions?.forceRecovery || preparedOptions?.images?.length || preparedOptions?.selectedText?.attachments.length || preparedOptions?.wholeFiles?.attachments.length) || text.trimStart().startsWith("/") || text.includes("/skill:") ? "prompt-admission" : undefined);
     const completion = this.#promise<boolean>(`${id}:completion`);
     if (preparedOptions?.commandId !== undefined) this.#pending.get(acceptedKey)!.forceTool = {
       commandId: preparedOptions.commandId,

@@ -360,3 +360,51 @@ test('removing the last saved inline reference still uses v8 for its clearing wr
   expect(controller.get(original.id)).toMatchObject({status:'saved',draft:{text:original.text,wholeFileAttachments:[]}});
  }finally{controller.dispose();}
 });
+
+describe("Goal composer intent", () => {
+  const image = { id: "image-one", hostId: "host", kind: "image" as const, name: "capture.png", sha256: "a".repeat(64), bytes: 10, mimeType: "image/png" as const };
+  test("invalid raw budget survives offline cache restore and clearing removes only the intent", () => {
+    const local = cache(), controller = new DraftController(saver([]), "host", local);
+    try {
+      controller.update("goal-offline", { text: "Ship the release", goal: { tokenBudget: "12x" }, attachments: [image], model: { provider: "fixture", id: "m" }, environment: null });
+      const restored = new DraftController(saver([]), "host", local);
+      try {
+        expect(restored.get("goal-offline")).toMatchObject({ status: "offline", draft: { text: "Ship the release", goal: { tokenBudget: "12x" }, attachments: [{ id: "image-one" }] } });
+        expect(() => restored.update("goal-offline", { goal: undefined })).toThrow("null");
+        restored.update("goal-offline", { goal: null });
+        expect(restored.get("goal-offline").draft).toMatchObject({ text: "Ship the release", goal: null, attachments: [{ id: "image-one" }], model: { provider: "fixture", id: "m" }, environment: null });
+      } finally { restored.dispose(); }
+    } finally { controller.dispose(); }
+  });
+  test("exact goal consumption clears only the captured intent, keeps a newer edit, and saves it on v24", async () => {
+    const calls: CommandEnvelope[] = [], controller = new DraftController(saver(calls), "host");
+    try {
+      const original = draft({ text: "Ship the release", goal: { tokenBudget: "5000" } });
+      controller.ingest(original); controller.setConnected(true);
+      const submitted = await controller.prepareSubmission(original.id);
+      controller.beginPendingSubmission(submitted, "goal-command");
+      controller.update(original.id, { text: "Ship the release, then tag it" });
+      controller.finishSubmission(original.id, submitted, true, false, "goal-command");
+      expect(controller.get(original.id).draft).toMatchObject({ text: "Ship the release, then tag it", goal: null });
+      controller.ingest({ ...original, revision: 2, text: "", goal: null, lastConsumption: { commandId: "goal-command", submittedRevision: 1 } });
+      expect(controller.get(original.id)).toMatchObject({ status: "unsaved", draft: { text: "Ship the release, then tag it", goal: null } });
+      await controller.flush(original.id);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ commandVersion: 24, command: { expectedRevision: 2, draft: { text: "Ship the release, then tag it", goal: null } } });
+    } finally { controller.dispose(); }
+  });
+  test("a failed or unknown send retains the captured intent and a stripped host goal conflicts", () => {
+    const controller = new DraftController(saver([]), "host");
+    try {
+      const original = draft({ goal: { tokenBudget: "" } });
+      controller.ingest(original);
+      controller.beginPendingSubmission(original, "goal-command");
+      controller.finishSubmission(original.id, original, false, true, "goal-command");
+      expect(controller.get(original.id).draft).toMatchObject({ text: original.text, goal: { tokenBudget: "" } });
+      controller.ingest({ ...original, revision: 2, text: "", goal: undefined });
+      expect(controller.get(original.id)).toMatchObject({ status: "conflict", draft: { goal: { tokenBudget: "" } }, conflict: { revision: 2 } });
+      controller.resolve(original.id, "remote");
+      expect(controller.get(original.id)).toMatchObject({ status: "offline", draft: { text: "", goal: null } });
+    } finally { controller.dispose(); }
+  });
+});

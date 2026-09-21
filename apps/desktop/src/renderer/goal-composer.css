@@ -1,0 +1,17 @@
+.goal-composer { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; color: var(--secondary); font-size: var(--small-font-size, 12px); }
+.goal-composer-chip { color: var(--secondary); }
+.goal-composer-chip > svg { flex: none; width: 14px; height: 14px; }
+.goal-composer-chip .goal-composer-clear, .goal-composer-chip:hover:not(:disabled) .goal-composer-mark, .goal-composer-chip:focus-visible .goal-composer-mark { display: none; }
+.goal-composer-chip:hover:not(:disabled) .goal-composer-clear, .goal-composer-chip:focus-visible .goal-composer-clear { display: block; }
+.goal-composer-chip:hover:not(:disabled), .goal-composer-chip:focus-visible { color: var(--text); }
+.goal-composer-budget-trigger { color: var(--secondary); font-size: inherit; }
+.goal-composer-budget-trigger.goal-composer-invalid { color: var(--danger); }
+.goal-composer > button:disabled { opacity: .5; }
+.goal-composer > button:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px; }
+.goal-composer-budget { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 3; display: flex; flex-direction: column; gap: 6px; width: min(100vw - 16px, 280px); padding: 10px 12px; box-sizing: border-box; border: var(--border-width, 1px) solid var(--border); border-radius: var(--radius-large, 12px); background: var(--elevated-surface); color: var(--secondary); }
+.goal-composer-budget label { display: flex; align-items: center; gap: 12px; color: var(--text); }
+.goal-composer-budget input { flex: 1; min-width: 0; width: 120px; padding: 5px 8px; color: var(--text); background: var(--app-surface); border: 1px solid var(--border); border-radius: var(--radius-small, 6px); font: inherit; }
+.goal-composer-budget input[aria-invalid="true"] { border-color: var(--danger); }
+.goal-composer-budget input:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 1px; }
+.goal-composer-budget [role="alert"] { color: var(--danger); }
+.goal-composer-budget span { line-height: 1.4; overflow-wrap: anywhere; }

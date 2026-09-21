@@ -744,3 +744,67 @@ test("malformed active-turn receipts retain uncertainty, the draft guard and the
     expect(restored.queuedEntries()[0]?.uncertain).toBe(false);
   } finally { drafts.dispose(); }
 });
+
+describe("Goal composer submissions", () => {
+  const goalDraft: Draft = { ...original, text: "Ship the release", goal: { tokenBudget: "5000" } };
+  const accepted = (envelope: CommandEnvelope): CommandResult => envelope.command.type === "session.create"
+    ? { ok: true, commandId: envelope.id, value: session } : { ok: true, commandId: envelope.id, admission: { kind: "user-message", entryId: "entry-goal" } };
+  test("an invalid budget or slash objective is refused before any session or goal command exists", async () => {
+    const calls: CommandEnvelope[] = [];
+    const controller = new SubmissionController(async envelope => { calls.push(envelope); return accepted(envelope); }, "host-a", cache());
+    await expect(controller.submit({ ...goalDraft, goal: { tokenBudget: "12x" } }, undefined, "prompt")).rejects.toThrow("positive integer");
+    await expect(controller.submit({ ...goalDraft, text: "/compact" }, undefined, "prompt")).rejects.toThrow("slash command");
+    expect(calls).toHaveLength(0); expect(controller.entries()).toHaveLength(0);
+  });
+  test("goal intent is refused for steer, active-turn follow-ups and native /force without creating a command", async () => {
+    const calls: CommandEnvelope[] = [];
+    const controller = new SubmissionController(async envelope => { calls.push(envelope); return accepted(envelope); }, "host-a", cache());
+    await expect(controller.submit(goalDraft, session.id, "steer")).rejects.toThrow("current response finishes");
+    await expect(controller.submitActive(goalDraft, session.id, "follow-up")).rejects.toThrow("current response finishes");
+    await expect(controller.submit({ ...goalDraft, text: "/force" }, session.id, "prompt", undefined, undefined, { nativeForce: true })).rejects.toThrow("/force");
+    expect(calls).toHaveLength(0); expect(controller.entries()).toHaveLength(0); expect(controller.queuedEntries()).toHaveLength(0);
+  });
+  test("the base create envelope and the v24 goal prompt keep one identity across an unknown outcome, edits and restart", async () => {
+    const storage = cache(), calls: CommandEnvelope[] = [];
+    const first = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return envelope.command.type === "session.create" ? accepted(envelope) : unknown(envelope); }, "host-a", storage);
+    await expect(first.submit(goalDraft, undefined, "prompt")).rejects.toThrow("pending");
+    expect(calls[0]?.commandVersion).toBeUndefined();
+    expect(calls[0]).toMatchObject({ command: { type: "session.create", projectId: original.projectId } });
+    expect(calls[1]).toMatchObject({ commandVersion: 24, command: { type: "session.prompt", sessionId: session.id, text: "Ship the release", goal: { objective: "Ship the release", tokenBudget: 5000 }, draft: { id: original.id, revision: original.revision } } });
+    const restored = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return accepted(envelope); }, "host-a", storage);
+    expect(restored.cacheWarning).toBeUndefined();
+    expect(restored.entries()[0]).toMatchObject({ uncertain: true, sessionId: session.id, draft: { goal: { tokenBudget: "5000" } } });
+    const result = await restored.submit({ ...edited, goal: null }, undefined, "prompt");
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toEqual(calls[1]);
+    expect(result).toMatchObject({ sessionId: session.id, commandId: calls[1]!.id, submitted: { text: "Ship the release", goal: { tokenBudget: "5000" } } });
+    expect(restored.entries()).toHaveLength(0);
+  });
+  test("a restored goal prompt refuses a cached envelope whose intent differs from its captured draft", async () => {
+    const storage = cache();
+    const controller = new SubmissionController(async envelope => envelope.command.type === "session.create" ? accepted(envelope) : unknown(envelope), "host-a", storage);
+    await expect(controller.submit(goalDraft, undefined, "prompt")).rejects.toThrow("pending");
+    const cached = JSON.parse(storage.read(controller.cacheKey)!);
+    cached[original.id].send.command.goal.tokenBudget = 1;
+    storage.write(controller.cacheKey, JSON.stringify(cached));
+    const restored = new SubmissionController(async () => { throw new Error("must not send"); }, "host-a", storage);
+    expect(restored.cacheWarning).toContain("Pending submission storage");
+    expect(restored.entries()).toHaveLength(0);
+  });
+  test("a cleared goal format prompts on v24 without a goal payload while steering keeps the base version", async () => {
+    const calls: CommandEnvelope[] = [];
+    const controller = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return accepted(envelope); }, "host-a", cache());
+    await controller.submit({ ...original, goal: null }, session.id, "prompt");
+    await controller.submit({ ...original, revision: 8, goal: null }, session.id, "steer");
+    expect(calls[0]).toMatchObject({ commandVersion: 24, command: { type: "session.prompt", text: original.text } });
+    expect("goal" in calls[0]!.command).toBe(false);
+    expect(calls[1]?.commandVersion).toBeUndefined();
+    expect(calls[1]).toMatchObject({ command: { type: "session.steer", text: original.text } });
+  });
+  test("a goal prompt accepted without a native user receipt stays uncertain for the same command", async () => {
+    const calls: CommandEnvelope[] = [];
+    const controller = new SubmissionController(async envelope => { calls.push(structuredClone(envelope)); return { ok: true, commandId: envelope.id }; }, "host-a", cache());
+    await expect(controller.submit(goalDraft, session.id, "prompt")).rejects.toThrow("uncertain");
+    expect(controller.entries()[0]).toMatchObject({ uncertain: true, send: { id: calls[0]!.id, commandVersion: 24 } });
+  });
+});

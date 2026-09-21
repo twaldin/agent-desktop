@@ -32,6 +32,7 @@ const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "r
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
   if (name === "tree") return { availability: "executable" };
   if (name === "export") return { availability: "executable" };
+  if (name === "goal") return { availability: "partial", reason: "Open the owning Goal panel, or prepare a new objective in the composer before sending." };
   if (supportedBuiltins.has(name)) return { availability: "executable" };
   // These commands use the owning Plan controller and its durable decisions.
   if (name === "plan" || name === "plan-review") return { availability: "executable" };
@@ -84,7 +85,7 @@ function nativeBuiltinRows(): ComposerAction[] {
     argumentHint: command.acpInputHint ?? command.inlineHint,
     subcommands: command.subcommands?.map(sub => ({ ...sub, ...builtinAvailability(command.name, sub.name) })),
     argumentCompletions: Boolean(command.subcommands?.length),
-    ...(command.name === "tree" ? { desktopAction: "tree" as const } : command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : command.name === "usage" ? { desktopAction: "usage-reset" as const } : {}),
+    ...(command.name === "goal" ? { desktopAction: "goal" as const } : command.name === "tree" ? { desktopAction: "tree" as const } : command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : command.name === "usage" ? { desktopAction: "usage-reset" as const } : {}),
   }));
 }
 

@@ -1,3 +1,4 @@
+import { parseGoalComposerDraft, parseGoalPromptIntent } from "../../../packages/shared/src/goal-composer";
 import { parseTreeCommandId, parseTreeMutationRequest, parseTreeTicket } from "../../../packages/shared/src/session-tree";
 import { exportId, exportTheme } from "../../../packages/shared/src/session-export";
 import { parseTodoCommandId, parseTodoMutationRequest } from "../../../packages/shared/src/session-todos";
@@ -41,11 +42,15 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,23].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,23,24].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
   const version = envelope.commandVersion as CommandEnvelope["commandVersion"];
   const command = object(envelope.command);
+  const goalCommand = command.type === "draft.put" && Object.hasOwn(object(command.draft), "goal") || Object.hasOwn(command, "goal");
+  if ((goalCommand || version === 24 || transportVersion === 24) && (version !== 24 || transportVersion !== undefined && transportVersion !== 24
+    || command.type !== "draft.put" && command.type !== "session.prompt"))
+    throw new Error("Goal composer intent requires command version 24 and its original version 24 endpoint.");
   const treeCommand = command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined;
   if ((treeCommand || version === 23 || transportVersion === 23) && (!treeCommand || version !== 23 || transportVersion !== undefined && transportVersion !== 23))
     throw new Error("Native history requires command version 23 and the version 23 endpoint.");
@@ -84,6 +89,10 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
   if (input.treeTicket !== undefined && (type !== "session.prompt" || commandVersion !== 23 || Object.keys(input).some(key => !["type", "sessionId", "text", "treeTicket"].includes(key))))
     throw new Error("History edit submissions require their original tree ticket and separate text/images.");
   const forceFields = hasForceFields ? parseForceToolPromptFields(input) : {};
+  const goal = Object.hasOwn(input, "goal") ? parseGoalPromptIntent(input.goal) : undefined;
+  if (goal && (type !== "session.prompt" || commandVersion !== 24 || hasForceFields || input.treeTicket !== undefined
+    || typeof input.text !== "string" || goal.objective !== input.text.trim() || input.text.trimStart().startsWith("/")))
+    throw new Error("Goal initialization requires its original ordinary objective prompt, separate from slash, history or force commands.");
   const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
   const promptText = () => hasContext && input.text === "" ? "" : text(input.text, "prompt", hasContext ? 500_000 : 4_000_000);
   switch (type) {
@@ -204,6 +213,7 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
     }
     case "session.prompt": return { id, command: { type, ...forceFields,
       ...(input.treeTicket === undefined ? {} : { treeTicket: parseTreeTicket(input.treeTicket) }),
+      ...(goal === undefined ? {} : { goal }),
       sessionId: text(input.sessionId, "session ID"), text: promptText(),
       ...(attachments === undefined ? {} : { attachments }),
       ...(wholeFileAttachments === undefined ? {} : { wholeFileAttachments }),
@@ -266,6 +276,7 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
       if (typeof draft.text !== "string" || draft.text.length > 4_000_000) throw new Error("Invalid draft text.");
       return { id, command: { type, expectedRevision: revision(input.expectedRevision), draft: {
         id: text(draft.id, "draft ID"), text: draft.text,
+        ...(Object.hasOwn(draft, "goal") ? { goal: parseGoalComposerDraft(draft.goal) } : {}),
         ...(Object.hasOwn(draft, "wholeFileAttachments") ? { wholeFileAttachments: (commandVersion ?? 0) >= 9
           ? parseInlineWholeFileMentions(draft.wholeFileAttachments, draft.text.length)
           : parseWholeFileAttachments(draft.wholeFileAttachments,draft.text.length) } : {}),

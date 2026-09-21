@@ -34,6 +34,28 @@ afterEach(() => {
 
 const draft: DraftInput = { id: "new-chat", text: "first laptop's unsent work", projectId: null, model: null, thinkingLevel: "high" };
 
+test("Goal intent survives restart and legacy writes; only its accepted revision clears it", () => {
+  const root = directory(), store = open(root);
+  store.putDraft({ ...draft, goal: { tokenBudget: "not yet valid" } }, 0);
+  close(store);
+  const reopened = open(root);
+  expect(reopened.getDraft(draft.id)?.goal).toEqual({ tokenBudget: "not yet valid" });
+  expect(() => reopened.putDraft(draft, 1)).toThrow("Goal composer protocol");
+  reopened.putDraft({ ...draft, goal: { tokenBudget: "1200" } }, 1);
+  const command: HostCommand = { type: "session.prompt", sessionId: "native-owner", text: draft.text,
+    goal: { objective: draft.text, tokenBudget: 1200 }, draft: { id: draft.id, revision: 2 } };
+  reopened.claimCommand("goal-send", "captured", command);
+  expect(() => reopened.finishCommand("goal-send", "captured", { ok: true, commandId: "goal-send", admission: { kind: "native-command", command: "goal" } })).toThrow("ordinary native user receipt");
+  expect(reopened.getDraft(draft.id)?.text).toBe(draft.text);
+  reopened.putDraft({ ...draft, text: "Newer objective", goal: { tokenBudget: "800" } }, 2);
+  reopened.finishCommand("goal-send", "captured", { ok: true, commandId: "goal-send", admission: { kind: "user-message", entryId: "native-entry" } });
+  expect(reopened.getDraft(draft.id)).toMatchObject({ text: "Newer objective", goal: { tokenBudget: "800" }, revision: 3 });
+  reopened.consumeDraft({ id: draft.id, revision: 3 }, "later-send");
+  expect(reopened.getDraft(draft.id)).toMatchObject({ text: "", goal: null, model: draft.model,
+    lastConsumption: { commandId: "later-send", submittedRevision: 3 } });
+  expect(() => reopened.putDraft(draft, 4)).toThrow("Goal composer protocol");
+});
+
 test("metadata transactions roll back nested writes together and persist complete transitions", () => {
   const root = directory(), store = open(root);
   store.writeMetadata("reset-test:a", { value: 1 });

@@ -2,6 +2,19 @@ import { expect, test } from "bun:test";
 import { parseCommandEnvelope } from "./validation";
 import type { ImageAttachmentRef } from "@agent-desktop/shared";
 
+test("Goal admission cannot downgrade, queue, replace its objective or hide in another command", () => {
+  const command = { type: "session.prompt" as const, sessionId: "native-owner", text: "Build it", goal: { objective: "Build it", tokenBudget: 1000 } };
+  expect(parseCommandEnvelope({ id: "goal", commandVersion: 24, command }, 24).command).toEqual(command);
+  for (const version of [undefined, 5, 23]) expect(() => parseCommandEnvelope({ id: "goal", commandVersion: version, command }, 24)).toThrow();
+  expect(() => parseCommandEnvelope({ id: "goal", commandVersion: 24, command }, 23)).toThrow();
+  for (const change of [{ type: "session.steer" }, { text: "Different" }, { text: "/goal Build it" }, { goal: { objective: "Build it", tokenBudget: 0 } }, { forceTool: { epoch: "e", expectedRevision: 1, toolName: "read" } }])
+    expect(() => parseCommandEnvelope({ id: "goal", commandVersion: 24, command: { ...command, ...change } }, 24)).toThrow();
+  expect(() => parseCommandEnvelope({ id: "goal", commandVersion: 24, command: { type: "session.create", text: "Build it", goal: command.goal } }, 24)).toThrow();
+  const draft = { id: "new-conversation", text: "Build it", projectId: null, model: null, goal: { tokenBudget: "unfinished" } };
+  expect(parseCommandEnvelope({ id: "draft", commandVersion: 24, command: { type: "draft.put", draft, expectedRevision: 0 } }, 24).command).toMatchObject({ draft });
+  expect(() => parseCommandEnvelope({ id: "draft", commandVersion: 5, command: { type: "draft.put", draft, expectedRevision: 0 } }, 5)).toThrow();
+});
+
 test("side questions reach their dedicated start and cancel commands with bounded native inputs", () => {
   const command = { type: "session.btw.start", sessionId: "parent", question: "  Explain this  " } as const;
   expect(parseCommandEnvelope({ id: "side-1", commandVersion: 5, command })).toEqual({

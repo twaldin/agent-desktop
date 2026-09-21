@@ -1,3 +1,5 @@
+import { GoalComposerIntent } from "./GoalComposerIntent";
+import { goalComposerCommand } from "./goal-composer";
 import { ExtensionStatuses, ExtensionWidgets, useExtensionSessionUi } from "./ExtensionSessionUi";
 import { SessionTreeHistory, SessionTreeEdit } from "./SessionTree";
 import { useSessionTree, type SessionTreePorts } from "./use-session-tree";
@@ -709,6 +711,8 @@ export function App() {
   const environmentReady = Boolean(selectedId || draft.execution?.type !== 'worktree' || (draft.environment === undefined ? !environmentAvailable && !hasRemoteExecution(draft.execution) : environmentAvailable && (draft.environment === null
     || environmentCatalog?.restored && !environmentCatalog.loading && !environmentCatalog.error && environmentCatalog.items.some(item => item.type === 'environment' && item.configPath === draft.environment?.configPath && item.revision === draft.environment?.revision))));
   const canSend = connected && Boolean(state) && !busy && !missingSession && !pendingSubmission?.preparation && Boolean(hasDraftContent(draft) || pendingSubmission?.uncertain) && (Boolean(pendingSubmission?.uncertain) || (!imageIssue && !selectedTextIssue && !wholeFileIssue && !imagesStaging && !remoteExecutionIssue && executionReady && environmentReady)) && (view.status !== "conflict" || Boolean(pendingSubmission?.uncertain)) && (!modeView?.conflict || Boolean(pendingSubmission?.uncertain)) && !selected?.archived;
+  const canRouteGoal = connected && Boolean(state) && !busy && !missingSession && !selected?.archived
+    && !pendingSubmission && view.status !== "conflict" && !modeView?.conflict && Boolean(goalComposerCommand(draft.text));
 
   const navigate = useCallback((id: string | null, owner = route.hostId ?? state?.host.id ?? desktop.localHostId, keepSettings = false, focusComposer = true) => {
     settingsOriginLabel.current = null; setAutomationsOpen(false); setPullRequestsOpen(false); setRoute({ sessionId: id, hostId: owner }); if(!keepSettings)setPluginDirectoryOpen(false);setIntegrationSelection(undefined); setActionError(null); setMenuOpen(false); if (!keepSettings) setSettingsOpen(false);
@@ -1441,6 +1445,38 @@ export function App() {
       } catch (cause) { setActionError(errorMessage(cause)); return; }
       finally { submitting.current = false; setBusy(false); }
     }
+    const goalDraft = drafts.get(draftId).draft;
+    const goalCommand = goalComposerCommand(goalDraft.text);
+    if (goalCommand && !submissions.get(draftId)?.uncertain) {
+      const originalRoute = selectedRef.current;
+      submitting.current = true; setBusy(true); setActionError(null);
+      try {
+        if (!connected || !bridge.getComposerActions) throw new Error("Reconnect to the owning host to resolve /goal. The draft was retained.");
+        const catalog = await bridge.getComposerActions(workspaceTarget, false, hostId);
+        assertComposerOwner(catalog, hostId, workspaceTarget);
+        if (selectedRef.current !== originalRoute || !desktop.catalog.records.get(hostId)?.connected || !sameDraftContent(goalDraft, drafts.get(draftId).draft))
+          throw new Error("The original conversation, connection, or draft changed while resolving /goal. Nothing was sent.");
+        const native = catalog.commands.find(row => row.name === "goal" && row.availability !== "shadowed");
+        if (native?.source.kind === "builtin") {
+          if (native.desktopAction !== "goal" || state?.goalComposer?.commandVersion !== 24) throw new Error("Update the owning host to use Goal composer intent. The draft was retained.");
+          if (goalCommand.kind === "manage") {
+            if (selectedId) dock.open("goal");
+            throw new Error(selectedId ? `Use the Goal panel for /goal ${goalCommand.verb}. The command and attachments were retained; nothing was changed.` : "Open a conversation to manage an existing goal. The command was retained.");
+          }
+          if (selectedId && !goalCommand.text.trim()) {
+            dock.open("goal");
+            drafts.update(draftId, { text: goalCommand.text, wholeFileAttachments: remapFileOffsets(goalDraft.text, goalCommand.text, goalDraft.wholeFileAttachments ?? []) });
+            return;
+          }
+          drafts.update(draftId, { text: goalCommand.text, goal: goalDraft.goal ?? { tokenBudget: "" },
+            ...(goalDraft.wholeFileAttachments === undefined ? {} : { wholeFileAttachments: remapFileOffsets(goalDraft.text, goalCommand.text, goalDraft.wholeFileAttachments) }) });
+          textarea.current?.focus();
+          return;
+        }
+        if (!native || !["executable", "partial"].includes(native.availability)) throw new Error("The owning host did not expose a supported /goal action. The draft was retained.");
+      } catch (cause) { if (selectedRef.current === originalRoute) setActionError(errorMessage(cause)); return; }
+      finally { submitting.current = false; setBusy(false); }
+    }
     if (!canSend) return;
     let browserContinuation;
     try {
@@ -1477,6 +1513,10 @@ export function App() {
       const pending = submissions.get(sendingDraftId);
       snapshot = pending?.uncertain ? pending.draft : await drafts.prepareSubmission(sendingDraftId);
       if (!hasDraftContent(snapshot)) return;
+      if (!pending?.uncertain && snapshot.goal) {
+        if (state?.goalComposer?.version !== 1 || state.goalComposer.commandVersion !== 24) throw new Error("Update the owning host before sending Goal intent. The draft was retained.");
+        if (running) throw new Error("Wait for the current response before starting a goal. The objective and attachments were retained.");
+      }
       if (!pending?.uncertain && hasRemoteExecution(snapshot.execution)) {
         const currentOwner = desktop.catalog.records.get(hostId);
         if (!currentOwner?.connected) throw new Error('Reconnect to the owning host before sending this remote worktree draft.');
@@ -1704,7 +1744,7 @@ export function App() {
     updateText: text => { if(textarea.current)textarea.current.replaceText(text); else drafts.update(draftId,{text,wholeFileAttachments:remapFileOffsets(drafts.get(draftId).draft.text,text,drafts.get(draftId).draft.wholeFileAttachments??[])}); },
     actions: [
       { id: "side-chat", name: "Side chat", description: "Ask a native OMP side question", icon: "sideChat", reason: !selected ? "Open a conversation to ask a side question." : undefined, run: () => dock.open("side-chat") },
-      { id: "goal", name: "Goal", description: "Set or edit the native goal", icon: "compose", reason: !selected ? "Open a conversation to manage its goal." : undefined, run: () => dock.open("goal") },
+      { id: "goal", name: "Goal", description: selected ? "Manage the native goal" : "Start a conversation with a goal", icon: "compose", reason: !selected && state?.goalComposer?.commandVersion !== 24 ? "Update the owning host to use Goal composer intent." : undefined, run: () => { if (selected) dock.open("goal"); else { drafts.update(draftId, { goal: drafts.get(draftId).draft.goal ?? { tokenBudget: "" } }); textarea.current?.focus(); } } },
       { id: "archive", name: "Archive", description: "Archive the current chat", icon: "archive", reason: !selected ? "Open a conversation to archive it." : !connected ? "Reconnect to archive this conversation." : undefined,
         run: async () => { if (!selected || !connected) throw new Error("The conversation is unavailable."); await command({ type: "session.archive", sessionId: selected.id, archived: true }); await refresh(); } },
       { id: "review", name: "Code review", description: "Review changes in this workspace", icon: "compose", reason: !workspace ? "Choose a project to review its changes." : undefined,
@@ -2147,7 +2187,7 @@ export function App() {
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={anchor => composerContext.current?.openProjects(anchor)}/>}
         <div className={`composer-region ${selectedId ? "" : "home-composer"}`}>
-          {selected && !selected.archived && <PendingMcpAuthorization key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} connected={connected}/>}
+          {selected && !selected.archived && <PendingMcpAuthorization key={`mcp:${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} connected={connected}/>}
           {selected && <PendingDetachedQuestions bridge={bridge} hostId={hostId} sessionId={selected.id} localHostId={desktop.localHostId} connected={connected} archived={selected.archived} drafts={drafts} submissions={submissions}/>}
           {(selectedId || pendingSessionId) && state && <>
             {!selectedId && <p className="subtle-notice">Requests for {knownPendingSession?.title ?? "the session being started"} on {state.host.name}.</p>}
@@ -2170,7 +2210,7 @@ export function App() {
           {selection.differingDraftModel && <p className="subtle-notice">This draft selects {draft.model!.provider}/{draft.model!.id}; the session’s last reported model is {selection.current!.provider}/{selection.current!.id}.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { model: null, thinkingLevel: undefined })}>Follow session model and reasoning</button></p>}
           {composer.catalog && !permissionChoice.supported && <p className="subtle-notice">This host does not support saved composer permission choices yet. Update the owning host to enable this control; its native permissions continue to apply.</p>}
           {draft.approvalMode && <p className="subtle-notice">Draft permissions: {approvalModes[draft.approvalMode]?.label ?? draft.approvalMode}. Applied on send and retained across session restarts.{permissionChoice.differs && permissionChoice.current && <> {selected ? "Current session" : "Workspace default"}: {approvalModes[permissionChoice.current].label}.</>} Native per-tool policies still apply.<button disabled={Boolean(selected?.archived) || running} onClick={() => drafts.update(draftId, { approvalMode: undefined })}>{selected ? "Follow current session permissions" : "Follow native default permissions"}</button></p>}
-          {selected && <GoalStrip key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
+          {selected && <GoalStrip key={`goal:${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} snapshot={activity.value} stale={!connected ? "Offline goal snapshot" : activity.error} running={running} archived={Boolean(selected.archived)} refresh={activity.refresh} onEdit={() => dock.open("goal")}/>}
           {forkController && <SessionFork data={forkController} request={forkMenu?.owner === forkOwner ? forkMenu.request : undefined}
             onClose={restore => { forkMenu?.request.dismissQuery?.(); if (restore) forkMenu?.request.restoreFocus(); setForkMenu(undefined); }}
             onSelect={execution => void runFork(execution)} onResume={() => void runFork()} onOpenChild={() => void openForkedChat()}/>}
@@ -2184,7 +2224,7 @@ export function App() {
             }}
             branchPrefix={preferences.get("git.branchPrefix") ?? "codex/"} onOpenGitSettings={() => { setSettingsPage("git"); openSettings(); }}
             onProject={projectId => { if (worktreesAvailable) selectProjectWithExecutionMode(drafts,draftId,projectId); else drafts.update(draftId,{projectId,...(projectId === null && draft.execution?.type === "worktree" ? {execution:{type:"local" as const}} : {})}); }} onHost={owner => navigate(null,owner)} onAddProject={() => void addProject()}/>}
-          {selected && state?.queuedMessages?.version === 1 && bridge.getQueuedMessages && bridge.mutateQueuedMessages && <QueuedMessages key={`${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} connected={connected} archived={Boolean(selected.archived)}/>}
+          {selected && state?.queuedMessages?.version === 1 && bridge.getQueuedMessages && bridge.mutateQueuedMessages && <QueuedMessages key={`queued:${hostId}:${selected.id}`} bridge={bridge} hostId={hostId} sessionId={selected.id} connected={connected} archived={Boolean(selected.archived)}/>}
           {queuedSubmissionRecoveries.map(item => <div className="inline-error" role="alert" key={item.send.id}><span>{item.receipt?.outcome === "unknown"
             ? `Delivery of an earlier message is unknown. Inspect command ${item.send.id} before sending it again.`
             : item.receipt?.message ?? "An earlier queued message was not recorded."}</span>{item.receipt?.outcome === "not-recorded"
@@ -2218,7 +2258,7 @@ export function App() {
               onSelection={autocomplete.observeCaret} onFocus={autocomplete.inputProps.onFocus} onBlur={autocomplete.inputProps.onBlur}
               onCompositionStart={autocomplete.inputProps.onCompositionStart} onCompositionEnd={autocomplete.inputProps.onCompositionEnd}
               ariaControls={autocomplete.inputProps['aria-controls']} ariaExpanded={autocomplete.inputProps['aria-expanded']} ariaActiveDescendant={autocomplete.inputProps['aria-activedescendant']}
-              placeholder={selected?.archived ? "Unarchive this conversation to continue" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)}
+              placeholder={selected?.archived ? "Unarchive this conversation to continue" : draft.goal ? "Describe the goal…" : running ? "Add instructions while the agent works…" : "Ask anything, or describe a task"} disabled={Boolean(selected?.archived)}
               onKeyDown={event => { if (autocomplete.onKeyDown(event)) return;
                 installedShortcuts.current?.handleKey(event.nativeEvent);
                 if (event.defaultPrevented || event.nativeEvent.defaultPrevented) return;
@@ -2231,8 +2271,9 @@ export function App() {
             <div className="composer-toolbar">
               <div className="composer-selections">
                 <ComposerSelections connection={{ bridge, hostId, localHostId: desktop.localHostId, connected }} key={`${hostId}:${draftId}:${workspaceOwner ?? ""}`} commandRef={composerSelections} data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)} />
+                {draft.goal && <GoalComposerIntent key={`${hostId}:${draftId}`} intent={draft.goal} disabled={Boolean(selected?.archived || busy || pendingSubmission?.uncertain)} onChange={goal => drafts.update(draftId, { goal })} onClear={() => { drafts.update(draftId, { goal: null }); textarea.current?.focus(); }}/>}
               </div>
-              <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : `Send (${normalSendShortcut})` : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
+              <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend && !canRouteGoal} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : `Send (${normalSendShortcut})` : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
             </div>
           </form>
           {forceSessionId && submissions.forceTools.pendingOperations(forceSessionId).map(operation => <div className="inline-error" role="status" key={operation.id}>
@@ -2247,7 +2288,7 @@ export function App() {
               }).catch(cause => setActionError(errorMessage(cause))).finally(() => setBusy(false));
             }}>Check original operation</button>
           </div>)}
-          {forceSessionId ? <ForceToolControl key={`${hostId}:${forceSessionId}`} owner={{hostId, sessionId:forceSessionId}}
+          {forceSessionId ? <ForceToolControl key={`force:${hostId}:${forceSessionId}`} owner={{hostId, sessionId:forceSessionId}}
             ownerLabel={`${selected?.title ?? knownPendingSession?.title ?? "Current conversation"} · ${state?.host.name ?? "Unavailable host"}`}
             ports={forceToolPorts} connected={connected && !selected?.archived} active={!contentOverlayOpen}
             draftText={draft.text} recovery={submissions.forceRecovery(forceSessionId)}/>

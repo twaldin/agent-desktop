@@ -1,3 +1,4 @@
+import { GOAL_COMPOSER_CAPABILITY, goalPromptFromDraft } from "../../../packages/shared/src/goal-composer";
 import { SESSION_TREE_CAPABILITY } from "../../../packages/shared/src/session-tree";
 import { SessionTreeHttp, mutateSessionTree, projectTreeJournalReceipt } from "./session-tree-http";
 import { TodoExternalEditorHttp, type TodoExternalEditorHttpAction } from "./todo-external-editor-http";
@@ -781,6 +782,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { protocolVersion: 1, sessionUsage: { version: 1, commandVersion: 20, nativePolicy: false }, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
       sessionExports: SESSION_EXPORT_CAPABILITY,
       sessionForks: SESSION_FORK_CAPABILITY,
+      goalComposer: GOAL_COMPOSER_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
       drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, forceTool: { version: 1, commandVersion: 18 }, plan: { version: 1, commandVersion: 19, document: { version: 1, commandVersion: 20 } }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
       todos: SESSION_TODOS_CAPABILITY, tree: SESSION_TREE_CAPABILITY,
@@ -965,7 +967,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24): Promise<CommandResult> {
     const command = envelope.command;
     if ((command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined) && commandVersion !== 23)
       return fail(envelope.id, "TREE_PROTOCOL_REQUIRED", "Native history requires version 23.");
@@ -992,6 +994,13 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     if (commandVersion < 3 && requiresAttachmentProtocol(command, id => store.getDraft(id))) return fail(envelope.id, "ATTACHMENT_PROTOCOL_REQUIRED", "This draft requires the image attachment protocol. Its content was preserved.");
     if ((command.type === "session.prompt" || command.type === "session.steer") && command.draft) {
       const draft = store.getDraft(command.draft.id);
+      if (draft?.goal !== undefined && (draft.goal !== null || command.type === "session.prompt") && commandVersion !== 24) return fail(envelope.id, "GOAL_COMPOSER_PROTOCOL_REQUIRED", "Send this draft with the Goal composer protocol. Its intent was preserved.");
+      if (draft?.revision === command.draft.revision && (draft.goal || command.type === "session.prompt" && (draft.goal !== undefined || command.goal !== undefined))) {
+        const expected = goalPromptFromDraft(draft);
+        const actual = command.type === "session.prompt" ? command.goal : undefined;
+        if (command.type !== "session.prompt" || draft.text !== command.text || expected?.objective !== actual?.objective || expected?.tokenBudget !== actual?.tokenBudget)
+          return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "The Goal intent does not match this draft revision. Reload its preserved content before sending.");
+      }
       if (draft?.wholeFileAttachments !== undefined && command.wholeFileAttachments === undefined) return fail(envelope.id, "WHOLE_FILE_PROTOCOL_REQUIRED", "Send the whole files with this draft. Its content was preserved.");
       if (draft?.revision === command.draft.revision && (draft.wholeFileAttachments !== undefined || command.wholeFileAttachments !== undefined)
         && (draft.text !== command.text || !sameWholeFileAttachments(draft.wholeFileAttachments, command.wholeFileAttachments))) return fail(envelope.id, "DRAFT_CONTENT_MISMATCH", "The submitted files do not match this draft revision. Reload its preserved content before sending.");
@@ -1308,7 +1317,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         goalContinuations?.cancel(command.sessionId);
         const nativeTitleBefore = handle.title;
         updateSession(command.sessionId, { status: "running", error: undefined });
-        const turn = handle.startPrompt(command.text, { commandId: envelope.id, commandVersion, treeTicket: command.treeTicket, forceTool: command.forceTool, forceRecovery: command.forceRecovery, model: command.model, thinkingLevel: command.thinkingLevel, ...(command.wholeFileAttachments === undefined ? {} : { wholeFiles: { submissionId: envelope.id, attachments: command.wholeFileAttachments } }), ...(command.selectedTextAttachments === undefined ? {} : { selectedText: { submissionId: envelope.id, attachments: command.selectedTextAttachments } }), ...(images === undefined ? {} : { images }) });
+        const turn = handle.startPrompt(command.text, { commandId: envelope.id, commandVersion, goal: command.goal, treeTicket: command.treeTicket, forceTool: command.forceTool, forceRecovery: command.forceRecovery, model: command.model, thinkingLevel: command.thinkingLevel, ...(command.wholeFileAttachments === undefined ? {} : { wholeFiles: { submissionId: envelope.id, attachments: command.wholeFileAttachments } }), ...(command.selectedTextAttachments === undefined ? {} : { selectedText: { submissionId: envelope.id, attachments: command.selectedTextAttachments } }), ...(images === undefined ? {} : { images }) });
         let notificationOutcome: 'completed' | 'failed' | 'stopped' = 'failed';
         const completion = turn.completion.then(agentInvoked => {
           const error = runtimeErrors.get(command.sessionId);
@@ -1403,7 +1412,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return operation;
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -1427,6 +1436,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       return fail(envelope.id, "OUTCOME_UNKNOWN", "The original command has no confirmed durable receipt. Inspect its outcome before issuing a new command.");
     }
     const command = envelope.command;
+    if ((command.type === "session.follow-up" || command.type === "session.steer" || command.type === "session.btw.start" || command.type === "session.question.answer")
+      && command.draft && store.getDraft(command.draft.id)?.goal) {
+      return store.finishCommand(envelope.id, hash, fail(envelope.id, "GOAL_COMPOSER_PROTOCOL_REQUIRED",
+        "Clear Goal intent explicitly before queuing, steering, or sending it to a side conversation. The draft was retained.")).result!;
+    }
     if (command.type === "session.follow-up") return dispatchFollowUp(envelope, hash);
     if (command.type === "workspace.mutate" && command.action.type === "git.submit") {
       // Publish the original receipt before waiting on the owner's command tail,
@@ -1693,6 +1707,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           const record = store.environmentPreparations.get(decodeURIComponent(preparationPath[1]!));
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
+        }
+        if (request.method === "POST" && url.pathname === "/v24/commands") {
+          const value = await request.json();
+          return Response.json(await dispatch(parseCommandEnvelope(value, 24), 24));
         }
         if (request.method === "POST" && url.pathname === "/v23/commands") {
           const value = await request.json();

@@ -1,3 +1,4 @@
+import { goalPromptForAdmission } from "../../../../packages/shared/src/goal-composer";
 let dapConfiguration: Promise<import("../integrations/dap").NativeDap> | undefined;
 import { parseSessionTree, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult } from "../../../../packages/shared/src/session-tree";
 let lspConfiguration: Promise<import("../integrations/lsp").NativeLsp> | undefined;
@@ -753,7 +754,8 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
           : forceOperation ? parseForceToolCommandId(message.args.options.commandId) : message.args.options.commandId;
         if (forceOperation && (commandId === undefined || message.args.options?.commandVersion !== 18))
           throw new Error("Force-tool prompt admission requires command version 18 and its original command identity.");
-        const options = message.args.options ? { ...message.args.options, ...forceFields, ...(commandId === undefined ? {} : { commandId }) } : undefined;
+        const goal = goalPromptForAdmission(message.args.text, message.args.options ?? {});
+        const options = message.args.options ? { ...message.args.options, ...forceFields, ...(goal ? { goal } : {}), ...(commandId === undefined ? {} : { commandId }) } : undefined;
         const run = requireSession().startPrompt(message.args.text, options);
         const receipt = (error?: unknown): ForceToolReceipt | undefined => {
           const native = error && typeof error === "object" && "forceToolReceipt" in error

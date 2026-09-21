@@ -1,4 +1,5 @@
 import { hasRemoteExecution } from "../../../../packages/shared/src/new-chat";
+import { parseGoalComposerDraft, sameGoalComposerDraft } from "../../../../packages/shared/src/goal-composer";
 import { parseEnvironmentSelection, sameEnvironmentSelection, parseImageAttachments, sameImageAttachments, parseNewChatExecution, sameNewChatExecution, type CommandEnvelope, type CommandResult, type Draft, type DraftInput, type ModelChoice } from "../../../../packages/shared/src/protocol";
 import { parseSelectedTextAttachments, sameSelectedTextAttachments } from "../../../../packages/shared/src/selected-text";
 import { hasRepeatedWholeFileSources, parseInlineWholeFileMentions, parseWholeFileAttachments, sameWholeFileAttachments, type WholeFileAttachment } from "../../../../packages/shared/src/whole-file";
@@ -31,13 +32,14 @@ export interface DraftCache {
 const equalModel = (a: ModelChoice | null, b: ModelChoice | null) => a?.id === b?.id && a?.provider === b?.provider;
 const parseDraftWholeFiles = (files: readonly WholeFileAttachment[], textLength: number) => hasRepeatedWholeFileSources(files)
   ? parseInlineWholeFileMentions(files, textLength) : parseWholeFileAttachments(files, textLength);
-export const sameDraftContent = (a: Draft, b: Draft) => a.text === b.text && a.projectId === b.projectId && equalModel(a.model, b.model) && a.thinkingLevel === b.thinkingLevel && a.approvalMode === b.approvalMode && sameNewChatExecution(a.execution, b.execution) && sameEnvironmentSelection(a.environment, b.environment) && sameImageAttachments(a.attachments, b.attachments) && sameSelectedTextAttachments(a.selectedTextAttachments, b.selectedTextAttachments) && sameWholeFileAttachments(a.wholeFileAttachments, b.wholeFileAttachments);
+export const sameDraftContent = (a: Draft, b: Draft) => a.text === b.text && a.projectId === b.projectId && equalModel(a.model, b.model) && a.thinkingLevel === b.thinkingLevel && a.approvalMode === b.approvalMode && sameNewChatExecution(a.execution, b.execution) && sameEnvironmentSelection(a.environment, b.environment) && sameGoalComposerDraft(a.goal, b.goal) && sameImageAttachments(a.attachments, b.attachments) && sameSelectedTextAttachments(a.selectedTextAttachments, b.selectedTextAttachments) && sameWholeFileAttachments(a.wholeFileAttachments, b.wholeFileAttachments);
 export const hasDraftContent = (draft: Pick<Draft, "text" | "attachments" | "selectedTextAttachments" | "wholeFileAttachments">) => Boolean(draft.text.trim() || draft.attachments?.length || draft.selectedTextAttachments?.length || draft.wholeFileAttachments?.length);
 /** Copy nested mutable input and preserve the distinction between legacy and image-aware empty drafts. */
 export function captureDraft(draft: Draft, hostId?: string): Draft {
   return { ...draft, model: draft.model ? { ...draft.model } : null,
     ...(draft.execution !== undefined ? { execution: parseNewChatExecution(draft.execution, draft.projectId) } : {}),
     ...(draft.environment !== undefined ? { environment: parseEnvironmentSelection(draft.environment, draft.projectId) } : {}),
+    ...(draft.goal !== undefined ? { goal: parseGoalComposerDraft(draft.goal) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments, hostId) } : {}),
     ...(draft.selectedTextAttachments !== undefined ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),
     ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseDraftWholeFiles(draft.wholeFileAttachments, draft.text.length) } : {}),
@@ -48,11 +50,12 @@ function editableDraft(draft: Draft): DraftInput {
     thinkingLevel: draft.thinkingLevel, approvalMode: draft.approvalMode,
     ...(draft.execution !== undefined ? { execution: parseNewChatExecution(draft.execution, draft.projectId) } : {}),
     ...(draft.environment !== undefined ? { environment: parseEnvironmentSelection(draft.environment, draft.projectId) } : {}),
+    ...(draft.goal !== undefined ? { goal: parseGoalComposerDraft(draft.goal) } : {}),
     ...(draft.attachments !== undefined ? { attachments: parseImageAttachments(draft.attachments) } : {}),
     ...(draft.selectedTextAttachments !== undefined ? { selectedTextAttachments: parseSelectedTextAttachments(draft.selectedTextAttachments) } : {}),
     ...(draft.wholeFileAttachments !== undefined ? { wholeFileAttachments: parseDraftWholeFiles(draft.wholeFileAttachments, draft.text.length) } : {}) };
 }
-const needsReceipt = (draft?: Draft) => draft !== undefined && (draft.attachments !== undefined || draft.execution !== undefined || draft.environment !== undefined || draft.selectedTextAttachments !== undefined || draft.wholeFileAttachments !== undefined);
+const needsReceipt = (draft?: Draft) => draft !== undefined && (draft.attachments !== undefined || draft.execution !== undefined || draft.environment !== undefined || draft.goal !== undefined || draft.selectedTextAttachments !== undefined || draft.wholeFileAttachments !== undefined);
 const stripsWholeFileOffsets = (base: Draft, remote: Draft) => base.wholeFileAttachments?.some(item => item.textOffset !== undefined
   && remote.wholeFileAttachments?.some(other => other.id === item.id && other.source.kind === item.source.kind
     && other.source.hostId === item.source.hostId && other.source.path === item.source.path && other.textOffset === undefined)) === true;
@@ -62,6 +65,7 @@ function directConsumption(remote: Draft, submitted: SubmissionCorrelation) {
   return Boolean(submitted.commandId && remote.lastConsumption?.commandId === submitted.commandId
     && remote.lastConsumption.submittedRevision === submitted.draft.revision && remote.revision === submitted.draft.revision + 1
     && remote.text === "" && sameEnvironmentSelection(remote.environment, submitted.draft.environment)
+    && (submitted.draft.goal === undefined ? remote.goal === undefined : remote.goal === null)
     && (submitted.draft.attachments === undefined ? remote.attachments === undefined : remote.attachments?.length === 0)
     && (submitted.draft.selectedTextAttachments === undefined ? remote.selectedTextAttachments === undefined : remote.selectedTextAttachments?.length === 0)
     && (submitted.draft.wholeFileAttachments === undefined ? remote.wholeFileAttachments === undefined : remote.wholeFileAttachments?.length === 0));
@@ -145,9 +149,10 @@ export class DraftController {
       this.publish(); return;
     }
     if (entry.base.attachments !== undefined && remote.attachments === undefined || entry.base.execution !== undefined && remote.execution === undefined
-      || entry.base.environment !== undefined && remote.environment === undefined || entry.base.selectedTextAttachments !== undefined && remote.selectedTextAttachments === undefined
+      || entry.base.environment !== undefined && remote.environment === undefined || entry.base.goal !== undefined && remote.goal === undefined
+      || entry.base.selectedTextAttachments !== undefined && remote.selectedTextAttachments === undefined
       || entry.base.wholeFileAttachments !== undefined && remote.wholeFileAttachments === undefined || stripsWholeFileOffsets(entry.base, remote)) {
-      entry.view = { ...entry.view, status: "conflict", conflict: remote, error: "The host draft is missing saved image, file context, execution, or environment information. Local content and choices were preserved." };
+      entry.view = { ...entry.view, status: "conflict", conflict: remote, error: "The host draft is missing saved image, file context, execution, environment, or Goal information. Local content and choices were preserved." };
       this.publish(); return;
     }
     if (entry.pendingDraft && sameDraftContent(remote, entry.pendingDraft)) {
@@ -167,7 +172,7 @@ export class DraftController {
       this.publish();
     }
   }
-  update(id: string, patch: Partial<Pick<Draft, "text" | "projectId" | "model" | "thinkingLevel" | "approvalMode" | "attachments" | "selectedTextAttachments" | "wholeFileAttachments" | "execution" | "environment">>) {
+  update(id: string, patch: Partial<Pick<Draft, "text" | "projectId" | "model" | "thinkingLevel" | "approvalMode" | "attachments" | "selectedTextAttachments" | "wholeFileAttachments" | "execution" | "environment" | "goal">>) {
     this.get(id); const entry = this.entries.get(id)!;
     if (entry.view.draft.attachments !== undefined && "attachments" in patch && patch.attachments === undefined) throw new Error("An image-aware draft must retain its attachment format. Remove images with an empty array.");
     if (entry.view.draft.selectedTextAttachments !== undefined && "selectedTextAttachments" in patch && patch.selectedTextAttachments === undefined) throw new Error("A selected-text-aware draft must retain its selection format. Clear selections with an empty array.");
@@ -176,6 +181,7 @@ export class DraftController {
       && !("wholeFileAttachments" in patch)) throw new Error("Update inline whole-file offsets atomically with draft text.");
     if (entry.view.draft.execution !== undefined && "execution" in patch && patch.execution === undefined) throw new Error("Select Local explicitly to clear a worktree choice.");
     if (entry.view.draft.environment !== undefined && "environment" in patch && patch.environment === undefined) throw new Error("Select No environment explicitly to clear an environment choice.");
+    if (entry.view.draft.goal !== undefined && "goal" in patch && patch.goal === undefined) throw new Error("Clear the Goal intent explicitly with null; the objective text stays in the draft.");
     const projectChanged = "projectId" in patch && patch.projectId !== entry.view.draft.projectId;
     const next = captureDraft({ ...entry.view.draft, ...patch,
       ...(projectChanged && entry.view.draft.environment !== undefined ? { environment: null } : {}) }, this.hostId);
@@ -204,7 +210,7 @@ export class DraftController {
       try {
         const draft = editableDraft(snapshot);
         const repeated = hasRepeatedWholeFileSources(snapshot.wholeFileAttachments ?? []) || hasRepeatedWholeFileSources(entry.base.wholeFileAttachments ?? []);
-        const result = await this.send({ id: crypto.randomUUID(), ...(entry.remoteProtocol ? { commandVersion: 12 as const } : repeated ? { commandVersion: 9 as const } : (snapshot.wholeFileAttachments?.some(file => file.textOffset !== undefined) || entry.base.wholeFileAttachments?.some(file => file.textOffset !== undefined)) ? { commandVersion: 8 as const } : snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
+        const result = await this.send({ id: crypto.randomUUID(), ...(snapshot.goal !== undefined || entry.base.goal !== undefined ? { commandVersion: 24 as const } : entry.remoteProtocol ? { commandVersion: 12 as const } : repeated ? { commandVersion: 9 as const } : (snapshot.wholeFileAttachments?.some(file => file.textOffset !== undefined) || entry.base.wholeFileAttachments?.some(file => file.textOffset !== undefined)) ? { commandVersion: 8 as const } : snapshot.wholeFileAttachments !== undefined ? { commandVersion: 7 as const } : snapshot.selectedTextAttachments !== undefined ? { commandVersion: 6 as const } : snapshot.environment !== undefined ? { commandVersion: 5 as const } : {}), command: { type: "draft.put", draft, expectedRevision: entry.base.revision } });
         if (!result.ok) {
           if (result.currentDraft) entry.view = { ...entry.view, status: "conflict", conflict: captureDraft(result.currentDraft, this.hostId), error: result.error.message };
           else entry.view = { ...entry.view, status: this.connected ? "error" : "offline", error: result.error.message };
@@ -263,6 +269,10 @@ export class DraftController {
       // The host owns revision increments and consumes the supplied revision.
       // Clear locally now, then reconcile the authoritative state event.
       entry.view = { draft: { ...entry.view.draft, text: "" }, status: "saved" }; entry.dirty = false;
+    } else if (accepted && submitted.goal && sameGoalComposerDraft(entry.view.draft.goal, submitted.goal)) {
+      // The accepted command initialized this exact intent. Newer objective,
+      // budget, attachment or choice edits stay; the host event reconciles text.
+      entry.view = { ...entry.view, draft: { ...entry.view.draft, goal: null } };
     }
     this.publish();
     if (entry.dirty) this.schedule(id);
@@ -278,8 +288,9 @@ export class DraftController {
       const retainWholeFiles = entry.view.draft.wholeFileAttachments !== undefined && remote.wholeFileAttachments === undefined;
       const retainExecution = entry.view.draft.execution !== undefined && remote.execution === undefined;
       const retainEnvironment = entry.view.draft.environment !== undefined && remote.environment === undefined;
-      const retainFormat = retainImages || retainSelectedText || retainWholeFiles || retainExecution || retainEnvironment;
-      entry.view = { draft: { ...remote, ...(retainImages ? { attachments: [] } : {}), ...(retainSelectedText ? { selectedTextAttachments: [] } : {}), ...(retainWholeFiles ? { wholeFileAttachments: [] } : {}), ...(retainExecution ? { execution: { type: 'local' as const } } : {}), ...(retainEnvironment ? { environment: null } : {}) }, status: retainFormat ? this.connected ? "unsaved" : "offline" : "saved" }; entry.dirty = retainFormat;
+      const retainGoal = entry.view.draft.goal !== undefined && remote.goal === undefined;
+      const retainFormat = retainImages || retainSelectedText || retainWholeFiles || retainExecution || retainEnvironment || retainGoal;
+      entry.view = { draft: { ...remote, ...(retainImages ? { attachments: [] } : {}), ...(retainSelectedText ? { selectedTextAttachments: [] } : {}), ...(retainWholeFiles ? { wholeFileAttachments: [] } : {}), ...(retainExecution ? { execution: { type: 'local' as const } } : {}), ...(retainEnvironment ? { environment: null } : {}), ...(retainGoal ? { goal: null } : {}) }, status: retainFormat ? this.connected ? "unsaved" : "offline" : "saved" }; entry.dirty = retainFormat;
     }
     else { entry.view = { draft: { ...entry.view.draft, revision: remote.revision }, status: this.connected ? "unsaved" : "offline" }; entry.dirty = true; entry.version += 1; }
     this.publish(); if (entry.dirty) this.schedule(id);
