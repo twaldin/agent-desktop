@@ -10,7 +10,7 @@ test('real worker reload rebinds native MCP tools, fences active turns and retir
   await Promise.all([agentDir,cwd,gates].map(p=>mkdir(p)));
   await writeFile(path.join(agentDir,'config.yml'),`extensions:\n  - ${JSON.stringify(path.join(import.meta.dir,'fixtures/mcp-provider.ts'))}\nretry:\n  enabled: false\n`);
   const config=path.join(agentDir,'mcp.json');
-  await writeFile(config,JSON.stringify({mcpServers:{fixture:{command:process.execPath,args:[path.join(import.meta.dir,'../omp/fixtures/mcp-server.ts')]}}}));
+  await writeFile(config,JSON.stringify({mcpServers:{fixture:{command:process.execPath,args:[path.join(import.meta.dir,'../omp/fixtures/mcp-server.ts')],env:{AGENT_DESKTOP_MCP_TEST_RESOURCE_DELAY:'2000'}}}}));
   const runtime=new WorkerRuntime({agentDir,workerPath:path.join(import.meta.dir,'fixtures/no-provider-worker.ts'),environment:{HOME:root,PATH:process.env.PATH,TMPDIR:tmpdir(),PI_CODING_AGENT_DIR:agentDir,MCP_CONTRACT_GATES:gates,TERM:'dumb'}});
   try {
     const session=await runtime.create({cwd,interactions:true,approvalOverride:'yolo'});
@@ -49,7 +49,16 @@ test('real worker reload rebinds native MCP tools, fences active turns and retir
     expect(await session.prompt('/fixture-tool-selection inspect')).toBe(false);
     expect(JSON.parse(await readFile(path.join(gates, 'active-tools.json'), 'utf8'))).toEqual(refreshedTools);
     await writeFile(config,JSON.stringify({mcpServers:{}}));
-    const ticket=await session.getSessionMcp();
+    // Native reconnect returns before its resource/prompt discovery finishes.
+    // Wait for this fixture's three metadata lists before selecting the reload
+    // ticket; a late list response correctly invalidates an earlier revision.
+    let ticket=await session.getSessionMcp();
+    for(let attempt=0;attempt<2000 && ticket.servers.some(server=>server.resources===null||server.resourceTemplates===null||server.prompts===null);attempt++){
+      await Bun.sleep(5);ticket=await session.getSessionMcp();
+    }
+    expect(ticket.servers[0]?.resources).toHaveLength(1);
+    expect(ticket.servers[0]?.resourceTemplates).toHaveLength(1);
+    expect(ticket.servers[0]?.prompts).toHaveLength(1);
     const reloaded=await session.reloadSessionMcp({epoch:ticket.epoch,expectedRevision:ticket.revision});
     expect(reloaded.servers).toEqual([]);
     await expect(session.reloadSessionMcp({epoch:ticket.epoch,expectedRevision:ticket.revision})).rejects.toThrow('changed');
