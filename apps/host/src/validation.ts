@@ -1,3 +1,4 @@
+import { parseTreeCommandId, parseTreeMutationRequest, parseTreeTicket } from "../../../packages/shared/src/session-tree";
 import { exportId, exportTheme } from "../../../packages/shared/src/session-export";
 import { parseTodoCommandId, parseTodoMutationRequest } from "../../../packages/shared/src/session-todos";
 import { parseUsageCommand } from "../../../packages/shared/src/session-usage";
@@ -40,11 +41,14 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,23].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
   const version = envelope.commandVersion as CommandEnvelope["commandVersion"];
   const command = object(envelope.command);
+  const treeCommand = command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined;
+  if ((treeCommand || version === 23 || transportVersion === 23) && (!treeCommand || version !== 23 || transportVersion !== undefined && transportVersion !== 23))
+    throw new Error("Native history requires command version 23 and the version 23 endpoint.");
   if (command.type === "session.todos.mutate" && (version !== 22 || transportVersion !== undefined && transportVersion !== 22))
     throw new Error("Native Todos require command version 22 and the version 22 endpoint.");
   if ((version === 22 || transportVersion === 22) && (command.type !== "session.todos.mutate" || version !== 22 || transportVersion !== undefined && transportVersion !== 22))
@@ -77,6 +81,8 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
   const hasForceFields = Object.hasOwn(input, "forceTool") || Object.hasOwn(input, "forceRecovery");
   if (hasForceFields && (type !== "session.prompt" || (commandVersion ?? 0) < 18))
     throw new Error("Force-tool admission requires prompt command version 18.");
+  if (input.treeTicket !== undefined && (type !== "session.prompt" || commandVersion !== 23 || Object.keys(input).some(key => !["type", "sessionId", "text", "treeTicket"].includes(key))))
+    throw new Error("History edit submissions require their original tree ticket and separate text/images.");
   const forceFields = hasForceFields ? parseForceToolPromptFields(input) : {};
   const hasContext = Boolean(attachments?.length || selectedTextAttachments?.length || wholeFileAttachments?.length);
   const promptText = () => hasContext && input.text === "" ? "" : text(input.text, "prompt", hasContext ? 500_000 : 4_000_000);
@@ -165,6 +171,11 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
       })() }),
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
+    case "session.tree.mutate": {
+      if (commandVersion !== 23) throw new Error("Native history requires command version 23.");
+      const { type: _type, ...request } = input;
+      return { id: parseTreeCommandId(id), command: { type, ...parseTreeMutationRequest(request) } };
+    }
     case "session.todos.mutate": {
       if (commandVersion !== 22) throw new Error("Native Todos require command version 22.");
       const { type: _type, ...request } = input;
@@ -192,6 +203,7 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
       return { id, command: { type, ...parseForceToolCancel(request) } };
     }
     case "session.prompt": return { id, command: { type, ...forceFields,
+      ...(input.treeTicket === undefined ? {} : { treeTicket: parseTreeTicket(input.treeTicket) }),
       sessionId: text(input.sessionId, "session ID"), text: promptText(),
       ...(attachments === undefined ? {} : { attachments }),
       ...(wholeFileAttachments === undefined ? {} : { wholeFileAttachments }),

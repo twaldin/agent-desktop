@@ -88,7 +88,7 @@ export class NativeSessionControls {
   #overrides = new Set<string>();
   #durableApprovalOverride?: OmpApprovalMode;
   #advancedStream: NativeAdvancedStreamControls;
-  constructor(private session: AgentSession, durableApprovalOverride?: OmpApprovalMode) {
+  constructor(private session: AgentSession, durableApprovalOverride?: OmpApprovalMode, private readonly ownerSessionId = () => session.sessionId) {
     this.#advancedStream = new NativeAdvancedStreamControls(session);
     this.#durableApprovalOverride = durableApprovalOverride;
     if (durableApprovalOverride !== undefined) this.#overrides.add("tools.approvalMode");
@@ -110,7 +110,7 @@ export class NativeSessionControls {
     const session = this.session;
     const states = settingStates(session.settings);
     for (const state of states) if (this.#overrides.has(state.path)) state.origin = "runtime";
-    const output: OmpSessionControls = { revision: this.#revision, sessionId: session.sessionId,
+    const output: OmpSessionControls = { revision: this.#revision, sessionId: this.ownerSessionId(),
       model: session.model ? { provider: session.model.provider, id: session.model.id } : null,
       thinkingLevel: session.configuredThinkingLevel(), serviceTiers: { ...session.serviceTierByFamily },
       capabilities: session.model ? modelCapabilities(session.model) : null,

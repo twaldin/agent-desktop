@@ -49,7 +49,11 @@ function toolOutput(details: unknown): TranscriptToolOutput | undefined {
 }
 function content(message: MessageRecord): TranscriptBlock[] {
   if (typeof message.content === "string") return [{ type: "text", text: message.content }];
-  if (!Array.isArray(message.content)) return typeof message.output === "string" ? [{ type: "text", text: message.output }] : [];
+  if (!Array.isArray(message.content)) {
+    if (typeof message.output === "string") return [{ type: "text", text: message.output }];
+    if ((message.role === "branchSummary" || message.role === "compactionSummary") && typeof message.summary === "string") return [{ type: "text", text: message.summary }];
+    return [];
+  }
   return message.content.map((value, blockIndex): TranscriptBlock => {
     const block = record(value);
     if (block?.type === "text" && typeof block.text === "string") return { type: "text", text: block.text };
@@ -87,6 +91,13 @@ function assistant(message: MessageRecord): TranscriptAssistantMetadata {
 function project(message: MessageRecord, id: string, nativeId?: string, lifecycle?: TranscriptMessage["lifecycle"], progress?: ToolProgress, fileReferences?: TranscriptMessage["fileReferences"], pendingOutput?: TranscriptToolOutput): TranscriptMessage {
   const blocks = content(message);
   const value: TranscriptMessage = { id, role: message.role, text: blocks.filter(block => block.type === "text").map(block => block.text).join("\n"), content: blocks, blocks, ...(nativeId ? { nativeId } : {}), ...(lifecycle ? { lifecycle } : {}), ...(finite(message.timestamp) ? { timestamp: message.timestamp } : {}) };
+  if (message.role === "branchSummary" || message.role === "compactionSummary") {
+    const summary: NonNullable<TranscriptMessage["nativeSummary"]> = {};
+    for (const key of ["fromId", "method", "shortSummary", "warning"] as const) if (typeof message[key] === "string") summary[key] = message[key];
+    for (const key of ["tokensBefore", "tokensAfter"] as const) if (finite(message[key])) summary[key] = message[key] as number;
+    if (Array.isArray(message.images)) summary.imageCount = message.images.length;
+    value.nativeSummary = summary;
+  }
   if (message.role === "fileMention") value.fileReferences = fileReferences ?? projectFileMentions(message);
   if (message.role === "assistant") value.assistant = assistant(message);
   if (message.role === "toolResult" && typeof message.toolCallId === "string") {

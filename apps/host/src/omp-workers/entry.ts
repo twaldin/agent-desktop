@@ -1,4 +1,5 @@
 let dapConfiguration: Promise<import("../integrations/dap").NativeDap> | undefined;
+import { parseSessionTree, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult } from "../../../../packages/shared/src/session-tree";
 let lspConfiguration: Promise<import("../integrations/lsp").NativeLsp> | undefined;
 import { parsePlanMutationRequest, parsePlanDocumentReadRequest } from "../../../../packages/shared/src/session-plan";
 import { parsePlanDocumentSection } from "../../../../packages/shared/src/plan-document";
@@ -281,6 +282,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       // This gate precedes native dispatch. Preserve a known Todos refusal so
       // its durable receipt can release the UI without replaying the command.
       const error = new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
+      if (message.operation === "mutateTree") Object.assign(error, { code: "TREE_REJECTED" });
       if (message.operation === "mutateTodos") Object.assign(error, { code: "TODOS_REJECTED" });
       throw error;
     }
@@ -512,6 +514,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         const value = parsePlanDocumentSection(await owner.getPlanDocumentSection(input), input.selection);
         if (requireSession() !== owner) throw new Error("The original Plan document worker changed during inspection.");
         respond(true, value); break;
+      }
+      case "getTree": respond(true, parseSessionTree(requireSession().getTree())); break;
+      case "mutateTree": {
+        const commandId = parseTreeCommandId(message.args.commandId), request = parseTreeMutationRequest(message.args.request);
+        const owner = requireSession();
+        const value = await owner.mutateTree(commandId, request);
+        try { if (requireSession() !== owner) throw new Error("History owner changed"); respond(true, parseTreeMutationResult(value, commandId)); }
+        catch (cause) { throw Object.assign(new Error("The native history result could not be confirmed.", { cause }), { code: "OUTCOME_UNKNOWN" }); }
+        break;
       }
       case "getTodos": respond(true, parseSessionTodos(requireSession().getTodos())); break;
       case "mutateTodos": {

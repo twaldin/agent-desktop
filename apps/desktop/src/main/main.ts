@@ -1,3 +1,4 @@
+import { registerSessionTreeReadHandler } from "./session-tree-transport";
 import { registerTodoExternalEditorHandlers } from "./todo-external-editor-transport";
 import { sessionExportStatus, saveSessionExport } from "./session-export";
 import { requestSessionUsage, requestSessionUsageCommand } from "./session-usage-transport";
@@ -686,6 +687,7 @@ registerPlanReadHandler(ipcMain, assertTrustedSender, endpointFor);
 registerPlanExternalEditorHandlers(ipcMain, assertTrustedSender, endpointFor);
 registerTodoExternalEditorHandlers(ipcMain, assertTrustedSender, endpointFor);
 registerSessionTodosReadHandler(ipcMain, assertTrustedSender, endpointFor);
+registerSessionTreeReadHandler(ipcMain, assertTrustedSender, endpointFor);
 ipcMain.handle("host:session-mcp", async (event, sessionId: string, hostId?: string, commandId?: string) => {
   assertTrustedSender(event); return requestSessionMcp(await endpointFor(hostId), sessionId, commandId);
 });

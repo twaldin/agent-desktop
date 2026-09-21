@@ -76,6 +76,7 @@ export class NativeSessionUsage {
     this.#unsubscribe = session.subscribe(event => { if (event.type === "model_changed") this.#revision = randomUUID(); });
   }
   dispose() { this.#unsubscribe(); this.#tickets.clear(); this.#rows.clear(); }
+  rebindProviderSession() { this.#sessionId = this.session.sessionId; this.#revision = randomUUID(); this.#snapshot = null; this.#tickets.clear(); this.#rows.clear(); }
   get busy() { return this.#busy; }
   #policy(): SessionUsage["policy"] { return this.session.settings.getGroup("codexResets"); }
   #fingerprint() {

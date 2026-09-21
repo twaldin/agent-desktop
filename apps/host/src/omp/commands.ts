@@ -20,6 +20,7 @@ import type { TodoMutationResult } from "../../../../packages/shared/src/session
  * Only reviewed native text handlers are enabled; ownership transitions remain gated.
  */
 export interface NativeCommandBridges {
+  recovery?: (command: "retry" | "fresh", args: string) => Promise<NativePromptDispatchResult>;
   forceTool?: Pick<NativeForceToolAdmission, "options" | "dispatch">;
   withNativeForceInvocation?: NativeForceInvocationScope;
   /** Invoked only after exact native extension/custom precedence. */
@@ -84,6 +85,10 @@ export async function dispatchNativePrompt(session: AgentSession, text: string, 
     const builtin = parsed && lookupBuiltinSlashCommand(parsed.name);
     if (parsed && builtin) {
       if (builtin.name === "export") throw new Error("Use the owning host HTML export service; direct worker export dispatch is unavailable.");
+      if (builtin.name === "retry" || builtin.name === "fresh") {
+        if (!bridges?.recovery) throw new Error("The native recovery owner is unavailable; this command was not executed.");
+        return bridges.recovery(builtin.name, parsed.args);
+      }
       if (builtin.name === "plan" || builtin.name === "plan-review") {
         if (!bridges?.plan) throw new Error("The native Plan owner is unavailable; this command was not executed.");
         return bridges.plan(text);

@@ -15,6 +15,9 @@ export interface NativePromptDispatchResult {
   handledCommand?: string;
   commandEntryId?: string;
   output?: string;
+  /** Scheduled native continuation owned by this command. Admission is durable
+   * before this settles, while prompt completion follows the actual turn. */
+  turnCompletion?: Promise<boolean>;
 }
 export interface OmpPromptRun {
   /** Flushed user entry or completed native command; null is unaccepted input. */
@@ -78,7 +81,7 @@ export function beginNativePrompt(
         else receipt.resolve(result.handledCommand ? { kind: "native-command", command: result.handledCommand,
           ...(result.commandEntryId ? { entryId: result.commandEntryId } : {}), ...(result.output ? { output: result.output } : {}) } : null);
       }
-      return result.agentInvoked;
+      return result.turnCompletion ? await result.turnCompletion : result.agentInvoked;
     } catch (error) {
       if (!entryObserved) receipt.reject(admissionFailure(error));
       throw error;

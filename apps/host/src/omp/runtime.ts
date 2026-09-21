@@ -1,3 +1,5 @@
+import { NativeSessionTree } from "./session-tree";
+import type { SessionTree, TreeTicket, TreeMutationRequest, TreeMutationResult } from "../../../../packages/shared/src/session-tree";
 import { parseTodoExternalEditorRequest, type TodoExternalEditorRequest } from "../../../../packages/shared/src/todo-external-editor";
 import { parsePreparedTodoExternalEditor, type PreparedTodoExternalEditor } from "./todo-external-editor";
 import { exportNativeSession, nativeExportIntent } from "./session-export";
@@ -16,6 +18,7 @@ import { parsePlanControlRequest, parsePlanDocumentReadRequest, parsePlanMutatio
 import type { PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { NativeSessionTodos } from "./session-todos";
 import { NativeSessionJobs } from "./session-jobs";
+import { NativeSessionRecovery } from "./session-recovery";
 import type { SessionJobsRequest, SessionJobsResult } from "../../../../packages/shared/src/session-jobs";
 import { parseTodoCommandId, parseTodoMutationRequest, type SessionTodos, type TodoMutationRequest, type TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 import { shouldEnterPlanModeOnStartup } from "@oh-my-pi/pi-coding-agent/plan-mode/startup";
@@ -100,7 +103,7 @@ function detachedQuestionRejected(message: string): Error {
 }
 
 type NativeModel = NonNullable<AgentSession["model"]>;
-export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent | { type: "plan_changed" } | { type: "todos_changed" } | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
+export type OmpRuntimeEvent = AgentSessionEvent | OmpBridgeEvent | { type: "plan_changed" } | { type: "todos_changed" } | { type: "tree_changed" } | { type: "queued_messages_changed"; snapshot: NativeQueuedMessagesSnapshot };
 export type OmpEventListener = (event: OmpRuntimeEvent) => void;
 export interface OmpSessionOptions {
   cwd: string;
@@ -113,7 +116,7 @@ export interface OmpSessionOptions {
   interactions?: boolean;
 }
 export interface OmpOpenOptions { expectedIdentity?: SessionStartupIdentity; sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
-export interface OmpPromptOptions { commandId?: string; commandVersion?: number; forceTool?: ForceToolGuard; forceRecovery?: ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
+export interface OmpPromptOptions { treeTicket?: TreeTicket; commandId?: string; commandVersion?: number; forceTool?: ForceToolGuard; forceRecovery?: ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
 export interface OmpBrowserTabCreateResult {
   tab: NativeBrowserTabMetadata;
   targetDisposition: "created-page" | "created-surface" | "adopted-existing-target";
@@ -181,6 +184,8 @@ export interface OmpSession {
   controlPlan(request: PlanControlRequest): Promise<PlanControlResult>;
   preparePlanDecision(commandId: string, request: PlanMutationRequest): Promise<OmpPlanDecisionPreparation>;
   startPlanExecution(phaseId: string): OmpPlanExecutionRun;
+  getTree(): SessionTree;
+  mutateTree(commandId: string, request: TreeMutationRequest): Promise<TreeMutationResult>;
   getTodos(): SessionTodos;
   mutateTodos(commandId: string, request: TodoMutationRequest): Promise<TodoMutationResult>;
   cancelForceTool(input: { ticket: ForceToolTicket; directiveId: string }): ForceToolCancelResult;
@@ -534,7 +539,7 @@ export class OmpRuntime {
       const queuedMessages = new NativeQueuedMessages(session, steering);
       const auth = context.auth;
       const registry = context.registry;
-      const mirror = new TranscriptMirror();
+      let mirror = new TranscriptMirror();
       const transcriptEntries = () => manager.getBranch().flatMap(entry => entry.type === "message" ? [{ id: entry.id, message: entry.message as unknown }]
         : entry.type === "custom_message" ? [{ id: entry.id, message: { role: "custom", customType: entry.customType, content: entry.content, display: entry.display, details: entry.details, attribution: entry.attribution, timestamp: Date.parse(entry.timestamp) } as unknown }] : []);
       const transcript = () => {
@@ -576,8 +581,9 @@ export class OmpRuntime {
       let goalController: NativeGoalController | undefined;
       let planController: NativePlanController | undefined;
       let todosController: NativeSessionTodos | undefined;
+      let treeController: NativeSessionTree | undefined;
       if (options.interactions) {
-        bridge = new OmpInteractionBridge(session.sessionId, emitBridge);
+        bridge = new OmpInteractionBridge(manager.getSessionId(), emitBridge);
         result.setToolUIContext(bridge, true);
         const ui = bridge;
         session.setUsageFallbackConfirmer((confirmation, signal) => ui.permissionConfirm(
@@ -616,7 +622,9 @@ export class OmpRuntime {
       let pluginReload: Promise<void> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
-      const nativeJobs = new NativeSessionJobs(session, assertSessionActive);
+      const nativeJobs = new NativeSessionJobs(session, assertSessionActive, manager.getSessionId());
+      let applyFreshProviderIdentity = () => {};
+      const nativeRecovery = new NativeSessionRecovery(session, manager, assertSessionActive, () => applyFreshProviderIdentity());
       const mcpFiles = new McpFileResources(manager.getCwd());
       const mcpApps = new NativeMcpApps({ executeTool: async (connection, tool, args, signal, assertOwner, metadata) => {
         // Share the session's normal extension startup with prompt admission.
@@ -630,14 +638,14 @@ export class OmpRuntime {
       }, filePath: source => path.join(mcpFiles.workspace.cwd, source.path), fileResource: (...args) => mcpFiles.request(...args), watchFile: (...args) => mcpFiles.watch(...args), manager: result.mcpManager, snapshot: () => mcp.read(), assertOwner: () => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are changing."); } });
       const assertInteractionActive = () => { if (disposed || promotionState === "retired") throw new Error("The native interaction owner has retired."); };
       const accountBridge = createNativeAccountSelectionBridge(async () => session, { assertActive: assertSessionActive, revalidate: () => auth.revalidateCredentials() });
-      const controls = new NativeSessionControls(session, options.approvalOverride);
+      const controls = new NativeSessionControls(session, options.approvalOverride, () => manager.getSessionId());
       const nativeGoalController = goalController = new NativeGoalController(session, manager, () => ({
-        disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation || Boolean(mcpMutation) || Boolean(planMutation) || Boolean(planController?.busy) || Boolean(todosController?.busy),
+        disposed, admissionPending, promptInFlight, mutationPending: goalMutation || accountMutation || Boolean(mcpMutation) || Boolean(planMutation) || Boolean(planController?.busy) || (Boolean(todosController?.busy) || Boolean(treeController?.busy)),
         interruptsInFlight, interactionsPending: (ui?.list().length ?? 0) > 0,
       }), async () => { await session.setActiveToolsByName(goalPreviousTools); });
       const assertIdle = () => {
         assertSessionActive();
-        if (usage.busy || promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || todosController?.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
+        if (usage.busy || promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || treeController?.busy || todosController?.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy");
       };
       const assertSnapshotReady = (operation = "moving this task") => {
         assertIdle();
@@ -678,13 +686,13 @@ export class OmpRuntime {
       const constructionDialect = result.nativeDialect;
       let forceAdmissionDepth = 0;
       let nativeForceDispatchDepth = 0;
-      const forceOwnerId = session.sessionId;
+      const forceOwnerId = manager.getSessionId();
       let forceOwnershipRevision = 0;
       let previousForceOwnership: readonly unknown[] | undefined;
       const getForceOwnershipRevision = () => {
         // Scope depth only changes presentation. Revision follows the actual
         // owner and canonical command identities, including runner replacement.
-        const current = [disposed, promotionState, session.sessionId, session.isDisposed, session.extensionRunner,
+        const current = [disposed, promotionState, manager.getSessionId(), session.sessionId, session.isDisposed, session.extensionRunner,
           session.extensionRunner?.getCommand("force")?.handler,
           session.customCommands.find(command => command.command.name === "force")?.command.execute];
         if (previousForceOwnership && current.some((value, index) => value !== previousForceOwnership![index])) forceOwnershipRevision++;
@@ -694,12 +702,12 @@ export class OmpRuntime {
       const forceTool = new NativeForceToolController(session, {
         getDialect: () => constructionDialect ?? resolveOwnedDialectFromEnv(Bun.env.PI_DIALECT),
         getOwnershipRevision: getForceOwnershipRevision,
-        getOwnershipReason: () => disposed || promotionState !== "idle" || session.sessionId !== forceOwnerId
+        getOwnershipReason: () => disposed || promotionState !== "idle" || manager.getSessionId() !== forceOwnerId
           ? "The original native force owner has retired."
           : nativeForceDispatchDepth === 0 && (session.extensionRunner?.getCommand("force") || session.customCommands.some(command => command.command.name === "force"))
             ? "An extension or custom command owns /force in this session." : undefined,
         getBusyReason: () => (forceAdmissionDepth === 0 && (promptInFlight || admissionPending))
-          || accountMutation || goalMutation || planMutation || planController?.busy || todosController?.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
+          || accountMutation || goalMutation || planMutation || planController?.busy || treeController?.busy || todosController?.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
           || session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running"
           ? "Resolve current native work before changing the force queue." : undefined,
       });
@@ -715,7 +723,7 @@ export class OmpRuntime {
         cancel: (input: Parameters<NativeForceToolController["cancel"]>[0]) => forceTool.cancel(input),
         assertRecovery: (input: ForceToolRecovery) => withinForceAdmission(() => forceTool.assertRecovery(input)),
       };
-      const planEpoch = crypto.randomUUID();
+      let planEpoch = crypto.randomUUID();
       const nativePlan = planController = new NativePlanController(session, manager, {
         assertOwner: () => {
           if (planTransitionInFlight) {
@@ -741,14 +749,14 @@ export class OmpRuntime {
       const readPlan = () => {
         assertSessionActive();
         const review = nativePlan.readReview(), snapshot = nativePlan.snapshot();
-        const busyReason = !resolveNativePlanInvocation(session, "/plan") ? "An extension or custom command owns /plan in this session." : nativePlan.busy || planMutation || accountMutation || goalMutation || mcpMutation || todosController?.busy || admissionPending || interruptsInFlight
+        const busyReason = !resolveNativePlanInvocation(session, "/plan") ? "An extension or custom command owns /plan in this session." : nativePlan.busy || planMutation || accountMutation || goalMutation || mcpMutation || treeController?.busy || todosController?.busy || admissionPending || interruptsInFlight
           || session.isCompacting || session.isAborting || session.hasPostPromptWork
           ? "Wait for the owning native operation to settle." : undefined;
         return projectSessionPlan({ epoch: planEpoch, snapshot, review, enabled: session.settings.get("plan.enabled"), busyReason });
       };
       const readPlanDocumentSection = (raw: PlanDocumentReadRequest): PlanDocumentSection => {
         const request = parsePlanDocumentReadRequest(raw), original = readPlan(), review = original.review;
-        if (request.sessionId !== session.sessionId || request.ticket.epoch !== original.ticket.epoch
+        if (request.sessionId !== manager.getSessionId() || request.ticket.epoch !== original.ticket.epoch
           || request.ticket.nativeSessionId !== original.ticket.nativeSessionId || request.ticket.revision !== original.ticket.revision
           || request.reviewId !== review?.id || request.reviewRevision !== review.revision
           || request.selection.documentRevision !== review.document?.documentRevision)
@@ -773,23 +781,40 @@ export class OmpRuntime {
       const nativeTodos = todosController = new NativeSessionTodos(session, manager, {
         assertOwner: assertSessionActive,
         getBusyReason: () => usage.busy || (todoDispatchDepth === 0 && (promptInFlight || admissionPending))
-          || accountMutation || goalMutation || planMutation || planController?.busy || mcpMutation || interruptsInFlight
+          || accountMutation || goalMutation || planMutation || planController?.busy || treeController?.busy || mcpMutation || interruptsInFlight
           || session.isStreaming || session.isCompacting || session.isAborting || session.hasPostPromptWork
           || session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running"
           ? "Resolve current native work before changing Todos." : undefined,
         onChanged: () => { if (!disposed && promotionState === "idle") for (const listener of listeners) listener({ type: "todos_changed" }); },
       });
+      applyFreshProviderIdentity = () => {
+        nativeJobs.rebindProviderSession(); nativeTodos.rebindProviderSession(); nativePlan.rebindProviderSession(); usage.rebindProviderSession();
+        planEpoch = crypto.randomUUID();
+      };
+      const nativeTree = treeController = new NativeSessionTree(session, manager, {
+        assertOwner: assertSessionActive, ui,
+        getBusyReason: () => usage.busy || promptInFlight || admissionPending || accountMutation || goalMutation
+          || planMutation || nativePlan.busy || nativeTodos.busy || mcpMutation || pluginReload || interruptsInFlight
+          || session.isStreaming || session.isCompacting || session.isAborting || session.hasPostPromptWork
+          || session.queuedMessageCount || ui?.list().length || btw.get()?.status === "running" || mcpReads.size || outputRead || mcpApps.pending
+          ? "Resolve current native work before changing conversation history." : undefined,
+        prepare: async () => { if (ui) { extensionStartup ??= initializeDesktopExtensions(session, ui); await extensionStartup; } },
+        onChanged: () => {
+          mirror = new TranscriptMirror(); transcript();
+          if (!disposed && promotionState === "idle") for (const listener of listeners) listener({ type: "tree_changed" });
+        },
+      });
       const handle: OmpSession = {
         readUsage: mode => usage.read(mode),
         prepareUsageReset: request => usage.prepare(request),
         redeemUsageReset: (ticket, requestId) => usage.redeem(ticket, requestId),
-        get id() { return session.sessionId; },
+        get id() { return manager.getSessionId(); },
         get sessionFile() { return session.sessionFile ?? sessionFile; },
         get cwd() { return manager.getCwd(); },
         get model() { return session.model ? { provider: session.model.provider, id: session.model.id } : null; },
         get thinkingLevel() { return session.configuredThinkingLevel(); },
         get isStreaming() { return session.isStreaming; },
-        get hasPostPromptWork() { return usage.busy || session.hasPostPromptWork || Boolean(mcp.getAuthorization()?.pending) || nativePlan.busy || Boolean(planMutation) || nativeTodos.busy; },
+        get hasPostPromptWork() { return usage.busy || session.hasPostPromptWork || Boolean(mcp.getAuthorization()?.pending) || nativePlan.busy || Boolean(planMutation) || nativeTree.busy || nativeTodos.busy; },
         get title() { return session.sessionName ?? manager.getHeader()?.title; },
         get createdAt() { return Date.parse(manager.getHeader()!.timestamp); },
         modelFallbackMessage: result.modelFallbackMessage,
@@ -864,7 +889,7 @@ export class OmpRuntime {
           const startedBeforeInterrupt = interruptEpoch;
           const preflight = () => {
             assertSessionActive();
-            if (admissionPending || accountMutation || goalMutation || planMutation || planController?.busy || nativeTodos.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
+            if (admissionPending || accountMutation || goalMutation || planMutation || planController?.busy || nativeTree.busy || nativeTodos.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
               || session.queuedMessageCount > 0 || (ui?.list().length ?? 0) > 0) {
               throw detachedQuestionRejected("The native session cannot accept a detached answer yet.");
             }
@@ -981,7 +1006,7 @@ export class OmpRuntime {
             try { assertIdle(); } catch { throw goalRejected("The native session is busy. Wait for its current work to finish."); }
           } else {
             assertSessionActive();
-            if (admissionPending || accountMutation || goalMutation || planMutation || planController?.busy || nativeTodos.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
+            if (admissionPending || accountMutation || goalMutation || planMutation || planController?.busy || nativeTree.busy || nativeTodos.busy || mcpMutation || interruptsInFlight || session.hasPostPromptWork
               || nativeGoalController.hasActiveToolExecution() || (ui?.list().length ?? 0) > 0) {
               throw goalRejected("The native session has an active tool, approval, ask, or admission. Wait for it to settle.");
             }
@@ -1137,7 +1162,7 @@ export class OmpRuntime {
           const original = readPlan();
           const current = () => {
             const value = readPlan();
-            if (request.sessionId !== session.sessionId || request.ticket.epoch !== value.ticket.epoch
+            if (request.sessionId !== manager.getSessionId() || request.ticket.epoch !== value.ticket.epoch
               || request.ticket.nativeSessionId !== value.ticket.nativeSessionId || request.ticket.revision !== value.ticket.revision
               || request.reviewId !== value.review?.id || request.reviewRevision !== value.review.revision
               || request.documentRevision !== value.review.document?.documentRevision || value.review.status !== "ready"
@@ -1151,7 +1176,7 @@ export class OmpRuntime {
           current();
           if (getEditorCommand() !== editorCommand || readPlan().ticket.revision !== original.ticket.revision)
             throw new Error("The Plan editor configuration changed during preparation.");
-          return parsePreparedPlanExternalEditor({ request, nativeSessionId: session.sessionId, sessionFile: session.sessionFile,
+          return parsePreparedPlanExternalEditor({ request, nativeSessionId: manager.getSessionId(), sessionFile: session.sessionFile,
             cwd: manager.getCwd(), ...prepared, editorCommand,
             environment: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
           }, request);
@@ -1160,15 +1185,17 @@ export class OmpRuntime {
         prepareTodoExternalEditor: async raw => {
           const request = parseTodoExternalEditorRequest(raw);
           assertSessionActive();
-          if (request.sessionId !== session.sessionId) throw new Error("The original Todos editor target changed.");
+          if (request.sessionId !== manager.getSessionId()) throw new Error("The original Todos editor target changed.");
           const prepared = nativeTodos.prepareExternalEditor(request.ticket);
           const editorCommand = getEditorCommand();
           if (!editorCommand) throw new Error("No editor configured on the owning host. Set VISUAL or EDITOR.");
-          return parsePreparedTodoExternalEditor({ request, nativeSessionId: session.sessionId, sessionFile: session.sessionFile,
+          return parsePreparedTodoExternalEditor({ request, nativeSessionId: manager.getSessionId(), sessionFile: session.sessionFile,
             cwd: manager.getCwd(), ...prepared, editorCommand,
             environment: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
           }, request);
         },
+        getTree: () => nativeTree.read(),
+        mutateTree: (commandId, request) => nativeTree.mutate(commandId, request),
         getTodos: () => { assertSessionActive(); return nativeTodos.read(); },
         mutateTodos: async (commandId, raw) => {
           // Identity/parse failures precede admission; the owner tags its own
@@ -1176,7 +1203,7 @@ export class OmpRuntime {
           let request: TodoMutationRequest;
           try { parseTodoCommandId(commandId); request = parseTodoMutationRequest(raw); assertSessionActive(); }
           catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: "TODOS_REJECTED" as const }); }
-          if (request.sessionId !== session.sessionId)
+          if (request.sessionId !== manager.getSessionId())
             throw Object.assign(new Error("The native Todos target changed before dispatch."), { code: "TODOS_REJECTED" as const });
           return nativeTodos.mutate(commandId, request);
         },
@@ -1184,10 +1211,10 @@ export class OmpRuntime {
           let dispatched = false;
           try {
           const request = parsePlanControlRequest(raw), original = readPlan();
-          if (request.sessionId !== session.sessionId || request.ticket.epoch !== original.ticket.epoch
+          if (request.sessionId !== manager.getSessionId() || request.ticket.epoch !== original.ticket.epoch
             || request.ticket.nativeSessionId !== original.ticket.nativeSessionId || request.ticket.revision !== original.ticket.revision)
             throw new Error("The original Plan state changed. Refresh before choosing an action.");
-          if (original.reconciliationRequired || planMutation || nativePlan.busy || nativeTodos.busy || accountMutation || goalMutation || mcpMutation
+          if (original.reconciliationRequired || planMutation || nativePlan.busy || nativeTree.busy || nativeTodos.busy || accountMutation || goalMutation || mcpMutation
             || admissionPending || interruptsInFlight || session.isCompacting || session.isAborting || session.hasPostPromptWork)
             throw new Error("Resolve pending native work before changing the Plan state.");
           const invocation = request.action === "toggle" || request.action === "review"
@@ -1212,16 +1239,16 @@ export class OmpRuntime {
         startPlanExecution: phaseId => {
           assertSessionActive();
           if (!phaseId || phaseId.length > 200 || phaseId.includes("\0")) throw new Error("Invalid native Plan phase identity.");
-          if (promptInFlight || admissionPending || planMutation || nativePlan.busy || nativeTodos.busy || accountMutation || goalMutation || mcpMutation || interruptsInFlight)
+          if (promptInFlight || admissionPending || planMutation || nativePlan.busy || nativeTree.busy || nativeTodos.busy || accountMutation || goalMutation || mcpMutation || interruptsInFlight)
             throw new Error("The original native owner has another pending admission.");
-          const originalId = session.sessionId, originalFile = session.sessionFile;
+          const originalId = manager.getSessionId(), originalFile = session.sessionFile;
           const controller = new AbortController();
           promptInFlight = admissionPending = true; admissionAbort = controller;
           const accepted = Promise.withResolvers<Awaited<OmpPlanExecutionRun["accepted"]>>();
           let nativeRun: OmpPlanExecutionRun | undefined, claimed = false;
           const assertOriginal = () => {
             assertSessionActive();
-            if (session.sessionId !== originalId || session.sessionFile !== originalFile) throw new Error("The original Plan execution owner changed.");
+            if (manager.getSessionId() !== originalId || session.sessionFile !== originalFile) throw new Error("The original Plan execution owner changed.");
           };
           const completion = (async () => {
             await auth.revalidateCredentials();
@@ -1269,7 +1296,7 @@ export class OmpRuntime {
           if (!commandId || commandId.length > 200 || commandId.includes("\0")) throw new Error("Invalid Plan command identity.");
           try { assertIdle(); } catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: "PLAN_REJECTED" }); }
           const original = readPlan();
-          if (request.sessionId !== session.sessionId || request.ticket.epoch !== original.ticket.epoch
+          if (request.sessionId !== manager.getSessionId() || request.ticket.epoch !== original.ticket.epoch
             || request.ticket.nativeSessionId !== original.ticket.nativeSessionId || request.ticket.revision !== original.ticket.revision
             || request.reviewId !== original.review?.id || request.reviewRevision !== original.review.revision)
             throw Object.assign(new Error("The original Plan review changed. Refresh before choosing an action."), { code: "PLAN_REJECTED" });
@@ -1361,14 +1388,18 @@ export class OmpRuntime {
         cancelForceTool: input => { assertSessionActive(); return forceTool.cancel(input); },
         startPrompt: (text, promptOptions = {}) => {
           assertSessionActive();
-          if (usage.busy || promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || nativeTodos.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          if (usage.busy || promptInFlight || accountMutation || goalMutation || planMutation || planController?.busy || nativeTree.busy || nativeTodos.busy || mcpMutation || session.isStreaming || session.hasPostPromptWork) throw new Error("OMP session is busy; steer the running session instead");
+          const treeTicket = promptOptions.treeTicket;
+          if (treeTicket && (promptOptions.commandVersion !== 23 || promptOptions.images !== undefined || promptOptions.model || promptOptions.thinkingLevel !== undefined || promptOptions.selectedText || promptOptions.wholeFiles || promptOptions.forceTool || promptOptions.forceRecovery))
+            throw new Error("History edit submission must preserve its original native branch and model.");
+          if (treeTicket) nativeTree.assertTicket(treeTicket);
           const forceFields = parseForceToolPromptFields(promptOptions);
           if (forceFields.forceRecovery && ((promptOptions.commandVersion ?? 0) < 18 || !promptOptions.commandId))
             throw new Error("Force prompt recovery requires command protocol 18 and its original operation identity.");
           promptOptions = { ...promptOptions, ...forceFields };
           if (promptOptions.forceRecovery && (promptOptions.images?.length || promptOptions.selectedText || promptOptions.wholeFiles))
             throw new Error("Force prompt recovery retains plain text only; attached content was not admitted by the original arm.");
-          const images = copyPreparedImages(promptOptions.images);
+          const images = treeTicket ? nativeTree.editImages(treeTicket) : copyPreparedImages(promptOptions.images);
           // Detach the renderer/worker payload before native setup can await.
           // A selected context is persisted separately, so its ordinary user
           // text must itself fit OMP's durable-string bound.
@@ -1397,6 +1428,7 @@ export class OmpRuntime {
           promptInFlight = true;
           admissionPending = true;
           admissionAbort = controller;
+          let restoreTreePrompt: (() => void) | undefined;
           let skillPrompt: NativeSkillPrompt | undefined;
           const receipt = Promise.withResolvers<OmpPromptReceipt | null>();
           const completion = (async () => {
@@ -1436,7 +1468,18 @@ export class OmpRuntime {
                     recoveryPromptEntered = true;
                     return { agentInvoked: await session.prompt(nativeText) };
                   });
+                if (treeTicket) {
+                  const assertConsumed = nativeTree.consumeEdit(treeTicket);
+                  const agent = session.agent, original = agent.prompt;
+                  const guarded = ((...args: Parameters<typeof original>) => {
+                    assertSessionActive(); controller.signal.throwIfAborted(); assertConsumed();
+                    return original.apply(agent, args);
+                  }) as typeof original;
+                  agent.prompt = guarded;
+                  restoreTreePrompt = () => { if (agent.prompt === guarded) agent.prompt = original; };
+                }
                 return dispatchNativePrompt(session, nativeText, imagePrompt?.images, skillPrompt, {
+                  recovery: (command, args) => nativeRecovery.dispatch(command, args, controller.signal),
                   plan: async raw => {
                     const invocation = resolveNativePlanInvocation(session, raw);
                     if (!invocation) throw new Error("The original native Plan command no longer owns this input.");
@@ -1459,7 +1502,7 @@ export class OmpRuntime {
                     try {
                       const current = nativeTodos.read();
                       return await nativeTodos.mutate(promptOptions.commandId ?? `prompt:${crypto.randomUUID()}`,
-                        { sessionId: session.sessionId, ticket: current.ticket, mutation: { action: "command", text: raw } });
+                        { sessionId: manager.getSessionId(), ticket: current.ticket, mutation: { action: "command", text: raw } });
                     } finally { todoDispatchDepth--; }
                   },
                   forceTool: forceAdmission,
@@ -1541,7 +1584,7 @@ export class OmpRuntime {
               await nativePlan.settleAfterTurn();
               await nativeTodos.settle();
               return completed;
-          })().catch(error => { receipt.reject(error); throw error; }).finally(() => { wholeFiles?.close(); selectedText?.close(); imagePrompt?.close(); skillPrompt?.close(); });
+          })().catch(error => { receipt.reject(error); throw error; }).finally(() => { restoreTreePrompt?.(); wholeFiles?.close(); selectedText?.close(); imagePrompt?.close(); skillPrompt?.close(); });
           void receipt.promise.catch(() => {});
           void completion.catch(() => {});
           const run = { accepted: receipt.promise, completion, get forceToolReceipt() { return forceAdmission.forceToolReceipt; } };
@@ -1555,7 +1598,7 @@ export class OmpRuntime {
         steer: async (text, expectedApprovalMode, options) => {
           assertSessionActive();
           if (options?.images?.length) throw new Error("Image attachments are not supported on steering input yet; no input was queued");
-          if (admissionPending || planMutation || nativePlan.busy || nativeTodos.busy || mcpMutation) throw new Error("OMP is still accepting a prompt or settling native maintenance.");
+          if (admissionPending || planMutation || nativePlan.busy || nativeTree.busy || nativeTodos.busy || mcpMutation) throw new Error("OMP is still accepting a prompt or settling native maintenance.");
           // The host snapshot can precede a concurrently admitted Interrupt.
           // Recheck in the owning worker before native steer can queue an idle
           // auto-continuation or land after abort's initial queue cancellation.
@@ -1566,7 +1609,7 @@ export class OmpRuntime {
         startFollowUp: (text, delivery, expectedApprovalMode, images) => {
           const assertCurrent = () => {
             assertSessionActive();
-            if (admissionPending || planMutation || nativePlan.busy || nativeTodos.busy || mcpMutation) throw new Error("OMP is still accepting a prompt or settling native maintenance.");
+            if (admissionPending || planMutation || nativePlan.busy || nativeTree.busy || nativeTodos.busy || mcpMutation) throw new Error("OMP is still accepting a prompt or settling native maintenance.");
             if (interruptsInFlight || !session.isStreaming) throw new Error("There is no running native turn accepting a follow-up");
             if (expectedApprovalMode !== undefined && approvalMode(expectedApprovalMode) !== session.settings.get("tools.approvalMode"))
               throw new Error("The running turn uses a different native permission mode. Stop it before changing permissions.");
@@ -1580,7 +1623,7 @@ export class OmpRuntime {
         moveSession: async cwd => {
           assertSnapshotReady();
           const destination = await requireDirectory(cwd), source = manager.getCwd();
-          if (destination === source) return { id: session.sessionId, cwd: source, sessionFile: session.sessionFile! };
+          if (destination === source) return { id: manager.getSessionId(), cwd: source, sessionFile: session.sessionFile! };
           await session.settings.flush(); await manager.flush();
           const saved = manager.captureState();
           const rescope = async (next: string) => {
@@ -1596,11 +1639,11 @@ export class OmpRuntime {
             catch (restoreError) { throw taskLocationOutcomeUnknown(`Native task location changed but rollback could not be verified: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`); }
             throw error;
           }
-          if (session.sessionId !== handle.id || manager.getCwd() !== destination) throw taskLocationOutcomeUnknown("Native task identity or working directory changed unexpectedly.");
-          return { id: session.sessionId, cwd: destination, sessionFile: session.sessionFile! };
+          if (manager.getSessionId() !== handle.id || manager.getCwd() !== destination) throw taskLocationOutcomeUnknown("Native task identity or working directory changed unexpectedly.");
+          return { id: manager.getSessionId(), cwd: destination, sessionFile: session.sessionFile! };
         },
         abort: async () => {
-          assertSessionActive(); admissionAbort?.abort(); ui?.cancelAll("aborted"); mcp.cancelAuthorization();
+          assertSessionActive(); nativeTree.abort(); admissionAbort?.abort(); ui?.cancelAll("aborted"); mcp.cancelAuthorization();
           interruptEpoch++;
           interruptsInFlight++;
           steering.cancelQueued("Interrupted before this steer left the native queue");
@@ -1654,6 +1697,7 @@ export class OmpRuntime {
         dispose: () => {
           if (disposeCall) return disposeCall;
           disposed = true;
+          nativeTree.abort();
           const resetCleanupErrors: unknown[] = [];
           try { resetOwners?.beginClose(); } catch (error) { resetCleanupErrors.push(error); }
           usage.dispose();
@@ -1677,6 +1721,7 @@ export class OmpRuntime {
             const clean = async (work: () => unknown) => { try { await work(); } catch (error) { cleanupErrors.push(error); } };
             await clean(() => nativePlan.dispose());
             await clean(() => nativeTodos.settle());
+            await clean(() => nativeTree.settle());
             await clean(() => forceTool.dispose());
             await clean(() => session.beginDispose());
             await clean(() => session.dispose());

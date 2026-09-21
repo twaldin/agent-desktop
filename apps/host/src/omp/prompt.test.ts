@@ -62,6 +62,21 @@ describe("native prompt admission contract", () => {
     } finally { await manager.close(); }
   });
 
+  test("scheduled command admission is durable before its actual continuation settles", async () => {
+    const manager = await nativeManager();
+    const turn = Promise.withResolvers<boolean>();
+    try {
+      const run = beginNativePrompt(manager, async () => {
+        const output = "Retrying the last failed turn.";
+        const commandEntryId = manager.appendCustomEntry("agent-desktop.command-output", { command: "retry", output });
+        return { agentInvoked: true, handledCommand: "retry", commandEntryId, output, turnCompletion: turn.promise };
+      }, async () => {});
+      expect(await run.accepted).toMatchObject({ kind: "native-command", command: "retry", output: "Retrying the last failed turn." });
+      let settled = false; void run.completion.then(() => { settled = true; }); await Bun.sleep(1); expect(settled).toBe(false);
+      turn.resolve(true); expect(await run.completion).toBe(true);
+    } finally { turn.resolve(false); await manager.close(); }
+  });
+
   test("image admission skips another user's append and requires its exact native object plus flush", async () => {
     const manager = await nativeManager();
     const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/hZkAAAAASUVORK5CYII=", "base64");

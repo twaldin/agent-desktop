@@ -215,6 +215,7 @@ const bridge: DesktopBridge = {
   cancelTodoEditor: (request, hostId) => ipcRenderer.invoke("host:todo-editor-cancel", request, hostId),
   recoverTodoEditor: (request, hostId) => ipcRenderer.invoke("host:todo-editor-recovery", request, hostId),
   getPlanDocumentSection: (request, hostId) => ipcRenderer.invoke("host:plan-document-section", request, hostId),
+  getSessionTree: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-tree-read", sessionId, hostId, commandId),
   getSessionTodos: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-todos-read", sessionId, hostId, commandId),
   getSessionMcp: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-mcp", sessionId, hostId, commandId),
   getSessionMcpAuthorization: (sessionId, hostId, commandId) => ipcRenderer.invoke("host:session-mcp-authorization", sessionId, hostId, commandId),

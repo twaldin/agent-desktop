@@ -27,9 +27,10 @@ const bounded = (value: unknown, limit = 4096) => typeof value === "string" ? va
 
 /** These reviewed native text handlers neither change the owned native identity
  * nor require a TUI controller. Others remain visible with a concrete gap. */
-const supportedBuiltins = new Set(["force", "model", "switch", "fast", "skillful", "computer", "prewalk", "rename", "jobs", "tools", "context", "changelog", "dump", "compact", "shake"]);
+const supportedBuiltins = new Set(["force", "model", "switch", "fast", "skillful", "computer", "prewalk", "rename", "jobs", "tools", "context", "changelog", "dump", "compact", "shake", "retry", "fresh"]);
 const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
+  if (name === "tree") return { availability: "executable" };
   if (name === "export") return { availability: "executable" };
   if (supportedBuiltins.has(name)) return { availability: "executable" };
   // These commands use the owning Plan controller and its durable decisions.
@@ -83,7 +84,7 @@ function nativeBuiltinRows(): ComposerAction[] {
     argumentHint: command.acpInputHint ?? command.inlineHint,
     subcommands: command.subcommands?.map(sub => ({ ...sub, ...builtinAvailability(command.name, sub.name) })),
     argumentCompletions: Boolean(command.subcommands?.length),
-    ...(command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : command.name === "usage" ? { desktopAction: "usage-reset" as const } : {}),
+    ...(command.name === "tree" ? { desktopAction: "tree" as const } : command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : command.name === "usage" ? { desktopAction: "usage-reset" as const } : {}),
   }));
 }
 

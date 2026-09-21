@@ -14,7 +14,7 @@ import type { ResetPolicyWireRequest, ResetPolicyWireResponse } from "./reset-po
 import type { WorkerResetPolicyReconnect } from "./reconnect-wire";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 70;
+export const WORKER_PROTOCOL_VERSION = 71;
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -86,6 +86,8 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "startPlanExecution"; args: { phaseId: string } }
   | { operation: "preparePlanDecision"; args: { commandId: string; request: import("../../../../packages/shared/src/session-plan").PlanMutationRequest } }
   | { operation: "controlPlan"; args: import("../../../../packages/shared/src/session-plan").PlanControlRequest }
+  | { operation: "getTree" }
+  | { operation: "mutateTree"; args: { commandId: string; request: import("../../../../packages/shared/src/session-tree").TreeMutationRequest } }
   | { operation: "getTodos" }
   | { operation: "mutateTodos"; args: { commandId: string; request: TodoMutationRequest } }
   | { operation: "getForceTool" }
@@ -163,7 +165,7 @@ export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | { type: "eventAck"; sequence: number }
   /** The child exits only after its disposal result has reached the owner. */
   | { type: "disposeAck"; id: string };
-export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" | "PLAN_REJECTED" | "TODOS_REJECTED" }
+export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" | "PLAN_REJECTED" | "TODOS_REJECTED" | "TREE_REJECTED" }
 export type ChildMessage =
   | ResetPolicyWireRequest
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
@@ -209,6 +211,6 @@ function remoteErrorMessage(error: Error, seen: Set<Error>, budget: { remaining:
 export function remoteError(error: unknown): RemoteError {
   return error instanceof Error
     ? { name: error.name.slice(0, 100), message: remoteErrorMessage(error, new Set(), { remaining: MAX_REMOTE_ERROR_DETAILS }),
-      ...("code" in error && (error.code === "OUTCOME_UNKNOWN" || error.code === "PLAN_REJECTED" || error.code === "TODOS_REJECTED") ? { code: error.code } : {}) }
+      ...("code" in error && (error.code === "OUTCOME_UNKNOWN" || error.code === "PLAN_REJECTED" || error.code === "TODOS_REJECTED" || error.code === "TREE_REJECTED") ? { code: error.code } : {}) }
     : { name: "Error", message: "OMP worker operation failed" };
 }

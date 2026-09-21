@@ -40,7 +40,7 @@ export function useTranscript(bridge: Pick<DesktopBridge, "getMessages" | "subsc
   const activityRef = useRef(activitySequence); activityRef.current = activitySequence;
   useEffect(() => {
     const owner = hostId && sessionId ? { hostId, sessionId } : null;
-    let cancelled = false; let pending = false; let again = false; let receivedLive = false; let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false; let pending = false; let again = false; let receivedLive = false; let historyGeneration = 0; let timer: ReturnType<typeof setTimeout> | undefined;
     const hasCurrentSnapshot = current.current.key === key && current.current.loaded;
     const update = (patch: Partial<Snapshot>) => { if (!cancelled) setSnapshot(previous => ({ ...(previous.key === key ? previous : empty()), ...patch, key })); };
     update({ error: null, loading: false });
@@ -48,19 +48,19 @@ export function useTranscript(bridge: Pick<DesktopBridge, "getMessages" | "subsc
     // rows, selection and focus while the next live snapshot is being fetched.
     if (!hasCurrentSnapshot && sessionId && hostId) void offlineCache.read(key).then(value => {
       const cached = JSON.parse(value ?? "[]");
-      if (!cancelled && !receivedLive && Array.isArray(cached)) update({ messages: cached, owner, source: "cache", loaded: true, cacheWarning: null });
-    }).catch(() => update({ cacheWarning: "The cached transcript could not be read. Reconnect to load it from its host." }));
+      if (!cancelled && !receivedLive && historyGeneration === 0 && Array.isArray(cached)) update({ messages: cached, owner, source: "cache", loaded: true, cacheWarning: null });
+    }).catch(() => { if (historyGeneration === 0) update({ cacheWarning: "The cached transcript could not be read. Reconnect to load it from its host." }); });
     async function load() {
       if (!bridge || !sessionId || !connected || cancelled) return;
       if (pending) { again = true; return; }
       pending = true; update({ loading: true });
-      const readSequence = activityRef.current;
+      const readSequence = activityRef.current, readHistoryGeneration = historyGeneration;
       try {
         const next = await bridge.getMessages(sessionId, hostId);
-        if (cancelled) return;
+        if (cancelled || readHistoryGeneration !== historyGeneration) return;
         receivedLive = true; update({ messages: next, owner, source: "host", loaded: true, readSequence, error: null });
         void offlineCache.write(key, JSON.stringify(next)).then(() => update({ cacheWarning: null }), () => update({ cacheWarning: "This transcript could not be cached for offline reading." }));
-      } catch (cause) { update({ error: errorMessage(cause) }); }
+      } catch (cause) { if (readHistoryGeneration === historyGeneration) update({ error: errorMessage(cause) }); }
       finally { pending = false; if (!cancelled) { update({ loading: false }); if (again) { again = false; schedule(); } } }
     }
     function schedule() {
@@ -70,7 +70,10 @@ export function useTranscript(bridge: Pick<DesktopBridge, "getMessages" | "subsc
     refreshRef.current = () => { void load(); };
     const unsubscribe = bridge?.subscribe(event => {
       if ((event.hostId ?? localHostId) !== hostId) return;
-      if (event.type === "runtime" && event.sessionId === sessionId) schedule();
+      if (event.type === "runtime" && event.sessionId === sessionId) {
+        if (event.event && typeof event.event === "object" && "type" in event.event && event.event.type === "tree_changed") { historyGeneration++; again = pending; }
+        schedule();
+      }
       if (event.type === "state" && event.state.sessions.some(session => session.id === sessionId)) schedule();
     });
     void load();

@@ -26,20 +26,23 @@ export type NativeJobsSession = Pick<AgentSession, "sessionId" | "sessionFile" |
  * same manager. Reads never consume, acknowledge, watch or evict anything the
  * agent has not seen; the only control is a guarded single-job abort request. */
 export class NativeSessionJobs {
-  readonly #owner: SessionJobsOwner;
+  #owner: SessionJobsOwner;
+  #providerSessionId: string;
   readonly #sessionFile: string | undefined;
   readonly #manager: AsyncJobManager | undefined;
   /** Opaque identity of a live native job object, so a recycled id with a colliding
    * startTime cannot be addressed by a target minted for its predecessor. */
   readonly #guards = new WeakMap<AsyncJob, string>();
-  constructor(private readonly session: NativeJobsSession, private readonly assertOwner: () => void) {
+  constructor(private readonly session: NativeJobsSession, private readonly assertOwner: () => void, nativeSessionId = session.sessionId) {
     const agentId = session.getAgentId();
-    this.#owner = { nativeSessionId: session.sessionId, epoch: randomUUID(), ...(agentId ? { agentId } : {}) };
+    this.#owner = { nativeSessionId, epoch: randomUUID(), ...(agentId ? { agentId } : {}) };
+    this.#providerSessionId = session.sessionId;
     this.#sessionFile = session.sessionFile;
     this.#manager = session.asyncJobManager;
     this.#assert();
   }
   get owner(): SessionJobsOwner { return { ...this.#owner }; }
+  rebindProviderSession(): void { this.assertOwner(); this.#providerSessionId = this.session.sessionId; this.#owner = { ...this.#owner, epoch: randomUUID() }; }
 
   request(raw: SessionJobsRequest): SessionJobsResult {
     let request: SessionJobsRequest;
@@ -71,7 +74,7 @@ export class NativeSessionJobs {
     try { this.assertOwner(); }
     catch (error) { throw new NativeJobsError("STALE_OWNER", error instanceof Error ? error.message : String(error)); }
     const session = this.session;
-    if (session.isDisposed || session.sessionId !== this.#owner.nativeSessionId || session.sessionFile !== this.#sessionFile
+    if (session.isDisposed || session.sessionId !== this.#providerSessionId || session.sessionFile !== this.#sessionFile
       || (session.getAgentId() || undefined) !== this.#owner.agentId || session.asyncJobManager !== this.#manager)
       throw new NativeJobsError("STALE_OWNER", "The original native jobs owner has retired.");
   }

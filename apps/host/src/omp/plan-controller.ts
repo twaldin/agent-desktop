@@ -142,7 +142,7 @@ export interface NativePlanPorts {
  * Runtime must serialize this owner with other session mutations and call
  * settleModelTransition after native agent_end before admitting new work. */
 export class NativePlanController {
-  readonly #identity: { nativeSessionId: string; sessionFile: string };
+  readonly #identity: { nativeSessionId: string; sessionFile: string; providerSessionId: string };
   #previous?: { tools: Presentation; model?: ModelState; restored: boolean };
   #pendingModel?: ModelState;
   #entered = false;
@@ -160,20 +160,26 @@ export class NativePlanController {
   readonly #proposal = (title: string) => this.prepareProposal(title);
   constructor(private readonly session: AgentSession, private readonly manager: SessionManager, private readonly ports: NativePlanPorts) {
     if (!session.sessionFile || session.sessionManager !== manager) throw new NativePlanError("rejected", "A persisted owning native session is required.");
-    this.#identity = { nativeSessionId: session.sessionId, sessionFile: session.sessionFile };
+    this.#identity = { nativeSessionId: manager.getSessionId(), providerSessionId: session.sessionId, sessionFile: session.sessionFile };
     this.#assert();
   }
   #assert(invocation?: NativePlanInvocation) {
     this.ports.assertOwner();
-    if (this.#disposed || this.session.sessionId !== this.#identity.nativeSessionId || this.session.sessionFile !== this.#identity.sessionFile
+    if (this.#disposed || this.session.sessionId !== this.#identity.providerSessionId || this.session.sessionFile !== this.#identity.sessionFile
       || this.manager.getSessionId() !== this.#identity.nativeSessionId || this.manager.getSessionFile() !== this.#identity.sessionFile)
       throw new NativePlanError("rejected", "The original native planning owner has retired.");
     invocation?.assertCurrent();
   }
+  rebindProviderSession(): void {
+    this.ports.assertOwner();
+    if (this.#disposed || this.manager.getSessionId() !== this.#identity.nativeSessionId || this.manager.getSessionFile() !== this.#identity.sessionFile) throw new NativePlanError("rejected", "The original native planning owner has retired.");
+    this.#identity.providerSessionId = this.session.sessionId;
+  }
   snapshot(): NativePlanSnapshot {
     this.#assert();
     const state = this.session.getPlanModeState(), journal = this.manager.buildSessionContext();
-    return { ...this.#identity, mode: state?.enabled ? "active" : journal.mode === "plan_paused" ? "paused" : "off",
+    return { nativeSessionId: this.#identity.nativeSessionId, sessionFile: this.#identity.sessionFile,
+      mode: state?.enabled ? "active" : journal.mode === "plan_paused" ? "paused" : "off",
       journalMode: journal.mode, restorationRequired: journal.mode === "plan" && !state?.enabled,
       planFilePath: state?.planFilePath, proposalHandlerOwned: this.session.peekPlanProposalHandler() === this.#proposal,
       model: this.session.model ? { provider: this.session.model.provider, id: this.session.model.id } : null,
@@ -425,7 +431,7 @@ export class NativePlanController {
       await Promise.allSettled(pending);
     }
     if (this.#proposalFailure) throw this.#proposalFailure;
-    if (this.#disposed || this.session.sessionId !== this.#identity.nativeSessionId || this.session.sessionFile !== this.#identity.sessionFile
+    if (this.#disposed || this.session.sessionId !== this.#identity.providerSessionId || this.session.sessionFile !== this.#identity.sessionFile
       || this.manager.getSessionId() !== this.#identity.nativeSessionId || this.manager.getSessionFile() !== this.#identity.sessionFile) return;
     return this.settleModelTransition();
   }
@@ -797,7 +803,8 @@ export class NativePlanController {
     if (this.#busy || this.session.isCompacting || this.session.isAborting) throw new NativePlanError("rejected", "Native planning maintenance is still settling.");
     this.#busy = true; let changed = false;
     const settled = Promise.withResolvers<void>(); this.#activeOperation = settled.promise;
-    const oldIdentity = { ...this.#identity }, oldRoot = resolveLocalUrlToPath("local://", this.#localOptions());
+    const oldIdentity = this.#identityNow(), oldProviderSessionId = this.session.sessionId,
+      oldRoot = resolveLocalUrlToPath("local://", this.#localOptions());
     let replacementIdentity: NativePlanIdentity | undefined;
     try {
       await this.#assertReviewArtifact(review);
@@ -828,7 +835,7 @@ export class NativePlanController {
     } catch (cause) {
       if (changed) this.#reconciliationRequired = true;
       const observedReplacement = replacementIdentity ?? (this.session.sessionFile
-        && (this.session.sessionId !== oldIdentity.nativeSessionId || this.session.sessionFile !== oldIdentity.sessionFile)
+        && (this.session.sessionId !== oldProviderSessionId || this.session.sessionFile !== oldIdentity.sessionFile)
         ? { nativeSessionId: this.session.sessionId, sessionFile: this.session.sessionFile } : undefined);
       throw new NativePlanError(changed ? "unknown" : "rejected", cause instanceof Error ? cause.message : String(cause), {
         cause, ...(observedReplacement ? { receipt: { kind: "fresh", transition: "unknown", oldIdentity,
@@ -912,7 +919,7 @@ export class NativePlanController {
 
   async saveAndStartNew(input: { reviewId: string; reviewRevision: string; documentRevision: string;
     destination: string }): Promise<NativePlanSaveResult> {
-    const review = this.#ownedReview(input), oldIdentity = { ...this.#identity };
+    const review = this.#ownedReview(input), oldIdentity = this.#identityNow();
     const destination = resolveToCwd(input.destination, this.manager.getCwd());
     if (this.#busy || this.session.isCompacting || this.session.isAborting)
       throw new NativePlanError("rejected", "Native planning maintenance is still settling.");
@@ -947,7 +954,7 @@ export class NativePlanController {
       if (!pending.length) break;
       await Promise.allSettled(pending);
     }
-    if (this.session.sessionId === this.#identity.nativeSessionId && this.session.sessionFile === this.#identity.sessionFile
+    if (this.session.sessionId === this.#identity.providerSessionId && this.session.sessionFile === this.#identity.sessionFile
       && this.session.peekPlanProposalHandler() === this.#proposal) this.session.setPlanProposalHandler(null);
     this.#disposed = true; this.#pendingModel = undefined;
     if (this.#proposalFailure) {

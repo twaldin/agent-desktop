@@ -1,3 +1,5 @@
+import { SESSION_TREE_CAPABILITY } from "../../../packages/shared/src/session-tree";
+import { SessionTreeHttp, mutateSessionTree, projectTreeJournalReceipt } from "./session-tree-http";
 import { TodoExternalEditorHttp, type TodoExternalEditorHttpAction } from "./todo-external-editor-http";
 import { TodoExternalEditors } from "./todo-external-editors";
 import { SessionExportService } from "./session-export";
@@ -602,6 +604,9 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     sessionExists: (id: string) => !stopping && Boolean(store.getSession(id)),
     existing: async (id: string) => stopping ? undefined : handles.get(id)?.catch(() => undefined),
   };
+  const sessionTreeHttp = new SessionTreeHttp({ ...todosOwners, hostId: store.host.id,
+    receipt: (sessionId, commandId) => projectTreeJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
+  });
   const sessionTodosHttp = new SessionTodosHttp({ ...todosOwners, hostId: store.host.id,
     receipt: (sessionId, commandId) => projectTodoJournalReceipt(store.getCommand(commandId), sessionId, commandId, commands.has(commandId)),
   });
@@ -776,7 +781,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       sessionForks: SESSION_FORK_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
       drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, forceTool: { version: 1, commandVersion: 18 }, plan: { version: 1, commandVersion: 19, document: { version: 1, commandVersion: 20 } }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
-      todos: SESSION_TODOS_CAPABILITY,
+      todos: SESSION_TODOS_CAPABILITY, tree: SESSION_TREE_CAPABILITY,
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput, sessionActivity = false): void {
@@ -958,8 +963,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23): Promise<CommandResult> {
     const command = envelope.command;
+    if ((command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined) && commandVersion !== 23)
+      return fail(envelope.id, "TREE_PROTOCOL_REQUIRED", "Native history requires version 23.");
     if (command.type === "session.todos.mutate" && commandVersion !== 22)
       return fail(envelope.id, "TODOS_REJECTED", "Native Todos require the revision-bound version 22 protocol.");
     if (commandVersion < 20 && command.type === "session.plan.mutate" && command.mutation.action === "document")
@@ -1064,6 +1071,17 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           ? await handle.reconnectSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision,serverName:command.serverName})
           : await handle.reloadSessionMcp({epoch:command.epoch,expectedRevision:command.expectedRevision});
         return ok({type:"session.mcp",snapshot});
+      }
+      case "session.tree.mutate": {
+        const { type: _type, ...request } = command;
+        try {
+          const result = await mutateSessionTree(todosOwners, envelope.id, request);
+          publish({ type: "runtime", sessionId: command.sessionId, event: { type: "tree_changed" } });
+          return ok({ type: "session.tree.mutate", result });
+        } catch (error) {
+          const rejected = error instanceof Error && "code" in error && error.code === "TREE_REJECTED";
+          return fail(envelope.id, rejected ? "TREE_REJECTED" : "OUTCOME_UNKNOWN", errorMessage(error));
+        }
       }
       case "session.todos.mutate": {
         const { type: _type, ...request } = command;
@@ -1268,7 +1286,11 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           assertForceToolRecoveryCommand(command, state, id => store.getCommand(id));
         }
         if (command.approvalMode !== undefined) await applySessionApproval(command.sessionId, command.approvalMode);
-        const handle = recoveryHandle ?? await getHandle(command.sessionId);
+        const treeOwner = command.treeTicket ? handles.get(command.sessionId) : undefined;
+        const treeHandle = treeOwner ? await treeOwner : undefined;
+        if (command.treeTicket && (!treeHandle || stopping || handles.get(command.sessionId) !== treeOwner))
+          return fail(envelope.id, "TREE_REJECTED", "The original history owner is unavailable; the edit was retained.");
+        const handle = treeHandle ?? recoveryHandle ?? await getHandle(command.sessionId);
         if (recoveryOwner && (handles.get(command.sessionId) !== recoveryOwner || stopping)) throw new Error("The original force worker changed during recovery setup.");
         if (command.text.startsWith("/")) {
           const intent = await handle.getExportIntent(command.text);
@@ -1284,7 +1306,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         goalContinuations?.cancel(command.sessionId);
         const nativeTitleBefore = handle.title;
         updateSession(command.sessionId, { status: "running", error: undefined });
-        const turn = handle.startPrompt(command.text, { commandId: envelope.id, commandVersion, forceTool: command.forceTool, forceRecovery: command.forceRecovery, model: command.model, thinkingLevel: command.thinkingLevel, ...(command.wholeFileAttachments === undefined ? {} : { wholeFiles: { submissionId: envelope.id, attachments: command.wholeFileAttachments } }), ...(command.selectedTextAttachments === undefined ? {} : { selectedText: { submissionId: envelope.id, attachments: command.selectedTextAttachments } }), ...(images === undefined ? {} : { images }) });
+        const turn = handle.startPrompt(command.text, { commandId: envelope.id, commandVersion, treeTicket: command.treeTicket, forceTool: command.forceTool, forceRecovery: command.forceRecovery, model: command.model, thinkingLevel: command.thinkingLevel, ...(command.wholeFileAttachments === undefined ? {} : { wholeFiles: { submissionId: envelope.id, attachments: command.wholeFileAttachments } }), ...(command.selectedTextAttachments === undefined ? {} : { selectedText: { submissionId: envelope.id, attachments: command.selectedTextAttachments } }), ...(images === undefined ? {} : { images }) });
         let notificationOutcome: 'completed' | 'failed' | 'stopped' = 'failed';
         const completion = turn.completion.then(agentInvoked => {
           const error = runtimeErrors.get(command.sessionId);
@@ -1379,7 +1401,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return operation;
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -1555,6 +1577,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
             { status: 503, headers: { "Cache-Control": "no-store" } });
           return todoExternalEditorHttp.route(request, todoEditorRoute[1]!, todoEditorRoute[2] as TodoExternalEditorHttpAction);
         }
+        const treeResponse = await sessionTreeHttp.route(request, url);
+        if (treeResponse) return treeResponse;
         const todosResponse = await sessionTodosHttp.route(request, url);
         if (todosResponse) return todosResponse;
         const usageResponse = await sessionUsageHttp.route(request, url);
@@ -1665,6 +1689,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           const record = store.environmentPreparations.get(decodeURIComponent(preparationPath[1]!));
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
+        }
+        if (request.method === "POST" && url.pathname === "/v23/commands") {
+          const value = await request.json();
+          return Response.json(await dispatch(parseCommandEnvelope(value, 23), 23));
         }
         if (request.method === "POST" && url.pathname === "/v22/commands") {
           const value = await request.json();

@@ -96,6 +96,27 @@ test("plugin reload builtins require the reload owner while list and extension p
   expect(reloads).toBe(1);
 });
 
+test("retry and fresh route only through the owning recovery bridge after exact extension precedence", async () => {
+  expect(builtinAvailability("retry").availability).toBe("executable");
+  expect(builtinAvailability("fresh").availability).toBe("executable");
+  const value = fixture(mcp("succeeded"));
+  const calls: unknown[] = [];
+  const recovery = async (command: "retry" | "fresh", args: string) => {
+    calls.push([command, args]);
+    return { agentInvoked: command === "retry", handledCommand: command, output: command };
+  };
+  expect(await dispatchNativePrompt(value.session, "/retry", undefined, undefined, { ...value.bridges, recovery })).toMatchObject({ handledCommand: "retry", agentInvoked: true });
+  expect(await dispatchNativePrompt(value.session, "/fresh", undefined, undefined, { ...value.bridges, recovery })).toMatchObject({ handledCommand: "fresh", agentInvoked: false });
+  expect(calls).toEqual([["retry", ""], ["fresh", ""]]);
+  await expect(dispatchNativePrompt(value.session, "/retry extra", undefined, undefined, { ...value.bridges, recovery })).resolves.toMatchObject({ handledCommand: "retry" });
+  expect(calls.at(-1)).toEqual(["retry", "extra"]);
+
+  const shadow = fixture(mcp("succeeded"), { extension: true });
+  Object.assign(shadow.session.extensionRunner!, { getCommand: (name: string) => name === "retry" ? { handler: async () => {} } : undefined });
+  await dispatchNativePrompt(shadow.session, "/retry", undefined, undefined, { ...shadow.bridges, recovery });
+  expect(calls).toHaveLength(3);
+});
+
 // These controls exercise the actual native parser and app dispatch precedence;
 // the injected admission port does not count as native queue/provider proof.
 function forceRouting(shadow?: string, prepared = false) {

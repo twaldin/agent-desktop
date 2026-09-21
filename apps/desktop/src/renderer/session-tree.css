@@ -1,0 +1,30 @@
+.session-tree-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.session-tree-heading h2 { margin:0; }
+.session-tree-history { width:min(640px, calc(100vw - 32px)); max-height:calc(100vh - 48px); padding:20px; }
+.session-tree-note { color:var(--secondary); font-size:12px; margin:8px 0; }
+.session-tree-search,.session-tree-selection { display:flex; gap:8px; align-items:center; }
+.session-tree-search input { flex:1; min-width:0; }
+.session-tree-history input,.session-tree-history select,.session-tree-history textarea,.session-tree-inline-summary input:not([type=checkbox]) { border:1px solid var(--border); border-radius:6px; padding:7px 9px; background:var(--elevated-surface); color:var(--text); font:inherit; }
+.session-tree-list { list-style:none; margin:12px -8px; padding:0; max-height:min(44vh,420px); overflow:auto; }
+.session-tree-list li { margin:0; }
+.session-tree-list button { display:flex; gap:8px; width:100%; align-items:flex-start; border:0; border-radius:6px; padding:8px 12px; background:transparent; text-align:left; color:var(--secondary); }
+.session-tree-list button[data-active-branch=true] { color:var(--text); }
+.session-tree-list button:hover,.session-tree-list button[aria-pressed=true] { background:var(--hover); }
+.session-tree-node { flex:none; width:10px; }
+.session-tree-row-text { min-width:0; display:flex; flex:1; flex-direction:column; gap:3px; }
+.session-tree-row-text strong { font-size:12px; font-weight:500; }
+.session-tree-row-text>span { font-size:12px; white-space:pre-wrap; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; }
+.session-tree-list small { font-size:11px; color:var(--secondary); }
+.session-tree-selection label { flex:1; display:flex; align-items:center; gap:8px; }
+.session-tree-selection input { flex:1; min-width:0; }
+.session-tree-summary { display:flex; align-items:center; justify-content:space-between; margin:12px 0; }
+.session-tree-history>textarea { width:100%; min-height:70px; resize:vertical; }
+.session-tree-inline-edit { width:100%; min-width:0; border:1px solid var(--border); border-radius:24px; background:color-mix(in srgb,var(--text) 5%,transparent); padding:12px; }
+.session-tree-inline-edit .composer-rich-input { min-height:48px; max-height:50vh; padding:0; }
+.session-tree-edit-actions { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-top:8px; }
+.session-tree-inline-summary { display:flex; flex-direction:column; gap:8px; font-size:12px; color:var(--secondary); }
+.session-tree-inline-summary label { display:flex; align-items:center; gap:6px; }
+.transcript-user-edit-action { display:flex; justify-content:flex-end; margin-top:4px; opacity:0; }
+.user-message:hover .transcript-user-edit-action,.user-message:focus-within .transcript-user-edit-action { opacity:1; }
+.transcript-detached-edit { margin:16px 0; }
+@media (max-width:600px) { .session-tree-history { padding:14px; } .session-tree-search { flex-wrap:wrap; } .session-tree-edit-actions { flex-wrap:wrap; } .transcript-user-edit-action { opacity:1; } }

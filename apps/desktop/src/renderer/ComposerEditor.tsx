@@ -18,6 +18,7 @@ import { ComposerCompositionGuard } from './composer-composition';
 export interface ComposerInput {focus():void;readonly selectionStart:number;readonly selectionEnd:number;setSelectionRange(start:number,end:number):void;closest(selector:string):Element|null;getCaretRect?(offset:number):{left:number;top:number;bottom:number}}
 export interface ComposerEditorHandle extends ComposerInput { readonly element:HTMLElement; replaceText(text:string):void; insertFile(file:WholeFileAttachment,range?:{start:number;end:number}):void }
 interface Props {
+ inputId?:string;ariaLabel?:string;
  inputRef:RefObject<ComposerEditorHandle|null>; scope:string; text:string; files?:readonly WholeFileAttachment[]; disabled?:boolean;placeholder:string;
  onChange(value:{text:string;files:WholeFileAttachment[]}):void;
  clipboardHostId?:string;canPasteFiles?:boolean;allowRepeatedFiles?:boolean;onPasteError?(error:Error):void;
@@ -37,7 +38,7 @@ export function ComposerEditor(props:Props){
   view=new EditorView(mount.current!,{
    state:EditorState.create({doc:composerDocument(latest.current.text,latest.current.files),plugins:[history(),keymap({'Mod-z':undo,'Shift-Mod-z':redo,'Mod-y':redo,Enter:newline,'Shift-Enter':newline}),keymap(baseKeymap)]}),
    editable:()=>!latest.current.disabled,
-   attributes:{id:'prompt',role:'textbox','aria-multiline':'true',spellcheck:'true',class:'composer-rich-input'},
+   attributes:{id:latest.current.inputId??'prompt',role:'textbox','aria-multiline':'true',spellcheck:'true',class:'composer-rich-input'},
    nodeViews:{file:node=>{
     const dom=document.createElement('span');dom.className='composer-inline-file';dom.contentEditable='false';dom.dataset.fileId=node.attrs.id;
     if(latest.current.onOpenFile)dom.dataset.interactive='true';
@@ -81,9 +82,9 @@ export function ComposerEditor(props:Props){
    // Reset history so undo cannot resurrect a superseded cross-device draft.
    view.updateState(EditorState.create({doc:desired,plugins:view.state.plugins,selection:TextSelection.create(desired,documentPosition(desired,Math.min(start,props.text.length)),documentPosition(desired,Math.min(end,props.text.length)))}));
   }
-  view.setProps({editable:()=>!props.disabled,attributes:{id:'prompt',role:'textbox','aria-label':'Prompt','aria-multiline':'true','aria-describedby':'prompt-keyboard-hint','aria-disabled':String(Boolean(props.disabled)),'aria-autocomplete':'list','aria-controls':props.ariaControls??'','aria-expanded':String(Boolean(props.ariaExpanded)),'aria-activedescendant':props.ariaActiveDescendant??'',spellcheck:'true',class:'composer-rich-input','data-placeholder':props.placeholder,'data-empty':String(!props.text&&!props.files?.length)}});
+  view.setProps({editable:()=>!props.disabled,attributes:{id:props.inputId??'prompt',role:'textbox','aria-label':props.ariaLabel??'Prompt','aria-multiline':'true','aria-describedby':props.inputId?'':'prompt-keyboard-hint','aria-disabled':String(Boolean(props.disabled)),'aria-autocomplete':'list','aria-controls':props.ariaControls??'','aria-expanded':String(Boolean(props.ariaExpanded)),'aria-activedescendant':props.ariaActiveDescendant??'',spellcheck:'true',class:'composer-rich-input','data-placeholder':props.placeholder,'data-empty':String(!props.text&&!props.files?.length)}});
  // A new scope replaces EditorView even when its draft and controls are identical.
- },[props.scope,props.text,props.files,props.disabled,props.placeholder,props.ariaControls,props.ariaExpanded,props.ariaActiveDescendant]);
+ },[props.scope,props.text,props.files,props.disabled,props.placeholder,props.ariaControls,props.ariaExpanded,props.ariaActiveDescendant,props.inputId,props.ariaLabel]);
  return <div className="composer-editor" ref={mount} onKeyDownCapture={event=>{
   const disposition=compositionGuard.current?.classify(event.nativeEvent,viewRef.current?.composing);
   if(disposition==='replay'){event.preventDefault();event.stopPropagation();return;}

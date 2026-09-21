@@ -14,18 +14,27 @@ import type { AttachmentMediaContext } from "./attachment-media";
 
 export interface TranscriptImages { media: AttachmentMediaContext; hostId: string; sessionId: string }
 const ImageContext = createContext<TranscriptImages | undefined>(undefined);
+const EditContext = createContext<((message: TranscriptMessage) => void) | undefined>(undefined);
 const ArtifactContext = createContext<((artifact: McpArtifact) => void) | undefined>(undefined);
 
-export function TranscriptMessages({ messages, contextKey, connected, linkActions, images, onOpenArtifact }: { messages: TranscriptMessage[]; contextKey: string; connected: boolean; linkActions?: TranscriptLinkActions; images?: TranscriptImages; onOpenArtifact?(artifact: McpArtifact): void }) {
+export function TranscriptMessages({ messages, contextKey, connected, linkActions, images, onOpenArtifact, onEdit, editing }: { messages: TranscriptMessage[]; contextKey: string; connected: boolean; linkActions?: TranscriptLinkActions; images?: TranscriptImages; onOpenArtifact?(artifact: McpArtifact): void; onEdit?(message: TranscriptMessage): void; editing?: { nativeId: string; content: ReactNode } }) {
   const disclosures = useMemo(() => new TranscriptDisclosureState(), [contextKey]);
   const markdownViews = useMemo(() => new MarkdownViewState(), [contextKey]);
   const links = useMemo(() => toolLinks(messages), [messages]);
-  return <ArtifactContext value={onOpenArtifact}><ImageContext value={images}><TranscriptMarkdownContext value={{ actions: linkActions, views: markdownViews }}>{messages.map(message => <TranscriptItem key={message.id} message={message} connected={connected} disclosures={disclosures} calls={links.calls} linkedCall={links.results.get(message.id)}/>)}</TranscriptMarkdownContext></ImageContext></ArtifactContext>;
+  const rows = messages.map(message => editing && editing.nativeId === message.nativeId
+    ? <div key={`edit:${editing.nativeId}`} className="transcript-detached-edit">{editing.content}</div>
+    : <TranscriptItem key={message.id} message={message} connected={connected} disclosures={disclosures} calls={links.calls} linkedCall={links.results.get(message.id)}/>);
+  // Keep the exact editor mounted while native navigation removes its original
+  // user row. Moving between separate JSX child arrays would recreate its owner.
+  if (editing && !messages.some(message => message.nativeId === editing.nativeId))
+    rows.push(<div key={`edit:${editing.nativeId}`} className="transcript-detached-edit">{editing.content}</div>);
+  return <EditContext value={onEdit}><ArtifactContext value={onOpenArtifact}><ImageContext value={images}><TranscriptMarkdownContext value={{ actions: linkActions, views: markdownViews }}>{rows}</TranscriptMarkdownContext></ImageContext></ArtifactContext></EditContext>;
 }
 export function TranscriptItem({ message, connected, disclosures, calls, linkedCall }: { message: TranscriptMessage; connected: boolean; disclosures: TranscriptDisclosureState; calls: Map<string, ToolLink>; linkedCall?: ToolLink }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const images = useContext(ImageContext);
   const openArtifact = useContext(ArtifactContext);
+  const edit = useContext(EditContext);
   const blocks = messageBlocks(message);
   if (message.role === "fileMention" && message.fileReferences) return <TranscriptFileMentions message={message} images={images} connected={connected}/>;
   const renderBlock = (block: TranscriptBlock, index: number) => <Block key={index} block={block} blockKey={`${message.id}:block:${index}`} nativeEntryId={message.nativeId} disclosures={disclosures} calls={calls} connected={connected} streaming={message.lifecycle === "streaming" || message.tool?.status === "running"} allowWideBlocks={message.role === "assistant" || message.role === "user"} toolOutput={message.role === "toolResult" || message.role === "tool"}/>;
@@ -49,7 +58,7 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
     <ComposerSelectedText attachments={message.selectedText.attachments}/><span className="transcript-selected-context-status">Saved context · prompt not linked</span>
   </section>;
   const user = message.role === "user", assistant = message.role === "assistant";
-  if (!user && !assistant) return <section className="transcript-native-message" data-message-id={message.id} aria-label={`Native ${message.role} message`}><div className="transcript-native-role">{message.role}</div>{blocks.map(renderBlock)}{!blocks.length && <p className="subtle-notice">No displayable content was supplied for this native message.</p>}</section>;
+  if (!user && !assistant) return <section className="transcript-native-message" data-message-id={message.id} aria-label={`Native ${message.role} message`}><div className="transcript-native-role">{message.role === "branchSummary" ? "Branch summary" : message.role === "compactionSummary" ? "Conversation summary" : message.role}</div>{blocks.map(renderBlock)}{message.nativeSummary?.warning && <p className="subtle-notice">{message.nativeSummary.warning}</p>}{message.nativeSummary && <details><summary>Summary details</summary><pre>{JSON.stringify(message.nativeSummary, null, 2)}</pre></details>}{!blocks.length && <p className="subtle-notice">No displayable content was supplied for this native message.</p>}</section>;
   const metadata = message.assistant, complete = message.lifecycle === "complete", goalCompletion = assistant ? message.goalCompletion : undefined;
   const showBody = !user || !message.selectedText || blocks.some(block => block.type !== "text" || block.text.length > 0);
   return <article className={`message ${user ? `user-message${message.selectedText ? " has-selected-text" : ""}` : "assistant-message"}`} data-message-id={message.id} data-native-id={message.nativeId} aria-label={user ? "Your message" : "Assistant message"}>
@@ -59,6 +68,7 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
       {complete && metadata?.stopReason === "aborted" && <p className="transcript-message-notice" role="status">{metadata.errorMessage || "This response was interrupted."}</p>}
       {complete && metadata?.stopReason === "length" && <p className="transcript-message-notice">The response reached its output limit.</p>}
     </div>}
+    {user && message.nativeId && edit && <div className="transcript-user-edit-action"><button type="button" className="icon-button small" aria-label="Edit message" title="Edit message" disabled={!connected} onClick={() => edit(message)}><Icon name="pencil"/></button></div>}
     {assistant && <div className="transcript-message-actions">{message.text && <button className="copy-message" onClick={async () => { try { await navigator.clipboard.writeText(message.text); setCopyState("copied"); } catch { setCopyState("failed"); } }}><span aria-live="polite">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed · retry" : "Copy"}</span></button>}{goalCompletion && <span className="transcript-goal-achievement" title={goalCompletionTitle(goalCompletion)}><GoalIcon name="achieved"/><span>Goal achieved in {goalDuration(goalCompletion.timeUsedSeconds)}</span></span>}{metadata && Object.keys(metadata).length > 0 && <details className="transcript-message-metadata"><summary>Response details</summary><dl>{metadata.provider && <><dt>Provider</dt><dd>{metadata.provider}</dd></>}{metadata.model && <><dt>Model</dt><dd>{metadata.model}</dd></>}{metadata.upstreamProvider && <><dt>Upstream provider</dt><dd>{metadata.upstreamProvider}</dd></>}{metadata.upstreamModel && <><dt>Upstream model</dt><dd>{metadata.upstreamModel}</dd></>}{complete && metadata.stopReason && <><dt>Native stop reason</dt><dd>{metadata.stopReason}</dd></>}{metadata.durationMs !== undefined && <><dt>Native duration</dt><dd>{metadata.durationMs} ms</dd></>}{metadata.usage && <><dt>Reported usage</dt><dd><pre>{JSON.stringify(metadata.usage, null, 2)}</pre></dd></>}</dl></details>}</div>}
   </article>;
 }

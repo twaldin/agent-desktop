@@ -766,7 +766,7 @@ index 7fd5684..0f28b29 100644
      onPayload?: SimpleStreamOptions["onPayload"];
      /** Provider response hook used by the active session request path. */
 diff --git a/dist/types/session/agent-session.d.ts b/dist/types/session/agent-session.d.ts
-index c55844c..cc27ad0 100644
+index c55844c..e534b59 100644
 --- a/dist/types/session/agent-session.d.ts
 +++ b/dist/types/session/agent-session.d.ts
 @@ -53,7 +53,7 @@ import type { TodoPhase } from "../tools/todo.js";
@@ -820,7 +820,16 @@ index c55844c..cc27ad0 100644
      /**
       * Applies Code Mode at session startup: when the initial model activates
       * it (`codeMode` `on`, or `auto` matching a `code_mode_only` catalog flag),
-@@ -1079,6 +1091,40 @@ export declare class AgentSession {
+@@ -975,6 +987,8 @@ export declare class AgentSession {
+      */
+     navigateTree(targetId: string, options?: {
+         summarize?: boolean;
++        /** Optional owner/lifetime fence after asynchronous preparation and before history changes. */
++        assertCurrent?: () => void;
+         customInstructions?: string;
+         /**
+          * Opts into the two-phase `ask` toolResult re-answer protocol
+@@ -1079,6 +1093,40 @@ export declare class AgentSession {
       */
      get contextUsageRevision(): number;
      fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null>;
@@ -5675,7 +5684,7 @@ index bead7e3..85c3bae 100644
  	onPayload?: SimpleStreamOptions["onPayload"];
  	/** Provider response hook used by the active session request path. */
 diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
-index ea17642..9a1c62f 100644
+index ea17642..8e9c3a7 100644
 --- a/src/session/agent-session.ts
 +++ b/src/session/agent-session.ts
 @@ -61,6 +61,7 @@ import type {
@@ -6081,7 +6090,34 @@ index ea17642..9a1c62f 100644
  	/**
  	 * Applies Code Mode at session startup: when the initial model activates
  	 * it (`codeMode` `on`, or `auto` matching a `code_mode_only` catalog flag),
-@@ -9794,9 +10063,104 @@ export class AgentSession {
+@@ -9312,6 +9581,8 @@ export class AgentSession {
+ 		targetId: string,
+ 		options: {
+ 			summarize?: boolean;
++			/** Optional owner/lifetime fence after asynchronous preparation and before history changes. */
++			assertCurrent?: () => void;
+ 			customInstructions?: string;
+ 			/**
+ 			 * Opts into the two-phase `ask` toolResult re-answer protocol
+@@ -9362,6 +9633,7 @@ export class AgentSession {
+ 		askReanswerCommitted?: boolean;
+ 	}> {
+ 		await this.#bash.flushPending();
++		options.assertCurrent?.();
+ 		const oldLeafId = this.sessionManager.getLeafId();
+ 
+ 		const targetEntry = this.sessionManager.getEntry(targetId);
+@@ -9511,6 +9783,9 @@ export class AgentSession {
+ 			summaryDetails = hookSummary.details;
+ 		}
+ 
++		// No await may separate this owner fence from the first history mutation.
++		options.assertCurrent?.();
++
+ 		// Determine the new leaf position based on target type
+ 		let newLeafId: string | null;
+ 		let editorText: string | undefined;
+@@ -9794,9 +10069,104 @@ export class AgentSession {
  	}
  
  	async fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null> {
@@ -6188,7 +6224,7 @@ index ea17642..9a1c62f 100644
  			baseUrlResolver: provider => {
  				if (provider === "google-antigravity") {
  					const mode = this.settings.get("providers.antigravityEndpoint");
-@@ -9810,11 +10174,57 @@ export class AgentSession {
+@@ -9810,11 +10180,57 @@ export class AgentSession {
  			},
  			signal,
  		});
@@ -6248,7 +6284,7 @@ index ea17642..9a1c62f 100644
  	}
  
  	/** Models whose live `/usage` reports map to a quantitative provider scope. */
-@@ -9888,11 +10298,14 @@ export class AgentSession {
+@@ -9888,11 +10304,14 @@ export class AgentSession {
  	/**
  	 * Ask before the first auto-spend (`codexResets.autoRedeem === "unset"`).
  	 * The answer is persisted, so this fires at most once per install. Headless
@@ -6264,7 +6300,7 @@ index ea17642..9a1c62f 100644
  	): Promise<boolean> {
  		const first = actions[0];
  		if (!first) return false;
-@@ -9906,6 +10319,11 @@ export class AgentSession {
+@@ -9906,6 +10325,11 @@ export class AgentSession {
  					"codex-auto-reset",
  				);
  			}
@@ -6276,7 +6312,7 @@ index ea17642..9a1c62f 100644
  			return false;
  		}
  
-@@ -9918,17 +10336,23 @@ export class AgentSession {
+@@ -9918,17 +10342,23 @@ export class AgentSession {
  			actions.length === 1
  				? `Spend a saved Codex rate-limit reset?\n${lines[0]}`
  				: `Spend ${actions.length} saved Codex rate-limit resets?\n${lines.join("\n")}`;
@@ -6310,7 +6346,7 @@ index ea17642..9a1c62f 100644
  			if (choice === "Yes") {
  				this.settings.set("codexResets.autoRedeem", "yes");
  				return true;
-@@ -9942,21 +10366,125 @@ export class AgentSession {
+@@ -9942,21 +10372,125 @@ export class AgentSession {
  		return false;
  	}
  
@@ -6443,7 +6479,7 @@ index ea17642..9a1c62f 100644
  			settings: {
  				enabled: shouldEvaluateCodexAutoRedeem(cfg.autoRedeem),
  				minBlockedMinutes: Math.max(0, cfg.minBlockedMinutes),
-@@ -9969,38 +10497,85 @@ export class AgentSession {
+@@ -9969,38 +10503,85 @@ export class AgentSession {
  			deferredUntilByKey: coordinator.deferredUntilByKey,
  			lastAttemptAtByAccount: coordinator.lastAttemptAtByAccount,
  			activeBlockUnblockAtMs,
@@ -6539,7 +6575,7 @@ index ea17642..9a1c62f 100644
  			} catch (error) {
  				// Thrown transport failure (network error, 15s timeout): same policy
  				// as a non-terminal code — release the episode and retry after the
-@@ -10013,8 +10588,18 @@ export class AgentSession {
+@@ -10013,8 +10594,18 @@ export class AgentSession {
  					account: action.accountKey,
  					error: String(error),
  				});
@@ -6558,7 +6594,7 @@ index ea17642..9a1c62f 100644
  			if (!isTerminalRedeemOutcome(outcome.code)) {
  				// `nothing_to_reset` (limits not constrained enough yet) or a
  				// transport failure: the credit is STILL BANKED. Release the episode
-@@ -10063,7 +10648,27 @@ export class AgentSession {
+@@ -10063,7 +10654,27 @@ export class AgentSession {
  					}
  					break;
  				default:
@@ -6587,7 +6623,7 @@ index ea17642..9a1c62f 100644
  						this.emitNotice(
  							"warning",
  							`Codex auto-redeem for ${action.label} failed (${outcome.code}); will retry later.`,
-@@ -10077,10 +10682,361 @@ export class AgentSession {
+@@ -10077,10 +10688,361 @@ export class AgentSession {
  					}
  					break;
  			}
@@ -6951,7 +6987,7 @@ index ea17642..9a1c62f 100644
  	}
  
  	/**
-@@ -10098,7 +11054,9 @@ export class AgentSession {
+@@ -10098,7 +11060,9 @@ export class AgentSession {
  	 * active account has no credits. The "unset" mode asks before spending;
  	 * "yes" skips the prompt; "no" avoids the eligibility IO entirely.
  	 * Per-account in-flight dedup lets concurrent sessions adopt one pass
@@ -6962,7 +6998,7 @@ index ea17642..9a1c62f 100644
  	 */
  	async #maybeAutoRedeemCodexReset(activeBlockUnblockAtMs?: number): Promise<boolean> {
  		const coordinator = this.#codexResetCoordinator;
-@@ -10112,10 +11070,41 @@ export class AgentSession {
+@@ -10112,10 +11076,41 @@ export class AgentSession {
  		const identity = authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
  		const accountKey = (identity?.accountId ?? identity?.email)?.trim().toLowerCase();
  		if (!accountKey) return false;
@@ -7005,7 +7041,7 @@ index ea17642..9a1c62f 100644
  			// Live data: the cached report predates the block that got us here.
  			await authStorage.invalidateUsageCache("openai-codex");
  			const reports = await this.fetchUsageReports();
-@@ -10132,24 +11121,50 @@ export class AgentSession {
+@@ -10132,24 +11127,50 @@ export class AgentSession {
  					error: String(error),
  				});
  			}
@@ -7066,7 +7102,7 @@ index ea17642..9a1c62f 100644
  		return run;
  	}
  
-@@ -10159,35 +11174,83 @@ export class AgentSession {
+@@ -10159,35 +11180,83 @@ export class AgentSession {
  	 * rule in `./codex-auto-reset`) across ALL stored accounts, regardless of
  	 * the active model or blocked state. Fire-and-forget: never delays the
  	 * fetch, never runs concurrently with itself or a blocked pass, and the

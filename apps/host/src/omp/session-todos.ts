@@ -49,14 +49,14 @@ export function resolveNativeTodoInvocation(session: AgentSession, text: string)
  * an empty latest state is authoritative and never falls back to live memory.
  * Reads never append; every user change goes through the native shared commit. */
 export class NativeSessionTodos {
-  readonly #identity: { nativeSessionId: string; sessionFile: string };
-  readonly #epoch = randomUUID();
+  readonly #identity: { nativeSessionId: string; sessionFile: string; providerSessionId: string };
+  #epoch = randomUUID();
   #busy = false;
   #active?: Promise<void>;
   #reconciliationRequired = false;
   constructor(private readonly session: AgentSession, private readonly manager: SessionManager, private readonly ports: NativeSessionTodosPorts) {
     if (!session.sessionFile || session.sessionManager !== manager) throw rejected("A persisted owning native session is required.");
-    this.#identity = { nativeSessionId: session.sessionId, sessionFile: session.sessionFile };
+    this.#identity = { nativeSessionId: manager.getSessionId(), providerSessionId: session.sessionId, sessionFile: session.sessionFile };
     this.#assert();
   }
   prepareExternalEditor(ticket: TodoTicket): { content: string; extension: string; trimTrailingNewline: boolean } {
@@ -73,10 +73,15 @@ export class NativeSessionTodos {
   async settle(): Promise<void> { while (this.#active) await this.#active.catch(() => {}); }
   #assert(invocation?: NativeTodoInvocation) {
     this.ports.assertOwner();
-    if (this.session.sessionId !== this.#identity.nativeSessionId || this.session.sessionFile !== this.#identity.sessionFile
+    if (this.session.sessionId !== this.#identity.providerSessionId || this.session.sessionFile !== this.#identity.sessionFile
       || this.manager.getSessionId() !== this.#identity.nativeSessionId || this.manager.getSessionFile() !== this.#identity.sessionFile)
       throw rejected("The original native Todos owner has retired.");
     invocation?.assertCurrent();
+  }
+  rebindProviderSession(): void {
+    this.ports.assertOwner();
+    if (this.manager.getSessionId() !== this.#identity.nativeSessionId || this.manager.getSessionFile() !== this.#identity.sessionFile) throw rejected("The original native Todos owner has retired.");
+    this.#identity.providerSessionId = this.session.sessionId; this.#epoch = randomUUID();
   }
   #busyReason(includeOwnBusy = true): string | undefined {
     return this.ports.getBusyReason() ?? (includeOwnBusy && this.#busy ? "A native Todos change is still settling."

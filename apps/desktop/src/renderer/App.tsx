@@ -1,4 +1,7 @@
 import { ExtensionStatuses, ExtensionWidgets, useExtensionSessionUi } from "./ExtensionSessionUi";
+import { SessionTreeHistory, SessionTreeEdit } from "./SessionTree";
+import { useSessionTree, type SessionTreePorts } from "./use-session-tree";
+import { parseSessionTreeResponse, type TreeMutationResult, type TreeTicket } from "../../../../packages/shared/src/session-tree";
 import type { TodoEditorPorts } from "./todo-external-editor-state";
 import { SessionExportDialog } from "./SessionExportDialog";
 import { SessionUsagePanel } from "./SessionUsagePanel";
@@ -1022,6 +1025,51 @@ export function App() {
     connected: connected && !selected?.archived, active: !contentOverlayOpen,
     supported: state?.todos?.version === 1 && state.todos.commandVersion === 22, localHostId: desktop.localHostId,
   });
+  const treePorts = useMemo<SessionTreePorts>(() => ({ bridge,
+    storage: { read: key => localStorage.getItem(key), write: (key, value) => localStorage.setItem(key, value), remove: key => localStorage.removeItem(key) } }), [bridge]);
+  const nativeTree = useSessionTree({ hostId, sessionId: selected?.id ?? "" }, treePorts, {
+    connected: connected && !selected?.archived, active: !contentOverlayOpen,
+    supported: state?.tree?.version === 1 && state.tree.commandVersion === 23, localHostId: desktop.localHostId,
+  });
+  const [treeHistoryOpen, setTreeHistoryOpen] = useState(false);
+  const [treeEdit, setTreeEdit] = useState<{ owner: string; targetId: string; text: string; imageCount: number; prepared?: TreeMutationResult; originalTicket?: TreeTicket }>();
+  useEffect(() => { setTreeHistoryOpen(false); setTreeEdit(undefined); }, [routeKey]);
+  const openTreeHistory = () => { setMenuOpen(false); setTreeHistoryOpen(true); void nativeTree.state.refresh().catch(cause => setActionError(errorMessage(cause))); };
+  const navigateTree = async (targetId: string, summarize: boolean, customInstructions?: string) => {
+    const capturedRoute = routeKey, view = nativeTree.state.getSnapshot();
+    if (!selectedId || !view.value) return;
+    setTreeHistoryOpen(false);
+    try {
+      const result = await nativeTree.state.mutate({ hostId, sessionId: selectedId }, { sessionId: selectedId, ticket: view.value.ticket,
+        mutation: { action: "navigate", targetId, summarize, ...(customInstructions === undefined ? {} : { customInstructions }) } });
+      if (selectedRef.current !== capturedRoute) return;
+      transcript.refresh();
+      if (result.draft) setTreeEdit({ owner: capturedRoute, targetId, text: result.draft.text, imageCount: result.draft.images.length, prepared: result });
+    } catch (cause) { if (selectedRef.current === capturedRoute) setActionError(errorMessage(cause)); }
+  };
+  const editHistoryMessage = (message: import("@agent-desktop/shared").TranscriptMessage) => {
+    if (!message.nativeId || !nativeTree.view.fresh || !nativeTree.view.value) return;
+    const entry = nativeTree.view.value.entries.find(entry => entry.id === message.nativeId);
+    if (!entry?.editable) { setActionError("This native message is not currently editable. Refresh its history."); return; }
+    setTreeEdit({ owner: routeKey, targetId: entry.id, text: entry.text, imageCount: entry.imageCount, originalTicket: nativeTree.view.value.ticket });
+  };
+  const restoreTreeEdit = async (commandId: string) => {
+    const capturedRoute = routeKey;
+    if (!selectedId || !bridge.getSessionTree) return;
+    try {
+      const response = parseSessionTreeResponse(await bridge.getSessionTree(selectedId, hostId, commandId), hostId, selectedId, commandId);
+      if (selectedRef.current !== capturedRoute) return;
+      const result = response.receipt?.result, recovered = result?.state.recoveredDraft;
+      if (response.receipt?.state !== "succeeded" || !result?.draft || !recovered || recovered.commandId !== commandId)
+        throw new Error("The original navigation has no confirmed editable receipt. It was not replayed.");
+      setTreeHistoryOpen(false); setTreeEdit({ owner: capturedRoute, targetId: recovered.targetId, text: result.draft.text, imageCount: result.draft.images.length, prepared: result });
+    } catch (cause) { if (selectedRef.current === capturedRoute) setActionError(errorMessage(cause)); }
+  };
+  const treeEditContent = treeEdit?.owner === routeKey && selectedId ? <SessionTreeEdit key={`${routeKey}:${treeEdit.targetId}`}
+    owner={{ hostId, sessionId: selectedId, targetId: treeEdit.targetId }} initialText={treeEdit.text} imageCount={treeEdit.imageCount}
+    prepared={treeEdit.prepared} originalTicket={treeEdit.originalTicket} bridge={bridge} connected={connected && !selected?.archived}
+    onClose={() => setTreeEdit(undefined)} onSent={() => { setTreeEdit(undefined); transcript.refresh(); void nativeTree.state.refresh(); }}
+    onStop={() => { void command({ type: "session.interrupt", sessionId: selectedId }); }}/>: undefined;
   const todosPanelPorts = useMemo<SessionTodosPanelPorts>(() => ({
     mutate: (owner, request) => nativeTodos.state.mutate(owner, request),
     refresh: async owner => {
@@ -1450,6 +1498,19 @@ export function App() {
           if (side.error) throw new Error(side.error);
           await refresh();
           return;
+        }
+      }
+      if (!pending?.uncertain && /^\s*\/tree(?:[\s:]|$)/.test(snapshot.text)) {
+        if (!selectedId || !bridge.getComposerActions) throw new Error("Open a connected conversation before using native /tree. The draft was retained.");
+        const target = { sessionId: selectedId }, catalog = await bridge.getComposerActions(target, false, hostId);
+        assertComposerOwner(catalog, hostId, target);
+        if (selectedRef.current !== originalRoute) throw new Error("The original conversation changed. Nothing was sent.");
+        const token = snapshot.text.trim().split(" ")[0]!.slice(1), literal = catalog.commands.find(row => row.name === token && row.availability !== "shadowed");
+        const native = literal?.source.kind === "extension" || literal?.source.kind === "custom" ? literal : catalog.commands.find(row => row.id === "builtin:tree");
+        if (native?.source.kind === "builtin") {
+          if (native.desktopAction !== "tree" || !state?.tree || !/^\s*\/tree\s*$/.test(snapshot.text) || snapshot.attachments?.length || snapshot.selectedTextAttachments?.length || snapshot.wholeFileAttachments?.length)
+            throw new Error("Use /tree without arguments or attachments to open native history. The draft was retained.");
+          openTreeHistory(); return;
         }
       }
       if (!pending?.uncertain && /^\s*\/todo(?:[\s:]|$)/.test(snapshot.text)) {
@@ -2008,7 +2069,7 @@ export function App() {
   const profileMenu = (triggerId?: string) => <ProfileMenu hosts={desktop.hosts} activeHostId={state?.host.id ?? route.hostId} hostName={activeHostName} connected={connected} connectionLabel={connectionLabel} onSelectHost={owner => navigate(null, owner, true)} onSettings={openSettings} onConnections={() => { setSettingsPage("connections"); openSettings(); }} onBuildStatus={() => setDialog("status")} onRefresh={() => desktop.refreshNetwork()} triggerId={triggerId}/>;
   // The right dock occupies the top-right corner of the titlebar band only when it renders as its own column.
   useEffect(() => { setExportOwner(undefined); }, [hostId, selected?.id]);
-  const conversationActions = selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button>{forkSupported && <button disabled={!canFork} title={forkController?.error ?? forkController?.value?.local.reason} onClick={() => openForkMenu(document.querySelector<HTMLElement>('[aria-label="Conversation actions"]'))}>Fork chat</button>}<button disabled={!connected || !state?.sessionExports || !bridge.getSessionExport || !bridge.saveSessionExport} onClick={() => { setExportOwner({ hostId, sessionId: selected.id }); setMenuOpen(false); }}>Export conversation…</button><button disabled={!canCopyMarkdown} title={markdownIssue ?? undefined} onClick={() => { void copyConversationMarkdown(); }}>Copy as Markdown</button>{state?.sessionUsage?.version === 1 && <button onClick={() => { setUsageOwner({ hostId, sessionId: selected.id, hostName: state.host.name }); setMenuOpen(false); }}>Provider usage…</button>}<button onClick={() => { dock.open("side-chat"); setMenuOpen(false); }}>Side chat</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>;
+  const conversationActions = selected && <div className="no-drag"><div className="menu-anchor"><button className="icon-button" onClick={() => setMenuOpen(value => !value)} aria-label="Conversation actions" aria-expanded={menuOpen} title="Conversation actions"><Icon name="more"/></button>{menuOpen && <><button className="menu-dismiss" onClick={() => setMenuOpen(false)} tabIndex={-1} aria-label="Close conversation actions"/><div className="action-menu"><button disabled={!connected} onClick={() => { setRenameTitle(selected.title); setDialog("rename"); setMenuOpen(false); }}>Rename</button><button disabled={!connected} onClick={archive}>{selected.archived ? "Unarchive" : "Archive"}</button>{forkSupported && <button disabled={!canFork} title={forkController?.error ?? forkController?.value?.local.reason} onClick={() => openForkMenu(document.querySelector<HTMLElement>('[aria-label="Conversation actions"]'))}>Fork chat</button>}<button disabled={!connected || !state?.sessionExports || !bridge.getSessionExport || !bridge.saveSessionExport} onClick={() => { setExportOwner({ hostId, sessionId: selected.id }); setMenuOpen(false); }}>Export conversation…</button><button disabled={!canCopyMarkdown} title={markdownIssue ?? undefined} onClick={() => { void copyConversationMarkdown(); }}>Copy as Markdown</button>{state?.sessionUsage?.version === 1 && <button onClick={() => { setUsageOwner({ hostId, sessionId: selected.id, hostName: state.host.name }); setMenuOpen(false); }}>Provider usage…</button>}<button onClick={() => { dock.open("side-chat"); setMenuOpen(false); }}>Side chat</button><button disabled={!connected || !state?.tree || !bridge.getSessionTree} onClick={openTreeHistory}>Conversation history…</button><button onClick={() => { transcript.refresh(); setMenuOpen(false); }}>Refresh transcript</button></div></>}</div></div>;
   const environmentAction = workspace && <button role="checkbox" aria-checked={environmentOpen} className={`icon-button ${environmentOpen ? "active" : ""}`} aria-label="Environment" title={environmentOpen ? "Hide environment" : "Show environment"} onClick={() => setEnvironmentOpen(value => !value)}><Icon name="sliders"/></button>;
   const fullWidthContent = !contentOverlayOpen && workspaceOpen && dock.snapshot.state.rightLayout === "full";
   const contentSide = resolveContentSide(dock.snapshot.state,taskDirection);
@@ -2077,7 +2138,7 @@ export function App() {
             {transcript.cacheWarning && <p className="subtle-notice">{transcript.cacheWarning}</p>}
             {selected?.error && <div className="inline-error" role="alert">{selected.error}</div>}
             {!transcript.messages.length && <div className="empty-transcript"><Icon name="compose"/><h2>{transcript.loading ? "Loading conversation…" : !selected ? "Conversation unavailable" : "Start the conversation"}</h2><p>{connected ? "Send a prompt to begin working in this session." : "No transcript is cached on this device."}</p></div>}
-            <TranscriptMessages messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }} onOpenArtifact={mcpCatalogue.snapshot?.canOpenApps ? openMcpArtifact : undefined}/>
+            <TranscriptMessages onEdit={state?.tree?.version === 1 && nativeTree.view.fresh && !nativeTree.view.value?.busyReason && !nativeTree.view.pending && !nativeTree.view.uncertain ? editHistoryMessage : undefined} editing={treeEditContent && treeEdit ? { nativeId: treeEdit.targetId, content: treeEditContent } : undefined} messages={transcript.messages} contextKey={`${hostId}:${selectedId}`} connected={connected} linkActions={transcriptLinkActions} images={{ media: attachmentMedia, hostId, sessionId: selectedId }} onOpenArtifact={mcpCatalogue.snapshot?.canOpenApps ? openMcpArtifact : undefined}/>
             {running && <div className="working-state" role="status"><span className="working-dot"/>Working…</div>}
           </div>
         </div>{!transcriptReading.following && <button className="transcript-latest" onClick={transcriptReading.latest} aria-label="Return to latest message"><Icon name="arrow"/><span>Return to latest</span></button>}</div> : <Welcome project={project} workspace={workspace} onSelectProject={anchor => composerContext.current?.openProjects(anchor)}/>}
@@ -2089,6 +2150,8 @@ export function App() {
             <PendingInteractions bridge={bridge} hostId={hostId} sessionId={(selectedId ?? pendingSessionId)!} localHostId={desktop.localHostId} connected={connected}/>
           </>}
           {markdownCopy?.owner === markdownCopyRoute.current && <div className={markdownCopy.state === "failed" ? "inline-error" : "subtle-notice"} role={markdownCopy.state === "failed" ? "alert" : "status"}><span>{markdownCopy.message}</span>{markdownCopy.state !== "copying" && <button className="icon-button small" onClick={() => setMarkdownCopy(null)} aria-label="Dismiss copy status"><Icon name="close"/></button>}</div>}
+          {nativeTree.view.pending && <div className="subtle-notice" role="status">Preparing native conversation history… <button type="button" disabled={!connected} onClick={() => { if (selectedId) void command({ type: "session.interrupt", sessionId: selectedId }); }}>Stop</button></div>}
+          {nativeTree.view.uncertain && <div className="inline-error" role="alert">The history change needs inspection. <button type="button" onClick={openTreeHistory}>Check original command</button></div>}
           {actionError && <div className="inline-error" role="alert"><span>{actionError.message}</span><button className="icon-button small" onClick={() => setActionError(null)} aria-label="Dismiss error"><Icon name="close"/></button></div>}
           {modeView?.conflict && !sameModeConflict(modeView) && draft.projectId && <div className="draft-conflict" role="alert"><strong>Work in changed on another device.</strong><p>Your prompt and other selections are preserved. Choose which execution mode to use for this project.</p><dl><dt>My choice</dt><dd>{executionModeLabel(modeView.draft.execution)}</dd><dt>Host’s saved choice</dt><dd>{executionModeLabel(modeView.conflict.execution)}</dd></dl><div><button className="secondary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"remote")}>Use saved mode</button><button className="primary-button" onClick={() => resolveProjectExecutionMode(drafts,draftId,draft.projectId!,"local")}>Keep my mode</button></div></div>}
           {modeView?.status === "error" && draft.projectId && <div className="inline-error" role="alert"><span>{modeView.error ?? "The Work in choice was not saved to the host."}</span><button disabled={!connected} onClick={() => void drafts.flush(projectExecutionModeDraftId(draft.projectId!)).catch(() => {})}>Retry mode save</button></div>}
@@ -2287,6 +2350,7 @@ export function App() {
         executionChoices={panelPlan.value.executionChoices} receipt={nativePlan.view.receipt} failure={nativePlan.view.failure} error={nativePlan.view.error}
         {...planReviewPorts} externalEditorPorts={planEditorPorts} copy={typeof navigator.clipboard?.writeText === "function" ? copyText : undefined}/>}
     </dialog>
+    {treeHistoryOpen && selectedId && <SessionTreeHistory state={nativeTree.state} view={nativeTree.view} connected={connected} onClose={() => setTreeHistoryOpen(false)} onRestore={id => void restoreTreeEdit(id)} onNavigate={(id, summarize, instructions) => void navigateTree(id, summarize, instructions)}/>}
     {exportOwner && <SessionExportDialog key={`${exportOwner.hostId}:${exportOwner.sessionId}`} bridge={bridge} {...exportOwner} connected={connected && hostId === exportOwner.hostId && selected?.id === exportOwner.sessionId} onClose={() => setExportOwner(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>
