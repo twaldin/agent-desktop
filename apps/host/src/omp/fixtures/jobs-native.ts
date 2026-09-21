@@ -251,13 +251,21 @@ async function worker() {
     const staleOwner = await session.nativeJobs({ action: "cancel", owner: { ...(await owner()), epoch: "stale-epoch" }, job: await target("w-a") }).then(() => "accepted", errorCode);
     result.cancellation = { requested: cancelB.requested, finalStatus: settledB.status, errorText: settledB.errorText, consumed: settledB.consumed, settledCancelRequested: staleB.requested, fabricatedGuard: fabricated, staleOwner };
     holdA.release();
-    const completedA = await control.waitJob({ jobId: "w-a", status: "completed" });
+    await control.waitJob({ jobId: "w-a", status: "completed" });
+    // Delivery can consume a completed result between control-socket and worker
+    // RPC observations. Compare a stable, delivered state here; the direct
+    // fixture above separately proves that inspect never consumes queued output.
+    const deliveredA = await until(async () => {
+      const job = await control.job("w-a");
+      return job?.consumed ? job : undefined;
+    }, "worker native result delivery");
     const inspectA = await session.nativeJobs({ action: "inspect", owner: await owner(), job: await target("w-a") }) as Extract<SessionJobsResult, { action: "inspect" }>;
+    const afterInspectA = await control.job("w-a");
     const seededIndependent = await control.seed({ label: "independent owner seed", owner: "independent" });
     const seededOwned = await control.seed({ label: "owned queued seed", type: "eval", owner: "original", queued: true });
     const snapshot = await read();
     result.completion = { row: summarize(rowOf(snapshot, "w-a")), resultIncludesChildOutput: inspectA.detail.resultText?.includes(JOBS_FIXTURE_CHILD_RESULT) === true, consumedAtInspect: inspectA.detail.consumed,
-      managerConsumedAtInspect: completedA.consumed, independentHidden: rowOf(snapshot, seededIndependent.jobId) === undefined, independentOwner: seededIndependent.ownerId,
+      managerConsumedBeforeInspect: deliveredA.consumed, managerConsumedAfterInspect: afterInspectA?.consumed, independentHidden: rowOf(snapshot, seededIndependent.jobId) === undefined, independentOwner: seededIndependent.ownerId,
       ownedQueued: summarize(rowOf(snapshot, seededOwned.jobId)) };
     await control.release(seededIndependent.jobId); await control.release(seededOwned.jobId, "fail", "seeded failure");
     const failedSeed = await control.waitJob({ jobId: seededOwned.jobId, settled: true });

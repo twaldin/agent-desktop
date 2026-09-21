@@ -76,7 +76,7 @@ test("production worker RPC over the original captured native session: real spaw
   expect(result.cancellation.staleOwner).toMatch(/STALE_OWNER/);
   expect(result.completion).toMatchObject({ row: { id: "w-a", status: "completed" }, resultIncludesChildOutput: true, independentHidden: true, independentOwner: JOBS_FIXTURE_INDEPENDENT_OWNER,
     ownedQueued: { type: "eval", status: "running", queued: true } });
-  expect(result.completion.consumedAtInspect).toBe(result.completion.managerConsumedAtInspect);
+  expect(result.completion).toMatchObject({ consumedAtInspect: true, managerConsumedBeforeInspect: true, managerConsumedAfterInspect: true });
   expect(result.failure).toMatchObject({ seededStatus: "failed", seededError: "seeded failure", childStatus: "failed", childErrorIncludesFailure: true });
   expect(result.beforeOwnerLoss.blockedInWorker).toEqual([]);
   expect(result.ownerLoss.disposedRead).not.toMatch(/^read:/);
