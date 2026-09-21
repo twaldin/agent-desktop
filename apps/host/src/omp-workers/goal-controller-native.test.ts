@@ -26,9 +26,9 @@ async function fixture() {
   const session = await runtime.create({ cwd, interactions: true });
   await session.setModel(model);
   const started = async (call: number) => {
-    const file = Bun.file(path.join(gates, `${call}.started`)), deadline = Date.now() + 7000;
-    while (!await file.exists() && Date.now() < deadline) await Bun.sleep(5);
-    expect(await file.exists()).toBe(true);
+    const file = path.join(gates, `${call}.started`), deadline = Date.now() + 7000;
+    while (!await Bun.file(file).exists() && Date.now() < deadline) await Bun.sleep(5);
+    expect(await Bun.file(file).exists()).toBe(true);
   };
   return { root, gates, runtime, session, started, close: async () => { await runtime.dispose(); await rm(root, { recursive: true, force: true }); } };
 }

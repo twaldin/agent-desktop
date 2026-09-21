@@ -13,9 +13,9 @@ test("owning native worker rejects idle and interrupt-racing steers and cancels 
   const runtime = new WorkerRuntime({ agentDir, workerPath: fileURLToPath(new URL("./fixtures/no-provider-worker.ts", import.meta.url)),
     environment: { HOME: root, PATH: process.env.PATH, TMPDIR: tmpdir(), PI_CODING_AGENT_DIR: agentDir, STEER_CONTRACT_GATES: gates, TERM: "dumb" } });
   const started = async (call: number) => {
-    const file = Bun.file(path.join(gates, `${call}.started`)), deadline = Date.now() + 7000;
-    while (!await file.exists() && Date.now() < deadline) await Bun.sleep(5);
-    expect(await file.exists()).toBe(true);
+    const file = path.join(gates, `${call}.started`), deadline = Date.now() + 7000;
+    while (!await Bun.file(file).exists() && Date.now() < deadline) await Bun.sleep(5);
+    expect(await Bun.file(file).exists()).toBe(true);
   };
   try {
     const session = await runtime.create({ cwd, interactions: true });

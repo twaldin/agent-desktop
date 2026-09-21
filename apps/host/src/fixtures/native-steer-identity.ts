@@ -43,7 +43,8 @@ try {
   if (receipt.kind !== "user-message") throw new Error("Expected native user entry");
   assert.notEqual(receipt.entryId, foreignEntry.id);
   const ownEntry = (await entries()).find(entry => entry.id === receipt.entryId);
-  assert.deepEqual(ownEntry.message, ownMessage); await started(3);
+  // Disk JSON cannot contain native runtime-only symbol metadata; compare every serialized message field.
+  assert.deepEqual(ownEntry.message, JSON.parse(JSON.stringify(ownMessage))); await started(3);
   await release(3); const otherReceipt = await parallel; assert.equal(otherReceipt.kind, "user-message");
   if (otherReceipt.kind !== "user-message") throw new Error("Expected second native user entry");
   assert.notEqual(otherReceipt.entryId, receipt.entryId); await started(4);
