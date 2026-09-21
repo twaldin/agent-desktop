@@ -1983,7 +1983,7 @@ export function App() {
     if (tab.kind === "goal") {
       if (!("sessionId" in target)) return <p>A goal belongs to a conversation.</p>;
       const goalSession = record?.state?.sessions.find(session => session.id === target.sessionId);
-      return <GoalPanel key={owner} bridge={bridge} hostId={tab.hostId} sessionId={target.sessionId} connected={online} running={goalSession?.status === "running"} archived={Boolean(goalSession?.archived)} active={active} activity={tab.hostId === hostId && target.sessionId === selected?.id ? activity : undefined} localHostId={desktop.localHostId}/>;
+      return <GoalPanel draftWindowId={windowRestoration.ownerSlot} key={owner} bridge={bridge} hostId={tab.hostId} sessionId={target.sessionId} connected={online} running={goalSession?.status === "running"} archived={Boolean(goalSession?.archived)} active={active} activity={tab.hostId === hostId && target.sessionId === selected?.id ? activity : undefined} localHostId={desktop.localHostId}/>;
     }
     if(tab.kind === "terminal") return tab.terminalId ? <DockTerminal bridge={bridge} hostId={tab.hostId} target={target} terminalId={tab.terminalId} connected={online} onNewTerminal={() => {
       const pane = dock.snapshot.state.right.tabIds.includes(tab.id) ? "right"
