@@ -12,7 +12,12 @@ export async function requestTurnReview(endpoint: HostEndpoint, sessionId: strin
   let value: unknown;
   try {
     const chunks: Uint8Array[] = []; let length = 0;
-    for (;;) { const part = await reader.read(); if (part.done) break; length += part.value.byteLength; chunks.push(part.value); }
+    for (;;) {
+      const part = await reader.read(); if (part.done) break;
+      length += part.value.byteLength;
+      if (length > 8 * 1024 * 1024) throw new Error('Recorded turn review exceeds the 8 MiB response limit.');
+      chunks.push(part.value);
+    }
     value = JSON.parse(Buffer.concat(chunks, length).toString('utf8'));
   } catch (error) { await reader.cancel().catch(() => {}); throw error; }
   finally { reader.releaseLock(); }
