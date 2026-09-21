@@ -1,6 +1,8 @@
 import { isWorkspaceFilePath } from "./dock-state";
 import { BranchReviewControls, ReviewSourceControl } from "./BranchReviewControls";
 import { branchReviewState, type ReviewSource } from "./branch-review-state";
+import { commitReviewState } from "./commit-review-state";
+import { CommitReviewFiles, CommitReviewHeader } from "./CommitReviewControls";
 import { useRepositoryWatch } from "./use-repository-watch";
 import { useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "./Icons";
@@ -15,13 +17,21 @@ export function ReviewPanel({ data, disabled, onEdit, commitRequest, onCommit }:
   const [, redraw] = useReducer(value => value + 1, 0);
   const branchState = useMemo(() => branchReviewState(data), [data]);
   const branchView = useSyncExternalStore(branchState.subscribe, branchState.getSnapshot, branchState.getSnapshot);
-  const branch = branchView.source === "branch";
-  useRepositoryWatch(data, branch);
+  const commitState = useMemo(() => commitReviewState(data, () => branchState.selectSource("branch")), [data, branchState]);
+  const commitView = useSyncExternalStore(commitState.subscribe, commitState.getSnapshot, commitState.getSnapshot);
+  const [commitPickerOpen, setCommitPickerOpen] = useState(false);
+  const branch = branchView.source === "branch", committed = branchView.source === "commit";
+  useRepositoryWatch(data, branch || committed || commitPickerOpen);
+  useLayoutEffect(() => {
+    commitState.configure({ active: true, sourceActive: committed, pickerOpen: commitPickerOpen, baseBranch: branchView.baseBranch });
+  }, [commitState, committed, commitPickerOpen, branchView.baseBranch]);
+  useLayoutEffect(() => () => commitState.configure({ active: false, sourceActive: false, pickerOpen: false }), [commitState]);
   useLayoutEffect(() => { branchState.configure(true); return () => branchState.configure(false); }, [branchState]);
   const branchResult = branchView.result?.state === "available" ? branchView.result : undefined;
   const [options, setOptions] = useState<ReviewOptions>({ ...DEFAULT_REVIEW_OPTIONS });
   const [preferenceError, setPreferenceError] = useState<string>();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  useLayoutEffect(() => { setCollapsed(new Set()); }, [branchView.source, commitView.selection?.commit]);
   const [commit, setCommit] = useState<{ revision: string; paths: string[] }>();
   const commitTrigger = useRef<HTMLButtonElement>(null);
   const optionsMenu = useRef<HTMLDetailsElement>(null);
@@ -45,7 +55,7 @@ export function ReviewPanel({ data, disabled, onEdit, commitRequest, onCommit }:
     openedCommitRequest.current = commitRequest;
     if (stagedEntries.length && !data.status.entries.some(entry => entry.kind === "conflict")) setCommit({ revision: data.status.revision, paths: stagedEntries.map(entry => entry.path) });
   }, [commitRequest, data.status, disabled]);
-  const displayedDiff = branch ? branchResult : data.diff;
+  const displayedDiff = committed ? undefined : branch ? branchResult : data.diff;
   const parsed = useMemo((): { value?: ReviewPatch; error?: string } => {
     if (!displayedDiff) return {};
     try { return { value: parseReviewPatch(displayedDiff.patch, crypto.randomUUID(), displayedDiff.path) }; }
@@ -57,21 +67,30 @@ export function ReviewPanel({ data, disabled, onEdit, commitRequest, onCommit }:
     return (!selected || selected === "." || file.path === selected || file.previousPath === selected || file.path.startsWith(`${selected}/`))
       && !patch?.files.some(parsed => parsed.metadata.name === file.path || parsed.metadata.prevName === file.path);
   }) ?? [];
-  const loading = branch ? branchView.loading : data.loading.has("diff");
-  const allCollapsed = Boolean(patch?.files.length) && patch!.files.every(file => collapsed.has(file.metadata.name));
-  const untracked = !branch && !staged && !data.diffSelection.path ? entries.filter(entry => entry.kind === "untracked") : [];
-  function select(path: string | undefined, nextStaged = staged) { setCollapsed(new Set()); if (branch) branchState.selectPath(path); else void data.showDiff(path, nextStaged); }
-  function selectSource(source: ReviewSource) { setCollapsed(new Set()); branchState.selectSource(source); if (source !== "branch") void data.showDiff(undefined, source === "staged"); }
+  const commitFiles = useMemo(() => {
+    const path = commitView.path;
+    return commitView.review?.files.filter(file => !path || file.path === path || file.previousPath === path || file.path.startsWith(`${path}/`)) ?? [];
+  }, [commitView.review, commitView.path]);
+  const totals = useMemo(() => committed && commitView.review
+    ? { files: commitFiles.length, additions: commitFiles.reduce((sum, file) => sum + (file.additions ?? 0), 0), deletions: commitFiles.reduce((sum, file) => sum + (file.deletions ?? 0), 0), binaryFiles: commitFiles.filter(file => file.additions === null).length }
+    : patch ? { files: patch.files.length, additions: patch.additions, deletions: patch.deletions, binaryFiles: patch.binaryFiles } : undefined, [committed, commitView.review, commitFiles, patch]);
+  const collapsePaths = useMemo(() => committed ? commitFiles.map(file => file.path) : patch?.files.map(file => file.metadata.name) ?? [], [committed, commitFiles, patch]);
+  const loading = committed ? commitView.loading : branch ? branchView.loading : data.loading.has("diff");
+  const allCollapsed = collapsePaths.length > 0 && collapsePaths.every(path => collapsed.has(path));
+  const untracked = !branch && !committed && !staged && !data.diffSelection.path ? entries.filter(entry => entry.kind === "untracked") : [];
+  function select(path: string | undefined, nextStaged = staged) { setCollapsed(new Set()); if (committed) commitState.selectPath(path); else if (branch) branchState.selectPath(path); else void data.showDiff(path, nextStaged); }
+  function selectSource(source: ReviewSource) { setCollapsed(new Set()); branchState.selectSource(source); if (source === "staged" || source === "unstaged") void data.showDiff(undefined, source === "staged"); }
   const stageAll = () => { if (data.status) void data.mutate(staged ? { type: "git.unstage", paths: entries.flatMap(reviewMutationPaths), expectedRevision: data.status.revision } : { type: "git.stage", paths: entries.flatMap(reviewMutationPaths) }); };
   return <section className="review-panel" aria-label="Review changes">
     <div className="review-toolbar">
-      <ReviewSourceControl source={branchView.source} disabled={!data.connected} onSelect={selectSource}/>
-      <span className="review-totals" aria-label={patch ? `${patch.files.length} files in patch, ${patch.additions} additions, ${patch.deletions} deletions${patch.binaryFiles ? `, ${patch.binaryFiles} binary files` : ""}` : "Diff totals unavailable"}>
-        {loading ? <span className="review-spinner" aria-label="Loading diff"/> : patch ? <><span className="review-added">+{patch.additions.toLocaleString()}</span><span className="review-deleted">−{patch.deletions.toLocaleString()}</span></> : "—"}
+      <ReviewSourceControl source={branchView.source} disabled={!data.connected} onSelect={selectSource} commitView={commitView}
+        onCommitSelect={commit => { commitState.selectCommit(commit); selectSource("commit"); }} onCommitRetry={() => commitState.retryCommits()} onCommitOpenChange={setCommitPickerOpen}/>
+      <span className="review-totals" aria-label={totals ? `${totals.files} files in patch, ${totals.additions} additions, ${totals.deletions} deletions${totals.binaryFiles ? `, ${totals.binaryFiles} binary files` : ""}` : "Diff totals unavailable"}>
+        {loading ? <span className="review-spinner" aria-label="Loading diff"/> : totals ? <><span className="review-added">+{totals.additions.toLocaleString()}</span><span className="review-deleted">−{totals.deletions.toLocaleString()}</span></> : "—"}
       </span>
       <div className="review-toolbar-actions">
         <button className="review-icon-button" aria-label={options.split ? "Switch to unified diff" : "Switch to split diff"} title={options.split ? "Switch to unified diff" : "Switch to split diff"} aria-pressed={options.split} onClick={() => changeOptions({ split: !options.split })}><LayoutIcon split={options.split}/></button>
-        <button className="review-icon-button" aria-label="Refresh diff" title="Refresh" disabled={!data.connected || loading} onClick={() => { void data.loadGit(); if (branch) branchState.refresh(); }}><Icon name="refresh"/></button>
+        <button className="review-icon-button" aria-label="Refresh diff" title="Refresh" disabled={!data.connected || loading} onClick={() => { void data.loadGit(); if (committed) commitState.refresh(); else if (branch) branchState.refresh(); }}><Icon name="refresh"/></button>
         <details ref={optionsMenu} className="review-options" onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); optionsMenu.current?.removeAttribute("open"); optionsMenu.current?.querySelector("summary")?.focus(); } }}>
           <summary className="review-icon-button" aria-label="Review options" title="Review options"><Icon name="more"/></summary>
           <div className="review-options-menu">
@@ -79,29 +98,31 @@ export function ReviewPanel({ data, disabled, onEdit, commitRequest, onCommit }:
             <label><input type="checkbox" checked={options.wordDiffs} onChange={event => changeOptions({ wordDiffs: event.target.checked })}/>Word differences</label>
             <label><input type="checkbox" checked={options.lineNumbers} onChange={event => changeOptions({ lineNumbers: event.target.checked })}/>Line numbers</label>
             <label><input type="checkbox" checked={options.indicators === "classic"} onChange={event => changeOptions({ indicators: event.target.checked ? "classic" : "bars" })}/>Plus/minus indicators</label>
-            <button disabled={!patch?.files.length} onClick={() => { setCollapsed(allCollapsed ? new Set() : new Set(patch!.files.map(file => file.metadata.name))); optionsMenu.current?.removeAttribute("open"); }}>{allCollapsed ? "Expand all diffs" : "Collapse all diffs"}</button>
+            <button disabled={!collapsePaths.length} onClick={() => { setCollapsed(allCollapsed ? new Set() : new Set(collapsePaths)); optionsMenu.current?.removeAttribute("open"); }}>{allCollapsed ? "Expand all diffs" : "Collapse all diffs"}</button>
           </div>
         </details>
         {onCommit ? <GitSubmissionButton data={data} className="review-commit-trigger" onOpen={onCommit}/> : <button ref={commitTrigger} className="review-commit-trigger" disabled={disabled || !stagedEntries.length || !data.status || data.status.entries.some(entry => entry.kind === "conflict")} onClick={() => { if (data.status) setCommit({ revision: data.status.revision, paths: stagedEntries.map(entry => entry.path) }); }} title="Commit staged changes">Commit<Icon name="chevron"/></button>}
       </div>
     </div>
     {branch && <BranchReviewControls key={data.cacheKey} workspace={data} state={branchState} view={branchView}/>}
+    {committed && <CommitReviewHeader view={commitView}/>}
     <div className="review-navigation">
-      <select aria-label="Jump to file" value={(branch ? branchView.path : data.diffSelection.path) ?? ""} onChange={event => select(event.target.value || undefined)} disabled={!data.connected}>
-        <option value="">{branch ? "All branch changes" : staged ? "All staged changes" : "All tracked changes"}</option>
-        {!branch && data.diffSelection.path && !entries.some(entry => entry.path === data.diffSelection.path) && <option value={data.diffSelection.path}>{data.diffSelection.path}</option>}
+      <select aria-label="Jump to file" value={(committed ? commitView.path : branch ? branchView.path : data.diffSelection.path) ?? ""} onChange={event => select(event.target.value || undefined)} disabled={!data.connected}>
+        <option value="">{committed ? "All commit changes" : branch ? "All branch changes" : staged ? "All staged changes" : "All tracked changes"}</option>
+        {!branch && !committed && data.diffSelection.path && !entries.some(entry => entry.path === data.diffSelection.path) && <option value={data.diffSelection.path}>{data.diffSelection.path}</option>}
         {branch && branchView.path && !branchResult?.files.some(file => file.path === branchView.path) && <option value={branchView.path}>{branchView.path}</option>}
-        {branch ? branchResult?.files.map(file => <option key={file.path} value={file.path}>{file.path}{file.untracked ? " (untracked)" : ""}</option>) : entries.map(entry => <option value={entry.path} key={entry.path}>{entry.path}{entry.kind === "untracked" ? " (untracked)" : entry.kind === "conflict" ? " (conflict)" : ""}</option>)}
+        {committed ? commitView.review?.files.map(file => <option key={file.path} value={file.path}>{file.path}</option>) : branch ? branchResult?.files.map(file => <option key={file.path} value={file.path}>{file.path}{file.untracked ? " (untracked)" : ""}</option>) : entries.map(entry => <option value={entry.path} key={entry.path}>{entry.path}{entry.kind === "untracked" ? " (untracked)" : entry.kind === "conflict" ? " (conflict)" : ""}</option>)}
       </select>
-      {!branch && <button disabled={disabled || !entries.length || !data.status} onClick={stageAll}>{staged ? "Unstage all" : "Stage all"}</button>}
+      {!branch && !committed && <button disabled={disabled || !entries.length || !data.status} onClick={stageAll}>{staged ? "Unstage all" : "Stage all"}</button>}
     </div>
     {preferenceError && <p className="review-message" role="status">{preferenceError}</p>}
     {data.errors.git && <p className="review-message" role="alert">{data.errors.git}</p>}
-    {!branch && data.errors.diff && <p className="review-message" role="alert">{data.errors.diff}</p>}
+    {!branch && !committed && data.errors.diff && <p className="review-message" role="alert">{data.errors.diff}</p>}
     {branchView.source === "branch" && branchView.error && <p className="review-message" role="alert">{branchView.error}</p>}
     {branchView.source === "branch" && branchView.result?.state === "unavailable" && <div className="review-branch-unavailable" role="status"><p>{({ default_branch_unavailable: "No default base branch is available. Select a base branch above.", head_unavailable: "This repository has no commit history to compare yet.", base_ref_unavailable: "The selected base reference is unavailable. Choose another base or refresh after it is restored.", merge_base_unavailable: "The current branch and selected base have no available merge base." })[branchView.result.reason]}</p><button onClick={() => branchState.refresh()} disabled={!data.connected}>Refresh branch comparison</button></div>}
     {parsed.error && <p className="review-message" role="alert">Diff could not be parsed: {parsed.error}</p>}
-    {loading && !patch && <div className="review-loading" role="status" aria-label="Loading diff"><span>Loading diff…</span></div>}
+    {!committed && loading && !patch && <div className="review-loading" role="status" aria-label="Loading diff"><span>Loading diff…</span></div>}
+    {committed && <CommitReviewFiles view={commitView} state={commitState} options={options} onEdit={onEdit} onCopyError={setPreferenceError} collapsed={collapsed} onToggle={path => setCollapsed(old => { const next = new Set(old); if (!next.delete(path)) next.add(path); return next; })}/>}
     {patch && !parsed.error && <ReviewDiffs options={options}>
       {patch.files.map(file => {
         const path = file.metadata.name, entry = entries.find(entry => entry.path === path || entry.originalPath === path);
@@ -131,7 +152,7 @@ export function ReviewPanel({ data, disabled, onEdit, commitRequest, onCommit }:
       {!patch.files.length && !missingNativePatches.length && !loading && <p className="review-empty">No {branch ? "branch" : staged ? "staged" : "tracked unstaged"} changes.</p>}
       {untracked.length > 0 && <section className="review-untracked" aria-label="Untracked files"><header>Untracked files <span>{untracked.length}</span></header>{untracked.map(entry => <button key={entry.path} onClick={() => select(entry.path)}><Icon name="compose"/><span>{entry.path}</span><span>Review</span></button>)}</section>}
     </ReviewDiffs>}
-    {!branch && !patch && !loading && !parsed.error && !data.errors.diff && <p className="review-empty">{data.connected ? "Select a source to review changes." : "Reconnect to load a diff."}</p>}
+    {!branch && !committed && !patch && !loading && !parsed.error && !data.errors.diff && <p className="review-empty">{data.connected ? "Select a source to review changes." : "Reconnect to load a diff."}</p>}
     {commit && <CommitDialog data={data} snapshot={commit} disabled={disabled} onClose={() => { setCommit(undefined); commitTrigger.current?.focus({ preventScroll: true }); }}/>} 
   </section>;
 }

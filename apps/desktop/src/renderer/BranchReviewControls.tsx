@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { parseGitRevisionExpression } from "@agent-desktop/shared";
 import { Icon } from "./Icons";
@@ -6,14 +6,18 @@ import { useBranchInventory } from "./use-branch-inventory";
 import { useBranchSearch } from "./use-branch-search";
 import type { WorkspaceState } from "./workspace-state";
 import type { BranchReviewState, BranchReviewView, ReviewSource } from "./branch-review-state";
+import { CommitReviewItems } from "./CommitReviewControls";
+import type { CommitReviewView } from "./commit-review-state";
+import type { GitReviewCommit } from "../../../../packages/shared/src/git-commit-review";
 import "./branch-selector.css";
 import "./branch-review.css";
 
-function ReviewMenu({ label, value, disabled, children }: { label: string; value: ReactNode; disabled?: boolean; children(close: () => void): ReactNode }) {
+function ReviewMenu({ label, value, disabled, children, onClose }: { label: string; value: ReactNode; disabled?: boolean; children(close: () => void): ReactNode; onClose?(): void }) {
   const [open, setOpen] = useState(false), [position, setPosition] = useState<CSSProperties>();
   const trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
   const close = () => { setOpen(false); trigger.current?.focus({ preventScroll: true }); };
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+  useEffect(() => { if (!open) onClose?.(); }, [open, onClose]);
   useLayoutEffect(() => {
     if (!open || !trigger.current) return;
     const measure = () => {
@@ -45,9 +49,27 @@ function ReviewMenu({ label, value, disabled, children }: { label: string; value
   }
   return <><button ref={trigger} type="button" className="review-source-trigger" aria-label={label} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => setOpen(value => !value)}><span>{value}</span><Icon name="chevron"/></button>{open && createPortal(<div ref={menu} style={position} role="menu" aria-label={`${label} menu`} className="branch-selector-menu review-source-menu" onKeyDown={key}>{children(close)}</div>, document.body)}</>;
 }
-export function ReviewSourceControl({ source, disabled, onSelect }: { source: ReviewSource; disabled: boolean; onSelect(source: ReviewSource): void }) {
+export function ReviewSourceControl({ source, disabled, onSelect, commitView, onCommitSelect, onCommitRetry, onCommitOpenChange }: {
+  source: ReviewSource; disabled: boolean; onSelect(source: ReviewSource): void; commitView: CommitReviewView;
+  onCommitSelect(commit: GitReviewCommit): void; onCommitRetry(): void; onCommitOpenChange(open: boolean): void;
+}) {
   const choices = [{ id: "branch", label: "Branch" }, { id: "unstaged", label: "Unstaged" }, { id: "staged", label: "Staged" }] as const;
-  return <ReviewMenu label="Review source" value={choices.find(item => item.id === source)!.label} disabled={disabled}>{close => choices.map(item => <button key={item.id} type="button" role="menuitemradio" aria-checked={source === item.id} onClick={() => { onSelect(item.id); close(); }}><span>{item.label}</span>{source === item.id && <Icon name="check"/>}</button>)}</ReviewMenu>;
+  const [commitsOpen, setCommitsOpen] = useState(false);
+  const commitTrigger = useRef<HTMLButtonElement>(null), submenu = useRef<HTMLDivElement>(null);
+  const reset = useCallback(() => { setCommitsOpen(false); onCommitOpenChange(false); }, [onCommitOpenChange]);
+  const openCommits = () => { setCommitsOpen(true); onCommitOpenChange(true); };
+  const back = () => { reset(); requestAnimationFrame(() => commitTrigger.current?.focus()); };
+  useLayoutEffect(() => {
+    if (commitsOpen) submenu.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [commitsOpen]);
+  return <ReviewMenu label="Review source" value={source === "commit" ? "Commit" : choices.find(item => item.id === source)!.label} disabled={disabled} onClose={reset}>{close => commitsOpen
+    ? <div ref={submenu} className="commit-review-menu" onKeyDown={event => { if (event.key === "ArrowLeft" && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); back(); } }}>
+      <button type="button" role="menuitem" onClick={back}><span>Review sources</span></button>
+      <CommitReviewItems view={commitView} onRetry={onCommitRetry} onSelect={commit => { onCommitSelect(commit); close(); }}/>
+    </div>
+    : <>{choices.map(item => <button key={item.id} type="button" role="menuitemradio" aria-checked={source === item.id} onClick={() => { onSelect(item.id); close(); }}><span>{item.label}</span>{source === item.id && <Icon name="check"/>}</button>)}
+      <button ref={commitTrigger} type="button" role="menuitem" aria-haspopup="menu" aria-expanded={false} onClick={openCommits} onKeyDown={event => { if (event.key === "ArrowRight" && !event.nativeEvent.isComposing) { event.preventDefault(); openCommits(); } }}><span>Commits</span><Icon name="chevron"/></button>
+    </>}</ReviewMenu>;
 }
 export function BranchReviewControls({ workspace, state, view }: { workspace: WorkspaceState; state: BranchReviewState; view: BranchReviewView }) {
   const inventory = useBranchInventory(workspace, workspace.connected, "starting-state");

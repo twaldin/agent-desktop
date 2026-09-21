@@ -80,20 +80,11 @@ function inventory(raw: string, numstat: string): BranchReviewFile[] {
   return files;
 }
 
-/** One bounded read observation; never writes an index, runs external diff/textconv drivers, or fetches objects. */
-export async function readBranchReview(ports: BranchReviewPorts, input: BranchReviewRequest = {}): Promise<BranchReview> {
-  const request = parseBranchReviewRequest(input), deadline = Date.now() + 30_000;
-  const checkTime = () => {
-    const timeoutMs = deadline - Date.now();
-    if (timeoutMs <= 0) throw new BranchReviewError("GIT_TIMEOUT", "Branch review exceeded its read time limit.");
-    return timeoutMs;
-  };
-  const git = (args: string[], validExitCodes?: number[]) => ports.git(["--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", ...args], {
-    timeoutMs: checkTime(), validExitCodes, env: { GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" },
-  });
-  await ports.requireGitRoot();
-  const selectedPath = request.path === undefined ? undefined : branchPath(ports.cwd, request.path);
-  if (selectedPath !== undefined) await branchParentOwned(ports.cwd, selectedPath);
+/** Shared base/ref semantics. Callers provide bounded local Git IO and root admission;
+ * Commit uses only this comparison, never the working-tree inventory below. */
+export async function resolveBranchReviewComparison(ports: BranchReviewPorts, input: BranchReviewRequest = {}) {
+  const request = parseBranchReviewRequest(input);
+  const git = (args: string[], validExitCodes?: number[]) => ports.git(args, { validExitCodes });
   const requestedBase = request.baseBranch ?? null;
   const fence = await ports.readFence();
   const resolveCommit = async (ref: string) => {
@@ -156,10 +147,10 @@ export async function readBranchReview(ports: BranchReviewPorts, input: BranchRe
       if ((latest ? `${latest.remote}/${latest.local}` : null) !== baseBranch) throw changed();
     }
   };
-  const unavailable = async (reason: Extract<BranchReview, { state: "unavailable" }>["reason"]): Promise<BranchReview> => {
+  const unavailable = async (reason: Extract<BranchReview, { state: "unavailable" }>["reason"]): Promise<Extract<BranchReview, { state: "unavailable" }> & { head: string | null }> => {
     await assertSource();
     if (reason !== "head_unavailable") await assertBase();
-    return { state: "unavailable", reason, ...context };
+    return { state: "unavailable", reason, ...context, head };
   };
   if (!head) return unavailable("head_unavailable");
   if (!baseRef) return unavailable("default_branch_unavailable");
@@ -171,6 +162,28 @@ export async function readBranchReview(ports: BranchReviewPorts, input: BranchRe
   if (merge.exitCode === 1) return unavailable("merge_base_unavailable");
   const mergeBase = merge.stdout.trim();
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(mergeBase)) throw invalid();
+  return { state: "available" as const, ...context, fence, head, baseCommit, mergeBase,
+    assertCurrent: async () => { await assertSource(); await assertBase(); } };
+}
+
+/** One bounded read observation; never writes an index, runs external diff/textconv drivers, or fetches objects. */
+export async function readBranchReview(ports: BranchReviewPorts, input: BranchReviewRequest = {}): Promise<BranchReview> {
+  const request = parseBranchReviewRequest(input), deadline = Date.now() + 30_000;
+  const checkTime = () => {
+    const timeoutMs = deadline - Date.now();
+    if (timeoutMs <= 0) throw new BranchReviewError("GIT_TIMEOUT", "Branch review exceeded its read time limit.");
+    return timeoutMs;
+  };
+  const git = (args: string[], validExitCodes?: number[]) => ports.git(["--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", ...args], {
+    timeoutMs: checkTime(), validExitCodes, env: { GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" },
+  });
+  await ports.requireGitRoot();
+  const selectedPath = request.path === undefined ? undefined : branchPath(ports.cwd, request.path);
+  if (selectedPath !== undefined) await branchParentOwned(ports.cwd, selectedPath);
+  const comparison = await resolveBranchReviewComparison({ ...ports, git: (args, options) => git(args, options?.validExitCodes) }, request);
+  if (comparison.state === "unavailable") { const { head: _head, ...unavailable } = comparison; return unavailable; }
+  const { fence, requestedBase, baseBranch, currentBranch, head, baseCommit, mergeBase } = comparison;
+  const context = { requestedBase, baseBranch, currentBranch, ...(request.path === undefined ? {} : { path: request.path }) };
   const diff = ["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--ignore-submodules=none", "--src-prefix=a/", "--dst-prefix=b/"];
   const readInventory = async () => {
     const raw = (await git([...diff, "--raw", "-z", mergeBase, "--"])).stdout;
@@ -253,8 +266,7 @@ export async function readBranchReview(ports: BranchReviewPorts, input: BranchRe
   }
   const after = await readInventory();
   if (before.raw !== after.raw || before.numstat !== after.numstat || JSON.stringify(before.untracked) !== JSON.stringify(after.untracked) || await workingFingerprint() !== working) throw changed();
-  await assertSource();
-  await assertBase();
+  await comparison.assertCurrent();
   const revision = digest(JSON.stringify([fence, requestedBase, baseBranch, currentBranch, head, baseCommit, mergeBase, before.raw, before.numstat, working, files]));
   const visible = selectedPath === undefined || selectedPath === "." ? files : files.filter(file => file.path === selectedPath || file.path.startsWith(`${selectedPath}/`) || file.previousPath === selectedPath);
   return { state: "available", ...context, revision, head, baseCommit, mergeBase, files, patch, binary: visible.some(file => file.additions === null || file.deletions === null) };

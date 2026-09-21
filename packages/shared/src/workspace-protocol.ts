@@ -1,3 +1,5 @@
+import type { GitCommitReviewSelection, GitCommitReviewPath, GitCommitReviewList, GitCommitReviewSnapshot, GitCommitReviewDiff } from "./git-commit-review";
+export * from "./git-commit-review";
 import type { BranchReviewRequest, BranchReview } from "./branch-review";
 export * from "./branch-review";
 import type { GitFileOrigin, GitFileLocation, GitFileHistoryCursor, GitFileInspection, GitFileHistoryPage, GitFileRevision } from "./git-file-history";
@@ -82,6 +84,9 @@ export interface WorkspaceOpenTarget {
 }
 export type WorkspaceQuery =
   | ({ type: "git.branch-review" } & BranchReviewRequest)
+  | { type: "git.commit-review-commits"; baseBranch?: string }
+  | { type: "git.commit-review"; selection: GitCommitReviewSelection }
+  | { type: "git.commit-review-diff"; selection: GitCommitReviewSelection; file: GitCommitReviewPath; context?: number }
   | { type: "file.operations" }
   | { type: "environment.actions" }
   | { type: "environment.output"; preparationId: string }
@@ -118,6 +123,9 @@ export type WorkspaceQuery =
   | { type: "git.worktrees" };
 export type WorkspaceQueryResult =
   | { type: "git.branch-review"; review: BranchReview }
+  | { type: "git.commit-review-commits"; list: GitCommitReviewList }
+  | { type: "git.commit-review"; review: GitCommitReviewSnapshot }
+  | { type: "git.commit-review-diff"; diff: GitCommitReviewDiff }
   | { type: "file.operations"; version: 1 }
   | { type: "environment.actions"; state: LocalEnvironmentActionsState }
   | { type: "environment.output"; output: LocalEnvironmentExecutionOutput | null }

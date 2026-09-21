@@ -1,5 +1,7 @@
+import { GitCommitReviewReader } from "./git-commit-review";
+import type { GitCommitReviewSelection, GitCommitReviewPath } from "../../../../packages/shared/src/git-commit-review";
 import { canonicalReadPath } from "./literal-read-path";
-import { readBranchReview } from "./branch-review";
+import { readBranchReview, resolveBranchReviewComparison } from "./branch-review";
 import type { BranchReviewRequest, BranchReview } from "../../../../packages/shared/src/branch-review";
 import { GitFileReader } from "./git-file-history";
 import { parseGitFileOrigin, parseGitFilePath, type GitFileHistoryCursor, type GitFileOrigin, type GitFileLocation, type GitFileInspection } from "../../../../packages/shared/src/git-file-history";
@@ -926,7 +928,7 @@ export class WorkspaceService {
 
   /** Pinned base discovery checks each ordered remote. remote show may contact
    * that remote using host-native auth; a base branch always retains its remote. */
-  async baseBranch(signal?: AbortSignal, cache?: DefaultBranchCache): Promise<{ local: string; remote: string } | null> {
+  async baseBranch(signal?: AbortSignal, cache?: DefaultBranchCache, options: { localOnly?: boolean } = {}): Promise<{ local: string; remote: string } | null> {
     await this.requireGitRoot(signal);
     const proof = cache ? await this.repositoryReadContext(signal) : undefined;
     const root = proof?.context.root ?? this.cwd, identity = proof?.identity ?? "";
@@ -953,8 +955,10 @@ export class WorkspaceService {
         const name = advertised.exitCode === 0 ? /HEAD branch:\s*(.+)/.exec(advertised.stdout)?.[1]?.trim() : null;
         return name && name !== "(unknown)" ? name : null;
       };
-      const advertised = cache ? await cache.advertisedDefault(root, identity, remote, advertisement, signal) : await advertisement(signal);
-      if (advertised) return { local: advertised, remote };
+      if (!options.localOnly) {
+        const advertised = cache ? await cache.advertisedDefault(root, identity, remote, advertisement, signal) : await advertisement(signal);
+        if (advertised) return { local: advertised, remote };
+      }
       for (const name of ["main", "master"]) {
         const exists = async (signal?: AbortSignal) => (await this.git(["show-ref", "--verify", "--quiet", `${prefix}${name}`], { validExitCodes: [1], signal })).exitCode === 0;
         if (cache ? await cache.remoteBranch(root, identity, remote, name, exists, signal) : await exists(signal)) return { local: name, remote };
@@ -992,6 +996,61 @@ export class WorkspaceService {
       cwd: this.cwd,
       readFence: async () => JSON.stringify([(await this.repositoryReadContext()).identity, (await this.indexState()).revision]),
     }, request);
+  }
+
+  private async commitReviewContext() {
+    await this.requireGitRoot();
+    const { identity } = await this.repositoryReadContext(), repositoryId = hash(Buffer.from(identity));
+    const reader = new GitCommitReviewReader({
+      text: async args => (await this.git(args, { env: { GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" } })).stdout,
+    }, repositoryId);
+    const assertCurrent = async () => {
+      if ((await this.repositoryReadContext()).identity !== identity) throw new WorkspaceError("WORKSPACE_CHANGED", "The repository changed during Commit review.");
+    };
+    return { reader, repositoryId, assertCurrent };
+  }
+
+  async commitReviewCommits(baseBranch?: string) {
+    const context = await this.commitReviewContext(), deadline = Date.now() + this.gitTimeoutMs;
+    const git = (args: string[], validExitCodes?: number[]) => {
+      const timeoutMs = deadline - Date.now();
+      if (timeoutMs <= 0) throw new WorkspaceError("GIT_TIMEOUT", "Commit list resolution exceeded its read time limit.");
+      return this.git(["--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", ...args], {
+        validExitCodes, timeoutMs, env: { GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" },
+      });
+    };
+    const comparison = await resolveBranchReviewComparison({
+      git: (args, options) => git(args, options?.validExitCodes),
+      requireGitRoot: () => this.requireGitRoot(),
+      baseBranch: () => this.baseBranch(undefined, undefined, { localOnly: true }),
+      cwd: this.cwd,
+      readFence: async () => (await this.repositoryReadContext()).identity,
+    }, baseBranch === undefined ? {} : { baseBranch });
+    if (comparison.state === "unavailable" && comparison.reason === "head_unavailable") {
+      // A ref can still name an absent/non-commit object. That is a failed read,
+      // not an unborn repository whose empty list may clear the selected SHA.
+      const head = await git(["rev-parse", "--verify", "--quiet", "HEAD"], [1]);
+      if (head.exitCode === 0) {
+        await git(["cat-file", "-e", `${head.stdout.trim()}^{commit}`]);
+        throw new WorkspaceError("GIT_CHANGED", "HEAD changed during Commit list resolution.");
+      }
+    }
+    const list = await context.reader.commits(comparison.state === "available" ? comparison.mergeBase : null, comparison.head);
+    if (comparison.state === "available") await comparison.assertCurrent();
+    await context.assertCurrent();
+    return list;
+  }
+
+  async commitReview(selection: GitCommitReviewSelection) {
+    const context = await this.commitReviewContext(), review = await context.reader.inspect(selection);
+    await context.assertCurrent();
+    return review;
+  }
+
+  async commitReviewDiff(selection: GitCommitReviewSelection, file: GitCommitReviewPath, lines?: number) {
+    const context = await this.commitReviewContext(), diff = await context.reader.file(selection, file, lines);
+    await context.assertCurrent();
+    return diff;
   }
 
   async diff(options: GitDiffOptions = {}): Promise<GitDiff> {

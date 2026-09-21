@@ -1,3 +1,4 @@
+import { parseGitCommitReviewPath, parseGitCommitReviewSelection } from "../../../packages/shared/src/git-commit-review";
 import { parseBranchReviewRequest } from "../../../packages/shared/src/branch-review";
 import { parseGitFileOrigin, parseGitFileLocation, parseGitFilePath, parseGitFileHistoryCursor } from "@agent-desktop/shared";
 import { parseSymbolDefinitionRequest } from "../../../packages/shared/src/symbol-navigation";
@@ -111,6 +112,12 @@ export function parseWorkspaceQuery(value: unknown): WorkspaceQuery {
     case "git.branch-review": {
       const { type, ...request } = query;
       return { type: "git.branch-review", ...parseBranchReviewRequest(request) };
+    }
+    case "git.commit-review-commits": return { type: query.type, ...(query.baseBranch === undefined ? {} : { baseBranch: parseGitRevisionExpression(query.baseBranch) }) };
+    case "git.commit-review": return { type: query.type, selection: parseGitCommitReviewSelection(query.selection) };
+    case "git.commit-review-diff": {
+      if (query.context !== undefined && (!Number.isSafeInteger(query.context) || (query.context as number) < 0 || (query.context as number) > 1000)) throw new Error("Invalid diff context.");
+      return { type: query.type, selection: parseGitCommitReviewSelection(query.selection), file: parseGitCommitReviewPath(query.file), context: query.context as number | undefined };
     }
     case "git.diff": {
       if (query.context !== undefined && (!Number.isSafeInteger(query.context) || (query.context as number) < 0 || (query.context as number) > 1000)) throw new Error("Invalid diff context.");
@@ -448,7 +455,9 @@ export class HostWorkspaces {
       return { type: query.type, receipt: this.store.getGitSubmission(target, query.commandId) ?? null };
     }
     const summaryOwner = query.type === "git.selection-summary" && !("filePath" in target) ? this.ownerStamp(target) : undefined;
-    const reviewOwner = (query.type === "git.review-summary" || query.type === "git.branch-review") && !("filePath" in target) ? this.ownerStamp(target) : undefined;
+    const isCommitReview = query.type === "git.commit-review-commits" || query.type === "git.commit-review" || query.type === "git.commit-review-diff";
+    const reviewOwner = (query.type === "git.review-summary" || query.type === "git.branch-review" || isCommitReview) && !("filePath" in target) ? this.ownerStamp(target) : undefined;
+    if (isCommitReview && "filePath" in target) throw new WorkspaceError("WORKSPACE_CHANGED", "A standalone file cannot own Commit review.");
     const branchSearchOwner = (query.type === "git.search-branches" || query.type === "git.search-starting-branches" || query.type === "git.resolve-revision" || query.type === "git.recent-branches" || query.type === "git.base-branch" || query.type === "git.default-branch" || query.type === "git.resolve-checkout") && !("filePath" in target) ? this.ownerStamp(target) : undefined;
     const isFileHistory = query.type === "git.file-inspect" || query.type === "git.file-history" || query.type === "git.file-revision";
     const fileHistoryOwner = isFileHistory && !("filePath" in target) ? this.ownerStamp(target) : undefined;
@@ -573,6 +582,21 @@ export class HostWorkspaces {
         if ("filePath" in target || reviewOwner !== this.ownerStamp(target))
           throw new WorkspaceError("WORKSPACE_CHANGED", "The workspace owner changed while reading branch changes.");
         return { type, review };
+      }
+      case "git.commit-review-commits": {
+        const list = await workspace.commitReviewCommits(query.baseBranch);
+        if ("filePath" in target || reviewOwner !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The Commit review owner changed during the read.");
+        return { type: query.type, list };
+      }
+      case "git.commit-review": {
+        const review = await workspace.commitReview(query.selection);
+        if ("filePath" in target || reviewOwner !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The Commit review owner changed during the read.");
+        return { type: query.type, review };
+      }
+      case "git.commit-review-diff": {
+        const diff = await workspace.commitReviewDiff(query.selection, query.file, query.context);
+        if ("filePath" in target || reviewOwner !== this.ownerStamp(target)) throw new WorkspaceError("WORKSPACE_CHANGED", "The Commit review owner changed during the read.");
+        return { type: query.type, diff };
       }
       case "git.diff": return { type: query.type, diff: await workspace.diff(query) };
       case "git.review-summary": {

@@ -27,6 +27,7 @@ async function fixture(standalone = false) {
       owners.push(hostId!);
       switch (query.type) {
         case "git.branch-review": throw new Error("Branch review uses its dedicated production-path fixture.");
+        case "git.commit-review-commits": case "git.commit-review": case "git.commit-review-diff": throw new Error("Commit review uses its dedicated owner-fenced host fixture.");
         case "file.operations": return {type:query.type,version:1};
         case "git.submission": throw new Error("Compound submissions are exercised through the host journal fixture.");
         case "git.selection-summary": throw new Error("Selection summaries are exercised through the owner-fenced host query fixture.");

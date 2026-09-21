@@ -1,7 +1,7 @@
 import type { BranchReview, BranchReviewRequest } from "../../../../packages/shared/src/branch-review";
 import type { WorkspaceQuery, WorkspaceQueryResult } from "../../../../packages/shared/src/workspace-protocol";
 
-export type ReviewSource = "staged" | "unstaged" | "branch";
+export type ReviewSource = "staged" | "unstaged" | "branch" | "commit";
 interface Workspace {
   connected: boolean;
   repositoryInvalidation: number;
