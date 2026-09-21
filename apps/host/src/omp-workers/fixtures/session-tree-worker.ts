@@ -1,6 +1,6 @@
 // Disposable real worker + native journal. Controlled provider is local code, not model inference.
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 const root = process.argv[2]!;
 assert.equal(process.env.HOME, root);
@@ -36,7 +36,7 @@ try {
  const before = await session.getTree();
  const result = await session.mutateTree("worker-navigation", { sessionId, ticket: before.ticket, mutation: { action: "navigate", targetId: user, summarize: false } });
  assert.equal(result.draft?.images.length, 5); assert.deepEqual(result.draft?.images, Array.from({ length: 5 }, () => image));
- assert.equal(session.id, sessionId); assert.equal(session.sessionFile, sessionFile);
+ assert.equal(session.id, sessionId); assert.equal(await realpath(session.sessionFile!), await realpath(sessionFile));
  assert.equal((await session.getMessages()).some(message => message.nativeId === user), false);
  const firstTicket = result.state.ticket;
  const substituted = session.startPrompt("Substituted images forbidden", { treeTicket: firstTicket, commandVersion: 23, commandId: "substitute", images: [] });
