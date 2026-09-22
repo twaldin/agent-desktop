@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { startHost } from "./server";
+import { SubmissionController } from "../../desktop/src/renderer/submissions";
 import { SESSION_FORCE_TOOL_OWNER_HEADER, parseForceToolResponse } from "../../../packages/shared/src/force-tool";
 import type { CommandEnvelope, CommandResult } from "@agent-desktop/shared";
 
@@ -95,6 +96,27 @@ test("two HTTP clients join one arm, reject changed IDs/stale tickets, retain ed
     await submit({ id: "cancel", commandVersion: 18, command: { type: "session.force.cancel", sessionId: session.id,
       ticket: { epoch: after.epoch, revision: after.revision }, directiveId: after.directives[0]!.id } });
     expect((await readState()).value?.directives).toEqual([]);
+    // The actual renderer must preserve the cleared Goal draft format while arming native force.
+    const goalDraft = host.store.putDraft({ id: draft.draft.id, text: "Goal objective", projectId: null, model: null, goal: { tokenBudget: "1000" } }, edited.ok ? edited.draft.revision : 0);
+    if (!goalDraft.ok) throw new Error("Goal setup failed");
+    const cleared = host.store.putDraft({ id: draft.draft.id, text: `/force ${tool}`, projectId: null, model: null, goal: null }, goalDraft.draft.revision);
+    if (!cleared.ok) throw new Error("Goal clear failed");
+    const forceBefore = (await readState()).value!;
+    const renderer = new SubmissionController(async command => {
+      const response = await fetch(`${host.connection.origin}/v${command.commandVersion}/commands`, { method: "POST", headers, body: JSON.stringify(command) });
+      expect(response.status).toBe(200);
+      return response.json() as Promise<CommandResult>;
+    }, host.store.host.id);
+    await renderer.submit(cleared.draft, session.id, "prompt", undefined, undefined, { nativeForce: true,
+      guard: { epoch: forceBefore.epoch, expectedRevision: forceBefore.revision, toolName: tool } });
+    expect(renderer.entries()).toEqual([]);
+    const armedAfterClear = (await readState()).value!;
+    expect(armedAfterClear.directives).toHaveLength(1);
+    expect(armedAfterClear.directives[0]!.toolName).toBe(tool);
+    await submit({ id: "cancel-after-goal", commandVersion: 18, command: { type: "session.force.cancel", sessionId: session.id,
+      ticket: { epoch: armedAfterClear.epoch, revision: armedAfterClear.revision }, directiveId: armedAfterClear.directives[0]!.id } });
+    expect((await readState()).value?.directives).toEqual([]);
+
     await writeFile(join(gates, "lost.crash"), "exit at native history flush");
     const lost = await submit({ id: "lost", commandVersion: 18, command: { type: "session.prompt", sessionId: session.id, text: `/force ${tool}` } });
     expect(lost).toMatchObject({ ok: false, error: { code: "OUTCOME_UNKNOWN" } });

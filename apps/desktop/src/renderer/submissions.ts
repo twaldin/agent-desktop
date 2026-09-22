@@ -42,7 +42,7 @@ export class EnvironmentPreparationPause extends Error {
 }
 const commandVersion = (draft: Draft): 4 | 5 | 6 | 7 | 8 | 9 | 12 | undefined => hasRemoteExecution(draft.execution) ? 12 : hasRepeatedWholeFileSources(draft.wholeFileAttachments ?? []) ? 9 : draft.wholeFileAttachments?.some(file=>file.textOffset!==undefined) ? 8 : draft.wholeFileAttachments !== undefined ? 7 : draft.selectedTextAttachments !== undefined ? 6 : draft.environment !== undefined ? 5 : draft.execution !== undefined ? 4 : undefined;
 /** Goal-format drafts prompt on command 24; steer, creation and environment envelopes keep their base versions. */
-const promptVersion = (draft: Draft, mode: PendingSubmission["mode"], force: boolean): 4 | 5 | 6 | 7 | 8 | 9 | 12 | 18 | 24 | undefined => force ? 18 : mode === "prompt" && draft.goal !== undefined ? 24 : commandVersion(draft);
+const promptVersion = (draft: Draft, mode: PendingSubmission["mode"], force: boolean): 4 | 5 | 6 | 7 | 8 | 9 | 12 | 18 | 24 | undefined => mode === "prompt" && draft.goal !== undefined ? 24 : force ? 18 : commandVersion(draft);
 const sameDraftReference = (value: { id: string; revision: number } | undefined, draft: Draft, required: boolean) => required
   ? value?.id === draft.id && value.revision === draft.revision
   : value === undefined;
@@ -79,7 +79,10 @@ export class SubmissionController {
             item.forceToolReceipt = parseForceToolReceipt(item.forceToolReceipt, item.send.id);
           }
           const expectedVersion = promptVersion(captured, item.mode, Boolean(item.force));
-          if (item.mode !== "question" && item.send && item.send.commandVersion !== expectedVersion) throw new Error("Pending input requires its exact original command protocol.");
+          // Older clients emitted v18 for cleared-Goal force drafts. Keep that exact
+          // persisted envelope for receipt recovery; never upgrade an uncertain send.
+          const legacyClearedGoalForce = captured.goal === null && item.force && item.mode === "prompt" && item.send?.commandVersion === 18;
+          if (item.mode !== "question" && item.send && item.send.commandVersion !== expectedVersion && !legacyClearedGoalForce) throw new Error("Pending input requires its exact original command protocol.");
           if (captured.goal && (item.mode !== "prompt" || item.force)) throw new Error("Pending Goal intent requires an ordinary prompt.");
           if (item.create?.command.type === "session.create") {
             const continuation=item.create.command.browserContinuation===undefined?undefined:parseDraftBrowserContinuation(item.create.command.browserContinuation);

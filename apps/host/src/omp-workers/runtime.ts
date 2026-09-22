@@ -833,8 +833,8 @@ export class WorkerClient {
     const forceOperation = forceFields.forceTool !== undefined || forceFields.forceRecovery !== undefined;
     const commandId = options?.commandId === undefined ? undefined
       : forceOperation ? parseForceToolCommandId(options.commandId) : options.commandId;
-    if (forceOperation && (commandId === undefined || options?.commandVersion !== 18))
-      throw new Error("Force-tool prompt admission requires command version 18 and its original command identity.");
+    if (forceOperation && (commandId === undefined || (options?.commandVersion !== 18 && options?.commandVersion !== 24)))
+      throw new Error("Force-tool prompt admission requires command version 18 or 24 and its original command identity.");
     const goal = goalPromptForAdmission(text, options ?? {});
     const preparedOptions = options ? { ...options, ...forceFields, ...(goal ? { goal } : {}), ...(commandId === undefined ? {} : { commandId }), images: copyPreparedImages(options.images), selectedText: copyNativeSelectedTextInput(options.selectedText), wholeFiles: copyNativeWholeFileInput(options.wholeFiles, text.length) } : undefined;
     const id = `${this.#requestPrefix}${++this.#requestId}`;

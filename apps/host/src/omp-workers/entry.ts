@@ -762,8 +762,8 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         const forceOperation = forceFields.forceTool !== undefined || forceFields.forceRecovery !== undefined;
         const commandId = message.args.options?.commandId === undefined ? undefined
           : forceOperation ? parseForceToolCommandId(message.args.options.commandId) : message.args.options.commandId;
-        if (forceOperation && (commandId === undefined || message.args.options?.commandVersion !== 18))
-          throw new Error("Force-tool prompt admission requires command version 18 and its original command identity.");
+        if (forceOperation && (commandId === undefined || (message.args.options?.commandVersion !== 18 && message.args.options?.commandVersion !== 24)))
+          throw new Error("Force-tool prompt admission requires command version 18 or 24 and its original command identity.");
         const goal = goalPromptForAdmission(message.args.text, message.args.options ?? {});
         const options = message.args.options ? { ...message.args.options, ...forceFields, ...(goal ? { goal } : {}), ...(commandId === undefined ? {} : { commandId }) } : undefined;
         const run = requireSession().startPrompt(message.args.text, options);

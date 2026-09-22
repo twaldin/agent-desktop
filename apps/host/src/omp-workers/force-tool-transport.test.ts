@@ -38,13 +38,17 @@ test("ordinary command admission preserves colon-bearing identities through both
   } finally { await f.close(); }
 });
 
-test("real worker entry validates force state/cancellation and publishes an accepted receipt before continuation", async () => {
+test.each([18, 24] as const)("real worker entry validates v%i force state/cancellation and publishes an accepted receipt before continuation", async commandVersion => {
   const f = await fixture();
   try {
     expect(await f.session.getForceTool()).toMatchObject({ epoch: "epoch-1", revision: 3, canArm: true, canCancel: true });
     expect(await f.session.cancelForceTool({ ticket: { epoch: "epoch-1", revision: 3 }, directiveId: "directive-1" }))
       .toMatchObject({ cancelledDirectiveId: "directive-1", state: { directives: [], canCancel: false } });
-    const run = f.session.startPrompt("controlled force admission", forceOptions);
+    for (const unsupported of [17, 19, 23] as const) {
+      expect(() => f.session.startPrompt("controlled force admission", { ...forceOptions, commandVersion: unsupported })).toThrow("command version 18 or 24");
+    }
+    expect(() => f.session.startPrompt("controlled force admission", { ...forceOptions, commandVersion, commandId: undefined })).toThrow("original command identity");
+    const run = f.session.startPrompt("controlled force admission", { ...forceOptions, commandVersion });
     expect(run.forceToolReceipt).toBeUndefined();
     expect(await run.accepted).toEqual({ kind: "user-message", entryId: "entry-1" });
     expect(run.forceToolReceipt).toEqual({ commandId: "command-1", epoch: "epoch-1", directiveId: "directive-1",

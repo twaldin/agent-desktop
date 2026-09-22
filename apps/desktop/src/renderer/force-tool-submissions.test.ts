@@ -162,3 +162,28 @@ test("definite not-armed refusal retains its original receipt and restores settl
   expect(calls[1]!.command).not.toHaveProperty("forceTool");
   expect(restored.entries()).toEqual([]);
 });
+
+
+test("cleared Goal drafts keep v24 for native force and preserve it across an uncertain restart", async () => {
+ const storage=cache(), calls:CommandEnvelope[]=[];
+ const cleared={...draft,goal:null};
+ const first=new SubmissionController(async e=>{calls.push(structuredClone(e));return unknown(e);},"host",storage);
+ await expect(first.submit(cleared,"s","prompt",undefined,undefined,{nativeForce:true,guard})).rejects.toThrow("uncertain");
+ expect(calls[0]).toMatchObject({commandVersion:24,command:{type:"session.prompt",forceTool:guard,draft:{id:cleared.id,revision:cleared.revision}}});
+ expect(calls[0]!.command).not.toHaveProperty("goal");
+ const restored=new SubmissionController(async e=>{calls.push(structuredClone(e));return partial(e);},"host",storage);
+ expect(restored.cacheWarning).toBeUndefined();
+ await expect(restored.submit({...cleared,text:"edited",goal:{tokenBudget:"5000"}},"other","prompt")).rejects.toThrow("Prompt not recorded");
+ expect(calls[1]).toEqual(calls[0]);
+});
+
+test("a saved legacy cleared-Goal force receipt is retained without upgrading its command", async () => {
+ const storage=cache(), calls:CommandEnvelope[]=[];
+ const envelope:CommandEnvelope={id:"legacy-force",commandVersion:18,command:{type:"session.prompt",sessionId:"s",text:draft.text,forceTool:guard,model:draft.model!,thinkingLevel:draft.thinkingLevel,draft:{id:draft.id,revision:draft.revision}}};
+ storage.write("agent-desktop:submissions:v1:host",JSON.stringify({[draft.id]:{draft:{...draft,goal:null},sessionId:"s",mode:"prompt",uncertain:true,force:{nativeForce:true,guard},send:envelope}}));
+ const restored=new SubmissionController(async e=>{calls.push(structuredClone(e));return unknown(e);},"host",storage);
+ expect(restored.cacheWarning).toBeUndefined();
+ expect(restored.entries()).toHaveLength(1);
+ await expect(restored.submit({...draft,text:"new input"},"s","prompt")).rejects.toThrow("uncertain");
+ expect(calls).toEqual([envelope]);
+});
