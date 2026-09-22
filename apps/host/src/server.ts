@@ -14,7 +14,8 @@ import { SessionUsageHttp, usageCommandHeaders } from "./session-usage-http";
 import { PlanExternalEditorHttp, type PlanExternalEditorHttpAction } from "./plan-external-editor-http";
 import { PlanExternalEditors } from "./plan-external-editors";
 import { PlanEditorTerminals } from "./plan-editor-terminal";
-import { SESSION_TODOS_CAPABILITY } from "../../../packages/shared/src/session-todos";
+import { SESSION_PLAN_OWNER_HEADER } from "../../../packages/shared/src/session-plan";
+import { SESSION_TODOS_CAPABILITY, SESSION_TODOS_OWNER_HEADER } from "../../../packages/shared/src/session-todos";
 import { SessionTodosHttp, projectTodoJournalReceipt, mutateSessionTodos } from "./session-todos-http";
 import { PlanDecisionService } from "./plan-decisions";
 import { projectPlanDecisionJournalReceipt, SessionPlanHttp } from "./session-plan-http";
@@ -1591,14 +1592,14 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (editorRoute) {
           if (!planExternalEditorHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING",
             message: "The owning host needs its pinned native terminal bundle to run the configured editor." } },
-            { status: 503, headers: { "Cache-Control": "no-store" } });
+            { status: 503, headers: { "Cache-Control": "no-store", [SESSION_PLAN_OWNER_HEADER]: store.host.id } });
           return planExternalEditorHttp.route(request, editorRoute[1]!, editorRoute[2] as PlanExternalEditorHttpAction);
         }
         const todoEditorRoute = /^\/v1\/sessions\/([^/]+)\/todos\/editor\/(capabilities|list|start|status|cancel|recovery)$/.exec(url.pathname);
         if (todoEditorRoute) {
           if (!todoExternalEditorHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING",
             message: "The owning host needs its pinned native terminal bundle to run the configured editor." } },
-            { status: 503, headers: { "Cache-Control": "no-store" } });
+            { status: 503, headers: { "Cache-Control": "no-store", [SESSION_TODOS_OWNER_HEADER]: store.host.id } });
           return todoExternalEditorHttp.route(request, todoEditorRoute[1]!, todoEditorRoute[2] as TodoExternalEditorHttpAction);
         }
         const treeResponse = await sessionTreeHttp.route(request, url);
